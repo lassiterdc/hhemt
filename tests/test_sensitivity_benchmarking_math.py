@@ -31,6 +31,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 
+from hhemt.analysis import PERF_VARS
 from hhemt.report_renderers import sensitivity_benchmarking as sb
 from hhemt.report_renderers.sensitivity_benchmarking import (
     _collect_rows,
@@ -1372,3 +1373,69 @@ def test_scaling_marker_series_are_none_when_neither_a_family_nor_a_serial_ancho
     assert isinstance(speedup_pg, dict)
     assert isinstance(strong_eff_pg, dict)
     assert speedup_pg == {}, "with no serial group the else arm's line series is empty, not absent"
+
+
+def test_the_wallclock_safe_allowlist_admits_barrier_synchronized_columns_at_both_domains():
+    """The sole gate on the headline benchmarking axis, asserted over membership and over principle.
+
+    `_WALLCLOCK_SAFE_COLS` is the ONLY thing standing between a config value and a mislabelled
+    wallclock axis: `report_config.sensitivity.dependent_var` is a bare `str` with no `Literal`
+    and no column-vocabulary validator, and `_collect_rows` resolves
+    `dependent_var.split(".", 1)[1]` against whatever the tree carries. It had zero coverage
+    before this test, which is why its membership could widen or narrow unobserved.
+
+    ADMISSION IS TWO CONJUNCTS AND THE REFUSALS ARE WHAT MAKE THAT FALSIFIABLE. Barrier-
+    synchronized (`Total` / `Simulation` / `Init`, each closing at TRITON's pre-checkpoint
+    barrier) AND evaluated over a domain a duration can be read from -- the published max over
+    ranks, or the `_coherent` read at the single rank attaining max(Total). Every category column
+    fails conjunct 1; every `_min` column fails conjunct 2 by being the FASTEST rank, i.e. a lower
+    bound on the phase rather than its wallclock.
+
+    `SWMM_STEP` IS ASSERTED REFUSED BY NAME because it is the one near-miss. Its bracket sits
+    inside the solver's rank-0 guard, so max(Rank) is exact rather than an upper bound -- the
+    stipulation `wallclock reduction uses max over rank` carries that exception -- and it is
+    STILL not a phase wallclock, because the bracket spans two index remaps and a per-timestep
+    side-file append besides the solve. A future reader who rediscovers the exactness must not
+    read it as an argument for admission.
+    """
+    expected = {
+        "performance.Total",
+        "performance.Simulation",
+        "performance.Init",
+        "performance.Total_coherent",
+        "performance.Simulation_coherent",
+        "performance.Init_coherent",
+    }
+    assert set(sb._WALLCLOCK_SAFE_COLS) == expected, (
+        "the wallclock-safe allowlist moved; it is the sole gate on the headline benchmarking "
+        "figure, so any membership change is a deliberate decision and belongs in this pin"
+    )
+
+    for col in ("Total", "Simulation", "Init"):
+        assert f"performance.{col}" in sb._WALLCLOCK_SAFE_COLS, f"{col} is barrier-synchronized"
+        assert f"performance.{col}_coherent" in sb._WALLCLOCK_SAFE_COLS, (
+            f"{col}_coherent is {col} read at one real rank and is the form whose children close "
+            "their level; refusing it is what kept a coherent axis unplottable"
+        )
+
+    # Every `_min` column is refused -- the fastest rank is a lower bound, not a wallclock.
+    for col in PERF_VARS:
+        assert f"performance.{col}_min" not in sb._WALLCLOCK_SAFE_COLS, (
+            f"{col}_min is the FASTEST rank; plotting it as wallclock understates the job, which "
+            "is the same mislabel class as a category upper bound in the opposite direction"
+        )
+
+    # Every category column is refused, at BOTH the published and the coherent domain: conjunct 1
+    # fails, so conjunct 2 cannot rescue it.
+    for col in set(PERF_VARS) - {"Total", "Simulation", "Init"}:
+        assert f"performance.{col}" not in sb._WALLCLOCK_SAFE_COLS, f"{col} is per-category cost"
+        assert f"performance.{col}_coherent" not in sb._WALLCLOCK_SAFE_COLS, (
+            f"{col}_coherent is coherent but not barrier-synchronized; coherence fixes WHICH rank, "
+            "not whether the quantity is an elapsed duration"
+        )
+
+    assert "performance.SWMM_STEP" not in sb._WALLCLOCK_SAFE_COLS, (
+        "SWMM_STEP's max(Rank) is exact because its bracket is rank-0-only, but the bracket also "
+        "spans two remaps and a side-file append, so it is not a phase wallclock"
+    )
+    assert "performance.SWMM_STEP_coherent" not in sb._WALLCLOCK_SAFE_COLS

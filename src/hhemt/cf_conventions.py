@@ -145,7 +145,7 @@ _CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = {
 _CF_PERFORMANCE_VARIABLES: dict[str, dict[str, str | None]] = {
     "Compute": {
         "standard_name": None,
-        "long_name": "Cumulative compute-kernel time, slowest rank",
+        "long_name": "Cumulative compute-kernel time, slowest rank for this column",
         "units": "s",
         "cell_methods": None,
     },
@@ -155,37 +155,37 @@ _CF_PERFORMANCE_VARIABLES: dict[str, dict[str, str | None]] = {
         # "SWMM_MPI is distinct from the pre-existing MPI column, which times TRITON's
         # own halo exchange rather than the coupling's gather/scatter." The two are
         # siblings at different levels of the hierarchy and must never be summed.
-        "long_name": "Cumulative MPI time for TRITON's own halo exchange, slowest rank",
+        "long_name": "Cumulative MPI time for TRITON's own halo exchange, slowest rank for this column",
         "units": "s",
         "cell_methods": None,
     },
     "IO": {
         "standard_name": None,
-        "long_name": "Cumulative output-writing time, slowest rank",
+        "long_name": "Cumulative output-writing time, slowest rank for this column",
         "units": "s",
         "cell_methods": None,
     },
     "Resize": {
         "standard_name": None,
-        "long_name": "Cumulative domain resize and rebalance time, slowest rank",
+        "long_name": "Cumulative domain resize and rebalance time, slowest rank for this column",
         "units": "s",
         "cell_methods": None,
     },
     "SWMM": {
         "standard_name": None,
-        "long_name": "Cumulative TRITON-SWMM coupling time, slowest rank",
+        "long_name": "Cumulative TRITON-SWMM coupling time, slowest rank for this column",
         "units": "s",
         "cell_methods": None,
     },
     "SWMM_XFER": {
         "standard_name": None,
-        "long_name": "Coupling host-device transfers and exchange kernel, slowest rank",
+        "long_name": "Coupling host-device transfers and exchange kernel, slowest rank for this column",
         "units": "s",
         "cell_methods": None,
     },
     "SWMM_MPI": {
         "standard_name": None,
-        "long_name": "Coupling MPI gather and scatter, slowest rank",
+        "long_name": "Coupling MPI gather and scatter, slowest rank for this column",
         "units": "s",
         "cell_methods": None,
     },
@@ -303,19 +303,60 @@ _CF_PERFORMANCE_SUMMARY_VARIABLES: dict[str, dict[str, str | None]] = {
 }
 
 
-_RANK_ATTRIBUTION_SUFFIX = ", slowest rank"
+# WHY THE PHRASE READS `for this column` AND NOT A BARE `slowest rank`. The reduction is
+# `max(dim="Rank")` applied PER VARIABLE, so each column's maximum may be attained at a
+# DIFFERENT rank -- which `_export_performance_summary`'s own `notes` attr states. A bare
+# `", slowest rank"` on thirteen columns therefore invites the one reading that is false of the
+# artifact: that there is a single job-wide slowest rank at which all thirteen were read. Under
+# the rank-axis schema the invitation got stronger rather than weaker, because the phrase now
+# sits beside `", fastest rank"` on the `_min` family and `", read at the rank attaining
+# max(Total)"` on the `_coherent` family -- two qualifiers that DO name one rank each, so the
+# unqualified parent reads as a third member of the same series. `Total` / `Simulation` / `Init`
+# carry no attribution because they are barrier-synchronized, so their max over ranks IS the
+# job-level figure; `SWMM_STEP` carries none because its `long_name` already names rank 0.
+#
+# THE SUBSTRING `slowest rank` IS RETAINED DELIBERATELY, AND THAT IS A SAFETY PROPERTY RATHER
+# THAN A WORDING PREFERENCE. `test_the_rank_axis_family_carries_units_without_cell_methods`
+# guards the derived families with `"slowest rank" not in long_name` -- a SUBSTRING test, while
+# the strip below is an `endswith` test on the FULL constant. The two predicates are not the
+# same, and a reword that REPLACES the phrase rather than extending it separates them: the strip
+# silently no-ops, the guard finds no `slowest rank` to object to, and every derived name becomes
+# a self-contradiction that reads as ordinary prose. Measured on all three forms -- the current
+# suffix, a move-the-phrase reword, and a replace-the-phrase reword -- the guard catches the
+# second and is GREEN on the third. Keeping `slowest rank` inside the new phrase keeps the
+# existing guard live against the second class; `test_the_rank_attribution_strip_is_live` closes
+# the third by measuring the strip's EFFECT rather than any phrase.
+_RANK_ATTRIBUTION_SUFFIX = ", slowest rank for this column"
+
+#: The parent columns whose `long_name` carries a rank attribution, and therefore the exact set
+#: on which `_perf_quantity_phrase` must CHANGE its input. Pinned as a SET rather than a count
+#: because a count of seven is reachable by a different seven; `test_the_rank_attribution_strip_
+#: is_live` compares the measured fired-set against this. Edit it only together with a deliberate
+#: change to which parents carry an attribution -- never to make a failing test pass.
+_RANK_ATTRIBUTED_COLUMNS: frozenset[str] = frozenset(
+    {"Compute", "MPI", "IO", "Resize", "SWMM", "SWMM_XFER", "SWMM_MPI"}
+)
 
 
 def _perf_quantity_phrase(long_name: str) -> str:
     """Strip the parent column's rank attribution, leaving the quantity it names.
 
-    Seven of the thirteen parent `long_name` strings end in `", slowest rank"`, which is true of
-    `max(dim="Rank")` and false of BOTH derived families. Suffixing a family qualifier onto the raw
-    parent string would yield seven self-contradictions that read as ordinary prose, which is the
-    same invisibility class as the `_auto_long_name` fallback this table exists to replace. The
-    strip is a string operation and therefore fragile to a reworded parent, which is why
-    `test_the_rank_axis_family_carries_units_without_cell_methods` asserts no derived `long_name`
-    carries the suffix -- the fragility is loud rather than silent.
+    Seven of the thirteen parent `long_name` strings end in `_RANK_ATTRIBUTION_SUFFIX`, which is
+    true of `max(dim="Rank")` and false of BOTH derived families. Suffixing a family qualifier onto
+    the raw parent string would yield seven self-contradictions that read as ordinary prose, which
+    is the same invisibility class as the `_auto_long_name` fallback this table exists to replace.
+
+    THE FRAGILITY IS A LITERAL SUFFIX MATCH AND ITS FAILURE MODE IS SILENCE, NOT NOISE. This is an
+    `endswith` test against one constant, so any reword of a parent that does not end in exactly
+    that constant makes the strip a no-op and leaves the parent's own attribution inside the
+    derived name. The sibling guard in `test_the_rank_axis_family_carries_units_without_cell_
+    methods` tests the SUBSTRING `"slowest rank"`, so it catches a no-op only while the reworded
+    parent still contains those words -- a reword that replaces them passes that guard with the
+    derivation broken. `test_the_rank_attribution_strip_is_live` is the discriminating check: it
+    asserts the set of parents on which this function CHANGES its input equals
+    `_RANK_ATTRIBUTED_COLUMNS`, and that no derived `long_name` contains its parent's full
+    `long_name`. Both arms measure this function's effect, so neither can be satisfied by a
+    no-opped strip under any wording.
     """
     if long_name.endswith(_RANK_ATTRIBUTION_SUFFIX):
         return long_name[: -len(_RANK_ATTRIBUTION_SUFFIX)]

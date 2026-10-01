@@ -53,7 +53,36 @@
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
-    renderer_sha256: 6589647cdb53cfe49f36ed5a40a4ea9152990cf1a2866322eb88364714a476c8
+    renderer_sha256: b0d6d7a258c8927c1245eb0de0a8345823664803897f3d624cd6dcb89f8098fc
+    justification_2026_09_30: >-
+      WP-3D: the wallclock-safe allowlist widened from three literals to six, and
+      `_WALLCLOCK_SAFE_COLS` moved from a `render()`-local set to a module constant so the
+      sole gate on this figure's axis is importable and therefore testable. THIRD FIRING of
+      the 2026-09-01 header note, discharged the way that note prescribes: the caption was
+      re-read IN FULL and the digest re-recorded, not written off as leftover staleness.
+      NO CURRENTLY-RENDERED CAPTION GOES STALE, and the reason is that every one of the
+      caption's six claims is keyed to the DEFAULT dependent variable `performance.Total`,
+      which this change does not move. The widening ADDS five admissible alternatives
+      (`Simulation`, and the `_coherent` forms of `Total` / `Simulation` / `Init`); it
+      changes neither the default nor what is plotted when the default is in force. Nothing
+      in the tree configures a non-default `dependent_var` today.
+      ONE LATENT GAP IS RECORDED RATHER THAN REPAIRED, because it is conditional on a
+      configuration that does not yet exist. Line 3 describes the dependent variable as
+      "slowest-rank wallclock (max across MPI ranks of per-rank cumulative deltas)". That is
+      true of `performance.Total` and FALSE of a `_coherent` column, which is a single-rank
+      read at the rank attaining max(Total) rather than a per-column max across ranks. So
+      the first time an operator sets `dependent_var: performance.Init_coherent` this caption
+      will assert the wrong reduction. The clause owed is one sentence distinguishing the two
+      domains; it is routed to the WP-3 coordinator rather than written here, because the
+      caption is a separate file outside this package's declared edits surface and no
+      rendered artifact is currently wrong.
+      THE RE-READ WAS PERFORMED, claim by claim. Independent variable: untouched. Dependent
+      variable default and its slowest-rank semantics: default untouched, semantics now
+      incomplete-not-false as recorded above. Restart-safety: untouched. The per-member
+      `aggregation` mode: untouched. SWMM-only routing to `swmm_full_rpt_file` Total elapsed
+      via `swmm_output_parser.parse_total_elapsed`: untouched -- that branch does not consult
+      the allowlist. Per-report axis auto-scaling and the cross-arm comparison warning:
+      untouched.
     justification_2026_09_08: >-
       Defect 1 of the twelve-red set (the experiment-tree reader conversion). THIS IS THE
       SECOND FIRING THE 2026-09-01 HEADER NOTE PREDICTED, discharged the way that note

@@ -325,9 +325,15 @@ def test_the_rank_axis_family_carries_units_without_cell_methods():
     publishes 26 durations as dimensionless quantities.
 
     The `slowest rank` assertion is the third face and the one no other test can see. Seven of the
-    thirteen parent `long_name` strings END in ", slowest rank", which is true of a maximum and false
-    of both derived families, so a mechanical suffix onto the raw parent string yields seven
-    self-contradictions that read as ordinary prose.
+    thirteen parent `long_name` strings END in `cf_conventions._RANK_ATTRIBUTION_SUFFIX`, which is
+    true of a maximum and false of both derived families, so a mechanical suffix onto the raw parent
+    string yields seven self-contradictions that read as ordinary prose.
+
+    THIS ARM IS A SUBSTRING TEST AND IS THEREFORE HALF OF THE GUARD, NOT ALL OF IT. It tests for the
+    words `slowest rank` while the strip it protects is an `endswith` match on the full constant, so
+    it catches a reword that MOVES the phrase off the end and is GREEN on one that REPLACES it --
+    measured on both forms. `test_the_rank_attribution_strip_is_live` below closes the replace case
+    by measuring the strip's effect rather than any phrase; keep both.
 
     ASSERTED THROUGH `apply_cf_attributes`, NOT BY IMPORTING THE DESCRIPTOR TABLE. The resolved
     attributes are a property of both the pre-fix and post-fix trees, so this test RUNS and FAILS on
@@ -364,3 +370,85 @@ def test_the_rank_axis_family_carries_units_without_cell_methods():
         assert long_name and long_name != _auto_long_name(name), (
             f"{name} fell through to the auto-humanized fallback rather than a declared long_name"
         )
+
+
+def test_the_rank_attribution_strip_is_live():
+    """The rank-attribution strip actually FIRES, measured as an effect rather than as a phrase.
+
+    THE DEFECT THIS PINS IS A SILENT ONE AND ITS SIBLING GUARD CANNOT SEE IT.
+    `_perf_quantity_phrase` removes the parent's rank attribution before the derived families
+    append their own qualifier, and it does so by `endswith` against ONE constant. Its sibling
+    above tests the SUBSTRING `"slowest rank"` on the derived names. Those two predicates come
+    apart on exactly one class of edit -- a reword that REPLACES the attribution phrase rather
+    than extending it -- and that class is the likely one, because rewording for clarity is what
+    anyone touching these strings is trying to do. Measured on three parent forms:
+
+        parent form                                  strip fires   substring guard
+        "... time, slowest rank for this column"     yes           pass   (shipped)
+        "... time at the slowest rank"               NO            FAIL   (caught, loud)
+        "... time at the maximum-attaining rank"     NO            pass   (GREEN, broken)
+
+    On the third row every derived name silently becomes a self-contradiction -- it asserts both
+    the parent's rank attribution and the family's own, in ordinary-reading prose.
+
+    BOTH ARMS BELOW MEASURE THE FUNCTION'S EFFECT, which is what makes them wording-independent.
+    Arm 1 asserts the SET of parents the strip changes, not a count: a count of seven is reachable
+    by a different seven, and the whole failure mode here is a silent change of membership. Arm 2
+    asserts the post-condition the strip exists to produce -- no derived `long_name` contains its
+    parent's full `long_name` -- which is precisely what a no-opped strip violates, under any
+    wording, including a future one that drops the words `slowest rank` entirely.
+
+    Arm 3 is the CONTROL, and it is here because arms 1 and 2 are both satisfiable by a strip that
+    cannot fail: if `_RANK_ATTRIBUTION_SUFFIX` were the empty string the slice would be a no-op on
+    every input, arm 1 would see an empty fired-set against an empty expectation if someone also
+    emptied the pin, and nothing would be measured. The control drives a known no-op form through
+    the real function and asserts it is detected.
+    """
+    from hhemt.cf_conventions import (
+        _CF_PERFORMANCE_RANK_AXIS_VARIABLES,
+        _RANK_ATTRIBUTED_COLUMNS,
+        _RANK_ATTRIBUTION_SUFFIX,
+        _perf_quantity_phrase,
+    )
+
+    # Arm 1 -- the strip's effect, as a SET.
+    fired = {
+        name
+        for name, entry in _CF_PERFORMANCE_VARIABLES.items()
+        if _perf_quantity_phrase(entry["long_name"]) != entry["long_name"]
+    }
+    assert fired == set(_RANK_ATTRIBUTED_COLUMNS), (
+        f"the rank-attribution strip fires on {sorted(fired)} but _RANK_ATTRIBUTED_COLUMNS pins "
+        f"{sorted(_RANK_ATTRIBUTED_COLUMNS)}. A parent long_name was reworded so it no longer ends "
+        f"in {_RANK_ATTRIBUTION_SUFFIX!r}, which makes the strip a NO-OP for that column and leaves "
+        "the parent's own rank attribution inside every derived name. Either restore the suffix "
+        "form or update the constant AND this pin together -- never this pin alone."
+    )
+    assert fired, "the strip fires on no parent at all; it has become unconditionally inert"
+
+    # Arm 2 -- the post-condition, stated over containment rather than over any phrase.
+    for name in _RANK_ATTRIBUTED_COLUMNS:
+        parent_long_name = _CF_PERFORMANCE_VARIABLES[name]["long_name"]
+        for suffix in ("_coherent", "_min"):
+            derived = _CF_PERFORMANCE_RANK_AXIS_VARIABLES[f"{name}{suffix}"]["long_name"]
+            assert parent_long_name not in derived, (
+                f"{name}{suffix}'s long_name {derived!r} contains its parent's FULL long_name, so "
+                "the attribution strip did not fire and the derived name now carries two "
+                "contradictory rank attributions"
+            )
+
+    # Arm 3 -- the control: a replace-the-phrase reword is detected by arm 2's predicate even
+    # though the substring guard passes it. Driven through the real function, no production state
+    # mutated.
+    reworded_parent = "Cumulative compute-kernel time at the maximum-attaining rank"
+    assert _perf_quantity_phrase(reworded_parent) == reworded_parent, (
+        "control precondition: this form must NOT be stripped, or it does not reproduce the no-op"
+    )
+    broken_derived = f"{_perf_quantity_phrase(reworded_parent)}, read at the rank attaining max(Total)"
+    assert "slowest rank" not in broken_derived, (
+        "control precondition: the substring guard must PASS on this form, which is what makes it "
+        "the silent case rather than the loud one"
+    )
+    assert reworded_parent in broken_derived, (
+        "arm 2's containment predicate must catch the form the substring guard misses"
+    )

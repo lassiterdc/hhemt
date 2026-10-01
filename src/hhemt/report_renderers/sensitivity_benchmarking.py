@@ -83,6 +83,23 @@ _CANONICAL_GROUP_ORDER = ("serial", "single_cpu", "single-cpu", "cpu", "gpu", "h
 _CANONICAL_FAMILIES = ("serial", "cpu", "gpu", "hybrid")
 _FAMILY_ALIASES = {"single_cpu": "serial", "single-cpu": "serial"}
 
+#: Columns a renderer may plot as WALLCLOCK, and the only gate between a config value and a
+#: mislabelled axis. Lifted to module scope from inside `render()` so the sole gate on the
+#: toolkit's headline benchmarking figure is importable and therefore testable; the membership
+#: rationale -- the two admission conjuncts, the `SWMM_STEP` near-miss that is still refused, and
+#: why no `_min` column is admitted -- is stated at the use site in `render()`, which is where a
+#: reader hits the `raise`.
+_WALLCLOCK_SAFE_COLS = frozenset(
+    {
+        "performance.Total",
+        "performance.Simulation",
+        "performance.Init",
+        "performance.Total_coherent",
+        "performance.Simulation_coherent",
+        "performance.Init_coherent",
+    }
+)
+
 #: Palette slots that are poor LINE colours on white. Okabe-Ito's yellow and black are
 #: fine as fills and bad as thin series lines. This guard became MORE load-bearing, not
 #: less, when the user ruled that point colour IS line colour: every decomposition colour
@@ -677,20 +694,52 @@ def render(
         )
 
     df = pd.DataFrame(rows)
-    # Wallclock-safe column allowlist (V0008+): only barrier-synchronized
-    # cumulative columns can be interpreted as wallclock. Other performance.*
-    # columns are per-category cost, not wallclock; raise rather than silently
-    # mislabel.
-    _WALLCLOCK_SAFE_COLS = {
-        "performance.Total",
-        "performance.Simulation",
-        "performance.Init",
-    }
+    # Wallclock-safe column allowlist (V0008+). ADMISSION TURNS ON TWO CONJUNCTS, and naming
+    # them separately is what makes the membership derivable rather than historical.
+    #
+    # CONJUNCT 1 -- BARRIER-SYNCHRONIZED. Only `Total`, `Simulation` and `Init` are elapsed
+    # wallclock at each rank: TRITON synchronizes ranks before every `st.stop(TOTAL_TIME)`
+    # (triton.h:2151-2162), so each of the three closes at a barrier and a maximum over ranks
+    # is the job-level elapsed figure. Every CATEGORY column (`Compute`, `MPI`, `IO`, `SWMM`,
+    # `Resize`, `Other` and the four SWMM children) is per-category cost at whichever rank
+    # happened to be slowest FOR THAT COLUMN, so its max over ranks is an upper bound on a
+    # contribution and not a duration anything elapsed. `SWMM_STEP` is the one named near-miss
+    # and it is still refused: its bracket sits inside the solver's rank-0 guard, so max(Rank)
+    # is exact rather than an upper bound -- but the bracket spans two index remaps and a
+    # per-timestep side-file append besides the solve, so it is not a phase wallclock either.
+    # The stipulation `wallclock reduction uses max over rank` carries that exception by name.
+    #
+    # CONJUNCT 2 -- EVALUATED OVER A DOMAIN A DURATION CAN BE READ FROM. The rank-axis schema
+    # added two derived families over all thirteen columns, so conjunct 1 alone no longer
+    # settles membership. `<Col>_coherent` is that column read at the SINGLE rank attaining
+    # max(Total), so for the three barrier-synchronized columns it is a genuine elapsed time at
+    # one real rank, and it is the form whose children close their level -- which the published
+    # family's do not, overshooting `Simulation` by 17.17 % to 40.80 % of `Total` over the
+    # 52-store corpus. `Total_coherent` equals `Total` IDENTICALLY by construction, since the
+    # selector's anchor IS argmax(Total) (pinned at tests/test_perf_rank_coherent_family.py:284),
+    # so admitting it moves no published figure. `<Col>_min` is the FASTEST rank and is refused
+    # for all thirteen: it is a lower bound on the phase, and plotting a lower bound as wallclock
+    # is the same mislabel class as plotting a category upper bound, merely in the opposite
+    # direction.
+    #
+    # WHAT THIS GUARD DOES NOT CHECK, stated because it is the sole gate. `dependent_var` is a
+    # bare `str` on `report_config.sensitivity` with no `Literal` and no validator over the
+    # column vocabulary, and `_collect_rows` resolves `dependent_var.split(".", 1)[1]` against
+    # whatever the tree carries -- so this set is the ONLY thing standing between a config value
+    # and a mislabelled axis. It raises on the CALLER's `dependent_var` rather than on the
+    # columns present, so a member whose store lacks the requested column reaches the
+    # no-data RuntimeError above instead, and the two failures stay distinguishable.
+    #
+    # The set itself is MODULE-SCOPED (`_WALLCLOCK_SAFE_COLS`, declared beside the other module
+    # constants) rather than rebuilt here, so a test can import the gate instead of re-deriving
+    # it from this function's source. Behaviour is unchanged by that move.
     if dependent_var not in _WALLCLOCK_SAFE_COLS:
         raise ValueError(
             f"dependent_var {dependent_var!r} is not wallclock-safe. "
             f"Choose one of: {sorted(_WALLCLOCK_SAFE_COLS)}. Other performance.* "
-            "columns are per-category cost and cannot be plotted as wallclock. "
+            "columns are per-category cost and cannot be plotted as wallclock; a "
+            "'_min' column is the fastest rank and is a lower bound on the phase, "
+            "not its wallclock. "
             "See library/docs/stipulations/hhemt/wallclock reduction uses max over rank.md "
             "for the project rule on this."
         )

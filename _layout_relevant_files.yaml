@@ -2566,3 +2566,53 @@ non_breaking_allowlist:
       WP-3E should annotate all three as spent. Any FURTHER change to this file's emitted
       variable set, dtypes, dims, coordinates, paths or log fields is NOT this class and must
       ride its own bump.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: efc82603b2813fae0917f203509e013a119f35a11a61bd792449e072ffad0bfa
+    justification: >-
+      DESCRIPTIVE STRINGS ONLY -- WP-3D's rank-attribution disambiguation. Same non-breaking
+      class as the WP-3A and rank-axis rows above, and for the same reason: no emitted variable
+      name, dtype, dim, coordinate, tree path, group name or log field moves. Only the TEXT of
+      seven `long_name` values changes, on variables that were already being written with a
+      declared `long_name`.
+      WHAT MOVED, exactly. The seven `_CF_PERFORMANCE_VARIABLES` entries whose `long_name` ended
+      in `", slowest rank"` (`Compute`, `MPI`, `IO`, `Resize`, `SWMM`, `SWMM_XFER`, `SWMM_MPI`)
+      now end in `", slowest rank for this column"`, and `_RANK_ATTRIBUTION_SUFFIX` moves with
+      them in lockstep. The other six entries are byte-unchanged: `Total` / `Simulation` / `Init`
+      carry no attribution because they are barrier-synchronized, so their max over ranks IS the
+      job-level figure; `SWMM_STEP` carries none because its `long_name` already names rank 0;
+      `Other` and `SWMM_OTHER` carry none today and are NOT touched here (recorded as a finding
+      routed to the design rather than repaired, since the approved extent is seven).
+      WHY THE WORDING CHANGED AT ALL. The reduction is `max(dim="Rank")` applied PER VARIABLE, so
+      each column's maximum may be attained at a different rank. A bare `", slowest rank"` on
+      seven columns invites the one reading that is false of the artifact -- a single job-wide
+      slowest rank at which all seven were read -- and the rank-axis schema strengthened that
+      invitation by placing the phrase beside `", fastest rank"` and `", read at the rank
+      attaining max(Total)"`, two qualifiers that DO each name one rank.
+      WHY THE SUBSTRING `slowest rank` IS RETAINED, which is a safety property and not a wording
+      preference. `_perf_quantity_phrase` strips the attribution by `endswith` against the full
+      constant, while the shipped guard
+      `test_the_rank_axis_family_carries_units_without_cell_methods` tests the SUBSTRING
+      `"slowest rank"`. Those predicates come apart on a reword that REPLACES the phrase: the
+      strip silently no-ops and the guard stays GREEN while every derived `long_name` becomes a
+      self-contradiction. Measured on all three forms -- shipped, move-the-phrase, and
+      replace-the-phrase: the existing guard FAILS on the second and PASSES on the third, which
+      is the silent case. Extending rather than replacing the phrase keeps that guard live, and
+      the new `test_the_rank_attribution_strip_is_live` closes the third class by asserting the
+      SET of parents on which the strip changes its input plus a containment post-condition --
+      both measurements of the function's effect, so neither is satisfiable by a no-opped strip
+      under any future wording. Verified by mutation: the replace-the-phrase form leaves the old
+      guard green and turns the new one red.
+      NO CRATE BYTES AND NO CELL_METHODS MOVE. `cell_methods` is untouched on all thirteen
+      parents and all 28 derived names; `units` is untouched; `PERF_VARS` and the
+      `_CF_PERFORMANCE_VARIABLES` KEY set are byte-identical to HEAD. The crate republishes
+      `long_name` as `description`, so the seven new strings reach a deposited record as
+      descriptive prose only -- which is the point of the change, not a side effect.
+      CHANGE-SCOPED via layout_signature, APPENDED rather than edited in place so the prior rows'
+      ground stays readable. The signature is this file's post-edit sha256, set explicitly:
+      omitting it would INHERIT the rank-axis row's signature, which no longer matches the
+      content, and check-b would keep failing.
+      EXPIRY CONDITION. This row covers the rank-attribution reword at exactly this content and
+      nothing else; it re-covers none of the three rows above, each of which expires on its own
+      terms. All four are superseded the moment WP-3E stamps LAYOUT_VERSION 24, and WP-3E should
+      annotate all four as spent. Any FURTHER change to this file's emitted variable set, dtypes,
+      dims, coordinates, paths or log fields is NOT this class and must ride its own bump.
