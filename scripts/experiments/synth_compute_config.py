@@ -285,6 +285,7 @@ def clean_case(
     tritonswmm_git_url: str | None = None,
     tritonswmm_software_directory: str | None = None,
     model_arm: str = "tritonswmm",
+    variant: str = "",
 ) -> _Case:
     """Clean determinism experiment: 28-config sweep, single-allocation walltime.
 
@@ -295,12 +296,33 @@ def clean_case(
 
     Pass ``system_directory`` on Rivanna to root the case under project space (Decision 4), e.g.
     ``"/project/{your-allocation}/{username}/norfolk/synth_compute_config/synth_cc_clean"``.
+
+    ``variant`` is an INFIX on the analysis name: ``synth_cc_clean{variant}_{model_arm}``. Default
+    ``""`` reproduces ``synth_cc_clean_{model_arm}`` byte-for-byte, so every existing caller is
+    unaffected. ``variant="P"`` yields ``synth_cc_cleanP_tritonswmm`` — the SAME-PIN clean reference
+    arm (``A1``) of the four-arm b4b re-run.
+
+    WHY AN INFIX RATHER THAN AN ANALYSIS-NAME OVERRIDE, and it is the arm dimension that decides it.
+    A full ``analysis_name`` override lets a caller supply a name whose arm disagrees with
+    ``model_arm``, and ``model_arm`` is what drives ``model_arm_toggles`` — so the name would say
+    ``tritonswmm`` while the enabled model was ``triton``, with nothing raising. That is the same
+    arm-disappears-silently class the estate runner's own ``_run_reprocess`` docstring records paying
+    for. Composing the name from ``model_arm`` makes the disagreement unwritable instead of merely
+    discouraged.
+
+    THE NAME IS LOAD-BEARING, not cosmetic. ``A1`` MUST NOT land at ``synth_cc_clean_{model_arm}``:
+    that path is already occupied by a DIFFERENT-PIN clean tree (declared
+    ``TRITONSWMM_branch_key: a38338b0...``, measured on its own ``cfg_system.yaml``) which carries 30
+    members, 30 ``hydraulics.out`` and member ids byte-identical to the resume arm's. It therefore
+    passes every cardinality guard the b4b criterion has and is discriminated from ``A1`` ONLY by the
+    solver pin. A distinct root is what makes that tree unreachable as a comparand rather than
+    merely refused after the fact.
     """
     _GENERATED.mkdir(parents=True, exist_ok=True)
     csv = _GENERATED / "clean_matrix.csv"
     write_clean_matrix_csv(csv)
     return _build_case(
-        analysis_name=f"synth_cc_clean_{model_arm}",
+        analysis_name=f"synth_cc_clean{variant}_{model_arm}",
         sensitivity_csv=csv,
         start_from_scratch=start_from_scratch,
         resume=False,
@@ -450,6 +472,143 @@ def build_resume_from_clean_runtimes(
     )
 
 
+#: Member-directory globs the stamp read walks, in order. BOTH are required and neither is
+#: redundant: live trees carry ``members/member_*`` while trees minted before the members-rename
+#: carry ``subanalyses/sa_*``, and the per-member store is the ONE stamp location uniform across
+#: the two eras. A MASTER-ONLY read (``sensitivity_datatree.zarr`` at the arm root) returns a FALSE
+#: ABSENT on a live arm, because a live arm has no master store at all — which is exactly the
+#: false-pass instrument this function exists instead of.
+_MEMBER_STORE_GLOBS: tuple[str, ...] = ("members/member_*", "subanalyses/sa_*")
+
+#: The attribute the stamp lives in. Named as a constant because a NEIGHBOURING attribute,
+#: ``hhemt_producing_sha``, IS populated on exactly the trees whose ``triton_producing_sha`` is
+#: absent — measured on all 30 stores of the different-pin clean tree — so any read loose enough to
+#: accept a ``*_producing_sha`` sibling reports a stamped arm on an unstamped one.
+_STAMP_ATTR = "triton_producing_sha"
+
+
+def _read_member_stamp(store: Path) -> str | None:
+    """Read one per-member store's ``triton_producing_sha``, or None when it carries no value.
+
+    ZARR V3, AND THE V2 READ IS A FALSE-ABSENT RATHER THAN AN ERROR YOU NOTICE. These stores are
+    ``zarr_format: 3`` (measured), so the attributes live in ``zarr.json`` under ``attributes`` and
+    there is NO ``.zattrs`` file. A ``.zattrs`` read raises ``FileNotFoundError`` on EVERY store,
+    including a correctly stamped one — so an instrument that catches that exception and maps it to
+    "no stamp" reports a uniform definite absence and can never observe a stamp that is present.
+    Measured on a real store: ``.zattrs`` present=False, read raised ``FileNotFoundError``, while the
+    ``zarr.json`` read returned the attribute namespace.
+
+    Returns None for: no ``zarr.json``, unparseable JSON, no ``attributes``, attribute absent, or an
+    attribute present but empty/whitespace. An EMPTY string is a non-stamp, not a stamp — treating a
+    falsy value as present is the other direction of the same false-pass.
+    """
+    import json
+
+    zarr_json = store / "zarr.json"
+    if not zarr_json.is_file():
+        return None
+    try:
+        attributes = json.loads(zarr_json.read_text()).get("attributes")
+    except (ValueError, OSError):
+        return None
+    if not isinstance(attributes, dict):
+        return None
+    value = attributes.get(_STAMP_ATTR)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip()
+
+
+def _shas_agree(stamped: str, expected: str) -> bool:
+    """True iff two commit-ish strings name the same commit under abbreviation.
+
+    The stamp is written full-length (40 chars) while an operator supplies a pin in either form, so
+    an equality test on the raw strings reports a MISMATCH on a correct arm whenever the two
+    lengths differ. Prefix agreement with a 7-character floor is the comparison git itself uses for
+    an abbreviated rev; below 7 the prefix is not discriminating and is refused rather than
+    accepted loosely.
+    """
+    a, b = stamped.strip().lower(), expected.strip().lower()
+    if len(a) < 7 or len(b) < 7:
+        return False
+    return a.startswith(b) or b.startswith(a)
+
+
+def check_arm_pin_stamp(arm_root: Path, expected_sha: str) -> dict:
+    """MINT-TIME stamp check for one comparand arm. Returns a verdict dict; raises nothing.
+
+    This is the TERM of §10 item 12's routed mechanics: immediately after ``A1`` is minted and
+    BEFORE the resume arms are launched, every per-member store must carry a non-empty
+    ``triton_producing_sha`` equal to the pin the arm was built at. An absent or differing stamp is a
+    STOP before 60 more members are spent — not a NOT-EVALUATED discovered after them.
+
+    WHY A POSITIVE CHECK RATHER THAN TRUSTING THE GATE. The gate's ``G3`` is fail-closed and
+    correct, but it runs at ACCEPTANCE time. The capture is intermittent rather than
+    deterministically absent — measured across 22 ``system_log.json`` under the run root, 7 carry a
+    null ``triton_head_sha`` (31.8%), and the split is NOT clean-versus-resume (5 of 10 clean runs DO
+    capture it while 2 resume arms do not). An intermittent ~32% failure with an unisolated cause
+    cannot be shown not to recur, which is the argument FOR a positive check at mint time.
+
+    THE DENOMINATOR IS PART OF THE VERDICT, and that is the whole reason ``NOT-EVALUATED`` exists
+    here. A verdict derived as "no bad stores were found" cannot distinguish "examined 30, all good"
+    from "examined 0" — and zero stores is the likelier of the two on a path typo, because every
+    glob returns empty on a wrong root. So ``examined == 0`` is ``NOT-EVALUATED`` and never ``PASS``,
+    and ``examined`` is reported beside the verdict rather than implied by it.
+
+    DELIBERATELY NOT A WHOLE-TREE GREP. Measured on the different-pin clean tree:
+    ``grep -rl triton_producing_sha`` returns 4 files — three binary ``render_bundle/*.zip`` and
+    ``validation_report.json`` — against ZERO stores carrying a value. A grep-based check reports
+    that unstamped tree as stamped.
+    """
+    stores: list[Path] = []
+    for glob in _MEMBER_STORE_GLOBS:
+        stores.extend(sorted(arm_root.glob(f"{glob}/analysis_datatree.zarr")))
+    # De-duplicate while preserving order: a tree carrying BOTH layouts (one exists) would
+    # otherwise double-count, inflating `examined` and making the denominator wrong in the
+    # reassuring direction.
+    seen: set[Path] = set()
+    unique_stores = [s for s in stores if not (s in seen or seen.add(s))]
+
+    stamped: dict[str, str] = {}
+    missing: list[str] = []
+    mismatched: dict[str, str] = {}
+    for store in unique_stores:
+        member = store.parent.name
+        value = _read_member_stamp(store)
+        if value is None:
+            missing.append(member)
+            continue
+        stamped[member] = value
+        if not _shas_agree(value, expected_sha):
+            mismatched[member] = value
+
+    examined = len(unique_stores)
+    if examined == 0:
+        verdict = "NOT-EVALUATED"
+        reason = f"no per-member analysis_datatree.zarr store found under {arm_root}"
+    elif missing or mismatched:
+        verdict = "STOP"
+        parts = []
+        if missing:
+            parts.append(f"{len(missing)} store(s) carry no {_STAMP_ATTR}: {sorted(missing)[:5]}")
+        if mismatched:
+            parts.append(f"{len(mismatched)} store(s) differ from {expected_sha}: {sorted(mismatched.items())[:5]}")
+        reason = "; ".join(parts)
+    else:
+        verdict = "PASS"
+        reason = f"all {examined} store(s) stamped and equal to {expected_sha}"
+    return {
+        "verdict": verdict,
+        "arm_root": str(arm_root),
+        "expected_sha": expected_sha,
+        "examined": examined,
+        "stamped": len(stamped),
+        "missing": sorted(missing),
+        "mismatched": mismatched,
+        "reason": reason,
+    }
+
+
 def _emit_bundle(case: _Case) -> Path:
     """Committed emit step (supersedes the prior inline-heredoc runbook): eda + bundle a materialized
     case, returning the bundle path. Requires df_status all-complete (batch_job runs out-of-band)."""
@@ -496,8 +655,10 @@ def _cli() -> None:
         description="Synth compute-config experiment driver (emit / combine).",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
+    _by_name: dict[str, object] = {}
     for name in ("clean", "resume"):
         sp = sub.add_parser(name)
+        _by_name[name] = sp
         sp.add_argument("--system-directory", required=True)
         sp.add_argument("--hpc-system-config", type=Path, default=None)
         sp.add_argument("--cell-size-m", type=float, default=3.5)
@@ -516,6 +677,27 @@ def _cli() -> None:
         sp.add_argument("--tritonswmm-software-directory", default=None)
         sp.add_argument("--eda", action="store_true")
         sp.add_argument("--bundle", action="store_true")
+    # CLEAN ONLY. `variant` is an infix on the analysis name and the resume arm has no analogue —
+    # offering it on `resume` would let an operator mint a resume tree whose name claims a clean
+    # variant. Default "" keeps every existing `clean` invocation byte-identical.
+    _by_name["clean"].add_argument(
+        "--variant",
+        default="",
+        help="Infix on the clean analysis name: synth_cc_clean{VARIANT}_{arm}. "
+        "Use 'P' for the SAME-PIN clean reference arm (A1) of the four-arm b4b re-run; "
+        "the default '' is the historical synth_cc_clean_{arm}.",
+    )
+    # MINT-TIME stamp check (a TERM of the routed b4b re-run mechanics, not a diagnostic). Exits
+    # 0 only on PASS: a STOP and a NOT-EVALUATED both exit non-zero, because the whole point is to
+    # halt before the resume arms are launched and a zero exit on "nothing examined" would not.
+    stp = sub.add_parser("stamp-check")
+    stp.add_argument(
+        "--arm-root",
+        type=Path,
+        required=True,
+        help="The arm's DOUBLED analysis dir, i.e. {run_root}/{name}/{name} — the parent of members/ or subanalyses/.",
+    )
+    stp.add_argument("--expected-sha", required=True, help="The pin the arm was BUILT at.")
     ip = sub.add_parser("intercomparison")
     ip.add_argument("--clean-system-directory", required=True)
     ip.add_argument("--resume-system-directory", required=True)
@@ -551,8 +733,20 @@ def _cli() -> None:
     ip.add_argument("--output", type=Path, default=None)
     args = p.parse_args()
 
+    if args.cmd == "stamp-check":
+        import json as _json
+        import sys as _sys
+
+        verdict = check_arm_pin_stamp(args.arm_root, args.expected_sha)
+        print(_json.dumps(verdict, indent=2, sort_keys=True))
+        print(f"STAMP-CHECK {verdict['verdict']}: {verdict['reason']}")
+        _sys.exit(0 if verdict["verdict"] == "PASS" else 1)
+
     if args.cmd in ("clean", "resume"):
         factory = clean_case if args.cmd == "clean" else resume_case
+        # `variant` exists on clean_case only; pass it only where the parser defined it so the
+        # resume path's call signature is byte-identical to before.
+        extra = {"variant": args.variant} if args.cmd == "clean" else {}
         case = factory(
             system_directory=args.system_directory,
             cell_size_m=args.cell_size_m,
@@ -560,6 +754,7 @@ def _cli() -> None:
             tritonswmm_branch_key=args.tritonswmm_sha,
             tritonswmm_git_url=args.tritonswmm_git_url,
             tritonswmm_software_directory=args.tritonswmm_software_directory,
+            **extra,
         )
         if args.eda or args.bundle:
             print("BUNDLE:", _emit_bundle(case))  # eda+bundle folded in (first-class emit)
