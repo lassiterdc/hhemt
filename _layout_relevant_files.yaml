@@ -2616,3 +2616,57 @@ non_breaking_allowlist:
       terms. All four are superseded the moment WP-3E stamps LAYOUT_VERSION 24, and WP-3E should
       annotate all four as spent. Any FURTHER change to this file's emitted variable set, dtypes,
       dims, coordinates, paths or log fields is NOT this class and must ride its own bump.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 5780572f6e377b0546780ae0e0788e2442c0c3b88f01cbf0efe39a70291565e8
+    justification: >-
+      WP-3C.2, the PROVENANCE half of the ARM-C pair whose advertisement half landed at
+      b29e854c's predecessor. DESCRIPTIVE AND DERIVED-LOOKUP STRINGS ONLY -- nothing here
+      reaches an emitted artifact. The emitted variable set, dtypes, dims, coordinates, tree
+      paths, group names, log fields, `units`, `long_name` and `cell_methods` are ALL
+      byte-unchanged on every variable at every mode; no `_CF_VARIABLE_MAP`,
+      `_CF_PERFORMANCE_VARIABLES`, `_CF_PERFORMANCE_SUMMARY_VARIABLES`,
+      `_CF_PERFORMANCE_RANK_AXIS_VARIABLES` or `_CF_VARIABLE_OVERRIDES_BY_MODE` entry is
+      added, removed or altered.
+      WHAT MOVED, exactly. Four module-level additions and one signature widening, all of
+      them read by the REPORT RENDERER and by tests, none of them by `apply_cf_attributes`:
+      (1) `_PERF_QUANTITY_PROVENANCE`, thirteen computed-quantity descriptors for the
+      performance columns, grounded in `_export_performance_summary`'s own expression
+      (`ds.sum(dim="timestep_min", skipna=False)` then `.max(dim="Rank", keepdims=True)`);
+      (2) `_PERF_SUMMARY_PROVENANCE_MODES` plus the DERIVED `_QUANTITY_PROVENANCE_BY_MODE`
+      fan-out over it; (3) `_ADVERTISABLE_VARIABLES`, the union `metadata.build_analysis_crate`
+      already computed inline, LIFTED here so the descriptor drift guard and the advertisement
+      read one object instead of two; (4) `_DESCRIBED_VARIABLES`, the mode-blind descriptor
+      union; and `quantity_provenance` gains an optional `mode` parameter, defaulting to the
+      pre-existing mode-blind behaviour so its one production caller is unchanged at the call
+      site.
+      WHY IT IS NOT THE BREAKING CLASS. `_QUANTITY_PROVENANCE` and its new sibling are read by
+      exactly one production consumer -- `report_renderers/metadata.py`'s data-dictionary table
+      -- and by tests. `apply_cf_attributes` does not read either, so no attr written to any
+      zarr store moves, and the deposited crate's `variableMeasured` membership is byte-identical
+      to HEAD (the advertisement union is the same SET, now named once instead of twice).
+      Verified by mutation rather than asserted: reverting `metadata.py` to its own locally-built
+      union, widened by one undescribed name, leaves the widened drift guard GREEN at 82 passed,
+      while the same widening through the shared constant turns it RED. That measurement is the
+      reason (3) is in this diff at all.
+      WHY THE OVERLAY IS MODE-SCOPED rather than merged flat into `_QUANTITY_PROVENANCE`. The
+      thirteen keys are generic -- `Total`, `MPI`, `IO`, `Other` -- and are the same names that
+      kept `_CF_PERFORMANCE_VARIABLES` out of `_CF_VARIABLE_MAP`. A flat merge would resolve a
+      wallclock descriptor for a non-performance mode carrying a same-named variable;
+      `test_the_overlay_is_mode_scoped_and_declines_under_a_non_performance_mode` asserts both
+      directions, and the flat-merge mutation turns three tests RED.
+      WHY THE `*_performance_tseries` MODES CARRY NO OVERLAY, recorded because the absence looks
+      like an omission. Those modes name the UNREDUCED per-rank series, so every `operation`
+      string -- each naming a sum and a maximum -- is false of that artifact; and supplying them
+      would make the mode-blind union AMBIGUOUS, since the same thirteen names would then carry
+      two conflicting operations with nothing in the call to choose. A tseries overlay is
+      therefore not a free addition and requires revisiting the mode-blind arm first.
+      CHANGE-SCOPED via layout_signature, APPENDED rather than edited in place so the prior
+      rows' ground stays readable. The signature is this file's post-edit sha256, set
+      EXPLICITLY: omitting it would INHERIT the rank-attribution row's signature, which no
+      longer matches the content, and check-b would keep failing.
+      EXPIRY CONDITION. This row covers the provenance-overlay addition at exactly this content
+      and nothing else; it re-covers none of the five rows above, each of which expires on its
+      own terms. All six are superseded the moment WP-3E stamps LAYOUT_VERSION 24, and WP-3E
+      should annotate all six as spent. Any change to this file's emitted variable set, dtypes,
+      dims, coordinates, paths, log fields or written attrs is NOT this class and must ride its
+      own bump.

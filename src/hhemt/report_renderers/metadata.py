@@ -1244,12 +1244,16 @@ def _provenance_outputs(
             "<em>Source variables</em> are the raw model outputs the value was computed from; "
             "<em>Operation</em> is the computation applied to them. These three are read from "
             "the toolkit's own quantity-provenance table rather than restated by hand. That "
-            "table's drift guard compares the table against the CF variable map only, so a "
-            "variable advertised from outside that map — today, the thirteen performance "
-            "columns — carries no descriptor and renders an em-dash in all three. The CF "
-            "<code>cell_methods</code> string, where one is declared, remains stamped on the "
-            "data itself; the performance variables declare none, so for those rows there is "
-            "no <code>cell_methods</code> for a CF-aware reader to find.</p>"
+            "table's drift guard compares it against the whole set this crate may advertise, "
+            "so a variable reaching this table with no descriptor fails a test rather than "
+            "rendering an em-dash here. An em-dash in these three columns therefore means the "
+            "variable is advertised from outside that set entirely, not that its descriptor "
+            "was forgotten. The CF <code>cell_methods</code> string, where one is declared, "
+            "remains stamped on the data itself; the thirteen performance columns declare "
+            "none at this advertisement, so for those rows <em>Operation</em> above is the "
+            "only account of the reduction a reader is given — and it names both reduced "
+            "axes, the per-rank sum over reporting timesteps and the maximum over ranks, "
+            "where the CF string could only ever have named the second.</p>"
         )
         parts.append(
             _grid_table(

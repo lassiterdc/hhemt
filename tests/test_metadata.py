@@ -228,21 +228,35 @@ def test_performance_names_reach_variable_measured_on_the_gated_path_only():
     )
 
 
-def test_advertised_performance_names_have_no_provenance_descriptor_yet():
-    """Pins the INTERIM state this commit creates, so the pair's second half is visible.
+def test_every_advertised_performance_name_carries_a_provenance_descriptor():
+    """The pair is CLOSED: every advertised performance name resolves a descriptor.
 
-    The advertisement union lands ahead of its `_QUANTITY_PROVENANCE_BY_MODE` overlay,
-    so in the interim the thirteen performance names are advertised with no descriptor
-    and the report's data-dictionary renders an em-dash in its three provenance columns.
-    The data-dictionary paragraph states exactly that; this test is what makes the
-    paragraph falsifiable, and it is the test that must be UPDATED — not deleted — when
-    the overlay lands.
+    UPDATED, not deleted, from the interim pin this test shipped as. That pin asserted
+    `described == []` — the state in which the advertisement union had landed and its
+    `_QUANTITY_PROVENANCE_BY_MODE` overlay had not, so the report's data-dictionary
+    rendered an em-dash in all three provenance columns for thirteen variables it had
+    just started advertising. The assertion is INVERTED here rather than removed,
+    because the question the pin was asking is permanent and only its answer moved: an
+    advertised variable with no descriptor is the defect, whichever direction the tree
+    drifts into it.
+
+    This is the mode-BLIND read, which is the one the renderer performs: it reads a
+    crate, and a crate carries no mode. A descriptor reachable only with a mode would
+    leave the rendered page exactly as broken as no descriptor at all, so asserting the
+    mode-blind arm here is what makes this test about the report rather than about the
+    table.
     """
     from hhemt.cf_conventions import _CF_PERFORMANCE_VARIABLES, quantity_provenance
 
-    described = sorted(v for v in _CF_PERFORMANCE_VARIABLES if quantity_provenance(v))
-    assert described == [], (
-        f"{described} now carry a provenance descriptor. The overlay has landed: update "
-        "the data-dictionary paragraph in report_renderers/metadata.py, which still tells "
-        "the reader these columns render an em-dash."
+    undescribed = sorted(v for v in _CF_PERFORMANCE_VARIABLES if quantity_provenance(v) is None)
+    assert undescribed == [], (
+        f"{undescribed} are advertised on the gated path with no provenance descriptor, "
+        "so the report's data dictionary renders an em-dash in all three provenance "
+        "columns for them. Add an entry to cf_conventions._PERF_QUANTITY_PROVENANCE."
     )
+
+    # The advertisement and the descriptor must agree about WHICH names exist, not merely
+    # about how many. A renderer row is keyed on the name, so a near-miss spelling renders
+    # an em-dash while both tables carry thirteen entries.
+    advertised = _advertised_var_names(_build(emitted_vars=set(_CF_PERFORMANCE_VARIABLES)))
+    assert {v for v in advertised if quantity_provenance(v)} == advertised

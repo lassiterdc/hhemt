@@ -434,7 +434,41 @@ unpaired_allowlist:
       the rename, so the exemption expires on the next change to this renderer.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: 87d3c0fda726bf041314d4db27e9d5f8c6738f77d8c66b1d4d58828a6b0f595a
+    renderer_sha256: 84b7f6016c0ace57bac2ea647a0ae6ea1fbd2da4474d57844adf66625893c2b5
+    justification_2026_10_01: >-
+      WP-3C.2 (the provenance half). Caption RE-READ IN FULL against the diff. The change is
+      ONE hunk in this renderer, in the same `parts.append` of the same `<p class='note'>`
+      data-dictionary string the 2026-09-29 entry below describes -- no other line of this
+      module moves.
+      WHAT THE HUNK DOES. It retires the INTERIM statement that entry flagged for exactly this
+      commit. Three clauses became false the moment the overlay landed and all three are
+      replaced: that the drift guard "compares the table against the CF variable map only"
+      (it now compares against the whole advertisable set); that a variable advertised from
+      outside that map "carries no descriptor and renders an em-dash in all three" (the
+      thirteen now carry descriptors); and the implicature that an em-dash there means a
+      forgotten descriptor (it now means the variable is advertised from outside the guarded
+      set entirely, which is the only remaining way to reach one). The replacement also states
+      what the `Operation` column now carries for those rows -- both reduced axes, the per-rank
+      sum over reporting timesteps and the maximum over ranks -- because `cell_methods` can
+      name only the second and this page is where the first is documented.
+      WHY THE CAPTION IS UNAFFECTED, re-derived rather than inherited from the entry below.
+      The caption describes three DISPLAYED sections plus a Sources block. (1) Only the
+      Provenance-summary bullet reaches this hunk, via "the consolidated outputs with their CF
+      variable dictionary". That phrase names the dictionary's PRESENCE; this hunk changes its
+      descriptor COVERAGE and the prose explaining the coverage rule, neither of which the
+      caption asserts. (2) Data availability and the Reproduction guide are byte-untouched --
+      the hunk does not leave the one `parts.append`. (3) `source_paths` is unchanged, so the
+      interpolated `source_paths_rst` block renders identically and the caption's Sources
+      promise still holds. (4) The table's COLUMN SET is unchanged: the same seven headers, the
+      same per-row keys; only thirteen rows that rendered three em-dashes now render prose.
+      THE ONE THING A REVIEWER SHOULD PROBE, named rather than left implicit: this paragraph is
+      no longer interim, so the pin that enforced it has been INVERTED rather than deleted --
+      `tests/test_metadata.py::test_every_advertised_performance_name_carries_a_provenance_descriptor`
+      now fails if any advertised performance name LACKS a descriptor, which is the direction
+      that can newly falsify this paragraph. Verified by mutation: dropping one descriptor, or
+      declining the mode-blind read, each turns it RED.
+      This is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded
+      after the edit, so the exemption expires on the next change to this renderer.
     justification_2026_09_29: >-
       WP-3C chunk 1 (the advertisement half). Caption RE-READ IN FULL against the diff.
       The change is ONE hunk in this renderer: the data-dictionary paragraph inside

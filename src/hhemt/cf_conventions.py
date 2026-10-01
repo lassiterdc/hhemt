@@ -575,15 +575,278 @@ _QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
 }
 
 
-def quantity_provenance(var_name: str) -> dict[str, str] | None:
+# Computed-quantity provenance for the THIRTEEN performance columns.
+#
+# WHY THIS IS A SEPARATE TABLE AND NOT THIRTEEN MORE ENTRIES IN `_QUANTITY_PROVENANCE`.
+# The keys are generic -- `Total`, `MPI`, `IO`, `Other` -- and are exactly the names that
+# kept `_CF_PERFORMANCE_VARIABLES` out of `_CF_VARIABLE_MAP` in the first place: each is
+# plausible as a different quantity under a non-performance mode, so a flat merge would
+# make `quantity_provenance("Total", mode="tritonswmm")` resolve to a wallclock descriptor
+# for a variable that mode never emits. Mode-scoping is the shape the module already chose
+# one layer down for the same collision (`_CF_VARIABLE_OVERRIDES_BY_MODE`).
+#
+# WHY IT IS A LITERAL WHILE ITS TWO SIBLING PERFORMANCE TABLES ARE DERIVED.
+# `_CF_PERFORMANCE_SUMMARY_VARIABLES` and `_CF_PERFORMANCE_RANK_AXIS_VARIABLES` are
+# comprehensions because exactly one attribute differs uniformly across all thirteen. Here
+# NOTHING is uniform: `Init` is `Total - Simulation`, `SWMM_OTHER` closes the coupling
+# level, `SWMM_STEP` is nonzero on rank 0 only, and the seven category timers are plain
+# measured brackets. A comprehension could only fabricate a single sentence that is false
+# of six of the thirteen. The BY-MODE fan-out below IS derived, which is the part that was
+# at risk of hand-copy drift.
+#
+# THE REDUCTION, read from the computing expression rather than from any CF string.
+# `_export_performance_summary` (and its duplicated module-level sibling
+# `_aggregate_perf_summary`) computes:
+#
+#     _summed = ds.sum(dim="timestep_min", skipna=False)
+#     ds = _summed.max(dim="Rank", keepdims=True)
+#
+# so every descriptor below names BOTH axes. `_PERF_SUMMARY_CELL_METHODS` names only
+# `Rank: maximum`, because CF-1.13 section 7.3 admits no name for the summed-away
+# `timestep_min`; this table is the channel that module header already nominates for the
+# time sum ("`_QUANTITY_PROVENANCE` is the human-facing table").
+#
+# ALL THIRTEEN DERIVATIONS ARE SOLVER-SIDE AND PER-RANK. The solver enforces
+# `SWMM_XFER + SWMM_MPI + SWMM_STEP + SWMM_OTHER == SWMM` on every emitted per-rank row;
+# `Other` closes Simulation and `Init` closes Total the same way. hhemt derives none of
+# them -- it reduces columns that arrive already closed -- so `source_variables` names the
+# per-rank timer rather than a toolkit expression, and the `operation` says where a
+# residual came from without implying hhemt computed it.
+#
+# THE PER-COLUMN / JOB-LEVEL DISTINCTION IS CARRIED IN `operation`, NOT LEFT TO THE READER.
+# `max` is applied PER VARIABLE, so a category column is the slowest rank FOR THAT COLUMN
+# and is an upper bound on its contribution to wallclock, while `Total` / `Simulation` /
+# `Init` are barrier-synchronized and their max over ranks IS the job-level figure. That
+# is the single most misread property of this artifact and the one a provenance table
+# exists to state.
+_PERF_QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
+    "Compute": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": "Compute per-rank cumulative timer",
+        "operation": (
+            "sum over reported timesteps per rank, then maximum over ranks; slowest rank "
+            "for this column, an upper bound on its contribution to wallclock"
+        ),
+        "operation_expr": "max_r Σ_t Compute",
+        "reduced_coordinate": "timestep_min (summed), Rank (maximum, retained as a size-one dimension)",
+    },
+    "MPI": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": "MPI per-rank cumulative timer (TRITON's own halo exchange, not the coupling's)",
+        "operation": (
+            "sum over reported timesteps per rank, then maximum over ranks; slowest rank "
+            "for this column, an upper bound on its contribution to wallclock"
+        ),
+        "operation_expr": "max_r Σ_t MPI",
+        "reduced_coordinate": "timestep_min (summed), Rank (maximum, retained as a size-one dimension)",
+    },
+    "IO": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": "IO per-rank cumulative timer",
+        "operation": (
+            "sum over reported timesteps per rank, then maximum over ranks; slowest rank "
+            "for this column, an upper bound on its contribution to wallclock"
+        ),
+        "operation_expr": "max_r Σ_t IO",
+        "reduced_coordinate": "timestep_min (summed), Rank (maximum, retained as a size-one dimension)",
+    },
+    "Resize": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": "Resize per-rank cumulative timer",
+        "operation": (
+            "sum over reported timesteps per rank, then maximum over ranks; slowest rank "
+            "for this column, an upper bound on its contribution to wallclock"
+        ),
+        "operation_expr": "max_r Σ_t Resize",
+        "reduced_coordinate": "timestep_min (summed), Rank (maximum, retained as a size-one dimension)",
+    },
+    "SWMM": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": (
+            "SWMM per-rank cumulative timer (parent bracket of SWMM_XFER, SWMM_MPI, SWMM_STEP, SWMM_OTHER)"
+        ),
+        "operation": (
+            "sum over reported timesteps per rank, then maximum over ranks; slowest rank "
+            "for this column, so its four children do not close against it after the "
+            "reduction -- they close on each per-rank row, and on the <Col>_coherent family"
+        ),
+        "operation_expr": "max_r Σ_t SWMM",
+        "reduced_coordinate": "timestep_min (summed), Rank (maximum, retained as a size-one dimension)",
+    },
+    "SWMM_XFER": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": "SWMM_XFER per-rank cumulative timer (nested inside the SWMM bracket)",
+        "operation": (
+            "sum over reported timesteps per rank, then maximum over ranks; slowest rank "
+            "for this column, an upper bound on its contribution to wallclock"
+        ),
+        "operation_expr": "max_r Σ_t SWMM_XFER",
+        "reduced_coordinate": "timestep_min (summed), Rank (maximum, retained as a size-one dimension)",
+    },
+    "SWMM_MPI": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": (
+            "SWMM_MPI per-rank cumulative timer (the coupling's gather/scatter, nested "
+            "inside SWMM and never part of the top-level MPI column)"
+        ),
+        "operation": (
+            "sum over reported timesteps per rank, then maximum over ranks; slowest rank "
+            "for this column, an upper bound on its contribution to wallclock"
+        ),
+        "operation_expr": "max_r Σ_t SWMM_MPI",
+        "reduced_coordinate": "timestep_min (summed), Rank (maximum, retained as a size-one dimension)",
+    },
+    "SWMM_STEP": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": (
+            "SWMM_STEP per-rank cumulative timer, spanning the rank-0 SWMM solve, its "
+            "local/global remaps, and the per-timestep exchange-replay append"
+        ),
+        # The ONLY one of the thirteen for which max(Rank) is exact rather than an upper
+        # bound, and the reason is architectural: the solver's bracket sits inside its
+        # `if (rank == 0)` guard, so every other rank contributes zero. Stated here because
+        # a reader applying the per-column caveat uniformly would under-read this column.
+        "operation": (
+            "sum over reported timesteps per rank, then maximum over ranks; nonzero on "
+            "rank 0 only, so the maximum is rank 0's own value exactly rather than an "
+            "upper bound over a spread"
+        ),
+        "operation_expr": "Σ_t SWMM_STEP (rank 0)",
+        "reduced_coordinate": "timestep_min (summed), Rank (maximum, retained as a size-one dimension)",
+    },
+    "SWMM_OTHER": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": (
+            "SWMM_OTHER per-rank cumulative timer, the solver-side residual SWMM - (SWMM_XFER + SWMM_MPI + SWMM_STEP)"
+        ),
+        "operation": (
+            "sum over reported timesteps per rank, then maximum over ranks; a residual the "
+            "solver derives per rank so the coupling level closes, not a measured bracket"
+        ),
+        "operation_expr": "max_r Σ_t SWMM_OTHER",
+        "reduced_coordinate": "timestep_min (summed), Rank (maximum, retained as a size-one dimension)",
+    },
+    "Other": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": (
+            "Other per-rank cumulative timer, the solver-side residual that closes "
+            "Simulation against its category columns"
+        ),
+        "operation": (
+            "sum over reported timesteps per rank, then maximum over ranks; a residual the "
+            "solver derives per rank so the simulation level closes, not a measured bracket"
+        ),
+        "operation_expr": "max_r Σ_t Other",
+        "reduced_coordinate": "timestep_min (summed), Rank (maximum, retained as a size-one dimension)",
+    },
+    "Simulation": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": "Simulation per-rank cumulative timer",
+        "operation": (
+            "sum over reported timesteps per rank, then maximum over ranks; "
+            "barrier-synchronized, so the maximum over ranks IS the job-level "
+            "simulation-phase wallclock rather than a per-column upper bound"
+        ),
+        "operation_expr": "max_r Σ_t Simulation",
+        "reduced_coordinate": "timestep_min (summed), Rank (maximum, retained as a size-one dimension)",
+    },
+    "Init": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": "Init per-rank cumulative timer, the solver-side residual Total - Simulation",
+        "operation": (
+            "sum over reported timesteps per rank, then maximum over ranks; a residual the "
+            "solver derives per rank, and barrier-synchronized, so the maximum over ranks "
+            "IS the job-level figure"
+        ),
+        "operation_expr": "max_r Σ_t Init",
+        "reduced_coordinate": "timestep_min (summed), Rank (maximum, retained as a size-one dimension)",
+    },
+    "Total": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": "Total per-rank cumulative timer",
+        # On a hotstart-resumed member this is CUMULATIVE across every allocation, because
+        # `_aggregate_perf_tseries` concatenates all preserved performance{N}.txt
+        # checkpoints. It is therefore NOT the final-allocation-only figure SLURM's Elapsed
+        # reports, and that is the discrepancy a reader is most likely to treat as an error.
+        "operation": (
+            "sum over reported timesteps per rank, then maximum over ranks; "
+            "barrier-synchronized, so the maximum over ranks IS the job-level wallclock. "
+            "On a hotstart-resumed member this is the cumulative wallclock across every "
+            "allocation, not the final allocation alone"
+        ),
+        "operation_expr": "max_r Σ_t Total",
+        "reduced_coordinate": "timestep_min (summed), Rank (maximum, retained as a size-one dimension)",
+    },
+}
+
+
+#: The modes whose consolidated store carries the reduced performance summary, and
+#: therefore the only modes under which the thirteen descriptors above are true.
+#:
+#: THE `*_performance_tseries` MODES ARE DELIBERATELY ABSENT, and their absence is a
+#: correctness property rather than an omission. Those modes name the PER-RANK series,
+#: which is never reduced and never consolidated (`_CF_VARIABLE_OVERRIDES_BY_MODE`'s own
+#: comment says so), so every `operation` above -- each of which names a sum and a maximum
+#: -- is false of that artifact. Supplying tseries descriptors would additionally make the
+#: mode-blind resolution below AMBIGUOUS: the same thirteen names would carry two
+#: conflicting operations with nothing in the call to choose between them. A tseries
+#: overlay is therefore not a free addition; it requires revisiting the mode-blind arm.
+_PERF_SUMMARY_PROVENANCE_MODES: frozenset[str] = frozenset({"tritonswmm_performance", "triton_only_performance"})
+
+#: Mode-scoped descriptor overlay. DERIVED over the mode set, so the thirteen descriptors
+#: have exactly one source and a new performance mode is one entry in the set above.
+_QUANTITY_PROVENANCE_BY_MODE: dict[str, dict[str, dict[str, str]]] = {
+    _mode: _PERF_QUANTITY_PROVENANCE for _mode in sorted(_PERF_SUMMARY_PROVENANCE_MODES)
+}
+
+
+#: Every variable `metadata.build_analysis_crate` may advertise in `variableMeasured`.
+#:
+#: DECLARED HERE AND IMPORTED BY `metadata.py` RATHER THAN REBUILT THERE, because the
+#: descriptor drift guard (`tests/test_quantity_provenance.py`) asserts coverage OF THE
+#: ADVERTISED UNION. A union recomputed independently in the guard would be a second
+#: expression of the same set: widening the advertisement would then leave the guard green
+#: against an uncovered variable, which is the precise failure the guard exists to catch.
+#: With one constant, widening the advertisement moves the guard by construction.
+_ADVERTISABLE_VARIABLES: dict[str, dict[str, str | None]] = {**_CF_VARIABLE_MAP, **_CF_PERFORMANCE_VARIABLES}
+
+
+#: Every variable for which a descriptor exists on the mode-blind read path. The two
+#: source tables are DISJOINT in their keys -- asserted by the drift guard, not assumed --
+#: so no name resolves two ways here.
+_DESCRIBED_VARIABLES: dict[str, dict[str, str]] = {**_QUANTITY_PROVENANCE, **_PERF_QUANTITY_PROVENANCE}
+
+
+def quantity_provenance(var_name: str, mode: str | None = None) -> dict[str, str] | None:
     """Return the computed-quantity descriptor for ``var_name``, or None.
 
-    The single sanctioned reader of `_QUANTITY_PROVENANCE`. Returns a COPY so a
-    consumer cannot mutate the module-level table, and None (never a fabricated
-    default) for an unmapped variable -- the metadata renderer turns that into an
-    explicit em-dash rather than a guess.
+    The single sanctioned reader of `_QUANTITY_PROVENANCE` and its mode-scoped
+    performance overlay. Returns a COPY so a consumer cannot mutate a module-level
+    table, and None (never a fabricated default) for an unmapped variable -- the
+    metadata renderer turns that into an explicit em-dash rather than a guess.
+
+    Parameters
+    ----------
+    mode
+        A consolidation mode, when the caller knows one. The mode's overlay shadows
+        the base table, mirroring `apply_cf_attributes`'s override dispatch: under a
+        non-performance mode the generic performance names resolve to None, which is
+        the collision the overlay is mode-scoped to prevent.
+
+        `None` resolves the ADVERTISED UNION -- base plus the performance
+        descriptors -- and that is the path the metadata renderer takes. It is sound
+        here and would NOT be sound at the advertisement site, and the asymmetry is
+        the point: `variableMeasured` is a CLAIM that the deposited store contains a
+        variable, so it is gated on the emitted set. This function makes no claim
+        about any store; it answers "what is this quantity, mathematically" for a
+        name the gated advertisement has ALREADY proven present. Declining to answer
+        on the mode-blind path would leave the thirteen rendering em-dashes, which is
+        the defect the overlay exists to repair.
     """
-    entry = _QUANTITY_PROVENANCE.get(var_name)
+    table = (
+        _DESCRIBED_VARIABLES if mode is None else {**_QUANTITY_PROVENANCE, **_QUANTITY_PROVENANCE_BY_MODE.get(mode, {})}
+    )
+    entry = table.get(var_name)
     return dict(entry) if entry is not None else None
 
 
