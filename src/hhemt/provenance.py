@@ -787,6 +787,11 @@ def emit_provenance(
     sub_dataset_relpaths=None,
     with_run_units: bool = True,
     emitted_vars: set[str] | None = None,
+    # THE INTERMEDIATE HOP. The thread is caller -> emit_provenance -> build_analysis_crate, so
+    # store-sourcing the crate's descriptors changes TWO signatures, not one; this function
+    # carries the mapping through and reads none of it. A precomputed {name: attrs} mapping is
+    # the smaller of the two possible contract changes and keeps `metadata.py` free of xarray.
+    emitted_attrs: dict[str, dict[str, str | None]] | None = None,
 ) -> tuple[str, str]:
     """Build the analysis crate + render the per-run CreateAction graph from log.py.
 
@@ -816,6 +821,7 @@ def emit_provenance(
         input_parts=input_parts,
         sub_dataset_relpaths=sub_dataset_relpaths,
         emitted_vars=emitted_vars,
+        emitted_attrs=emitted_attrs,
     )
 
     for member_id, event_id, model_type in _iter_run_units(analysis) if with_run_units else ():

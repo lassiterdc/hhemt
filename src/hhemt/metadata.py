@@ -185,6 +185,11 @@ def build_analysis_crate(
     consolidated_zarr_relpath: str,  # e.g. "analysis_datatree.zarr"
     input_parts: list[dict],  # [{"@id", "sha256", "contentSize", "encodingFormat"}]
     emitted_vars: set[str] | None = None,  # actual data_vars of the deposited store
+    # {name: attrs} read off the DEPOSITED store, so each advertised variable is described
+    # exactly as the store describes it. A precomputed MAPPING rather than the datasets
+    # themselves, deliberately: both callers already iterate the tree to build `emitted_vars`
+    # and can fill this in the same pass, and this module then gains no xarray dependency.
+    emitted_attrs: dict[str, dict[str, str | None]] | None = None,
     sub_dataset_relpaths: list[str] | None = None,  # D5: master hasPart-refs each sub Dataset (FLAT)
 ) -> ROCrate:
     crate = ROCrate()  # seeds Root Dataset (./) + Metadata descriptor
@@ -290,8 +295,40 @@ def build_analysis_crate(
         if emitted_vars is None
         else [(v, a) for v, a in _ADVERTISABLE_VARIABLES.items() if v in emitted_vars]
     )
+
+    # THE DESCRIPTOR IS SOURCED FROM THE DEPOSITED STORE'S OWN ATTRS WHEN THE CALLER SUPPLIES
+    # THEM, which is what makes the advertisement-set invariant structural rather than policed:
+    # "advertise exactly the variables the deposited store contains, described exactly as the
+    # store describes them." The membership half is the `emitted_vars` gate above; this is the
+    # description half. You cannot describe a variable you did not read, and the descriptor
+    # cannot diverge from the stamp because it IS the stamp.
+    #
+    # UNTIL THIS LANDED, THE CRATE WAS OVERRIDE-BLIND, and the recorded consequence is kept here
+    # rather than deleted with the defect. This module reads `_CF_VARIABLE_MAP` and
+    # `_CF_PERFORMANCE_VARIABLES` and read `_CF_VARIABLE_OVERRIDES_BY_MODE` NOT AT ALL
+    # (`grep -c '_CF_VARIABLE_OVERRIDES_BY_MODE' src/hhemt/metadata.py` was 0 against 2 in
+    # `cf_conventions.py`), so a link-mode deposit published a `long_name` and a `cell_methods`
+    # that its own store contradicted. Two override modes carry that entry and they are
+    # byte-identical -- `tritonswmm_swmm_link` and `swmm_only_link`, the coupled model's and the
+    # standalone model's link outputs. After the base entries were respelled to the conformant
+    # `time:` spelling the `cell_methods` half agrees BY COINCIDENCE OF TWO CONVERGING VALUES,
+    # not by derivation; the surviving `long_name` divergence is what proved the crate was not
+    # store-sourced. Reading the store closes both halves at once.
+    #
+    # THE FALLBACK IS CONSERVATIVE AND ITS PREDICATE IS `long_name`. A store node that was never
+    # CF-stamped carries no `long_name`, and a tree may legitimately contain such a node (the
+    # opt-in per-scenario timeseries groups are not stamped), so an advertised name resolving to
+    # an unstamped node falls back to the static entry rather than publishing an empty
+    # descriptor. That makes this change MONOTONE: it can only replace a static descriptor with
+    # a store descriptor that actually exists.
+    def _descriptor(var: str, static: dict) -> dict[str, str | None]:
+        stored = (emitted_attrs or {}).get(var)
+        src = stored if stored and stored.get("long_name") else static
+        return {k: src.get(k) for k in ("long_name", "units", "standard_name", "cell_methods")}
+
     var_refs = []  # CF crosswalk -> variableMeasured PropertyValues
     for var, attrs in _advertised:
+        attrs = _descriptor(var, attrs)
         pv = crate.add(
             ContextEntity(
                 crate,
@@ -300,7 +337,15 @@ def build_analysis_crate(
                     "@type": "PropertyValue",
                     "name": var,
                     "description": attrs["long_name"],
-                    "unitText": attrs["units"],
+                    # GUARDED SYMMETRICALLY WITH ITS TWO SIBLINGS, and this is prophylactic
+                    # rather than a repair of a live false claim. Every `_ADVERTISABLE_VARIABLES`
+                    # entry is typed `str | None`, so `None` is admissible for `units` exactly as
+                    # for the other two; measured, `units is None` in zero of the 25, and a real
+                    # deposited crate carried 9 PropertyValues with 9 non-null `unitText`. The
+                    # value of the guard is that a FUTURE entry legitimately carrying no units --
+                    # or a store-sourced descriptor read off a node that declares none -- cannot
+                    # silently publish a `unitText` null into the deposited record.
+                    **({"unitText": attrs["units"]} if attrs["units"] else {}),
                     **({"propertyID": attrs["standard_name"]} if attrs["standard_name"] else {}),
                     **({"measurementTechnique": attrs["cell_methods"]} if attrs["cell_methods"] else {}),
                 },

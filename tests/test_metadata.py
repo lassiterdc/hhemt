@@ -260,3 +260,119 @@ def test_every_advertised_performance_name_carries_a_provenance_descriptor():
     # an em-dash while both tables carry thirteen entries.
     advertised = _advertised_var_names(_build(emitted_vars=set(_CF_PERFORMANCE_VARIABLES)))
     assert {v for v in advertised if quantity_provenance(v)} == advertised
+
+
+# --------------------------------------------------------------------------------------
+# WP-3F(c)/(d): the descriptor is SOURCED FROM THE DEPOSITED STORE, and `unitText` is guarded.
+# --------------------------------------------------------------------------------------
+
+
+def _advertised_props(crate) -> dict[str, dict]:
+    doc = json.loads(metadata.canonical_jsonld(crate))
+    return {
+        n["name"]: n
+        for n in doc["@graph"]
+        if isinstance(n, dict) and str(n.get("@id", "")).startswith("#var-") and "name" in n
+    }
+
+
+def test_the_descriptor_is_sourced_from_the_deposited_store_when_supplied():
+    """The DESCRIPTION half of the advertisement invariant: "described exactly as the store describes them".
+
+    THE DEFECT THIS CLOSES IS A DIVERGENCE, NOT AN ABSENCE. `metadata.py` reads
+    `_CF_VARIABLE_MAP` / `_CF_PERFORMANCE_VARIABLES` and reads `_CF_VARIABLE_OVERRIDES_BY_MODE`
+    not at all, so a link-mode deposit published the BASE entry's `long_name` while its own store
+    carried the override's. The static table cannot see the mode; the store is already
+    mode-resolved by the time it is deposited.
+
+    THE OVERRIDE'S `long_name` IS THE DISCRIMINATOR AND `cell_methods` IS NOT. Both now read
+    `time: maximum`, by convergence on the conformant spelling rather than by derivation, so a
+    test keyed on `cell_methods` would be satisfied whether or not the store was read. Keying on
+    `long_name` is what makes this test able to fail.
+    """
+    store = {
+        "max_velocity_mps": {
+            "long_name": "Maximum conduit velocity",
+            "units": "m s-1",
+            "standard_name": "sea_water_speed",
+            "cell_methods": "time: maximum",
+        }
+    }
+    base = _advertised_props(_build(emitted_vars={"max_velocity_mps"}))["max_velocity_mps"]
+    sourced = _advertised_props(_build(emitted_vars={"max_velocity_mps"}, emitted_attrs=store))["max_velocity_mps"]
+
+    assert base["description"] == "Maximum flood velocity", (
+        "fixture precondition: the static table is the grid-cell entry"
+    )
+    assert sourced["description"] == "Maximum conduit velocity", (
+        "the advertised description must come from the store's own attrs, not from the static table"
+    )
+    assert base["description"] != sourced["description"], "this test cannot discriminate unless the two differ"
+
+
+def test_omitting_emitted_attrs_is_byte_identical_to_before():
+    """The default MUST be byte-identical, because every caller is unthreaded until it is threaded.
+
+    `emitted_attrs=None` is the state the two production call sites are in today, so a change in
+    this branch's bytes would be a silent change to every deposited crate.
+    """
+    real = {"max_wlevel_m", "max_flow_cms"}
+    assert metadata.canonical_jsonld(_build(emitted_vars=real)) == metadata.canonical_jsonld(
+        _build(emitted_vars=real, emitted_attrs=None)
+    )
+    assert metadata.canonical_jsonld(_build(emitted_vars=real)) == metadata.canonical_jsonld(
+        _build(emitted_vars=real, emitted_attrs={})
+    )
+
+
+def test_an_unstamped_store_node_falls_back_to_the_static_descriptor():
+    """THE MONOTONICITY PROPERTY: store-sourcing can only REPLACE a descriptor that exists.
+
+    A tree may legitimately carry a node `apply_cf_attributes` never stamped -- the opt-in
+    per-scenario timeseries groups are not stamped -- so an advertised name whose store attrs
+    carry no `long_name` must not publish an empty descriptor. The fallback predicate is
+    `long_name` for that reason, and not mere key presence.
+    """
+    props = _advertised_props(_build(emitted_vars={"max_wlevel_m"}, emitted_attrs={"max_wlevel_m": {}}))["max_wlevel_m"]
+    assert props["description"] == "Maximum water level over simulation"
+    assert props["unitText"] == "m"
+
+
+def test_unit_text_is_guarded_symmetrically_with_its_two_siblings():
+    """(d) -- PROPHYLACTIC, and deliberately not described as a live false claim.
+
+    Measured at the time: `units is None` in zero of the 25 advertisable entries, and a real
+    deposited crate carried 9 PropertyValues with 9 non-null `unitText`. So the asymmetry was
+    LATENT. The value of closing it is that a future entry legitimately carrying no units -- or a
+    store-sourced descriptor read off a node that declares none -- cannot publish a `unitText`
+    null into the deposited record, which is what an unguarded subscription did.
+    """
+    store = {"max_wlevel_m": {"long_name": "Water level", "units": None, "standard_name": None, "cell_methods": None}}
+    props = _advertised_props(_build(emitted_vars={"max_wlevel_m"}, emitted_attrs=store))["max_wlevel_m"]
+
+    assert props["description"] == "Water level"
+    assert "unitText" not in props, "a None units must OMIT the key, exactly as propertyID and measurementTechnique do"
+    assert "propertyID" not in props
+    assert "measurementTechnique" not in props
+
+    # And the guard is not a blanket omission: a real value still publishes.
+    store["max_wlevel_m"]["units"] = "m"
+    assert (
+        _advertised_props(_build(emitted_vars={"max_wlevel_m"}, emitted_attrs=store))["max_wlevel_m"]["unitText"] == "m"
+    )
+
+
+def test_emit_provenance_carries_emitted_attrs_through_to_the_crate():
+    """The TWO-SIGNATURE cost, asserted on the signature rather than inferred from the design.
+
+    `emit_provenance` is the intermediate hop; a mapping it fails to carry through reaches
+    nothing, and the failure is silent because the crate still builds from the static table.
+    """
+    import inspect
+
+    from hhemt.provenance import emit_provenance
+
+    for fn in (emit_provenance, metadata.build_analysis_crate):
+        params = inspect.signature(fn).parameters
+        assert "emitted_attrs" in params, f"{fn.__name__} does not accept emitted_attrs"
+        assert params["emitted_attrs"].default is None, f"{fn.__name__}'s emitted_attrs must default to None"
