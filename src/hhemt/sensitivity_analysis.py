@@ -1750,13 +1750,21 @@ class TRITONSWMM_sensitivity_analysis:
         from hhemt.provenance import emit_provenance
 
         _sub_relpaths = [f"members/member_{member_id}/analysis_datatree.zarr" for member_id in self.members]
-        _emitted_vars = {str(v) for _n in tree.subtree for v in _n.dataset.data_vars}
+        # BOTH halves, from one pass, via the shared helper the regular-path caller also uses --
+        # see `processing_analysis.emitted_vars_and_attrs` for the conflict policy. `emitted_attrs`
+        # is what makes the crate's descriptors STORE-SOURCED rather than static-map-sourced; this
+        # is the second of the capability's two production call sites and both must thread it,
+        # because the experiment crate is the one a deposit reader is actually handed.
+        from hhemt.processing_analysis import emitted_vars_and_attrs
+
+        _emitted_vars, _emitted_attrs = emitted_vars_and_attrs(_n.dataset for _n in tree.subtree)
         _core_json, _graph_json = emit_provenance(
             self.experiment,
             consolidated_zarr_relpath="experiment_datatree.zarr",
             sub_dataset_relpaths=_sub_relpaths,
             with_run_units=False,
             emitted_vars=_emitted_vars,
+            emitted_attrs=_emitted_attrs,
         )
         apply_provenance_core(tree, core_json_str=_core_json)
 

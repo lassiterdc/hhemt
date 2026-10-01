@@ -2237,6 +2237,27 @@ non_breaking_allowlist:
       rows' ground stays readable. Re-stamp on any further non-breaking edit; a change to an
       artifact's path, name, dim or DATA-VARIABLE set is NOT this class and must bump
       LAYOUT_VERSION.
+      SPENT AT WP-3E, ANNOTATED RATHER THAN REMOVED. Verdict: EXPIRED -- this IS the resolved row for processing_analysis.py, and it was NOT authored by this thread -- WP-3E's crate-descriptor caller threading expired it as collateral, which no package in the thread predicted.
+      MEASURED at the WP-3E commit over all 131 rows resolved by `_load_allowlist`'s last-wins
+      rule against the live file hashes: 97 SUPERSEDED, 30 LIVE, 4 EXPIRED. The nine annotated
+      rows are 5 SUPERSEDED (c31b7406, bada3c4d, 2f9c5dd6, efc82603, 5780572f) and 4 EXPIRED
+      (40faaaf0, f43f116f, ff47bf7c, 77079f0f). That differs from what this thread predicted in
+      two ways and both matter: the supersessions happened BY LAST-WINS, before and independent
+      of any bump, so an expiry condition naming the bump as the moment of supersession names
+      the wrong event; and two of the four expiries (ff47bf7c, 77079f0f) are rows this thread
+      never authored, expired as collateral of WP-3E's caller threading.
+      NO SIGNATURE IS REFRESHED, deliberately. The LAYOUT_VERSION 23->24 bump is this commit's
+      gate response -- check-b returns 0 on a bumped commit BEFORE it reads this allowlist at
+      all -- so re-stamping an expired signature here would arm a change-scoped exemption for
+      content the bump already covers, and would then silently exempt the NEXT change to the
+      file. An expired signature correctly re-fires check-b on that next change, which is the
+      behaviour wanted. REMOVAL was the other arm and was RUN rather than reasoned about: the
+      loader accepts the nine-row deletion (no path resolves to a signature-less row, because
+      every signature-less row for these paths precedes a signature-carrying one), so removal
+      is admissible and was declined on the audit trail instead -- this loader's own comment
+      calls these rows 'an append-LOG' whose 'justifications are the audit trail', and a
+      superseded row is already never consulted, so deleting it costs its justification and
+      buys nothing mechanical.
   - path: src/hhemt/process_simulation.py
     layout_signature: e119589b3cdbeb090526316db9df60e2327952b473aada42add0d3319e2e3142
     justification: >-
@@ -2372,6 +2393,27 @@ non_breaking_allowlist:
       EXPIRY CONDITION: covers this docstring-text correction only. Any change to a method
       SIGNATURE, a parameter NAME, a log field, an emitted path, or the on-disk shape this
       class writes is NOT this class and must bump LAYOUT_VERSION.
+      SPENT AT WP-3E, ANNOTATED RATHER THAN REMOVED. Verdict: EXPIRED -- this IS the resolved row for sensitivity_analysis.py, and it was NOT authored by this thread -- WP-3E's crate-descriptor caller threading expired it as collateral, which no package in the thread predicted.
+      MEASURED at the WP-3E commit over all 131 rows resolved by `_load_allowlist`'s last-wins
+      rule against the live file hashes: 97 SUPERSEDED, 30 LIVE, 4 EXPIRED. The nine annotated
+      rows are 5 SUPERSEDED (c31b7406, bada3c4d, 2f9c5dd6, efc82603, 5780572f) and 4 EXPIRED
+      (40faaaf0, f43f116f, ff47bf7c, 77079f0f). That differs from what this thread predicted in
+      two ways and both matter: the supersessions happened BY LAST-WINS, before and independent
+      of any bump, so an expiry condition naming the bump as the moment of supersession names
+      the wrong event; and two of the four expiries (ff47bf7c, 77079f0f) are rows this thread
+      never authored, expired as collateral of WP-3E's caller threading.
+      NO SIGNATURE IS REFRESHED, deliberately. The LAYOUT_VERSION 23->24 bump is this commit's
+      gate response -- check-b returns 0 on a bumped commit BEFORE it reads this allowlist at
+      all -- so re-stamping an expired signature here would arm a change-scoped exemption for
+      content the bump already covers, and would then silently exempt the NEXT change to the
+      file. An expired signature correctly re-fires check-b on that next change, which is the
+      behaviour wanted. REMOVAL was the other arm and was RUN rather than reasoned about: the
+      loader accepts the nine-row deletion (no path resolves to a signature-less row, because
+      every signature-less row for these paths precedes a signature-carrying one), so removal
+      is admissible and was declined on the audit trail instead -- this loader's own comment
+      calls these rows 'an append-LOG' whose 'justifications are the audit trail', and a
+      superseded row is already never consulted, so deleting it costs its justification and
+      buys nothing mechanical.
   - path: src/hhemt/process_simulation.py
     layout_signature: c31b7406a443832d20d964c8015a3bb1a624481f776e53a9b96a7c1ddd635563
     justification: >-
@@ -2414,6 +2456,27 @@ non_breaking_allowlist:
       reader to infer that this path's shape changes are a non-breaking class. Any FURTHER
       change to this file's emitted variable set, dtypes, coordinates, paths or log fields is
       NOT this class and must ride its own bump.
+      SPENT AT WP-3E, ANNOTATED RATHER THAN REMOVED. Verdict: SUPERSEDED -- a later row for this same path (signature 40faaaf0) wins under last-wins, so this row's signature was never consulted after that row landed.
+      MEASURED at the WP-3E commit over all 131 rows resolved by `_load_allowlist`'s last-wins
+      rule against the live file hashes: 97 SUPERSEDED, 30 LIVE, 4 EXPIRED. The nine annotated
+      rows are 5 SUPERSEDED (c31b7406, bada3c4d, 2f9c5dd6, efc82603, 5780572f) and 4 EXPIRED
+      (40faaaf0, f43f116f, ff47bf7c, 77079f0f). That differs from what this thread predicted in
+      two ways and both matter: the supersessions happened BY LAST-WINS, before and independent
+      of any bump, so an expiry condition naming the bump as the moment of supersession names
+      the wrong event; and two of the four expiries (ff47bf7c, 77079f0f) are rows this thread
+      never authored, expired as collateral of WP-3E's caller threading.
+      NO SIGNATURE IS REFRESHED, deliberately. The LAYOUT_VERSION 23->24 bump is this commit's
+      gate response -- check-b returns 0 on a bumped commit BEFORE it reads this allowlist at
+      all -- so re-stamping an expired signature here would arm a change-scoped exemption for
+      content the bump already covers, and would then silently exempt the NEXT change to the
+      file. An expired signature correctly re-fires check-b on that next change, which is the
+      behaviour wanted. REMOVAL was the other arm and was RUN rather than reasoned about: the
+      loader accepts the nine-row deletion (no path resolves to a signature-less row, because
+      every signature-less row for these paths precedes a signature-carrying one), so removal
+      is admissible and was declined on the audit trail instead -- this loader's own comment
+      calls these rows 'an append-LOG' whose 'justifications are the audit trail', and a
+      superseded row is already never consulted, so deleting it costs its justification and
+      buys nothing mechanical.
   - path: src/hhemt/cf_conventions.py
     layout_signature: bada3c4d99247bce33e1afa46d054140d581ee67f9867dd294b77e21f2564804
     justification: >-
@@ -2480,6 +2543,27 @@ non_breaking_allowlist:
       that this path's shape-bearing changes are a non-breaking class. Any FURTHER change to a
       mode key, to a `cell_methods` string, or to the axis a `cell_methods` string names is NOT
       this class and must ride its own bump.
+      SPENT AT WP-3E, ANNOTATED RATHER THAN REMOVED. Verdict: SUPERSEDED -- three later cf_conventions.py rows (2f9c5dd6, efc82603, 5780572f) and then f43f116f each won under last-wins, so this row was already spent BEFORE the bump its own expiry condition names.
+      MEASURED at the WP-3E commit over all 131 rows resolved by `_load_allowlist`'s last-wins
+      rule against the live file hashes: 97 SUPERSEDED, 30 LIVE, 4 EXPIRED. The nine annotated
+      rows are 5 SUPERSEDED (c31b7406, bada3c4d, 2f9c5dd6, efc82603, 5780572f) and 4 EXPIRED
+      (40faaaf0, f43f116f, ff47bf7c, 77079f0f). That differs from what this thread predicted in
+      two ways and both matter: the supersessions happened BY LAST-WINS, before and independent
+      of any bump, so an expiry condition naming the bump as the moment of supersession names
+      the wrong event; and two of the four expiries (ff47bf7c, 77079f0f) are rows this thread
+      never authored, expired as collateral of WP-3E's caller threading.
+      NO SIGNATURE IS REFRESHED, deliberately. The LAYOUT_VERSION 23->24 bump is this commit's
+      gate response -- check-b returns 0 on a bumped commit BEFORE it reads this allowlist at
+      all -- so re-stamping an expired signature here would arm a change-scoped exemption for
+      content the bump already covers, and would then silently exempt the NEXT change to the
+      file. An expired signature correctly re-fires check-b on that next change, which is the
+      behaviour wanted. REMOVAL was the other arm and was RUN rather than reasoned about: the
+      loader accepts the nine-row deletion (no path resolves to a signature-less row, because
+      every signature-less row for these paths precedes a signature-carrying one), so removal
+      is admissible and was declined on the audit trail instead -- this loader's own comment
+      calls these rows 'an append-LOG' whose 'justifications are the audit trail', and a
+      superseded row is already never consulted, so deleting it costs its justification and
+      buys nothing mechanical.
   - path: src/hhemt/process_simulation.py
     layout_signature: 40faaaf05777ae477470e35f876723b6a00877080d451ccc87982eaae8025602
     justification: >-
@@ -2540,6 +2624,27 @@ non_breaking_allowlist:
       and WP-3E should annotate both as spent. Any FURTHER change to this file's emitted
       variable set, dtypes, dims, coordinates, paths or log fields is NOT this class and must
       ride its own bump.
+      SPENT AT WP-3E, ANNOTATED RATHER THAN REMOVED. Verdict: EXPIRED -- this IS the resolved row for process_simulation.py, and WP-3E's additive comment repair at the fifth invalid-inference site changed the file, so the stamped signature no longer matches.
+      MEASURED at the WP-3E commit over all 131 rows resolved by `_load_allowlist`'s last-wins
+      rule against the live file hashes: 97 SUPERSEDED, 30 LIVE, 4 EXPIRED. The nine annotated
+      rows are 5 SUPERSEDED (c31b7406, bada3c4d, 2f9c5dd6, efc82603, 5780572f) and 4 EXPIRED
+      (40faaaf0, f43f116f, ff47bf7c, 77079f0f). That differs from what this thread predicted in
+      two ways and both matter: the supersessions happened BY LAST-WINS, before and independent
+      of any bump, so an expiry condition naming the bump as the moment of supersession names
+      the wrong event; and two of the four expiries (ff47bf7c, 77079f0f) are rows this thread
+      never authored, expired as collateral of WP-3E's caller threading.
+      NO SIGNATURE IS REFRESHED, deliberately. The LAYOUT_VERSION 23->24 bump is this commit's
+      gate response -- check-b returns 0 on a bumped commit BEFORE it reads this allowlist at
+      all -- so re-stamping an expired signature here would arm a change-scoped exemption for
+      content the bump already covers, and would then silently exempt the NEXT change to the
+      file. An expired signature correctly re-fires check-b on that next change, which is the
+      behaviour wanted. REMOVAL was the other arm and was RUN rather than reasoned about: the
+      loader accepts the nine-row deletion (no path resolves to a signature-less row, because
+      every signature-less row for these paths precedes a signature-carrying one), so removal
+      is admissible and was declined on the audit trail instead -- this loader's own comment
+      calls these rows 'an append-LOG' whose 'justifications are the audit trail', and a
+      superseded row is already never consulted, so deleting it costs its justification and
+      buys nothing mechanical.
   - path: src/hhemt/cf_conventions.py
     layout_signature: 2f9c5dd6e682935f5da54d22f006376a70efc66c101aed853d535dcb4ffd4228
     justification: >-
@@ -2584,6 +2689,27 @@ non_breaking_allowlist:
       WP-3E should annotate all three as spent. Any FURTHER change to this file's emitted
       variable set, dtypes, dims, coordinates, paths or log fields is NOT this class and must
       ride its own bump.
+      SPENT AT WP-3E, ANNOTATED RATHER THAN REMOVED. Verdict: SUPERSEDED -- two later cf_conventions.py rows (efc82603, 5780572f) and then f43f116f each won under last-wins.
+      MEASURED at the WP-3E commit over all 131 rows resolved by `_load_allowlist`'s last-wins
+      rule against the live file hashes: 97 SUPERSEDED, 30 LIVE, 4 EXPIRED. The nine annotated
+      rows are 5 SUPERSEDED (c31b7406, bada3c4d, 2f9c5dd6, efc82603, 5780572f) and 4 EXPIRED
+      (40faaaf0, f43f116f, ff47bf7c, 77079f0f). That differs from what this thread predicted in
+      two ways and both matter: the supersessions happened BY LAST-WINS, before and independent
+      of any bump, so an expiry condition naming the bump as the moment of supersession names
+      the wrong event; and two of the four expiries (ff47bf7c, 77079f0f) are rows this thread
+      never authored, expired as collateral of WP-3E's caller threading.
+      NO SIGNATURE IS REFRESHED, deliberately. The LAYOUT_VERSION 23->24 bump is this commit's
+      gate response -- check-b returns 0 on a bumped commit BEFORE it reads this allowlist at
+      all -- so re-stamping an expired signature here would arm a change-scoped exemption for
+      content the bump already covers, and would then silently exempt the NEXT change to the
+      file. An expired signature correctly re-fires check-b on that next change, which is the
+      behaviour wanted. REMOVAL was the other arm and was RUN rather than reasoned about: the
+      loader accepts the nine-row deletion (no path resolves to a signature-less row, because
+      every signature-less row for these paths precedes a signature-carrying one), so removal
+      is admissible and was declined on the audit trail instead -- this loader's own comment
+      calls these rows 'an append-LOG' whose 'justifications are the audit trail', and a
+      superseded row is already never consulted, so deleting it costs its justification and
+      buys nothing mechanical.
   - path: src/hhemt/cf_conventions.py
     layout_signature: efc82603b2813fae0917f203509e013a119f35a11a61bd792449e072ffad0bfa
     justification: >-
@@ -2634,6 +2760,27 @@ non_breaking_allowlist:
       terms. All four are superseded the moment WP-3E stamps LAYOUT_VERSION 24, and WP-3E should
       annotate all four as spent. Any FURTHER change to this file's emitted variable set, dtypes,
       dims, coordinates, paths or log fields is NOT this class and must ride its own bump.
+      SPENT AT WP-3E, ANNOTATED RATHER THAN REMOVED. Verdict: SUPERSEDED -- a later cf_conventions.py row (5780572f) and then f43f116f each won under last-wins.
+      MEASURED at the WP-3E commit over all 131 rows resolved by `_load_allowlist`'s last-wins
+      rule against the live file hashes: 97 SUPERSEDED, 30 LIVE, 4 EXPIRED. The nine annotated
+      rows are 5 SUPERSEDED (c31b7406, bada3c4d, 2f9c5dd6, efc82603, 5780572f) and 4 EXPIRED
+      (40faaaf0, f43f116f, ff47bf7c, 77079f0f). That differs from what this thread predicted in
+      two ways and both matter: the supersessions happened BY LAST-WINS, before and independent
+      of any bump, so an expiry condition naming the bump as the moment of supersession names
+      the wrong event; and two of the four expiries (ff47bf7c, 77079f0f) are rows this thread
+      never authored, expired as collateral of WP-3E's caller threading.
+      NO SIGNATURE IS REFRESHED, deliberately. The LAYOUT_VERSION 23->24 bump is this commit's
+      gate response -- check-b returns 0 on a bumped commit BEFORE it reads this allowlist at
+      all -- so re-stamping an expired signature here would arm a change-scoped exemption for
+      content the bump already covers, and would then silently exempt the NEXT change to the
+      file. An expired signature correctly re-fires check-b on that next change, which is the
+      behaviour wanted. REMOVAL was the other arm and was RUN rather than reasoned about: the
+      loader accepts the nine-row deletion (no path resolves to a signature-less row, because
+      every signature-less row for these paths precedes a signature-carrying one), so removal
+      is admissible and was declined on the audit trail instead -- this loader's own comment
+      calls these rows 'an append-LOG' whose 'justifications are the audit trail', and a
+      superseded row is already never consulted, so deleting it costs its justification and
+      buys nothing mechanical.
   - path: src/hhemt/cf_conventions.py
     layout_signature: 5780572f6e377b0546780ae0e0788e2442c0c3b88f01cbf0efe39a70291565e8
     justification: >-
@@ -2688,6 +2835,27 @@ non_breaking_allowlist:
       should annotate all six as spent. Any change to this file's emitted variable set, dtypes,
       dims, coordinates, paths, log fields or written attrs is NOT this class and must ride its
       own bump.
+      SPENT AT WP-3E, ANNOTATED RATHER THAN REMOVED. Verdict: SUPERSEDED -- the later cf_conventions.py row f43f116f won under last-wins.
+      MEASURED at the WP-3E commit over all 131 rows resolved by `_load_allowlist`'s last-wins
+      rule against the live file hashes: 97 SUPERSEDED, 30 LIVE, 4 EXPIRED. The nine annotated
+      rows are 5 SUPERSEDED (c31b7406, bada3c4d, 2f9c5dd6, efc82603, 5780572f) and 4 EXPIRED
+      (40faaaf0, f43f116f, ff47bf7c, 77079f0f). That differs from what this thread predicted in
+      two ways and both matter: the supersessions happened BY LAST-WINS, before and independent
+      of any bump, so an expiry condition naming the bump as the moment of supersession names
+      the wrong event; and two of the four expiries (ff47bf7c, 77079f0f) are rows this thread
+      never authored, expired as collateral of WP-3E's caller threading.
+      NO SIGNATURE IS REFRESHED, deliberately. The LAYOUT_VERSION 23->24 bump is this commit's
+      gate response -- check-b returns 0 on a bumped commit BEFORE it reads this allowlist at
+      all -- so re-stamping an expired signature here would arm a change-scoped exemption for
+      content the bump already covers, and would then silently exempt the NEXT change to the
+      file. An expired signature correctly re-fires check-b on that next change, which is the
+      behaviour wanted. REMOVAL was the other arm and was RUN rather than reasoned about: the
+      loader accepts the nine-row deletion (no path resolves to a signature-less row, because
+      every signature-less row for these paths precedes a signature-carrying one), so removal
+      is admissible and was declined on the audit trail instead -- this loader's own comment
+      calls these rows 'an append-LOG' whose 'justifications are the audit trail', and a
+      superseded row is already never consulted, so deleting it costs its justification and
+      buys nothing mechanical.
   - path: src/hhemt/cf_conventions.py
     layout_signature: f43f116f80448a7dee8c310250b45ff466f26b2055355df70d6424f6c4323d90
     justification: >-
@@ -2742,3 +2910,24 @@ non_breaking_allowlist:
       superseded the moment WP-3E stamps LAYOUT_VERSION 24, and WP-3E should annotate all eight as
       spent. Any change to this file's emitted variable set, dtypes, dims, coordinates, paths, log
       fields or written attrs is NOT this class and must ride its own bump.
+      SPENT AT WP-3E, ANNOTATED RATHER THAN REMOVED. Verdict: EXPIRED -- this IS the resolved row for cf_conventions.py, and WP-3E's two comment repairs (the _ADVERTISABLE_VARIABLES guard-scope clause and the label-ownership scope qualifier) changed the file, so the stamped signature no longer matches.
+      MEASURED at the WP-3E commit over all 131 rows resolved by `_load_allowlist`'s last-wins
+      rule against the live file hashes: 97 SUPERSEDED, 30 LIVE, 4 EXPIRED. The nine annotated
+      rows are 5 SUPERSEDED (c31b7406, bada3c4d, 2f9c5dd6, efc82603, 5780572f) and 4 EXPIRED
+      (40faaaf0, f43f116f, ff47bf7c, 77079f0f). That differs from what this thread predicted in
+      two ways and both matter: the supersessions happened BY LAST-WINS, before and independent
+      of any bump, so an expiry condition naming the bump as the moment of supersession names
+      the wrong event; and two of the four expiries (ff47bf7c, 77079f0f) are rows this thread
+      never authored, expired as collateral of WP-3E's caller threading.
+      NO SIGNATURE IS REFRESHED, deliberately. The LAYOUT_VERSION 23->24 bump is this commit's
+      gate response -- check-b returns 0 on a bumped commit BEFORE it reads this allowlist at
+      all -- so re-stamping an expired signature here would arm a change-scoped exemption for
+      content the bump already covers, and would then silently exempt the NEXT change to the
+      file. An expired signature correctly re-fires check-b on that next change, which is the
+      behaviour wanted. REMOVAL was the other arm and was RUN rather than reasoned about: the
+      loader accepts the nine-row deletion (no path resolves to a signature-less row, because
+      every signature-less row for these paths precedes a signature-carrying one), so removal
+      is admissible and was declined on the audit trail instead -- this loader's own comment
+      calls these rows 'an append-LOG' whose 'justifications are the audit trail', and a
+      superseded row is already never consulted, so deleting it costs its justification and
+      buys nothing mechanical.

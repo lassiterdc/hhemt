@@ -961,6 +961,21 @@ class TRITONSWMM_sim_post_processing:
         # `Rank: maximum` naming nothing, so `cf_conventions._PERF_SUMMARY_CELL_METHODS`
         # would be inadmissible the moment it were stamped.
         #
+        # THAT PREMISE IS ABOUT ONE PAIR AND THE CONCLUSION DRAWN FROM IT WAS ABOUT THE WHOLE
+        # CONSTANT, which is the one step it overshoots -- the same premise-to-conclusion
+        # widening the sibling recording at `cf_conventions.py:251` repairs, and the fifth and
+        # last site in the tree to record it. Section 7.3 defines the attribute as "a list of
+        # blank-separated words of the form name: method", so admissibility is PER PAIR, and the
+        # constant is now the TWO-pair `"time: sum Rank: maximum"`. Fully collapsing the axis
+        # therefore invalidates the `Rank:` pair ALONE: the `time:` pair is admitted by section
+        # 7.3.4's standard-name class, whose licensing condition is the ABSENCE of a time axis on
+        # this artifact, so it survives the collapse untouched -- and would survive it even if
+        # `Rank` were the only axis there was. The premise above is RETAINED unedited because it
+        # re-measures true of the pair it names; only the scope of its conclusion is new, and the
+        # reason to state it is that a reader who takes the constant as the unit concludes that
+        # retaining `Rank` is what makes ANY annotation possible here, which is false and would
+        # make the retained axis look load-bearing for a pair that does not depend on it.
+        #
         # WHY A RETAINED DIMENSION AND NOT A SCALAR COORDINATE, which the same CF sentence
         # also permits and which is the smaller-looking change. A scalar was measured to fail
         # twice. It documents a collapsed domain of ONE rank, which is true of a selection and

@@ -96,6 +96,7 @@ EXPECTED_LADDER: list[str] = [
     "V0021__experiment_tree_unification",
     "V0022__promote_producer_written_experiment_tree",
     "V0023__column_set_heterogeneity_coords",
+    "V0024__rank_coherent_perf_reductions",
 ]
 
 

@@ -345,7 +345,18 @@ _PERF_SUMMARY_CELL_METHODS = "time: sum Rank: maximum"
 #     `_auto_long_name` is a FAILURE SIGNAL, not a label channel; and a derived family's
 #     label is DERIVED from its base entry's label, never restated.
 #
-# No other module authors a label for a deposited variable. Under this rule a reword of a parent
+# No other module authors a label for a DEPOSITED variable, and the qualifier is load-bearing
+# rather than decorative. Measured tree-wide 2026-10-01, the only two sites outside this module
+# that author a `long_name` at all are `synthetic_model/weather.py:120` and `:125`, on the
+# synthetic forcing dataset -- `RG_synth` and `water_level`. Those are generated INPUT variables
+# consumed by scenario preparation, never members of a consolidated mode dataset, so no advertised
+# or stamped label is sourced from them and nothing false reaches a deposit. Stating the rule
+# WITHOUT the qualifier makes it false of the tree it governs, which costs a future reader the
+# whole rule rather than the exception: a measurable counterexample to an unqualified normative
+# sentence reads as evidence the sentence is not enforced. (The other four `"long_name"` matches
+# under `src/` -- `metadata.py:326`, `:327`, `:339` and `report_renderers/_provenance.py:212` --
+# are READS of an attrs mapping, not authorship, and are outside the rule in either form.) Under
+# this rule a reword of a parent
 # label propagates to every derived label automatically, so sequencing between the package that
 # rewords and the package that authors a derived family stops mattering -- which is the property
 # worth stating, rather than the sequence. `_auto_long_name` being a failure signal is not a
@@ -898,7 +909,17 @@ _QUANTITY_PROVENANCE_BY_MODE: dict[str, dict[str, dict[str, str]]] = {
 #: ADVERTISED UNION. A union recomputed independently in the guard would be a second
 #: expression of the same set: widening the advertisement would then leave the guard green
 #: against an uncovered variable, which is the precise failure the guard exists to catch.
-#: With one constant, widening the advertisement moves the guard by construction.
+#: With one constant, widening the advertisement THROUGH THAT CONSTANT moves the guard by
+#: construction. The qualifier is the whole content of the sentence and it was absent until
+#: 2026-10-01: the guard is total over the CONSTANT, never over what the producer ADVERTISES, so a
+#: producer-local re-widening at the advertisement site -- iterating `{**_ADVERTISABLE_VARIABLES,
+#: **anything_else}` instead of this object -- advertises names the guard cannot see and leaves it
+#: GREEN. Measured: adding one name to this dict turns the bijection guard red, and adding the same
+#: name at the advertisement site instead leaves it green with the name advertised. So this is the
+#: sentence a future reader would trust to conclude no further check is needed, and the unqualified
+#: form licenses exactly the drift it claims to foreclose. The property that holds is narrower and
+#: is what the import buys: there is ONE object, so a widening EXPRESSED HERE cannot bypass the
+#: guard; a widening expressed anywhere else can, and nothing mechanical prevents it.
 _ADVERTISABLE_VARIABLES: dict[str, dict[str, str | None]] = {**_CF_VARIABLE_MAP, **_CF_PERFORMANCE_VARIABLES}
 
 

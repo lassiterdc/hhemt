@@ -397,8 +397,15 @@ class TRITONSWMM_analysis_post_processing:
         from hhemt.cf_conventions import apply_producing_stamp, apply_provenance_core
         from hhemt.provenance import emit_provenance
 
-        _emitted_vars = {str(v) for _p, _ds in tree_dict.items() if _p != "/" for v in _ds.data_vars}
-        _core_json, _graph_json = emit_provenance(self._analysis, emitted_vars=_emitted_vars)
+        # BOTH halves, from one pass. `emitted_attrs` is what makes the crate's descriptors
+        # STORE-SOURCED; omitting it here leaves the crate on the static base map and therefore
+        # override-blind, which published `'Maximum flood velocity'` for a link-mode store that
+        # stamps `'Maximum conduit velocity'`. The capability landed one commit earlier and was
+        # unreached from production until this line threaded it.
+        _emitted_vars, _emitted_attrs = emitted_vars_and_attrs(_ds for _p, _ds in tree_dict.items() if _p != "/")
+        _core_json, _graph_json = emit_provenance(
+            self._analysis, emitted_vars=_emitted_vars, emitted_attrs=_emitted_attrs
+        )
         apply_provenance_core(tree, core_json_str=_core_json)
 
         # ADR-15 Phase 1: re-derive the scalar producing-stamp fast-path on the
@@ -821,6 +828,65 @@ class TRITONSWMM_analysis_post_processing:
             if proc_log[f_out.name].success is True:
                 already_written = True
         return already_written
+
+
+#: The four descriptor keys ``metadata.build_analysis_crate._descriptor`` projects. Declared here
+#: so the mapping this module hands it carries exactly the keys it reads and no others; a wider
+#: mapping would be silently truncated there and a narrower one would publish a `None`.
+_CRATE_DESCRIPTOR_KEYS: tuple[str, ...] = ("long_name", "units", "standard_name", "cell_methods")
+
+
+def emitted_vars_and_attrs(node_datasets) -> tuple[set[str], dict[str, dict[str, str | None]]]:
+    """Return ``(emitted_vars, emitted_attrs)`` for the crate, from ONE pass over the tree's nodes.
+
+    THIS EXISTS SO THE TWO HALVES CANNOT DIVERGE IN MEMBERSHIP, which is the whole reason it is a
+    helper rather than a second comprehension at each call site. ``build_analysis_crate``
+    advertises the names in ``emitted_vars`` and describes each one from ``emitted_attrs``, so a
+    name present in the first and absent from the second is advertised with a STATIC descriptor
+    while reading as store-sourced. Both callers previously built only the first half, each with
+    its own comprehension over its own tree handle, and both now derive both halves here.
+
+    WHY THIS LIVES IN THIS MODULE AND NOT IN ``metadata.py``. That module deliberately carries no
+    xarray dependency -- its ``emitted_attrs`` parameter is documented as "a precomputed MAPPING
+    rather than the datasets themselves" for exactly that reason -- and this function reads
+    ``ds.data_vars`` and ``da.attrs``. ``sensitivity_analysis.py`` already imports its sibling
+    stamping helpers from here, so this is the module both callers can reach.
+
+    THE CONFLICT POLICY, and it is a DECIDED choice rather than a fallthrough. A flat
+    ``{name: attrs}`` mapping cannot express one name described two ways, and a tree MAY carry one
+    name in two nodes: ``max_velocity_mps`` is the measured case, carried by both
+    ``tritonswmm_swmm_link`` and ``swmm_only_link``. Where two nodes agree, the agreed descriptor
+    is used. Where they DISAGREE, the name is OMITTED from the mapping so ``_descriptor`` falls
+    back to its static entry -- because there is no single correct description, and publishing
+    either one would be a false claim about the other node. That keeps this change MONOTONE in the
+    sense ``_descriptor``'s own contract states: it can only replace a static descriptor with a
+    store descriptor that actually exists AND is unambiguous. Measured on the live tables, exactly
+    one variable's override diverges from its base entry (``max_velocity_mps``: base
+    ``'Maximum flood velocity'``, both link modes ``'Maximum conduit velocity'``) and the two
+    override modes carrying it are byte-identical, so the disagree branch is reachable only by a
+    future heterogeneous tree and is inert on the current corpus. An unstamped node contributes
+    nothing: ``_descriptor``'s predicate is a non-empty ``long_name``, so a node carrying none
+    leaves the name on its static entry regardless of what this returns.
+    """
+    emitted_vars: set[str] = set()
+    attrs_by_var: dict[str, dict[str, str | None]] = {}
+    conflicted: set[str] = set()
+    for ds in node_datasets:
+        for name, da in ds.data_vars.items():
+            var = str(name)
+            emitted_vars.add(var)
+            if var in conflicted:
+                continue
+            desc = {k: da.attrs.get(k) for k in _CRATE_DESCRIPTOR_KEYS}
+            if not desc.get("long_name"):
+                continue
+            prior = attrs_by_var.get(var)
+            if prior is None:
+                attrs_by_var[var] = desc
+            elif prior != desc:
+                conflicted.add(var)
+                del attrs_by_var[var]
+    return emitted_vars, attrs_by_var
 
 
 def _stamp_triton_provenance(tree: "xr.DataTree", analysis) -> None:
