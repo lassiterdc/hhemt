@@ -27,6 +27,8 @@ from hhemt.cf_conventions import (
     apply_cf_attributes,
 )
 
+from ._cf_cell_methods_grammar import cell_methods_classes
+
 # The column set TRITON emitted BEFORE the SWMM-timer split, verbatim from the pre-split
 # header literal that `tests/test_synth_03_perf_tseries_diff.py` and
 # `tests/test_synth_06_resume_safety.py` still write into their synthetic
@@ -76,8 +78,12 @@ def _summary_ds(var_names: list[str], value: float = 1.0) -> xr.Dataset:
 
     `_export_performance_summary` writes `ds.sum(dim="timestep_min").max(dim="Rank",
     keepdims=True)`, so `timestep_min` is gone entirely while `Rank` survives at size one --
-    it is the carrier for the summary's CF `cell_methods` domain, which has no admissible
-    name if the axis is fully collapsed.
+    it is the carrier for the `Rank` PAIR of the summary's two-pair CF `cell_methods`, which
+    has no admissible name under the spelling `Rank` if the axis is fully collapsed. The TIME
+    pair is spelled `time` and is admissible by CF 7.3.4's class 3 precisely BECAUSE no
+    dimension or coordinate here is named `time`; that pair needs no retained axis. The
+    collapsed-axis argument is about the `Rank` spelling only, and reading it as a general rule
+    that a summed-away axis cannot be named is what produced this campaign's defect.
 
     THE SHAPE IS PART OF WHAT THESE TESTS COVER. This helper carried 0-d variables until the
     axis was retained; keeping it 0-d would have left every test below asserting against a
@@ -256,28 +262,37 @@ def test_performance_tseries_columns_declare_no_cell_methods(mode):
 def test_performance_summary_columns_declare_the_rank_reduction(mode):
     """The summary's whole reason for being separately addressable.
 
-    Asserts the CF-1.13 admissibility condition, not merely the string: section 7.3 allows a
-    cell_methods name only if it is "a dimension of the variable, a scalar coordinate
-    variable, a valid standard name, or the word `area`", so the name is checked against the
-    variable's own dims. That is what makes the retained size-one `Rank` load-bearing rather
-    than decorative -- fully collapsing the axis would leave this string naming nothing.
+    Asserts the CF-1.13 admissibility condition PER PAIR, not merely the string. Section 7.3
+    defines the attribute as "a list of blank-separated words of the form `name: method`" and
+    allows a name only if it is "a dimension of the variable, a scalar coordinate variable, a
+    valid standard name, or the word `area`". The value carries TWO pairs taking TWO DIFFERENT
+    classes -- `time` by class 3 (7.3.4's standard-name form) and `Rank` by class 1 (a dimension
+    of the variable) -- so the check is per pair and the CLASS SEQUENCE is what is asserted.
+    That is what makes the retained size-one `Rank` load-bearing rather than decorative: collapse
+    it and the second pair's class drops to None.
 
-    `timestep_min` IS DELIBERATELY NOT NAMED and its absence is asserted. The time sum is
-    real, but after it `timestep_min` is neither a dim, nor a coord, nor a CF standard name,
-    nor `area`, so naming it would be inadmissible in exactly the way a scalar `Rank` was.
+    A COLON SPLIT CANNOT EXPRESS THIS and the superseded form used one. Measured,
+    `"time: sum Rank: maximum".split(":")` is `['time', ' sum Rank', ' maximum']`, whose middle
+    element carries the first pair's method and the second pair's name together -- so the split
+    yields no pair structure at all. `_cf_cell_methods_grammar.cell_methods_classes` is the
+    per-pair oracle and imports nothing from `cf_conventions`, so a wrong rule cannot agree with
+    itself at both ends.
+
+    THE CLASS SEQUENCE IS STRICTLY STRONGER THAN THE `timestep_min`-ABSENCE ASSERTION it
+    replaced. That assertion passed on any string lacking the token, `"foo: bar"` included;
+    this one pins which of CF's four classes each name takes.
     """
     ds = apply_cf_attributes(_summary_ds(POST_SPLIT_VARS), mode)
 
     for name in POST_SPLIT_VARS:
         cm = ds[name].attrs.get("cell_methods")
-        assert cm == "Rank: maximum", f"{name} carries cell_methods {cm!r}, not the summary's rank reduction"
-        named_axis = cm.split(":")[0]
-        assert named_axis in ds[name].dims, (
-            f"{name} names axis {named_axis!r} in cell_methods but does not carry it as a dimension; "
-            "CF-1.13 section 7.3 admits only a dimension, a scalar coordinate variable, a standard name, or 'area'"
+        assert cm == "time: sum Rank: maximum", (
+            f"{name} carries cell_methods {cm!r}, not the summary's time sum and rank reduction"
         )
-        assert "timestep_min" not in cm, (
-            f"{name} names timestep_min, which the time sum removed and which is not a CF standard name"
+        classes = cell_methods_classes(cm, ds[name], ds, where=name)
+        assert classes == ["standard_name", "dimension"], (
+            f"{name}'s cell_methods pairs resolve to classes {classes}, not the expected "
+            "class-3 time pair followed by the class-1 retained-dimension rank pair"
         )
 
 
@@ -292,7 +307,7 @@ def test_the_two_performance_artifacts_agree_on_long_name_and_units():
     for name, summary_entry in _CF_PERFORMANCE_SUMMARY_VARIABLES.items():
         base_entry = _CF_PERFORMANCE_VARIABLES[name]
         assert base_entry["cell_methods"] is None, f"{name}'s series entry gained a cell_methods"
-        assert summary_entry["cell_methods"] == "Rank: maximum"
+        assert summary_entry["cell_methods"] == "time: sum Rank: maximum"
         for field in ("standard_name", "long_name", "units"):
             assert summary_entry[field] == base_entry[field], (
                 f"{name}'s {field} differs between the series and summary descriptors; "
@@ -317,7 +332,7 @@ def test_the_rank_axis_family_carries_units_without_cell_methods():
     """`units` is inherited from the parent column; `cell_methods` is declined; neither implies the other.
 
     The defect this pins had ONE cause and THREE faces. The coherent family is a SELECTION and the
-    `min` family names a different method, so neither may carry the summary's `Rank: maximum` --
+    `min` family names a different method, so neither may carry the summary's `cell_methods` --
     correct, and asserted by its own sibling. What that reasoning does NOT reach is `units`: a
     selection from a seconds-valued column, and a minimum over it, are both still seconds. CF-1.13
     section 3.1.1 makes the omission an assertion rather than a gap ("A variable with no units
@@ -354,7 +369,8 @@ def test_the_rank_axis_family_carries_units_without_cell_methods():
                 "CF reads an absent units as a positive claim that the variable is dimensionless"
             )
             assert "cell_methods" not in attrs, (
-                f"{name}{suffix} declares cell_methods; a selection and a minimum are not Rank: maximum"
+                f"{name}{suffix} declares cell_methods; a selection and a minimum are not the "
+                "summary's time sum and rank maximum"
             )
             assert "slowest rank" not in attrs.get("long_name", ""), (
                 f"{name}{suffix} attributes itself to the slowest rank, which is the parent's reduction"

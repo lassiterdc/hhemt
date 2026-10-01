@@ -199,7 +199,7 @@ def test_reader_returns_a_copy_and_none_for_unknown():
 def test_last_timestep_variable_is_described_as_a_selection_not_a_reduction():
     """Regression guard for the defect that motivated this table.
 
-    `wlevel_m_last_tstep` carries `cell_methods="timestep_min: point"`, but `point`
+    `wlevel_m_last_tstep` carries `cell_methods="time: point"`, but `point`
     in CF means the variable RETAINS the time dimension with no method applied. The
     computation (process_simulation.py, `summarize_triton_simulation_results`) is
     `ds["wlevel_m"].sel(timestep_min=tsteps.max())` -- a selection. If the descriptor

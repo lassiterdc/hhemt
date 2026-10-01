@@ -5,8 +5,11 @@ summary's thirteen published columns are ``sum(dim="timestep_min").max(dim="Rank
 CF construct that documents a reduction is ``cell_methods``. CF-1.13 section 7.3 constrains
 what a ``cell_methods`` name may be -- "In the specification of this attribute, name can be a
 dimension of the variable, a scalar coordinate variable, a valid standard name, or the word
-``area``" -- so ``"Rank: maximum"`` is admissible ONLY while ``Rank`` is one of those four
-things. Fully collapsing the axis leaves the string naming nothing at all, and section 7.3.2
+``area``" -- and defines the attribute as "a list of blank-separated words of the form
+``name: method``", so the stamped ``"time: sum Rank: maximum"`` is TWO pairs taking TWO classes:
+``time`` by class 3 (section 7.3.4's standard-name form) and ``Rank`` by class 1. The ``Rank``
+PAIR is admissible ONLY while ``Rank`` is one of those four things. Fully collapsing the axis
+leaves THAT pair naming nothing at all, and section 7.3.2
 is explicit that retention is what buys the documentation: "A dimension of size one may be the
 result of 'collapsing' an axis by some statistical operation ... It is strongly recommended
 that dimensions of size one be retained (or scalar coordinate variables be defined) to enable
@@ -24,10 +27,17 @@ STOP resolving in the consolidated product, which is the artifact a reader is ac
 the rejected form through the same concat and asserts it fails, because an assertion that the
 shipped form survives is satisfiable by a concat that preserves everything.
 
-THE ANNOTATION IS CHECKED AGAINST THE VARIABLE'S OWN DIMS, never against a literal. Asserting
-``cell_methods == "Rank: maximum"`` alone would stay green if the axis were removed tomorrow --
-the string would still match and would still name nothing. Every assertion here resolves the
-named axis against ``da.dims``, so the admissibility CONDITION is what is pinned.
+THE ANNOTATION IS CHECKED AGAINST THE VARIABLE'S OWN STRUCTURE, never against a literal alone.
+Asserting the string by equality would stay green if the axis were removed tomorrow -- the string
+would still match and its ``Rank`` pair would still name nothing. The SPIRIT of that rule survives
+and is strengthened; the STATED MECHANISM does not. A ``cm.split(":")[0] in da.dims`` check cannot
+express a two-pair value at all: measured, ``"time: sum Rank: maximum".split(":")`` is
+``['time', ' sum Rank', ' maximum']``, whose middle element carries the first pair's method and the
+second pair's name together. Every assertion here instead resolves EVERY pair through
+``_cf_cell_methods_grammar.cell_methods_classes`` and asserts the returned CLASS SEQUENCE, so the
+per-pair admissibility CONDITION is what is pinned. That oracle imports nothing from
+``cf_conventions``: sourcing the rule from the module under audit would let a wrong rule agree with
+itself at both ends.
 
 BOTH REDUCTION SITES, because the reduction is duplicated at ``_export_performance_summary``
 (inline, instance method) and ``_aggregate_perf_summary`` (module level) and kept in step by an
@@ -45,11 +55,12 @@ from __future__ import annotations
 import contextlib
 from pathlib import Path
 
-import numpy as np
 import pytest
 import xarray as xr
 
 from hhemt.cf_conventions import apply_cf_attributes
+
+from ._cf_cell_methods_grammar import cell_methods_classes
 
 _BASE_COLS = ("Compute", "MPI", "IO", "Resize", "SWMM", "Other", "Simulation", "Init", "Total")
 
@@ -212,11 +223,12 @@ def test_the_coherent_selection_stays_off_the_reduced_axis(two_rank_perf_dir, tm
 
 
 def test_the_summary_annotation_resolves_against_the_variables_own_dims(two_rank_perf_dir, tmp_path):
-    """The admissibility CONDITION, not the string.
+    """The admissibility CONDITION, per pair, not the string.
 
-    ``cell_methods == "Rank: maximum"`` alone would stay green if the axis were removed; this
-    resolves the named axis against ``da.dims``, which is one of the four things CF-1.13
-    section 7.3 admits as a name.
+    String equality alone would stay green if the axis were removed; this resolves EVERY pair
+    through the independent oracle and asserts the class sequence, so the class-1 arm is what
+    the retained ``Rank`` dimension has to satisfy and the class-3 arm is what ``time`` satisfies
+    without any axis at all.
     """
     from hhemt.process_simulation import _aggregate_perf_summary
 
@@ -224,10 +236,11 @@ def test_the_summary_annotation_resolves_against_the_variables_own_dims(two_rank
 
     for col in _BASE_COLS:
         cm = out[col].attrs.get("cell_methods")
-        assert cm == "Rank: maximum", f"{col} carries cell_methods {cm!r}"
-        assert cm.split(":")[0] in out[col].dims, (
-            f"{col} names an axis it does not carry; CF-1.13 section 7.3 admits only a dimension "
-            "of the variable, a scalar coordinate variable, a valid standard name, or 'area'"
+        assert cm == "time: sum Rank: maximum", f"{col} carries cell_methods {cm!r}"
+        classes = cell_methods_classes(cm, out[col], out, where=col)
+        assert classes == ["standard_name", "dimension"], (
+            f"{col}'s cell_methods pairs resolve to classes {classes}, not the expected "
+            "class-3 time pair followed by the class-1 retained-dimension rank pair"
         )
 
 
@@ -262,10 +275,12 @@ def test_the_annotated_axis_still_resolves_after_the_consolidation_concat(two_ra
     for col in _BASE_COLS:
         da = consolidated[col]
         cm = da.attrs.get("cell_methods")
-        assert cm == "Rank: maximum", f"{col} lost its annotation at the concat: {cm!r}"
-        assert cm.split(":")[0] in da.dims, (
-            f"{col}'s annotation stopped resolving in the CONSOLIDATED product: dims {da.dims}. "
-            "This is the exact failure the retained dimension was chosen over a scalar to avoid."
+        assert cm == "time: sum Rank: maximum", f"{col} lost its annotation at the concat: {cm!r}"
+        classes = cell_methods_classes(cm, da, consolidated, where=col)
+        assert classes == ["standard_name", "dimension"], (
+            f"{col}'s annotation stopped resolving in the CONSOLIDATED product: classes {classes}, "
+            f"dims {da.dims}. This is the exact failure the retained dimension was chosen over a "
+            "scalar to avoid, and the per-pair form is what localizes it to the rank pair."
         )
 
 
@@ -301,7 +316,8 @@ def test_a_differing_scalar_rank_would_not_have_survived_the_concat(two_rank_per
         "the differing scalar was expected to be promoted along the concat axis"
     )
     assert "Rank" not in consolidated.dims, (
-        "a promoted scalar is not a dimension, which is why 'Rank: maximum' would have stopped "
+        "a promoted scalar is not a dimension, which is why the 'Rank: maximum' PAIR of "
+        "'time: sum Rank: maximum' would have stopped "
         "resolving here while remaining resolvable in every per-member store"
     )
     assert consolidated["Total"].dims == ("event_iloc",), (
@@ -314,20 +330,145 @@ def test_the_rank_axis_carries_the_method_and_deliberately_not_the_domain(two_ra
 
     CF-1.13 section 7.3 pairs a non-``point`` method with bounds ("should also be provided"),
     and section 7.1 makes the SHAPE a must: "A boundary variable must have one more dimension
-    than its associated coordinate or auxiliary coordinate variable." Both available forms fail
-    that in the consolidated product -- a per-member ``[0, n_ranks-1]`` concatenates to
-    ``(event_iloc, Rank, nv)``, two more dimensions than the 1-d coordinate it attaches to,
-    while an invariant extent is conformant in shape and false for any member whose rank count
-    differs. The extent is carried by ``n_ranks`` instead.
+    than its associated coordinate or auxiliary coordinate variable."
+
+    THE GROUND IS THE ABSENCE OF A ``Rank`` COORDINATE VARIABLE, which is one tier simpler than
+    the concat-shape argument this docstring carried until 2026-10-01. That argument reasoned
+    about "the 1-d coordinate it attaches to" -- a coordinate the store does not carry.
+    ``max(dim="Rank", keepdims=True)`` leaves a DIMENSION WITHOUT A COORDINATE: measured here,
+    ``"Rank" in out.dims`` is True while ``"Rank" in out.coords`` and ``"Rank" in out.variables``
+    are both False. Section 7.1's must is stated over a boundary variable's ASSOCIATED coordinate
+    variable, so with no such variable there is nothing for bounds to attach to and the
+    recommendation is unsatisfiable without first materializing one. The ``Rank`` cell_methods
+    pair is unaffected, because section 7.3 admits "a dimension of the variable" disjunctively
+    beside "a scalar coordinate variable".
+
+    THE SUPERSEDED ASSERTION WAS VACUOUS, AND NOT FOR THE REASON IT LOOKS LIKE. It read
+    ``assert "bounds" not in out.get("Rank", xr.DataArray(np.array(0))).attrs``. The sentinel
+    default was DEAD CODE, never reached: measured on xarray 2026.4.0, ``ds.get("Rank", sentinel)``
+    for a coordless dimension does NOT return the sentinel -- xarray materializes a VIRTUAL range
+    DataArray (``'Rank' (Rank: 1)``, "Dimensions without coordinates") whose ``.attrs`` is ``{}``.
+    So the assertion was vacuous against every state this pipeline produces while remaining
+    satisfiable as an expression: materialize a real ``Rank`` coordinate carrying the attr and
+    ``.attrs`` returns ``{'bounds': ...}``, measured. A repair aimed at "stop the getter
+    defaulting" would therefore target behaviour that does not exist.
 
     Pinned rather than merely commented so that a later change supplying ``bounds`` has to come
-    here and restate the shape argument, instead of adding a variable that reads as an
-    improvement and violates a must one tier down.
+    here and restate the argument, instead of adding a variable that reads as an improvement and
+    violates a must one tier down. Supplying bounds now requires materializing the ``Rank``
+    coordinate FIRST, which this test's second assertion is what makes visible.
     """
     from hhemt.process_simulation import _aggregate_perf_summary
 
     out = _aggregate_perf_summary(two_rank_perf_dir, resume_steps=[])
 
     assert "Rank_bnds" not in out.variables, "a bounds variable appeared without the shape argument being revisited"
-    assert "bounds" not in out.get("Rank", xr.DataArray(np.array(0))).attrs
+    assert "Rank" in out.dims, "the retained size-one axis is the premise of everything below"
+    assert "Rank" not in out.coords and "Rank" not in out.variables, (
+        "a Rank COORDINATE VARIABLE appeared; CF section 7.1's bounds recommendation becomes "
+        "satisfiable the moment it does, so the recorded decision to decline bounds has to be "
+        "revisited here rather than inherited"
+    )
+    assert not any("bounds" in out[v].attrs for v in out.variables), (
+        "a bounds attribute appeared on some variable without the shape argument being revisited"
+    )
     assert "n_ranks" in out.data_vars, "the collapsed extent must remain recoverable from the store"
+
+
+# --------------------------------------------------------------------------------------
+# The zarr round-trip at production chunking, with the TWO DIFFERENTIAL ARMS. A guard for a
+# hazard that has never fired is unverified until its violating input is exhibited, and a
+# guard exercised only on the state it was written against cannot be told apart from a
+# renamed-dimension check wearing a new name.
+# --------------------------------------------------------------------------------------
+
+
+def _consolidated_two_rank_members(tmp_path):
+    """Three members through the real consolidation concat form, CF-stamped.
+
+    Factored out so the round-trip and its violating arm are driven by the SAME object the
+    concat test asserts on, rather than by a hand-built lookalike.
+    """
+    from hhemt.process_simulation import _aggregate_perf_summary
+
+    members = []
+    for i, ranks in enumerate([(0, 1), (0,), (0, 1)]):
+        perf_dir = tmp_path / f"rt_member{i}" / "performance"
+        perf_dir.mkdir(parents=True)
+        for tstep in range(1, 4):
+            _write_perf_file(perf_dir, tstep, ranks=ranks)
+        members.append(
+            apply_cf_attributes(_aggregate_perf_summary(perf_dir, resume_steps=[]), "tritonswmm_performance")
+        )
+    return xr.concat(members, dim="event_iloc", combine_attrs="drop_conflicts")
+
+
+def test_the_annotation_still_resolves_after_a_zarr_round_trip_at_production_chunking(tmp_path):
+    """The serialization tier, which neither the in-memory concat nor an eager read can cover.
+
+    THE CHUNKED REOPEN IS LOAD-BEARING. An unchunked read loads eagerly into numpy and cannot
+    distinguish a lazy object from an eager one, so it would pass whatever the answer; ``chunks={}``
+    is what makes the reopened object the one a consumer actually gets.
+    """
+    consolidated = _consolidated_two_rank_members(tmp_path)
+    store = tmp_path / "roundtrip.zarr"
+    consolidated.to_zarr(store)
+    reopened = xr.open_zarr(store, chunks={})
+
+    assert "Rank" in reopened.dims and reopened.sizes["Rank"] == 1
+    for col in _BASE_COLS:
+        da = reopened[col]
+        cm = da.attrs.get("cell_methods")
+        assert cm == "time: sum Rank: maximum", f"{col} lost its annotation across the zarr round trip: {cm!r}"
+        classes = cell_methods_classes(cm, da, reopened, where=col)
+        assert classes == ["standard_name", "dimension"], (
+            f"{col}'s annotation stopped resolving after serialization: classes {classes}, dims {da.dims}"
+        )
+
+
+def test_a_squeezed_rank_axis_makes_the_rank_pair_unresolvable(tmp_path):
+    """ARM (a) -- THE VIOLATING INPUT. Without it the assertion above is an unfired guard.
+
+    Constructs the store a ``Rank``-dropping serialization would leave and shows the per-pair
+    oracle goes RED on it. ``Rank`` is then neither a dimension of the variable, nor a scalar
+    coordinate, nor ``area``, nor in the class-3 vocabulary, so ``cell_methods_name_class``
+    returns ``None``.
+
+    THE ``time`` PAIR STILL RESOLVES ON THAT SAME STORE, which is what makes this arm discriminate
+    at the PAIR level rather than on the whole string -- and is why the assertion message has to
+    name which pair failed.
+    """
+    consolidated = _consolidated_two_rank_members(tmp_path)
+    squeezed = consolidated.squeeze("Rank", drop=True)
+    store = tmp_path / "squeezed.zarr"
+    squeezed.to_zarr(store)
+    reopened = xr.open_zarr(store, chunks={})
+
+    assert "Rank" not in reopened.dims, "the violating input must actually lack the axis or this arm proves nothing"
+    cm = reopened["Total"].attrs["cell_methods"]
+    with pytest.raises(AssertionError, match="none of CF-1.13"):
+        cell_methods_classes(cm, reopened["Total"], reopened, where="Total")
+
+    # The class-3 pair is unaffected by the squeeze: the failure is localized, not wholesale.
+    from ._cf_cell_methods_grammar import cell_methods_name_class
+
+    assert cell_methods_name_class("time", reopened["Total"], reopened) == "standard_name"
+    assert cell_methods_name_class("Rank", reopened["Total"], reopened) is None
+
+
+def test_a_differently_positioned_satisfying_value_produces_no_finding():
+    """ARM (b) -- a DIFFERENTLY-POSITIONED satisfying input, and it is a real corpus value.
+
+    The predicate was written against the class-3 + class-1 sequence. A value occupying a
+    DIFFERENT correct state must produce no finding, and ``final_surface_flood_volume_m3``'s
+    ``"area: sum"`` is one: a single pair taking class 4. This arm is what proves the predicate is
+    a four-class disjunction rather than a hard-coded two-pair sequence. A predicate that pinned
+    the sequence would pass arm (a) and FAIL here, and arm (a) alone cannot see that.
+    """
+    ds = apply_cf_attributes(
+        xr.Dataset({"final_surface_flood_volume_m3": ((), 0.0)}),
+        "tritonswmm_triton",
+    )
+    cm = ds["final_surface_flood_volume_m3"].attrs["cell_methods"]
+    assert cm == "area: sum"
+    assert cell_methods_classes(cm, ds["final_surface_flood_volume_m3"], ds, where="area exemplar") == ["area"]

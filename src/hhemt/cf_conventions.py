@@ -23,13 +23,13 @@ _CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = {
         "standard_name": "sea_surface_height_above_geoid",
         "long_name": "Maximum water level over simulation",
         "units": "m",
-        "cell_methods": "timestep_min: maximum",
+        "cell_methods": "time: maximum",
     },
     "max_velocity_mps": {
         "standard_name": "sea_water_speed",
         "long_name": "Maximum flood velocity",
         "units": "m s-1",
-        "cell_methods": "timestep_min: maximum",
+        "cell_methods": "time: maximum",
     },
     "velocity_x_mps": {
         "standard_name": "sea_water_x_velocity",
@@ -59,7 +59,7 @@ _CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = {
         "standard_name": "sea_surface_height_above_geoid",
         "long_name": "Water level at final timestep",
         "units": "m",
-        "cell_methods": "timestep_min: point",
+        "cell_methods": "time: point",
     },
     "final_surface_flood_volume_m3": {
         "standard_name": None,
@@ -248,15 +248,29 @@ _CF_PERFORMANCE_VARIABLES: dict[str, dict[str, str | None]] = {
 
 # The performance SUMMARY's reduction, as a CF cell_methods string.
 #
-# WHY `Rank: maximum` AND NOT `"timestep_min: sum Rank: maximum"`, which is the accurate
-# description of the computation and is what this module's own header comment named until
-# 2026-09-29. CF-1.13 section 7.3 constrains what a cell_methods NAME may be: "In the
-# specification of this attribute, name can be a dimension of the variable, a scalar
-# coordinate variable, a valid standard name, or the word `area`." After
-# `_export_performance_summary`'s `ds.sum(dim="timestep_min")`, `timestep_min` is none of
-# those four -- measured: the sum drops both the dimension and the coordinate, `timestep_min`
-# does not occur anywhere in the CF-1.13 document, and it is not `area`. Naming it would be
-# the SAME inadmissible form that the stored-coordinate design rejected for a scalar `Rank`.
+# WHY THE TIME PAIR IS SPELLED `time` AND NOT `timestep_min`, and why the string carries TWO
+# pairs rather than the single `Rank` pair this module stamped until 2026-10-01. CF-1.13
+# section 7.3 constrains what a cell_methods NAME may be: "In the specification of this
+# attribute, name can be a dimension of the variable, a scalar coordinate variable, a valid
+# standard name, or the word `area`." After `_export_performance_summary`'s
+# `ds.sum(dim="timestep_min")`, the bare `timestep_min` name is none of those four --
+# measured: the sum drops both the dimension and the coordinate, `timestep_min` does not occur
+# anywhere in the CF-1.13 document, and it is not `area`. Naming it would be the SAME
+# inadmissible form that the stored-coordinate design rejected for a scalar `Rank`.
+#
+# THAT PREMISE IS ABOUT A SPELLING AND THE CONCLUSION DRAWN FROM IT WAS ABOUT AN AXIS, which
+# is the one move it stopped short of -- section 7.3.4's. 7.3.4 licenses the standard-name
+# class and names `time` in its own worked example, "a cell_methods entry of `time: mean`
+# (where `time`, it should be noted, is a valid standard_name)", while forbidding that form
+# only "if the name of a dimension or scalar coordinate variable is identical to name"; and it
+# states the licensing condition as an ASSUMPTION OF ABSENCE -- "(As required by this
+# convention, it is assumed here that ... `time` is not a dimension or coordinate variable.)"
+# So the ABSENCE of a time axis on this artifact is the PRECONDITION for `time` rather than
+# the disqualifier it was read as. Measured on the deposited consolidated tree: no group is
+# named `time` and none is named `timestep_min`, so `time` passes class 3 here while the bare
+# `timestep_min` spelling still fails all four. The premise above is RETAINED unedited because
+# every clause of it re-measures true; only the step after it is new.
+#
 # `Rank` IS admissible, and only because it is RETAINED: section 7.3.2 states that "A
 # dimension of size one may be the result of 'collapsing' an axis by some statistical
 # operation" and that "It is strongly recommended that dimensions of size one be retained
@@ -265,25 +279,56 @@ _CF_PERFORMANCE_VARIABLES: dict[str, dict[str, str | None]] = {
 # size-one `Rank` dimension is that carrier, and it is a "dimension of the variable" both in
 # the per-member store and after the consolidation concat (measured).
 #
-# THE TIME SUM IS NOT UNDOCUMENTED, it is documented on a channel with the grammar for it:
-# the dataset-level `notes` attr states the full reduction, and `_QUANTITY_PROVENANCE` is
-# the human-facing table. Section 7.3's "the method applies only to the axis designated in
-# cell_methods by name" means omitting an axis asserts nothing false about it.
+# THE VALUE IS A TWO-PAIR STRING AND EVERY ADMISSIBILITY CHECK ON IT IS PER PAIR. Section 7.3
+# defines the attribute as "a list of blank-separated words of the form name: method", so the
+# two pairs here take two DIFFERENT classes -- `time` by class 3 (7.3.4) and `Rank` by class 1
+# (a dimension of the variable). A predicate that splits on the colon does not produce a pair
+# structure at all: measured, `"time: sum Rank: maximum".split(":")` is
+# `['time', ' sum Rank', ' maximum']`, whose middle element carries the first pair's METHOD and
+# the second pair's NAME together. `tests/_cf_cell_methods_grammar.py` is the per-pair oracle,
+# and it deliberately imports nothing from this module.
+#
+# THE TIME SUM NOW REACHES THE CF CHANNEL, and that is the substantive reason this string moved.
+# Until 2026-10-01 this comment asserted that the sum was "documented on a channel with the
+# grammar for it: the dataset-level `notes` attr states the full reduction". That was MEASURED
+# FALSE: `notes` carries no reduction token at all, `_QUANTITY_PROVENANCE` covered 0 of the 13
+# performance columns, and the crate advertised no `measurementTechnique` for them -- so the
+# time reduction reached NO channel. The first pair is now where it is stated. Section 7.3's
+# "the method applies only to the axis designated in cell_methods by name" is why naming both
+# axes is a strengthening rather than a redundancy: the single-pair form asserted nothing false
+# about time, and also nothing true.
 #
 # `bounds` IS DELIBERATELY NOT SUPPLIED, and the decision is recorded rather than defaulted.
 # Section 7.3 pairs a non-`point` method with bounds ("should also be provided"), and section
 # 7.1 makes the shape a MUST: "A boundary variable must have one more dimension than its
-# associated coordinate or auxiliary coordinate variable." Both available forms fail. A
-# PER-MEMBER `Rank_bnds` of [0, n_ranks-1] concatenates to dims (event_iloc, Rank, nv) --
-# measured -- which is TWO more dimensions than the 1-d `Rank` coordinate it would be
-# attached to, violating that must in the consolidated product for structurally the same
-# reason the scalar-`Rank` form failed. An INVARIANT `Rank_bnds` does concatenate to the
-# conformant (Rank, nv), but a single literal extent is false for any member whose rank
-# count differs from it, and members in this corpus do differ -- `_export_performance_
-# summary`'s own comment handles "a 2-rank then 4-rank member". A shape-conformant lie and a
-# truthful shape violation are both worse than the omission, so the axis carries the method
+# associated coordinate or auxiliary coordinate variable."
+#
+# THE GROUND IS ONE TIER SIMPLER THAN THIS COMMENT CLAIMED UNTIL 2026-10-01, and the earlier
+# ground was a COUNTERFACTUAL that a reader holding only the deposited store could not resolve.
+# It argued that a per-member `Rank_bnds` of [0, n_ranks-1] concatenates to
+# `(event_iloc, Rank, nv)`, "TWO more dimensions than the 1-d `Rank` coordinate it would be
+# attached to" -- but THE SHIPPED STORE CARRIES NO `Rank` COORDINATE VARIABLE AT ALL. Measured
+# on `_aggregate_perf_summary`'s output: `"Rank" in ds.dims` is True while
+# `"Rank" in ds.coords` and `"Rank" in ds.variables` are both False, because
+# `max(dim="Rank", keepdims=True)` leaves a dimension WITHOUT a coordinate. Section 7.1's must
+# is stated over a boundary variable's ASSOCIATED coordinate variable, so with no such variable
+# there is nothing for a bounds variable to be associated with, and 7.3/7.3.4's bounds
+# recommendation is unsatisfiable here without first materializing a `Rank` coordinate -- an
+# on-disk schema change out of this scope. That is checkable against the store a reader holds;
+# the concat-shape argument was not.
+#
+# THE CARRIER CHOICE IS CF-CONFORMANT AS IT STANDS, and the disjunction is why. Section 7.3
+# admits "a dimension of the variable" DISJUNCTIVELY beside "a scalar coordinate variable", so
+# the `Rank` pair resolves on the dimension alone and needs no coordinate variable to be
+# admissible. Only `bounds` needs one, which is what makes the method supplied and the domain
+# declined rather than both standing or both falling.
+#
+# AND THE INVARIANT FORM FAILS FOR ITS OWN REASON, untouched by the above: a single literal
+# extent is false for any member whose rank count differs from it, and members in this corpus
+# do differ -- `_export_performance_summary`'s own comment handles "a 2-rank then 4-rank
+# member". A shape-conformant lie is worse than the omission, so the axis carries the method
 # and not the domain. `n_ranks` carries the extent as an ordinary variable instead.
-_PERF_SUMMARY_CELL_METHODS = "Rank: maximum"
+_PERF_SUMMARY_CELL_METHODS = "time: sum Rank: maximum"
 
 
 # The performance SUMMARY's variable descriptions: the timeseries entries above plus the
@@ -292,6 +337,21 @@ _PERF_SUMMARY_CELL_METHODS = "Rank: maximum"
 # thirteen-entry duplicate would invite on the next wording fix. Only `cell_methods`
 # differs, and it differs uniformly because every one of these thirteen columns is the same
 # `max(dim="Rank")` of the same time sum.
+#
+# THE `long_name` OWNERSHIP RULE, stated here because this derivation is the pattern it
+# generalises rather than an exception to it:
+#
+#     `cf_conventions.py` owns every `long_name` that reaches a deposited artifact;
+#     `_auto_long_name` is a FAILURE SIGNAL, not a label channel; and a derived family's
+#     label is DERIVED from its base entry's label, never restated.
+#
+# No other module authors a label for a deposited variable. Under this rule a reword of a parent
+# label propagates to every derived label automatically, so sequencing between the package that
+# rewords and the package that authors a derived family stops mattering -- which is the property
+# worth stating, rather than the sequence. `_auto_long_name` being a failure signal is not a
+# stylistic claim: measured, it produces `'Swmm xfer min'` for `SWMM_XFER_min`, mangling an
+# acronym the rest of this module preserves, and that string is what a deposited-dataset reader
+# saw for the derived family until the rank-axis table supplied declared labels.
 #
 # THE COHERENT AND `min` FAMILIES ARE DELIBERATELY ABSENT. `<Col>_coherent` is a SELECTION
 # at the single rank attaining max(Total), not a reduction over the rank axis, so
@@ -414,9 +474,17 @@ _CF_PERFORMANCE_RANK_AXIS_VARIABLES: dict[str, dict[str, str | None]] = {
     # absence-of-`units` is exactly the signal the 26 durations beside these were emitting wrongly --
     # leaving these two on absence would make one byte-level state carry both "declared
     # dimensionless" and "nobody supplied it" inside a single artifact.
+    # A COORDINATE VALUE, NOT AN INDEX, and the label said "Index" until 2026-10-01. The
+    # computation is `_summed["Rank"].where(_chosen).max(dim="Rank")` -- it reads the `Rank`
+    # COORDINATE's VALUE at the selected rank, never a positional index. The two coincide only
+    # while rank labels are contiguous from zero (they are, in every member of this corpus, so
+    # this is wrong in principle and correct in practice), and on a non-contiguous axis the
+    # coordinate value and the position diverge and an "index" label would be false. The field
+    # is additionally FLOAT, deliberately, so NaN can mean "no rank was selectable" -- which an
+    # "index" reading also misrepresents.
     "coherent_rank": {
         "standard_name": None,
-        "long_name": "Index on the Rank axis of the rank attaining max(Total); NaN when no rank was selectable",
+        "long_name": ("Value of the Rank coordinate at the rank attaining max(Total); NaN when no rank was selectable"),
         "units": "1",
         "cell_methods": None,
     },
@@ -429,9 +497,17 @@ _CF_PERFORMANCE_RANK_AXIS_VARIABLES: dict[str, dict[str, str | None]] = {
 }
 
 
-# Conduit velocity shares the scalar-speed standard_name with TRITON's max speed,
-# but uses `time:` rather than `timestep_min:` in cell_methods. When applied to
-# the SWMM link mode, this overrides the base entry above.
+# Conduit velocity shares the scalar-speed standard_name with TRITON's max speed. When applied
+# to the SWMM link mode, this overrides the base entry above.
+#
+# THE DISTINGUISHING FIELD IS `long_name`, NOT `cell_methods`, and it changed hands on
+# 2026-10-01. This comment previously read that the override "uses `time:` rather than
+# `timestep_min` in cell_methods" -- true until the base entries were respelled to `time:` in
+# the same commit, after which BOTH entries carry `time: maximum` and `cell_methods` discriminates
+# nothing. The surviving divergence is `long_name`: "Maximum conduit velocity" against the base's
+# "Maximum flood velocity", a line-geometry quantity against a grid-cell one. A reader checking
+# whether the override is still load-bearing must read that field; `cell_methods` now agrees by
+# CONVERGENCE on the conformant spelling, not by the override being redundant.
 _CF_VARIABLE_OVERRIDES_BY_MODE: dict[str, dict[str, dict[str, str | None]]] = {
     # The unsuffixed performance modes are the SUMMARY, not a shared name for both
     # artifacts. `processing_analysis._MODE_CONFIG` already binds each of these two keys to
@@ -471,12 +547,22 @@ _CF_VARIABLE_OVERRIDES_BY_MODE: dict[str, dict[str, dict[str, str | None]]] = {
 #
 # WHY THIS EXISTS SEPARATELY FROM `cell_methods`. `cell_methods` is a CF construct with a
 # constrained grammar; it cannot say "value selected at the final timestep", and it cannot
-# say whether the value describes a grid cell, a node, or a conduit. Two entries in the map
-# above demonstrate the gap directly: `wlevel_m_last_tstep` carries `timestep_min: point`,
+# say whether the value describes a grid cell, a node, or a conduit. One entry in the map
+# above demonstrates the gap directly: `wlevel_m_last_tstep` carries `time: point`,
 # but `point` in CF means the variable RETAINS the time dimension with no method applied,
 # whereas process_simulation.py:2516 is `ds["wlevel_m"].sel(timestep_min=tsteps.max())` --
-# a selection, not a reduction; and the SWMM-tier entries name `time:`, which is not a
-# dimension or coordinate of those variables (their dims are `event_iloc, link_id`).
+# a selection, not a reduction. That is the gap this table exists to fill, and `cell_methods`
+# has no grammar that could.
+#
+# THE SECOND EXAMPLE THIS COMMENT USED TO GIVE WAS NOT A GAP AT ALL AND IS WITHDRAWN. Until
+# 2026-10-01 it read that "the SWMM-tier entries name `time:`, which is not a dimension or
+# coordinate of those variables (their dims are `event_iloc, link_id`)" -- disparaging four of
+# this module's own CONFORMANT entries. CF-1.13 section 7.3.4 licenses `time` as a class-3
+# standard name and states its precondition as an ASSUMPTION OF ABSENCE: "it is assumed here
+# that ... `time` is not a dimension or coordinate variable." So `time` not being a dimension
+# of those variables is exactly WHAT MAKES the spelling admissible, not what forbids it. Left
+# standing, that sentence directed a maintainer to repair the conformant entries into the
+# non-conformant form.
 #
 # This table is the human-facing answer, rendered by the metadata report page. It does NOT
 # replace `cell_methods` on the data -- whether `cell_methods` is the right CF construct for
@@ -531,7 +617,7 @@ _QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
         "source_variables": "wlevel_m",
         # NOT a reduction: process_simulation.py:2516 is
         # ds["wlevel_m"].sel(timestep_min=tsteps.max()). The cell_methods string
-        # says "timestep_min: point", which describes a variable that KEEPS the
+        # says "time: point", which describes a variable that KEEPS the
         # time dimension with no method applied -- a different thing.
         "operation": "value selected at the final reported timestep",
         "operation_expr": "h(t_max)",
@@ -601,10 +687,15 @@ _QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
 #     _summed = ds.sum(dim="timestep_min", skipna=False)
 #     ds = _summed.max(dim="Rank", keepdims=True)
 #
-# so every descriptor below names BOTH axes. `_PERF_SUMMARY_CELL_METHODS` names only
-# `Rank: maximum`, because CF-1.13 section 7.3 admits no name for the summed-away
-# `timestep_min`; this table is the channel that module header already nominates for the
-# time sum ("`_QUANTITY_PROVENANCE` is the human-facing table").
+# so every descriptor below names BOTH axes, and so does `_PERF_SUMMARY_CELL_METHODS` as of
+# 2026-10-01. This comment previously read that the constant "names only `Rank: maximum`,
+# because CF-1.13 section 7.3 admits no name for the summed-away `timestep_min`" -- the premise
+# was about the SPELLING `timestep_min` and the conclusion was drawn about the AXIS. Section
+# 7.3.4 admits `time` as a class-3 standard name precisely BECAUSE no dimension or coordinate
+# of these variables is named `time`, so the constant is now the two-pair
+# `"time: sum Rank: maximum"`. This table remains the human-facing channel for what the
+# operation MEANS, which `cell_methods` has no grammar to say; it is no longer the ONLY channel
+# carrying the time reduction.
 #
 # ALL THIRTEEN DERIVATIONS ARE SOLVER-SIDE AND PER-RANK. The solver enforces
 # `SWMM_XFER + SWMM_MPI + SWMM_STEP + SWMM_OTHER == SWMM` on every emitted per-rank row;
@@ -887,8 +978,13 @@ def apply_cf_attributes(ds: xr.Dataset, mode: str) -> xr.Dataset:
         A processing_analysis `_MODE_CONFIG` key, or one of the write-path-only
         `*_performance_tseries` modes, which name an artifact that is never consolidated and
         therefore has no `_MODE_CONFIG` entry. Selects the mode-specific override when
-        present (e.g., SWMM link's cell_methods differs from TRITON, and the performance
-        summary carries a reduction the per-rank series must not).
+        present (e.g., SWMM link's `long_name` names a conduit where TRITON's names a grid
+        cell, and the performance summary carries a reduction the per-rank series must not).
+        The SWMM link override's distinguishing field is `long_name`, NOT `cell_methods`:
+        this sentence said `cell_methods` until 2026-10-01, which stopped being true when the
+        TRITON base entries were respelled to the conformant `time:` spelling in the same
+        commit. Both now read `time: maximum`, so the override is still load-bearing and
+        `cell_methods` is no longer what shows it.
     """
     overrides = _CF_VARIABLE_OVERRIDES_BY_MODE.get(mode, {})
     for var_name, da in ds.data_vars.items():

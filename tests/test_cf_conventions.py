@@ -28,7 +28,9 @@ def test_apply_cf_sets_standard_name_for_known_vars():
     ds = _build_triton_ds()
     apply_cf_attributes(ds, mode="tritonswmm_triton")
     assert ds["max_wlevel_m"].attrs["standard_name"] == "sea_surface_height_above_geoid"
-    assert ds["max_wlevel_m"].attrs["cell_methods"] == "timestep_min: maximum"
+    # CF 7.3.4 class 3: `time` is a valid standard_name and is NOT a dimension or coordinate of
+    # this variable, which is the PRECONDITION the class-3 form requires rather than a defect.
+    assert ds["max_wlevel_m"].attrs["cell_methods"] == "time: maximum"
     assert ds["max_velocity_mps"].attrs["standard_name"] == "sea_water_speed"
     # Coordinate attrs
     assert ds["x"].attrs["standard_name"] == "projection_x_coordinate"
@@ -44,10 +46,19 @@ def test_apply_cf_auto_generates_long_name_for_unknown_vars():
 
 
 def test_apply_cf_mode_override_for_swmm_link_velocity():
+    """`long_name` is the DISCRIMINATING field; the `cell_methods` assertion was DELETED.
+
+    A sibling assertion on `cell_methods == "time: maximum"` lived here until 2026-10-01. It
+    became VACUOUS rather than wrong in the same commit that respelled the TRITON base entries to
+    the conformant `time:` spelling: `apply_cf_attributes` substitutes WHOLE entries, so after the
+    respell the base entry's `cell_methods` is byte-identical to the override's and deleting the
+    override entirely would leave that assertion satisfied. A permanently-green assertion is worse
+    than an absent one, so the discrimination moves to `long_name` -- "Maximum conduit velocity"
+    against the base's "Maximum flood velocity" -- which is the field that still differs.
+    """
     ds = xr.Dataset({"max_velocity_mps": (("link_id",), np.zeros(4))})
     apply_cf_attributes(ds, mode="swmm_only_link")
     assert ds["max_velocity_mps"].attrs["long_name"] == "Maximum conduit velocity"
-    assert ds["max_velocity_mps"].attrs["cell_methods"] == "time: maximum"
 
 
 def test_apply_global_attributes_sets_conventions():

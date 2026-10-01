@@ -2419,7 +2419,7 @@ non_breaking_allowlist:
     justification: >-
       SEQUENCING ONLY, AND THIS ROW IS NOT THE NON-BREAKING CLASS THE PRIOR cf_conventions.py
       ROWS ARE. Read those first, because each asserts that only descriptive strings move and
-      this one CANNOT: WP-3B stamps `cell_methods = "Rank: maximum"` onto the thirteen
+      this one CANNOT: WP-3B stamps a `cell_methods` carrying a `Rank: maximum` pair onto the thirteen
       performance-summary columns, and the stamp is only ADMISSIBLE because its sibling edit
       retains `Rank` as a size-one DIMENSION on that artifact -- so the on-disk artifact SHAPE
       changes and a LAYOUT_VERSION bump IS owed. Adding an attr alone would be the
@@ -2439,15 +2439,30 @@ non_breaking_allowlist:
       `cell_methods`. The summary dict is DERIVED from the series dict rather than copied, so
       `standard_name` / `long_name` / `units` are physically incapable of drifting between the
       two artifacts. No existing key is removed and no existing string is edited.
-      WHY THE STRING IS `Rank: maximum` AND NOT THE FULL `timestep_min: sum Rank: maximum`
-      THAT THIS FILE'S OWN HEADER COMMENT NAMED. CF-1.13 section 7.3 admits a cell_methods
-      name only if it is "a dimension of the variable, a scalar coordinate variable, a valid
-      standard name, or the word `area`". After the summary's `sum(dim="timestep_min")`,
-      `timestep_min` is none of those four -- measured: the sum drops both the dimension and
-      the coordinate, and `timestep_min` occurs ZERO times in the CF-1.13 document, so it is
-      not a standard name either. Naming it would have shipped the same inadmissible form that
-      decision 6.2 rejected for a scalar `Rank`. The time sum is documented on the channels
-      with grammar for it: the dataset-level `notes` attr and `_QUANTITY_PROVENANCE`.
+      WHY THE RANK PAIR ALONE, AND NOT A TIME PAIR BESIDE IT, AT THE TIME OF THIS ROW. CF-1.13
+      section 7.3 admits a cell_methods name only if it is "a dimension of the variable, a scalar
+      coordinate variable, a valid standard name, or the word `area`". After the summary's
+      `sum(dim="timestep_min")`, the bare `timestep_min` name is none of those four -- measured:
+      the sum drops both the dimension and the coordinate, and `timestep_min` occurs ZERO times in
+      the CF-1.13 document, so it is not a standard name either. Naming it would have shipped the
+      same inadmissible form that decision 6.2 rejected for a scalar `Rank`.
+      THAT PREMISE IS ABOUT A SPELLING AND THE CONCLUSION DRAWN FROM IT WAS ABOUT AN AXIS, and the
+      step it stops one move short of is section 7.3.4's. 7.3.4 licenses the standard-name class
+      and names `time` in its own worked example -- "a cell_methods entry of `time: mean` (where
+      `time`, it should be noted, is a valid standard_name)" -- forbidding that form only "if the
+      name of a dimension or scalar coordinate variable is identical to name", and stating the
+      licensing condition as an ASSUMPTION OF ABSENCE: "(As required by this convention, it is
+      assumed here that ... `time` is not a dimension or coordinate variable.)" So the ABSENCE of a
+      time axis on this artifact is the PRECONDITION for `time` rather than the disqualifier it was
+      read as. The premise above is RETAINED unedited because every clause of it re-measures true;
+      only this step is new. WP-3F therefore moved the constant to the two-pair
+      `"time: sum Rank: maximum"`, after which the time reduction reaches the CF channel it had not
+      reached on any channel at all -- the claim this row previously made, that "the time sum is
+      documented on the channels with grammar for it: the dataset-level `notes` attr and
+      `_QUANTITY_PROVENANCE`", was MEASURED FALSE of `notes` (zero reduction tokens) and of
+      `_QUANTITY_PROVENANCE` (0 of 13 columns covered at the time). `_QUANTITY_PROVENANCE` now
+      covers the thirteen and remains the channel for what the operation MEANS, which cell_methods
+      has no grammar to say.
       WHY IT IS SAFE TO LAND AHEAD OF THE STAMP. It is additive on NEWLY-PRODUCED artifacts
       only, and it adds an ATTR rather than a name or a value. An artifact that predates this
       change carries no `cell_methods` on these columns and is read exactly as before --
@@ -2487,7 +2502,9 @@ non_breaking_allowlist:
       statistical operation" and that "It is strongly recommended that dimensions of size one
       be retained (or scalar coordinate variables be defined) to enable documentation of the
       method (through the `cell_methods` attribute)". With the axis fully collapsed, the
-      sibling edit's `"Rank: maximum"` would name nothing and be inadmissible.
+      sibling edit's `Rank: maximum` PAIR would name nothing and be inadmissible. (The TIME pair
+      beside it, added by WP-3F, is admissible by 7.3.4's class 3 with no retained axis at all, so
+      the retention argument is about the rank pair specifically and not about the whole string.)
       WHY NOT THE SCALAR COORDINATE THE SAME CF SENTENCE ALSO PERMITS, which would not have
       changed any variable's shape and would therefore not have needed this row. Measured to
       fail twice. A scalar documents a collapsed domain of ONE rank, true of a selection and
@@ -2546,7 +2563,8 @@ non_breaking_allowlist:
       EXPLICITLY rather than by omission.
       THE `cell_methods` EXCLUSION IS UNCHANGED AND DELIBERATE. A selection is not a reduction
       and a minimum names a different method, so no member of this family may carry the
-      summary's `Rank: maximum`. Measured 0-of-28 carrying `cell_methods` BOTH before and
+      summary's `cell_methods` (a `Rank: maximum` pair at the time of this row; a
+      `time: sum Rank: maximum` two-pair value after WP-3F). Measured 0-of-28 carrying `cell_methods` BOTH before and
       after; `cell_methods: None` is skipped by `_set_attrs`, so the exclusion holds by
       construction rather than by discipline. `units` and `cell_methods` are independent CF
       attributes and the reasoning that correctly declines the second says nothing about the
@@ -2670,3 +2688,57 @@ non_breaking_allowlist:
       should annotate all six as spent. Any change to this file's emitted variable set, dtypes,
       dims, coordinates, paths, log fields or written attrs is NOT this class and must ride its
       own bump.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: f43f116f80448a7dee8c310250b45ff466f26b2055355df70d6424f6c4323d90
+    justification: >-
+      SEQUENCING ONLY, AND IT IS THE DESCRIPTIVE-STRING CLASS THE SEVEN cf_conventions.py ROWS
+      ABOVE DESCRIBE -- read the WP-3B row in particular, which is the one that is NOT this class.
+      WP-3F edits only cell_methods VALUES, long_name strings and comments. No emitted variable
+      set, dtype, dim, coordinate, tree path, group name or log field moves, and no axis's
+      retention changes, so no on-disk SHAPE moves. A LAYOUT_VERSION bump is nevertheless owed
+      because WRITTEN ATTRS move on newly-produced artifacts, and the WP-3B row's own expiry
+      condition says so in terms: "Any FURTHER change to a mode key, to a `cell_methods` string, or
+      to the axis a `cell_methods` string names is NOT this class and must ride its own bump."
+      This row is the scheduling device that lets WP-3F land ahead of that bump; it is never a
+      claim that no migration is owed.
+      WHAT ACTUALLY CHANGES IN THIS FILE. `_PERF_SUMMARY_CELL_METHODS` becomes the two-pair
+      `"time: sum Rank: maximum"`; the three TRITON annotation values are respelled from
+      `timestep_min` to `time` (`time: maximum` twice and `time: point` once); `coherent_rank`'s
+      `long_name` is corrected from "Index on the Rank axis" to "Value of the Rank coordinate",
+      which it always was; the `long_name` ownership rule is stated; and four recorded false
+      negatives are repaired -- the claim that the time axis cannot be named at all, the claim
+      that the dataset-level `notes` attr states the full reduction, the claim that the SWMM-tier
+      `time:` entries name nothing, and the `bounds` decision's counterfactual premise about "the
+      1-d `Rank` coordinate it would be attached to", which the store does not carry.
+      WHY THE RESPELL IS A CONFORMANCE FIX RATHER THAN A RENAME. CF-1.13 section 7.3 admits a
+      cell_methods name only if it is a dimension of the variable, a scalar coordinate variable, a
+      valid standard name, or `area`. No store this toolkit writes carries a `timestep_min`
+      dimension alongside these variables and `timestep_min` occurs ZERO times in the CF document,
+      so the old spelling named nothing in any store; section 7.3.4 admits `time` as a class-3
+      standard name precisely BECAUSE no dimension or coordinate here is named `time`. The three
+      respelled values therefore go from inadmissible to admissible, and four sibling SWMM entries
+      were already spelled `time:` and correct.
+      WHY IT IS SAFE TO LAND AHEAD OF THE STAMP. It is additive-and-corrective on NEWLY-PRODUCED
+      artifacts only, and every edit replaces one attr STRING with another. An artifact that
+      predates this change keeps whatever string it was stamped with and is read exactly as before
+      -- `apply_cf_attributes` is called at read/consolidation time and stamps whatever it is
+      given, so nothing on disk needs transforming. That is the condition V0011 / V0016 / V0023
+      were written for and is why V0024's body is a no-op rather than a backfill.
+      THE 28 FIXTURE-MANIFEST LINES ARE A KNOWN, RECORDED RESIDUAL AND ARE NOT COVERED BY THIS ROW.
+      `tests/fixtures/bundles/**/peak_flood_depth.manifest.json` carries the old `timestep_min:`
+      spelling on 28 lines that no assertion in the suite evaluates. They are held because
+      regenerating those bundles needs a synth cache whose documented population path is a
+      prohibited-venue run, not because the staleness is acceptable.
+      CHANGE-SCOPED via layout_signature, and APPENDED rather than edited in place so the prior
+      rows' ground stays readable. The signature is this file's POST-EDIT sha256, derived by two
+      independent implementations that agreed; omitting the field would INHERIT the provenance-
+      overlay row's signature, which no longer matches this content, and check-b would keep
+      failing. Editing an existing row instead of appending would also be wrong: the loader merges
+      a signature forward precisely so an append cannot silently downgrade a change-scoped path to
+      permanently exempt.
+      EXPIRY CONDITION. This row covers the cell_methods respell, the summary constant, the
+      `coherent_rank` label and the comment repairs at exactly this content and nothing else; it
+      re-covers none of the seven rows above, each of which expires on its own terms. All eight are
+      superseded the moment WP-3E stamps LAYOUT_VERSION 24, and WP-3E should annotate all eight as
+      spent. Any change to this file's emitted variable set, dtypes, dims, coordinates, paths, log
+      fields or written attrs is NOT this class and must ride its own bump.
