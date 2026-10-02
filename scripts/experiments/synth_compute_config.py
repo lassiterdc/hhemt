@@ -118,6 +118,7 @@ def _build_case(
     model_arm: str = "tritonswmm",
     resume_interruption_schedule: tuple[int, ...] = _RESUME_INTERRUPTION_SCHEDULE,
     ensemble_partition: str = "gpu-a6000",
+    swmm_snapshot_disable: bool = False,
 ) -> _Case:
     """Materialize the synthetic UVA case and return an object exposing ``.analysis``.
 
@@ -164,6 +165,17 @@ def _build_case(
         if hpc_system_config_yaml is not None
         else Path(__file__).parent / "hpc_system_config_synth_uva.yaml"
     )
+
+    # A3's arm selector, and it is injected ONLY when True rather than always.
+    # TWO reasons, and the second is the one that is easy to miss.
+    # (1) An always-present key would write `swmm_snapshot_disable: false` into the PERSISTED
+    #     analysis_config.yaml of every existing arm, so those input configs would stop being
+    #     byte-identical to what they are today for no behavioural gain.
+    # (2) The persisted config is the ONLY route that reaches the emission. The cfg is written by
+    #     prepare_scenario_runner.py, a SUBPROCESS that re-loads `--analysis-config` FROM DISK, so
+    #     setting the attribute on an already-constructed analysis object is a silent no-op. It has
+    #     to travel as config text, which is what `additional_analysis_configs` is for.
+    snapshot_disable_cfg = {"swmm_snapshot_disable": True} if swmm_snapshot_disable else {}
 
     case = retrieve_synth_TRITON_SWMM_test_case(
         analysis_name=analysis_name,
@@ -255,6 +267,7 @@ def _build_case(
                     "group_by_var": "run_mode",
                 },
             },
+            **snapshot_disable_cfg,
         },
     )
     return _Case(analysis=case.analysis, system_directory=str(case.system.cfg_system.system_directory))
@@ -347,6 +360,7 @@ def resume_case(
     tritonswmm_software_directory: str | None = None,
     model_arm: str = "tritonswmm",
     variant: str = "",
+    swmm_snapshot_disable: bool = False,
 ) -> _Case:
     """Resume demo (Option-D deterministic single kill): the runner SIGKILLs the
     fresh first attempt mid-sim after N hotstart checkpoints; the Snakemake retry
@@ -409,6 +423,7 @@ def resume_case(
         tritonswmm_git_url=tritonswmm_git_url,
         tritonswmm_software_directory=tritonswmm_software_directory,
         model_arm=model_arm,
+        swmm_snapshot_disable=swmm_snapshot_disable,
     )
 
 
@@ -461,6 +476,8 @@ def build_resume_from_clean_runtimes(
     tritonswmm_software_directory: str | None = None,
     model_arm: str = "tritonswmm",
     variant: str = "",
+    clean_variant: str | None = None,
+    swmm_snapshot_disable: bool = False,
 ) -> _Case:
     """Two-pass (FQ3): read each completed clean-sweep member_id's full-completion
     wallclock and size the resume walltimes to force a mid-sim kill (~T/3), then
@@ -481,6 +498,25 @@ def build_resume_from_clean_runtimes(
     caller genuinely needing asymmetric infixes must add a second parameter and argue for it; do
     not reach for that to work around a mis-set ``clean_system_directory``.
 
+    ``clean_variant`` IS that second parameter, and this is the argument for it. It defaults to
+    ``None``, which resolves to ``variant`` and reproduces the coupling above EXACTLY -- every
+    existing caller is byte-unaffected, and the asymmetric pair stays unwritable unless a caller
+    names it. The caller that needs it is the b4b re-run's THIRD arm, ``A3``: two resume arms sit at
+    the SAME solver pin and differ only in which resume path they exercise -- ``A2`` takes the
+    full-precision state snapshot, ``A3`` is forced onto the old exchange-replay fallback by
+    ``swmm_snapshot_disable=1`` -- and BOTH are compared against the ONE same-pin clean arm ``A1``,
+    which is minted at ``variant="P"``. So ``A3`` needs the clean infix ``P`` (to locate ``A1``) and
+    a resume infix that is NOT ``P`` (because ``synth_cc_resumeP_tritonswmm`` is already ``A2``, and
+    the docstring above gives the reason that collision is unacceptable: two resume arms sharing one
+    inner analysis name reproduce the wrong-pin-at-a-plausible-path ambiguity one level down). One
+    parameter cannot express that pair, which is exactly the case this parameter is added for.
+
+    WHAT IT DOES NOT LICENSE. It does not make the clean arm optional or the pairing advisory: the
+    internal read is still LIVE against ``clean_system_directory``, so naming a clean infix whose
+    arm is absent or incomplete still raises, which is the stop described below and is deliberately
+    preserved. Do not reach for this parameter to work around a mis-set ``clean_system_directory``
+    either -- that is the same misuse the paragraph above warns about, and it now has a second door.
+
     WHAT THAT INTERNAL READ IS AND IS NOT, because its name oversells it. ``size_resume_walltimes``
     is called and its result is DISCARDED — ``resume_case`` accepts ``runtime_min_by_member`` and
     forwards it nowhere (``_build_case`` has no such parameter, and ``write_resume_matrix_csv`` is
@@ -493,6 +529,11 @@ def build_resume_from_clean_runtimes(
     """
     from hhemt.synthetic_experiment import size_resume_walltimes
 
+    # None resolves to `variant`, so the symmetric pairing above is preserved byte-for-byte for
+    # every caller that does not name an asymmetric pair. An empty STRING is a real, distinct
+    # value here -- it names the un-infixed clean arm `synth_cc_clean_{model_arm}` -- so the
+    # resolution tests `is None` rather than falsiness.
+    clean_infix = variant if clean_variant is None else clean_variant
     clean = clean_case(
         system_directory=clean_system_directory,
         cell_size_m=cell_size_m,
@@ -501,7 +542,7 @@ def build_resume_from_clean_runtimes(
         tritonswmm_git_url=tritonswmm_git_url,
         tritonswmm_software_directory=tritonswmm_software_directory,
         model_arm=model_arm,
-        variant=variant,
+        variant=clean_infix,
     )
     runtime_min_by_member = size_resume_walltimes(clean.analysis)
     return resume_case(
@@ -514,6 +555,10 @@ def build_resume_from_clean_runtimes(
         tritonswmm_software_directory=tritonswmm_software_directory,
         model_arm=model_arm,
         variant=variant,
+        # Forwarded to the RESUME arm only. The clean read above must NEVER carry it: the clean
+        # arm never resumes, so the key would have no effect on its behaviour but WOULD land in
+        # its reconstructed config, and `A1` is the shared comparand for both resume arms.
+        swmm_snapshot_disable=swmm_snapshot_disable,
     )
 
 

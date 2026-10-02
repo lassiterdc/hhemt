@@ -161,6 +161,13 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     # docstring names — which had been red for both fields.
     "resume_interruption_schedule": "experiment",
     "toggle_consolidate_timeseries": "experiment",
+    # "experiment" by the RULE above (non-Path, not an HPC-execution field) and
+    # independently by SIBLING CONSISTENCY with `resume_interruption_schedule`
+    # directly above: both are resume-EXPERIMENT arm selectors, and this one
+    # DEFINES which resume path the arm exercises. A reproducer must KEEP it, not
+    # Supply or Amend it — amending it silently converts a replay arm into a
+    # snapshot arm, which is the one comparison the arm exists to make.
+    "swmm_snapshot_disable": "experiment",
     # per-sim-event-labeling: names the presentation column on the user's own
     # weather_events_to_simulate CSV. "experiment" by the RULE above (non-Path,
     # not an HPC-execution field), and independently by SIBLING CONSISTENCY --

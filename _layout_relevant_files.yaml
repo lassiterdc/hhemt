@@ -2931,3 +2931,73 @@ non_breaking_allowlist:
       calls these rows 'an append-LOG' whose 'justifications are the audit trail', and a
       superseded row is already never consulted, so deleting it costs its justification and
       buys nothing mechanical.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 76eaaf8a36097760f1aea26b81d1969ebb2d5b8b2d38829be6771d4bd8f75d51
+    justification: >-
+      NON-BREAKING. Adds ONE field, swmm_snapshot_disable (bool, default False), the arm selector
+      that makes the toolkit emit the TRITON cfg key `swmm_snapshot_disable=1` for a COUPLED
+      scenario, which forces a coupled hotstart resume onto the old exchange-replay fallback
+      instead of the full-precision state snapshot. Same class as the
+      hpc_runtime_min_for_analysis_output_consolidation row (2ea7e707) and the
+      toggle_consolidate_timeseries class before it: INPUT-config schema only, and the DEFAULT is
+      what makes it non-breaking. False appends NOTHING, so the cfg emitted for every existing
+      phase -- clean, cleanP, resume, resumeP, clean_ornl, resume_ornl -- is byte-identical to what
+      the pre-change code emitted, and the write-or-skip decision at the emission site is
+      unchanged as well. This is asserted rather than argued:
+      tests/test_snapshot_disable_cfg_emission.py::test_unset_field_returns_the_input_object_unchanged
+      asserts OBJECT IDENTITY on the no-op path, so no byte can differ, and
+      ::test_unset_field_emits_a_cfg_with_no_snapshot_disable_key reads the written file back.
+      No field is removed, renamed, retyped or given a new default; no validator changes; every
+      config that loaded before loads identically. Nothing on an existing analysis tree changes --
+      no _version.json field, no figure stem, no zarr group, variable, dtype, attr or chunk, no log
+      field, no _status flag name. The ONE on-disk artifact the field can reach is a per-scenario
+      TRITON cfg, and only for a run that OPTS IN by setting the field; no existing tree is
+      perturbed and no migration could act on a tree that does not yet exist. This file is
+      layout-relevant only via the src/hhemt/config/**/*.py glob and is NOT in
+      layout_relevant.paths. NOT covered by the 501822e0 row, which scopes itself to description
+      text and excludes field additions by its own expiry condition. EXPIRY CONDITION: covers this
+      ONE additive optional field with a behaviour-preserving default. Any field removal, rename,
+      retype, default change, or an addition whose default changes emitted output is NOT this class.
+  - path: src/hhemt/scenario.py
+    layout_signature: bba528e3900fbc50e89216b287f301918d561c9a0219ee550810e99f29c79ad5
+    justification: >-
+      NON-BREAKING. Adds a module-level constant SWMM_SNAPSHOT_DISABLE_KEY and a pure text helper
+      append_swmm_snapshot_disable(cfg_content, disable), and calls it ONCE from
+      _generate_TRITON_SWMM_cfg's existing post-processing block. With swmm_snapshot_disable False
+      -- the default, and the value every existing phase carries -- the helper returns its input
+      OBJECT unchanged, so the emitted cfg bytes and the write-or-skip decision are both identical
+      to the pre-change code. The write gate moves from `if "output_folder" not in cfg_content` to
+      `if cfg_content != cfg_as_written`, which is the SAME predicate whenever the field is False.
+      compute_event_id_slug is NOT touched, so Check B's AST-normalized hash of that function is
+      unaffected -- verified by running check-b. The TRITON-only generator is unmodified and is
+      asserted to remain so by
+      tests/test_snapshot_disable_cfg_emission.py::test_only_the_coupled_generator_appends_the_key,
+      which walks live source and fails if a second call site appears. Nothing on an existing
+      analysis tree changes -- no path, no slug, no directory name, no log field, no _status flag
+      name, no zarr artifact. The only on-disk effect is one appended LINE in a per-scenario TRITON
+      cfg, and only for a run that opts in. The emission is deliberately NOT a template placeholder:
+      utils.fill_template routes to string.Template.safe_substitute and ONE template feeds BOTH cfg
+      generators, so a placeholder added for the coupled mapping alone would be emitted into the
+      TRITON-only cfg as the LITERAL text ${...} with no error at write time. EXPIRY CONDITION:
+      covers this one additive helper and its single coupled call site. Any change to a
+      ScenarioPaths field, an event_id slug, a directory name, a log field or compute_event_id_slug
+      is NOT this class.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: 1e14434cb01445aa7d63cb7c5f5e7c8a5ebaa0900c3a1a7dad1d113c7e4f443d
+    justification: >-
+      NON-BREAKING and MANDATORY rather than optional. Adds ONE _FIELD_BUCKET entry,
+      swmm_snapshot_disable -> "experiment", required by the bidirectional totality gates
+      tests/test_reprex_taxonomy.py::test_field_bucket_is_total and
+      tests/test_synth_metadata_renderer.py::test_every_config_field_appears_exactly_once, both of
+      which go RED on any new config field carrying no bucket. "experiment" by the table's own
+      stated RULE (non-Path, not an HPC-execution field) and independently by sibling consistency
+      with resume_interruption_schedule directly above it: both are resume-EXPERIMENT arm
+      selectors. The bucket is semantically load-bearing rather than bookkeeping -- it is what
+      tells a reproducer to KEEP the value, and Amending it would silently convert a replay arm
+      into a snapshot arm, which is the one comparison the arm exists to make. Same class as the
+      resume_interruption_schedule / toggle_consolidate_timeseries / weather_event_label_column
+      rows this table already records. No bucket is changed or removed, no classifier logic
+      changes, and the scrub and amendment behaviour of every existing field is untouched. This
+      file is layout-relevant only via the src/hhemt/config/**/*.py glob and reaches no on-disk
+      analysis artifact. EXPIRY CONDITION: covers this ONE additive bucket entry. Changing or
+      removing an existing field's bucket, or editing a classifier function, is NOT this class.

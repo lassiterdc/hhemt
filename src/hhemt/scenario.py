@@ -350,6 +350,45 @@ def compute_event_id_slug(weather_event_indexers: dict) -> str:
     return "_".join(f"{idx}.{val}" for idx, val in weather_event_indexers.items())
 
 
+#: The TRITON cfg key that forces a COUPLED hotstart resume onto the old exchange-replay
+#: fallback instead of the full-precision state snapshot. The solver reads it through
+#: `argsd("swmm_snapshot_disable", argmap, "0")`; setting it to 1 leaves the solver's
+#: `snapshot_path_stem` EMPTY, which is the predicate the snapshot writer, the snapshot
+#: restorer and the missing-snapshot classifier all share.
+#:
+#: THIS SPELLING IS A CROSS-REPOSITORY CONTRACT, not a local name. Arm membership for the
+#: bit-for-bit re-run is established iff a member's own `config_{k}.cfg` carries the literal
+#: `swmm_snapshot_disable=1`, which the solver's cfg rewriter carries forward verbatim as an
+#: unknown-key passthrough. Renaming it here without renaming the solver's argsd read AND
+#: that membership predicate in the same change silently unassigns every member from its arm,
+#: with no compile error and no test failure in this repository.
+SWMM_SNAPSHOT_DISABLE_KEY = "swmm_snapshot_disable"
+
+
+def append_swmm_snapshot_disable(cfg_content: str, disable: bool) -> str:
+    """Append the snapshot-disable cfg line when `disable`, else return the text UNCHANGED.
+
+    Pure text transform, deliberately NOT a template placeholder. A placeholder cannot
+    express this: `utils.fill_template` routes to `string.Template.safe_substitute`, and the
+    ONE template is shared by the coupled and the TRITON-only cfg generators, so a placeholder
+    added for the coupled mapping alone would be emitted into the TRITON-only cfg as the
+    LITERAL text `${...}` with no error at write time. Appending from the coupled generator
+    instead means no placeholder exists to go unmapped, and the TRITON-only path is untouched
+    by construction rather than by a guard someone has to maintain.
+
+    `disable=False` returns the SAME object, so the no-op case cannot perturb a byte and the
+    caller's write-or-skip decision is unchanged from before this function existed. The write
+    is idempotent: an input already carrying the key at line start is returned unchanged, so a
+    re-prepared scenario does not accumulate duplicate lines.
+    """
+    if not disable:
+        return cfg_content
+    if f"\n{SWMM_SNAPSHOT_DISABLE_KEY}=" in f"\n{cfg_content}":
+        return cfg_content
+    separator = "" if cfg_content.endswith("\n") else "\n"
+    return f"{cfg_content}{separator}{SWMM_SNAPSHOT_DISABLE_KEY}=1\n"
+
+
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
 
@@ -785,9 +824,18 @@ class TRITONSWMM_scenario:
 
         # Post-process to add output_folder for TRITON-SWMM outputs
         cfg_content = self.scen_paths.triton_swmm_cfg.read_text()
+        cfg_as_written = cfg_content
         if "output_folder" not in cfg_content:
             # Insert after dem_filename line
             cfg_content = cfg_content.replace("\ndem_filename=", '\noutput_folder="out_tritonswmm"\ndem_filename=')
+        # Arm selector for the coupled resume path. Appended HERE and only here: the key gates
+        # the SWMM coupling surface, so the TRITON-only generator below must never carry it.
+        # The write is now gated on "did the text change" rather than on the output_folder
+        # probe alone, which is the SAME condition whenever swmm_snapshot_disable is False —
+        # so a run that leaves the field unset writes the same bytes, or skips the write, exactly
+        # as it did before this block existed.
+        cfg_content = append_swmm_snapshot_disable(cfg_content, self._analysis.cfg_analysis.swmm_snapshot_disable)
+        if cfg_content != cfg_as_written:
             self.scen_paths.triton_swmm_cfg.write_text(cfg_content)
 
         self.log.triton_swmm_cfg_created.set(True)
