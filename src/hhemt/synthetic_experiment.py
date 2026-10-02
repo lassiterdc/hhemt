@@ -344,14 +344,34 @@ def write_resume_matrix_csv(
 
 
 def size_resume_walltimes(clean_analysis) -> dict[str, int]:
-    """Two-pass (FQ3): read each clean-sweep member_id's full-completion wallclock
-    (minutes) from the completed clean analysis, for feeding
-    ``write_resume_matrix_csv(runtime_min_by_member=...)``.
+    """Read each clean-sweep member_id's full-completion wallclock (minutes) from the
+    completed clean analysis.
 
     Source: ``df_status['perf_Total']`` (cumulative wallclock in seconds -> /60),
     max over each member's rows. On the CLEAN run this equals SLURM ``Elapsed`` because
     clean is never resumed (perf_Total only exceeds Elapsed when resumes occurred).
     Run AFTER the clean sweep has completed.
+
+    THIS RETURN VALUE NO LONGER FEEDS ANYTHING, and the docstring said otherwise until
+    2026-10-02. It directed the reader to feed the result to
+    ``write_resume_matrix_csv(runtime_min_by_member=...)`` — a keyword that does not exist
+    on that function, as ``write_resume_matrix_csv``'s OWN docstring states three paragraphs
+    up ("This retires the old ``round(T_member / kill_divisor)`` short-walltime sizing (and
+    its ``runtime_min_by_member`` two-pass dependency)"). The two docstrings in this one file
+    contradicted each other, and the stale half is the one a reader tracing the chain reaches
+    first. Under Option D the kill is a deterministic checkpoint-count SIGKILL and every
+    resume row carries the same generous ``_CLEAN_WALLTIME_MIN`` as the clean sweep, so no
+    walltime is sized from any clean run.
+
+    WHAT THE CALL IS STILL FOR, which is the only reason not to delete it. Its sole caller
+    ``build_resume_from_clean_runtimes`` discards the dict (``resume_case`` accepts
+    ``runtime_min_by_member`` and forwards it nowhere). What survives is that this function
+    performs a LIVE READ which can RAISE: ``df_status`` is a compute-on-read property and
+    ``dropna(subset=["perf_Total"])`` raises ``KeyError`` when the column is absent. So the
+    call is now a de-facto PRECONDITION CHECK on the paired clean arm's completeness, not a
+    sizing pass. Anyone removing it should remove that check knowingly rather than as dead
+    code — and anyone reasoning about campaign parallelism should note the clean->resume
+    ordering edge comes from THIS read, not from a walltime computation.
     """
     df = clean_analysis.df_status
     return (

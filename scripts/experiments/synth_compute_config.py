@@ -346,6 +346,7 @@ def resume_case(
     tritonswmm_git_url: str | None = None,
     tritonswmm_software_directory: str | None = None,
     model_arm: str = "tritonswmm",
+    variant: str = "",
 ) -> _Case:
     """Resume demo (Option-D deterministic single kill): the runner SIGKILLs the
     fresh first attempt mid-sim after N hotstart checkpoints; the Snakemake retry
@@ -364,6 +365,27 @@ def resume_case(
 
     Pass ``system_directory`` on Rivanna to root the case under project space (Decision 4), e.g.
     ``"/project/{your-allocation}/{username}/norfolk/synth_compute_config/synth_cc_resume"``.
+
+    ``variant`` is an INFIX on the analysis name: ``synth_cc_resume{variant}_{model_arm}``, the exact
+    mirror of ``clean_case``'s. Default ``""`` reproduces ``synth_cc_resume_{model_arm}``
+    byte-for-byte, so every existing caller is unaffected. ``variant="_ornl"`` yields
+    ``synth_cc_resume_ornl_tritonswmm`` — the ORNL-UPSTREAM-pinned resume arm of the solver-version
+    control, whose comparand is the ORNL-pinned clean arm rather than either fork-pinned arm.
+
+    WHY THIS PARAMETER EXISTS AT ALL, since the CLI deliberately does not expose it. The analysis
+    name is composed HERE and nowhere else, so it is the only place a caller can vary it; an estate
+    driver that needs two resume arms at two different solver pins can distinguish their OUTER
+    folders via ``system_directory`` but could not distinguish their INNER analysis names without
+    this. The path is DOUBLED (``{system_directory}/{analysis_name}``), and the inner layer is the
+    one the b4b design calls load-bearing: its measured lesson is that a wrong-pin arm at a
+    plausible path passed every structural guard and was discriminated from the reference arm by
+    its PIN alone. Two resume arms sharing the inner name ``synth_cc_resume_{model_arm}`` reproduce
+    exactly that ambiguity one level down.
+
+    THE SAME ARM-AGREEMENT ARGUMENT APPLIES AS ON ``clean_case`` and is the reason this is an infix
+    rather than a full ``analysis_name`` override: a free-form name could claim ``tritonswmm`` while
+    ``model_arm`` enabled ``triton``, with nothing raising. Composing from ``model_arm`` makes that
+    disagreement unwritable.
     """
     _GENERATED.mkdir(parents=True, exist_ok=True)
     csv = _GENERATED / "resume_matrix.csv"
@@ -376,7 +398,7 @@ def resume_case(
     # This supersedes the prior short-walltime + repeated-driver-re-invocation
     # scheme (both retired).
     return _build_case(
-        analysis_name=f"synth_cc_resume_{model_arm}",
+        analysis_name=f"synth_cc_resume{variant}_{model_arm}",
         sensitivity_csv=csv,
         start_from_scratch=start_from_scratch,
         resume=True,
@@ -438,6 +460,7 @@ def build_resume_from_clean_runtimes(
     tritonswmm_git_url: str | None = None,
     tritonswmm_software_directory: str | None = None,
     model_arm: str = "tritonswmm",
+    variant: str = "",
 ) -> _Case:
     """Two-pass (FQ3): read each completed clean-sweep member_id's full-completion
     wallclock and size the resume walltimes to force a mid-sim kill (~T/3), then
@@ -447,6 +470,26 @@ def build_resume_from_clean_runtimes(
     ``hhemt.synthetic_experiment.size_resume_walltimes`` (df_status['perf_Total'];
     on the clean run this equals SLURM Elapsed because clean is never resumed).
     ``cell_size_m`` MUST match the clean sweep's for a valid byte-identity compare.
+
+    ``variant`` is forwarded to BOTH the internal ``clean_case`` read AND the returned
+    ``resume_case``, which is a DELIBERATE COUPLING and not an oversight. The internal read exists
+    only to locate the clean arm this resume arm pairs with, so its analysis name MUST be the one
+    the clean arm was actually minted under: a resume arm at ``variant="_ornl"`` whose internal read
+    reconstructed ``synth_cc_clean_{model_arm}`` would point at a directory that does not exist
+    under ``clean_system_directory``. One parameter therefore enforces the invariant that the pair
+    shares an infix, and an asymmetric pair is UNWRITABLE rather than merely discouraged. A future
+    caller genuinely needing asymmetric infixes must add a second parameter and argue for it; do
+    not reach for that to work around a mis-set ``clean_system_directory``.
+
+    WHAT THAT INTERNAL READ IS AND IS NOT, because its name oversells it. ``size_resume_walltimes``
+    is called and its result is DISCARDED — ``resume_case`` accepts ``runtime_min_by_member`` and
+    forwards it nowhere (``_build_case`` has no such parameter, and ``write_resume_matrix_csv`` is
+    called bare). Under Option D the kill is a deterministic checkpoint-count SIGKILL and every row
+    carries the generous clean walltime, so nothing is sized from the clean sweep any more. What
+    SURVIVES is that the read is LIVE: it touches ``clean_analysis.df_status`` and
+    ``dropna(subset=["perf_Total"])``, so it can raise against an incomplete or absent clean tree.
+    That is the real reason ``clean_system_directory`` must name the pair's OWN clean arm — not
+    walltime provenance, which no longer exists.
     """
     from hhemt.synthetic_experiment import size_resume_walltimes
 
@@ -458,6 +501,7 @@ def build_resume_from_clean_runtimes(
         tritonswmm_git_url=tritonswmm_git_url,
         tritonswmm_software_directory=tritonswmm_software_directory,
         model_arm=model_arm,
+        variant=variant,
     )
     runtime_min_by_member = size_resume_walltimes(clean.analysis)
     return resume_case(
@@ -469,6 +513,7 @@ def build_resume_from_clean_runtimes(
         tritonswmm_git_url=tritonswmm_git_url,
         tritonswmm_software_directory=tritonswmm_software_directory,
         model_arm=model_arm,
+        variant=variant,
     )
 
 
@@ -762,9 +807,16 @@ def _cli() -> None:
         sp.add_argument("--tritonswmm-software-directory", default=None)
         sp.add_argument("--eda", action="store_true")
         sp.add_argument("--bundle", action="store_true")
-    # CLEAN ONLY. `variant` is an infix on the analysis name and the resume arm has no analogue —
-    # offering it on `resume` would let an operator mint a resume tree whose name claims a clean
-    # variant. Default "" keeps every existing `clean` invocation byte-identical.
+    # CLEAN ONLY ON THIS CLI SURFACE, and the reason is no longer that the resume arm lacks the
+    # parameter — `resume_case` and `build_resume_from_clean_runtimes` BOTH accept `variant` now,
+    # because the ORNL-pinned solver-version control needs a resume arm whose INNER analysis name
+    # differs from the fork-pinned one. What stays CLI-clean-only is the FLAG, and that is a
+    # surface decision rather than a capability one: a resume arm's variant must MATCH its paired
+    # clean arm's (the internal clean read resolves `synth_cc_clean{variant}_{arm}`), and this CLI
+    # exposes no way to state the pair, so an operator-supplied `--variant` on `resume` could
+    # silently name a clean tree that does not exist. The estate driver calls the Python factories
+    # directly and sets both halves of the pair at one site, which is where the invariant is
+    # expressible. Default "" keeps every existing `clean` invocation byte-identical.
     _by_name["clean"].add_argument(
         "--variant",
         default="",
@@ -843,8 +895,11 @@ def _cli() -> None:
 
     if args.cmd in ("clean", "resume"):
         factory = clean_case if args.cmd == "clean" else resume_case
-        # `variant` exists on clean_case only; pass it only where the parser defined it so the
-        # resume path's call signature is byte-identical to before.
+        # `resume_case` ALSO accepts `variant` now, so this guard is no longer about capability —
+        # it mirrors the parser, which defines `--variant` on the `clean` subparser only (see the
+        # CLI-surface comment above for why). Passing it only where the parser defined it keeps the
+        # resume path's call signature byte-identical to before and keeps `args.variant` from being
+        # read on a namespace that has no such attribute.
         extra = {"variant": args.variant} if args.cmd == "clean" else {}
         case = factory(
             system_directory=args.system_directory,
