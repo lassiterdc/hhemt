@@ -534,7 +534,36 @@ def _shas_agree(stamped: str, expected: str) -> bool:
     return a.startswith(b) or b.startswith(a)
 
 
-def check_arm_pin_stamp(arm_root: Path, expected_sha: str) -> dict:
+def declared_member_count(*, rank_sweep: tuple[int, ...] | None = None) -> int:
+    """The clean/resume sweep's DECLARED member count — its sensitivity-matrix row count.
+
+    This is the ``expected_members`` input to ``check_arm_pin_stamp`` for a caller that has no live
+    case to count (the stand-alone ``stamp-check`` phase). It is DERIVED from the matrix builder
+    rather than written as a literal ``30``, so it moves with ``rank_sweep`` instead of silently
+    disagreeing with an arm minted under a different sweep.
+
+    Serves BOTH sweeps: ``write_clean_matrix_csv`` and ``write_resume_matrix_csv`` both emit
+    ``_rows(_configs(rank_sweep))``, differing only in per-row walltime, so their row counts are
+    equal by construction (measured: 30 and 30 at the default sweep, with 30 unique ``member_id``
+    in each). The count goes through the PUBLIC writer that ``clean_case`` itself calls, so it
+    cannot drift from what the mint actually declares.
+
+    A caller that DOES hold the minted case should pass ``len(case.analysis.sensitivity.members)``
+    instead — that is the realized population, and it is strictly better evidence than a
+    re-derivation of the matrix.
+    """
+    import tempfile
+
+    import pandas as pd
+
+    kwargs = {} if rank_sweep is None else {"rank_sweep": tuple(rank_sweep)}
+    with tempfile.TemporaryDirectory() as tmp:
+        csv = Path(tmp) / "matrix.csv"
+        write_clean_matrix_csv(csv, **kwargs)
+        return len(pd.read_csv(csv))
+
+
+def check_arm_pin_stamp(arm_root: Path, expected_sha: str, *, expected_members: int) -> dict:
     """MINT-TIME stamp check for one comparand arm. Returns a verdict dict; raises nothing.
 
     This is the TERM of §10 item 12's routed mechanics: immediately after ``A1`` is minted and
@@ -549,30 +578,55 @@ def check_arm_pin_stamp(arm_root: Path, expected_sha: str) -> dict:
     capture it while 2 resume arms do not). An intermittent ~32% failure with an unisolated cause
     cannot be shown not to recur, which is the argument FOR a positive check at mint time.
 
-    THE DENOMINATOR IS PART OF THE VERDICT, and that is the whole reason ``NOT-EVALUATED`` exists
-    here. A verdict derived as "no bad stores were found" cannot distinguish "examined 30, all good"
-    from "examined 0" — and zero stores is the likelier of the two on a path typo, because every
-    glob returns empty on a wrong root. So ``examined == 0`` is ``NOT-EVALUATED`` and never ``PASS``,
-    and ``examined`` is reported beside the verdict rather than implied by it.
+    THE DENOMINATOR IS PART OF THE VERDICT, and it comes from the DECLARED population rather than
+    the FOUND one. A verdict derived as "no bad stores were found" cannot distinguish "examined 30,
+    all good" from "examined 0". The first repair of that gap guarded only the zero case, and zero is
+    the one value of the family a glob-derived denominator gets right: a member directory that exists
+    and carries NO ``analysis_datatree.zarr`` is matched by no glob, so it is neither examined nor
+    reported missing, and the arm returns ``PASS`` on a population it never looked at. Measured on
+    the landed instrument before this argument existed: 30 member directories, 3 consolidated,
+    verdict ``PASS``, ``examined`` 3, ``missing`` ``[]``, reason "all 3 store(s) stamped and equal
+    to e53c2fa0…" — a true sentence answering a different question than the one asked.
+
+    So ``expected_members`` is REQUIRED and keyword-only, and ``examined != expected_members`` is
+    ``NOT-EVALUATED`` in EITHER direction. Required rather than defaulted because a default of
+    "do not check" leaves the defect live at exactly the call sites that reach it, and the omission
+    is then unwritable instead of silent. The number is free at every call site — it is the matrix
+    row count, which is the member count by construction (``write_clean_matrix_csv`` emits one row
+    per ``member_id`` and ``_create_members`` makes one member per row).
+
+    A NON-POSITIVE ``expected_members`` is itself ``NOT-EVALUATED``, and that branch is load-bearing
+    rather than defensive: without it ``expected_members=0`` against an empty glob satisfies
+    ``examined == expected_members`` and returns ``PASS`` with "all 0 store(s) stamped" — the
+    original false pass, re-entered through the argument added to prevent it.
+
+    THE CARDINALITY GUARD ALSO SUBSUMES THE BOTH-LAYOUTS HAZARD, which is why no de-duplication of
+    the two globs is performed. A tree carrying both member containers yields two DISTINCT stores per
+    logical member, so a path-keyed de-duplication can never fire (the globs' first segments are
+    disjoint) and a suffix-keyed one would guard a shape ``V0019`` REFUSES to produce — it
+    ``move_dir``s ``subanalyses/`` onto ``members/`` with ``merge_policy="error"``, so the source
+    container ceases to exist and a pre-existing destination raises. Under this guard such a tree
+    reports ``NOT-EVALUATED`` because its store count exceeds its declared member count, which is the
+    refusing direction. The hazard is handled here, by the denominator, not by a de-duplication.
 
     DELIBERATELY NOT A WHOLE-TREE GREP. Measured on the different-pin clean tree:
     ``grep -rl triton_producing_sha`` returns 4 files — three binary ``render_bundle/*.zip`` and
     ``validation_report.json`` — against ZERO stores carrying a value. A grep-based check reports
     that unstamped tree as stamped.
     """
+    # A plain UNION of the two globs, deliberately un-de-duplicated. The two patterns differ in
+    # their first path segment, so no path can be produced by both and a path-keyed de-duplication
+    # is unreachable by construction; the both-layouts tree a suffix-keyed one would address is
+    # refused by V0019 rather than produced by it, and is caught here by the cardinality guard
+    # below in the refusing direction. See the docstring's final paragraph.
     stores: list[Path] = []
     for glob in _MEMBER_STORE_GLOBS:
         stores.extend(sorted(arm_root.glob(f"{glob}/analysis_datatree.zarr")))
-    # De-duplicate while preserving order: a tree carrying BOTH layouts (one exists) would
-    # otherwise double-count, inflating `examined` and making the denominator wrong in the
-    # reassuring direction.
-    seen: set[Path] = set()
-    unique_stores = [s for s in stores if not (s in seen or seen.add(s))]
 
     stamped: dict[str, str] = {}
     missing: list[str] = []
     mismatched: dict[str, str] = {}
-    for store in unique_stores:
+    for store in stores:
         member = store.parent.name
         value = _read_member_stamp(store)
         if value is None:
@@ -582,10 +636,36 @@ def check_arm_pin_stamp(arm_root: Path, expected_sha: str) -> dict:
         if not _shas_agree(value, expected_sha):
             mismatched[member] = value
 
-    examined = len(unique_stores)
-    if examined == 0:
+    examined = len(stores)
+    # THE ONE CARDINALITY GUARD. It replaces the `examined == 0` branch rather than sitting beside
+    # it: a second guard for a case this one already decides would be dead the moment it was
+    # written, which is the defect this commit repairs elsewhere in this function. The zero case
+    # keeps its distinct path-typo diagnostic inside the shared branch, because a wrong arm root and
+    # a short arm are different operator errors with different remedies.
+    if expected_members < 1:
         verdict = "NOT-EVALUATED"
-        reason = f"no per-member analysis_datatree.zarr store found under {arm_root}"
+        reason = (
+            f"expected_members={expected_members} declares no population, so every verdict over it "
+            "is vacuous — pass the arm's matrix row count"
+        )
+    elif examined != expected_members:
+        verdict = "NOT-EVALUATED"
+        if examined == 0:
+            detail = (
+                f"no per-member analysis_datatree.zarr store found under {arm_root} — a wrong arm "
+                "root is the likeliest cause, the path is DOUBLED as {run_root}/{name}/{name}"
+            )
+        elif examined < expected_members:
+            detail = (
+                f"{expected_members - examined} declared member(s) carry no store; an unconsolidated "
+                "member is matched by no glob, so it is neither examined nor reported missing"
+            )
+        else:
+            detail = (
+                f"{examined - expected_members} store(s) beyond the declared population — a stale "
+                "member directory or both member containers present on one tree"
+            )
+        reason = f"examined {examined} store(s) against {expected_members} declared member(s): {detail}"
     elif missing or mismatched:
         verdict = "STOP"
         parts = []
@@ -596,12 +676,17 @@ def check_arm_pin_stamp(arm_root: Path, expected_sha: str) -> dict:
         reason = "; ".join(parts)
     else:
         verdict = "PASS"
-        reason = f"all {examined} store(s) stamped and equal to {expected_sha}"
+        # The denominator is named in the PASS reason too, not only in the refusals. The retired
+        # wording ("all 3 store(s) stamped and equal to …") was TRUE on the 3-of-30 arm and answered
+        # a different question than the one asked; saying "all 30 of 30 declared" is the same
+        # sentence with the thing a reader needs in order to tell those two states apart.
+        reason = f"all {examined} of {expected_members} declared member store(s) stamped and equal to {expected_sha}"
     return {
         "verdict": verdict,
         "arm_root": str(arm_root),
         "expected_sha": expected_sha,
         "examined": examined,
+        "expected_members": expected_members,
         "stamped": len(stamped),
         "missing": sorted(missing),
         "mismatched": mismatched,
@@ -698,6 +783,20 @@ def _cli() -> None:
         help="The arm's DOUBLED analysis dir, i.e. {run_root}/{name}/{name} — the parent of members/ or subanalyses/.",
     )
     stp.add_argument("--expected-sha", required=True, help="The pin the arm was BUILT at.")
+    # FAIL CLOSED, for the same reason --tritonswmm-sha carries no default. The denominator is
+    # part of the verdict, so a default silently asserts a population nobody declared for THIS
+    # arm — and the value a default could plausibly take (today's matrix row count) is wrong for
+    # any arm minted under a different rank_sweep, which is precisely the drift a default hides.
+    # A wrong operator value halts (NOT-EVALUATED); an absent declaration cannot pass.
+    stp.add_argument(
+        "--expected-members",
+        type=int,
+        required=True,
+        help="How many members the arm DECLARES, i.e. its sensitivity-matrix row count (30 for the "
+        "clean/resume sweeps at the default rank_sweep). A store count that disagrees in either "
+        "direction is NOT-EVALUATED, never PASS: an unconsolidated member is matched by no glob, "
+        "so without this the arm passes on a population it never looked at.",
+    )
     ip = sub.add_parser("intercomparison")
     ip.add_argument("--clean-system-directory", required=True)
     ip.add_argument("--resume-system-directory", required=True)
@@ -737,7 +836,7 @@ def _cli() -> None:
         import json as _json
         import sys as _sys
 
-        verdict = check_arm_pin_stamp(args.arm_root, args.expected_sha)
+        verdict = check_arm_pin_stamp(args.arm_root, args.expected_sha, expected_members=args.expected_members)
         print(_json.dumps(verdict, indent=2, sort_keys=True))
         print(f"STAMP-CHECK {verdict['verdict']}: {verdict['reason']}")
         _sys.exit(0 if verdict["verdict"] == "PASS" else 1)

@@ -104,7 +104,7 @@ def test_default_variant_is_byte_identical_to_the_historical_name() -> None:
 
 def test_pass_requires_every_store_stamped_and_equal(tmp_path: Path) -> None:
     arm = _arm(tmp_path, "synth_cc_cleanP_tritonswmm", n=4, stamp=_PIN_P)
-    v = check_arm_pin_stamp(arm, _PIN_P)
+    v = check_arm_pin_stamp(arm, _PIN_P, expected_members=4)
     assert v["verdict"] == "PASS"
     assert v["examined"] == 4 and v["stamped"] == 4
     assert v["missing"] == [] and v["mismatched"] == {}
@@ -114,7 +114,7 @@ def test_one_absent_stamp_is_a_stop_not_a_pass(tmp_path: Path) -> None:
     """The measured base rate is intermittent (~32%), so a SINGLE unstamped member must STOP."""
     arm = _arm(tmp_path, "arm", n=3, stamp=_PIN_P)
     _write_v3_store(arm / "members" / "member_9", stamp=None)
-    v = check_arm_pin_stamp(arm, _PIN_P)
+    v = check_arm_pin_stamp(arm, _PIN_P, expected_members=4)
     assert v["verdict"] == "STOP"
     assert v["examined"] == 4 and v["missing"] == ["member_9"]
 
@@ -122,7 +122,7 @@ def test_one_absent_stamp_is_a_stop_not_a_pass(tmp_path: Path) -> None:
 def test_a_differing_pin_is_a_stop(tmp_path: Path) -> None:
     """A fully-stamped arm at the WRONG pin is the cross-pin confound presented as same-pin."""
     arm = _arm(tmp_path, "arm", n=3, stamp=_PIN_OTHER)
-    v = check_arm_pin_stamp(arm, _PIN_P)
+    v = check_arm_pin_stamp(arm, _PIN_P, expected_members=3)
     assert v["verdict"] == "STOP"
     assert v["stamped"] == 3 and len(v["mismatched"]) == 3
 
@@ -142,10 +142,13 @@ def test_zero_stores_is_not_evaluated_and_never_a_pass(tmp_path: Path) -> None:
     """
     empty = tmp_path / "typo_root"
     empty.mkdir()
-    v = check_arm_pin_stamp(empty, _PIN_P)
+    v = check_arm_pin_stamp(empty, _PIN_P, expected_members=30)
     assert v["verdict"] == "NOT-EVALUATED"
     assert v["examined"] == 0
     assert v["verdict"] != "PASS"
+    # The zero case keeps its own diagnostic inside the shared cardinality branch: a wrong arm
+    # root and a short arm are different operator errors and the reason must say which.
+    assert "wrong arm root" in v["reason"]
 
 
 def test_zattrs_is_absent_on_a_v3_store_so_a_v2_read_raises(tmp_path: Path) -> None:
@@ -183,7 +186,7 @@ def test_whole_tree_grep_finds_the_literal_where_no_store_carries_a_value(tmp_pa
     grep_hits = [p for p in arm.rglob("*") if p.is_file() and "triton_producing_sha" in p.read_text()]
     assert len(grep_hits) >= 4, "fixture must reproduce the literal-present/value-absent shape"
 
-    v = check_arm_pin_stamp(arm, _PIN_P)
+    v = check_arm_pin_stamp(arm, _PIN_P, expected_members=3)
     assert v["verdict"] == "STOP"
     assert v["stamped"] == 0, "the specified read must find ZERO stamped stores where grep finds the literal"
 
@@ -211,18 +214,190 @@ def test_both_member_layouts_are_read(tmp_path: Path) -> None:
     """``subanalyses/sa_*`` is the CORRECT name on pre-rename trees and must not be missed."""
     assert _MEMBER_STORE_GLOBS == ("members/member_*", "subanalyses/sa_*")
     legacy = _arm(tmp_path, "legacy", layout="subanalyses", n=3, stamp=_PIN_P)
-    v = check_arm_pin_stamp(legacy, _PIN_P)
+    v = check_arm_pin_stamp(legacy, _PIN_P, expected_members=3)
     assert v["verdict"] == "PASS" and v["examined"] == 3
 
 
-def test_a_tree_carrying_both_layouts_is_not_double_counted(tmp_path: Path) -> None:
-    """The denominator must be wrong in NEITHER direction; one real tree carries both namings."""
+def test_a_tree_carrying_both_layouts_yields_one_store_per_layout_per_member(tmp_path: Path) -> None:
+    """The glob union is a PLAIN union — no de-duplication — and the name now says so.
+
+    RENAMED from ``test_a_tree_carrying_both_layouts_is_not_double_counted``, whose name asserted
+    the opposite of its own body: it asserted ``examined == 4`` for 2 logical members, i.e. that each
+    member IS counted twice, under a name claiming it is not. The de-duplication block the old name
+    referred to was keyed on the PATH and could never fire (the two globs' first segments are
+    disjoint), and removing it left the suite green — so the name advertised a guarantee nothing
+    held, and a reader auditing coverage by test name recorded it as checked.
+
+    What is asserted here is the real behaviour (a plain union) AND, in the second half, that the
+    hazard the dead block claimed to address is now genuinely handled — by the cardinality guard, in
+    the REFUSING direction, rather than silently absorbed.
+    """
     arm = tmp_path / "both"
     for i in range(2):
         _write_v3_store(arm / "members" / f"member_{i}", stamp=_PIN_P)
         _write_v3_store(arm / "subanalyses" / f"sa_{i}", stamp=_PIN_P)
-    v = check_arm_pin_stamp(arm, _PIN_P)
-    assert v["examined"] == 4, "two layouts x two members = four distinct stores"
+
+    # A plain union: two layouts x two members = four distinct stores, none de-duplicated.
+    v = check_arm_pin_stamp(arm, _PIN_P, expected_members=4)
+    assert v["examined"] == 4 and v["verdict"] == "PASS"
+
+    # And the hazard the retired comment named — "inflating `examined` and making the denominator
+    # wrong in the reassuring direction" — is REFUSED rather than reassuring: a tree whose declared
+    # population is 2 logical members but which carries 4 stores is NOT-EVALUATED.
+    v2 = check_arm_pin_stamp(arm, _PIN_P, expected_members=2)
+    assert v2["verdict"] == "NOT-EVALUATED", "4 stores against 2 declared members must not PASS"
+    assert "beyond the declared population" in v2["reason"]
+
+
+def test_the_both_layouts_shape_is_refused_by_the_rename_migration_not_produced_by_it(tmp_path: Path) -> None:
+    """The measured ground for deleting the de-duplication rather than re-keying it on the suffix.
+
+    ``V0019`` moves ``subanalyses/`` ONTO ``members/`` with ``merge_policy="error"``. Two
+    consequences, both asserted here against the real primitive: the source container ceases to
+    exist (it is a ``shutil.move``, so a migrated tree carries ONE container, never both), and a
+    tree that already carries the destination RAISES rather than merging. So the both-layouts shape
+    is not something the migration yields — it is something the migration refuses. A de-duplication
+    keyed on the member suffix would therefore have been a second guard against an unreachable
+    condition, which is the defect this commit removes, not a repair of it.
+    """
+    from hhemt.version_migration.context import MigrationContext
+
+    # (a) The move RELOCATES: afterwards only the destination exists.
+    tree = tmp_path / "migrated"
+    (tree / "subanalyses" / "sa_0").mkdir(parents=True)
+    ctx = MigrationContext(target_dir=tree, dry_run=False, migration_id="V0019-probe")
+    ctx._apply_move_dir(str(tree / "subanalyses"), str(tree / "members"), "error")
+    assert (tree / "members" / "sa_0").is_dir()
+    assert not (tree / "subanalyses").exists(), "a move leaves ONE container, so both-layouts is not its output"
+
+    # (b) A pre-existing destination is REFUSED, not merged into a both-layouts tree.
+    clash = tmp_path / "clash"
+    (clash / "subanalyses" / "sa_0").mkdir(parents=True)
+    (clash / "members" / "member_0").mkdir(parents=True)
+    ctx2 = MigrationContext(target_dir=clash, dry_run=False, migration_id="V0019-probe")
+    with pytest.raises(FileExistsError):
+        ctx2._apply_move_dir(str(clash / "subanalyses"), str(clash / "members"), "error")
+
+
+# --------------------------------------------------------------------------------------
+# THE DENOMINATOR — the declared population, not the found one
+# --------------------------------------------------------------------------------------
+
+
+def _member_dir_without_store(arm_root: Path, member_id: str) -> Path:
+    """A member directory in the REAL unconsolidated shape: config + log + an empty ``sims/``.
+
+    This is the shape that is invisible to the instrument in BOTH directions: matched by no store
+    glob, so neither examined nor reported missing.
+    """
+    member = arm_root / "members" / f"member_{member_id}"
+    (member / "sims").mkdir(parents=True, exist_ok=True)
+    (member / f"member_{member_id}.yaml").write_text(f"member_id: {member_id}\n")
+    (member / "log.json").write_text(json.dumps({"member_id": member_id}))
+    return member
+
+
+def test_a_short_arm_is_not_evaluated_even_when_every_store_found_is_stamped(tmp_path: Path) -> None:
+    """THE MEASURED REGRESSION. 30 declared members, 3 consolidated, every one correctly stamped.
+
+    Against the prior instrument this exact fixture returned ``PASS`` with ``examined=3``,
+    ``stamped=3``, ``missing=[]`` and the reason "all 3 store(s) stamped and equal to e53c2fa0…" — a
+    true sentence answering a different question than the one asked. The estate keys its failure
+    recording on the VERDICT (``if verdict["verdict"] != "PASS"``), so that PASS recorded nothing
+    and would have spent 60 members on A2/A3 against a comparand that cannot satisfy the b4b
+    criterion's conjunct (A) for 27 of 30 members.
+
+    An unconsolidated member is matched by no glob, which is why the earlier ``examined == 0`` guard
+    did not cover this: zero is the one value of the family a glob-derived denominator gets right.
+    """
+    arm = tmp_path / "synth_cc_cleanP_tritonswmm"
+    member_ids = [f"gpu_{i}_r1" for i in range(30)]
+    for member_id in member_ids:
+        _member_dir_without_store(arm, member_id)
+    for member_id in member_ids[:3]:
+        _write_v3_store(arm / "members" / f"member_{member_id}", stamp=_PIN_P)
+
+    assert len(list((arm / "members").iterdir())) == 30, "fixture must present 30 member directories"
+
+    v = check_arm_pin_stamp(arm, _PIN_P, expected_members=30)
+    assert v["verdict"] == "NOT-EVALUATED", "a PASS here is the measured false pass this guard repairs"
+    assert v["verdict"] != "PASS"
+    assert v["examined"] == 3 and v["stamped"] == 3 and v["missing"] == []
+    assert v["expected_members"] == 30, "the declared population must be reported beside the verdict"
+    assert "27 declared member(s) carry no store" in v["reason"]
+
+
+def test_an_over_long_arm_is_not_evaluated_so_the_denominator_is_wrong_in_neither_direction(tmp_path: Path) -> None:
+    """The OTHER direction, and it is a separate test because one comparison cannot cover both.
+
+    A guard written as ``examined < expected_members`` passes every assertion of the short-arm test
+    above while admitting a tree carrying MORE stores than it declares — a stale member directory
+    left by a partial delete, or both member containers on one tree. The verdict must turn on
+    inequality, not on shortfall.
+    """
+    arm = _arm(tmp_path, "arm", n=4, stamp=_PIN_P)
+    v = check_arm_pin_stamp(arm, _PIN_P, expected_members=3)
+    assert v["verdict"] == "NOT-EVALUATED"
+    assert v["examined"] == 4 and v["expected_members"] == 3
+    assert "beyond the declared population" in v["reason"]
+
+
+def test_a_non_positive_declared_population_is_not_evaluated_never_a_vacuous_pass(tmp_path: Path) -> None:
+    """The hole the expected-count argument would otherwise re-open at zero.
+
+    With the cardinality guard written as ``examined != expected_members`` ALONE, a caller passing
+    ``expected_members=0`` against an empty glob satisfies the equality and returns ``PASS`` with
+    "all 0 store(s) stamped" — the original false pass, re-entered through the argument added to
+    prevent it. This is why the non-positive branch is load-bearing rather than defensive.
+    """
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    for declared in (0, -1):
+        v = check_arm_pin_stamp(empty, _PIN_P, expected_members=declared)
+        assert v["verdict"] == "NOT-EVALUATED", f"expected_members={declared} must not reach PASS"
+        assert "declares no population" in v["reason"]
+
+
+def test_the_declared_population_is_a_required_keyword_argument(tmp_path: Path) -> None:
+    """A default of "do not check" would leave the defect live at exactly the call sites that reach it.
+
+    Pinned as a signature property, not just a behaviour, because the regression this guards is a
+    later refactor giving the parameter a default for caller convenience — which restores the
+    glob-derived denominator silently at every site that then stops passing it.
+    """
+    import inspect
+
+    sig = inspect.signature(check_arm_pin_stamp)
+    param = sig.parameters["expected_members"]
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY, "keyword-only: not passable positionally by accident"
+    assert param.default is inspect.Parameter.empty, (
+        "REQUIRED: a default silently restores the glob-derived denominator at every site that stops passing it"
+    )
+    with pytest.raises(TypeError):
+        check_arm_pin_stamp(tmp_path, _PIN_P)  # type: ignore[call-arg]
+
+
+def test_declared_member_count_tracks_the_matrix_rather_than_hardcoding_thirty() -> None:
+    """The stand-alone ``stamp-check`` phase holds no case, so its count is DERIVED from the matrix.
+
+    Asserted against the matrix writer rather than against the literal 30, so a ``rank_sweep`` change
+    moves the expectation with the sweep instead of producing a false NOT-EVALUATED on every arm.
+    """
+    import tempfile
+
+    import pandas as pd
+
+    from hhemt.synthetic_experiment import write_clean_matrix_csv
+    from scripts.experiments.synth_compute_config import declared_member_count
+
+    assert declared_member_count() == 30, "the default sweep declares 30 members (measured)"
+    with tempfile.TemporaryDirectory() as tmp:
+        csv = Path(tmp) / "m.csv"
+        write_clean_matrix_csv(csv, rank_sweep=(2, 4))
+        assert declared_member_count(rank_sweep=(2, 4)) == len(pd.read_csv(csv))
+    assert declared_member_count(rank_sweep=(2, 4)) != declared_member_count(), (
+        "the count must MOVE with rank_sweep, or it is a hardcoded 30 wearing a function's clothes"
+    )
 
 
 @pytest.mark.parametrize(
