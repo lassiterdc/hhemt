@@ -1109,11 +1109,51 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
     # So: do NOT "fix" this by adding an indeterminate arm, and do NOT widen the predicate
     # to `!= "absent"` -- that would convert an unresolvable registry lookup into a
     # reported defect, which is the opposite error.
-    present = [
-        d
-        for d in REGISTRY
-        if not (d.trigger == "resumed_coupled" and not coupled) and resolve(d, sha).status == "present"
-    ]
+    #
+    # WHAT THE 2026-10-03 RULING DID CHANGE: the ruling above is scoped to VERDICT
+    # CATEGORIES, and the developer said so in as many words ("agreed on both fronts",
+    # against a finding that separated the category question from the WORDING question).
+    # The measured defect is NOT that `indeterminate` lacks a verdict -- it is that the
+    # PASSING SUMMARY did not say which of the two states produced it. At a REGISTERED pin
+    # (three `absent`/`known_absent_set` verdicts) and at an UNREGISTERED one (three
+    # `indeterminate`/`ancestry_unresolvable` verdicts) the emitted row was BYTE-IDENTICAL
+    # once the pin substring was masked, so "a build carrying no known resume defect" read
+    # the same whether the registry had ASSESSED this build and cleared it or had never
+    # heard of it. That is a disclosed-denominator defect, and the repair is the one the
+    # SIBLING check one function below already applies: name the examined and
+    # indeterminate counts in `summary` (free text; no `CheckResult` schema change, so the
+    # persisted validation_report.json shape is untouched).
+    #
+    # `applicable_defects` is extracted from the former inline comprehension so the
+    # denominator and the numerator are computed from ONE resolution pass. `resolve` is
+    # pure, so this is behaviour-identical to resolving twice -- but a second pass would be
+    # a second chance for the numerator and the denominator to disagree, which is exactly
+    # the class of defect being closed here.
+    applicable_defects = [d for d in REGISTRY if not (d.trigger == "resumed_coupled" and not coupled)]
+    verdicts = [(d, resolve(d, sha)) for d in applicable_defects]
+    present = [d for d, v in verdicts if v.status == "present"]
+    n_absent = sum(1 for _, v in verdicts if v.status == "absent")
+    indeterminate = [d for d, v in verdicts if v.status == "indeterminate"]
+    # The denominator sentence, shared by BOTH arms. It is on the failing arm too, and
+    # deliberately: a FAIL naming one PRESENT defect out of three applicable ones is
+    # already distinguishable by its id list, but it does NOT say whether the other two
+    # were cleared or never assessed -- the same undisclosed-denominator shape, one arm
+    # over.
+    # The three counts SUM to the denominator in every arm, so a reader can check the
+    # arithmetic on the page rather than trusting the sentence.
+    _parts = [f"{len(applicable_defects)} applicable registry defect(s)"]
+    if present:
+        _parts.append(f"{len(present)} PRESENT")
+    if n_absent:
+        _parts.append(f"{n_absent} assessed ABSENT")
+    if indeterminate:
+        _parts.append(
+            f"{len(indeterminate)} INDETERMINATE and therefore NOT assessed at this pin "
+            f"({', '.join(d.defect_id for d in indeterminate)}) -- the pin is in no "
+            "known-absent/known-present set and the read path has no clone for ancestry, "
+            "so register it in model_defects.py"
+        )
+    _denom = "; ".join(_parts)
     if present:
         return CheckResult(
             name=_name,
@@ -1121,7 +1161,8 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
             passed=False,
             summary=(
                 f"{n_resumed} resumed sim(s) at a TRITON build carrying {len(present)} known "
-                f"resume defect(s): {', '.join(d.defect_id for d in present)} (pin {sha[:12]})."
+                f"resume defect(s): {', '.join(d.defect_id for d in present)} (pin {sha[:12]}; "
+                f"{_denom})."
             ),
             details=[{"scenario": "(analysis-level)", "detail": f"{d.defect_id}: {d.remedy}"} for d in present],
         )
@@ -1129,7 +1170,7 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
         name=_name,
         level="aggregate",
         passed=True,
-        summary=(f"{n_resumed} resumed sim(s) at a build carrying no known resume defect (pin {sha[:12]})."),
+        summary=(f"{n_resumed} resumed sim(s) at a build carrying no known resume defect (pin {sha[:12]}; {_denom})."),
         details=[],
     )
 

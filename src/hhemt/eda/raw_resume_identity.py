@@ -202,9 +202,23 @@ def parse_resume_timestep(model_log: Path) -> float | None:
     for marker in (_TRITON_SNAPSHOT_RESTORE_MARKER, _TRITON_REPLAY_MARKER):
         if marker not in text:
             continue
-        tok = text.rsplit(marker, 1)[1].strip().split()[0].rstrip(".,;")
+        # EMPTY-TAIL GUARD, and it is the SPLIT that has to be inside the guard rather
+        # than inside the `try`. `.split()` on an empty or whitespace-only tail returns
+        # `[]`, so `[0]` raises `IndexError` -- which the `except ValueError` below does
+        # NOT catch, so the function raised where its own docstring promises `None`. The
+        # old form placed `.split()[0]` OUTSIDE the `try` for no reason beyond expression
+        # chaining, and widening the `except` to `(ValueError, IndexError)` would have
+        # been the WRONG repair: it conflates "no token at all" with "a token that is not
+        # a number", and it leaves the next reader of this chain free to append another
+        # index. The shape below is NOT invented here -- it is lifted verbatim from
+        # `resume_events._parse_leading_float`, which is the same token rule with this
+        # guard already in place, and whose docstring already declares the two rules
+        # IDENTICAL by intent.
+        parts = text.rsplit(marker, 1)[1].strip().split()
+        if not parts:
+            return None
         try:
-            return float(tok)
+            return float(parts[0].rstrip(".,;"))
         except ValueError:
             return None
     return None
