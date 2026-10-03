@@ -26,6 +26,24 @@ Measured at `5c2ef5a3`:
     durable artifact", and omits its five neighbours -- which a diverged `value_t` streamed
     with the default `operator<<` emits by exactly the same mechanism.
 
+PRODUCTION REACH, measured, because it bounds how much any of this matters and because it
+corrects a reachability sentence in the sibling module. `parse_resume_timestep` has ZERO
+production call sites: `grep -rn 'parse_resume_timestep' --include=*.py src/ scripts/` at
+`5c2ef5a3` returns one definition and three DOCSTRING mentions, and nothing else. The b4b
+figure's resume boundary comes from `resume_boundaries_from_schedule`
+(`raw_resume_identity.py:706`), which that function's own docstring describes as
+"Model-agnostic and K-complete, unlike `parse_resume_timestep`"; the durable stamp's
+`resume_t` comes from `processing_analysis._parse_replay_t` (`processing_analysis.py:1024`,
+the REGEX rule). So the sibling module's claim that `inf` "is the one row whose divergence
+could reach a durable artifact: the stamp written by `processing_analysis` would carry
+`resume_t: null` while the figure's parser reads `inf`" is wrong in its second clause -- the
+figure does not call that parser, so there is no second reader for the stamp to disagree
+with. CONSEQUENCE FOR READING THIS MODULE: every divergence recorded here is a property of
+the FUNCTIONS and none of them is a live wrong answer today. They matter because
+`parse_resume_timestep` is under contract from six test modules and would be the natural
+thing to wire in when the figure needs a MEASURED rather than a REQUESTED boundary -- which
+is exactly when a wrong answer read off a later line would start reaching an artifact.
+
 THIS MODULE IS A CHARACTERIZATION OF THE FRAME, NOT A REPAIR. Nothing here asserts a
 behaviour anyone has ruled on. It records what the two held-constant dimensions produce, so
 a change to either token rule -- including a legitimate collapse of the two onto one
