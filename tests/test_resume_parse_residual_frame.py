@@ -10,6 +10,9 @@ different and worse direction, and this test names that".
 
 BOTH CLAIMS ARE TRUE OVER THAT MODULE'S FIXTURE FAMILY AND NEITHER IS TRUE OF THE CLASS,
 because the fixture family holds two dimensions constant that the implementations do not.
+As of 2026-10-03 the sibling's own prose carries that scoping and cites this module for the
+two held-constant dimensions, so the frame is stated where the claims are made and measured
+here; the paragraphs below remain the measurement rather than a second assertion of it.
 Measured at `5c2ef5a3`:
 
   * TAIL SCOPE. `eda/raw_resume_identity.parse_resume_timestep` takes its tail to END OF
@@ -36,9 +39,14 @@ figure's resume boundary comes from `resume_boundaries_from_schedule`
 `resume_t` comes from `processing_analysis._parse_replay_t` (`processing_analysis.py:1024`,
 the REGEX rule). So the sibling module's claim that `inf` "is the one row whose divergence
 could reach a durable artifact: the stamp written by `processing_analysis` would carry
-`resume_t: null` while the figure's parser reads `inf`" is wrong in its second clause -- the
+`resume_t: null` while the figure's parser reads `inf`" was wrong in its second clause -- the
 figure does not call that parser, so there is no second reader for the stamp to disagree
-with. CONSEQUENCE FOR READING THIS MODULE: every divergence recorded here is a property of
+with. THAT SENTENCE WAS REPAIRED IN THE SIBLING ON 2026-10-03 and now carries this same
+measurement; the quoted wording is retained there as the superseded claim, so a reader
+arriving from here finds the two modules in agreement rather than in contradiction. The
+correction is recorded in both places deliberately -- this module measured it, and the
+sibling is where the wrong sentence was read.
+CONSEQUENCE FOR READING THIS MODULE: every divergence recorded here is a property of
 the FUNCTIONS and none of them is a live wrong answer today. They matter because
 `parse_resume_timestep` is under contract from six test modules and would be the natural
 thing to wire in when the figure needs a MEASURED rather than a REQUESTED boundary -- which

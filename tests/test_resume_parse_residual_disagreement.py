@@ -1,13 +1,25 @@
-"""The residual disagreement among the THREE in-tree resume-time parses, characterized.
+r"""The residual disagreement among the THREE in-tree resume-time parses, characterized.
 
 WHAT THIS MODULE IS FOR. The 2026-10-03 repair to
 `eda/raw_resume_identity.parse_resume_timestep` closed the EMPTY-TAIL class across all
-three implementations -- measured: the other two were already total over it, the regex
-because no match is reachable on an empty tail and the leaf because of its explicit
-`if not parts: return None`, so the repair closed the only member that was open. It did
-NOT close "the numeric parse" as a class. Measured over 25 tails, 4 still disagree, and
-all 4 are the TOKEN rule against the REGEX rule. This module records those 4 so the next
-change to any of the three goes red here instead of silently widening the set.
+three implementations OVER THIS MODULE'S FIXTURE FAMILY -- measured: the other two were
+already total over it, the regex because no match is reachable on an empty tail and the
+leaf because of its explicit `if not parts: return None`, so the repair closed the only
+member that was open. It did NOT close "the numeric parse" as a class. Measured over this
+module's 25 tails, 4 still disagree, and all 4 are the TOKEN rule against the REGEX rule.
+This module records those 4 so the next change to any of the three goes red here instead
+of silently widening the set.
+
+THE FRAME OF BOTH COUNTS ABOVE IS NAMED, NOT ELIDED, and it is why they carry "over this
+module's fixture family" rather than standing as class-wide closure. Every fixture here is
+SINGLE-LINE and every tail is a FINITE token, and the implementations hold neither constant:
+`tests/test_resume_parse_residual_frame.py` measures the two dimensions this family cannot
+express -- TAIL SCOPE (the two token rules split to END OF FILE versus END OF LINE, so on a
+multi-line log they return different answers) and THE NON-FINITE FAMILY (`nan`, `-nan`,
+`NaN`, `-inf`, `Infinity` diverge by the same mechanism as the `inf s` row below and are
+absent from `_RESIDUAL`). That module states in its own docstring that both claims "ARE
+TRUE OVER THAT MODULE'S FIXTURE FAMILY AND NEITHER IS TRUE OF THE CLASS". Read the two
+together; neither count above is a statement about the class.
 
 IT IS A CHARACTERIZATION, NOT A FINDING, and the distinction matters for how a reader
 should treat a green. A green here does not say the three parsers agree; it says they
@@ -28,9 +40,27 @@ default `operator<<`, which never emits `_` or `0x`, so the `1_000` and `0x10` r
 UNREACHABLE from the solver and are probes of the mechanism rather than live hazards. The
 `3600s` row (no space) is likewise unreachable at the live pin, which emits `" s ("` --
 the WP-2B review carrier records that and deliberately declines to assert it. `inf` IS
-reachable in principle from a diverged sim, and it is the one row whose divergence could
-reach a durable artifact: the stamp written by `processing_analysis` would carry
-`resume_t: null` while the figure's parser reads `inf`.
+reachable in principle from a diverged sim, and it is the only row of the four for which
+that is so.
+
+IT REACHES NO DURABLE ARTIFACT TODAY, and an earlier version of this paragraph said
+otherwise. It claimed `inf` was "the one row whose divergence could reach a durable
+artifact: the stamp written by `processing_analysis` would carry `resume_t: null` while the
+figure's parser reads `inf`". The second clause is FALSE: the figure does not call that
+parser. Measured at 24be6058 --
+`grep -rnE 'parse_resume_timestep[[:space:]]*\(' --include=*.py src/ scripts/` returns ONE
+hit and it is the `def` line itself (`raw_resume_identity.py:181`), and no module under
+`src/` or `scripts/` imports the symbol at all. So `parse_resume_timestep` has ZERO
+production call sites, and its callers are six test modules. The two things that actually
+produce a resume boundary in production are `resume_boundaries_from_schedule`
+(`raw_resume_identity.py:227`, called at `:706` from `check_raw_b4b` -- the bit-for-bit
+figure) and `processing_analysis._parse_replay_t` (`:950`, called at `:1024-1025` -- the
+durable stamp, and the REGEX rule). There is therefore no second reader for the stamp to
+disagree with, and the divergence this table records is a property of the FUNCTIONS rather
+than a live wrong answer. It matters because `parse_resume_timestep` is the natural thing to
+wire in when the figure needs a MEASURED rather than a REQUESTED boundary -- which is
+exactly when these rows would start reaching an artifact.
+`tests/test_resume_parse_residual_frame.py` carries the same measurement.
 
 COMPILE-FREE AND ANALYSIS-FREE BY CONSTRUCTION: no `*_compiled` fixture, no
 `TRITONSWMM_analysis`.
@@ -100,11 +130,19 @@ def test_no_implementation_raises_on_the_empty_tail_class(tmp_path):
 
 
 def test_the_disagreement_set_is_token_versus_regex_only(tmp_path):
-    """Structural claim: every residual row is the token rule against the regex rule.
+    """Structural claim, SCOPED TO `_RESIDUAL`: every row here is token-versus-regex.
 
-    If a future row appears in which the two TOKEN implementations differ from each other,
-    the class has regressed in a different and worse direction, and this test names that
-    rather than letting a new parametrize row absorb it.
+    If a future row is ADDED TO `_RESIDUAL` in which the two TOKEN implementations differ
+    from each other, the class has regressed in a different and worse direction, and this
+    test names that rather than letting a new parametrize row absorb it.
+
+    THE SCOPE IS NOT A HEDGE -- the two token rules ALREADY differ off this family, and the
+    promise would be false if it were read as class-wide. `_RESIDUAL` is single-line
+    throughout, where a file-scoped tail and a line-scoped tail coincide;
+    `tests/test_resume_parse_residual_frame.py::test_the_two_token_rules_are_extensionally_UNEQUAL_off_the_single_line_family`
+    exhibits the multi-line case where they do not. So this test pins a property of the
+    declared list, which is the honest form of a claim no finite corpus can make
+    unconditionally -- it does not certify that no such row exists.
     """
     for tail, _t, _r, _reach in _RESIDUAL:
         token, regex, leaf = _three(tail, tmp_path)

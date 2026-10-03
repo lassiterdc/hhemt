@@ -6,9 +6,21 @@ NEGATIVE controls: every reachable finding code is exercised against a MUTATED C
 tree, and the pass on the real tree is one test among several rather than the whole suite.
 
 MUTATION DISCIPLINE. Every mutating test builds a throwaway copy under `tmp_path` and
-points the guard at it with `--root`. `test_the_real_tree_is_unmutated` re-reads the two
-tracked operands' sha256 afterwards, so a test that accidentally wrote to the real tree is
-caught here rather than in someone's later `git status`.
+points the guard at it with `--root`. `test_the_real_tree_is_unmutated` compares the two
+tracked operands' sha256 against the COLLECTION-TIME SNAPSHOT that
+`tests/test_pin_guard_operand_integrity.py` takes at import, so a test that accidentally
+wrote to the real tree is caught here rather than in someone's later `git status`.
+
+THE SNAPSHOT IS IMPORTED, NOT RE-TAKEN, and that is deliberate. Until 2026-10-03 this
+module's own digest assertion was `all(len(d) == 64 for d in digests.values())`, which is
+true of sha256's output width for every possible input and so could not separate an
+unmutated tree from a mutated one -- the module advertised a tripwire it did not have, and
+`test_pin_guard_operand_integrity.py` was written to carry the real one. Rather than
+duplicate that mechanism here (a second source that drifts) or pin literal digests (which
+would red on every legitimate edit -- measured: `src/hhemt/model_defects.py` carries 14
+commits and six of its last eight are pin-registry edits, so a literal list would red
+hardest exactly when the tree is changing on purpose), this module CONSUMES the carrier's
+single snapshot. One source, one mechanism, and a red here names the file.
 
 THE GUARD IS LOADED BY PATH, not imported as a package module: `scripts/` is not a package
 and the guard deliberately imports nothing from `hhemt`, so a path load is both the only
@@ -36,6 +48,18 @@ _GUARD = _REPO / "scripts" / "check_live_pin_registered.py"
 #: The two tracked files whose agreement the guard audits.
 _PIN_REL = "tests/fixtures/_triton_source_cache.py"
 _REGISTRY_REL = "src/hhemt/model_defects.py"
+
+# The digest tripwire's SINGLE SOURCE. `_AT_COLLECTION` is captured when that module is
+# imported, which pytest performs during collection -- strictly before any test body in the
+# session, including this module's own mutating tests. Imported rather than re-taken so the
+# two modules cannot drift; the import also fails loudly if the carrier is ever deleted,
+# which is the right outcome for a tripwire this module's docstring advertises.
+from tests.test_pin_guard_operand_integrity import (  # noqa: E402
+    _AT_COLLECTION as _OPERANDS_AT_COLLECTION,
+)
+from tests.test_pin_guard_operand_integrity import (  # noqa: E402
+    _snapshot as _operand_digests_now,
+)
 
 
 def _load_guard():
@@ -74,6 +98,18 @@ def _set_pin(root: Path, value: str) -> None:
 # -------------------------------------------------------------------------------------
 # The real tree.
 # -------------------------------------------------------------------------------------
+
+
+def test_the_imported_snapshot_covers_exactly_this_module_s_operands():
+    """Instrument check on the IMPORT, because a silent operand-set drift is invisible.
+
+    `test_the_real_tree_is_unmutated` indexes the imported snapshot by THIS module's
+    `_PIN_REL` / `_REGISTRY_REL`. If the carrier's `_OPERANDS` ever lost one of them the
+    tripwire would stop covering it, and a dict comprehension over the carrier's own keys
+    would simply skip it rather than raise -- so the equality is asserted here rather than
+    left to be noticed. A red here means the two modules disagree about what is tracked.
+    """
+    assert set(_OPERANDS_AT_COLLECTION) == {_PIN_REL, _REGISTRY_REL}
 
 
 def test_the_real_tree_passes():
@@ -207,17 +243,30 @@ def test_an_absent_pin_declaration_fails_closed(tmp_path):
 def test_the_real_tree_is_unmutated():
     """No test above may have written to the tracked operands.
 
-    Digests recorded 2026-10-03 against the committed content; a legitimate edit to either
-    file updates them in the same change, which is the point -- an unexplained red here
-    means something mutated the real tree.
-    """
-    import hashlib
+    The COMPARISON is the assertion, and until 2026-10-03 it was not performed: the body
+    built the two digests and then asserted only that each was 64 characters long, which is
+    a property of sha256's output width and of nothing in this repository. So this test
+    could not red on a mutation of either operand -- the one thing its name and its own
+    docstring assert it does. It now compares each operand against the collection-time
+    snapshot imported from `tests/test_pin_guard_operand_integrity.py`, whose
+    `test_a_length_only_digest_predicate_cannot_discriminate` is the standing control
+    proving the two predicates differ.
 
-    digests = {rel: hashlib.sha256((_REPO / rel).read_bytes()).hexdigest() for rel in (_PIN_REL, _REGISTRY_REL)}
+    A legitimate edit to either file needs no update here, because the snapshot is taken
+    per session rather than recorded per commit -- so a red means a test in THIS session
+    wrote to the real tree, which is the event the mutation-discipline contract names.
+    """
+    drifted = {
+        rel: (_OPERANDS_AT_COLLECTION[rel], measured)
+        for rel, measured in _operand_digests_now().items()
+        if _OPERANDS_AT_COLLECTION[rel] != measured
+    }
     # Re-run the guard on the real tree as the end-state check: if either operand had been
     # mutated by a sibling test, this is the cheapest place it surfaces.
     assert guard.main([]) == 0
-    assert all(len(d) == 64 for d in digests.values())
+    assert not drifted, "a test in this session wrote to a tracked guard operand: " + "; ".join(
+        f"{rel}: {was[:12]} -> {now[:12]}" for rel, (was, now) in drifted.items()
+    )
     # And the pin the guard reads is still the one the fixture module declares.
     from tests.fixtures._triton_source_cache import TRITON_PIN
 
