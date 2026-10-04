@@ -3001,3 +3001,67 @@ non_breaking_allowlist:
       file is layout-relevant only via the src/hhemt/config/**/*.py glob and reaches no on-disk
       analysis artifact. EXPIRY CONDITION: covers this ONE additive bucket entry. Changing or
       removing an existing field's bucket, or editing a classifier function, is NOT this class.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 3a190cd77ce205c11ab03fe2635dec63b96b5301aa0d20699d2ee150ddf3800a
+    justification: >-
+      NON-BREAKING. Adds ONE field, swmm_snapshot_keep_all (bool, default False), the arm selector
+      that makes the toolkit emit the TRITON cfg key `swmm_snapshot_keep_all=1` for a COUPLED
+      scenario, which disarms the solver's snapshot PRUNE gate so every checkpoint index retains a
+      restorable SWMM state snapshot instead of only the two most recent. Same class as the
+      swmm_snapshot_disable row above it: INPUT-config schema only, and the DEFAULT is what makes
+      it non-breaking. False appends NOTHING. This is DEMONSTRATED rather than argued: a pre-change
+      pipeline and a post-change flag-off pipeline, both reconstructed mechanically from source and
+      run over the real filled template, produced byte-identical output with an identical
+      write-or-skip decision, and the flag-ON arm differed by exactly the one line, proving the
+      comparison discriminating. Asserted durably by
+      tests/test_snapshot_keep_all_cfg_emission.py::test_unset_field_returns_the_input_object_unchanged
+      and ::test_both_flags_off_returns_the_input_object_through_the_composed_pair, both on OBJECT
+      IDENTITY so no byte can differ. No field is removed, renamed, retyped or given a new default;
+      no validator changes; every config that loaded before loads identically. Nothing on an
+      existing analysis tree changes -- no _version.json field, no figure stem, no zarr group,
+      variable, dtype, attr or chunk, no log field, no _status flag name. The ONE on-disk artifact
+      the field can reach is a per-scenario TRITON cfg, and only for a run that OPTS IN. EXPIRY
+      CONDITION: covers this ONE additive optional field with a behaviour-preserving default. Any
+      field removal, rename, retype, default change, or an addition whose default changes emitted
+      output is NOT this class.
+  - path: src/hhemt/scenario.py
+    layout_signature: 2cd3b413224c50396d560514d69df0592d2673a38c421df073bdd874125edd9f
+    justification: >-
+      NON-BREAKING. Adds a module-level constant SWMM_SNAPSHOT_KEEP_ALL_KEY and a pure text helper
+      append_swmm_snapshot_keep_all(cfg_content, keep_all), and calls it ONCE from
+      _generate_TRITON_SWMM_cfg's existing post-processing block, composed immediately after the
+      existing append_swmm_snapshot_disable call. With swmm_snapshot_keep_all False -- the default,
+      and the value every existing phase carries -- the helper returns its input OBJECT unchanged,
+      so the emitted cfg bytes and the write-or-skip decision are both identical to the pre-change
+      code; the write gate `if cfg_content != cfg_as_written` is UNCHANGED by this row.
+      compute_event_id_slug is NOT touched, so Check B's AST-normalized hash of that function is
+      unaffected -- verified by running check-b, which reports this file only for the whole-file
+      signature and names no slug finding. The TRITON-only generator is unmodified and is asserted
+      to remain so by
+      tests/test_snapshot_keep_all_cfg_emission.py::test_only_the_coupled_generator_appends_the_key,
+      which walks live source and fails if a second call site appears, and the call site is asserted
+      to read the CONFIG FIELD rather than a literal by
+      ::test_the_call_site_reads_the_config_field_not_a_literal. The helper is deliberately SEPARATE
+      from its sibling rather than generalized into one flag-table helper: a shared helper would
+      carry N flags through ONE call site, making the per-flag single-call-site guard unobservable,
+      and could return its input object only when EVERY flag is off, degrading a per-flag byte-proof
+      into a conjunctive one. Nothing on an existing analysis tree changes. The only on-disk effect
+      is one appended LINE in a per-scenario TRITON cfg, and only for a run that opts in. EXPIRY
+      CONDITION: covers this one additive helper and its single coupled call site. Any change to a
+      ScenarioPaths field, an event_id slug, a directory name, a log field or compute_event_id_slug
+      is NOT this class.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: 7d68ebef1025e52a97fe6dd797b33515658d3fde9a355e21d162651e9ada2842
+    justification: >-
+      NON-BREAKING and MANDATORY rather than optional. Adds ONE _FIELD_BUCKET entry,
+      swmm_snapshot_keep_all -> "experiment", required by the bidirectional totality gates
+      tests/test_reprex_taxonomy.py::test_field_bucket_is_total and
+      tests/test_synth_metadata_renderer.py::test_every_config_field_appears_exactly_once, both of
+      which were MEASURED RED on the field with no bucket and MEASURED GREEN with exactly this entry
+      present. "experiment" by the table's own stated RULE (non-Path, not an HPC-execution field) and
+      independently by sibling consistency with swmm_snapshot_disable directly above it: both are
+      resume-EXPERIMENT arm selectors. The bucket is semantically load-bearing rather than
+      bookkeeping -- it is what tells a reproducer to KEEP the value rather than Supply or Amend it,
+      and amending it changes which resume mechanism the arm exercises. No classification changes for
+      any existing field; the table's totality contract is restored, not altered. EXPIRY CONDITION:
+      covers this ONE added bucket entry. Any re-bucketing of an existing field is NOT this class.

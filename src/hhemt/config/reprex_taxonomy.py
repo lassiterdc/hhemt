@@ -168,6 +168,16 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     # Supply or Amend it — amending it silently converts a replay arm into a
     # snapshot arm, which is the one comparison the arm exists to make.
     "swmm_snapshot_disable": "experiment",
+    # "experiment" by the RULE above (non-Path, not an HPC-execution field) and
+    # independently by SIBLING CONSISTENCY with swmm_snapshot_disable directly
+    # above: both are resume-EXPERIMENT arm selectors, and this one DEFINES the
+    # RETENTION DEPTH of the snapshot path whose EXISTENCE that one governs. A
+    # reproducer must KEEP it, not Supply or Amend it -- amending it changes which
+    # resume mechanism the arm exercises, which is the one thing the arm holds
+    # fixed. MANDATORY rather than optional: test_field_bucket_is_total and
+    # test_every_config_field_appears_exactly_once both go RED on any new config
+    # field carrying no bucket.
+    "swmm_snapshot_keep_all": "experiment",
     # per-sim-event-labeling: names the presentation column on the user's own
     # weather_events_to_simulate CSV. "experiment" by the RULE above (non-Path,
     # not an HPC-execution field), and independently by SIBLING CONSISTENCY --

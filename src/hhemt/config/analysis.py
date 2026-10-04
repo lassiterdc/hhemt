@@ -574,6 +574,46 @@ class analysis_config(cfgBaseModel):
             "the key is present in the solver's argsd table at the pin you are running."
         ),
     )
+    swmm_snapshot_keep_all: bool = Field(
+        default=False,
+        description=(
+            "Resume-EXPERIMENT arm selector for the COUPLED model only. When True the "
+            "toolkit appends the line `swmm_snapshot_keep_all=1` to each coupled "
+            "scenario's TRITON cfg, which disarms the solver's snapshot PRUNE gate so "
+            "every checkpoint index retains a restorable SWMM state snapshot instead of "
+            "only the two most recent. "
+            "WHAT IT BUYS, which is not 'more snapshots'. Under the keep-2 default a "
+            "member interrupted at a checkpoint older than the two most recent finds NO "
+            "snapshot and silently falls back to the exchange-replay path, so ONE "
+            "experiment mixes TWO resume mechanisms across its members and the "
+            "cross-experiment comparison carries an undeclared confound. Setting this "
+            "makes the resume mechanism UNIFORM across every member of an arm, which is "
+            "what lets a run against one solver pin be compared to a run against another "
+            "with the resume path held fixed. "
+            "IT IS INDEPENDENT OF swmm_snapshot_disable, NOT ITS INVERSE. That field "
+            "empties snapshot_path_stem and removes the snapshot path entirely; this one "
+            "changes the RETENTION DEPTH of a snapshot path that exists. Both False is "
+            "the shipped default; both True is expressible and is resolved BY THE SOLVER "
+            "(disable wins — there is no stem to retain into), never by this toolkit, "
+            "which emits what the configuration asked for and arbitrates nothing. "
+            "The default False appends NOTHING, so every cfg emitted for a run that "
+            "leaves this unset is BYTE-IDENTICAL to one emitted before this field "
+            "existed. The TRITON-only cfg never carries the key: the key gates the SWMM "
+            "coupling surface, so it is meaningless there. "
+            "THE SPELLING IS LOAD-BEARING IN ANOTHER REPOSITORY. The solver reads this "
+            'key through `argsd("swmm_snapshot_keep_all", argmap, "0")`, and arm '
+            "membership is established iff a member's own `config_{k}.cfg` carries the "
+            "literal `swmm_snapshot_keep_all=1` — carried there by the solver's "
+            "unknown-key cfg passthrough. Renaming the emitted key without renaming that "
+            "argsd read in the same change silently unassigns every member from its arm "
+            "with no error anywhere. "
+            "THE PIN IS PART OF THE CONTRACT AND NOTHING HERE CAN CHECK IT. A solver that "
+            "predates the key does not read it, and no TRITON cfg parse rejects an "
+            "unknown key, so setting this against such a solver emits the line, prunes to "
+            "keep-2 anyway, and leaves the armed-looking cfg behind as evidence. Verify "
+            "the key is present in the solver's argsd table at the pin you are running."
+        ),
+    )
     # local run constraints
     local_cpu_cores_for_workflow: int | None = Field(
         None,

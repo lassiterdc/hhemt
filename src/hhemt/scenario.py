@@ -389,6 +389,59 @@ def append_swmm_snapshot_disable(cfg_content: str, disable: bool) -> str:
     return f"{cfg_content}{separator}{SWMM_SNAPSHOT_DISABLE_KEY}=1\n"
 
 
+#: The TRITON cfg key that makes the solver RETAIN every coupled SWMM state snapshot instead
+#: of pruning to its keep-2 default. The solver reads it through
+#: `argsd("swmm_snapshot_keep_all", argmap, "0")`; setting it to 1 disarms the prune gate so
+#: every checkpoint index keeps a restorable snapshot on disk.
+#:
+#: WHY IT EXISTS, which is NOT "more snapshots are better". With the keep-2 default, a member
+#: interrupted at a checkpoint older than the two most recent finds NO snapshot and silently
+#: falls back to the exchange-replay path, so one experiment mixes two resume mechanisms across
+#: its members and the cross-experiment comparison carries a confound nobody declared. Setting
+#: this key makes the resume mechanism UNIFORM across every member of an arm.
+#:
+#: IT IS INDEPENDENT OF `SWMM_SNAPSHOT_DISABLE_KEY`, NOT ITS INVERSE. That key empties
+#: `snapshot_path_stem` and so removes the snapshot path entirely; this one changes the
+#: RETENTION DEPTH of a snapshot path that exists. Both off is the shipped default; both on is
+#: expressible and is resolved BY THE SOLVER (disable wins — there is no stem to retain into),
+#: never by this toolkit, which emits what the configuration asked for and arbitrates nothing.
+#:
+#: THIS SPELLING IS A CROSS-REPOSITORY CONTRACT, not a local name. Arm membership is
+#: established iff a member's own `config_{k}.cfg` carries the literal `swmm_snapshot_keep_all=1`,
+#: which the solver's cfg rewriter carries forward verbatim as an unknown-key passthrough.
+#: Renaming it here without renaming the solver's argsd read in the same change silently
+#: unassigns every member from its arm, with no compile error and no test failure in this
+#: repository.
+SWMM_SNAPSHOT_KEEP_ALL_KEY = "swmm_snapshot_keep_all"
+
+
+def append_swmm_snapshot_keep_all(cfg_content: str, keep_all: bool) -> str:
+    """Append the snapshot-keep-all cfg line when `keep_all`, else return the text UNCHANGED.
+
+    Deliberately a SEPARATE function from `append_swmm_snapshot_disable` rather than one
+    generalized flag-table helper, and the separation is what two of this module's guards
+    measure. `test_only_the_coupled_generator_appends_the_key` asserts a call-site set keyed on
+    the FUNCTION NAME: one shared helper would carry N flags through ONE call site, so the
+    per-flag single-call-site property stops being observable — you could no longer tell which
+    flags that site emits. And the `keep_all=False` no-op is asserted on OBJECT IDENTITY, which
+    a shared helper can only offer when EVERY flag is off, degrading a per-flag byte-proof into
+    a conjunctive one. Both flags are also independently settable, so there is no shared
+    invariant for a merged helper to hold.
+
+    Same contract as its sibling, for the same reasons: `keep_all=False` returns the SAME
+    object, so the no-op case cannot perturb a byte and the caller's write-or-skip decision is
+    unchanged from before this function existed. The write is idempotent — an input already
+    carrying the key at line start is returned unchanged, so a re-prepared scenario does not
+    accumulate duplicate lines.
+    """
+    if not keep_all:
+        return cfg_content
+    if f"\n{SWMM_SNAPSHOT_KEEP_ALL_KEY}=" in f"\n{cfg_content}":
+        return cfg_content
+    separator = "" if cfg_content.endswith("\n") else "\n"
+    return f"{cfg_content}{separator}{SWMM_SNAPSHOT_KEEP_ALL_KEY}=1\n"
+
+
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
 
@@ -835,6 +888,13 @@ class TRITONSWMM_scenario:
         # so a run that leaves the field unset writes the same bytes, or skips the write, exactly
         # as it did before this block existed.
         cfg_content = append_swmm_snapshot_disable(cfg_content, self._analysis.cfg_analysis.swmm_snapshot_disable)
+        # Second, independent arm selector on the SAME coupled surface: retention DEPTH of the
+        # snapshot path, where the line above governs whether that path exists at all. Appended
+        # HERE and only here for the same reason — the key gates the SWMM coupling surface, so
+        # the TRITON-only generator below must never carry it. Order between the two appends is
+        # immaterial to the solver (argsd reads an unordered argmap) but is fixed here so the
+        # emitted bytes are deterministic for a member that sets both.
+        cfg_content = append_swmm_snapshot_keep_all(cfg_content, self._analysis.cfg_analysis.swmm_snapshot_keep_all)
         if cfg_content != cfg_as_written:
             self.scen_paths.triton_swmm_cfg.write_text(cfg_content)
 
