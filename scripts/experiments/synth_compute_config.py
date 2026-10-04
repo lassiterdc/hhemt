@@ -119,6 +119,7 @@ def _build_case(
     resume_interruption_schedule: tuple[int, ...] = _RESUME_INTERRUPTION_SCHEDULE,
     ensemble_partition: str = "gpu-a6000",
     swmm_snapshot_disable: bool = False,
+    swmm_snapshot_keep_all: bool = False,
 ) -> _Case:
     """Materialize the synthetic UVA case and return an object exposing ``.analysis``.
 
@@ -176,6 +177,21 @@ def _build_case(
     #     setting the attribute on an already-constructed analysis object is a silent no-op. It has
     #     to travel as config text, which is what `additional_analysis_configs` is for.
     snapshot_disable_cfg = {"swmm_snapshot_disable": True} if swmm_snapshot_disable else {}
+
+    # THE SNAPSHOT-RETENTION selector, and it is injected ONLY when True for BOTH of the reasons
+    # the sibling above gives, which apply here unchanged -- plus a third that is specific to this
+    # flag and is the one that would be lost by "simplifying" to an always-present key.
+    # (3) THIS CAMPAIGN'S ARM-MEMBERSHIP EVIDENCE IS THE LITERAL IN A MEMBER'S OWN
+    #     `config_{k}.cfg` (`src/hhemt/scenario.py:410` records that contract in the toolkit).
+    #     An always-present key would write `swmm_snapshot_keep_all: false` into the persisted
+    #     analysis_config of EVERY arm in the corpus -- including arms that never elected it --
+    #     and the line `swmm_snapshot_keep_all=0` would then appear in every member cfg. A later
+    #     reader could no longer tell a keep-all arm from a non-keep-all arm by the artifact,
+    #     which is the discriminator the whole b4b design rests on.
+    # KEPT AS A SECOND DICT rather than merged with the sibling: the two flags are independent
+    # (`disable` forces the replay fallback; `keep_all` disarms the retention prune that CAUSES
+    # the fallback), so a future change to one must not have to read the other.
+    snapshot_keep_all_cfg = {"swmm_snapshot_keep_all": True} if swmm_snapshot_keep_all else {}
 
     case = retrieve_synth_TRITON_SWMM_test_case(
         analysis_name=analysis_name,
@@ -268,6 +284,7 @@ def _build_case(
                 },
             },
             **snapshot_disable_cfg,
+            **snapshot_keep_all_cfg,
         },
     )
     return _Case(analysis=case.analysis, system_directory=str(case.system.cfg_system.system_directory))
@@ -361,6 +378,7 @@ def resume_case(
     model_arm: str = "tritonswmm",
     variant: str = "",
     swmm_snapshot_disable: bool = False,
+    swmm_snapshot_keep_all: bool = False,
 ) -> _Case:
     """Resume demo (Option-D deterministic single kill): the runner SIGKILLs the
     fresh first attempt mid-sim after N hotstart checkpoints; the Snakemake retry
@@ -424,6 +442,7 @@ def resume_case(
         tritonswmm_software_directory=tritonswmm_software_directory,
         model_arm=model_arm,
         swmm_snapshot_disable=swmm_snapshot_disable,
+        swmm_snapshot_keep_all=swmm_snapshot_keep_all,
     )
 
 
@@ -478,6 +497,7 @@ def build_resume_from_clean_runtimes(
     variant: str = "",
     clean_variant: str | None = None,
     swmm_snapshot_disable: bool = False,
+    swmm_snapshot_keep_all: bool = False,
 ) -> _Case:
     """Two-pass (FQ3): read each completed clean-sweep member_id's full-completion
     wallclock and size the resume walltimes to force a mid-sim kill (~T/3), then
@@ -559,6 +579,11 @@ def build_resume_from_clean_runtimes(
         # arm never resumes, so the key would have no effect on its behaviour but WOULD land in
         # its reconstructed config, and `A1` is the shared comparand for both resume arms.
         swmm_snapshot_disable=swmm_snapshot_disable,
+        # Forwarded to the RESUME arm only, for the identical reason: the retention prune this
+        # flag disarms runs on the RESUME restore path, so the key is inert on a clean arm and
+        # would still land in the clean arm's reconstructed config and destroy its own
+        # membership-by-literal reading.
+        swmm_snapshot_keep_all=swmm_snapshot_keep_all,
     )
 
 
