@@ -185,9 +185,29 @@ def _build_case(
     #     `config_{k}.cfg` (`src/hhemt/scenario.py:410` records that contract in the toolkit).
     #     An always-present key would write `swmm_snapshot_keep_all: false` into the persisted
     #     analysis_config of EVERY arm in the corpus -- including arms that never elected it --
-    #     and the line `swmm_snapshot_keep_all=0` would then appear in every member cfg. A later
-    #     reader could no longer tell a keep-all arm from a non-keep-all arm by the artifact,
-    #     which is the discriminator the whole b4b design rests on.
+    #     which that arm never asked for and which SHIPS: the persisted analysis_config is in the
+    #     ADR-11 deposit set (`src/hhemt/publishing.py` materializes `cfg_analysis.yaml` into the
+    #     deposit root via `model_dump(mode="json")` and lists it in the deposited set), so every
+    #     non-electing arm's DEPOSITED input config stops being byte-identical to what it is today.
+    #     TWO STRONGER CLAIMS ARE FALSE, and both are recorded as false because each was asserted
+    #     here in an earlier draft of this comment before anyone measured it.
+    #     (i) NO member `config_{k}.cfg` would change. `append_swmm_snapshot_keep_all`
+    #     (`src/hhemt/scenario.py`) returns its input object UNCHANGED when the field is False and
+    #     emits only the literal `=1` otherwise -- asserted on OBJECT IDENTITY by
+    #     `tests/test_snapshot_keep_all_cfg_emission.py`, and it has exactly one call site. The
+    #     solver cannot add it either: TRITON's checkpoint writer (`src/output.h::output_cfg`)
+    #     starts from the original cfg TEXT and in-place-replaces only `sim_start_time=`,
+    #     `checkpoint_id=`, `time_step=` and `it_count=`, so it never materializes an absent key.
+    #     The membership-by-literal reading is therefore NOT what an always-present key destroys.
+    #     (ii) NO compatibility divergence row would fire. `reprex_taxonomy` does class this field
+    #     `experiment`, but `bundle/_compatibility.py` selects what it compares from the CLOSED
+    #     two-member tuple `_CFG_ANALYSIS_COMPARISON_FIELDS` (`weather_events_to_simulate`,
+    #     `sensitivity_analysis`) and never consults the taxonomy to ADD a field -- the taxonomy is
+    #     read only to CLASSIFY a field the tuple already selected, and `grep -c swmm_snapshot` over
+    #     that module returns 0. That exposure is LATENT, not live: it becomes real only if someone
+    #     extends that tuple, which the comment directly above the tuple expressly invites.
+    #     The deposit-set harm above is therefore the WHOLE of the reachable harm, and it is
+    #     sufficient on its own to justify injecting the key only when True.
     # KEPT AS A SECOND DICT rather than merged with the sibling: the two flags are independent
     # (`disable` forces the replay fallback; `keep_all` disarms the retention prune that CAUSES
     # the fallback), so a future change to one must not have to read the other.
