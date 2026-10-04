@@ -886,9 +886,13 @@ def read_arm_pin(arm_root: Path, layout: str) -> tuple[str | None, dict]:
     """§8.7.3 `G3` — read each arm's stamped ``triton_producing_sha``. THE READ IS SPECIFIED.
 
     Returns ``(pin, provenance)``; ``pin`` is the single uniform sha across the arm's
-    per-member stores, or ``None`` when ABSENT or NON-UNIFORM. ``provenance`` publishes the
+    per-member stores, or ``None`` when ABSENT, NON-UNIFORM, or stamped over FEWER (or more)
+    stores than the arm declares members. ``provenance`` publishes the member count, the
     store count, the stamped count and every distinct value found, so the verdict is
     CHECKABLE rather than trusted.
+
+    UNIFORMITY IS OVER THE DECLARED POPULATION, NOT THE FOUND ONE. ``n_stamped !=
+    n_members`` yields ``None`` in either direction -- see the comment at the return.
 
     THREE OBVIOUS INSTRUMENTS ARE FALSE-PASS AND THIS AVOIDS ALL THREE.
 
@@ -928,7 +932,29 @@ def read_arm_pin(arm_root: Path, layout: str) -> tuple[str | None, dict]:
         "n_stamped": len(values),
         "distinct_pins": tuple(distinct),
     }
-    return (distinct[0] if len(distinct) == 1 else None), provenance
+    # W4. THE DENOMINATOR IS THE DECLARED POPULATION, WHICH IS THE MEMBER COUNT -- never the
+    # FOUND one. `sorted(set(values))` collapses a PARTIALLY-stamped arm onto the single value
+    # its stamped members happen to carry, so 1-of-30 stamped and 30-of-30 stamped return the
+    # SAME pin and are indistinguishable at the call site. A member directory carrying no
+    # `analysis_datatree.zarr` at all is matched by no glob, so it is neither examined nor
+    # reported missing, which is the quiet half. The guard refuses in EITHER direction:
+    # `!=` rather than `<`, because an over-long store count means the denominator is wrong too.
+    #
+    # THIS IS THE SAME ARGUMENT, AND THE SAME DENOMINATOR, AS THE MINT-TIME CHECK
+    # `scripts/experiments/synth_compute_config.py::check_arm_pin_stamp` ALREADY MAKES -- that
+    # one takes the declared count as a REQUIRED keyword-only argument. Here the declared count
+    # is free: it is the arm's own member count, read from the same glob the comparison zips on.
+    #
+    # AND THE GROUND IS A MEASUREMENT RATHER THAN A PRECAUTION. That function's docstring
+    # records the stamp capture as INTERMITTENT, not deterministically absent: across 22
+    # `system_log.json` under the run root, 7 carry a null `triton_head_sha` (31.8%), and the
+    # split is NOT clean-versus-resume. An intermittent ~32% failure with an unisolated cause
+    # cannot be shown not to recur, so a measurement that every arm is fully stamped TODAY
+    # does not retire the guard -- it only says the guard does not fire today.
+    uniform = distinct[0] if len(distinct) == 1 else None
+    if len(values) != len(suffixes):
+        uniform = None
+    return uniform, provenance
 
 
 @dataclasses.dataclass(frozen=True)
@@ -974,9 +1000,41 @@ def compare_arms(
     control, whose whole purpose is to span two pins; it then publishes both stamps and is
     REPORTED rather than gated.
 
-    THE FOUR `NOT-EVALUATED` TRIGGERS, all first-class: an empty member intersection; a
-    per-artifact compared set that is empty (`G1`); a pin that is absent or non-uniform; and
-    a pin that differs across the two arms while ``require_pin_identity`` holds.
+    WHICH OF §9.4's SIX `NOT-EVALUATED` TRIGGERS THIS INSTRUMENT CARRIES, AND WHICH IT DOES
+    NOT. §9.4 enumerates SIX; this function is conjunct (A)'s cross-arm comparison and
+    implements TWO of them. The earlier form of this docstring asserted *"THE FOUR
+    NOT-EVALUATED TRIGGERS, all first-class"* -- a COMPLETENESS claim over a set it does not
+    carry, which is the defect rather than the location.
+
+    IMPLEMENTED HERE:
+
+    * **Trigger 1** -- ``COMPARED`` empty on a compared artifact (`G1`, per artifact), or ODD
+      on a PAIR-DERIVED one (`G2`, consulted at the verdict layer).
+    * **Trigger 5** -- a comparand arm whose stamped ``triton_producing_sha`` is ABSENT,
+      NON-UNIFORM, partially stamped, or differs from the arm under test (`G3`, via
+      ``read_arm_pin``). The ABSENT/non-uniform half is UNCONDITIONAL;
+      ``require_pin_identity=False`` waives pin INEQUALITY only.
+
+    PLUS TWO (A)-SIDE REFUSALS §9.4 does not number, both of the same vacuous-pass class:
+    an empty MEMBER intersection (the path-layer route to the empty comparison), and an
+    ASYMMETRIC compared set across the two sides (§8.7.2's *"the SAME eight on both sides,
+    which is the property conjunct (A) actually needs"*).
+
+    OWED ELSEWHERE, and the owner is named rather than implied:
+
+    * **Trigger 2** -- the re-run's two-layer invalidation (`_status` flags AND the per-model
+      ``processing_log.outputs[...].success`` record ``_already_written`` consults). OWNER:
+      the LAUNCH party, per §10 item 12's routed mechanics. It is a property of the RUN, not
+      of the artifacts on disk, and nothing readable from two arm roots can establish it --
+      an EDA module handed two finished trees cannot tell a force-rerun from a flag-only
+      invalidation that re-emitted the rule and skipped the write.
+    * **Trigger 3** -- a representative set with no member that resumed twice. OWNER:
+      conjunct (B)'s representative SELECTION. (A) ranges over every member, so it has no
+      representative set to check.
+    * **Trigger 4** -- conjunct (B)'s comparand FILE SET empty on either side. OWNER:
+      conjunct (B), which compares solver artifact BYTES rather than summary columns.
+    * **Trigger 6** -- a member whose ARM cannot be established from its own
+      ``config_{k}.cfg``. OWNER: §10 item 11's arm-scoped retention acceptance.
     """
     arm_pin, arm_pin_prov = read_arm_pin(arm_root, arm_layout)
     ref_pin, ref_pin_prov = read_arm_pin(reference_root, reference_layout)
@@ -991,15 +1049,21 @@ def compare_arms(
             verdict=NOT_EVALUATED, reason=reason, n_compared=n_compared, n_members_compared=n_members, pins=pins
         )
 
-    if require_pin_identity:
-        # G3. Stated as absent-OR-differing, and the ABSENT half is the one that catches the
-        # decoy: an unstamped tree is discriminated from the same-pin arm by this and by
-        # nothing else, because it passes member enumeration, path resolution and the
-        # file-set cardinality guard at 30 == 30 == 30.
-        if arm_pin is None or ref_pin is None:
-            return _not_evaluated(f"G3: pin absent or non-uniform (arm={arm_pin_prov}, reference={ref_pin_prov})")
-        if arm_pin != ref_pin:
-            return _not_evaluated(f"G3: cross-pin comparison refused (arm={arm_pin}, reference={ref_pin})")
+    # W2. G3's TWO HALVES HAVE DIFFERENT SCOPES AND ONLY ONE IS EXEMPTIBLE.
+    #
+    # The ABSENT/non-uniform half is UNCONDITIONAL. §8.7.3 grants exactly one exemption -- the
+    # `A1`-versus-`A4` control, "whose whole purpose is to span two pins" -- and SPANNING TWO
+    # PINS PRESUPPOSES TWO PINS, so the exemption cannot coherently reach an arm carrying no
+    # stamp at all. Nesting this half inside the flag made `require_pin_identity=False` waive
+    # the ONE property that discriminates the unstamped run-root decoy, which passes member
+    # enumeration, path resolution, conjunct (A)'s summary read and the file-set cardinality
+    # guard at 30 == 30 == 30 and fails on the pin alone. The control is unaffected: both its
+    # arms ARE stamped, at two different pins, so it still runs and is still reported.
+    if arm_pin is None or ref_pin is None:
+        return _not_evaluated(f"G3: pin absent or non-uniform (arm={arm_pin_prov}, reference={ref_pin_prov})")
+    # Only pin INEQUALITY is exemptible, which is all §8.7.3 exempts.
+    if require_pin_identity and arm_pin != ref_pin:
+        return _not_evaluated(f"G3: cross-pin comparison refused (arm={arm_pin}, reference={ref_pin})")
 
     arm_suffixes = set(member_suffixes(arm_root, arm_layout))
     ref_suffixes = set(member_suffixes(reference_root, reference_layout))
@@ -1037,10 +1101,61 @@ def compare_arms(
                     {"member": suffix, "artifact": str(rel), "detail": f"unreadable: {exc}", "verdict": NOT_EVALUATED}
                 )
                 continue
+            # W1. THE DERIVATION IS RUN ON BOTH SIDES AND THE SETS MUST BE EQUAL.
+            #
+            # §8.7.2 states the pair rule "yields the SAME eight on both sides, which is the
+            # property conjunct (A) actually needs". Deriving from the REFERENCE alone does not
+            # ASSERT that property: a column absent on the arm side became a per-column
+            # NOT-EVALUATED detail row, the loop CONTINUED, and the surviving columns all
+            # agreed -- so an asymmetry NARROWED the comparison to the intersection and
+            # returned AGREE. Measured pre-fix on a one-pair asymmetry: AGREE over 18 column
+            # instances where 22 were owed. The asymmetry is LIVE, not hypothetical: the
+            # `.rpt` parse path names the fourth link variable `capacity_setting` and the
+            # `.out`/pyswmm path names it `capacity`, and both spellings are live
+            # simultaneously on one host in one run.
+            #
+            # The refusal is at the VERDICT layer and not a detail row, because a conjunct that
+            # reports AGREE while publishing its own shortfall in `details` is satisfiable by
+            # narrowing -- which §8.7.3's falsifiability clause forbids by name.
             columns, prov = compared_columns_for(ds_ref)
-            provenance.append({"member": suffix, "artifact": str(rel), **prov})
+            columns_arm, prov_arm = compared_columns_for(ds_arm)
+            provenance.append(
+                {
+                    "member": suffix,
+                    "artifact": str(rel),
+                    **prov,
+                    "n_compared_arm": prov_arm["n_compared"],
+                    "g2_pair_even_arm": prov_arm["g2_pair_even"],
+                }
+            )
+            # W5. G2 IS A GATE, NOT ONLY A PUBLISHED FIGURE. It was computed and never
+            # consulted. It is provably vacuous on every set the pair rule produces (`IMMUNE`
+            # is the injective image of `AT_RISK` under `c -> c[:-4]+"_last"`, with a range
+            # disjoint from it), so it can fire ONLY where a member enters from OUTSIDE the
+            # rule -- a future edit to `derive_compared_columns` that hand-adds a `_max` by
+            # name, which is precisely the omission it exists to catch. Evaluated on BOTH
+            # sides, over the PAIR-DERIVED operands only, never over the unioned set.
+            if not (prov["g2_pair_even"] and prov_arm["g2_pair_even"]):
+                return _not_evaluated(
+                    f"G2: odd pair-derived set on member {suffix} artifact {rel} "
+                    f"(reference even={prov['g2_pair_even']} over |AT_RISK|={prov['n_at_risk']}, "
+                    f"arm even={prov_arm['g2_pair_even']} over |AT_RISK|={prov_arm['n_at_risk']}); "
+                    f"a member entered from outside the pair rule"
+                )
+            if set(columns) != set(columns_arm):
+                only_ref = tuple(sorted(set(columns) - set(columns_arm)))
+                only_arm = tuple(sorted(set(columns_arm) - set(columns)))
+                return _not_evaluated(
+                    f"asymmetric compared set on member {suffix} artifact {rel}: "
+                    f"reference|COMPARED|={len(columns)}, arm|COMPARED|={len(columns_arm)}; "
+                    f"reference-only={only_ref}, arm-only={only_arm}"
+                )
+            # G1, per compared artifact, and now provably SYMMETRIC: the sets are equal above,
+            # so one side's emptiness decides both and the single-side test is sound. An
+            # artifact yielding nothing on BOTH sides is NOT-EVALUATED for that artifact; an
+            # artifact yielding nothing on ONE side is the asymmetry refused above, which is
+            # the ARTIFACT-level sibling of the column-level narrowing W1 names.
             if not prov["g1_non_empty"]:
-                # G1, per compared artifact. An artifact yielding nothing is NOT-EVALUATED.
                 details.append(
                     {
                         "member": suffix,
@@ -1052,12 +1167,19 @@ def compare_arms(
                 continue
             for var in columns:
                 if var not in ds_arm.data_vars:
+                    # UNREACHABLE BY CONSTRUCTION under the symmetry refusal above:
+                    # `compared_columns_for(ds)` returns a subset of `ds.data_vars`, so
+                    # `set(columns) == set(columns_arm)` entails every member of `columns` is
+                    # present on the arm side. RETAINED AS A BACKSTOP rather than deleted,
+                    # because a future edit that relaxes or removes the symmetry refusal would
+                    # otherwise silently restore the narrowing with no row in `details` at all.
+                    # It is a dead branch on purpose; it is not a live narrowing path.
                     details.append(
                         {
                             "member": suffix,
                             "artifact": str(rel),
                             "variable": var,
-                            "detail": "absent on arm side",
+                            "detail": "absent on arm side (symmetry refusal bypassed)",
                             "verdict": NOT_EVALUATED,
                         }
                     )

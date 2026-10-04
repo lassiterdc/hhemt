@@ -705,16 +705,24 @@ _AT_RISK_BASES = ("capacity_setting", "flow_cms", "link_depth_m", "velocity_mps"
 _IMMUNE_COLS = ("max_flow_cms", "max_over_full_depth", "max_over_full_flow", "max_velocity_mps")
 
 
-def _link_summary(*, truncate: str | None = None) -> xr.Dataset:
+def _link_summary(*, truncate: str | None = None, drop_pair: str | None = None) -> xr.Dataset:
     """A link summary shaped like the real one.
 
     ``truncate`` names ONE at-risk base whose ``_max`` is LOWERED while its ``_last`` is left
     untouched — which IS the resume-defect signature: the true maximum fell outside the
     retained window, so the reduction is low while the final-step value is unaffected. It is
     not a synthetic one-ULP bump; it is the mechanism under test.
+
+    ``drop_pair`` names ONE at-risk base whose ``_max``/``_last`` pair is OMITTED, producing
+    an artifact whose PAIR-DERIVED set is a strict subset of the other side's. That is the
+    model-path spelling asymmetry (``capacity_setting`` vs ``capacity``) in its smallest
+    reproducible form, and it is what a one-sided derivation NARROWS over instead of
+    refusing.
     """
     data = {}
     for i, base in enumerate(_AT_RISK_BASES):
+        if base == drop_pair:
+            continue
         mx = 10.0 + i
         if base == truncate:
             mx = 6.0 + i  # the maximum that survived a 36-step window
@@ -728,8 +736,14 @@ def _link_summary(*, truncate: str | None = None) -> xr.Dataset:
     return xr.Dataset(data, coords={"event_iloc": [0], "link_id": ["c1", "c2"]})
 
 
-def _write_arm(root, layout, *, pin, suffixes=("0", "1"), truncate_on=()):
-    """Materialize an arm root at the NAMED layout with per-member stamped stores."""
+def _write_arm(root, layout, *, pin, suffixes=("0", "1"), truncate_on=(), drop_pair=None, stamp_only=None):
+    """Materialize an arm root at the NAMED layout with per-member stamped stores.
+
+    ``drop_pair`` omits one at-risk pair from EVERY member's summary on this side, so the two
+    sides' pair-derived sets are UNEQUAL. ``stamp_only`` restricts the stamp to the named
+    suffixes, producing the PARTIALLY-stamped arm whose stamp is uniform over the members
+    that carry one and absent on the rest.
+    """
     from hhemt.eda.cross_sim_identity import _LAYOUT_PREFIX, MEMBER_LAYOUTS
 
     top = MEMBER_LAYOUTS[layout].split("/")[0]
@@ -737,7 +751,10 @@ def _write_arm(root, layout, *, pin, suffixes=("0", "1"), truncate_on=()):
         member = root / top / f"{_LAYOUT_PREFIX[layout]}{suffix}"
         proc = member / "sims" / "event_index.0" / "processed"
         proc.mkdir(parents=True, exist_ok=True)
-        ds = _link_summary(truncate=truncate_on[0] if (suffix in truncate_on[1:] and truncate_on) else None)
+        ds = _link_summary(
+            truncate=truncate_on[0] if (suffix in truncate_on[1:] and truncate_on) else None,
+            drop_pair=drop_pair,
+        )
         ds.to_zarr(proc / "TRITONSWMM_SWMM_link_summary.zarr", mode="w", consolidated=False)
         # The G3 read target: zarr v3 per-member store, attributes under `attributes` in
         # zarr.json. A `.zattrs` read raises FileNotFoundError here, which is the false-ABSENT
@@ -745,7 +762,7 @@ def _write_arm(root, layout, *, pin, suffixes=("0", "1"), truncate_on=()):
         store = member / "analysis_datatree.zarr"
         store.mkdir(parents=True, exist_ok=True)
         payload = {"zarr_format": 3, "node_type": "group", "attributes": {}}
-        if pin is not None:
+        if pin is not None and (stamp_only is None or suffix in stamp_only):
             payload["attributes"]["triton_producing_sha"] = pin
         (store / "zarr.json").write_text(json.dumps(payload))
     return root
@@ -910,3 +927,190 @@ def test_g2_is_scoped_to_the_pair_derived_set_not_the_union(tmp_path):
     assert len(cols) % 2 == 1, "the union is odd — which is why G2 must not range over it"
     assert prov["g2_pair_even"] is True
     assert pair_rule_is_self_consistent(frozenset(), frozenset()) is True, "and it holds on the zero case"
+
+
+# ---- W1/W2/W4/W5/W6: the repair set from testing-specialist:4's withhold ----
+#
+# Each of the first four is a POSITIVE CONTROL: it was RED at 08948124 before the repair in
+# the same session that turned it green, and the pre-fix verdict is recorded in the assertion
+# message so a future reader sees what the instrument USED to return rather than only that it
+# now refuses.
+
+
+def test_a_one_sided_derived_set_REFUSES_rather_than_narrowing(tmp_path):
+    """W1 — §8.7.2's property asserted at the VERDICT layer, not as detail rows.
+
+    §8.7.2 states the pair rule *"yields the SAME eight on both sides, which is the property
+    conjunct (A) actually needs."* Deriving the compared set from the REFERENCE alone does
+    not assert that property: a column absent on the arm side becomes a per-column
+    NOT-EVALUATED detail row, the loop CONTINUES, and the surviving columns all agree — so a
+    live column-name asymmetry (the ``capacity_setting`` vs ``capacity`` model-path spelling,
+    measured co-live on one host in one run) silently NARROWS the comparison and returns
+    AGREE over 9 columns where 11 were owed.
+
+    PRE-FIX at 08948124 this returned ``AGREE`` with ``n_compared == 18``.
+    """
+    from hhemt.eda.cross_sim_identity import NOT_EVALUATED, compare_arms
+
+    clean = _write_arm(tmp_path / "cleanPR", "members", pin=_PIN_P)
+    # The arm's summaries carry one FEWER at-risk pair than the reference's.
+    resumed = _write_arm(tmp_path / "resumePS", "members", pin=_PIN_P, drop_pair="velocity_mps")
+
+    res = compare_arms(arm_root=resumed, arm_layout="members", reference_root=clean, reference_layout="members")
+    assert res.verdict == NOT_EVALUATED, (
+        f"a one-sided derived set must REFUSE at the verdict layer, not narrow to the "
+        f"intersection; got {res.verdict}: {res.reason}"
+    )
+    assert "asymmetric compared set" in res.reason, res.reason
+    # The refusal names BOTH sides' cardinalities and the symmetric difference, so a reader
+    # can tell an asymmetry from an empty set without re-deriving either.
+    assert "velocity_mps_max" in res.reason and "velocity_mps_last" in res.reason, res.reason
+
+
+def test_an_absent_pin_is_not_evaluated_even_when_pin_identity_is_waived(tmp_path):
+    """W2 — the `G3` opt-out waives pin INEQUALITY only, never the ABSENT half.
+
+    Spanning two pins presupposes two pins, so §8.7.3's one exemption — the `A1`-versus-`A4`
+    control — cannot coherently reach an arm carrying no stamp at all. The module's own
+    in-code comment calls the absent half *"the sole discriminator"* against the unstamped
+    run-root decoy, which passes member enumeration, path resolution and the 30 == 30 == 30
+    cardinality guard and fails on the pin alone.
+
+    PRE-FIX at 08948124 this returned ``AGREE``: both absent-OR-non-uniform and differing
+    were nested inside ``if require_pin_identity:``, so ``False`` waived both.
+    """
+    from hhemt.eda.cross_sim_identity import NOT_EVALUATED, compare_arms
+
+    decoy = _write_arm(tmp_path / "decoy", "members", pin=None)
+    resumed = _write_arm(tmp_path / "resumePS", "members", pin=_PIN_P)
+
+    res = compare_arms(
+        arm_root=resumed,
+        arm_layout="members",
+        reference_root=decoy,
+        reference_layout="members",
+        require_pin_identity=False,
+    )
+    assert res.verdict == NOT_EVALUATED, (
+        f"require_pin_identity=False must waive INEQUALITY only; an unstamped comparand is "
+        f"NOT-EVALUATED under both settings. Got {res.verdict}: {res.reason}"
+    )
+    assert "pin absent or non-uniform" in res.reason, res.reason
+    assert res.pins["require_pin_identity"] is False, "the waiver is still published"
+
+    # And the control the exemption EXISTS for is unaffected: two arms, two DIFFERENT stamps,
+    # both present -> the cross-pin comparison still runs and is reported.
+    other = _write_arm(tmp_path / "cleanP", "members", pin=_PIN_OTHER)
+    reported = compare_arms(
+        arm_root=resumed,
+        arm_layout="members",
+        reference_root=other,
+        reference_layout="members",
+        require_pin_identity=False,
+    )
+    assert reported.verdict == "AGREE", f"the A1-vs-A4 control must still run: {reported.reason}"
+
+
+def test_a_partially_stamped_arm_yields_no_pin(tmp_path):
+    """W4 — ``n_stamped != n_members`` is NOT-EVALUATED, in EITHER direction.
+
+    ``sorted(set(values))`` collapses a partially-stamped arm onto the one value its stamped
+    members carry, so 1-of-30 stamped is indistinguishable from 30-of-30 at the return. The
+    denominator must be the DECLARED population, which is the member count — the same
+    argument ``scripts/experiments/synth_compute_config.py::check_arm_pin_stamp`` already
+    makes for the mint-time check, and the same reason: a verdict derived as "no bad stores
+    were found" cannot distinguish "examined 30, all good" from "examined 1".
+
+    PRE-FIX at 08948124 ``read_arm_pin`` returned ``_PIN_P`` here and ``compare_arms``
+    returned ``AGREE``.
+    """
+    from hhemt.eda.cross_sim_identity import NOT_EVALUATED, compare_arms, read_arm_pin
+
+    partial = _write_arm(tmp_path / "partial", "members", pin=_PIN_P, suffixes=("0", "1"), stamp_only=("0",))
+    pin, prov = read_arm_pin(partial, "members")
+    assert prov["n_members"] == 2 and prov["n_stores"] == 2 and prov["n_stamped"] == 1, prov
+    assert prov["distinct_pins"] == (_PIN_P,), "one uniform VALUE, over a partial population"
+    assert pin is None, "a partially-stamped arm must not read as uniform"
+
+    # A member directory carrying NO store at all is the other direction of the same gap: it
+    # is matched by no glob, so it is neither examined nor reported missing.
+    full = _write_arm(tmp_path / "full", "members", pin=_PIN_P)
+    res = compare_arms(arm_root=partial, arm_layout="members", reference_root=full, reference_layout="members")
+    assert res.verdict == NOT_EVALUATED and "pin absent or non-uniform" in res.reason, res.reason
+
+    # The guard is PRESENCE-keyed, not value-keyed: a fully-stamped arm still reads its pin.
+    assert read_arm_pin(full, "members")[0] == _PIN_P
+
+
+def test_g2_odd_pair_derived_set_is_consulted_by_compare_arms(tmp_path, monkeypatch):
+    """W5 — `G2` is a GATE, not only a published figure.
+
+    ``compared_columns_for`` computes ``g2_pair_even`` and ``compare_arms`` consulted
+    ``g1_non_empty`` alone, so the EVEN conjunct was provenance a reader could check and the
+    instrument could not act on. `G2` is provably vacuous on every set the pair rule
+    produces — ``IMMUNE`` is the injective image of ``AT_RISK`` with a disjoint range — so it
+    is unreachable without a source edit to ``derive_compared_columns``, and that edit is
+    exactly what it exists to catch. The monkeypatch IS that edit, applied for one test.
+
+    PRE-FIX at 08948124 this returned ``AGREE``.
+    """
+    import hhemt.eda.cross_sim_identity as csi
+
+    clean = _write_arm(tmp_path / "cleanPR", "members", pin=_PIN_P)
+    resumed = _write_arm(tmp_path / "resumePS", "members", pin=_PIN_P)
+
+    real = csi.derive_compared_columns
+
+    def _hand_added(ds):
+        at_risk, immune, _derived = real(ds)
+        # A future edit that hand-adds a `_max` BY NAME to a pair-derived set: the member
+        # enters from OUTSIDE the rule, so the pair identity no longer holds.
+        derived = at_risk | immune | frozenset({"max_over_full_flow"})
+        return at_risk, immune, derived
+
+    monkeypatch.setattr(csi, "derive_compared_columns", _hand_added)
+    assert csi.compared_columns_for(_link_summary())[1]["g2_pair_even"] is False, "the patch must break G2"
+
+    res = csi.compare_arms(arm_root=resumed, arm_layout="members", reference_root=clean, reference_layout="members")
+    assert res.verdict == csi.NOT_EVALUATED, f"an odd PAIR-DERIVED set must refuse; got {res.verdict}: {res.reason}"
+    assert "G2" in res.reason, res.reason
+
+
+def test_float32_eps_is_the_coarsest_floor_over_the_admitted_float_dtype_set() -> None:
+    """W6's accepted residual, pinned as a CLASS claim rather than left as prose.
+
+    ``check_cross_sim_identity`` publishes a HARDCODED ``detection_floor`` of
+    ``np.finfo(np.float32).eps`` beside a population derived at run time by
+    ``compared_columns_for``. The constant is CORRECT and is NOT derived, and the hazard the
+    reviewer names is that the next author reads a correct constant as a derived one. The
+    claim that makes it correct — *"float32 eps is the coarsest over today's admitted set"* —
+    quantifies over a class, so it is pinned here rather than asserted in a comment.
+
+    MEASURED 2026-10-04 over ``src/``: ``float16`` has ZERO occurrences and the only float
+    dtypes named anywhere in the package are ``float32`` (66 occurrences) and ``float64``
+    (80). ``float16`` is the one standard float dtype COARSER than ``float32``
+    (eps 9.77e-04 vs 1.19e-07), so its absence is what makes the constant the ceiling. This
+    test fails the moment a coarser float dtype enters the package, which is the moment the
+    published floor starts UNDERSTATING what the verdict can see.
+    """
+    import pathlib
+
+    floor = float(np.finfo(np.float32).eps)
+    admitted = ("float32", "float64")
+    for name in admitted:
+        assert float(np.finfo(np.dtype(name)).eps) <= floor, (
+            f"{name} is coarser than the published detection_floor {floor:g}"
+        )
+
+    src = pathlib.Path(__file__).resolve().parents[1] / "src" / "hhemt"
+    assert src.is_dir(), src
+    coarser = sorted(
+        str(p.relative_to(src))
+        for p in src.rglob("*.py")
+        if any(tok in p.read_text() for tok in ("float16", "np.half", "'<f2'", '"<f2"'))
+    )
+    assert coarser == [], (
+        f"a float dtype coarser than float32 entered the package ({coarser}); the hardcoded "
+        f"detection_floor in check_cross_sim_identity now UNDERSTATES the verdict's "
+        f"resolution and must be derived from the compared columns' dtypes"
+    )
