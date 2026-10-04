@@ -45,8 +45,15 @@ which pytest performs during COLLECTION, strictly before any test in the session
 compared against the live bytes inside a test. That has zero false reds across legitimate
 commits and fires on exactly the event the contract names.
 
-SCOPE, stated so a green here is not over-read. This catches a write performed by the
-PYTEST SESSION. It is not a git-cleanliness check and it does not replace one.
+SCOPE, stated so a green here is not over-read. This catches a write performed BETWEEN
+THIS MODULE'S IMPORT AND THIS TEST'S EXECUTION, IN THIS PROCESS -- which is narrower than
+"a write performed by the session" in two measured ways. A COLLECTION-TIME write (a
+module-level statement in a module imported before this one) precedes the snapshot and is
+NOT caught: measured, a probe moving its write from a test body to module level took the
+module set from 2 failed to 17 passed on a mutated tree. And under xdist the session spans
+processes while this comparison does not, so a write in another worker after this check has
+run is likewise outside it. It is not a git-cleanliness check and it does not replace one;
+for both residuals above, the git check is the covering instrument.
 
 COMPILE-FREE AND ANALYSIS-FREE BY CONSTRUCTION: no `*_compiled` fixture, no
 `TRITONSWMM_analysis`. Screened by fixture closure, never by module text.
