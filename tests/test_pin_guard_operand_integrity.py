@@ -1,34 +1,49 @@
-"""The in-session mutation tripwire `test_check_live_pin_registered.py` advertises.
+"""The in-session mutation tripwire `test_check_live_pin_registered.py` advertises and imports.
 
-WHAT IS WRONG AND WHY IT IS INVISIBLE. `tests/test_check_live_pin_registered.py` states a
-mutation-discipline contract in its module docstring -- "`test_the_real_tree_is_unmutated`
-re-reads the two tracked operands' sha256 afterwards, so a test that accidentally wrote to
-the real tree is caught here rather than in someone's later `git status`" -- and that test's
-own docstring adds "Digests recorded 2026-10-03 against the committed content; a legitimate
-edit to either file updates them in the same change". The implementation computes the two
-digests and then asserts:
+WHAT WAS WRONG AND WHY IT WAS INVISIBLE -- REPAIRED BY `944364b9`. This paragraph is a
+HISTORICAL RECORD, not a live finding, and it is retained rather than deleted because a
+reader arriving with the old claim in hand needs to find it here and learn which version
+they hold. Until that commit, `tests/test_check_live_pin_registered.py` stated a
+mutation-discipline contract its implementation did not keep. Its module docstring read
+"`test_the_real_tree_is_unmutated` re-reads the two tracked operands' sha256 afterwards, so
+a test that accidentally wrote to the real tree is caught here rather than in someone's
+later `git status`", and that test's own docstring added "Digests recorded 2026-10-03
+against the committed content; a legitimate edit to either file updates them in the same
+change". BOTH SENTENCES ARE NOW GONE FROM THERE -- `944364b9` rewrote each one, so a search
+for either returns nothing and that is the expected result rather than evidence this
+paragraph has drifted. Verify with whitespace normalization, never a single-line literal
+grep: the sibling line-wraps that prose, so a line-scoped search returns a zero that looks
+identical to genuine absence. The implementation computed the two digests and then asserted:
 
     assert all(len(d) == 64 for d in digests.values())
 
 `hashlib.sha256(...).hexdigest()` is 64 characters for every possible input, so that
-predicate is CONSTANT and cannot separate an unmutated tree from a mutated one. No digests
-are recorded anywhere in the file. Positive-controlled at `5c2ef5a3`: the predicate returns
+predicate is CONSTANT and cannot separate an unmutated tree from a mutated one. That is a
+property of the predicate rather than of any one commit, which is why the control below
+still measures it on a locally re-implemented copy. No literal digests were recorded
+anywhere in that file, and none are recorded there now either -- post-repair that is the
+DESIGN rather than the defect, because the sibling imports this module's single snapshot
+instead of keeping a second copy. Positive-controlled at `5c2ef5a3`: the predicate returns
 True on the real tree, True on a copy with arbitrary text appended to both operands, and
-True on a copy with both operands EMPTIED. The two non-vacuous assertions beside it --
-`guard.main([]) == 0` and `guard.read_pin(_REPO) == TRITON_PIN` -- catch a mutation that
-BREAKS the pin/registry agreement or moves the pin, and are blind to any mutation that
-leaves the agreement intact (a comment, a docstring, a reordered set, an added defect entry
-whose `known_absent_in` already contains the live pin).
+True on a copy with both operands EMPTIED. The two non-vacuous assertions that stood beside
+it -- `guard.main([]) == 0` and `guard.read_pin(_REPO) == TRITON_PIN` -- SURVIVE in the
+repaired sibling: they catch a mutation that BREAKS the pin/registry agreement or moves the
+pin, and are blind to any mutation that leaves the agreement intact (a comment, a docstring,
+a reordered set, an added defect entry whose `known_absent_in` already contains the live
+pin). That residual blindness is what the snapshot comparison closes.
 
 WHY THIS MODULE AND NOT A RECORDED-DIGEST LIST. A list of literal digests compared against
 the live files reds on every LEGITIMATE edit too, and `src/hhemt/model_defects.py` is edited
 on every pin registration -- so that form would red most often at exactly the moments the
-tree is being changed on purpose, and would be routed around within two bumps. The stated
-PURPOSE is narrower than the stated MECHANISM: catching an in-session accidental write. The
-instrument that matches the purpose is a SNAPSHOT taken at module import -- which pytest
-performs during COLLECTION, strictly before any test in the session executes -- compared
-against the live bytes inside a test. That has zero false reds across legitimate commits and
-fires on exactly the event the contract names.
+tree is being changed on purpose, and would be routed around within two bumps. Pre-repair
+the sibling's stated PURPOSE was narrower than its stated MECHANISM: catching an in-session
+accidental write. The two now AGREE there, and this paragraph is why they agree on the
+snapshot rather than on a digest list -- the sibling's own docstring reproduces the
+argument, so changing it here without changing it there splits one rationale across two
+sources. The instrument that matches the purpose is a SNAPSHOT taken at module import --
+which pytest performs during COLLECTION, strictly before any test in the session executes --
+compared against the live bytes inside a test. That has zero false reds across legitimate
+commits and fires on exactly the event the contract names.
 
 SCOPE, stated so a green here is not over-read. This catches a write performed by the
 PYTEST SESSION. It is not a git-cleanliness check and it does not replace one.
@@ -91,11 +106,17 @@ def test_the_snapshot_is_populated_and_distinct():
 def test_a_length_only_digest_predicate_cannot_discriminate(tmp_path):
     """Why this module exists, as a measurement rather than a reading.
 
-    Evaluates the landed length-only predicate and this module's snapshot predicate against
-    the SAME pair of trees -- one faithful, one mutated. The length-only predicate returns
-    the same verdict on both; the snapshot predicate separates them. A test that flips this
-    result has either repaired the sibling or broken this one, and either way should be read
-    here before anywhere else.
+    Evaluates the RETIRED length-only predicate -- re-implemented locally below, because
+    `944364b9` removed it from the sibling -- and this module's snapshot predicate against
+    the SAME pair of trees, one faithful and one mutated. The length-only predicate returns
+    the same verdict on both; the snapshot predicate separates them.
+
+    BOTH predicates are LOCAL to this test and neither reads the sibling, so a flip here
+    says nothing about the sibling's state: it means this module's own control has changed,
+    and it should be read here before anywhere else. The test outliving the defect is the
+    point rather than an oversight -- it is the standing proof that the two predicates
+    differ, which is what the sibling's `test_the_real_tree_is_unmutated` docstring now
+    cites when it explains why it imports this snapshot instead of re-taking or pinning one.
     """
 
     def length_only(root: Path) -> bool:
