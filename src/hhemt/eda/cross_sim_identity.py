@@ -59,6 +59,117 @@ TRACKED_VARS: tuple[str, ...] = (
 )
 
 
+#: §8.7.2's pair-signature suffixes. ``summarize_swmm_simulation_results``
+#: (process_simulation.py:3510-3512) emits, for every time-variant var ``v``, BOTH
+#: ``v_max`` and ``v_last`` and then drops ``v``. A tree-wide grep returns exactly ONE
+#: emitter of a ``_max``-suffixed data_var and exactly ONE of a ``_last``-suffixed one and
+#: they are the SAME loop iteration, so the suffix PAIR is a signature of that loop and of
+#: nothing else.
+_MAX_SUFFIX = "_max"
+_LAST_SUFFIX = "_last"
+
+#: The verdict value for a comparison that is neither agreement nor disagreement. §8.7.2's
+#: `G1`/`G2` and §8.7.3's `G3` all resolve here. It is a FIRST-CLASS THIRD OUTCOME: an
+#: empty compared set agrees on every input including one differing in all sixteen columns,
+#: so collapsing it into ``passed=True`` is the vacuous pass the criterion exists to close.
+NOT_EVALUATED = "NOT-EVALUATED"
+
+
+def derive_compared_columns(ds: xr.Dataset) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+    """§8.7.2's PAIR-SIGNATURE derivation, ranged over the COMPARED ARTIFACT.
+
+    Returns ``(AT_RISK, IMMUNE, COMPARED)``::
+
+        AT_RISK  = { c for c in ds.data_vars
+                     if c.endswith("_max") and c[:-4] + "_last" in ds.data_vars }
+        IMMUNE   = { c[:-4] + "_last" for c in AT_RISK }
+        COMPARED = AT_RISK | IMMUNE
+
+    WHY THE PREDICATE IS STATED OVER THE PAIR AND NEVER OVER THE SUMMARISER'S LOOP
+    CONDITION. The natural-looking rule ``{v + "_max" for v in ds.data_vars if
+    tstep_dimname in ds[v].coords}`` describes the summariser's INPUT and is FALSE of
+    everything in its OUTPUT, because the loop runs ``drop_vars(var)`` inside and
+    ``drop_dims(tstep_dimname)`` after. MEASURED on eight real on-disk summaries: that rule
+    yields the EMPTY SET on all eight, so a comparison keyed on it iterates nothing and
+    reports agreement.
+
+    WHY THE ``_last`` CONJUNCT IS LOAD-BEARING RATHER THAN DECORATIVE. The same link summary
+    also carries ``max_flow_cms``, ``max_velocity_mps``, ``max_over_full_flow`` and
+    ``max_over_full_depth`` — every one a ``.rpt`` report-header column using ``max`` as a
+    PREFIX, and every one structurally immune to the resume defect. Requiring the ``_last``
+    partner is what makes the predicate correct BY CONSTRUCTION rather than correct by the
+    current header vocabulary happening not to end in ``_max``.
+
+    AND THE PREDICATE IS MODEL-PATH-INDEPENDENT, which is the property it exists for. The
+    ``.rpt`` parse path names the fourth link variable ``capacity_setting``
+    (swmm_output_parser.py:501) and the ``.out``/pyswmm path names it ``capacity`` (:979).
+    MEASURED: both spellings are live SIMULTANEOUSLY on one host in one run —
+    ``TRITONSWMM_SWMM_link_summary.zarr`` carries ``capacity_setting_max`` while
+    ``SWMM_only_link_summary.zarr`` carries ``capacity_max``. A hardcoded list is wrong on
+    one of them whichever spelling it picks; the pair rule never names a base variable.
+    """
+    data_vars = frozenset(str(c) for c in ds.data_vars)
+    at_risk = frozenset(
+        c for c in data_vars if c.endswith(_MAX_SUFFIX) and c[: -len(_MAX_SUFFIX)] + _LAST_SUFFIX in data_vars
+    )
+    immune = frozenset(c[: -len(_MAX_SUFFIX)] + _LAST_SUFFIX for c in at_risk)
+    return at_risk, immune, at_risk | immune
+
+
+def pair_rule_is_self_consistent(at_risk: frozenset[str], compared: frozenset[str]) -> bool:
+    """§8.7.2's `G2` — EVEN, and ``|COMPARED| == 2 * |AT_RISK|``, SCOPED TO THE PAIR-DERIVED SET.
+
+    This is a self-consistency check on the PAIR CONSTRUCTION — that every ``_max`` admitted
+    brought its ``_last`` partner — and it MUST NOT be evaluated over a set the pair rule did
+    not produce. ``IMMUNE`` is the image of ``AT_RISK`` under ``c -> c[:-4] + "_last"``,
+    injective, with a range disjoint from ``AT_RISK`` because no string ends in both
+    ``_max`` and ``_last``; so the identity holds IDENTICALLY on every set the rule produces
+    (measured true on all four SWMM family/side combinations and on the four zero cases).
+
+    `G2` can therefore only ever fire where a member enters from OUTSIDE the rule — which is
+    exactly what ``compared_columns_for`` does when it unions the hand-named
+    ``TRACKED_VARS`` floor in. That is why this predicate takes the PAIR-DERIVED operands
+    and never the unioned set: evaluated over the union it would fire on the correct
+    configuration, which is the vacuity §8.7.2 scopes it away from.
+    """
+    return len(compared) == 2 * len(at_risk)
+
+
+def compared_columns_for(ds: xr.Dataset) -> tuple[tuple[str, ...], dict]:
+    """The columns conjunct (A) compares on ONE artifact, plus the `G1`/`G2` provenance.
+
+    The compared set is the §8.7.2 pair-derived ``COMPARED`` UNIONED with those hand-named
+    ``TRACKED_VARS`` members actually PRESENT on this artifact. The union is deliberate and
+    §8.7.2 anticipates it: the pair rule reaches the SWMM summariser's reductions only, and
+    the TRITON depth field is outside its reach by construction — measured,
+    ``TRITONSWMM_TRITON_summary.zarr`` carries ``max_wlevel_m`` and
+    ``wlevel_m_last_tstep``, so it yields ``AT_RISK = {}`` and the pair rule compares no
+    TRITON field at all. Dropping the hand-named floor would therefore REGRESS peak-flood-depth
+    coverage the shipped instrument has, in the course of repairing the SWMM blindness.
+
+    Returns ``(columns, provenance)``. ``provenance`` carries ``|COMPARED|``, the three
+    derived cardinalities, the hand-named members admitted, and the `G1`/`G2` verdicts, so a
+    later reader CHECKS the result rather than trusting it (§8.7.2's `G1` requires
+    ``|COMPARED|`` be published, not assumed).
+    """
+    at_risk, immune, derived = derive_compared_columns(ds)
+    present_named = tuple(sorted(v for v in TRACKED_VARS if v in ds.data_vars))
+    columns = tuple(sorted(derived | frozenset(present_named)))
+    provenance = {
+        "n_compared": len(columns),
+        "n_at_risk": len(at_risk),
+        "n_immune": len(immune),
+        "n_derived": len(derived),
+        "at_risk": tuple(sorted(at_risk)),
+        "named_floor_admitted": present_named,
+        # G1 is evaluated over the set actually compared: an artifact yielding nothing at all
+        # is NOT-EVALUATED. G2 is evaluated over the PAIR-DERIVED operands only (see above).
+        "g1_non_empty": bool(columns),
+        "g2_pair_even": pair_rule_is_self_consistent(at_risk, derived),
+    }
+    return columns, provenance
+
+
 #: Mode keys consumed via ``_retrieve_combined_output(mode)``. Imported from the
 #: single source of truth so a mode-set change is picked up automatically.
 def _enabled_modes(analysis: TRITONSWMM_analysis) -> list[str]:
@@ -462,7 +573,14 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
                 ds_cmp = sub.process._retrieve_combined_output(mode)
             except (FileNotFoundError, ValueError):
                 continue
-            for var in TRACKED_VARS:
+            # §8.7.2: the compared column set is DERIVED from the artifact by the pair
+            # signature and unioned with the hand-named floor, never enumerated. The
+            # enumerated four are all structurally IMMUNE to the resume defect on the SWMM
+            # side — they are `.rpt` report-header columns using `max` as a PREFIX — and they
+            # sit in the SAME Dataset as the at-risk `_max` reductions, so an enumerated
+            # instrument compares the wrong columns and passes rather than comparing nothing.
+            compared_cols, _col_prov = compared_columns_for(ds_ref)
+            for var in compared_cols:
                 if var not in ds_ref.data_vars or var not in ds_cmp.data_vars:
                     continue
                 for e in ds_ref["event_iloc"].values:
@@ -709,3 +827,282 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
     verdict_path.write_text(json.dumps(dataclasses.asdict(verdict), indent=2, default=str))
 
     return EdaResult(verdict=verdict, artifact_path=artifact_path, plot_id=plot_id)
+
+
+# ---------------------------------------------------------------------------
+# §8.7 conjunct (A) — the CROSS-ARM comparison instrument.
+#
+# `check_cross_sim_identity` above is an INTRA-ARM instrument: it compares MEMBERS of one
+# sensitivity master against a reference MEMBER of that same master. Conjunct (A) asks a
+# different question — arm-A member {suffix} against arm-B member {suffix} — so it needs its
+# own entry point rather than a flag on that one. Everything below is parameterised over
+# CALLER-SUPPLIED arm roots and layouts and hardcodes NO §8.7 path template, because the
+# GATED pair under the 2026-10-03 pin-equalisation ruling is (cleanPR, resumePS) while the
+# shape's own templates name (cleanP, resumeP): the ruling is a later input the shape does
+# not contain, so an instrument that bakes in the shape's templates wires the wrong pair.
+# ---------------------------------------------------------------------------
+
+#: The two per-member layouts, named EXPLICITLY. The live arms carry ``members/member_*``
+#: ONLY; the read-only archive carries ``subanalyses/sa_*`` ONLY (it predates the rename),
+#: and a ``find -maxdepth 3 -type d -name members`` under the archive RESUME analysis
+#: returns 0.
+#:
+#: THE LAYOUT IS A REQUIRED ARGUMENT AND IS NEVER RESOLVED BY NON-EMPTY GLOB. One glob
+#: applied to both sides matches 30 on one and 0 on the other; a zipper over those two then
+#: compares 30 against 0 and PASSES VACUOUSLY — the same failure class §8.7.2 closes at the
+#: column layer, arriving from the path layer instead. Worse, the archive clean analysis is
+#: the one tree carrying BOTH namings, and its ``members/`` holds 30 correctly-named member
+#: directories with an EMPTY ``sims/`` — so a non-empty-glob resolver SELECTS THE DECOY,
+#: survives member enumeration at 30, survives path resolution, and compares nothing.
+MEMBER_LAYOUTS: dict[str, str] = {
+    "members": "members/member_*",
+    "subanalyses": "subanalyses/sa_*",
+}
+
+#: Identity-on-the-suffix mapping between the two layouts (``member_{x}`` <-> ``sa_{x}``),
+#: measured rather than assumed: stripping ``member_`` from the live arm's 30 children and
+#: ``sa_`` from the archive's 30 yields two sorted lists whose ``diff`` is EMPTY.
+_LAYOUT_PREFIX: dict[str, str] = {"members": "member_", "subanalyses": "sa_"}
+
+
+def member_suffixes(arm_root: Path, layout: str) -> tuple[str, ...]:
+    """Sorted member SUFFIXES under ``arm_root`` for the EXPLICITLY-NAMED ``layout``.
+
+    The suffix — not the directory name — is the cross-layout join key, so a comparison
+    between a ``members/`` arm and a ``subanalyses/`` arm zips on a value both sides share.
+    """
+    if layout not in MEMBER_LAYOUTS:
+        raise ValueError(f"unknown layout {layout!r}; expected one of {sorted(MEMBER_LAYOUTS)}")
+    prefix = _LAYOUT_PREFIX[layout]
+    return tuple(sorted(p.name[len(prefix) :] for p in arm_root.glob(MEMBER_LAYOUTS[layout]) if p.is_dir()))
+
+
+def member_dir(arm_root: Path, layout: str, suffix: str) -> Path:
+    """The member directory for ``suffix`` under ``arm_root``'s named ``layout``."""
+    return arm_root / MEMBER_LAYOUTS[layout].split("/")[0] / f"{_LAYOUT_PREFIX[layout]}{suffix}"
+
+
+def read_arm_pin(arm_root: Path, layout: str) -> tuple[str | None, dict]:
+    """§8.7.3 `G3` — read each arm's stamped ``triton_producing_sha``. THE READ IS SPECIFIED.
+
+    Returns ``(pin, provenance)``; ``pin`` is the single uniform sha across the arm's
+    per-member stores, or ``None`` when ABSENT or NON-UNIFORM. ``provenance`` publishes the
+    store count, the stamped count and every distinct value found, so the verdict is
+    CHECKABLE rather than trusted.
+
+    THREE OBVIOUS INSTRUMENTS ARE FALSE-PASS AND THIS AVOIDS ALL THREE.
+
+    1. A ``.zattrs`` read. The store is **zarr v3**: attributes live in ``zarr.json`` under
+       the ``attributes`` key, and a ``.zattrs`` read raises ``FileNotFoundError`` — which
+       MUST NOT be mistaken for an absent stamp. This reads ``zarr.json``.
+    2. A MASTER-ONLY read. Measured: the archive clean arm carries 31 stamped stores (1
+       master ``sensitivity_datatree.zarr`` + 30 per-sub) while the live resume arm carries
+       30 per-member stores and NO master store at all, so a master-only read returns a
+       false ABSENT on every live arm. **The per-member store is the one location uniform
+       across eras**, and it is the only one read here.
+    3. A WHOLE-TREE ``grep`` for the literal. Measured on the shape's DECOY 2:
+       ``grep -rl 'triton_producing_sha'`` returns **4** — three binary
+       ``render_bundle/*.zip`` plus ``validation_report.json`` — against **ZERO** stores
+       carrying a stamped value. A grep-based check reports an UNSTAMPED tree as stamped,
+       which is exactly the decoy's one discriminating property defeated.
+    """
+    suffixes = member_suffixes(arm_root, layout)
+    values: list[str] = []
+    n_stores = 0
+    for suffix in suffixes:
+        zj = member_dir(arm_root, layout, suffix) / "analysis_datatree.zarr" / "zarr.json"
+        if not zj.is_file():
+            continue
+        n_stores += 1
+        try:
+            attrs = json.loads(zj.read_text()).get("attributes") or {}
+        except (json.JSONDecodeError, OSError):
+            continue
+        sha = attrs.get("triton_producing_sha")
+        if sha:
+            values.append(str(sha))
+    distinct = sorted(set(values))
+    provenance = {
+        "n_members": len(suffixes),
+        "n_stores": n_stores,
+        "n_stamped": len(values),
+        "distinct_pins": tuple(distinct),
+    }
+    return (distinct[0] if len(distinct) == 1 else None), provenance
+
+
+@dataclasses.dataclass(frozen=True)
+class ArmComparison:
+    """The published result of a cross-arm conjunct-(A) comparison.
+
+    ``verdict`` is one of ``"AGREE"``, ``"DISAGREE"`` or ``NOT_EVALUATED`` — THREE outcomes,
+    because an empty compared set or an unreadable pin is neither agreement nor
+    disagreement, and collapsing either into agreement is the vacuous pass the whole
+    criterion exists to close.
+    """
+
+    verdict: str
+    reason: str
+    n_compared: int
+    n_members_compared: int
+    pins: dict
+    details: tuple[dict, ...] = ()
+    provenance: tuple[dict, ...] = ()
+
+
+def compare_arms(
+    *,
+    arm_root: Path,
+    arm_layout: str,
+    reference_root: Path,
+    reference_layout: str,
+    summary_glob: str = _SUMMARY_GLOB,
+    require_pin_identity: bool = True,
+) -> ArmComparison:
+    """§8.7 conjunct (A): compare an arm's FLAT per-scenario summaries against a reference arm's.
+
+    Both roots and BOTH layouts are caller-supplied and required; no §8.7 path template is
+    baked in (see the module comment above this block for why that is load-bearing under the
+    pin-equalisation ruling).
+
+    READS THE FLAT PER-SCENARIO SUMMARIES, NEVER THE CONSOLIDATED TREE — consolidation
+    CF-stamps, dual-indexes and recompresses, all byte-perturbing, so a comparison that read
+    the consolidated store would test the consolidation pipeline rather than the solver.
+
+    ``require_pin_identity=True`` is `G3`: a reference whose stamp is ABSENT, or differs from
+    the arm under test, yields ``NOT_EVALUATED``. Pass ``False`` ONLY for the `A1`-versus-`A4`
+    control, whose whole purpose is to span two pins; it then publishes both stamps and is
+    REPORTED rather than gated.
+
+    THE FOUR `NOT-EVALUATED` TRIGGERS, all first-class: an empty member intersection; a
+    per-artifact compared set that is empty (`G1`); a pin that is absent or non-uniform; and
+    a pin that differs across the two arms while ``require_pin_identity`` holds.
+    """
+    arm_pin, arm_pin_prov = read_arm_pin(arm_root, arm_layout)
+    ref_pin, ref_pin_prov = read_arm_pin(reference_root, reference_layout)
+    pins = {
+        "arm": {"pin": arm_pin, **arm_pin_prov},
+        "reference": {"pin": ref_pin, **ref_pin_prov},
+        "require_pin_identity": require_pin_identity,
+    }
+
+    def _not_evaluated(reason: str, n_compared: int = 0, n_members: int = 0) -> ArmComparison:
+        return ArmComparison(
+            verdict=NOT_EVALUATED, reason=reason, n_compared=n_compared, n_members_compared=n_members, pins=pins
+        )
+
+    if require_pin_identity:
+        # G3. Stated as absent-OR-differing, and the ABSENT half is the one that catches the
+        # decoy: an unstamped tree is discriminated from the same-pin arm by this and by
+        # nothing else, because it passes member enumeration, path resolution and the
+        # file-set cardinality guard at 30 == 30 == 30.
+        if arm_pin is None or ref_pin is None:
+            return _not_evaluated(f"G3: pin absent or non-uniform (arm={arm_pin_prov}, reference={ref_pin_prov})")
+        if arm_pin != ref_pin:
+            return _not_evaluated(f"G3: cross-pin comparison refused (arm={arm_pin}, reference={ref_pin})")
+
+    arm_suffixes = set(member_suffixes(arm_root, arm_layout))
+    ref_suffixes = set(member_suffixes(reference_root, reference_layout))
+    shared = sorted(arm_suffixes & ref_suffixes)
+    if not shared:
+        # The vacuous-pass trigger arriving from the PATH layer: one glob matching 30 on one
+        # side and 0 on the other zips to nothing and would otherwise report agreement.
+        return _not_evaluated(
+            f"empty member intersection (arm={len(arm_suffixes)} under {arm_layout}, "
+            f"reference={len(ref_suffixes)} under {reference_layout})"
+        )
+
+    details: list[dict] = []
+    provenance: list[dict] = []
+    total_compared = 0
+    n_members_compared = 0
+    for suffix in shared:
+        arm_member = member_dir(arm_root, arm_layout, suffix)
+        ref_member = member_dir(reference_root, reference_layout, suffix)
+        # Join the two sides on the summary path RELATIVE to the member dir, so the
+        # member-directory naming asymmetry cannot leak into the artifact pairing.
+        arm_rel = {p.relative_to(arm_member): p for p in arm_member.glob(summary_glob)}
+        ref_rel = {p.relative_to(ref_member): p for p in ref_member.glob(summary_glob)}
+        shared_rel = sorted(set(arm_rel) & set(ref_rel), key=str)
+        if not shared_rel:
+            details.append({"member": suffix, "detail": "no shared summary artifact", "verdict": NOT_EVALUATED})
+            continue
+        member_compared = 0
+        for rel in shared_rel:
+            try:
+                ds_ref = _open_summary(ref_rel[rel])
+                ds_arm = _open_summary(arm_rel[rel])
+            except (FileNotFoundError, OSError, ValueError) as exc:
+                details.append(
+                    {"member": suffix, "artifact": str(rel), "detail": f"unreadable: {exc}", "verdict": NOT_EVALUATED}
+                )
+                continue
+            columns, prov = compared_columns_for(ds_ref)
+            provenance.append({"member": suffix, "artifact": str(rel), **prov})
+            if not prov["g1_non_empty"]:
+                # G1, per compared artifact. An artifact yielding nothing is NOT-EVALUATED.
+                details.append(
+                    {
+                        "member": suffix,
+                        "artifact": str(rel),
+                        "detail": "G1: empty compared set",
+                        "verdict": NOT_EVALUATED,
+                    }
+                )
+                continue
+            for var in columns:
+                if var not in ds_arm.data_vars:
+                    details.append(
+                        {
+                            "member": suffix,
+                            "artifact": str(rel),
+                            "variable": var,
+                            "detail": "absent on arm side",
+                            "verdict": NOT_EVALUATED,
+                        }
+                    )
+                    continue
+                member_compared += 1
+                total_compared += 1
+                res = compare_variable_exact(ds_ref[var], ds_arm[var])
+                if not res["identical"]:
+                    details.append(
+                        {
+                            "member": suffix,
+                            "artifact": str(rel),
+                            "variable": var,
+                            "verdict": "DISAGREE",
+                            "detail": (
+                                f"max_abs_diff={res['max_abs_diff']:.6g}, "
+                                f"dtype_match={res['dtype_match']}, coord_match={res['coord_match']}"
+                            ),
+                        }
+                    )
+        if member_compared:
+            n_members_compared += 1
+
+    if total_compared == 0:
+        return _not_evaluated("no column was compared on any member", n_members=n_members_compared)
+    disagreements = [d for d in details if d.get("verdict") == "DISAGREE"]
+    verdict = "DISAGREE" if disagreements else "AGREE"
+    reason = (
+        f"{len(disagreements)} differing (member, artifact, column) tuple(s)"
+        if disagreements
+        else f"all {total_compared} compared column instances bitwise equal"
+    )
+    return ArmComparison(
+        verdict=verdict,
+        reason=reason,
+        n_compared=total_compared,
+        n_members_compared=n_members_compared,
+        pins=pins,
+        details=tuple(details),
+        provenance=tuple(provenance),
+    )
+
+
+def _open_summary(path: Path) -> xr.Dataset:
+    """Open one FLAT per-scenario summary (``.zarr`` store or ``.nc`` file)."""
+    if path.suffix == ".zarr" or path.is_dir():
+        return xr.open_zarr(path, consolidated=False)
+    return xr.open_dataset(path)

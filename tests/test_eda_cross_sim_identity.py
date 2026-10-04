@@ -686,3 +686,227 @@ def test_declared_sources_are_the_summary_tier_not_the_consolidated_store(tmp_pa
     assert all("processed" in p and "_summary" in p for p in declared), (
         f"declared a path outside the flat summary tier: {declared}"
     )
+
+
+# ---- §8.7 conjunct (A): the CROSS-ARM comparison instrument ----
+#
+# Fast tier, no solver build and no HPC. Both arm roots are materialized on tmp_path with
+# REAL zarr summary stores whose data_var set reproduces the real link summary's — the
+# at-risk pair-derived reductions AND the structurally-immune `.rpt` max-PREFIX columns
+# CO-RESIDENT in one Dataset, which is the property that makes the enumerated instrument
+# blind rather than empty (measured on
+# ~/.cache/hhemt/.../processed/TRITONSWMM_SWMM_link_summary.zarr, 14 data_vars).
+
+_PIN_P = "b1ff26892d95"
+_PIN_OTHER = "e53c2fa01a64"
+
+#: The real link summary's data_var set, split by whether the pair rule admits it.
+_AT_RISK_BASES = ("capacity_setting", "flow_cms", "link_depth_m", "velocity_mps")
+_IMMUNE_COLS = ("max_flow_cms", "max_over_full_depth", "max_over_full_flow", "max_velocity_mps")
+
+
+def _link_summary(*, truncate: str | None = None) -> xr.Dataset:
+    """A link summary shaped like the real one.
+
+    ``truncate`` names ONE at-risk base whose ``_max`` is LOWERED while its ``_last`` is left
+    untouched — which IS the resume-defect signature: the true maximum fell outside the
+    retained window, so the reduction is low while the final-step value is unaffected. It is
+    not a synthetic one-ULP bump; it is the mechanism under test.
+    """
+    data = {}
+    for i, base in enumerate(_AT_RISK_BASES):
+        mx = 10.0 + i
+        if base == truncate:
+            mx = 6.0 + i  # the maximum that survived a 36-step window
+        data[f"{base}_max"] = (("event_iloc", "link_id"), np.array([[mx, mx + 0.5]], dtype="float64"))
+        data[f"{base}_last"] = (("event_iloc", "link_id"), np.array([[1.0 + i, 1.5 + i]], dtype="float64"))
+    for j, col in enumerate(_IMMUNE_COLS):
+        # IMMUNE: written from the .rpt TLinkStats family, which provably round-trips, so
+        # these are IDENTICAL on both sides even when the reduction is truncated. That is
+        # exactly why an instrument enumerating them cannot fail on this defect.
+        data[col] = (("event_iloc", "link_id"), np.array([[100.0 + j, 101.0 + j]], dtype="float64"))
+    return xr.Dataset(data, coords={"event_iloc": [0], "link_id": ["c1", "c2"]})
+
+
+def _write_arm(root, layout, *, pin, suffixes=("0", "1"), truncate_on=()):
+    """Materialize an arm root at the NAMED layout with per-member stamped stores."""
+    from hhemt.eda.cross_sim_identity import _LAYOUT_PREFIX, MEMBER_LAYOUTS
+
+    top = MEMBER_LAYOUTS[layout].split("/")[0]
+    for suffix in suffixes:
+        member = root / top / f"{_LAYOUT_PREFIX[layout]}{suffix}"
+        proc = member / "sims" / "event_index.0" / "processed"
+        proc.mkdir(parents=True, exist_ok=True)
+        ds = _link_summary(truncate=truncate_on[0] if (suffix in truncate_on[1:] and truncate_on) else None)
+        ds.to_zarr(proc / "TRITONSWMM_SWMM_link_summary.zarr", mode="w", consolidated=False)
+        # The G3 read target: zarr v3 per-member store, attributes under `attributes` in
+        # zarr.json. A `.zattrs` read raises FileNotFoundError here, which is the false-ABSENT
+        # the specified read avoids.
+        store = member / "analysis_datatree.zarr"
+        store.mkdir(parents=True, exist_ok=True)
+        payload = {"zarr_format": 3, "node_type": "group", "attributes": {}}
+        if pin is not None:
+            payload["attributes"]["triton_producing_sha"] = pin
+        (store / "zarr.json").write_text(json.dumps(payload))
+    return root
+
+
+def test_enumerated_instrument_is_BLIND_to_the_truncation_the_derived_one_catches(tmp_path):
+    """THE FAILING DEMONSTRATION, and it is the load-bearing one.
+
+    A repair shown only to pass has not been shown to be a repair. This pins the defect's
+    signature and asserts BOTH halves against the SAME artifact pair:
+
+      * the ENUMERATED four (today's shipped ``TRACKED_VARS``) are all equal, so an
+        instrument keyed on them reports AGREEMENT on a truncated member;
+      * the DERIVED set catches it.
+
+    Asserting only the second half would leave "the derived set fails" indistinguishable
+    from "any instrument would have failed here", which is the distinction the whole §8.7.1
+    finding turns on.
+    """
+    from hhemt.eda.cross_sim_identity import TRACKED_VARS, compared_columns_for
+
+    ref = _link_summary()
+    truncated = _link_summary(truncate="flow_cms")
+
+    # (1) The enumerated instrument is BLIND: every one of today's four names that is PRESENT
+    #     on this artifact is bitwise equal across the truncated pair.
+    enumerated_present = [v for v in TRACKED_VARS if v in ref.data_vars]
+    assert enumerated_present, "fixture must exercise the enumerated names, else this proves nothing"
+    for var in enumerated_present:
+        assert compare_variable_exact(ref[var], truncated[var])["identical"], (
+            f"{var} differs — fixture no longer reproduces the defect signature (an immune "
+            f"column must be IDENTICAL for the blindness demonstration to mean anything)"
+        )
+
+    # (2) The derived instrument CATCHES it.
+    columns, prov = compared_columns_for(ref)
+    assert prov["n_at_risk"] == 4 and prov["n_derived"] == 8, prov
+    differing = [v for v in columns if not compare_variable_exact(ref[v], truncated[v])["identical"]]
+    assert differing == ["flow_cms_max"], f"the derived set must catch exactly the truncated reduction, got {differing}"
+
+
+def test_compare_arms_DISAGREES_on_a_truncated_member(tmp_path):
+    """The failing demonstration end-to-end through ``compare_arms``, same pin on both sides."""
+    from hhemt.eda.cross_sim_identity import compare_arms
+
+    clean = _write_arm(tmp_path / "cleanPR", "members", pin=_PIN_P)
+    resumed = _write_arm(tmp_path / "resumePS", "members", pin=_PIN_P, truncate_on=("flow_cms", "1"))
+
+    res = compare_arms(arm_root=resumed, arm_layout="members", reference_root=clean, reference_layout="members")
+    assert res.verdict == "DISAGREE", f"{res.verdict}: {res.reason}"
+    assert res.n_compared > 0 and res.n_members_compared == 2
+    bad = [d for d in res.details if d.get("verdict") == "DISAGREE"]
+    assert {d["variable"] for d in bad} == {"flow_cms_max"}, bad
+    assert {d["member"] for d in bad} == {"1"}, "only the truncated member may disagree"
+    # The published figures §8.7.2's G1 requires be OUTPUTS rather than assumptions.
+    assert all(p["n_at_risk"] == 4 for p in res.provenance)
+    assert res.pins["arm"]["pin"] == res.pins["reference"]["pin"] == _PIN_P
+
+
+def test_compare_arms_AGREES_on_an_untruncated_pair(tmp_path):
+    """The PASSING demonstration — run second, and only meaningful because the first exists."""
+    from hhemt.eda.cross_sim_identity import compare_arms
+
+    clean = _write_arm(tmp_path / "cleanPR", "members", pin=_PIN_P)
+    resumed = _write_arm(tmp_path / "resumePS", "members", pin=_PIN_P)
+    res = compare_arms(arm_root=resumed, arm_layout="members", reference_root=clean, reference_layout="members")
+    assert res.verdict == "AGREE", f"{res.verdict}: {res.reason}"
+    # 11 columns x 2 members = 22; the number is pinned so a silently-narrowing set is a RED,
+    # not a quieter green.
+    assert res.n_compared == 22, res.n_compared
+
+
+# ---- The refusal semantics: NOT-EVALUATED is a first-class THIRD outcome ----
+
+
+def test_absent_stamp_is_not_evaluated_never_agreement(tmp_path):
+    """G3's ABSENT half — the ONLY property discriminating the unstamped run-root decoy.
+
+    That tree passes member enumeration at 30, passes path resolution, and passes the
+    file-set cardinality guard at 30 == 30 == 30. The pin is the one thing it fails.
+    """
+    from hhemt.eda.cross_sim_identity import NOT_EVALUATED, compare_arms
+
+    clean = _write_arm(tmp_path / "decoy", "members", pin=None)  # unstamped
+    resumed = _write_arm(tmp_path / "resumePS", "members", pin=_PIN_P)
+    res = compare_arms(arm_root=resumed, arm_layout="members", reference_root=clean, reference_layout="members")
+    assert res.verdict == NOT_EVALUATED and "G3" in res.reason
+    assert res.pins["reference"]["n_stamped"] == 0
+    assert res.pins["reference"]["n_stores"] == 2, "the stores must EXIST and merely lack the value"
+
+
+def test_differing_stamp_is_not_evaluated_and_the_control_can_opt_out(tmp_path):
+    """A cross-pin comparison is refused by default; the A1-vs-A4 control opts out explicitly."""
+    from hhemt.eda.cross_sim_identity import NOT_EVALUATED, compare_arms
+
+    other = _write_arm(tmp_path / "cleanP", "members", pin=_PIN_OTHER)
+    resumed = _write_arm(tmp_path / "resumePS", "members", pin=_PIN_P)
+    gated = compare_arms(arm_root=resumed, arm_layout="members", reference_root=other, reference_layout="members")
+    assert gated.verdict == NOT_EVALUATED and "cross-pin" in gated.reason
+    assert gated.pins["arm"]["pin"] == _PIN_P and gated.pins["reference"]["pin"] == _PIN_OTHER
+
+    reported = compare_arms(
+        arm_root=resumed,
+        arm_layout="members",
+        reference_root=other,
+        reference_layout="members",
+        require_pin_identity=False,
+    )
+    assert reported.verdict == "AGREE"
+    assert reported.pins["arm"]["pin"] != reported.pins["reference"]["pin"], "both stamps still published"
+
+
+def test_layout_asymmetry_does_not_pass_vacuously(tmp_path):
+    """One glob on both sides matches N on one and 0 on the other and a zipper then passes.
+
+    Named per side, the archive layout compares correctly against a live arm; named WRONGLY,
+    the result is NOT-EVALUATED rather than agreement.
+    """
+    from hhemt.eda.cross_sim_identity import NOT_EVALUATED, compare_arms, member_suffixes
+
+    archive = _write_arm(tmp_path / "archive", "subanalyses", pin=_PIN_P)
+    live = _write_arm(tmp_path / "live", "members", pin=_PIN_P)
+    # Mapping is identity on the suffix.
+    assert member_suffixes(archive, "subanalyses") == member_suffixes(live, "members") == ("0", "1")
+
+    ok = compare_arms(arm_root=live, arm_layout="members", reference_root=archive, reference_layout="subanalyses")
+    assert ok.verdict == "AGREE", ok.reason
+
+    wrong = compare_arms(arm_root=live, arm_layout="members", reference_root=archive, reference_layout="members")
+    assert wrong.verdict == NOT_EVALUATED, f"a wrong per-side layout must REFUSE, got {wrong.verdict}"
+
+
+def test_empty_derived_and_empty_member_sets_are_not_evaluated(tmp_path):
+    """G1 per artifact, and the empty member intersection — the two remaining triggers."""
+    from hhemt.eda.cross_sim_identity import NOT_EVALUATED, compare_arms, compared_columns_for
+
+    # G1: an artifact carrying neither a pair nor a named-floor member yields nothing.
+    barren = xr.Dataset(
+        {"time_of_max_flow_min": (("event_iloc", "link_id"), np.array([[1.0, 2.0]]))},
+        coords={"event_iloc": [0], "link_id": ["c1", "c2"]},
+    )
+    cols, prov = compared_columns_for(barren)
+    assert cols == () and prov["g1_non_empty"] is False and prov["n_compared"] == 0
+
+    # Empty member intersection: disjoint suffixes.
+    a = _write_arm(tmp_path / "a", "members", pin=_PIN_P, suffixes=("0", "1"))
+    b = _write_arm(tmp_path / "b", "members", pin=_PIN_P, suffixes=("8", "9"))
+    res = compare_arms(arm_root=a, arm_layout="members", reference_root=b, reference_layout="members")
+    assert res.verdict == NOT_EVALUATED and "empty member intersection" in res.reason
+
+
+def test_g2_is_scoped_to_the_pair_derived_set_not_the_union(tmp_path):
+    """G2 evaluated over the UNION would fire on the correct configuration.
+
+    §8.7.2 scopes it to the pair-derived operands precisely because the hand-named floor
+    enters from OUTSIDE the rule. This pins the scoping: the union is ODD (11) on a real link
+    summary shape while G2 still reads True.
+    """
+    from hhemt.eda.cross_sim_identity import compared_columns_for, pair_rule_is_self_consistent
+
+    cols, prov = compared_columns_for(_link_summary())
+    assert len(cols) % 2 == 1, "the union is odd — which is why G2 must not range over it"
+    assert prov["g2_pair_even"] is True
+    assert pair_rule_is_self_consistent(frozenset(), frozenset()) is True, "and it holds on the zero case"
