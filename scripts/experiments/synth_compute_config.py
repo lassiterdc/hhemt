@@ -185,12 +185,19 @@ def _build_case(
     #     `config_{k}.cfg` (`src/hhemt/scenario.py:410` records that contract in the toolkit).
     #     An always-present key would write `swmm_snapshot_keep_all: false` into the persisted
     #     analysis_config of EVERY arm in the corpus -- including arms that never elected it --
-    #     which that arm never asked for and which SHIPS: the persisted analysis_config is in the
-    #     ADR-11 deposit set (`src/hhemt/publishing.py` materializes `cfg_analysis.yaml` into the
-    #     deposit root via `model_dump(mode="json")` and lists it in the deposited set), so every
-    #     non-electing arm's DEPOSITED input config stops being byte-identical to what it is today.
-    #     TWO STRONGER CLAIMS ARE FALSE, and both are recorded as false because each was asserted
-    #     here in an earlier draft of this comment before anyone measured it.
+    #     which that arm never asked for. THAT HARM IS REAL AND IT DOES NOT SHIP -- it is confined
+    #     to the IN-TREE INPUT yaml. It is also not (3)'s to justify: reason (1) states this exact
+    #     harm for the sibling flag, and this block's opening sentence already adopts BOTH sibling
+    #     reasons as applying here unchanged, so the guard is justified before (3) says anything.
+    #     (3) EXISTS ONLY TO ADD WHAT IS SPECIFIC TO THIS FLAG -- that THIS arm's membership
+    #     evidence is the cfg literal, which is what makes the input yaml's byte-stability worth
+    #     protecting here and not merely tidy -- AND IT NOMINATES NO DECISIVE CLAIM OF ITS OWN.
+    #     THREE successive drafts each nominated a NEW harm as "sufficient on its own" and all
+    #     three were FALSE. The slot is REMOVED rather than refilled, because refilling it is the
+    #     mechanism: every one of the three reached a false consequence by one unverified hop from
+    #     a TRUE citation, so quoting the source is not the check -- measuring the consequence is.
+    #     THREE STRONGER CLAIMS ARE FALSE, and all three are recorded as false because each was
+    #     asserted here in an earlier draft of this comment before anyone measured it.
     #     (i) NO member `config_{k}.cfg` would change. `append_swmm_snapshot_keep_all`
     #     (`src/hhemt/scenario.py`) returns its input object UNCHANGED when the field is False and
     #     emits only the literal `=1` otherwise -- asserted on OBJECT IDENTITY by
@@ -203,11 +210,25 @@ def _build_case(
     #     `experiment`, but `bundle/_compatibility.py` selects what it compares from the CLOSED
     #     two-member tuple `_CFG_ANALYSIS_COMPARISON_FIELDS` (`weather_events_to_simulate`,
     #     `sensitivity_analysis`) and never consults the taxonomy to ADD a field -- the taxonomy is
-    #     read only to CLASSIFY a field the tuple already selected, and `grep -c swmm_snapshot` over
-    #     that module returns 0. That exposure is LATENT, not live: it becomes real only if someone
-    #     extends that tuple, which the comment directly above the tuple expressly invites.
-    #     The deposit-set harm above is therefore the WHOLE of the reachable harm, and it is
-    #     sufficient on its own to justify injecting the key only when True.
+    #     read only to CLASSIFY a field the union already produced (`_field_bucket` is called at
+    #     `:338`, INSIDE the `if va != vb` body, so it can change a row's SEVERITY and can never
+    #     create one). Grounded STRUCTURALLY rather than on a zero-count grep, which is blind to a
+    #     differently-spelled consumer: every row is minted from `(set(ca) | set(cb))` where both
+    #     are `_read_jsonld_core` outputs, that function builds its dict through per-tuple
+    #     `if ... in` gates plus exactly three literal keys (`case_name`, `schemaVersion`,
+    #     `analysis_id`), with no `.keys()`, `.items()` or dict-union anywhere in the module, and it
+    #     has exactly two call sites. That exposure is LATENT, not live: it becomes real only if
+    #     someone extends that tuple, which the comment heading the tuple block expressly invites.
+    #     (iii) NO SHIPPED artifact would change -- and the mechanism an earlier draft cited as the
+    #     reason one WOULD is the mechanism that refutes it. BOTH shipped copies of
+    #     `cfg_analysis.yaml` are REGENERATED from the model, never copied from the input yaml:
+    #     `src/hhemt/publishing.py:188` (the ADR-11 deposit set) and
+    #     `src/hhemt/bundle/_emit.py:590` (the render bundle) each write
+    #     `cfg.model_dump(mode="json")` with no `exclude_*` flag, and pydantic emits every declared
+    #     field at its default. So both ALREADY carry `swmm_snapshot_keep_all: false` today for
+    #     every non-electing arm. Measured 2026-10-04 against a persisted config carrying NO
+    #     `swmm_snapshot` key: the key is nevertheless present in the dump at `false`, and adding
+    #     it to the input yaml leaves the dumped bytes IDENTICAL.
     # KEPT AS A SECOND DICT rather than merged with the sibling: the two flags are independent
     # (`disable` forces the replay fallback; `keep_all` disarms the retention prune that CAUSES
     # the fallback), so a future change to one must not have to read the other.
