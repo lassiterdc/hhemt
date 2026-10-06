@@ -1,4 +1,11 @@
-"""Tests for the ADR-9 cross-sim byte-identity EDA check (eda/cross_sim_identity.py)."""
+"""Tests for the cross-sim byte-identity check (``eda/cross_sim_identity.py``).
+
+The problem: a sensitivity master runs one model under several compute configurations, and a
+result that changes with the configuration is a defect rather than a finding. The check under
+test compares each member's FLAT per-scenario summaries against a reference member bit-for-bit.
+These tests pin what that comparison ranges over, which member it is referenced to, and which of
+its three outcomes — AGREE, DISAGREE, NOT-EVALUATED — a given input produces.
+"""
 
 from __future__ import annotations
 
@@ -16,7 +23,15 @@ from hhemt.eda.cross_sim_identity import (
     compare_variable_exact,
 )
 
-# ---- Fast tier (no build): non-sensitivity skip + graceful-absent + kernel ----
+# ---- Non-sensitivity skip + graceful-absent (BOTH build) and the build-free kernel ----
+#
+# The first two members reach a BUILT fixture and compile on a cold cache:
+# `test_non_sensitivity_returns_skipped` via `synth_multi_sim_analysis_cached`
+# (`retrieve_synth_multi_sim_test_case`) and `test_validate_analysis_graceful_absent` via
+# `synthetic_multisim_completed`, whose own fixture argument is `tritonswmm_cpu_compiled`.
+# Only the second carries `slow`, so an `-m "not slow"` selection does NOT exclude the first —
+# deselect both by node id to run this file where compiling is not permitted. The three
+# `compare_variable_exact` / `_combine_cells` members take no fixture and run anywhere.
 
 
 def test_non_sensitivity_returns_skipped(synth_multi_sim_analysis_cached):
@@ -137,10 +152,11 @@ def test_sensitivity_master_identical_passes(synthetic_sensitivity_completed):
 
     Substrate: synthetic_sensitivity_completed (conftest.py) runs the synth
     sensitivity master once per session to the f_consolidate_experiment_complete
-    state, materializing per-member summaries on disk. Per the plan's bit-repro
-    empirical precondition, if the synth solver is NOT bit-reproducible across
-    the 4 compute modes this assertion is re-scoped to 'check ran + well-formed
-    verdict/artifact' (plan Empirical Testing decision rule)."""
+    state, materializing per-member summaries on disk. The equality presupposes that
+    the synth solver is bit-reproducible across the 4 compute modes; if a future
+    substrate stops being so, the response is to RE-SCOPE this to 'the check ran and
+    returned a well-formed verdict + artifact', never to relax the equality in place —
+    a relaxed equality is a check that cannot fail."""
     analysis = synthetic_sensitivity_completed.experiment
     result = check_cross_sim_identity(analysis)
     assert result.skipped is False
@@ -175,7 +191,7 @@ def test_sensitivity_master_identical_passes(synthetic_sensitivity_completed):
 @pytest.mark.requires_snakemake_subprocess
 @pytest.mark.slow
 def test_sensitivity_master_across_family_characterizes(synthetic_sensitivity_completed):
-    """ADR-4 across-family (within_family=False): the verdict NEVER asserts equality.
+    """Across-family (``within_family=False``): the verdict NEVER asserts equality.
 
     Whether or not the subs are bit-identical, the across-family verdict is
     passed=True and its summary discloses the bounded divergence (the boundary IS
@@ -186,7 +202,7 @@ def test_sensitivity_master_across_family_characterizes(synthetic_sensitivity_co
     result = check_cross_sim_identity(analysis, within_family=False)
     assert result.skipped is False
     assert result.verdict is not None
-    # Disclosed divergence is always a PASS under ADR-4 across-family semantics.
+    # Across-family, a disclosed divergence is a PASS: the bound is the result, not a failure.
     assert result.verdict.passed is True, result.verdict.summary
     assert "haracterized divergence" in result.verdict.summary
     assert result.verdict.name == "Cross-sim byte-identity"
@@ -217,9 +233,14 @@ def test_verdict_surfaces_in_validate_analysis(synthetic_sensitivity_completed):
 def test_identity_group_partition_persisted(synthetic_sensitivity_completed):
     """The additive byte-identity PARTITION (identity_group) is persisted into the artifact.
 
-    Contract (plan R1 producer): identity_group is int32, dims (member_id,), computed from the
-    FLAT summaries via compare_variable_exact (NOT the consolidated tree), emitted over the
-    NON-reference member_id coord (purely additive), with the reference's own label carried in the
+    Producer contract: identity_group is int32 with dims `("sa_id",)`. The coordinate the
+    artifact binds is named `sa_id` — that is the name every assertion below reads — while the
+    attribute keys describing the same axis are named for the MEMBER (`reference_member_id`,
+    `reference_member_id_by_family`, and the `ref_member_id` detail-row field). The two names
+    denote one axis and only `sa_id` is ever a coordinate; nothing else in this file says so, so
+    it is said here. identity_group is computed from the FLAT summaries via
+    compare_variable_exact (NOT the consolidated tree) and emitted over the NON-reference
+    members only (purely additive), with the reference's own label carried in the
     reference_group attr. Two subs share a label iff byte-identical on the config-diff
     variables at every event -- so on a bit-identical master (verdict passed) every sub +
     the reference collapse to ONE group."""
@@ -232,7 +253,7 @@ def test_identity_group_partition_persisted(synthetic_sensitivity_completed):
     assert ds["identity_group"].dtype == np.int32
     assert ds["identity_group"].dims == ("sa_id",)
     assert (ds["identity_group"].values >= 0).all()
-    # Purely additive: identity_group shares the existing artifact vars' (non-reference) member_id
+    # Purely additive: identity_group shares the existing artifact vars' (non-reference) `sa_id`
     # coord; the reference is carried separately as an attr, not in the label array.
     assert "reference_member_id" in ds.attrs
     ref_id = str(ds.attrs["reference_member_id"])
@@ -257,9 +278,10 @@ def test_tracked_vars_are_actually_emitted_names() -> None:
     Defect (2026-07-21): the tuple carried ``max_full_flow_ratio`` /
     ``max_full_depth_ratio`` — defined in cf_conventions.py:121,127 but emitted
     NOWHERE. Because the comparison loops ``continue`` past absent vars, all three
-    consumers (check_cross_sim_identity, compute_sensitivity, the [Q8] REQ-1
-    reproduction check) silently compared 2 of 4 variables, and a [Q8] cross-hardware
-    DoD was certified without conduit capacity ever being compared. The emitted names
+    consumers (check_cross_sim_identity, compute_sensitivity, and the REQ-1 reproduction
+    check in scripts/experiments/doi_emitter_and_ingestion_verification.py) silently
+    compared 2 of 4 variables, and a cross-hardware reproduction claim was certified
+    without conduit capacity ever being compared. The emitted names
     live in constants.LST_COL_HEADERS_LINK_FLOW_SUMMARY and are what the renderers
     consume (per_sim_conduit_flow.py:120,555).
     """
@@ -316,7 +338,7 @@ class _StubSub:
 
 
 def test_reference_rank_selects_serial_over_lexicographically_earlier_gpu():
-    """N1: the reference is the SERIAL-CPU sub, not the lexicographically-first member_id.
+    """The reference is the SERIAL-CPU sub, not the lexicographically-first member_id.
 
     The retired rule sorted on member_id alone, which on the real compute-config sweep selected
     `gpu_0_r1` — making every reported difference a difference-from-a-GPU-run rather than
@@ -361,7 +383,7 @@ def test_reference_rank_tiebreaks_are_ordered_as_documented():
     assert [member for member, _ in sorted(tied, key=_ref_rank)] == ["a_gpu_1", "z_gpu_1"]
 
 
-# ---- EW-4: per-family reference selection (strict path) ----
+# ---- Per-family reference selection (strict path) ----
 #
 # Fast tier, no solver build and no HPC: the harness stubs the three surfaces
 # check_cross_sim_identity touches on a sub (`cfg_analysis`, `process._MODE_CONFIG` +
@@ -375,15 +397,17 @@ def test_reference_rank_tiebreaks_are_ordered_as_documented():
 # _write_synth_sensitivity_csv is mpi/openmp/hybrid/serial with n_gpus=[0,0,0,0] -> one 'cpu' family;
 # container_validation_suite.csv is four rows all run_mode=gpu -> one 'gpu' family. In a single
 # family the per-family reference IS the global reference, so every slow test in this file is a
-# provable no-op under EW-4. Their green is a regression check, never evidence the change works.
+# provable no-op under per-family referencing. Their green is a regression check, never
+# evidence the change works.
 
 _DEPTH_MODE = "tritonswmm"
 _LINK_MODE = "tritonswmm_swmm_link"
 
-#: One float32 ULP at 1.0 — the EXACT magnitude of all 24 GPU-vs-serial-CPU tuples EW-4 stops
-#: failing, and (see test_within_family_cpu_divergence_still_fails) the magnitude that must STILL be
-#: fatal within a family. Pinning one number to both roles is what makes "we re-referenced" and "we
-#: widened tolerance" distinguishable outcomes rather than two stories about the same green suite.
+#: One float32 ULP at 1.0 — the EXACT magnitude of every GPU-vs-serial-CPU tuple that per-family
+#: referencing stops failing, and (see test_within_family_cpu_divergence_still_fails) the magnitude
+#: that must STILL be fatal within a family. Pinning one number to both roles is what makes
+#: "we re-referenced" and "we widened tolerance" distinguishable outcomes rather than two
+#: stories about the same green suite.
 _ULP32 = float(np.finfo(np.float32).eps)
 
 
@@ -509,7 +533,7 @@ def test_references_by_family_partitions_cpu_and_gpu():
 
 
 def test_references_by_family_single_family_is_todays_reference():
-    """On a SINGLE-family master the per-family reference IS the pre-EW-4 global reference.
+    """On a SINGLE-family master the per-family reference IS the former global reference.
 
     Both real fixtures are single-family, so this is the guard that keeps their verdicts bit-identical
     if the family predicate is ever changed. The two frames are transcribed from the fixtures rather
@@ -537,18 +561,19 @@ def test_references_by_family_single_family_is_todays_reference():
 
 
 def test_within_family_cpu_divergence_still_fails(tmp_path):
-    """P7 GUARD — DO NOT DELETE OR RELAX. A CPU-vs-CPU divergence MUST still fail the verdict.
+    """PRESERVATION GUARD — DO NOT DELETE OR RELAX. A CPU-vs-CPU divergence MUST still fail the verdict.
 
-    This is a PRESERVATION test: it is green both before and after EW-4, and that is the point. EW-4
-    re-references the comparison; it does not widen it. Without this arm, "the false GPU FAILs are
-    gone" and "the strict path was silently widened" are indistinguishable outcomes — both produce a
-    passing verdict on the campaign, and the second is exactly what rejecting a within_family=False
-    flip was meant to avoid.
+    This is a PRESERVATION test: it is green both before and after the per-family change, and that
+    is the point. Per-family referencing re-references the comparison; it does not widen it.
+    Without this arm, "the false GPU FAILs are gone" and "the strict path was silently
+    widened" are indistinguishable outcomes — both produce a passing verdict on the campaign,
+    and the second is exactly what rejecting a within_family=False flip was meant to avoid.
 
     The magnitude is load-bearing: the perturbation is ONE float32 ULP, bit-for-bit the same
-    max_abs_diff as every GPU-family tuple EW-4 stops failing. So the pair of assertions states the
-    fix's actual semantics — the same magnitude that is no longer compared ACROSS families is still
-    fatal WITHIN one. Any tolerance added to the strict path turns this red.
+    max_abs_diff as every GPU-family tuple per-family referencing stops failing. So the pair
+    of assertions states the fix's actual semantics — the same magnitude that is no longer
+    compared ACROSS families is still fatal WITHIN one. Any tolerance added to the strict
+    path turns this red.
     """
     master = _master(
         tmp_path,
@@ -573,12 +598,12 @@ def test_within_family_cpu_divergence_still_fails(tmp_path):
 def test_cross_family_gpu_divergence_no_longer_fails(tmp_path):
     """A GPU sub diverging from serial-CPU by one float32 ULP no longer fails — and KEEPS its row.
 
-    Pre-EW-4 this verdict was `passed=False` with '1 (member, event, variable) tuple(s) diverged from
-    reference member_id=serial_0_r1' — the two false FAIL cells on the combined report's
-    errors-and-warnings page, in miniature.
+    Before per-family referencing this verdict was `passed=False` with '1 (member, event,
+    variable) tuple(s) diverged from reference member_id=serial_0_r1' — the two false FAIL
+    cells on the combined report's errors-and-warnings page, in miniature.
 
     The second half is the part that matters structurally. The lone GPU sub is its own family's
-    reference, so it self-compares and stays in the artifact's member_id coord with identical=True /
+    reference, so it self-compares and stays in the artifact's `sa_id` coord with identical=True /
     max_abs_diff=0.0. Had the change excluded EVERY family reference from the loop instead of only
     the primary one, this sub would vanish from the coord, _config_diff._identity_labels would have
     no label for the 1-GPU group, and — because _config_diff re-references every GPU group to that
@@ -603,11 +628,15 @@ def test_cross_family_gpu_divergence_no_longer_fails(tmp_path):
 
 
 def test_artifact_member_id_coord_excludes_only_the_primary_reference(tmp_path):
-    """EXACTLY ONE sub is excluded from the artifact's member_id coord, whatever the family count.
+    """EXACTLY ONE sub is excluded from the artifact's `sa_id` coord, whatever the family count.
+
+    The coordinate is `sa_id`; this callable's own name says `member_id` and is wrong about it.
+    The name is load-bearing elsewhere and is not renamed here — read the assertions, which bind
+    `ds["sa_id"]`.
 
     Stated as a coord-membership invariant on purpose. The downstream symptom of breaking it is a
     false 'differs' in a renderer two modules away (_config_diff), which nobody would trace back to
-    this loop; the invariant is checkable right here. The companion assertion pins VMS 8's
+    this loop; the invariant is checkable right here. The companion assertion pins the
     per-family reference map, which is pure disclosure — _config_diff still folds back only the
     single scalar `reference_member_id`, and that contract is deliberately unchanged.
     """
@@ -674,8 +703,8 @@ def test_declared_sources_are_the_summary_tier_not_the_consolidated_store(tmp_pa
     Reads the manifest sidecar rather than the returned EdaResult, for two reasons: the
     dataclass carries no source_paths field, and the sidecar is the artifact the bundle
     harvest actually consumes. Asserts over the raw relative STRINGS rather than Path
-    objects because this module imports json but not pathlib.Path, and an [ADD] spec
-    carries one anchor and so cannot also reach the import block.
+    objects because this module imports json and not pathlib.Path, and adding an import to
+    serve one assertion is a wider change than the assertion needs.
     """
     master = _master(tmp_path, {"serial_0_r1": (_StubCfg("serial", n_mpi_procs=1, n_omp_threads=1), 0.0)})
     result = check_cross_sim_identity(master)
@@ -693,7 +722,7 @@ def test_declared_sources_are_the_summary_tier_not_the_consolidated_store(tmp_pa
     )
 
 
-# ---- §8.7 conjunct (A): the CROSS-ARM comparison instrument ----
+# ---- The CROSS-ARM comparison instrument ----
 #
 # Fast tier, no solver build and no HPC. Both arm roots are materialized on tmp_path with
 # REAL zarr summary stores whose data_var set reproduces the real link summary's — the
@@ -777,8 +806,8 @@ def _triton_summary(*, perturb: str | None = None) -> xr.Dataset:
 def _perf_summary() -> xr.Dataset:
     """A perf summary shaped like the real one: wall-clock columns, no pair, no raster grid.
 
-    §8.3.1 excludes this artifact from the b4b gate BY NAME — "a TIMING artifact deliberately
-    outside a bit-identity criterion because wall clock is not reproducible". It is built here
+    The bit-identity gate excludes this artifact BY NAME: it is a TIMING artifact, deliberately
+    outside a bit-identity criterion because wall clock is not reproducible. It is built here
     so the fail-closed third branch has a real negative control rather than an invented one.
     """
     return xr.Dataset(
@@ -841,8 +870,8 @@ def test_enumerated_instrument_is_BLIND_to_the_truncation_the_derived_one_catche
       * the DERIVED set catches it.
 
     Asserting only the second half would leave "the derived set fails" indistinguishable
-    from "any instrument would have failed here", which is the distinction the whole §8.7.1
-    finding turns on.
+    from "any instrument would have failed here", which is the distinction this
+    demonstration exists to make.
     """
     from hhemt.eda.cross_sim_identity import TRACKED_VARS, compared_columns_for
 
@@ -879,7 +908,7 @@ def test_compare_arms_DISAGREES_on_a_truncated_member(tmp_path):
     bad = [d for d in res.details if d.get("verdict") == "DISAGREE"]
     assert {d["variable"] for d in bad} == {"flow_cms_max"}, bad
     assert {d["member"] for d in bad} == {"1"}, "only the truncated member may disagree"
-    # The published figures §8.7.2's G1 requires be OUTPUTS rather than assumptions.
+    # `G1` requires the compared-set figures be published OUTPUTS, not assumptions — assert them.
     assert all(p["n_at_risk"] == 4 for p in res.provenance)
     assert res.pins["arm"]["pin"] == res.pins["reference"]["pin"] == _PIN_P
 
@@ -895,8 +924,9 @@ def test_compare_arms_AGREES_on_an_untruncated_pair(tmp_path):
     # 8 columns x 1 artifact x 2 members = 16; the number is pinned so a silently-narrowing
     # set is a RED, not a quieter green. RE-AIMED from 22: the old figure was 11 per member,
     # the 8 pair-derived columns PLUS the three `TRACKED_VARS` members the hand-named floor
-    # unioned in. §8.3.1 publishes `|COMPARED| = 8` for this family, so 22 pinned a measured
-    # figure that exceeded its own published one. The pin's PURPOSE is unchanged and is why
+    # unioned in. The criterion for this family is `|COMPARED| = 8` — pinned below by
+    # `test_the_swmm_families_take_the_pair_derivation_with_no_named_floor` — so 22 pinned a
+    # measured figure exceeding the stated one. The pin's PURPOSE is unchanged and is why
     # the number is re-aimed rather than deleted.
     assert res.n_compared == 16, res.n_compared
 
@@ -921,7 +951,7 @@ def test_absent_stamp_is_not_evaluated_never_agreement(tmp_path):
 
 
 def test_differing_stamp_is_not_evaluated_and_the_control_can_opt_out(tmp_path):
-    """A cross-pin comparison is refused by default; the A1-vs-A4 control opts out explicitly."""
+    """A cross-pin comparison is refused by default; the two-pin control opts out explicitly."""
     from hhemt.eda.cross_sim_identity import NOT_EVALUATED, compare_arms
 
     other = _write_arm(tmp_path / "cleanP", "members", pin=_PIN_OTHER)
@@ -962,7 +992,11 @@ def test_layout_asymmetry_does_not_pass_vacuously(tmp_path):
 
 
 def test_empty_derived_and_empty_member_sets_are_not_evaluated(tmp_path):
-    """G1 per artifact, and the empty member intersection — the two remaining triggers."""
+    """Two more NOT-EVALUATED triggers: G1 per artifact, and the empty member intersection.
+
+    Not the last two. Four further triggers are exercised below — an asymmetric compared set,
+    an absent pin under a waived pin-identity check, a partially-stamped arm, and an odd
+    pair-derived set."""
     from hhemt.eda.cross_sim_identity import NOT_EVALUATED, compare_arms, compared_columns_for
 
     # G1: an artifact carrying neither a pair nor a named-floor member yields nothing.
@@ -989,10 +1023,9 @@ def test_a_variable_present_on_the_reference_and_absent_on_the_member_is_DISCLOS
 
     Class: NEW CAPABILITY. The plausible wrong implementation is the shipped bare `continue`,
     which skips the variable with no row at all; this test is red under it at the row
-    assertion. The reviewer testing-specialist:96 folded this into Finding A's test rather
-    than writing a second one ("one class, one test"), so the reviewer's file does NOT cover
-    it and reverting my symmetric hunk alone leaves that file green — measured. This is the
-    coder-side cover for behaviour I built, not a restatement of a reviewer assertion.
+    assertion. This file is the ONLY cover for the narrowing row: the companion suite
+    `tests/test_eda_cross_sim_identity_review.py` asserts over `NOT_EVALUATED` but never over
+    a per-VARIABLE narrowing row, so deleting the row assertion below leaves that file green.
 
     Why it is required, as a consequence a reader can check against the code: `compare_arms`
     refuses the same asymmetry at the verdict layer, and its own comment states the ground —
@@ -1058,7 +1091,7 @@ def test_g2_is_scoped_to_the_pair_derived_set_not_the_returned_set(tmp_path):
     set ODD at 11 while `G2` read True. That floor is gone, the link set is the even 8, and
     the old assertion `len(cols) % 2 == 1` would now be red — so the test is re-cut onto the
     vehicle the repair CREATED rather than deleted, and the new vehicle is strictly stronger
-    because it is §8.3.1's own case instead of a defect's side effect.
+    because it is the TRITON family's own correct configuration instead of a defect's side effect.
 
     Property: `G2` reads the PAIR-DERIVED operands and never `compared_columns_for`'s return
     value, for EVERY artifact family.
@@ -1067,7 +1100,7 @@ def test_g2_is_scoped_to_the_pair_derived_set_not_the_returned_set(tmp_path):
     all-vars branch that is `8 == 0`.
     Why required: an unscoped `G2` is consulted as a GATE in `compare_arms`, so a False
     there returns NOT-EVALUATED — restoring, via the guard, exactly the permanent
-    NOT-EVALUATED on the TRITON family that §8.3.1 repaired.
+    NOT-EVALUATED on the TRITON family that the all-vars derivation repaired.
     What kills it: computing `g2_pair_even` over `columns` rather than over `derived`.
     A second correct implementation under which it still passes: one keying the family
     dispatch on the artifact filename stem instead of on the raster dims — the branch
@@ -1096,7 +1129,7 @@ def test_g2_is_scoped_to_the_pair_derived_set_not_the_returned_set(tmp_path):
 
 
 def test_the_triton_family_takes_the_all_vars_derivation(tmp_path):
-    """§8.3.1 table row 3: `COMPARED = set(summary.data_vars)` for the TRITON family.
+    """The TRITON family's derivation: `COMPARED = set(summary.data_vars)`.
 
     Property: on an artifact carrying the TRITON raster grid, the compared set is EVERY
     data_var — quantified over the family, not over this fixture's particular eight.
@@ -1104,9 +1137,10 @@ def test_the_triton_family_takes_the_all_vars_derivation(tmp_path):
     one-rule-for-all union `sorted(derived | present_named)`, which on this artifact yields
     `AT_RISK = {}` and a compared set of the single name `max_wlevel_m`; this test is red
     under it at the first assertion (1 != 8).
-    Why required: a compared set of one over an eight-variable artifact is the §8.7.1
-    blindness — seven fields of the family §8.3.1 calls "the CONTROL that proves the solver's
-    own output series is intact" go uncompared, and a control you do not compare is not one.
+    Why required: a compared set of one over an eight-variable artifact is the blindness this
+    derivation removes — seven fields of the family that serves as the CONTROL proving the
+    solver's own output series is intact go uncompared, and a control you do not compare is
+    not one.
     What kills it: restoring the hand-named floor as the TRITON branch, or narrowing all-vars
     to any proper subset of `data_vars`.
     A second correct implementation under which it still passes: a filename-stem dispatch
@@ -1129,15 +1163,16 @@ def test_the_triton_family_takes_the_all_vars_derivation(tmp_path):
 
 
 def test_the_swmm_families_take_the_pair_derivation_with_no_named_floor(tmp_path):
-    """§8.3.1 table rows 1-2: `COMPARED` is the pair signature, published at 8.
+    """The SWMM node/link families' derivation: `COMPARED` is the pair signature, at 8.
 
     Property: on an artifact carrying the `_max`/`_last` pair signature, the compared set is
     EXACTLY `AT_RISK | IMMUNE` and admits no hand-named member.
     Class: NEW CAPABILITY. The plausible wrong implementation is the shipped union, which
     adds the three present `TRACKED_VARS` members and yields 11; this test is red under it.
-    Why required: §8.3.1 publishes `|COMPARED| = 8` for this family, and a measured figure
-    that exceeds its published one means the criterion a reader checks is not the criterion
-    that ran. The surplus members are also precisely the `.rpt` columns §8.7.1 disqualified.
+    Why required: the criterion for this family is `|COMPARED| = 8`, and a measured figure
+    that exceeds the stated one means the criterion a reader checks is not the criterion that
+    ran. The surplus members are also precisely the `.rpt`-derived columns `_IMMUNE_COLS`
+    names, which are identical on both sides even when a reduction is truncated.
     What kills it: re-introducing the union, or admitting the `<U7` `type` column by widening
     this family to all-vars.
     A second correct implementation under which it still passes: one deriving `IMMUNE` by
@@ -1163,16 +1198,16 @@ def test_a_non_summariser_artifact_fails_closed_rather_than_taking_either_branch
 
     Property: an artifact carrying neither the pair signature nor the raster grid gets no
     derivation at all — quantified over every artifact the `*_summary.*` glob reaches that
-    §8.3.1's three-row table does not name.
+    neither derivation branch names.
     Class: REGRESSION. The near-miss implementation — keying all-vars on `not AT_RISK`
     instead of on the raster grid — is red here, because a perf summary is ALSO pair-empty
     and would be routed to all-vars.
-    Why required: the perf summary's columns are wall-clock seconds, which §8.3.1 excludes
-    from a bit-identity criterion by name. Comparing them makes the gate DISAGREE on every
+    Why required: the perf summary's columns are wall-clock seconds, which the bit-identity
+    criterion excludes by name because wall clock is not reproducible. Comparing them makes the gate DISAGREE on every
     resume forever — a criterion that cannot PASS, traded for one that could not FAIL.
     What kills it: replacing `_is_raster_summary(ds)` with `not derived`.
     A second correct implementation under which it still passes: an explicit stem allowlist
-    over §8.3.1's three artifacts.
+    over the three summary artifacts — TRITON, SWMM link, SWMM node.
     """
     from hhemt.eda.cross_sim_identity import compared_columns_for
 
@@ -1199,7 +1234,7 @@ def test_a_triton_divergence_away_from_the_floor_is_MISSED_by_the_union_and_CAUG
     Class: REGRESSION end-to-end through `compare_arms`. Under the shipped union the TRITON
     compared set is `{max_wlevel_m}` alone, that variable is IDENTICAL across this pair, and
     the verdict is AGREE — this test is red under it at the final assertion.
-    Why required: §8.3.1 keeps the TRITON family in the gate as the CONTROL proving the
+    Why required: the TRITON family is in the gate as the CONTROL proving the
     solver's own series survived while SWMM's did not. A control that reports AGREE on a
     divergent member is reporting on its own narrowness.
     What kills it: narrowing the TRITON branch back to any set excluding the perturbed
@@ -1236,7 +1271,7 @@ def test_a_triton_divergence_away_from_the_floor_is_MISSED_by_the_union_and_CAUG
     assert any(d.get("variable") == "time_of_max_wlevel_min" for d in res.details), res.details
 
 
-# ---- W1/W2/W4/W5/W6: the repair set from testing-specialist:4's withhold ----
+# ---- Four refusals the instrument did not previously make, and one accepted residual ----
 #
 # Each of the first four is a POSITIVE CONTROL: it was RED at 08948124 before the repair in
 # the same session that turned it green, and the pre-fix verdict is recorded in the assertion
@@ -1245,10 +1280,10 @@ def test_a_triton_divergence_away_from_the_floor_is_MISSED_by_the_union_and_CAUG
 
 
 def test_a_one_sided_derived_set_REFUSES_rather_than_narrowing(tmp_path):
-    """W1 — §8.7.2's property asserted at the VERDICT layer, not as detail rows.
+    """The pair rule's SYMMETRY property, asserted at the VERDICT layer and not as detail rows.
 
-    §8.7.2 states the pair rule *"yields the SAME eight on both sides, which is the property
-    conjunct (A) actually needs."* Deriving the compared set from the REFERENCE alone does
+    The pair rule yields the SAME eight columns on both sides, and that symmetry is the
+    property the cross-arm comparison needs. Deriving the compared set from the REFERENCE alone does
     not assert that property: a column absent on the arm side becomes a per-column
     NOT-EVALUATED detail row, the loop CONTINUES, and the surviving columns all agree — so a
     live column-name asymmetry (the ``capacity_setting`` vs ``capacity`` model-path spelling,
@@ -1275,10 +1310,12 @@ def test_a_one_sided_derived_set_REFUSES_rather_than_narrowing(tmp_path):
 
 
 def test_an_absent_pin_is_not_evaluated_even_when_pin_identity_is_waived(tmp_path):
-    """W2 — the `G3` opt-out waives pin INEQUALITY only, never the ABSENT half.
+    """The `G3` opt-out waives pin INEQUALITY only, never the ABSENT half.
 
-    Spanning two pins presupposes two pins, so §8.7.3's one exemption — the `A1`-versus-`A4`
-    control — cannot coherently reach an arm carrying no stamp at all. The module's own
+    Spanning two pins presupposes two pins, so the one exemption — the two-pin control, which
+    compares an arm against a reference built at a DIFFERENT TRITON pin and passes
+    `require_pin_identity=False` to do it — cannot coherently reach an arm carrying no stamp
+    at all. The module's own
     in-code comment calls the absent half *"the sole discriminator"* against the unstamped
     run-root decoy, which passes member enumeration, path resolution and the 30 == 30 == 30
     cardinality guard and fails on the pin alone.
@@ -1315,11 +1352,11 @@ def test_an_absent_pin_is_not_evaluated_even_when_pin_identity_is_waived(tmp_pat
         reference_layout="members",
         require_pin_identity=False,
     )
-    assert reported.verdict == "AGREE", f"the A1-vs-A4 control must still run: {reported.reason}"
+    assert reported.verdict == "AGREE", f"the two-pin control must still run: {reported.reason}"
 
 
 def test_a_partially_stamped_arm_yields_no_pin(tmp_path):
-    """W4 — ``n_stamped != n_members`` is NOT-EVALUATED, in EITHER direction.
+    """``n_stamped != n_members`` is NOT-EVALUATED, in EITHER direction.
 
     ``sorted(set(values))`` collapses a partially-stamped arm onto the one value its stamped
     members carry, so 1-of-30 stamped is indistinguishable from 30-of-30 at the return. The
@@ -1350,7 +1387,7 @@ def test_a_partially_stamped_arm_yields_no_pin(tmp_path):
 
 
 def test_g2_odd_pair_derived_set_is_consulted_by_compare_arms(tmp_path, monkeypatch):
-    """W5 — `G2` is a GATE, not only a published figure.
+    """`G2` is a GATE, not only a published figure.
 
     ``compared_columns_for`` computes ``g2_pair_even`` and ``compare_arms`` consulted
     ``g1_non_empty`` alone, so the EVEN conjunct was provenance a reader could check and the
@@ -1384,12 +1421,12 @@ def test_g2_odd_pair_derived_set_is_consulted_by_compare_arms(tmp_path, monkeypa
 
 
 def test_float32_eps_is_the_coarsest_floor_over_the_admitted_float_dtype_set() -> None:
-    """W6's accepted residual, pinned as a CLASS claim rather than left as prose.
+    """An accepted residual, pinned as a CLASS claim rather than left as prose.
 
     ``check_cross_sim_identity`` publishes a HARDCODED ``detection_floor`` of
     ``np.finfo(np.float32).eps`` beside a population derived at run time by
-    ``compared_columns_for``. The constant is CORRECT and is NOT derived, and the hazard the
-    reviewer names is that the next author reads a correct constant as a derived one. The
+    ``compared_columns_for``. The constant is CORRECT and is NOT derived, and the hazard
+    is that the next author reads a correct constant as a derived one. The
     claim that makes it correct — *"float32 eps is the coarsest over today's admitted set"* —
     quantifies over a class, so it is pinned here rather than asserted in a comment.
 
