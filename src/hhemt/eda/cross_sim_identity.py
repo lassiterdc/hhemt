@@ -126,44 +126,121 @@ def pair_rule_is_self_consistent(at_risk: frozenset[str], compared: frozenset[st
     ``_max`` and ``_last``; so the identity holds IDENTICALLY on every set the rule produces
     (measured true on all four SWMM family/side combinations and on the four zero cases).
 
-    `G2` can therefore only ever fire where a member enters from OUTSIDE the rule — which is
-    exactly what ``compared_columns_for`` does when it unions the hand-named
-    ``TRACKED_VARS`` floor in. That is why this predicate takes the PAIR-DERIVED operands
-    and never the unioned set: evaluated over the union it would fire on the correct
-    configuration, which is the vacuity §8.7.2 scopes it away from.
+    `G2` can therefore only ever fire where a member enters from OUTSIDE the rule, and that
+    is why this predicate takes the PAIR-DERIVED operands and never the set
+    ``compared_columns_for`` returns. TWO live sites make the distinction load-bearing. The
+    ALL-VARS branch returns a set the pair rule did not produce at all — on a real TRITON
+    summary ``|COMPARED|`` is 8 while ``|AT_RISK|`` is 0, so an unscoped `G2` reads
+    ``8 == 0``, refuses a correct comparison, and returns the TRITON arm to the permanent
+    NOT-EVALUATED §8.3.1 repaired. And a future edit that hand-adds a ``_max`` by name to a
+    pair-derived set is the omission `G2` exists to catch, which is why it is scoped rather
+    than deleted.
+
+    THE THIRD SITE IS GONE: until this function's caller was repaired to dispatch per
+    artifact family, it unioned a hand-named ``TRACKED_VARS`` floor into every artifact, and
+    that union was the original outside-the-rule member. The floor is removed, so the union
+    no longer exists and this paragraph records the retired form rather than a live one.
     """
     return len(compared) == 2 * len(at_risk)
+
+
+#: The dimension pair that identifies the TRITON raster-summary family, and the reason it is
+#: a SIGNATURE rather than a convenience. ``summarize_triton_simulation_results`` reduces a
+#: gridded ``(timestep_min, y, x)`` raster, so its summary is the only one in the per-scenario
+#: `processed/` set carried on an ``x``/``y`` grid; `processing_analysis._MODE_CONFIG` encodes
+#: the same fact, listing ``["x", "y"]` as the concat dim for exactly the two TRITON modes
+#: (``tritonswmm_triton``, ``triton_only``) and a scalar or ``None`` for the other six.
+#: MEASURED over every DISTINCT summary stem in the local run cache — nine of them — the
+#: three buckets this module dispatches on are DISJOINT and TOTAL: four SWMM node/link stems
+#: carry a pair and no grid, two TRITON stems carry a grid and no pair, and the two perf
+#: stems plus `hydrology_inflow_summary` carry neither.
+_RASTER_GRID_DIMS = frozenset({"x", "y"})
+
+
+def _is_raster_summary(ds: xr.Dataset) -> bool:
+    """True iff this artifact is on the TRITON summariser's ``x``/``y`` raster grid.
+
+    Deliberately NOT a filename test: `compared_columns_for` receives a Dataset at both of
+    its call sites and only one of them holds a path, so a stem-keyed dispatch would need a
+    second mode-to-stem table beside `summary_paths._SUMMARY_STEMS_BY_MODEL` and would go
+    stale against it silently.
+
+    Deliberately NOT ``not AT_RISK`` either, which is the near-miss worth naming because it
+    reads as the obvious generalization of §8.3.1's own sentence that the pair signature "is
+    simply not the emitter of this family". MEASURED: `TRITONSWMM_perf_summary` and
+    `hydrology_inflow_summary` are ALSO pair-empty, so a pair-emptiness key routes them to
+    all-vars and compares `Total`/`Simulation`/`Init` — wall-clock seconds, which §8.3.1
+    excludes from a bit-identity criterion by name because they are not reproducible. That
+    key would turn a gate that cannot fail on the TRITON family into one that cannot pass on
+    any family.
+    """
+    return _RASTER_GRID_DIMS <= frozenset(str(d) for d in ds.sizes)
 
 
 def compared_columns_for(ds: xr.Dataset) -> tuple[tuple[str, ...], dict]:
     """The columns conjunct (A) compares on ONE artifact, plus the `G1`/`G2` provenance.
 
-    The compared set is the §8.7.2 pair-derived ``COMPARED`` UNIONED with those hand-named
-    ``TRACKED_VARS`` members actually PRESENT on this artifact. The union is deliberate and
-    §8.7.2 anticipates it: the pair rule reaches the SWMM summariser's reductions only, and
-    the TRITON depth field is outside its reach by construction — measured,
-    ``TRITONSWMM_TRITON_summary.zarr`` carries ``max_wlevel_m`` and
-    ``wlevel_m_last_tstep``, so it yields ``AT_RISK = {}`` and the pair rule compares no
-    TRITON field at all. Dropping the hand-named floor would therefore REGRESS peak-flood-depth
-    coverage the shipped instrument has, in the course of repairing the SWMM blindness.
+    §8.3.1 states the derivation PER ARTIFACT FAMILY and this function is that table, keyed
+    on a property each artifact carries rather than on its filename:
 
-    Returns ``(columns, provenance)``. ``provenance`` carries ``|COMPARED|``, the three
-    derived cardinalities, the hand-named members admitted, and the `G1`/`G2` verdicts, so a
-    later reader CHECKS the result rather than trusting it (§8.7.2's `G1` requires
-    ``|COMPARED|`` be published, not assumed).
+    * a SWMM node/link summary carries the ``_max``/``_last`` pair signature and takes the
+      §8.7.2 PAIR derivation — ``COMPARED = AT_RISK | IMMUNE``;
+    * a TRITON summary carries the raster grid and takes the ALL-VARS derivation —
+      ``COMPARED = set(summary.data_vars)``;
+    * anything else takes NEITHER, yields the empty set, and is `G1` NOT-EVALUATED.
+
+    THE HAND-NAMED ``TRACKED_VARS`` FLOOR IS GONE FROM BOTH LIVE BRANCHES, and it is removed
+    rather than narrowed. §8.7.1 records that those four names ARE the blind set the whole
+    criterion was restated to escape — three are `.rpt` LINK FLOW SUMMARY columns written
+    from ``TLinkStats``, the family that provably round-trips, and the fourth is the TRITON
+    depth field — so unioning them in re-admitted the blindness at every artifact. On the
+    TRITON side the floor is not lost but SUBSUMED: all-vars admits ``max_wlevel_m`` by
+    construction and compares seven further fields beside it, so the repair WIDENS
+    peak-flood-depth coverage rather than regressing it. On the SWMM side the floor was pure
+    over-comparison against §8.3.1's published ``|COMPARED| = 8`` and it also dragged in
+    ``max_velocity_mps``'s neighbours; dropping it is what makes the measured figure equal
+    the published one.
+
+    MEASURED on the real stores, before and after, per member: link 11 -> 8, node 9 -> 8,
+    TRITON 1 -> 8; 21 -> 24 per member and 630 -> 720 over a 30-member arm pair.
+
+    WHY ALL-VARS IS NOT EXTENDED TO THE SWMM FAMILIES, beyond §8.3.1 assigning them the pair
+    rule: the link summary carries a ``type`` variable of dtype ``<U7``, so an all-vars set
+    there would hand a string column to a numeric bitwise comparison.
+
+    Returns ``(columns, provenance)``. ``provenance`` names the branch that fired in
+    ``derivation``, so a reader CHECKS which §8.3.1 row applied instead of inferring it
+    (§8.7.2's `G1` requires ``|COMPARED|`` be published, not assumed).
     """
     at_risk, immune, derived = derive_compared_columns(ds)
-    present_named = tuple(sorted(v for v in TRACKED_VARS if v in ds.data_vars))
-    columns = tuple(sorted(derived | frozenset(present_named)))
+    if derived:
+        columns = tuple(sorted(derived))
+        derivation = "pair-signature"
+    elif _is_raster_summary(ds):
+        columns = tuple(sorted(str(c) for c in ds.data_vars))
+        derivation = "all-vars"
+    else:
+        # Fail CLOSED. §8.3.1's table is closed over three artifacts and its own falsifier
+        # names "a FOURTH summary artifact ... compared by the b4b gate and does not appear
+        # in this table" as the thing that falsifies it. An unrecognised family therefore
+        # yields nothing and is refused by `G1` at BOTH consumers — `compare_arms` per
+        # artifact and `check_cross_sim_identity` per mode — which SURFACES that fourth
+        # artifact instead of absorbing it into whichever branch happened to match. The
+        # "at BOTH consumers" clause is load-bearing and was FALSE when this comment was
+        # first written: `check_cross_sim_identity` bound the provenance and never read it.
+        columns = ()
+        derivation = "none"
     provenance = {
         "n_compared": len(columns),
         "n_at_risk": len(at_risk),
         "n_immune": len(immune),
         "n_derived": len(derived),
         "at_risk": tuple(sorted(at_risk)),
-        "named_floor_admitted": present_named,
+        "derivation": derivation,
         # G1 is evaluated over the set actually compared: an artifact yielding nothing at all
-        # is NOT-EVALUATED. G2 is evaluated over the PAIR-DERIVED operands only (see above).
+        # is NOT-EVALUATED. G2 is evaluated over the PAIR-DERIVED operands only, which is what
+        # keeps it silent on the all-vars branch: there `|COMPARED|` is 8 while `|AT_RISK|` is
+        # 0, so an unscoped G2 would read `8 == 0` and refuse a correct comparison.
         "g1_non_empty": bool(columns),
         "g2_pair_even": pair_rule_is_self_consistent(at_risk, derived),
     }
@@ -573,15 +650,64 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
                 ds_cmp = sub.process._retrieve_combined_output(mode)
             except (FileNotFoundError, ValueError):
                 continue
-            # §8.7.2: the compared column set is DERIVED from the artifact by the pair
-            # signature and unioned with the hand-named floor, never enumerated. The
-            # enumerated four are all structurally IMMUNE to the resume defect on the SWMM
-            # side — they are `.rpt` report-header columns using `max` as a PREFIX — and they
-            # sit in the SAME Dataset as the at-risk `_max` reductions, so an enumerated
-            # instrument compares the wrong columns and passes rather than comparing nothing.
-            compared_cols, _col_prov = compared_columns_for(ds_ref)
+            # §8.3.1: the compared column set is DERIVED from the artifact, per family — the
+            # §8.7.2 pair signature on a SWMM node/link summary, all-vars on a TRITON raster
+            # summary — and is never enumerated. The hand-named `TRACKED_VARS` four are all
+            # structurally IMMUNE to the resume defect on the SWMM side (they are `.rpt`
+            # report-header columns using `max` as a PREFIX) and they sit in the SAME Dataset
+            # as the at-risk `_max` reductions, so an enumerated instrument compares the wrong
+            # columns and PASSES rather than comparing nothing — which is why this call takes
+            # whatever `compared_columns_for` derives and names no variable itself.
+            compared_cols, col_prov = compared_columns_for(ds_ref)
+            # `G1`, AT THIS CONSUMER. §8.7.2 states the conjunct is "UNIVERSAL, and evaluated
+            # PER COMPARED ARTIFACT ... An empty set is `NOT-EVALUATED`, never a pass", and
+            # UNIVERSAL means both consumers of this derivation and not just `compare_arms`.
+            # Until this guard existed the provenance was bound and discarded here, so a mode
+            # whose every artifact routed to the fail-closed branch left `all_identical` at its
+            # initialised True and the verdict read "All tracked variables bit-identical ..."
+            # over ZERO comparisons — wording byte-identical to a measured agreement, which is
+            # the one reading an acceptance decision rests on.
+            #
+            # The disclosure is a PER-MODE NOT-EVALUATED row and NOT `passed=False`, mirroring
+            # what `compare_arms` already does per ARTIFACT. Failing here would red an analysis
+            # for carrying one incomparable mode beside modes that compared cleanly, which is a
+            # different claim from the one `G1` makes.
+            if not col_prov["g1_non_empty"]:
+                details.append(
+                    {
+                        "sa_id": member_id,
+                        "ref_member_id": fam_ref_id,
+                        "mode": mode,
+                        "verdict": NOT_EVALUATED,
+                        "detail": (
+                            f"G1: empty compared set for mode {mode} "
+                            f"(derivation={col_prov['derivation']}) — nothing was compared"
+                        ),
+                    }
+                )
+                continue
             for var in compared_cols:
                 if var not in ds_ref.data_vars or var not in ds_cmp.data_vars:
+                    # THE SYMMETRIC DISCLOSURE. A column the derivation admitted on the
+                    # reference and that is absent on the member NARROWS the comparison to the
+                    # intersection. `compare_arms` refuses that asymmetry at the verdict layer,
+                    # recording in its own comment that "a conjunct that reports AGREE while
+                    # publishing its own shortfall in `details` is satisfiable by narrowing";
+                    # here it was not even publishing the shortfall. Disclosed rather than
+                    # refused, for the same reason the `G1` row above is: this consumer's
+                    # verdict is a standing per-analysis health row, not an acceptance gate.
+                    details.append(
+                        {
+                            "sa_id": member_id,
+                            "ref_member_id": fam_ref_id,
+                            "mode": mode,
+                            "variable": var,
+                            "verdict": NOT_EVALUATED,
+                            "detail": (
+                                "derived on the reference and absent on the member — comparison narrowed, not performed"
+                            ),
+                        }
+                    )
                     continue
                 for e in ds_ref["event_iloc"].values:
                     da_ref_sel = ds_ref[var].sel(event_iloc=e)
