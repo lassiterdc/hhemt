@@ -23,12 +23,22 @@ import pytest
 
 from hhemt import resume_events as re_mod
 
-# A snapshot-path line in the emitted shape: marker literal, then the time as the first
-# whitespace token (the rule `eda/raw_resume_identity.parse_resume_timestep` relies on),
-# then the remaining contract fields.
+# TWO FIXTURE TIERS, AND THE DISTINCTION IS LOAD-BEARING. The pair below is NOT the
+# emitted shape and never was -- it is this module author's model of it, written before
+# WP-1C chunk (5) landed, and it differs from what the solver writes in five places. It is
+# RETAINED rather than replaced because it is the TOLERANCE arm: it proves the parser is
+# not coupled to the solver's exact punctuation, which is what keeps a relabelling inside
+# the accepted spelling family from silently zeroing the ledger. The REAL emitted shapes,
+# reconstructed byte-for-byte from the solver source, are `SNAPSHOT_LINE_EMITTED` and
+# `REPLAY_LINE_EMITTED` further down, and those are the pair that holds the parser against
+# what it will actually process.
+#
+# A tolerance-arm line: marker literal, then the time as the first whitespace token (the
+# rule `eda/raw_resume_identity.parse_resume_timestep` relies on), then the contract fields
+# in a plausible-but-not-emitted punctuation.
 SNAPSHOT_LINE = "[OK] SWMM state restored from snapshot to t=3000 s; checkpoint_id=0042"
 
-# A replay-path line carrying the classified fallback reason.
+# The tolerance arm's replay-path sibling, carrying the classified fallback reason.
 REPLAY_LINE = "[..] SWMM exchange history replayed to t=6000 s (11435 steps); checkpoint_id=0084 reason=absent"
 
 
@@ -240,3 +250,326 @@ def test_read_tolerates_absent_and_corrupt_rows(tmp_path):
     )
     rows = re_mod.read_resume_events(ledger)
     assert len(rows) == 1 and rows[0]["path"] == "snapshot"
+
+
+# --------------------------------------------------------------------------------------
+# The REAL emitted shapes, reconstructed byte-for-byte from the solver source
+# --------------------------------------------------------------------------------------
+#
+# WHY THESE EXIST BESIDE THE TWO ABOVE. The two fixtures above were written BEFORE WP-1C
+# chunk (5) landed and encode this module author's model of the emitted line. That model
+# differs from what the solver writes in five places -- the ANSI-wrapped `[..]` prefix
+# rather than a bare `[OK]`, the label `checkpoint=` rather than `checkpoint_id=`, a
+# trailing ` [resume-event ...]` bracket rather than a `;`, a `path=` token, and a
+# `(N steps ...); resuming live segment` clause. A suite holding only the guessed shape
+# stays green against a parser that fails on every real line, which is the oracle gap
+# these close.
+#
+# Reconstructed from `triton-custom` at `f9c28da`:
+#   src/swmm_triton.h:1229-1233  -- the snapshot arm
+#   src/swmm_triton.h:853-857    -- the replay arm
+#   src/constants.h:190,185,196  -- GRAY "\033[90m", RESET "\033[0m", IN = GRAY "[..] " RESET
+# `up_to_time` is a `value_t` (double) rendered by the default ostream formatter, so an
+# integral value prints without a decimal point; `rec_count` is a `long`.
+_IN = "\x1b[90m[..] \x1b[0m"
+SNAPSHOT_LINE_EMITTED = (
+    _IN + "SWMM state restored from snapshot to t=3600 s (11435 steps skipped);"
+    " resuming live segment [resume-event checkpoint=42 path=snapshot]"
+)
+REPLAY_LINE_EMITTED = (
+    _IN + "SWMM exchange history replayed to t=3600 s (11435 steps);"
+    " resuming live segment [resume-event checkpoint=42 path=replay reason=absent]"
+)
+
+
+@pytest.mark.parametrize(
+    "line,expected_path,expected_reason",
+    [
+        (SNAPSHOT_LINE_EMITTED, "snapshot", None),
+        (REPLAY_LINE_EMITTED, "replay", "absent"),
+    ],
+)
+def test_the_real_solver_emitted_shapes_parse(line, expected_path, expected_reason):
+    """Property: all four contract fields parse out of the line the SOLVER actually emits.
+
+    Class: NEW CAPABILITY. The plausible wrong implementation is a `_CHECKPOINT_ID_RE`
+    tightened to the spelling the guessed fixtures use -- dropping the bare `checkpoint`
+    alternative and keeping only `checkpoint[_ ]?id|ckpt|cp` -- which is exactly the edit
+    an author checking the regex against this module's own older fixtures would make.
+    Under it the real line's `checkpoint=42` matches nothing (`checkpoint` contains no
+    `cp` or `ckpt` substring), `checkpoint_id` is None, and this test reds while every
+    guessed-shape test stays green.
+
+    Why required, as a consequence a reader can check against the code: the harvest admits
+    a line by SUBSTRING containment of a marker and then parses three fields out of
+    whatever surrounds it. Every one of those three parses meets solver-authored text this
+    suite had never seen -- the ANSI prefix precedes the marker, and the bracket, the
+    `path=` token and the `steps skipped` clause all follow it. A green suite over guessed
+    text establishes nothing about any of them.
+
+    What kills it: narrowing the checkpoint label family, anchoring the marker match to
+    the start of the line (the ANSI prefix would then defeat it), or scoping the reason
+    scan to anything that excludes the trailing bracket.
+
+    A second correct implementation under which it still passes: one that parses the
+    trailing `[resume-event ...]` bracket as a `key=value` map and reads `checkpoint` and
+    `reason` out of it, ignoring the rest of the line entirely. That differs from the
+    current whole-line regex in the thing this test asserts on and returns the same four
+    fields.
+    """
+    (ev,) = re_mod.harvest_resume_events(line)
+    assert ev["path"] == expected_path
+    assert ev["resume_time_s"] == 3600.0
+    assert ev["resume_time_status"] == "parsed"
+    assert ev["checkpoint_id"] == "42"
+    assert ev["checkpoint_id_status"] == "parsed"
+    assert ev["replay_reason"] == expected_reason
+    assert ev["raw"] == line
+
+
+def test_a_snapshot_line_carrying_a_reason_word_gets_no_reason():
+    """Property: the reason field is a function of the PATH alone, never of other line text.
+
+    Input class: a snapshot-marker line that ALSO contains a bare token from
+    `REPLAY_REASONS`. The guard at `resume_events.py`'s reason block is the module's one
+    deliberate, documented safety decision, and it is the only thing standing between that
+    class and a fabricated fallback reason for a run that never fell back.
+
+    Class: NEW CAPABILITY. The plausible wrong implementation is the guard removed --
+    scanning for a reason on every line regardless of path. Under it this test reds with
+    `replay_reason == 'retention-collision'`; every pre-existing snapshot fixture stays
+    green, because each occupies a satisfying position the guarded and unguarded code
+    agree on, which is why the guard shipped unheld.
+
+    Why required, as a consequence a reader can check against the code: the reason scan is
+    whole-line and word-bounded, and the three reason tokens are not reserved vocabulary --
+    `absent` is an ordinary English word and the other two are hyphenated identifiers that
+    can appear in an operator-chosen snapshot stem or a diagnostic. The markers also reach
+    one shared file descriptor from every rank (the runner opens the model log once and
+    passes it as both stdout and stderr), so two ranks' partial writes can land on one
+    physical line. Whatever the route, a fabricated reason is worse than an absent one: it
+    is a field a reader will act on that says a run fell back when it did not.
+
+    What kills it: removing the path conditioning, or deriving `path` from a `path=` token
+    in the text rather than from which marker literal matched.
+
+    A second correct implementation under which it still passes: one that reads the reason
+    only from a `reason=` key inside the trailing `[resume-event ...]` bracket, on either
+    path. The stray token here is outside any such bracket, so that implementation also
+    returns None, and it differs from the current one in exactly the thing asserted on.
+    """
+    line = (
+        _IN + "SWMM state restored from snapshot to t=3600 s (11435 steps skipped);"
+        " resuming live segment [resume-event checkpoint=42 path=snapshot]"
+        " (prior attempt logged retention-collision)"
+    )
+    (ev,) = re_mod.harvest_resume_events(line)
+    assert ev["path"] == "snapshot"
+    assert ev["replay_reason"] is None, "a reason-shaped word on a snapshot line manufactured a fallback reason"
+    assert ev["replay_reason_status"] == "not-applicable"
+
+
+# --------------------------------------------------------------------------------------
+# Totality: the ledger cannot fail a finished simulation
+# --------------------------------------------------------------------------------------
+
+
+def test_harvest_from_logfile_survives_an_undecodable_byte(tmp_path):
+    """Property: an undecodable byte costs its own character and NOT the exec's evidence.
+
+    Class: NEW CAPABILITY. The plausible wrong implementation is the runner's pre-repair
+    form lifted verbatim -- `harvest_resume_events(model_logfile.read_text())`. Under it
+    this test reds with `UnicodeDecodeError`, which is a `ValueError`: in the runner that
+    escaped a handler written as `except OSError`, reached `main()`'s outer `except
+    Exception`, wrote `_status/_failed/{rule_token}.json` and returned 1 -- recording a
+    FINISHED simulation as FAILED. A second wrong implementation, `try: ... except:
+    return []`, also reds here, and that is the point of asserting on the harvested event
+    rather than on the absence of a raise.
+
+    Why required, as a consequence a reader can check against the code: the model log is
+    a merged stdout+stderr stream from a whole HPC command stack, and this codebase
+    already treats solver-log decode failure as a real handled condition elsewhere
+    (`swmm_output_parser.py` tries UTF-8 then CP-1252). Both marker lines are pure ASCII,
+    so there is no reason for one bad byte anywhere else in the file to cost the resume
+    evidence the ledger exists to preserve.
+
+    What kills it: reading without `errors="replace"`, or handling the decode failure by
+    returning an empty list.
+
+    A second correct implementation under which it still passes: reading the file as bytes
+    and decoding with `latin-1`, which is total over every byte sequence and leaves the
+    ASCII marker line identical. It differs from the current implementation in the decode
+    strategy, which is the thing this test asserts on.
+    """
+    log = tmp_path / "model_tritonswmm_evt0.log"
+    log.write_bytes(b"preamble \xff\xfe garbage\n" + SNAPSHOT_LINE_EMITTED.encode() + b"\nSimulation ends\n")
+    (ev,) = re_mod.harvest_from_logfile(log)
+    assert ev["path"] == "snapshot"
+    assert ev["resume_time_s"] == 3600.0
+    assert ev["checkpoint_id"] == "42"
+
+
+def test_harvest_from_logfile_returns_empty_for_an_absent_log(tmp_path):
+    """An absent log is the same answer as 'no resume events', never a raise."""
+    assert re_mod.harvest_from_logfile(tmp_path / "nope.log") == []
+
+
+def test_append_never_raises_on_a_non_integral_attempt(tmp_path):
+    """Property: NO argument to the public append can raise; a bad one costs the row only.
+
+    Class: REGRESSION -- red on the pre-change tree with `ValueError: invalid literal for
+    int() with base 10: 'x'`, because `int(attempt)` was evaluated OUTSIDE the try whose
+    handler was `except OSError`.
+
+    Why required, as a consequence a reader can check against the code: this function is
+    exported in `__all__` and its own docstring promises it NEVER raises, and the module
+    is deliberately a leaf so that a future validator or renderer can import it. A
+    documented promise the code does not keep is worse than no promise, because the
+    caller writes no handler.
+
+    What kills it: moving any raising step back outside the try, or narrowing the handler
+    to an exception tuple.
+
+    A second correct implementation under which it still passes: one that validates
+    `attempt` up front and returns `"write-failed"` on a non-integral value without
+    entering the try at all. It differs from the current total-handler approach in exactly
+    the mechanism asserted on and returns the same token.
+    """
+    ledger = tmp_path / "_resume_events" / "x.jsonl"
+    events = re_mod.harvest_resume_events(SNAPSHOT_LINE_EMITTED)
+    assert re_mod.append_resume_events(ledger, events, attempt="x") == "write-failed"
+
+
+# --------------------------------------------------------------------------------------
+# Chunk (3): the reader, and the drift signal it computes
+# --------------------------------------------------------------------------------------
+
+
+def _rows(*attempts):
+    return [{"path": "replay", "attempt": a} for a in attempts]
+
+
+def test_the_audit_reports_a_shortfall_when_a_resume_left_no_durable_row():
+    """Property: a sim that resumed against a ledger holding fewer rows is a loud defect.
+
+    Input class: `n_resumes >= 1` with strictly fewer durable ledger rows. That is the
+    marker-drift signal, and it is the only one available without a solver checkout: a
+    solver-side reword makes BOTH in-tree copies of the literal agree and both wrong, the
+    harvest silently returns nothing, and no literal-vs-literal assertion anywhere can
+    see it. This arithmetic can.
+
+    Class: NEW CAPABILITY. The plausible wrong implementation is an audit that compares
+    `recorded` against `len(rows)` or against zero -- any predicate not keyed on hhemt's
+    own `n_resumes` -- under which a ledger of zero rows for a sim that resumed twice
+    reports healthy. Under it this test reds.
+
+    Why required, as a consequence a reader can check against the code: the solver emits
+    exactly one marker per resumed exec, and `n_resumes` is incremented by hhemt in a
+    repository the solver cannot reach, so the two counts are independent measurements of
+    the same event and a divergence has no benign reading in this direction.
+
+    What kills it: comparing on the wrong side of the inequality, dropping the `expected`
+    operand, or returning a non-defect verdict when `shortfall > 0`.
+
+    A second correct implementation under which it still passes: one that returns a
+    boolean `ok` plus a cause list instead of a verdict token, computed from the same two
+    counts. It differs in the return shape, which is not what this assertion turns on --
+    the shortfall arithmetic is.
+    """
+    a = re_mod.audit_resume_evidence(_rows(1), n_resumes=3)
+    assert a["verdict"] == "evidence-shortfall"
+    assert (a["expected"], a["recorded"], a["shortfall"]) == (3, 1, 2)
+    assert "NO surviving evidence" in a["summary"]
+
+
+def test_the_audit_is_complete_when_every_resume_left_a_row():
+    """The healthy case: equal counts are `complete`, never a shortfall."""
+    a = re_mod.audit_resume_evidence(_rows(1, 2, 3), n_resumes=3)
+    assert a["verdict"] == "complete"
+    assert a["shortfall"] == 0
+    assert a["era_restarts"] == 0
+
+
+def test_an_era_restart_is_counted_and_is_not_a_shortfall():
+    """Property: the force-rerun era signature is reported, and never as a defect.
+
+    Input class: a ledger holding MORE rows than the live `n_resumes` knows about, with a
+    non-monotone attempt sequence. A member-scoped force-rerun deletes
+    `log_{model_type}.json` and restarts `n_resumes` while this analysis-level ledger
+    survives, so this is the one direction in which the two counts legitimately diverge.
+
+    Class: NEW CAPABILITY. The plausible wrong implementation is a symmetric audit --
+    `recorded != expected` is a defect -- which is the obvious generalisation of the
+    shortfall rule and which would fire on every force-rerun, training an operator to
+    ignore the signal that matters.
+
+    Why required, as a consequence a reader can check against the code: the shortfall rule
+    is one-sided BY CONSTRUCTION and nothing in the arithmetic says so. Without this test
+    a later author reads `max(0, expected - recorded)` as a convenience and symmetrises it.
+
+    What kills it: making the audit symmetric, or counting a restart from a strictly
+    increasing sequence.
+
+    A second correct implementation under which it still passes: one that detects the era
+    boundary from the rows' `recorded_at` timestamps going backwards rather than from the
+    attempt sequence. It differs in the detection mechanism and returns the same counts on
+    this input.
+    """
+    a = re_mod.audit_resume_evidence(_rows(1, 2, 3, 1, 2), n_resumes=2)
+    assert a["verdict"] == "complete"
+    assert a["shortfall"] == 0
+    assert a["era_restarts"] == 1
+    assert "more than one force-rerun era" in a["summary"]
+
+
+def test_a_never_resumed_sim_is_no_resumes_not_a_shortfall():
+    """A sim that never resumed is `no-resumes`, which is the audit's third verdict.
+
+    Without this arm the shortfall rule has no stated behaviour at `expected == 0`, and
+    the natural wrong reading -- that zero rows is always a defect -- would fire a WARNING
+    on every fresh, never-resumed exec, which is the overwhelming majority of them.
+    """
+    a = re_mod.audit_resume_evidence([], n_resumes=0)
+    assert a["verdict"] == "no-resumes"
+    assert a["shortfall"] == 0
+
+
+def test_the_runner_reads_the_ledger_in_production():
+    """Property: the reader is WIRED, not merely defined -- chunk (3)'s own condition.
+
+    Class: REGRESSION -- red on the pre-change tree, where `read_resume_events` existed
+    and was called only from tests, making WP-2D write-only in production. Output pasted
+    in the coder round: `AssertionError: the runner never reads the ledger -- WP-2D is
+    write-only`.
+
+    Why required, as a consequence a reader can check against the code: every other test
+    in this module drives `resume_events` directly, so all of them stay green against a
+    runner that never calls the reader. The drift detection the audit computes is worth
+    nothing unless something in production runs it, and nothing else in this suite can
+    tell the difference.
+
+    What kills it: deleting either call from the runner's ledger block.
+
+    A second correct implementation under which it still passes: a runner that routes both
+    through a module-level helper in this same package -- the assertion is over the call
+    graph reachable from the runner's source, which an aliased import still satisfies, not
+    over a particular statement shape. A reader relocated to `analysis_validation.py`
+    instead WOULD red this, and correctly so: that is a different §9.1 pair-row outcome
+    and the test is the record of which one shipped.
+
+    The consumer of the asserted value outside this test is the shape's WP-2D chunk (3)
+    and its §9.1 pair-row consequence: the sink-only form is the form in which no pair row
+    moves, and this assertion is what pins the package to it.
+    """
+    import ast
+
+    import hhemt
+
+    src = (Path(hhemt.__file__).parent / "run_simulation_runner.py").read_text()
+    called = {
+        node.func.attr
+        for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert "read_resume_events" in called, "the runner never reads the ledger -- WP-2D is write-only"
+    assert "audit_resume_evidence" in called, "the runner never audits the ledger against n_resumes"

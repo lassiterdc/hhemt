@@ -27,17 +27,24 @@ exist in this tree. It matters concretely here: ``analysis_validation.py`` is th
 home of a future consumer, and a module-level import from this file into that one would
 close a cycle if the constants had been sourced the other way.
 
-WHAT IS *NOT* PINNED, AND HOW THIS MODULE SURVIVES THAT. The solver emits the four fields
-in one line, in the existing ``...to t=`` shape, so the numeric parse at
-``eda/raw_resume_identity.py`` keeps working unchanged. That shape pins TWO of the four
+WHAT THE EMITTED SHAPE PINS, NOW THAT IT IS OBSERVED RATHER THAN ANTICIPATED. The solver
+emits the four fields in one line, in the existing ``...to t=`` shape, so the numeric parse
+at ``eda/raw_resume_identity.py`` keeps working unchanged. That shape pins TWO of the four
 fields exactly -- the path (which marker literal appears) and the resume time (the first
-whitespace token after the literal). The remaining two are pinned by VOCABULARY rather
-than by position: the reason is a closed three-value set matched as a literal token, and
-the checkpoint id is matched by a labelled ``key=value`` scan over the spellings below.
-**Every row also carries the verbatim source line**, so a row written before the emitter's
-exact spelling was known loses nothing: a later parser reads ``raw`` and recovers the
-field. That is what makes writing this ledger before the emitter lands a safe trade rather
-than a guess.
+whitespace token after the literal). The remaining two are pinned by VOCABULARY rather than
+by position: the reason is a closed three-value set matched as a literal token, and the
+checkpoint id is matched by a labelled ``key=value`` scan over the spellings below.
+
+The emitter HAS LANDED and its spelling is no longer a guess: ``swmm_triton.h:1229`` and
+``:853`` in the solver tree at ``f9c28da``, which emit the label ``checkpoint=`` inside a
+trailing ``[resume-event ...]`` bracket, behind the ANSI-wrapped ``[..]`` prefix that
+``constants.h:196``'s ``IN`` macro expands to. ``tests/test_resume_event_ledger.py`` pins
+BOTH byte-reconstructed real lines, so the parser is held against what the solver writes
+rather than against this module author's model of it. The spelling family below is
+therefore no longer a hedge against an unknown -- it is a TOLERANCE, and its remaining
+value is that a solver-side relabelling inside the family does not silently zero the
+ledger. **Every row also carries the verbatim source line**, so a field this module parses
+wrongly is still recoverable: a later parser reads ``raw`` rather than re-running the sim.
 """
 
 from __future__ import annotations
@@ -55,6 +62,8 @@ __all__ = [
     "SNAPSHOT_MARKER",
     "ResumePath",
     "append_resume_events",
+    "audit_resume_evidence",
+    "harvest_from_logfile",
     "harvest_resume_events",
     "ledger_path_for",
     "read_resume_events",
@@ -196,6 +205,42 @@ def harvest_resume_events(log_text: str) -> list[dict]:
     return events
 
 
+def harvest_from_logfile(model_logfile: Path) -> list[dict]:
+    """Every resume event in one sim's model log, read from the file and never raising.
+
+    THE READ IS THE RAISING STEP AND IT BELONGS HERE RATHER THAN AT THE CALL SITE, which
+    is the measured defect this function exists to close. The runner previously called
+    ``harvest_resume_events(model_logfile.read_text())`` under ``except OSError``, and
+    ``Path.read_text()`` raises ``UnicodeDecodeError`` on a byte the ambient encoding
+    cannot decode -- a ``ValueError``, not an ``OSError``. It escaped to the runner's outer
+    ``except Exception``, which writes ``_status/_failed/{rule_token}.json`` and returns 1,
+    so an observability ledger could record a FINISHED simulation as FAILED and have it
+    re-dispatched. Putting the read inside the module whose contract is NEVER-RAISES is
+    what makes that unreachable by construction rather than by a handler someone must keep
+    wide.
+
+    ``errors="replace"`` rather than a bare ``try``/``return []``, and the difference is
+    the whole point: returning [] on one undecodable byte would discard the WHOLE exec's
+    resume evidence, which is the evidence loss this package exists to stop, reproduced at
+    exec granularity by its own guard. Both marker lines are pure ASCII, so a replacement
+    character elsewhere in the log leaves every contract field intact and the damage is
+    confined to the bytes that were already unreadable.
+
+    Deliberately NOT a UTF-8-then-CP-1252 ladder (the shape ``swmm_output_parser.py`` uses
+    for SWMM ``.rpt`` files, Gotcha 12): that ladder exists to recover MEANING from a
+    known second encoding, and it still raises when both fail. Here the meaning lives in
+    ASCII marker lines and the requirement is that nothing raises at all.
+
+    Returns [] when the file is absent or unreadable -- the same answer a non-resumed exec
+    gives, which every reader here already represents as an empty list.
+    """
+    try:
+        text = model_logfile.read_text(errors="replace")
+    except Exception:
+        return []
+    return harvest_resume_events(text)
+
+
 def append_resume_events(
     ledger: Path,
     events: list[dict],
@@ -214,33 +259,61 @@ def append_resume_events(
     so the write path is wrapped and a failure degrades to an absent record -- which every
     reader here already represents as an empty list.
 
-    ``attempt`` is the sim's persisted ``n_resumes`` as read BEFORE this exec, matching the
-    ``_walltime`` ledger's own ``attempt`` key so the two ledgers join on it. It also carries
-    the only available stale-row signature: a member-scoped force-rerun deletes the member
-    directory including ``log_{model_type}.json``, so ``n_resumes`` restarts and a reader
-    seeing the attempt sequence restart knows a wipe intervened. The force-rerun path is NOT
-    wired to delete this ledger -- doing so would mean editing ``analysis.py``, another work
-    package's file -- so that signature is how a reader tells the eras apart today.
+    ``attempt`` is the sim's persisted ``n_resumes`` as the runner reads it AFTER
+    ``prepare_simulation_command`` has run -- so on a resumed exec it ALREADY COUNTS THIS
+    ONE (``run_simulation.py:1106`` increments inside the hotstart branch, and the runner
+    re-reads at ``run_simulation_runner.py:641``). Stated exactly because
+    ``audit_resume_evidence`` below rests on it: after an exec that has resumed k times
+    cumulatively, ``attempt`` is k and the ledger holds k rows, so the two are directly
+    comparable and a shortfall is arithmetic rather than a judgement. The earlier wording
+    here read "as read BEFORE this exec", which describes a DIFFERENT number and would make
+    that comparison off by one. The key name matches the ``_walltime`` ledger's own
+    ``attempt`` so the two ledgers join on it.
+
+    It also carries the only available stale-row signature: a member-scoped force-rerun
+    deletes the member directory including ``log_{model_type}.json``, so ``n_resumes``
+    restarts while this analysis-level ledger survives, and the attempt sequence goes
+    non-monotone. ``audit_resume_evidence`` counts those restarts rather than leaving the
+    inference to a reader nobody instructs.
+
+    Deliberately NOT wired into the force-rerun deletion: ``analysis.py:4925-4936`` already
+    removes each ``model_*.log`` together with its ``_walltime/{stem}.jsonl`` sibling and
+    adding ``_resume_events`` there is one line inside that existing loop, so the mechanism
+    EXISTS and is three lines away. It is DECLINED ON SCOPE -- ``analysis.py`` is WP-2A's
+    file and acquiring it flips ``WP-2A || WP-2D`` to NOT-concurrent in the shape's §9.1
+    table. Read this as a scope decision with a named owner, never as "no mechanism
+    exists"; the audit's ``era_restarts`` is what makes the un-deleted ledger readable in
+    the meantime.
     """
     if not events:
         return "no-events"
-    stamped = [
-        {
-            **event,
-            "attempt": int(attempt),
-            "slurm_jobid": slurm_jobid,
-            # UTC and offset-aware. A ledger is read on a different machine from the one
-            # that wrote it, and a naive local timestamp is not orderable across the two.
-            "recorded_at": datetime.datetime.now(datetime.UTC).isoformat(),
-        }
-        for event in events
-    ]
+    # EVERY step that can raise is inside the try, and the handler is total. Both halves
+    # were measured wrong: `int(attempt)` and `json.dumps(row)` sat where an `except
+    # OSError` could not reach them, so this function's own NEVER-RAISES docstring was
+    # false of the public signature it exports in `__all__` -- `attempt="x"` raised
+    # ValueError straight through a caller that had been told it could not. Widening the
+    # clause rather than validating the inputs is deliberate: an observability ledger has
+    # no input it would rather reject than record, so every failure mode has the same
+    # correct disposition (lose the row, keep the simulation) and a total handler states
+    # that once instead of enumerating causes it will not keep up with.
     try:
+        stamped = [
+            {
+                **event,
+                "attempt": int(attempt),
+                "slurm_jobid": slurm_jobid,
+                # UTC and offset-aware. A ledger is read on a different machine from the
+                # one that wrote it, and a naive local timestamp is not orderable across
+                # the two.
+                "recorded_at": datetime.datetime.now(datetime.UTC).isoformat(),
+            }
+            for event in events
+        ]
         ledger.parent.mkdir(parents=True, exist_ok=True)
         with open(ledger, "a") as handle:
             for row in stamped:
                 handle.write(json.dumps(row) + "\n")
-    except OSError:
+    except Exception:
         return "write-failed"
     return "appended"
 
@@ -272,3 +345,83 @@ def read_resume_events(ledger: Path) -> list[dict]:
         if isinstance(row, dict):
             rows.append(row)
     return rows
+
+
+def audit_resume_evidence(rows: list[dict], *, n_resumes: int) -> dict:
+    """Compare what the ledger durably holds against how many times the sim resumed.
+
+    THIS IS WHAT MAKES THE LEDGER READ IN PRODUCTION, and the comparison is the only
+    drift detector available without a solver checkout. ``n_resumes`` is hhemt's own
+    cumulative count, written by ``run_simulation.py``'s hotstart branch and owned by a
+    repository the solver cannot reach; ``len(rows)`` is what the solver's markers
+    actually produced, across every exec. The solver emits exactly one of the two markers
+    per resumed exec (``swmm_triton.h:845-847``), so in a healthy sim the two numbers are
+    EQUAL and a shortfall is arithmetic rather than a judgement.
+
+    Four conditions produce a shortfall and a reader must surface all four: the solver
+    reworded a marker literal (the drift this module's two copied literals cannot
+    otherwise detect -- a reword makes both copies agree and both wrong, and the suite
+    stays green); the ledger write failed; the model-log read degraded; or the sink was
+    never reached. The audit does NOT claim which -- it claims that a resume happened and
+    left no durable evidence, which is the condition, and the four causes are the
+    enumeration a reader starts from.
+
+    ONE-SIDED BY CONSTRUCTION, and the asymmetry is load-bearing rather than a
+    simplification. Only a shortfall (``recorded < expected``) is reported as a defect,
+    because the one mechanism that makes ``recorded`` EXCEED ``expected`` runs the other
+    way: a member-scoped force-rerun deletes ``log_{model_type}.json`` and restarts
+    ``n_resumes`` while this analysis-level ledger survives, leaving a ledger that
+    legitimately holds more rows than the live counter knows about. Treating that as a
+    defect would fire on every force-rerun. It is reported separately as
+    ``era_restarts``, counted from the ``attempt`` sequence going non-monotone, which is
+    the signature ``append_resume_events``' docstring describes.
+
+    Deliberately NOT a raise and NOT a verdict the caller must act on: the caller is the
+    runner, finishing a simulation that has already succeeded, and this module's standing
+    contract is that an observability ledger cannot fail one. The return is a record; the
+    caller decides the log level.
+
+    PURE over ``rows`` -- it touches no filesystem -- so a test drives it with literals and
+    a caller composes it with ``read_resume_events``. That split is what lets the audit be
+    tested without a ledger and used without a second read.
+    """
+    expected = max(0, int(n_resumes or 0))
+    recorded = len(rows)
+
+    # A restart is an attempt value that fails to exceed its predecessor. Rows whose
+    # attempt is absent or non-integral are skipped rather than coerced: a malformed row
+    # is already represented as survivable everywhere else in this module, and guessing a
+    # value here would manufacture a restart the ledger does not record.
+    attempts = [row.get("attempt") for row in rows]
+    ordered = [a for a in attempts if isinstance(a, int) and not isinstance(a, bool)]
+    era_restarts = sum(1 for prev, cur in zip(ordered, ordered[1:], strict=False) if cur <= prev)
+
+    shortfall = max(0, expected - recorded)
+    if expected == 0:
+        verdict = "no-resumes"
+        summary = f"no resumes recorded for this sim; ledger holds {recorded} row(s)."
+    elif shortfall:
+        verdict = "evidence-shortfall"
+        summary = (
+            f"{expected} resume(s) recorded in the model log but only {recorded} durable "
+            f"ledger row(s): {shortfall} resume event(s) left NO surviving evidence. "
+            "Causes, in the order worth checking: the solver reworded a resume marker, "
+            "the ledger write failed, the model-log read degraded, or the sink was not "
+            "reached."
+        )
+    else:
+        verdict = "complete"
+        summary = f"{recorded} durable ledger row(s) for {expected} resume(s) -- complete."
+    if era_restarts:
+        summary += (
+            f" Also: the attempt sequence restarts {era_restarts} time(s), so this ledger "
+            "spans more than one force-rerun era."
+        )
+    return {
+        "verdict": verdict,
+        "expected": expected,
+        "recorded": recorded,
+        "shortfall": shortfall,
+        "era_restarts": era_restarts,
+        "summary": summary,
+    }

@@ -773,17 +773,54 @@ def main():
         # live in hhemt.resume_events so a reader can import them without importing this
         # runner (whose module body calls logging.basicConfig).
         try:
-            _re_events = resume_events.harvest_resume_events(model_logfile.read_text())
+            _re_ledger = resume_events.ledger_path_for(model_logfile)
+            _re_events = resume_events.harvest_from_logfile(model_logfile)
             _re_outcome = resume_events.append_resume_events(
-                resume_events.ledger_path_for(model_logfile),
+                _re_ledger,
                 _re_events,
                 attempt=int(_n_done),
                 slurm_jobid=os.environ.get("SLURM_JOB_ID"),
             )
             logger.info(f"[{event_iloc}] resume-event ledger: {_re_outcome} ({len(_re_events)} event(s))")
-        except OSError as _re_err:
-            # Reading the model log is the only raising step left; the append never raises.
-            logger.warning(f"[{event_iloc}] resume-event ledger append failed (non-fatal): {_re_err}")
+
+            # WP-2D chunk (3) -- THE READER, and it is a CROSS-EXEC read rather than a
+            # read-back of what was just written: read_resume_events returns every row
+            # this sim has ever durably recorded, which is the one question no per-exec
+            # artifact can answer and the whole reason this ledger exists. Comparing that
+            # count against hhemt's own cumulative n_resumes is a marker-drift detector
+            # that needs no solver checkout and no second copy of the solver's literal: a
+            # reword makes both in-tree copies agree and both wrong, the harvest silently
+            # returns nothing, and this arithmetic is what still notices.
+            #
+            # WARNING and not a raise, and not a failed marker. The simulation finished;
+            # resume_events' standing contract is that an observability ledger cannot
+            # fail one, and this read is inside the same total handler for the same
+            # reason. The operator reads a WARNING in the sim log; nothing downstream
+            # keys on it.
+            _re_audit = resume_events.audit_resume_evidence(
+                resume_events.read_resume_events(_re_ledger), n_resumes=int(_n_done)
+            )
+            if _re_audit["verdict"] == "evidence-shortfall":
+                logger.warning(f"[{event_iloc}] resume-event ledger: {_re_audit['summary']}")
+            else:
+                logger.info(f"[{event_iloc}] resume-event ledger audit: {_re_audit['summary']}")
+        except Exception as _re_err:
+            # TOTAL, and the widening IS a fix rather than defensiveness. The clause read
+            # `except OSError` while the read above was `model_logfile.read_text()`, which
+            # raises UnicodeDecodeError -- a ValueError, not an OSError -- on any byte the
+            # ambient encoding cannot decode. It escaped to main()'s outer `except
+            # Exception` at the bottom of this function, which writes
+            # _status/_failed/{rule_token}.json and returns 1, so a simulation that had
+            # already finished was recorded FAILED and re-dispatched under
+            # hpc_restart_times_simulate.
+            #
+            # That decode path is now closed one level down by harvest_from_logfile, which
+            # reads with errors="replace" and never raises. This clause covers the
+            # REMAINDER -- the path construction, the append, the audit, the logging -- and
+            # the two are a partition rather than the same guard twice: the inner one
+            # preserves the exec's resume evidence through a corrupt byte, which a handler
+            # here could only discard.
+            logger.warning(f"[{event_iloc}] resume-event ledger step failed (non-fatal): {_re_err}")
 
         # Check simulation status via log file
         status = (
