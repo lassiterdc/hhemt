@@ -283,6 +283,15 @@ class TRITONSWMM_sim_post_processing:
         TRITON-SWMM (model_type='tritonswmm') and TRITON-only (model_type='triton')
         timeseries paths. The two prior loops differed only in the model_type
         passed to latest_sim_date(); everything else was byte-identical."""
+        # BACK HALF OF A TEMPORARY-REFUSAL MARKER PAIR. This writer emits a ZARR STORE to
+        # whatever path it is handed, and the path it is handed carries the
+        # target_processed_output_type extension -- so under 'nc' it produces a zarr store
+        # named '*.nc' that the reader then opens with h5netcdf and raises on. Because of
+        # that, validation._validate_gridded_output_type refuses
+        # target_processed_output_type='nc' at preflight whenever this writer is
+        # reachable. A converting tail added at or below this function is the condition
+        # that retires that refusal: delete the helper and its preflight_validate call in
+        # the same change, and delete this comment with them.
         # Phase 1.2: Chunked processing - calculate optimal chunk size
         from hhemt.utils import estimate_timesteps_per_chunk
 
@@ -559,7 +568,7 @@ class TRITONSWMM_sim_post_processing:
                 raise RuntimeError(
                     f"SWMM simulation not completed. Check model log files in {self._scenario.scen_paths.logs_dir}"
                 )
-        print(f"Processing run results for scenario {scen.event_iloc}", flush=True)  # type: ignore
+        print(f"Processing run results for scenario {scen.event_iloc}", flush=True)
 
         # Performance time series processing: model_type determines which performance files to process
         # Performance files only exist for TRITON models (not SWMM-only)
@@ -595,7 +604,7 @@ class TRITONSWMM_sim_post_processing:
             print(
                 f"Processed TRITON outputs for scenario {scen.event_iloc}",
                 flush=True,
-            )  # type: ignore
+            )
         # SWMM outputs processing: model_type determines which SWMM outputs to process
         if (which == "both") or (which == "SWMM"):
             if model_type == "tritonswmm":
@@ -608,7 +617,7 @@ class TRITONSWMM_sim_post_processing:
                 print(
                     f"Processed TRITON-SWMM SWMM outputs for scenario {scen.event_iloc}",
                     flush=True,
-                )  # type: ignore
+                )
             elif model_type == "swmm":
                 self._export_SWMM_outputs(
                     model="swmm",
@@ -619,7 +628,7 @@ class TRITONSWMM_sim_post_processing:
                 print(
                     f"Processed SWMM-only outputs for scenario {scen.event_iloc}",
                     flush=True,
-                )  # type: ignore
+                )
 
         return
 
@@ -1372,7 +1381,7 @@ class TRITONSWMM_sim_post_processing:
                 print(f"{f_out_nodes.name} already written. Not overwriting.")
         else:
             elapsed_s = time.time() - start_time
-            self._write_output(ds_nodes, f_out_nodes, comp_level, verbose, mode=node_mode)  # type: ignore
+            self._write_output(ds_nodes, f_out_nodes, comp_level, verbose, mode=node_mode)
             self.log.add_sim_processing_entry(f_out_nodes, get_file_size_MiB(f_out_nodes), elapsed_s, True)
         # WRITE LINKS
         if links_already_written:
@@ -1380,7 +1389,7 @@ class TRITONSWMM_sim_post_processing:
                 print(f"{f_out_links.name} already written. Not overwriting.")
         else:
             elapsed_s = time.time() - start_time
-            self._write_output(ds_links, f_out_links, comp_level, verbose, mode=link_mode)  # type: ignore
+            self._write_output(ds_links, f_out_links, comp_level, verbose, mode=link_mode)
             self.log.add_sim_processing_entry(
                 f_out_links,
                 get_file_size_MiB(f_out_links),

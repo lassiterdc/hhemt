@@ -186,9 +186,7 @@ def return_swmm_outputs(
             coords_to_coerce=["node_id", "link_id"],
         )
     else:
-        ds_node_tseries, ds_link_tseries = return_node_time_series_results_from_outfile(  # type: ignore
-            swmm_timeseries_result_file
-        )
+        ds_node_tseries, ds_link_tseries = return_node_time_series_results_from_outfile(swmm_timeseries_result_file)
         rpt_file = swmm_timeseries_result_file.with_suffix(".rpt")
         if rpt_file.exists():
             try:
@@ -655,9 +653,7 @@ def _build_system_results(
         runoff_continuity_error_perc = float(runoff_continuity_error_line.split(" ")[-1].split("\n")[0])
     else:
         runoff_continuity_error_perc = np.nan
-    flow_continuity_error_perc = float(
-        flow_continuity_error_line.split(" ")[-1].split("\n")[0]  # type: ignore
-    )
+    flow_continuity_error_perc = float(flow_continuity_error_line.split(" ")[-1].split("\n")[0])
     system_flooding = float(system_flood_loss_line.split(" ")[-1].split("\n")[0])
     analysis_end_datetime = _parse_analysis_end_line(analysis_end_line)
     dict_system_results = dict(
@@ -907,7 +903,7 @@ def return_node_time_series_results_from_outfile(f_outfile):
         d_links = out.links
         d_nodes = out.nodes
         units = out.units
-        if units["system"] != "SI":  # type: ignore
+        if units["system"] != "SI":
             # RAISE, never sys.exit. SystemExit derives from BaseException, so no
             # `except Exception` in any caller catches it and the process dies with
             # no traceback -- the un-diagnosable shape that made an unrelated
@@ -1139,7 +1135,7 @@ def return_data_from_rpt(lst_section_lines):
                     print(normal_row)
                     print(problem_row)
                     break
-                if "orifice" in problem_row_lower:  # type: ignore
+                if "orifice" in problem_row_lower:
                     solution = (
                         "Orifice conduits do not return max velocity or max over full flow. Filling with empty string"
                     )

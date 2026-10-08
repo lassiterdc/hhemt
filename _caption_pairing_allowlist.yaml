@@ -434,7 +434,7 @@ unpaired_allowlist:
       the rename, so the exemption expires on the next change to this renderer.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: 84b7f6016c0ace57bac2ea647a0ae6ea1fbd2da4474d57844adf66625893c2b5
+    renderer_sha256: 8bdf78a84dc9828610db395f8d7952bb610d72bb8a6a60321b2553161bc78072
     justification_2026_10_01: >-
       WP-3C.2 (the provenance half). Caption RE-READ IN FULL against the diff. The change is
       ONE hunk in this renderer, in the same `parts.append` of the same `<p class='note'>`
@@ -531,6 +531,62 @@ unpaired_allowlist:
       semantic (a new carriage channel), and the re-read found the caption's scope disjoint
       from it. Digest recorded after the grouped apply, so the exemption expires on the next
       change to this renderer.
+    justification_2026_09_21_d132_arm_classification: >-
+      `### D132` apply, the fifteen-spec arm-classification set. Caption RE-READ IN FULL
+      against the diff, which is the discharge this guard asks for -- it checks PAIRING,
+      not agreement, so the obligation is that someone looked, and someone did.
+      WHY THE CAPTION IS UNAFFECTED, stated so a reviewer can disagree with the reasoning
+      rather than only with the conclusion: the change is confined to
+      `_resolve_consolidated_tree`'s new `analysis is None` branch, which recovers the ARM
+      from the root's own `cfg_analysis.yaml` and prepends the arm-correct store to the
+      candidate list, falling through to the unchanged name walk when no config is present.
+      It therefore changes WHICH ROOT STORE is resolved on a bundle or reconstituted path,
+      from the migration-time store to the arm-correct one. The caption asserts what the
+      three rendered sections CONTAIN and WHERE each is SOURCED -- the `ro-crate-metadata.json`
+      provenance sidecar, the `Data availability` check in `validation_report.json`, and the
+      configuration fields grouped supply/amend/keep. It makes NO claim about root-store
+      resolution, about which of two stores is read, or about any value whose identity the
+      resolver decides. The change makes the provenance panel MORE correct on exactly the
+      path where it could previously be stamped from a stale store while plots rendered from
+      the current one; nothing the caption says about content or source moves.
+      The guard fired CORRECTLY: `metadata.py`'s sha moved, and a reader who had not opened
+      the caption could not have known the scope was disjoint. Digest verified independently
+      with `sha256sum` rather than taken from the guard's message, and re-recorded, so the
+      exemption expires on the next change to this renderer.
+    justification_2026_09_19: >-
+      W7 Finding C. Caption RE-READ IN FULL against the diff, which is the discharge this
+      guard asks for -- it checks PAIRING, not agreement, so the obligation is that
+      someone looked, and someone did.
+      WHY THE CAPTION IS UNAFFECTED, stated so a reviewer can disagree with the reasoning
+      rather than only with the conclusion: the caption describes three RENDERED OUTPUT
+      sections -- the provenance summary, data availability, and the reproduction guide --
+      and the change touches none of them. It lifts the inline tuple in
+      `_resolve_consolidated_tree` to a module constant `_DECLARED_TREE_PATH_ATTRS` with
+      IDENTICAL contents in IDENTICAL order, reads that constant instead of the literal,
+      and adds a field-contract assertion in the test suite. No rendered section, no
+      source list and no value shown on the page can move, because the resolver returns
+      the same path for the same inputs -- verified by the coordinator, P1 1->0 and
+      P2 0->1 over the same two names, with the three `test_metadata_*` nodes passing 3/3.
+      The guard nonetheless fired CORRECTLY: `metadata.py`'s sha moved, and a reader who
+      had not opened the caption could not have known the scope was disjoint.
+      Digest re-recorded after the change, so the exemption expires on the next change to
+      this renderer -- which is the property that makes these rows safe.
+    justification_2026_10_08_merge_digest: >-
+      MERGE DISCLOSURE, not a re-read claim. The docs-and-experiment-system merge makes this
+      renderer a THIRD artifact: develop tip hashed 84b7f6016c0ace57bac2ea647a0ae6ea1fbd2da4474d57844adf66625893c2b5
+      and the sibling tip 483c6eae370b2d83afaabafacc3be8986d4c3569ceb87c13c3e0b4f4aa377f36, so each
+      side's recorded digest was honest about its own branch and wrong about the merge. The digest
+      above is the merged content, computed with this guard's own chunked sha256 over the merged blob
+      and verified independently of the specialist round that proposed it. The module merged CLEANLY
+      (zero conflict markers); only the recorded digest had to move.
+      BOTH SIDES' JUSTIFICATION HISTORIES ARE RETAINED. The two branches each carried a
+      justification_2026_09_21 for this pair with DIFFERENT bodies -- develop's grouped bundle-emit
+      entry and the sibling's D132 arm-classification entry -- which a YAML mapping cannot hold twice.
+      The sibling's is preserved under justification_2026_09_21_d132_arm_classification rather than
+      dropped; the guard keys exemptions on the PAIR and does not read justification key names, so the
+      rename loses nothing. No caption was re-read for this entry and none is claimed to have been:
+      the exemption this row carries is the union of the two branches' prior discharges plus this
+      digest move, and it expires on the next change to this renderer.
     justification_2026_09_07: >-
       load-mode VMS commit. Caption RE-READ IN FULL against the diff, and its scope is
       DISJOINT from the change. The change renames `_is_toolkit_owned` to

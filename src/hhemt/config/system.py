@@ -148,7 +148,16 @@ class system_config(cfgBaseModel):
     )
     TRITONSWMM_branch_key: str | None = Field(
         None,
-        description="TRITONSWMM branch to checkout. Known working branches: 02438b60613a7d913d884e7b836f9f5ff421fe7d",
+        description=(
+            "Git ref the TRITONSWMM clone is pinned to. In native mode this may be a "
+            "branch, a tag, or a commit sha; in container mode it MUST be a full commit "
+            "sha, because a container skips the compile and there is no clone to resolve "
+            "a branch name against. The pin is re-checked on every run, and a run is "
+            "refused when an existing clone sits at a different commit. That check is "
+            "the only protection against stale numerics: an existing clone is never "
+            "re-checked-out and its cached build is never invalidated. Leave "
+            "unset to build whatever the clone's default branch resolves to."
+        ),
     )
     SWMM_git_URL: str = Field(
         "https://github.com/USEPA/Stormwater-Management-Model.git",
@@ -204,12 +213,18 @@ class system_config(cfgBaseModel):
     # CONSTANTS
     dem_outside_watershed_height: float | None = Field(
         None,
-        description="DEM height applied to grid cells outside of the watershed boundary. Used for scaling DEM plot "
-        "colorbars.",
+        description="Elevation burned into the DEM outside the watershed boundary. Report figures never test cells "
+        "against it directly. Cells at or above the smaller of this and dem_building_height (or the one that is "
+        "set), less wall_threshold_buffer_m, are painted as walls, so a value below the raster's real terrain paints "
+        "terrain as wall and reports no error. Leave unset when the DEM carries no such sentinel.",
     )
     dem_building_height: float | None = Field(
         None,
-        description="DEM height applied to DEM gridcells overlapping buildings. Used for scaling DEM plot colorbars.",
+        description="Elevation burned into DEM cells overlapping buildings. Report figures drop cells whose value "
+        "equals this number from the DEM colorbar range, and paint cells at or above the smaller of this and "
+        "dem_outside_watershed_height (or the one that is set), less wall_threshold_buffer_m, as walls. A value that "
+        "does not match the raster leaves rooftops in the colorbar and reports no error. Leave unset when the DEM "
+        "carries no such sentinel.",
     )
     # TOGGLES
     toggle_use_swmm_for_hydrology: bool = Field(
@@ -222,15 +237,27 @@ class system_config(cfgBaseModel):
     )
     toggle_triton_model: bool = Field(
         ...,
-        description="Determines whether or not a TRITON-only model will be compiled and run",
+        description=(
+            "Determines whether or not a TRITON-only model is enabled. The build is "
+            "not performed here: in native mode the setup rule asserts that an enabled "
+            "model already has a successful build."
+        ),
     )
     toggle_tritonswmm_model: bool = Field(
         ...,
-        description="Determines whether or not a TRITON-SWMM coupled model will be compiled and run",
+        description=(
+            "Determines whether or not a TRITON-SWMM coupled model is enabled. The "
+            "build is not performed here: in native mode the setup rule asserts that an "
+            "enabled model already has a successful build."
+        ),
     )
     toggle_swmm_model: bool = Field(
         ...,
-        description="Determines whether or not a standalone SWMM model will be compiled and run",
+        description=(
+            "Determines whether or not a standalone SWMM model is enabled. The build is "
+            "not performed here: in native mode the setup rule asserts that an enabled "
+            "model already has a successful build."
+        ),
     )
     # PARAMETERS
     target_dem_resolution: float = Field(

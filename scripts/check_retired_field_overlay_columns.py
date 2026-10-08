@@ -7,9 +7,17 @@ class (Gotcha 18 / sensitivity_analysis.py:77-94) at commit time, not HPC-run ti
 import sys
 from pathlib import Path
 
-from hhemt.config.analysis import analysis_config
-from hhemt.config.system import system_config
-from hhemt.sensitivity_analysis import _ANALYSIS_COLUMN_PREFIX, _SYSTEM_COLUMN_PREFIX
+# Bind `import hhemt` to THIS checkout before the first package import: the editable
+# install names ONE `src`, and the live `model_fields` this guard reads would otherwise
+# be another checkout's. See scripts/local_src.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from local_src import bind_local_src  # noqa: E402
+
+bind_local_src(Path(__file__).resolve().parent.parent / "src", {"hhemt"})
+
+from hhemt.config.analysis import analysis_config  # noqa: E402
+from hhemt.config.system import system_config  # noqa: E402
+from hhemt.sensitivity_analysis import _ANALYSIS_COLUMN_PREFIX, _SYSTEM_COLUMN_PREFIX  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 _ANALYSIS_FIELDS = set(analysis_config.model_fields)
@@ -30,10 +38,10 @@ def _overlay_columns(xlsx: Path) -> list[str]:
 
 def _violation(col: str) -> str | None:
     if col.startswith(_SYSTEM_COLUMN_PREFIX):
-        field = col[len(_SYSTEM_COLUMN_PREFIX):]
+        field = col[len(_SYSTEM_COLUMN_PREFIX) :]
         return None if field in _SYSTEM_FIELDS else f"system.{field}"
     if col.startswith(_ANALYSIS_COLUMN_PREFIX):
-        field = col[len(_ANALYSIS_COLUMN_PREFIX):]
+        field = col[len(_ANALYSIS_COLUMN_PREFIX) :]
         return None if field in _ANALYSIS_FIELDS else f"analysis.{field}"
     return None
 
@@ -44,8 +52,10 @@ def main() -> int:
         for col in _overlay_columns(xlsx):
             v = _violation(col)
             if v:
-                violations.append(f"{xlsx.relative_to(REPO)}: overlay column '{col}' "
-                                  f"names retired field '{v}' (absent from live model_fields)")
+                violations.append(
+                    f"{xlsx.relative_to(REPO)}: overlay column '{col}' "
+                    f"names retired field '{v}' (absent from live model_fields)"
+                )
     if violations:
         print("Retired-field overlay-column violations:", file=sys.stderr)
         for v in violations:

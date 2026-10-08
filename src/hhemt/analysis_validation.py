@@ -848,12 +848,20 @@ def _collect_stage_stamps(analysis) -> dict[str, dict | None]:
             _consolidate = _legacy
     out["consolidate"] = _consolidate
 
-    # plots: any figure sidecar. The stamp is per-figure and uniform within a render,
-    # so the first readable sidecar is representative; a genuinely mixed render is a
-    # different finding and belongs to the caller's build-disagreement branch.
+    # plots: any figure sidecar WHOSE FIGURE IS STILL THERE. The stamp is per-figure and
+    # uniform within a render, so the first readable LIVE sidecar is representative; a
+    # genuinely mixed render is a different finding and belongs to the caller's
+    # build-disagreement branch. An ORPHAN sidecar is readable too, so without the guard
+    # a dead figure's stamp could stand for the whole stage. If none survives the guard
+    # the key is left unset, which this function already treats as uncaptured -- the same
+    # disposition it takes for `sim` below, and a true answer rather than a suppressed one.
     plots = adir / "plots"
     if plots.exists():
+        from hhemt.utils import figure_exists_for
+
         for sidecar in sorted(plots.rglob("*.manifest.json")):
+            if not figure_exists_for(sidecar):
+                continue
             got = _from_json(sidecar)
             if got:
                 out["plots"] = got

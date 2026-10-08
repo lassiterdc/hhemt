@@ -8,7 +8,7 @@ schema, and what the toolkit produces.
   configs, and the toggle-dependency table.
 - [CLI reference](cli.md): every `hhemt` command and the structured exit codes.
 - [Output data model](output-data-model.md): what a completed analysis writes,
-  the three output tiers, and the CF-1.13 variables.
+  the output tiers, and the CF-1.13 variables.
 - [FAIR scope table](fair-scope-table.md): item-by-item F/A/I/R posture over
   the whole reproducibility dataset.
 - [Reporting sets](reporting-sets.md): the named renderer selections that decide

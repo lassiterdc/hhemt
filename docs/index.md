@@ -39,14 +39,18 @@ Two YAML configs describe the study, and the toolkit does the rest:
 ```python
 from hhemt.experiments import NorfolkIreneExperiment
 
-norfolk = NorfolkIreneExperiment.load(hhemt_sha="0123456789abcdef0123456789abcdef01234567")  # fetches the data once; sha = the commit you run
+# hhemt_sha is the 40-hex commit you are running; `git rev-parse HEAD` prints it.
+norfolk = NorfolkIreneExperiment.load(hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT")
+norfolk.system.compile_TRITON_SWMM()             # once per machine: builds the solver
 result = norfolk.analysis.run(from_scratch=False, execution_mode="auto")
 norfolk.analysis.render_report()                 # self-contained interactive report
 ```
 
-That is the whole worked path for the shipped example. The same two calls run a
-four-hundred-member ensemble on a cluster; what changes is the configuration, not
-the code you write.
+The load fetches the case-study data once. That is the whole worked path for the
+shipped example on a laptop, and the same calls run a four-hundred-member ensemble
+on a cluster; what changes is the configuration.
+One thing more changes on a GPU partition: you build the solver with the
+command-line form on [Compile the solver](how-to/compiling-the-solver.md).
 
 **[Start with the Quickstart](tutorials/quickstart.md)**, which takes a fresh clone
 to a finished report.

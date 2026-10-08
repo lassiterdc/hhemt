@@ -64,3 +64,29 @@ def test_ordinary_config_miss_is_not_decorated():
         "the diagnostic fired on a path outside every node-local root -- attribution "
         "is not gating, and every ordinary typo will now carry this prose"
     )
+
+
+def test_schema_violation_is_a_configuration_error_naming_the_file(tmp_path):
+    """The loader wrap. Discriminating property: the class AND `config_path` (pydantic's
+    error has no path). RED pre-fix: a bare pydantic ValidationError. The satisfying arm is
+    a schema-valid file loading normally through the same function."""
+    import pydantic
+    import pytest
+
+    from hhemt.config.loaders import _load_config
+    from hhemt.exceptions import ConfigurationError
+
+    class _Tiny(pydantic.BaseModel):
+        n: int
+
+    bad = tmp_path / "tiny.yaml"
+    bad.write_text("n: not-an-int\n", encoding="utf-8")
+    with pytest.raises(ConfigurationError) as excinfo:
+        _load_config(bad, _Tiny)
+    assert excinfo.value.config_path == bad
+    assert excinfo.value.field == "tiny.yaml"
+    assert isinstance(excinfo.value.__cause__, pydantic.ValidationError)
+
+    good = tmp_path / "good.yaml"
+    good.write_text("n: 3\n", encoding="utf-8")
+    assert _load_config(good, _Tiny).n == 3

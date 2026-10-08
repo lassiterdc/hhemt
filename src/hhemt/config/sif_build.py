@@ -12,8 +12,17 @@ class sif_build_config(BaseModel):
 
     sif_root: Path = Field(..., description="Root under which the builder writes and the resolver looks.")
     partition: str = Field(..., description="Build partition on the BUILD host (must be fakeroot-capable).")
-    cpus: int = 16
-    mem_mb: int = 65536
-    walltime_min: int = 480  # a6000 measured 5h45m; TIMEOUT is retriable (retries: 1)
-    recipes_dir: Path | None = None  # None -> the package's sif/recipes
+    cpus: int = Field(16, description="CPUs requested for the build job.")
+    mem_mb: int = Field(65536, description="Memory requested for the build job, in MB.")
+    walltime_min: int = Field(
+        480,
+        description=(
+            "Wall-clock limit for the build job, in minutes. A timeout is retriable, so a value that is "
+            "too low costs a retry rather than a failed build."
+        ),
+    )  # a6000 measured 5h45m; TIMEOUT is retriable (retries: 1)
+    recipes_dir: Path | None = Field(
+        None,
+        description="Directory holding the build recipes. Leave unset to use the ones shipped with the package.",
+    )  # None -> the package's sif/recipes
     toolkit_root: Path = Field(..., description="The git checkout that IS the running toolkit.")

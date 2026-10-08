@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 import xarray as xr
-import yaml  # type: ignore
+import yaml
 
 import hhemt.analysis as anlysis
 from hhemt import orchestrator_sentinels as _osent
@@ -53,8 +53,10 @@ class UniqueSystemTarget:
     # Phase 6 (DQ7a): the ensemble partition this build target compiles for.
     # All member_ids in a target share (hw, backend) by dedup-key construction, so any
     # member's partition yields the correct GPU build; the first member's is stored.
-    # Threaded to the setup rule's --target-partition so the GPU compile resolves
-    # the right PartitionSpec hardware per build target (not the master partition).
+    # Threaded to the setup rule's --target-partition so that rule's native-mode build
+    # assertion reads the GPU build for the right PartitionSpec hardware per build
+    # target (not the master partition). It is also what a by-hand compile of this
+    # target must pass to build for that hardware.
     target_partition: str | None = None
 
 
@@ -452,7 +454,8 @@ class TRITONSWMM_sensitivity_analysis:
             master Snakefile generator carries no read of it, so it changes no emitted
             rule. It does not compile, because no emitted setup rule carries a
             ``--compile-*`` flag and the rule asserts the solver tier rather than
-            building it. Its one surviving effect is the ``phases_completed`` roll-up
+            building it. In container mode it performs no such check, because the
+            SIF carries the binary. Its one surviving effect is the ``phases_completed`` roll-up
             reported by ``TRITONSWMM_analysis.run()``, which lists ``"setup"`` when this
             or ``process_system_level_inputs`` is True.
         recompile_if_already_done_successfully : bool
@@ -519,16 +522,24 @@ class TRITONSWMM_sensitivity_analysis:
         # Idempotent when Analysis.submit_workflow already applied it on the
         # dispatch path (matched flags would be absent by now).
         #
-        # THE IDEMPOTENCY ARGUMENT ABOVE HOLDS FOR FLAGS AND NOT FOR FIGURES, and the
-        # difference only became observable once the dispatch-path call was gated. At a
-        # render floor the pre-delete deletes NO flag (the floor's prefix tuple is empty)
-        # and instead deletes every figure under `plots/` except `plots/eda/`. On a dry
-        # run the gated first invocation now leaves those figures in place, so an
-        # ungated second invocation here finds them present and deletes them -- the
-        # symptom is unchanged and the fix at analysis.py:3578 does nothing on the
-        # sensitivity path, which is the path every sensitivity master takes. Measured
-        # over the modelled chain: gating only the first call leaves a dry run at
-        # 7 figures -> 2, identical to the unfixed behaviour.
+        # THE IDEMPOTENCY ARGUMENT ABOVE HOLDS FOR FLAGS AND NOT FOR FIGURES, and that
+        # is why this call threads `dry_run`. At a render floor the pre-delete deletes NO
+        # flag (the floor's prefix tuple is empty) and instead deletes every figure under
+        # `plots/` except `plots/eda/`.
+        #
+        # THE GUARD IS AT THE DESTRUCTIVE SITE, NOT HERE. workflow.py's
+        # `_delete_flags_for_force_rerun` carries `if stage == "render" and not dry_run:`
+        # around the figure deletion, so every caller that reports its own dry_run state
+        # accurately is covered and no second gate is needed at this call site. Threading
+        # it here is therefore load-bearing rather than defensive: drop the argument in a
+        # refactor and this path silently resumes deleting figures on a preview.
+        #
+        # THE HISTORY IS RECORDED HERE so the threading is not read as redundant. Until
+        # f8c47ec3 (2026-08-25) this call did not thread `dry_run`, and a dry run at a
+        # render floor destroyed the user's figures. Measured 2026-08-25 against that
+        # pre-f8c47ec3 state, not against any current behaviour: 7 figures -> 2 on a
+        # preview. D131 later ruled THAT the broad reading holds -- on a dry run ALL
+        # figures survive, not only `plots/eda/`.
         self.experiment._apply_force_rerun(overrides.force_rerun, dry_run=dry_run)
 
         # Driver-start orchestrator-liveness sentinel (Phase 2), keyed on the
@@ -841,7 +852,7 @@ class TRITONSWMM_sensitivity_analysis:
             # regenerate_existing arm; no-op otherwise.
             if start_with == "process" and regenerate_existing and not dry_run:
                 _unlink_dprocess_flags_for_regenerate(targets, status_dir)
-            # Report+plot deletion ALWAYS runs (toggle-independent) — the report
+            # Report deletion ALWAYS runs (toggle-independent) — the report
             # regenerates from the preserved zarr on the default path (FQ1 parity).
             _report_html = experiment_dir / "analysis_report.html"
             _report_zip = experiment_dir / "analysis_report.zip"
@@ -1220,8 +1231,9 @@ class TRITONSWMM_sensitivity_analysis:
             Target path for the bundle.
         container_defs : list of Path, or None
             One Apptainer ``.def`` per distinct architecture to carry. Required, and
-            repeatable, for a container-mode analysis, because nothing in the config
-            names one. Ignored for a native analysis.
+            repeatable, for a container-mode analysis: the config names ONE recipe per
+            container reference and cannot express a multi-architecture SET. Ignored
+            for a native analysis.
 
         Returns
         -------
@@ -1251,8 +1263,9 @@ class TRITONSWMM_sensitivity_analysis:
         ----------
         container_defs : list of Path, or None
             One Apptainer ``.def`` per distinct architecture to carry. Required, and
-            repeatable, for a container-mode analysis, because nothing in the config
-            names one. Ignored for a native analysis.
+            repeatable, for a container-mode analysis: the config names ONE recipe per
+            container reference and cannot express a multi-architecture SET. Ignored
+            for a native analysis.
 
         Returns
         -------
@@ -1275,7 +1288,9 @@ class TRITONSWMM_sensitivity_analysis:
 
         Opt-in only — NEVER invoked from run()/submit_workflow(), mirroring
         render_report()/bundle_report_data(). Deposits the master
-        sensitivity_datatree.zarr + master-rooted ro-crate sidecar; the license is
+        experiment_datatree.zarr, the master-rooted ro-crate sidecar, and the two
+        materialized configs (cfg_analysis.yaml, cfg_system.yaml) — see
+        publishing._deposit_set, which filters that list by existence. The license is
         read from the emitted crate. Returns {"target","data_doi","software_doi","record_url"}.
         """
         from hhemt.publishing import publish_analysis
@@ -1780,6 +1795,23 @@ class TRITONSWMM_sensitivity_analysis:
         _stamp_coupled_resume_evidence(tree, self.experiment)
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
         write_rocrate_sidecar(self.experiment.analysis_paths.analysis_dir, graph_json=_graph_json)
+
+        # ARM REFRESH AT THE WRITE BOUNDARY (D132 clause f) -- the master-arm twin of the
+        # refresh in processing_analysis.consolidate_to_datatree, and required rather than
+        # symmetric: a directory ADVANCED from regular to sensitivity that consolidates and
+        # STOPS leaves cfg_analysis.yaml asserting the prior regular arm while this master
+        # store is the current one. Covering only the regular writer closes one direction of
+        # a defect that has two.
+        # UNCONDITIONAL, idempotent, and reading nothing -- see the companion site for why a
+        # divergence test cannot be trusted here. Perturbs no scheduling: this file is a
+        # declared input of NO emitted Snakemake rule, and the mtime-preserving rewrite
+        # primitive is migration-only.
+        # DOES NOT close the file-only residual.
+        import yaml as _yaml
+
+        (self.experiment.analysis_paths.analysis_dir / "cfg_analysis.yaml").write_text(
+            _yaml.safe_dump(self.experiment.cfg_analysis.model_dump(mode="json"))
+        )
 
         self.experiment._refresh_log()
         if hasattr(self.experiment.log, "sensitivity_datatree_consolidation_complete"):
@@ -2657,7 +2689,7 @@ class TRITONSWMM_sensitivity_analysis:
                 }
             )
             analysis_id = f"{self.member_prefix}{member_id}"
-            cfg_snstvty_analysis.analysis_id = analysis_id  # type: ignore
+            cfg_snstvty_analysis.analysis_id = analysis_id
             analysis_directory = self.members_dir / str(cfg_snstvty_analysis.analysis_id)
             analysis_directory.mkdir(parents=True, exist_ok=True)
             cfg_snstvty_analysis.toggle_sensitivity_analysis = False
@@ -2855,7 +2887,10 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = False,
         recompile_if_already_done_successfully: bool = False,
     ):
-        """Compile the solver once per unique system target (workflow phase 1).
+        """Compile the solver once per unique system target.
+
+        Direct-execution helper. The emitted workflow does not call it: the
+        per-target setup rules assert an existing build rather than building.
 
         members that agree on the compile-relevant tuple
         ``(target_dem_resolution, gpu_hardware, gpu_compilation_backend)``

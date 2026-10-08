@@ -4,7 +4,12 @@ Standalone script for setting up the TRITON-SWMM workflow.
 
 This script handles Phase 1 of the consolidated SLURM workflow:
 1. Process system-level inputs (DEM, Mannings files)
-2. Compile enabled model types (TRITON-SWMM, TRITON-only, SWMM)
+2. In native mode, assert that every enabled model type (TRITON-SWMM, TRITON-only,
+   SWMM) already has a successful build. Container mode skips the check, because the
+   SIF carries the binary.
+
+Compiling is opt-in and no emitted setup rule requests it: pass one or more of the
+--compile-* flags below to build from this script by hand.
 
 This script is designed to run as a single task in a heterogeneous SLURM job,
 before the array of simulation tasks begins.
@@ -576,7 +581,7 @@ def main() -> int:
                     # The image WAS read and carries no label — an image defect.
                     logger.warning(
                         "Container mode: no org.hhemt.triton_sha label found on "
-                        f"{getattr(_cspec, 'sif_path', None)} — the consolidated tree "
+                        f"{_sif} — the consolidated tree "
                         "will carry no triton_producing_sha, and every model-defect "
                         "verdict will resolve INDETERMINATE."
                     )
@@ -587,7 +592,7 @@ def main() -> int:
                     # corrupt, truncated, or wrong-format container.
                     logger.warning(
                         "Container mode: `apptainer inspect` could not read "
-                        f"{getattr(_cspec, 'sif_path', None)} — {_image_error}. "
+                        f"{_sif} — {_image_error}. "
                         "Provenance was NOT captured; the container itself is "
                         "unreadable, so re-transfer or rebuild it. The apptainer "
                         "module loaded correctly, so container.apptainer_module is "
@@ -599,7 +604,7 @@ def main() -> int:
                     # not sent to inspect a perfectly good container.
                     logger.warning(
                         "Container mode: could not run `apptainer inspect` on "
-                        f"{getattr(_cspec, 'sif_path', None)} in any form "
+                        f"{_sif} in any form "
                         f"(container.apptainer_module={getattr(_cspec, 'apptainer_module', None)!r}). "
                         "Provenance was NOT captured; set container.apptainer_module to "
                         "the cluster's apptainer modulefile, or ship a sandbox-directory "

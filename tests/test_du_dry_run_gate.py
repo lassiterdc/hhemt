@@ -1,10 +1,15 @@
 """The dry-run gate on the fused deleter, both arms, at tmp_path.
 
-The reprocess-dry_run stipulation SANCTIONS the file deletion -- it is the mtime trigger
-that makes a `--dry-run` preview meaningful -- and FORBIDS the sentinel write. The unified
-deletion tool fuses the two, so "delete without accounting" is expressible only through
-`delete_and_account_unless_dry_run`. These two tests are the only non-solver coverage of
-that distinction; the end-to-end guard is solver-bearing.
+The reprocess-dry_run stipulation SANCTIONS the deletion of the REPORT ARTIFACTS -- they
+are the mtime trigger that makes a `--dry-run` preview meaningful -- and FORBIDS the
+sentinel write. It does NOT sanction deleting figures: the developer ruled (D131) that on
+a dry run plots survive, so the reprocess site passes only the report shell through this
+helper and keeps its figure list inside the guard. The victim below is a report shell,
+which is why these assertions are correct under that ruling and unchanged by it. The
+unified deletion tool fuses deletion and accounting, so "delete without accounting" is
+expressible only through `delete_and_account_unless_dry_run`. For the FIGURE half of the
+distinction see the dry-run figure-survival checks in
+tests/test_reprocess_rebuild_invalidation.py; the end-to-end guard is solver-bearing.
 """
 
 from __future__ import annotations

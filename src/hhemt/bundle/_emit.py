@@ -63,13 +63,15 @@ if TYPE_CHECKING:
     from hhemt.config.bundle_exclude import BundleExcludeConfig
 
 
-from hhemt.constants import EDA_PLOTS_SUBDIR
 from hhemt.exceptions import StaleReadModelError
 from hhemt.provenance import producing_stamp
+from hhemt.utils import select_regenerable_figures
 
-# Local alias: the shared constant is the single source, and keeping the historical name
-# means the existing in-file references need no edit.
-_EDA_SUBDIR = EDA_PLOTS_SUBDIR
+# The eda exemption is no longer spelled here. It lives once, in
+# constants.UNREGENERABLE_ANALYSIS_SUBTREES, and reaches this site through
+# utils.select_regenerable_figures -- so this module's former local alias for the
+# eda subdirectory constant, and the import that fed it, are retired rather than
+# kept beside a second source for one fact.
 
 
 def _figure_stem(name: str) -> str:
@@ -127,19 +129,25 @@ def _prune_undeclared_figures(analysis_dir: Path, plots_dir: Path) -> list[str]:
     if declared is None or not plots_dir.exists():
         return []
     removed: list[str] = []
-    _prune_targets: list[Path] = []
-    for path in sorted(plots_dir.rglob("*")):
-        if path.is_dir() or path.name.endswith(".manifest.json"):
-            continue
-        if _EDA_SUBDIR in path.relative_to(plots_dir).parts:
-            continue
-        if _figure_stem(path.name) in declared:
-            continue
-        removed.append(str(path.relative_to(analysis_dir)))
-        _sidecar = path.with_suffix(path.suffix + ".manifest.json")
-        # This prune runs against the LIVE analysis tree (PRUNE-BEFORE-HARVEST), so these
-        # are DU-counted `plots/` bytes: route through the tool (clause 1).
-        _prune_targets += [path, _sidecar]
+    # The walk comes from the ONE selector. The `keep` predicate is this caller's own
+    # question -- a figure the Snakefile still declares is not an orphan -- and it stays
+    # here rather than moving into the selector, which knows nothing about declarations.
+    #
+    # DELIBERATE NON-CONSUMPTION: this site does NOT read
+    # constants.UNREGENERABLE_ANALYSIS_SUBTREES whole. The selector applies it, and because
+    # this walk is rooted at plots/ the only member it can reach is plots/eda -- which is
+    # the right subset, since eda_local/ is not a figure and an undeclared-FIGURE prune
+    # has no business exempting it. The subset follows from the root, not from a skip list
+    # anyone maintains here, which is why the inline exemption this replaced is gone.
+    #
+    # This prune runs against the LIVE analysis tree (PRUNE-BEFORE-HARVEST), so these are
+    # DU-counted `plots/` bytes: route through the tool (clause 1).
+    _prune_targets = select_regenerable_figures(
+        analysis_dir,
+        plots_dir,
+        keep=lambda p: _figure_stem(p.name) in declared,
+        on_select=lambda p: removed.append(str(p.relative_to(analysis_dir))),
+    )
     from hhemt.du_sentinels import delete_and_account
 
     delete_and_account(_prune_targets, scope_dir=analysis_dir, scope="analysis")
@@ -897,7 +905,7 @@ def _emit_hpc_identity(analysis: TRITONSWMM_analysis, staging: Path) -> None:
     Allow-list-BY-CONSTRUCTION (D7): reach ONLY for the named compute-config-identity
     fields (``partitions`` map + ``gpu_allocation_flavor``) — the fields two experiments
     must agree on for an intercomparison to be meaningful — and NEVER emit any
-    USER-bucket scalar (default_account / login_node / container.sif_path). No
+    USER-bucket scalar (default_account / login_node / container.sif_root). No
     enumerate-and-null (that is fail-open against future schema drift). No-op when the
     analysis carries no hpc_system_config (local/native runs). Passes the zero-user-info
     gate trivially (it never writes a producer value). NOT the reprex template.

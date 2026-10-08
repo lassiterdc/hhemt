@@ -94,3 +94,112 @@ def test_two_identical_siblings_stay_expanded():
     assert _SENTINEL_MARK not in html
     assert "member_gpu_0_r1" in html
     assert "member_gpu_1_r1" in html
+
+
+def _assert_declared_attrs_are_fields():
+    """Every name `_resolve_consolidated_tree` looks up reflectively is a real field.
+
+    Extracted from its test node so the rename demonstration below can assert that THIS
+    raises. Both components of that demonstration are ordinary in this suite; a test
+    function calling another test function is not, and an unprecedented shape invites a
+    cleanup whose most natural form would inline this body and silently remove the check.
+
+    Pure introspection: no store, no analysis, no I/O, no solver.
+    """
+    import dataclasses
+
+    # IMPORT POSITION IS LOAD-BEARING -- do not hoist to module scope. The name is
+    # resolved from `hhemt.paths` at CALL time, which is what lets
+    # test_metadata_reflective_guard_fires_under_a_rename patch the module attribute and
+    # observe this raise. A module-scope binding is resolved once at import and the patch
+    # would not reach it: measured, this helper then does NOT raise under the patch and
+    # that test goes red. The comment explains; the test is what stops you.
+    from hhemt.paths import AnalysisPaths
+
+    declared = {f.name for f in dataclasses.fields(AnalysisPaths)}
+    missing = [a for a in metadata._DECLARED_TREE_PATH_ATTRS if a not in declared]
+    assert not missing, (
+        f"_resolve_consolidated_tree looks up {missing} on AnalysisPaths, which no longer "
+        f"declares them. getattr's default will mask this: the lookup yields None and the "
+        f"ROOT_TREE_NAMES fallback returns a path anyway, so nothing fails. Update "
+        f"metadata._DECLARED_TREE_PATH_ATTRS to the new field name(s)."
+    )
+
+
+def test_metadata_reflective_attr_names_are_real_fields():
+    """The shipped guard. Delegates to the helper so the rename check has a subject.
+
+    Guards a MASKED failure rather than a loud one: `_resolve_consolidated_tree` reads
+    `AnalysisPaths` attributes by string via `getattr(..., None)`, so a renamed or split
+    field yields None, the `is not None` filter drops it, and the ROOT_TREE_NAMES fallback
+    answers anyway -- identically to the healthy call when the declared path equals the
+    fallback, and differently or as None otherwise. Nothing raises in any of those.
+    """
+    _assert_declared_attrs_are_fields()
+
+
+def test_metadata_reflective_tuple_resolves_sensitivity_first():
+    """The tuple's FIRST entry is the precedence, and it is pinned by VALUE.
+
+    Three clauses, none subsuming the others -- measured over four states:
+
+      * tuple inverted, fields unchanged        -> value clause RED, order clause RED
+      * BOTH tuple and fields reordered         -> value clause RED, order clause GREEN
+      * a field renamed or split                -> value clause GREEN, set clause RED
+
+    SINGLE-POINT COVERAGE, disclosed because nothing else in this file says it: a field
+    SPLIT is caught by the SET clause ALONE. Both order clauses pass, and the helper's own
+    set-guard passes too, because both original names still exist alongside the new one.
+    The set clause reads as a weaker restatement of the helper and is therefore the clause
+    a simplifier deletes first -- and it is the sole cover for the split half of the
+    hazard `_DECLARED_TREE_PATH_ATTRS`'s own comment names.
+    """
+    import dataclasses
+
+    from hhemt.paths import AnalysisPaths
+
+    assert metadata._DECLARED_TREE_PATH_ATTRS[0] == "sensitivity_datatree_zarr", (
+        f"the reflective lookup now resolves {metadata._DECLARED_TREE_PATH_ATTRS[0]!r} FIRST. "
+        f"`_resolve_consolidated_tree`'s docstring declares the sensitivity-master name is "
+        f"tried first, mirroring `_combine_merge._resolve_root_tree`. Either the precedence "
+        f"was inverted by accident, or it changed deliberately and both the docstring and "
+        f"this test must change with it."
+    )
+
+    field_order = [f.name for f in dataclasses.fields(AnalysisPaths) if f.name.endswith("_datatree_zarr")]
+    assert set(metadata._DECLARED_TREE_PATH_ATTRS) == set(field_order), (
+        "the reflective tuple and the dataclass no longer name the same fields"
+    )
+    assert list(metadata._DECLARED_TREE_PATH_ATTRS) != field_order, (
+        "the reflective tuple now matches AnalysisPaths declaration order. That is the "
+        "signature of a comprehension having replaced the hand-ordered constant. The tuple "
+        "must stay sensitivity-FIRST while the dataclass declares analysis-first; if the "
+        "dataclass was deliberately reordered instead, retire this clause explicitly rather "
+        "than letting it pass by coincidence."
+    )
+
+
+def test_metadata_reflective_guard_fires_under_a_rename(monkeypatch):
+    """The field-contract guard actually RAISES when a field is renamed.
+
+    Without this the guard is only known to be GREEN on a healthy tree, and a guard never
+    observed failing is indistinguishable from one written backwards.
+
+    It also pins the helper's function-local import: the patch below replaces the
+    attribute on `hhemt.paths`, a call-time import sees the replacement and a module-scope
+    one does not, so hoisting turns this red.
+    """
+    import dataclasses
+
+    import pytest
+
+    renamed = dataclasses.make_dataclass(
+        "AnalysisPaths",
+        [
+            ("analysis_tree_zarr", object, dataclasses.field(default=None)),
+            ("sensitivity_datatree_zarr", object, dataclasses.field(default=None)),
+        ],
+    )
+    monkeypatch.setattr("hhemt.paths.AnalysisPaths", renamed)
+    with pytest.raises(AssertionError, match="analysis_datatree_zarr"):
+        _assert_declared_attrs_are_fields()

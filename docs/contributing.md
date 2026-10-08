@@ -34,6 +34,11 @@ open an issue to discuss before submitting.
    step 2. Do NOT add `--no-deps` here — unlike the two `--no-deps` installs above,
    which exist to stop pip displacing conda-resolved `numpy`/`pandas`, the docs
    tooling has no conda-resolved counterpart and `--no-deps` would install none of it.
+   Run it from the checkout you mean to document: an editable install names ONE
+   `src`, so running it from a worktree re-points the shared conda environment's
+   `import hhemt` at that worktree until the next install. If you keep several
+   checkouts, `uv run --locked --extra docs mkdocs serve` needs no install step and
+   binds to the checkout it runs in.
 4. Install `uv` (https://docs.astral.sh/uv/). It is a hard prerequisite, not a
    convenience: every pre-commit hook in this repo runs through `uv run --locked`,
    so `git commit` fails without it. `uv` builds and manages its own project
@@ -98,8 +103,9 @@ open an issue to discuss before submitting.
       restriction the toolkit imposes: as the paragraph above says, `PERMITTED_VENUES`
       names a capability, and nothing in the code knows what Rivanna is. Tests that
       neither compile the solver nor execute a simulation are NOT restricted and may run
-      locally. A suite-level green claim additionally requires `scope=union` (see the
-      [CLI reference](reference/cli.md#hhemt-test-toolkit)), and it is produced there.
+      locally. A suite-level green claim additionally requires `scope=union`, which
+      the `hhemt test toolkit` CLI cannot produce (see the
+      [CLI reference](reference/cli.md#hhemt-test-toolkit)).
       For why the guard is shaped this way, see
       [the compile venue, and why the token relaxes rather than arms](explanation/testing-the-toolkit.md#the-compile-venue-and-why-the-token-relaxes-rather-than-arms).
   Which tier `just qa` gives you does NOT depend on your machine: `compile_tier` is
@@ -118,6 +124,29 @@ Build docs locally:
 pip install -e ".[docs]"
 mkdocs serve
 ```
+
+The install line re-points the shared conda environment's editable install at the
+checkout you run it from (see step 3 of the development setup). From a second
+checkout, `uv run --locked --extra docs mkdocs serve` builds the same site with no
+install step.
+
+## Documentation gates
+
+CI runs four gates on every push to `main` or `develop` and on every pull request
+into either branch, from one list in `scripts/docs_gates.sh`: the strict build (with
+the htmlproofer internal-link check), public-API autodoc coverage, docs content
+hygiene, and published-surface fidelity. Run the same list locally before opening a
+pull request:
+
+```bash
+RUN="uv run --locked --extra docs" bash scripts/docs_gates.sh
+```
+
+With `just` installed, `just docs-check` runs exactly that line. `uv run --locked
+--extra docs` binds `import hhemt` to the checkout you run it in, so the autodoc
+gate grades this checkout and its `population root:` line names the tree it
+enumerated. Never `uv run --active` here: under a foreign `VIRTUAL_ENV` it
+re-points another checkout's editable install.
 
 ## Documentation gate exemptions
 
@@ -203,7 +232,7 @@ behaviour or delete information.
 | Right, and the compliant form is behaviour-identical | Comply | A suppression here is debt against no offsetting truth. |
 | Right, but compliance is genuinely unavailable | `# noqa` or `per-file-ignores` + a reason naming the blocker | The blocker is the reason — and blockers expire, so it must be checkable. |
 | Right, and complying would delete information | `# noqa: XXX` + reason | Column alignment, an assertion, and a deliberate shape are all information. |
-| A real defect nobody is fixing today | Fix it, or ignore it with an explicit tracked note | See the `docs/*.ipynb` F403 block in `pyproject.toml`. |
+| A real defect nobody is fixing today | Fix it, or ignore it with an explicit tracked note | A tracked note keeps the defect visible and dated; a bare suppression hides it. |
 
 **Unused variables, imports and function arguments are governed by "No cruft" above,
 which is narrower than this table.** Investigate first; do not suppress an F401, F841

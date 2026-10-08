@@ -23,6 +23,13 @@ Two independent assertions, because an anchor and a docstring are different fact
 Exit 0 = both hold. 1 = >=1 failure of either (enumerated separately).
 2 = usage/environment error (site dir absent, import failure, api.md absent or
 declaring no directives). Pure stdlib.
+
+The population is bound to THIS checkout's ``src`` through ``scripts/local_src.py``
+(prepend, purge, then a provenance assert on every imported module), and one
+``population root:`` line printed immediately before the verdict names the tree the
+symbols came from, the API page, and the site. A bare ``python`` run of this script
+from a worktree therefore grades the worktree, not whichever checkout the shared
+editable install last pointed at.
 """
 
 from __future__ import annotations
@@ -34,6 +41,10 @@ import inspect
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
+from types import ModuleType
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from local_src import assert_resolved_under, bind_local_src  # noqa: E402
 
 # The documented surface is DERIVED from docs/reference/api.md's ``:::`` directives
 # rather than declared here. That is deliberate and it removes a defect class rather
@@ -46,6 +57,7 @@ from pathlib import Path
 # (`hhemt.toolkit` needs no directive: its sole export `Toolkit` is re-exported at
 # the top level and rendered by ``::: hhemt`` as ``hhemt.Toolkit``.)
 API_REFERENCE_PAGE = Path(__file__).resolve().parent.parent / "docs" / "reference" / "api.md"
+SRC_ROOT = Path(__file__).resolve().parent.parent / "src"
 
 
 def public_modules(api_page: Path = API_REFERENCE_PAGE) -> tuple[str, ...]:
@@ -106,11 +118,28 @@ def _declared_public(mod) -> list[str]:
     ]
 
 
-def expected_qualnames() -> set[str]:
+def _import_public_module(modname: str, src_root: Path) -> ModuleType:
+    """The one import path both enumerators share: bind, import, then assert provenance.
+
+    ``bind_local_src`` puts ``src_root`` first on ``sys.path`` and evicts any warm
+    ``sys.modules`` entry of the module's package that resolved elsewhere, so the
+    import below reaches THIS checkout whether the interpreter is cold or warm.
+    ``assert_resolved_under`` then reports the one case the bind cannot repair, a
+    ``src_root`` that supplies no such package, by raising into ``main()``'s exit-2
+    branch. A module that declares no ``__file__`` passes both: the injected
+    fixtures in this gate's tests are such modules and pin nothing about resolution.
+    """
+    bind_local_src(src_root, (modname,))
+    mod = importlib.import_module(modname)
+    assert_resolved_under(mod, src_root)
+    return mod
+
+
+def expected_qualnames(api_page: Path = API_REFERENCE_PAGE, src_root: Path = SRC_ROOT) -> set[str]:
     """{module}.{symbol} for every public class/function, by the ``__all__``-or-defs rule."""
     out: set[str] = set()
-    for modname in public_modules():
-        mod = importlib.import_module(modname)
+    for modname in public_modules(api_page):
+        mod = _import_public_module(modname, src_root)
         for sym in _declared_public(mod):
             if sym.startswith("_"):
                 continue  # mirrors mkdocs.yml filters: ["!^_"]
@@ -121,7 +150,7 @@ def expected_qualnames() -> set[str]:
     return out
 
 
-def undocumented_symbols() -> list[str]:
+def undocumented_symbols(api_page: Path = API_REFERENCE_PAGE, src_root: Path = SRC_ROOT) -> list[str]:
     """Public symbols that render an anchor but carry NO docstring.
 
     An anchor proves the symbol reached the page; it says nothing about whether
@@ -137,8 +166,8 @@ def undocumented_symbols() -> list[str]:
     so they are tested explicitly — omitting them silently undercounts.
     """
     missing: list[str] = []
-    for modname in public_modules():
-        mod = importlib.import_module(modname)
+    for modname in public_modules(api_page):
+        mod = _import_public_module(modname, src_root)
         for sym in getattr(mod, "__all__", ()):
             if sym.startswith("_"):
                 continue
@@ -184,6 +213,20 @@ def rendered_anchors(site_dir: Path) -> set[str]:
     return ids
 
 
+def _provenance_line(site_dir: Path, *, import_failed: bool = False) -> str:
+    """One line naming what the verdict below it was computed over.
+
+    Printed on the verdict's own stream immediately before it, at every exit that
+    reached the import, so a reader of either stream sees the roots beside the
+    sentence they qualify. The resolved package directory is the measurement and
+    ``SRC_ROOT`` is the intention; a reader can see the two agree.
+    """
+    package = sys.modules.get("hhemt")
+    origin = None if import_failed or package is None else getattr(package, "__file__", None)
+    resolved = f"hhemt resolved at {Path(origin).resolve().parent}" if origin else "hhemt import FAILED"
+    return f"population root: {SRC_ROOT} ({resolved}); api page: {API_REFERENCE_PAGE}; site: {site_dir.resolve()}"
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
@@ -199,11 +242,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         expected = expected_qualnames()
     except Exception as exc:  # import failure is an env error, not a coverage miss
+        print(_provenance_line(args.site_dir, import_failed=True), file=sys.stderr)
         print(f"ERROR: could not import public modules: {exc}", file=sys.stderr)
         return 2
     anchors = rendered_anchors(args.site_dir)
     missing = sorted(q for q in expected if q not in anchors)
     if missing:
+        print(_provenance_line(args.site_dir), file=sys.stderr)
         print("autodoc coverage FAILED — public symbols with no rendered doc anchor:", file=sys.stderr)
         for qual in missing:
             print(f"  - {qual}", file=sys.stderr)
@@ -217,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
 
     undocumented = undocumented_symbols()
     if undocumented:
+        print(_provenance_line(args.site_dir), file=sys.stderr)
         print("autodoc coverage FAILED — public symbols that render with NO docstring:", file=sys.stderr)
         for qual in undocumented:
             print(f"  - {qual}", file=sys.stderr)
@@ -229,6 +275,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    print(_provenance_line(args.site_dir))
     print(
         f"autodoc coverage OK — all {len(expected)} class/function symbols named by "
         f"`__all__`, or defined at module level where a module declares none, render "

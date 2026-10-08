@@ -19,6 +19,7 @@ from pathlib import Path
 
 from hhemt.config.experiment_bundle import ExperimentConfig
 from hhemt.exceptions import ConfigurationError
+from hhemt.orchestration import RunMode
 
 
 @dataclass(frozen=True)
@@ -97,8 +98,8 @@ def resolve_hpc_system_config(
             message=(
                 f"No hpc_system_config for cluster {cluster!r} at {path}. On the cluster, set "
                 "$HHEMT_DEPLOYMENT_CONFIG to your compute-visible deployment-config checkout and "
-                "`git pull` it, then reconstruct the per-cluster config (fill default_account and "
-                "container.sif_path). Or set $HHEMT_HPC_SYSTEM_CONFIG, or pass --hpc-system-config."
+                "`git pull` it, then reconstruct the per-cluster config (fill default_account). "
+                "Or set $HHEMT_HPC_SYSTEM_CONFIG, or pass --hpc-system-config."
             ),
             config_path=path,
         )
@@ -282,7 +283,7 @@ def build_case_from_bundle(
 
     Preserves the landed fail-fast guards verbatim: a ``default_account`` that is unset
     or still a ``{your-...}`` placeholder raises; a missing or placeholder
-    ``container.sif_path`` raises when the bundle declares a container. Config
+    ``container.sif_root`` raises when the bundle declares a container. Config
     resolution is NON-MUTATING — it reads the deployment config, never edits a tracked file.
     """
     from hhemt.config.loaders import load_hpc_system_config
@@ -333,15 +334,23 @@ def run_experiment(
     hpc_system_config_yaml: str | Path | None = None,
     assume_yes: bool = False,
     wait: bool | None = None,
-    mode: str = "resume",
+    mode: RunMode = RunMode.resume,
     override_wipe_nonempty: bool = False,
+    override_force_rerun: str | dict | None = None,
     **cli_overrides: object,
 ):
     """Load -> validate -> gate overrides -> build -> run.
 
-    mode: 'resume' (default) picks up where the last invocation left off; 'fresh' wipes the
-    analysis_dir first; 'overwrite' reruns existing scenarios without a full reset. The default
-    matches ``Toolkit.run``'s own default so the two layers state one value rather than two.
+    mode: a ``RunMode`` member. ``resume`` (default) picks up where the last invocation left
+    off; ``fresh`` wipes the analysis_dir first. The default matches ``Toolkit.run``'s own
+    default so the two layers state one value rather than two. This is a typed pass-through:
+    the CLI refuses an unknown value at parse time and ``Toolkit.run`` refuses one at the
+    reduction site, so no third check lives here.
+
+    override_force_rerun: per-invocation override of the bundle analysis config's
+    ``force_rerun`` (``"all"``, ``"none"``, or a subject dict), threaded untouched into
+    ``Toolkit.run``. None, the default, reads the config field. This is the honest route to
+    re-running completed scenarios without a wipe; it is a knob, not a mode.
 
     The override gate is the R8 contract: if `resolve_overrides` returns a non-empty
     list, print the side-by-side table and require explicit confirmation. A non-TTY
@@ -387,4 +396,5 @@ def run_experiment(
         dry_run=dry_run,
         wait_for_completion=wait,
         override_wipe_nonempty=override_wipe_nonempty,
+        override_force_rerun=override_force_rerun,
     )

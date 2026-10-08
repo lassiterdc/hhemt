@@ -30,7 +30,7 @@ from hhemt.execution import (
     SlurmExecutor,
 )
 from hhemt.log import TRITONSWMM_analysis_log
-from hhemt.orchestration import resolve_execution_locus
+from hhemt.orchestration import RunMode, resolve_execution_locus
 from hhemt.paths import AnalysisPaths
 from hhemt.plot_analysis import TRITONSWMM_analysis_plotting
 from hhemt.plot_utils import print_json_file_tree
@@ -54,7 +54,7 @@ from hhemt.snakemake_snakefile_parsing import (
 from hhemt.swmm_output_parser import (
     retrieve_swmm_performance_stats_from_rpt,
 )
-from hhemt.utils import fast_rmtree, parse_triton_log_file
+from hhemt.utils import fast_rmtree, parse_triton_log_file, select_regenerable_figures
 from hhemt.validation import ValidationResult, assert_configs_visible_cross_node, preflight_validate, running_identity
 from hhemt.wipe_guard import assert_wipe_is_deliberate
 from hhemt.workflow import (
@@ -311,9 +311,11 @@ class TRITONSWMM_analysis:
     ``test()``
         Run a strict, least-demanding subset of *this* analysis under
         ``{analysis_dir}/_test/``, exercising the real
-        compile-run-process-consolidate-report path for one minimum-device
-        representative per unique compute configuration. This is the smoke test
-        to run before committing an allocation to a full run.
+        run-process-consolidate-report path for one minimum-device
+        representative per unique compute configuration. In native mode the
+        solver must already be built: the run checks for the build and never
+        performs it. This is the smoke test to run before committing an
+        allocation to a full run.
     ``validate()``
         Preflight the configuration without executing anything.
     ``get_workflow_status()``
@@ -474,7 +476,16 @@ class TRITONSWMM_analysis:
             analysis_paths_kwargs["output_swmm_only_link_summary"] = analysis_dir / f"SWMM_only_links.{ext}"
 
         # Hierarchical DataTree consolidation (Phase 2)
-        analysis_paths_kwargs["analysis_datatree_zarr"] = analysis_dir / "analysis_datatree.zarr"
+        # ARM-SCOPED (D132), and the claim is SMALL by ruling. This is the REGULAR arm's root
+        # store. A sensitivity MASTER never writes it -- the master-reader census closed EMPTY
+        # at 14 of 14 -- so leaving it UNBOUND makes that a property of the binding rather than
+        # of the call graph, enforced by the ValueError guards already present at
+        # processing_analysis.py's writer and at _retrieve_combined_output.
+        # NOT A NAME REPAIR: the regular arm's bound path is unchanged, so route 1 is
+        # byte-identical and this closes NEITHER route. Repointing the name would instead make
+        # every root-group renderer raise AssertionError.
+        if not cfg_analysis.toggle_sensitivity_analysis:
+            analysis_paths_kwargs["analysis_datatree_zarr"] = analysis_dir / "analysis_datatree.zarr"
 
         # Sensitivity-level DataTree zarr (Phase 3) — aggregates members.
         if cfg_analysis.toggle_sensitivity_analysis:
@@ -1101,8 +1112,9 @@ class TRITONSWMM_analysis:
             ``{analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.zip``.
         container_defs : list of Path, or None
             One Apptainer ``.def`` per distinct architecture to carry. Required, and
-            repeatable, for a container-mode analysis, because nothing in the config
-            names one. Ignored for a native analysis.
+            repeatable, for a container-mode analysis: the config names ONE recipe per
+            container reference and cannot express a multi-architecture SET. Ignored
+            for a native analysis.
 
         Returns
         -------
@@ -1139,8 +1151,9 @@ class TRITONSWMM_analysis:
         ----------
         container_defs : list of Path, or None
             One Apptainer ``.def`` per distinct architecture to carry. Required, and
-            repeatable, for a container-mode analysis, because nothing in the config
-            names one. Ignored for a native analysis.
+            repeatable, for a container-mode analysis: the config names ONE recipe per
+            container reference and cannot express a multi-architecture SET. Ignored
+            for a native analysis.
 
         Returns
         -------
@@ -1164,11 +1177,15 @@ class TRITONSWMM_analysis:
         Opt-in only — NEVER invoked from analysis.run() or submit_workflow(), mirroring
         bundle_report_data()/transfer_results(). Requires the analysis to have consolidated
         (ro-crate-metadata.json + analysis_datatree.zarr present); the license is read from
-        the emitted crate sidecar. override_dataset_license does NOT re-stamp the archived
-        license (baked at consolidation into the immutable crate) — it ASSERTS your expected
-        value against the sidecar and raises PublishError on mismatch, directing you to set
-        analysis_config.dataset_license and reprocess(start_with='consolidate'). Returns
-        {"target","data_doi","software_doi","record_url"}.
+        the emitted crate sidecar. Publishing never re-stamps that archived license. Before
+        anything is deposited, publish compares analysis_config.dataset_license against the
+        crate license and raises PublishError when they differ; that check runs before any
+        override is read. Re-emit the crate with
+        reprocess(start_with='consolidate', regenerate_existing=True), then publish again.
+        override_dataset_license, when given, is a second assertion of the license you
+        expect, compared against the crate only after the config check has passed; a
+        mismatch raises PublishError. Returns {"target","data_doi","software_doi","record_url"};
+        for target='hydroshare' data_doi is None and the dict also carries "manual_step".
         """
         from hhemt.publishing import publish_analysis
 
@@ -3159,8 +3176,10 @@ class TRITONSWMM_analysis:
         (enabled-model-toggles x compilation-backend x partition x compute-config)
         group present in the analysis, materializes each under
         ``{analysis_dir}/_test/``, truncates its inputs to ~``n_reporting_timesteps``
-        reporting frames, and runs the full compile->run->process->consolidate->
-        report path. A strict subset of the user's defined analysis -- no sweeps,
+        reporting frames, and runs the full run->process->consolidate->report
+        path. In native mode the solver must already be built: the emitted setup rule
+        asserts that every enabled model has a successful build and never performs one.
+        A strict subset of the user's defined analysis -- no sweeps,
         no synthetic substitution (PIP O-f requirements 1-7).
 
         Notes
@@ -3195,7 +3214,7 @@ class TRITONSWMM_analysis:
                 verbose=verbose,
                 wait_for_job_completion=wait_for_job_completion,
                 dry_run=dry_run,
-            )  # full compile->run->process->consolidate->report
+            )  # full run->process->consolidate->report
             results.append(
                 TestSubResult(
                     representative=rep,
@@ -3642,7 +3661,7 @@ class TRITONSWMM_analysis:
         Use recommended mode:
 
         >>> status = analysis.get_workflow_status()
-        >>> result = analysis.run(mode=status.recommended_mode)
+        >>> result = analysis.run(from_scratch=status.recommended_mode == "fresh")
 
         Notes
         -----
@@ -3855,7 +3874,9 @@ class TRITONSWMM_analysis:
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
             Does NOT compile: no emitted setup rule carries a ``--compile-*`` flag, so
-            the rule asserts the solver tier rather than building it. What it does do
+            the rule asserts the solver tier rather than building it. In container
+            mode it performs no such check, because the SIF carries the binary.
+            What it does do
             depends on which path this facade dispatches to, and on one of them it does
             nothing at all: on a non-sensitivity analysis this and
             ``process_system_level_inputs`` together decide whether the setup rule
@@ -4136,9 +4157,15 @@ class TRITONSWMM_analysis:
         Parameters
         ----------
         start_with
-            Stage to re-fire from. ``"consolidate"`` is the common case —
-            re-aggregates the analysis datatree zarr and re-renders the
-            report against existing sim outputs.
+            Stage to re-fire from. ``"consolidate"`` is the common case. With
+            ``regenerate_existing=False`` (the default) the consolidated zarr
+            is left in place and consolidation stays inert; the report is
+            re-rendered against the existing zarr. Pass
+            ``regenerate_existing=True`` to delete the consolidate flag and
+            the zarr and rebuild them; that rebuild is also what re-emits
+            ``ro-crate-metadata.json``. A sensitivity-toggled analysis
+            dispatches to ``TRITONSWMM_sensitivity_analysis.reprocess``,
+            whose ``start_with`` entry describes its own flag handling.
         execution_mode
             ``"auto"`` (default) detects SLURM context; ``"local"`` /
             ``"slurm"`` force the mode.
@@ -4665,18 +4692,33 @@ class TRITONSWMM_analysis:
             report_html = analysis_dir / "analysis_report.html"
             report_zip = analysis_dir / "analysis_report.zip"
             plots_dir = analysis_dir / "plots"
-            # Clause 1: ONE accounting call for the report shell + every plot artifact. The
-            # tool measures what it deletes and adjusts this scope's sentinel once; the
-            # former FIX-3 "skip the decrement on the regenerate arms" gate is gone because
-            # the later zarr deletion now also routes through the tool, which is idempotent
-            # per path rather than a re-walk (a double decrement cannot occur: each path is
-            # deleted, and therefore counted, exactly once).
+            # Clause 1: ONE accounting call for the report shell + every ELIGIBLE plot
+            # artifact. The tool measures what it deletes and adjusts this scope's sentinel
+            # once; the former FIX-3 "skip the decrement on the regenerate arms" gate is
+            # gone because the later zarr deletion now also routes through the tool, which
+            # is idempotent per path rather than a re-walk (a double decrement cannot
+            # occur: each path is deleted, and therefore counted, exactly once).
+            #
+            # The plots half comes from the ONE selector, utils.select_regenerable_figures,
+            # which supplies the guard this site never had: the unregenerable-subtree skip.
+            # Its absence here is why the DEFAULT reprocess used to destroy plots/eda/, a
+            # family no Snakemake rule regenerates. An unfiltered rglob over plots/ is the
+            # defect, not a shortcut.
             _targets = [report_html, report_zip]
-            if plots_dir.exists():
-                _targets += [a for a in plots_dir.rglob("*") if a.is_file()]
-            # dry_run: the deletes are the mtime trigger the stipulation sanctions; the
-            # sentinel is deliberately NOT written on a dry run. This site expressed that
-            # by hand and three siblings did not; the helper is now the single expression.
+            if not dry_run:
+                # THE DRY-RUN FIGURE CLAUSE. `reprocess dry_run performs no destructive
+                # mutation` does not enumerate figures at THIS site -- its figure clause is
+                # scoped to the force-rerun path -- so the developer was asked and ruled:
+                # on a dry run, plots survive. ALL figures stay inside this guard, not only
+                # the unregenerable subtrees, on the same cost-and-irreversibility grounds
+                # the rule states for the other path (a measured 63-minute serial render
+                # that nothing on a dry-run path regenerates, against a preview yield the
+                # rule itself measures as zero at a render floor).
+                _targets += select_regenerable_figures(analysis_dir, plots_dir)
+            # The report shell stays OUTSIDE the guard -- it IS the mtime trigger the
+            # stipulation sanctions -- while the sentinel is never written on a dry run.
+            # The helper is the single expression of that combination; three sibling call
+            # sites receive it by auto-merge and this is the fourth.
             du_sentinels.delete_and_account_unless_dry_run(
                 _targets, scope_dir=analysis_dir, scope="analysis", dry_run=dry_run
             )
@@ -5155,9 +5197,37 @@ class TRITONSWMM_analysis:
             # comment on the layer above.
             self._delete_chapter_sets_for_force_rerun(spec, dry_run=dry_run)
 
+    def _clear_consolidate_completion_signals(self, status_dir: Path) -> None:
+        """Clear BOTH analysis-level consolidate completion signals, together.
+
+        V0018 established that the ``e_consolidate_*`` FLAG and the log field
+        ``datatree_consolidation_complete`` are ONE signal carried on two media, and
+        that clearing either alone leaves the consolidate gate shut;
+        ``tests/test_version_migration_V0018.py`` asserts exactly that on the
+        migration path. The scenario-set-change invalidator below cleared only the
+        flag, so ``consolidate_to_datatree``'s ``_log_complete`` conjunct still read
+        True, the four-term reuse conjunction still held, and an ADDED scenario never
+        reached the consolidated store while every Snakemake rule reported success.
+
+        The log clear is REDUNDANT under the widened consolidation fingerprint, which
+        now hashes the scenario-id set and therefore mismatches on any set change and
+        forces the rebuild on its own. It is retained as defence-in-depth: the
+        fingerprint closes the input-change route, this closes the
+        explicit-invalidation route, and the two fail independently. Do NOT remove it
+        as dead code on the strength of the fingerprint alone.
+
+        The two carriers are cleared in ONE definition so that a future caller cannot
+        clear one and forget the other. That generalization failure -- not merely its
+        instance at the caller below -- is what this method exists to close.
+        """
+        (status_dir / "e_consolidate_complete.flag").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
+        (status_dir / "e_consolidate_complete.flag.json").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
+        if hasattr(self.log, "datatree_consolidation_complete"):
+            self.log.datatree_consolidation_complete.set(False)
+
     def _invalidate_consolidate_flag_on_scenario_set_change(self) -> None:
-        """Delete e_consolidate_complete.flag (and orphan per-event flags) when the
-        multi_sim scenario set changed since the last prepared run.
+        """Clear BOTH consolidate completion signals (and orphan per-event flags)
+        when the multi_sim scenario set changed since the last prepared run.
 
         Under the toolkit's --rerun-triggers mtime profile, a present
         e_consolidate_complete.flag prevents Snakemake from re-demanding an ADDED
@@ -5186,8 +5256,7 @@ class TRITONSWMM_analysis:
             return  # set unchanged — no invalidation needed
         # Set changed: drop the analysis-level consolidate flag so the added chain is
         # re-demanded; drop orphan per-event flags for removed events.
-        (status_dir / "e_consolidate_complete.flag").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
-        (status_dir / "e_consolidate_complete.flag.json").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
+        self._clear_consolidate_completion_signals(status_dir)
         removed = prepared_event_ids - config_event_ids
         for ev in removed:
             for stem in (
@@ -6551,7 +6620,7 @@ def _recommendation_ladder(
     summaries_exist: bool,
     n_not_prepared: int = 0,
     n_not_run: int = 0,
-) -> tuple[str, str, str]:
+) -> tuple[str, RunMode, str]:
     """The workflow-status recommendation ladder, as a PURE function of its five booleans.
 
     Ordered: upstream incompleteness wins over downstream completion, so an operator holding
@@ -6561,15 +6630,15 @@ def _recommendation_ladder(
     fixture, no compile and no shared cache.
     """
     if not setup_complete:
-        return "setup", "fresh", "Setup incomplete. Use 'fresh' mode to process system inputs."
+        return "setup", RunMode.fresh, "Setup incomplete. Use 'fresh' mode to process system inputs."
     if not all_prepared:
-        return "preparation", "resume", f"Use 'resume' to create {n_not_prepared} remaining scenarios."
+        return "preparation", RunMode.resume, f"Use 'resume' to create {n_not_prepared} remaining scenarios."
     if not all_run:
-        return "simulation", "resume", f"Use 'resume' to run {n_not_run} pending/failed simulations."
+        return "simulation", RunMode.resume, f"Use 'resume' to run {n_not_run} pending/failed simulations."
     if not proc_complete:
-        return "processing", "resume", "Use 'resume' to process simulation outputs."
+        return "processing", RunMode.resume, "Use 'resume' to process simulation outputs."
     if not summaries_exist:
-        return "consolidation", "resume", "Use 'resume' to consolidate analysis summaries."
+        return "consolidation", RunMode.resume, "Use 'resume' to consolidate analysis summaries."
     # 'fresh' is the only actionable mode for a complete analysis (resume has nothing left
     # to do); it is a valid translate_mode() input, so analysis.run(mode=...) works.
-    return "complete", "fresh", "All phases complete. Use 'fresh' to redo the analysis from scratch."
+    return "complete", RunMode.fresh, "All phases complete. Use 'fresh' to redo the analysis from scratch."

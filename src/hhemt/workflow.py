@@ -25,7 +25,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
-import yaml  # type: ignore
+import yaml
 
 from hhemt.config.analysis import ClearRawValue
 from hhemt.config.hpc_system import (
@@ -36,7 +36,7 @@ from hhemt.config.hpc_system import (
     system_directory_bind,
 )
 from hhemt.constants import consolidate_experiment_flag, model_type_from_flag_name
-from hhemt.exceptions import ConfigurationError, WorkflowError
+from hhemt.exceptions import ConfigurationError, WorkflowError, WorkflowPlanningError
 from hhemt.orchestration import resolve_execution_locus
 from hhemt.report_plot_ids import (
     _OUTPUT_EXT_BY_RENDERER,
@@ -69,7 +69,7 @@ from hhemt.summary_paths import (
 from hhemt.summary_paths import (  # noqa: F401  (re-export shim under the historical private name)
     scenario_summaries_present as _scenario_summaries_present,
 )
-from hhemt.utils import fast_rmtree
+from hhemt.utils import fast_rmtree, select_regenerable_figures
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -856,6 +856,30 @@ def _resolve_snakefile_path(analysis_dir: Path, *, dry_run: bool) -> Path:
     return production
 
 
+def _raise_if_dry_run_failed(dry_run_result: dict, *, phase: str) -> None:
+    """Raise ``WorkflowPlanningError`` when a pre-submit dry run reported failure.
+
+    ONE site for the check every submit arm performs before it submits or returns its
+    ``dry_run_result``. A failed plan is a planning failure with a documented class and
+    exit code (``EXIT_CODE_MAP[WorkflowPlanningError]``, 3), not a bare ``RuntimeError``
+    that the CLI reports as ``Unexpected Error`` (10). ``phase`` names the calling arm
+    (``single_job``, ``batch_job``, ``local``, ``slurm``, or their ``sensitivity_``
+    forms) and is exposed as ``exc.phase``; the composed message keeps the historical
+    ``Dry run failed; workflow submission aborted.`` text as its reason.
+    """
+    if dry_run_result.get("success"):
+        return
+    raise WorkflowPlanningError(
+        phase=phase,
+        reason=(
+            "Dry run failed; workflow submission aborted.\n"
+            f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
+            f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
+            "  (the log may be node-local and absent if this ran in a batch job)"
+        ),
+    )
+
+
 def _max_plausible_job_lifetime_min(cfg_analysis, *, slack_min: int = 30) -> int:
     """Upper bound on how long a sim job could plausibly run: its own SLURM
     walltime + slack (queue/startup/accounting lag). Single source of truth for
@@ -1397,10 +1421,17 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         result["partial_failures"] = partial_failures
         if partial_failures:
             result["success"] = False
+            tokens = ", ".join(r.get("rule_token", "?") for r in partial_failures)
+            # The producer rewrites the sentence when it flips the verdict, so every
+            # consumer (the CLI reporter, WorkflowResult.__str__, a notebook printing
+            # result.message) tells the same truth instead of "completed successfully".
+            result["message"] = (
+                f"{len(partial_failures)} rule(s) permanently failed under --keep-going "
+                f"(the rest of the DAG completed): {tokens}"
+            )
             print(
                 f"[Workflow] {len(partial_failures)} rule(s) permanently failed "
-                f"(--keep-going let the rest complete): "
-                + ", ".join(r.get("rule_token", "?") for r in partial_failures),
+                f"(--keep-going let the rest complete): {tokens}",
                 flush=True,
             )
         return result
@@ -2036,8 +2067,9 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             inject into ``TRITONSWMM_system``. Emitted as ``--target-partition`` ONLY
             when provided — the shared/non-GPU-compile rule emissions pass None and
             stay byte-identical. The GPU-compile target is the ENSEMBLE (sim)
-            partition for BOTH the setup rule (which compiles the binary that runs on
-            the sim partition) and the sim rule (which runs it) — NOT the processing
+            partition for BOTH the setup rule (whose native-mode build assertion reads
+            the GPU build for that partition) and the sim rule (which runs it), NOT the
+            processing
             partition (which is CPU post-processing and carries no GPU hardware).
 
         Returns
@@ -2192,25 +2224,18 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # exactly the `plots/eda/` family this block exempts. Keyword-only with a False default,
         # so every existing caller is byte-identical.
         if stage == "render" and not dry_run:
-            plots_dir = self.analysis_paths.analysis_dir / "plots"
-            _render_targets: list[Path] = []
-            if plots_dir.exists():
-                for fig_path in sorted(plots_dir.rglob("*")):
-                    if fig_path.is_dir() or fig_path.name.endswith(".manifest.json"):
-                        continue
-                    # plots/eda/ is EXEMPT, from the SAME constant
-                    # bundle/_emit.py::_prune_undeclared_figures reads: those figures come
-                    # from analysis.eda(), a non-Snakemake in-process facade, so NO rule
-                    # regenerates them after deletion. Deleting them here removes the EDA
-                    # family permanently and silently -- a re-render restores only the
-                    # Snakemake-driven figures.
-                    from hhemt.constants import EDA_PLOTS_SUBDIR
-
-                    if EDA_PLOTS_SUBDIR in fig_path.relative_to(plots_dir).parts:
-                        continue
-                    logger.info("force_rerun[stage=render]: deleting figure %s", fig_path)
-                    sidecar = fig_path.with_suffix(fig_path.suffix + ".manifest.json")
-                    _render_targets += [fig_path, sidecar]
+            # The eda exemption is no longer spelled here. It reaches this site through
+            # utils.select_regenerable_figures, which reads the one registry in
+            # constants.UNREGENERABLE_ANALYSIS_SUBTREES -- so the inline subdirectory test
+            # and its local import are gone rather than kept as a second copy of one rule.
+            # Those figures come from analysis.eda(), a non-Snakemake in-process facade, so
+            # NO rule regenerates them after deletion; deleting them here would remove the
+            # EDA family permanently and silently.
+            _render_targets = select_regenerable_figures(
+                self.analysis_paths.analysis_dir,
+                self.analysis_paths.analysis_dir / "plots",
+                on_select=lambda p: logger.info("force_rerun[stage=render]: deleting figure %s", p),
+            )
             # Clause 1: ONE accounting call for every figure + sidecar (Gotcha 38's O(1)
             # decrement now lives inside the tool).
             from hhemt.du_sentinels import delete_and_account
@@ -3060,7 +3085,7 @@ rule consolidate_scenario:
         Generate Snakefile content with separate rules for prep, simulation, and processing.
 
         This creates a five-phase workflow:
-        1. Setup: System inputs processing and compilation
+        1. Setup: System inputs processing, and (native mode) the build assertion
         2. Scenario preparation: SWMM model generation (lightweight, 1 CPU)
         3. Simulation execution: TRITON-SWMM runs (resource-intensive, GPUs/CPUs)
         4. Output processing: Timeseries extraction and compression (I/O bound, 1-2 CPUs)
@@ -3078,7 +3103,8 @@ rule consolidate_scenario:
             ``process_system_level_inputs`` are both False the rule only touches its
             completion flag. It does NOT compile: no emitted setup rule carries a
             ``--compile-*`` flag, so the rule ASSERTS the solver tier rather than
-            building it (ASSERT-NOT-BUILD, D84).
+            building it (ASSERT-NOT-BUILD, D84). In container mode it performs no
+            such check, because the SIF carries the binary.
         recompile_if_already_done_successfully : bool
             Forwarded to the generated setup rule's ``hhemt.setup_workflow``
             invocation as ``--recompile-if-already-done``, where it has no reachable
@@ -3152,12 +3178,12 @@ rule consolidate_scenario:
         # Get absolute path to conda environment file using helper
         conda_env_path = self._get_conda_env_path()
         config_args = self._get_config_args()
-        # Phase-4 (4c): the SETUP rule (compiles the GPU binary) and the SIM rule
-        # (runs it) resolve GPU hardware/backend from the ENSEMBLE (sim) partition's
-        # PartitionSpec — the compile/run target — via --target-partition. NB: the
-        # ensemble partition (NOT the processing partition) is the GPU-compile source
-        # for the setup rule too, because the binary it builds runs on the sim
-        # partition. Other rules keep the shared config_args (no --target-partition).
+        # Phase-4 (4c): the SETUP rule (which in native mode asserts the GPU build)
+        # and the SIM rule (which runs it) resolve GPU hardware/backend from the
+        # ENSEMBLE (sim) partition's PartitionSpec via --target-partition. NB: the
+        # ensemble partition (NOT the processing partition) is the source for the
+        # setup rule too, because the build it checks for is the one the sims run.
+        # Other rules keep the shared config_args (no --target-partition).
         gpu_compile_config_args = self._get_config_args(target_partition=self.cfg_analysis.hpc_ensemble_partition)
         skip_setup = not (process_system_level_inputs or compile_TRITON_SWMM)
 
@@ -4752,13 +4778,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
         finally:
             analysis.cfg_analysis.local_cpu_cores_for_workflow = original_local_cores
 
-        if not dry_run_result.get("success"):
-            raise RuntimeError(
-                "Dry run failed; workflow submission aborted.\n"
-                f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
-                f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
-                "  (the log may be node-local and absent if this ran in a batch job)"
-            )
+        _raise_if_dry_run_failed(dry_run_result, phase="single_job")
 
         # Override mode to indicate intended execution context
         dry_run_result["mode"] = "single_job"
@@ -6649,7 +6669,8 @@ exit $snakemake_status
             ``process_system_level_inputs`` are both False the rule only touches its
             completion flag. It does NOT compile: no emitted setup rule carries a
             ``--compile-*`` flag, so the rule ASSERTS the solver tier rather than
-            building it (ASSERT-NOT-BUILD, D84).
+            building it (ASSERT-NOT-BUILD, D84). In container mode it performs no
+            such check, because the SIF carries the binary.
         recompile_if_already_done_successfully : bool
             Forwarded to the generated setup rule's ``hhemt.setup_workflow``
             invocation as ``--recompile-if-already-done``, where it has no reachable
@@ -6853,13 +6874,7 @@ exit $snakemake_status
                 verbose=verbose,
             )
 
-            if not dry_run_result.get("success"):
-                raise RuntimeError(
-                    "Dry run failed; workflow submission aborted.\n"
-                    f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
-                    f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
-                    "  (the log may be node-local and absent if this ran in a batch job)"
-                )
+            _raise_if_dry_run_failed(dry_run_result, phase="batch_job")
 
             if dry_run:
                 self.analysis._refresh_log()
@@ -6949,13 +6964,7 @@ exit $snakemake_status
                 dry_run=True,
             )
 
-        if not dry_run_result.get("success"):
-            raise RuntimeError(
-                "Dry run failed; workflow submission aborted.\n"
-                f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
-                f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
-                "  (the log may be node-local and absent if this ran in a batch job)"
-            )
+        _raise_if_dry_run_failed(dry_run_result, phase=mode)
 
         if dry_run:
             self.analysis._refresh_log()
@@ -8659,7 +8668,8 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         # Phase 3: unique compile targets (deduplicated by compile-relevant tuple
         # in Phase 1). One Snakemake `rule setup_target_{N}` is emitted per entry
         # so a sensitivity study spanning different gpu_hardware / DEM resolution
-        # values compiles once per target rather than once per member.
+        # values gets one setup rule per DISTINCT target rather than one per member.
+        # Those rules assert an existing build (native mode); they do not compile.
         self.unique_system_targets = sensitivity_analysis.unique_system_targets
 
         # Compose base workflow builder for common patterns
@@ -8973,10 +8983,8 @@ onerror:
 
         # Build the rule all with all dependencies
         consolidation_flags = []
-        for member_id in self.sensitivity_analysis.members.keys():  # type: ignore
-            consolidation_flags.append(
-                f"_status/e_consolidate_member-{member_id}_complete.flag"  # type: ignore
-            )
+        for member_id in self.sensitivity_analysis.members.keys():
+            consolidation_flags.append(f"_status/e_consolidate_member-{member_id}_complete.flag")
 
         # Phase 3: per-target setup flags. Listed explicitly in rule_all_inputs so
         # the DAG planner can reach setup_target rules even for members whose
@@ -9100,7 +9108,9 @@ onerror:
 
         # Phase 3: emit one setup rule per unique compile target. For a sensitivity
         # study that varies gpu_hardware or target_dem_resolution across members,
-        # this materializes the per-target compile DAG without redundant compilation.
+        # this materializes one setup rule per DISTINCT build target rather than one
+        # per member. Those rules assert an existing build (native mode) and never
+        # compile: no --compile-* flag is emitted below.
         # Backward-compat: a study with no `system_config_yaml` column (or all rows
         # collapsing to one target) yields exactly one rule (`setup_target_0`).
         for target in self.unique_system_targets:
@@ -9148,7 +9158,7 @@ onerror:
         # mtime trigger re-runs only that member_id's rule chain.
         status_dir = self.experiment.analysis_paths.analysis_dir / "_status"
         status_dir.mkdir(parents=True, exist_ok=True)
-        for member_id, analysis in self.sensitivity_analysis.members.items():  # type: ignore
+        for member_id, analysis in self.sensitivity_analysis.members.items():
             fingerprint_path = status_dir / f"member-{member_id}_inputs.json"
             self.sensitivity_analysis._write_member_id_fingerprint(analysis, fingerprint_path)
         if len(self.sensitivity_analysis.independent_vars) == 0:
@@ -9159,7 +9169,7 @@ onerror:
 
         # Generate simulation rules for each member
         analysis_flags = []
-        for member_id, analysis in self.sensitivity_analysis.members.items():  # type: ignore
+        for member_id, analysis in self.sensitivity_analysis.members.items():
             # Extract resource requirements from member config
             n_mpi = analysis.cfg_analysis.n_mpi_procs or 1
             n_omp = analysis.cfg_analysis.n_omp_threads or 1
@@ -9377,7 +9387,7 @@ onerror:
 
             # Consolidate outputs after all sims have been run. Sanitize for
             # use as a Snakemake rule identifier.
-            prefix = self.sensitivity_analysis.member_prefix  # type: ignore
+            prefix = self.sensitivity_analysis.member_prefix
             consolidate_inputs = [f'"{flag}"' for flag in analysis_sim_flags]
             consolidate_inputs.append(f'"_status/member-{member_id}_inputs.json"')
             snakefile_content += f'''rule consolidate_{prefix}{member_id_rule}:
@@ -10487,7 +10497,8 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             master Snakefile generator carries no read of it, so it changes no emitted
             rule. It does not compile, because no emitted setup rule carries a
             ``--compile-*`` flag and the rule asserts the solver tier rather than
-            building it. Its one surviving effect is the ``phases_completed`` roll-up
+            building it. In container mode it performs no such check, because the
+            SIF carries the binary. Its one surviving effect is the ``phases_completed`` roll-up
             reported by ``TRITONSWMM_analysis.run()``, which lists ``"setup"`` when this
             or ``process_system_level_inputs`` is True.
         recompile_if_already_done_successfully : bool
@@ -10711,13 +10722,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 verbose=verbose,
             )
 
-            if not dry_run_result.get("success"):
-                raise RuntimeError(
-                    "Dry run failed; workflow submission aborted.\n"
-                    f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
-                    f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
-                    "  (the log may be node-local and absent if this ran in a batch job)"
-                )
+            _raise_if_dry_run_failed(dry_run_result, phase="sensitivity_batch_job")
 
             if dry_run:
                 self.sensitivity_analysis._update_experiment_log()
@@ -10821,13 +10826,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 dry_run=True,
             )
 
-        if not dry_run_result.get("success"):
-            raise RuntimeError(
-                "Dry run failed; workflow submission aborted.\n"
-                f"  reason: {dry_run_result.get('message', '<no message returned>')}\n"
-                f"  snakemake log: {dry_run_result.get('snakemake_logfile', '<none>')}\n"
-                "  (the log may be node-local and absent if this ran in a batch job)"
-            )
+        _raise_if_dry_run_failed(dry_run_result, phase=f"sensitivity_{mode}")
 
         if dry_run:
             self.sensitivity_analysis._update_experiment_log()

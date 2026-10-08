@@ -105,9 +105,9 @@ class cfgBaseModel(BaseModel):
     @staticmethod
     def _get_field_descriptions(model_cls):
         data = {field_name: field_info.description or "" for field_name, field_info in model_cls.model_fields.items()}
-        sr = pd.Series(data)  # type: ignore
-        sr.index.name = "attr_name"  # type: ignore
-        sr.name = "desc"  # type: ignore
+        sr = pd.Series(data)
+        sr.index.name = "attr_name"
+        sr.name = "desc"
         return sr
 
     @staticmethod
@@ -117,11 +117,11 @@ class cfgBaseModel(BaseModel):
         """
         data = {}
         for name, field in model_cls.model_fields.items():
-            is_optional = field.default is not ... or field.allow_none  # type: ignore
+            is_optional = field.default is not ... or field.allow_none
             data[name] = is_optional
-        sr = pd.Series(data)  # type: ignore
-        sr.index.name = "attr_name"  # type: ignore
-        sr.name = "optional"  # type: ignore
+        sr = pd.Series(data)
+        sr.index.name = "attr_name"
+        sr.name = "optional"
         return sr
 
     def cfg_dic_to_df(self):
@@ -149,8 +149,8 @@ class cfgBaseModel(BaseModel):
 
         print(
             tabulate(
-                lst_rows,  # type: ignore
-                headers=[str(data.index.name)] + list(data.columns),  # type: ignore
+                lst_rows,
+                headers=[str(data.index.name)] + list(data.columns),
                 tablefmt="grid",
                 maxcolwidths=[25, 60, 60],
             )

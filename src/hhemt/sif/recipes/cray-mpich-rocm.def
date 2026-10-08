@@ -3,13 +3,14 @@
 #
 # Productionized from the validated probe.def (Frontier job 4898044) + the
 # in-SIF TRITON-SWMM build (Kokkos-HIP, gfx90a/MI250X) + Change-B runtime
-# hardening. Build OFF-SITE where root/`--fakeroot` exists, `apptainer sign`,
-# then transfer the signed SIF to $MEMBERWORK and reference it by DOI+SHA-256
-# (never embed). See containers/README.md for the build -> sign -> transfer
-# recipe and the pin-capture procedure.
+# hardening. Frontier login nodes grant no fakeroot, so this family is built on a
+# fakeroot-capable host and its `.sif` AND `.manifest.json` are placed under the
+# target's `container.sif_root`. Images are addressed by digest, never by filename,
+# and are NOT PGP-signed by the toolkit. The pins below are captured at build time,
+# each with its own capture command.
 #
-# Pin contract (ADR-2 pinned/signed/DOI-referenced; ADR-4 within-family
-# identity). The signed, fetched SIF's SHA-256 is the identity carrier -- a
+# Pin contract (ADR-2 pinned/DOI-referenced, as amended by ADR-21; ADR-4
+# within-family identity). The fetched SIF's SHA-256 is the identity carrier -- a
 # byte-identical SquashFS rebuild is foreclosed (ADR-4); these pins make a
 # REBUILD functionally equivalent (same package set -> same triton.exe
 # behavior). The <PLACEHOLDER> tokens below are values produced BY the off-site

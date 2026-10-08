@@ -72,6 +72,12 @@ coverage:
     uv run --python=3.12 --extra test coverage report -m
     uv run --python=3.12 --extra test coverage html
 
+# The documentation gates: the SAME script CI runs, on the per-tree uv .venv, whose
+# editable .pth names THIS checkout. Never `uv run --active` here: under a foreign
+# VIRTUAL_ENV it re-points another tree's editable install at this one (measured).
+docs-check:
+    RUN="uv run --locked --extra docs" bash scripts/docs_gates.sh
+
 # Build the project, useful for checking that packaging is correct
 build:
     rm -rf build

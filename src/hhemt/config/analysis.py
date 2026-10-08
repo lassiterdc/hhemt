@@ -308,8 +308,8 @@ class analysis_config(cfgBaseModel):
     dataset_license: Literal["CC0-1.0", "CC-BY-NC-4.0"] = Field(
         default="CC0-1.0",
         description=(
-            "SPDX identifier for the published DATASET license (frozen 2-entry vocab, "
-            "ADR-8). Baked into the RO-Crate root Dataset.license at consolidation and "
+            "SPDX identifier for the published DATASET license (a deliberately frozen "
+            "two-entry vocabulary). Baked into the RO-Crate root Dataset.license at consolidation and "
             "read back for the DataCite rightsList at publish time (rightsIdentifierScheme "
             "'SPDX'). CC0-1.0 default is the open, regret-safe choice across immutable DOIs. "
             "CC-BY-NC-4.0 is the research/education-leaning slot; note CC 'NonCommercial' is "
@@ -419,10 +419,11 @@ class analysis_config(cfgBaseModel):
         gt=0,
         description=(
             "Memory allocation (in MB) for the setup_target SLURM rule that runs "
-            "system-input processing (DEM coarsening, Manning's raster) and TRITON-SWMM "
-            "compilation. Default 12 GB covers 0.35 m DEM processing (empirical peak "
-            "~5.15 GB parent-process RSS) with 2.3x headroom and the compile-side peak "
-            "(~1.34 GB) ~9x. Increase for higher-resolution DEMs or larger watersheds."
+            "system-input processing (DEM coarsening, Manning's raster) and, in native mode, "
+            "asserts that every enabled model already has a successful build. Default 12 GB "
+            "covers 0.35 m DEM processing (empirical peak ~5.15 GB parent-process RSS) with "
+            "2.3x headroom; the rule performs no compile, so it needs no compile-side headroom. "
+            "Increase for higher-resolution DEMs or larger watersheds."
         ),
     )
     hpc_runtime_min_for_setup: int = Field(
@@ -430,9 +431,9 @@ class analysis_config(cfgBaseModel):
         gt=0,
         description=(
             "Time allocation (in minutes) for the setup_target SLURM rule. Default 60 "
-            "covers 0.35 m DEM processing (empirical wall time ~2:24) plus a -j4 GPU "
-            "compile (~3 min) with headroom. Increase for higher-resolution DEMs or "
-            "slower nodes."
+            "covers 0.35 m DEM processing (empirical wall time ~2:24) with headroom; the "
+            "rule performs no compile. Increase for higher-resolution DEMs or slower "
+            "nodes."
         ),
     )
 
@@ -450,7 +451,8 @@ class analysis_config(cfgBaseModel):
             "number rather than a value derived from the memory allocation — no "
             "physical relation ties walltime to job RAM, and inventing one would state "
             "an assumption as a computed value. NOT hpc_runtime_min_for_setup (a "
-            "DIFFERENT rule — DEM processing and compilation) and NOT any process_* "
+            "DIFFERENT rule: DEM processing and the build assertion) and NOT any "
+            "process_* "
             "knob (those are in-runner byte/count budgets, not SLURM allocations)."
         ),
     )
@@ -830,8 +832,12 @@ class analysis_config(cfgBaseModel):
         description="TRITON processed output type, zarr or nc.",
         json_schema_extra=field_meta(
             options={
-                "zarr": "Chunked Zarr store. Default and preferred -- supports lazy and partial reads.",
-                "nc": "One NetCDF file per scenario. Use when a downstream consumer requires NetCDF.",
+                "zarr": "Chunked Zarr store. Default and preferred -- supports lazy and partial reads, "
+                "and the only value accepted when toggle_triton_model or toggle_tritonswmm_model is on.",
+                "nc": "One NetCDF file per scenario. Supported for the per-scenario summaries and the "
+                "SWMM node/link timeseries only. REFUSED at preflight when toggle_triton_model or "
+                "toggle_tritonswmm_model is enabled, because the gridded TRITON exporter writes a zarr "
+                "store to the '.nc'-named path; temporary, pending the NetCDF follow-up.",
             }
         ),
     )
@@ -859,29 +865,29 @@ class analysis_config(cfgBaseModel):
         200,
         description="Target memory budget (MiB) PER LOAD CHUNK for streaming-chunked operations on per-scenario "
         "timeseries "
-        "output. This is the in-memory RSS guard ONLY; it does NOT govern zarr-append granularity (see "
-        "process_append_batch_timesteps). Consumed by both write_timeseries_outputs (raw-to-zarr chunked LOAD at "
-        "process_simulation.py L544/L736) AND summarize_triton_simulation_results' "
+        "output. This is the in-memory RSS guard ONLY; it does NOT govern how many timesteps go into one "
+        "output chapter (see process_append_batch_timesteps). Consumed by both the chunked raw-to-zarr LOAD "
+        "inside write_timeseries_outputs AND summarize_triton_simulation_results' "
         "_streaming_argmax_with_companions helper (per-cell argmax+companion reduction). On fine grids a single "
         "float64 timestep can meet/exceed this budget, flooring the load chunk to 1 timestep — that is a correct "
-        "memory guard, NOT a performance bug, because append granularity is decoupled via "
-        "process_append_batch_timesteps. See Gotcha #23/#24.",
+        "memory guard, NOT a performance bug, because write granularity is decoupled via "
+        "process_append_batch_timesteps.",
     )
     process_append_batch_timesteps: int = Field(
         128,
-        description="Number of LOADED timesteps to accumulate before emitting ONE zarr append in "
+        description="Number of LOADED timesteps to accumulate before emitting ONE output chapter in "
         "write_timeseries_outputs. "
-        "Decouples zarr-append granularity from the in-memory load-chunk size "
+        "Decouples write granularity from the in-memory load-chunk size "
         "(process_output_target_chunksize_mb), "
-        "so fine grids that floor the load chunk to 1 timestep still emit only ceil(N_timesteps / this) appends "
-        "instead of O(N_timesteps) tiny appends. Independent of the streaming-summary reduction (which does not "
-        "append). Buffer RSS is additionally byte-capped at 2x the load budget at write time, so raising this is "
+        "so fine grids that floor the load chunk to 1 timestep still emit only ceil(N_timesteps / this) chapters "
+        "instead of O(N_timesteps) tiny ones. Independent of the streaming-summary reduction (which writes no "
+        "chapter). Buffer RSS is additionally byte-capped at 2x the load budget at write time, so raising this is "
         "safe.",
     )
     process_append_batch_memory_budget_mb: int | None = Field(
         None,
         description=(
-            "Memory budget (MiB) governing BOTH the zarr-append batch byte cap in "
+            "Memory budget (MiB) governing BOTH the output-chapter batch byte cap in "
             "write_timeseries_outputs AND the streaming-argmax summary reduction in "
             "summarize_triton_simulation_results. Distinct from "
             "process_output_target_chunksize_mb (the small per-LOAD-chunk RSS guard, "
@@ -998,35 +1004,30 @@ class analysis_config(cfgBaseModel):
     )
     experiment_cfg_yaml: Path | None = Field(
         None,
-        description="Path to the configuration file of the master analysis.",
+        description="Path to the configuration file of the parent experiment this analysis is a member of. "
+        "Required when is_experiment_member is true.",
     )
     report: _report_config_model = Field(
         ...,
         description=(
             "Required inline report-rendering config (formerly a separate "
             "report_config.yaml referenced by absolute path in Snakefile shell "
-            "lines, eliminated post-F2). The canonical source of truth for "
+            "lines, since eliminated). The canonical source of truth for "
             "renderer parameters including `interactive.static_backend`. A "
             "cfg_analysis.yaml file without a `report:` block raises pydantic "
             "ValidationError at load time. Callers may still pass an explicit "
             "`report_config=` argument to `analysis.run()` to override. "
-            "This inline field IS ADR-7 reporting-config layer 3 "
-            "(report-composition): the frozen-default-field whose optional "
-            "runtime override is the `report_config=` Path kwarg on run() "
-            "(resolved in TRITONSWMM_analysis.run). Layer-3 precedence: explicit "
-            "`report_config=` Path > inline cfg_analysis.report. It is "
-            "deliberately INLINE (not a path field) per the post-F2 decision "
-            "recorded above; ADR-7's 'path field' wording describes the default "
-            "shape it imagined, not a functional contract — the inline-default + "
-            "path-override form satisfies ADR-7's 'frozen-default-field + "
-            "optional runtime override' requirement."
+            "Precedence: an explicit `report_config=` Path passed to run() wins "
+            "over this inline block. The field is deliberately inline rather "
+            "than a path to a separate file, so a cfg_analysis.yaml carries its "
+            "own report configuration with nothing to repoint."
         ),
     )
 
     brand_theme: Path | None = Field(
         None,
         description=(
-            "Optional path to a brand-theme YAML (ADR-7 layer 2 — institutional "
+            "Optional path to a brand-theme YAML (institutional "
             "identity: report.css :root palette + HTML-table primary/accent + "
             "navbar upper-left text). When None (default), the code-frozen "
             "DEFAULT_BRAND_THEME (config/brand_theme.py) applies. Mirrors the "
@@ -1042,24 +1043,24 @@ class analysis_config(cfgBaseModel):
     static_plot_configs: list[Path] = Field(
         default_factory=list,
         description=(
-            "ADR-7 reporting-config layer 4: per-plot static-config YAML paths. "
+            "Per-plot static-config YAML paths. "
             "Each path is a standalone publication-static plot spec. Default [] "
             "(no static plots) — strict-safe; old yamls load cleanly. Each element "
             "is existence-validated at config-load via a dedicated "
             "@field_validator('static_plot_configs') (the base * validator "
             "cfgBaseModel._check_paths_exist only existence-checks SCALAR Path fields "
             "and passes list[Path] through, so a list-aware validator is required). "
-            "REFERENCE + VALIDATION ONLY in this plan: the static_plots() generation "
-            "this field triggers is built downstream in "
-            "reporting-system_static-plots-entrypoint-and-distribution; the field is "
-            "inert (settable but unconsumed) until that plan lands."
+            "Consumed by analysis.static_plots(), which renders one figure per config "
+            "via a dedicated Snakemake workflow; a single config may also be selected "
+            "by ID at call time. Leaving this list empty is an error unless a config "
+            "is supplied at call time."
         ),
     )
 
     eda: eda_config = Field(
         default_factory=eda_config,
         description=(
-            "Optional inline EDA-loop config (ADR-10): selects which EDA plots "
+            "Optional inline EDA-loop config: selects which EDA plots "
             "appear in the standalone eda_report.html. Default member set (the "
             "cross-sim byte-identity plot) applies when absent. Deliberately INLINE "
             "(not a path field) so it travels in cfg_analysis.yaml and Bundle.eda() "
@@ -1071,17 +1072,17 @@ class analysis_config(cfgBaseModel):
     execution_environment: Literal["native", "container"] = Field(
         "native",
         description=(
-            "ADR-1: 'native' runs compile+sim+processing on the host (today's "
-            "behavior, byte-identical); 'container' wraps the innermost sim {exe} and "
+            "'native' runs sim+processing on the host (the default); "
+            "'container' wraps the innermost sim {exe} and "
             "the process_{model} runners in `apptainer exec {sif}`, where the cluster "
             "SIF is described by hpc_system_config.container (ContainerSpec). Additive "
             "default-valued field so pre-container configs load as native. The "
-            "native|container SELECTOR is experiment-scoped (C-HPC-FIELD-PLACEMENT); "
+            "native|container SELECTOR is experiment-scoped; "
             "the cluster-coupled 'how to exec' lives on ContainerSpec."
         ),
         json_schema_extra=field_meta(
             options={
-                "native": "Compile, simulate and process on the host. Today's behavior, byte-identical.",
+                "native": "Simulate and process on the host.",
                 "container": (
                     "Wrap the sim executable and the process_{model} runners in "
                     "`apptainer exec {sif}`, per hpc_system_config.container."

@@ -31,7 +31,8 @@
 # (root-mapped namespace; /scratch has ~12 TB; docker.io + code.ornl.gov reachable),
 # so NO off-site build host or SIF transfer is needed for UVA (the off-site flow in
 # README §0 is Frontier-specific: ORNL Harbor policy + no login-node fakeroot).
-# Then `apptainer sign` and reference by DOI+SHA-256. See containers/README.md.
+# Images are addressed by digest under `container.sif_root` and are NOT PGP-signed
+# by the toolkit; reference by DOI+SHA-256.
 # =============================================================================
 
 Bootstrap: docker

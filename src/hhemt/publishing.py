@@ -540,7 +540,12 @@ class _ZenodoTarget:
 
 
 class _HydroShareTarget:
-    """Two-invocation flow: hsclient publish-to-public -> manual web-UI DOI -> backfill."""
+    """Two-step flow: one hsclient publish call (create, upload, publish-to-public), then a manual web-UI DOI mint.
+
+    No backfill leg exists for this target: hsclient v1.1.6 cannot mint the DOI, and a second
+    ``publish`` call creates a second resource, so the data-to-software relation must ride on
+    the creating call's ``software_doi``.
+    """
 
     def publish(self, *, deposit, license_spdx, software_doi, analysis_dir, creators=None) -> dict:
         # creators: accepted for call-site parity; an hsclient creator-metadata mapping is a
@@ -576,9 +581,10 @@ class _HydroShareTarget:
             "software_doi": software_doi,
             "record_url": record_url,
             "manual_step": (
-                "HydroShare resource is public. hsclient v1.1.6 cannot mint a DOI programmatically — "
-                f"open {record_url} and use 'Publish' in the web UI to mint the DOI, then re-run publish "
-                "with the minted DOI to backfill the reciprocal software edge."
+                "HydroShare resource is public. hsclient v1.1.6 cannot mint a DOI programmatically. "
+                f"Open {record_url} and use 'Publish' in the web UI to mint the DOI. Do not re-run "
+                "publish afterwards, because every HydroShare publish call creates a new resource and "
+                "the data-to-software relation is recorded only from the software_doi passed on this call."
             ),
         }
 

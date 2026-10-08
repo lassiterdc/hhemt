@@ -387,7 +387,7 @@ class TRITONSWMM_system:
         unique_values = np.unique(arr[~np.isnan(arr)])
         no_data_value = rds_lu.rio.nodata
         # create dataframe from landuse vals in the landuse raster
-        df_lu_vals = pd.Series(index=unique_values, name="placeholder").to_frame()  # type: ignore
+        df_lu_vals = pd.Series(index=unique_values, name="placeholder").to_frame()
         df_lu_vals.index.name = landuse_colname
         # join the landuse values present in the raster with the lookup table
         df_lu_vals = df_lu_vals.join(df_lu_lookup.set_index(landuse_colname), how="left")
@@ -409,7 +409,7 @@ class TRITONSWMM_system:
         target_resolution = self.cfg_system.target_dem_resolution
 
         rds_dem = rxr.open_rasterio(dem_unprocessed)
-        # crs = rds_dem.rio.crs  # type: ignore
+        # crs = rds_dem.rio.crs
         # og_dem_res_xy, og_dem_avg_gridsize = compute_grid_resolution(rds_dem)
         if (rds_dem.data < -100).sum() > 0:  # type: ignore
             sys.exit(
@@ -1189,8 +1189,11 @@ class TRITONSWMM_system:
             )
         lines.extend(
             [
-                # This compile script runs as a plain `/bin/bash` subprocess of the
-                # setup rule; it inherits conda's ENV VARS but NOT the `conda` shell
+                # This compile script runs as a plain `/bin/bash` subprocess of
+                # whatever invoked the compile (a by-hand `setup_workflow` run, a
+                # sensitivity direct-execution helper, or a suite chunk; never an
+                # emitted setup rule, which passes no `--compile-*` flag). It
+                # inherits conda's ENV VARS but NOT the `conda` shell
                 # function (conda init never `export -f`s it). On sites whose
                 # miniforge module carries an Lmod unload hook that runs `conda
                 # deactivate`, `module purge` would invoke the conda BINARY -> errors
@@ -1255,17 +1258,25 @@ class TRITONSWMM_system:
         Serialized on a per-BUILD-DIR lock. `TRITONSWMM_build_dir_cpu` carries no
         per-target component, so two `UniqueSystemTarget`s that differ only in
         `target_dem_resolution` (or in partition, at equal `gpu_hardware`) resolve to
-        the SAME cpu build dir — and `workflow.py` emits one INDEPENDENT
-        `rule setup_target_{N}` per target with no Snakemake `group:`, so those rules
-        run concurrently in EVERY execution mode: under `batch_job` as independently
-        dispatched SLURM jobs, under `1_job_many_srun_tasks` as concurrent srun tasks
-        inside one allocation, and under `local` as parallel Snakemake jobs at
-        `--cores N`. All three compile into one directory and write one
-        `compilation.log`. Without this lock the loser's
+        the SAME cpu build dir, and any two compilers that reach it write one
+        directory and one `compilation.log`. Without this lock the loser's
         objects are interleaved with the winner's and the log can still read
         "Build finished" (Gotcha 52's corruption class, on production HPC). The lock
         wraps the already-compiled gate too, so a waiter re-reads the log marker AFTER
         the holder finishes and correctly skips instead of rebuilding.
+
+        WHO CONTENDS, and it is no longer the emitted rules. `workflow.py` does emit
+        one INDEPENDENT `rule setup_target_{N}` per target with no Snakemake `group:`,
+        and those rules do run concurrently in every execution mode, but none of them
+        passes a `--compile-*` flag, so none of them reaches this method. The MEASURED
+        contender is the parallel pytest suite, whose chunks share the compiled tier
+        by design: on runs `20260904T074157Z_cd4d8f6d9a91` and
+        `20260904T145255Z_2853a077a3ee`, four chunk writers each acquired
+        `triton/.build_tritonswmm_cpu.compile.lock` (see suite/aggregate.py's
+        shared-by-design write analysis). The second contender is by-hand compiling:
+        `docs/how-to/compiling-the-solver.md` tells an operator to run
+        `setup_workflow --compile-triton-swmm` once per GPU partition, and every one
+        of those runs builds the same shared CPU directory.
         """
         build_dir.parent.mkdir(parents=True, exist_ok=True)
         lock = resolve_filelock(
@@ -1289,7 +1300,9 @@ class TRITONSWMM_system:
             # compile ran, so that log is empty or stale and the lock path, the only
             # actionable datum, would never reach the operator. On Lustre
             # resolve_filelock returns a crash-release-less SoftFileLock, so a
-            # SLURM-killed setup_target job leaves exactly this state. Emit the
+            # SLURM-killed compile holder leaves exactly this state: a by-hand
+            # `setup_workflow --compile-*` job or a suite chunk, never an emitted
+            # setup_target rule, which passes no `--compile-*` flag. Emit the
             # diagnostic first (same stderr idiom as _assert_dem_integrity), then
             # raise so the exit-code-3 mapping is preserved.
             print(
@@ -1700,10 +1713,14 @@ class TRITONSWMM_system:
         """Internal method to compile TRITON-only for a single backend.
 
         Serialized on the per-BUILD-DIR compile lock — see _compile_backend for the
-        full rationale (N independent `setup_target_{N}` jobs compile into one build
-        dir with no per-target component). The lock wraps the already-compiled gate
-        too, so a waiter re-reads the log marker after the holder finishes and skips
-        instead of rebuilding.
+        full rationale (the build dir carries no per-target component, so every
+        concurrent compiler lands in one directory). No emitted `setup_target_{N}`
+        rule reaches here: this method's only caller chain begins at
+        ``setup_workflow.py:510``, behind ``--compile-triton-only``, which no rule
+        emits. The live contenders are concurrent by-hand ``setup_workflow`` runs
+        and parallel suite chunks sharing the compiled tier. The lock wraps the
+        already-compiled gate too, so a waiter re-reads the log marker after the
+        holder finishes and skips instead of rebuilding.
         """
         build_dir.parent.mkdir(parents=True, exist_ok=True)
         lock = resolve_filelock(
@@ -2022,8 +2039,12 @@ class TRITONSWMM_system:
             raise ValueError("SWMM build dir not configured (toggle_swmm_model may be False)")
 
         # Serialize on the per-build-dir compile lock (see _compile_backend). SWMM's
-        # build dir carries no per-target component either, so concurrent setup_target
-        # jobs would otherwise race one swmm_build. The already-compiled gate is re-read
+        # build dir carries no per-target component either, so any two concurrent
+        # compilers would otherwise race one swmm_build. No emitted setup_target rule
+        # is one of them: this method's only caller is setup_workflow.py:539, behind
+        # --compile-swmm, which no rule emits. The live contenders are by-hand
+        # setup_workflow runs and parallel suite chunks sharing the compiled tier.
+        # The already-compiled gate is re-read
         # INSIDE the lock so a waiter skips instead of rebuilding.
         build_dir.mkdir(parents=True, exist_ok=True)
         lock = resolve_filelock(
@@ -2404,9 +2425,7 @@ def spatial_resampling(xds_to_resample, xds_target, missingfillval=-9999):
     # resample
     ## https://corteva.github.io/rioxarray/stable/rioxarray.html#rioxarray.raster_dataset.RasterDataset.reproject_match
     ## (https://rasterio.readthedocs.io/en/stable/api/rasterio.enums.html#rasterio.enums.Resampling)
-    xds_to_resampled = xds_to_resample.rio.reproject_match(  # type: ignore
-        xds_target, resampling=Resampling.average
-    )
+    xds_to_resampled = xds_to_resample.rio.reproject_match(xds_target, resampling=Resampling.average)
     # fill missing values with prespecified val (this should just corresponds to areas
     # where one dataset has pieces outside the other)
     xds_to_resampled = xr.where(xds_to_resampled >= 3.403e37, x=missingfillval, y=xds_to_resampled)
@@ -2426,7 +2445,7 @@ def coarsen_georaster(rds, target_resolution, xllcorner=None, yllcorner=None, nr
     target_res = og_avg_gridsize * res_multiplier
 
     if xllcorner is not None and yllcorner is not None and nrows is not None and ncols is not None:
-        # left, bottom, right, top = rds.rio.bounds()  # type: ignore
+        # left, bottom, right, top = rds.rio.bounds()
         # ncols = int(np.ceil((right - xllcorner) / target_resolution))
         # nrows = int(np.ceil((top - yllcorner) / target_resolution))
         transform = from_origin(
@@ -2435,16 +2454,14 @@ def coarsen_georaster(rds, target_resolution, xllcorner=None, yllcorner=None, nr
             target_resolution,
             target_resolution,
         )
-        rds_coarse = rds.rio.reproject(  # type: ignore
+        rds_coarse = rds.rio.reproject(
             crs,
             transform=transform,
             shape=(nrows, ncols),
             resampling=Resampling.average,
         )
     else:
-        rds_coarse = rds.rio.reproject(  # type: ignore
-            crs, resolution=target_res, resampling=Resampling.average
-        )  # aggregate cells
+        rds_coarse = rds.rio.reproject(crs, resolution=target_res, resampling=Resampling.average)  # aggregate cells
     _, coarse_avg_gridsize = compute_grid_resolution(rds_coarse)
     assert np.isclose(coarse_avg_gridsize, target_resolution)
 

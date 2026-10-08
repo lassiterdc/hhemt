@@ -113,12 +113,11 @@ class eda_config(cfgBaseModel):
         "cdn",
         description=(
             "Tabulator JS bundling for the EDA datasets table in eda_report.html. "
-            "Defaults to 'cdn' (INTERIM, per DECISION-1 Option A / SPAWN): the "
+            "Defaults to 'cdn' (INTERIM): the "
             "toolkit's inline-Tabulator path is an unimplemented stub today "
             "(_tabulator_defaults.build_html_document(js_mode='inline') warns + "
-            "falls back to CDN). Completing inline-Tabulator toolkit-wide is the "
-            "SEPARATE reporting-system_inline-tabulator plan (scoped under the "
-            "reporting-system system design); when it lands, this default flips to "
+            "falls back to CDN). Completing inline-Tabulator toolkit-wide is "
+            "separate, pending work; when it lands, this default flips to "
             "'inline' and the EDA table becomes fully offline-safe. Note: 'inline' "
             "is NOT yet functional — it currently still resolves to CDN."
         ),

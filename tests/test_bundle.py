@@ -777,7 +777,9 @@ def test_read_static_backend_raises_when_report_absent_via_from_directory(tmp_pa
     (tmp_path / "bundle_manifest.json").write_text(
         json.dumps({"bundle_schema_version": BUNDLE_SCHEMA_VERSION, "bundle_root_invariants": {}})
     )
-    with pytest.raises(ValidationError):  # pydantic.ValidationError via from_directory
+    from hhemt.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="report"):  # the loader wraps pydantic's error
         Bundle.from_directory(tmp_path)
 
 

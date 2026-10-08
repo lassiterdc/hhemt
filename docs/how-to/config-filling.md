@@ -30,6 +30,15 @@ Set `target_dem_resolution` to the cell size you actually want to simulate at.
 This coarsens the full-resolution DEM, and it is the single field with the largest
 effect on runtime.
 
+If your DEM carries burned-in sentinel elevations, for buildings or for the area
+outside the watershed, set `dem_building_height` and `dem_outside_watershed_height`
+to those exact values. Report figures drop cells equal to the building value from
+the DEM colorbar range, and paint every cell at or above the smaller of the two
+values (or the one you set), less `wall_threshold_buffer_m`, as a wall. A value
+that does not match your raster reports no error: the symptoms are a colorbar
+stretched by rooftop cells, or real terrain painted as wall. Leave both unset if
+your raster carries no sentinels; neither field is required.
+
 ## 3. Resolve the toggles
 
 Each toggle you flip makes other fields required. Set the toggles first, then fill
@@ -72,9 +81,13 @@ execute. A non-zero exit names the offending field. Preflight validation
 accumulates every error and reports them together, so you fix one round of
 problems rather than discovering them one at a time.
 
-For a stronger check that actually compiles and runs a minimal subset of your own
-analysis, use `analysis.test()`. See the
+For a stronger check that runs a minimal subset of your own analysis end to end
+against a solver you have already compiled, use `analysis.test()`. See the
 [Norfolk end-to-end tutorial](../tutorials/norfolk-end-to-end.md).
+
+A real run needs the same, and neither `analysis.test()` nor `analysis.run()`
+builds one. Compile it once first, following
+[Compile the solver](compiling-the-solver.md).
 
 !!! warning "Sensitivity analyses: edit the XLSX, never the CSV"
     With `toggle_sensitivity_analysis: true`, the derived

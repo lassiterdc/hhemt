@@ -9,6 +9,11 @@ without an import cycle. PATH-ONLY: MUST NOT instantiate ``TRITONSWMM_scenario``
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # Report-target completeness predicate (report-target-predicate unification).
 # ---------------------------------------------------------------------------
@@ -61,12 +66,50 @@ _SUMMARY_ATTRS_BY_MODEL: dict[str, tuple[str, ...]] = {
 }
 
 
-def scenario_summaries_present(analysis, event_id: str, enabled_models: list[str]) -> bool:
-    """True iff every enabled model's per-sim summary file exists for ``event_id``.
+def summary_artifact_present(path: Path, out_type: str) -> bool:
+    """True iff ``path`` exists AND is the artifact KIND ``out_type`` implies.
 
-    Path-only existence probe mirroring
-    ``processing_analysis._retrieve_combined_output``'s test (the predicate
-    ``consolidate_*_datatree`` skips on). It MUST NOT instantiate
+    A zarr store is a DIRECTORY and a NetCDF summary is a FILE, so a bare
+    ``.exists()`` is satisfied by either shape under either setting and cannot tell a
+    readable artifact from one the reader raises on. ``is_file()`` ALONE is the wrong
+    repair and is the one this docstring exists to forbid: it returns False on the zarr
+    store that every DEFAULT configuration produces, which would report every healthy
+    analysis incomplete at every consumer of the predicates below.
+
+    Keyed on ``out_type`` rather than on the suffix because every caller here CONSTRUCTS
+    the path from ``out_type`` and therefore knows the expected kind exactly. The
+    suffix-keyed sibling in ``eda/cross_sim_identity._summary_paths`` is the GLOB-side
+    form, written for a helper that discovers paths it did not construct; it is strictly
+    weaker here, because it accepts a plain FILE at ``{stem}.zarr``.
+
+    EXPORTED so this is the single source of the rule rather than its fourth independent
+    statement. Three other sites state it today -- ``process_simulation._open_engine`` as
+    an engine choice, ``process_simulation._summary_usable`` as an open probe, and
+    ``eda/cross_sim_identity._summary_paths`` as a suffix rule -- and none imports
+    another. Adopting this at those three is a one-line import each, deliberately NOT
+    done here: two of the three files belong to no workstream in the current partition.
+    Deliberately NOT an openability probe (the ``_summary_usable`` form): that would need
+    xarray and O(subs x events x stems) I/O, and this module's PATH-ONLY contract exists
+    so ``workflow.py`` and ``analysis_validation.py`` can both import it without a cycle.
+    """
+    return path.is_dir() if out_type == "zarr" else path.is_file()
+
+
+def scenario_summaries_present(analysis, event_id: str, enabled_models: list[str]) -> bool:
+    """True iff every enabled model's per-sim summary is present AND is the KIND
+    ``target_processed_output_type`` implies — a zarr STORE (directory) under
+    ``zarr``, a NetCDF FILE under ``nc``.
+
+    Path-only KIND probe. It is NARROWER than a bare existence probe and STRICTLY
+    WEAKER than ``processing_analysis._retrieve_combined_output``'s test, which it no
+    longer mirrors: that test is a CONJUNCTION of existence (``processing_analysis.py``
+    ``:501``) and a per-model processing-log record (``:539-546``) that, in its own
+    words, "is the only signal in the tree that attests RETURN rather than PRESENCE".
+    This predicate closes the KIND axis and leaves the READABILITY axis exactly where it
+    was: a fill-filled partial zarr store satisfies ``is_dir()`` and OPENS, and only the
+    log record screens it out. That is not a gap to close here — the log hangs off the
+    scenario and the PATH-ONLY contract below forbids instantiating one. It remains the
+    predicate ``consolidate_*_datatree`` skips on, and it MUST NOT instantiate
     ``TRITONSWMM_scenario`` — that constructor mkdir's ``processed/``,
     ``swmm/``, and ``out_swmm/`` as a side effect (scenario.py:63/65/82), so a
     generation-time read-only probe would create scenario subdirectories and
@@ -84,7 +127,37 @@ def scenario_summaries_present(analysis, event_id: str, enabled_models: list[str
         if not stems:
             return False
         for stem in stems:
-            if not (processed / f"{stem}.{out_type}").exists():
+            candidate = processed / f"{stem}.{out_type}"
+            if not summary_artifact_present(candidate, out_type):
+                # THE WRONG-KIND CASE IS THE ONLY ONE THAT WARNS, and the condition is
+                # exact rather than heuristic: the kind check has just failed, so an
+                # EXISTING path is present-but-wrong-kind and nothing else. Absence --
+                # the ordinary mid-workflow state this predicate reports on constantly --
+                # is silent. Without this line the fix makes its own target population
+                # QUIETER: today a zarr store under a '.nc' name reaches
+                # processing_analysis._retrieve_combined_output and raises an uncaught
+                # IsADirectoryError (measured; it is an OSError, so the four enclosing
+                # (FileNotFoundError, ValueError) handlers do not catch it), and after
+                # this fix both consumers skip it in silence -- consolidate_workflow.py
+                # at its SKIP 2 `continue`, which mis-diagnoses the branch in-comment as
+                # "mid-recovery", and workflow.py, which drops the sub. That population
+                # is FROZEN: _already_written is log-based and no future run regenerates
+                # it, so this predicate is its last detector and a silent skip is not
+                # detection.
+                if candidate.exists():
+                    logger.warning(
+                        "Summary artifact present but of the WRONG KIND, so this scenario "
+                        "is being skipped as incomplete: %s exists but is not a %s. "
+                        "target_processed_output_type is %r, which expects a %s. This is "
+                        "the signature of an analysis written by a past 'nc' run on a "
+                        "gridded TRITON configuration; no re-run regenerates it, because "
+                        "the completion check is log-based and the configuration is now "
+                        "refused at preflight.",
+                        candidate,
+                        "directory (zarr store)" if out_type == "zarr" else "file",
+                        out_type,
+                        "zarr store directory" if out_type == "zarr" else "NetCDF file",
+                    )
                 return False
     return True
 

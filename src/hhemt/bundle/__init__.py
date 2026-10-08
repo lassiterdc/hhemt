@@ -275,7 +275,8 @@ class Bundle:
         """Validate round-trip runnability against a target HPC profile (ADR-10).
 
         Verifies the SIF (mandatory sha256 digest match when the crate references
-        one, fail-closed; best-effort ``apptainer verify`` PGP), re-aims
+        one, fail-closed; the toolkit does not PGP-sign SIFs and runs no signature
+        check), re-aims
         ``validation.py`` preflight at ``target_hpc_profile``, and emits per-``(member_id,
         column)`` problem pairs plus per-field graduated experiment amendments for
         closest-possible cross-system reproduction. Mirrors ``Bundle.eda()`` —
@@ -285,7 +286,8 @@ class Bundle:
         ----------
         reprex_config : hhemt.config.reprex_config.reprex_config
             The target user's minimal runnable-field set (account / login node /
-            SIF path / scratch + target partition selectors).
+            ``sif_root``, the directory their images are found under by digest /
+            scratch + target partition selectors).
         target_hpc_profile : hhemt.config.hpc_system.hpc_system_config
             The reproducer's own HPC profile (partition caps, container spec).
 

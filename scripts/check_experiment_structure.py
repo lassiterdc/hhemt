@@ -20,7 +20,15 @@ from pathlib import Path
 
 import yaml
 
-from hhemt.config.experiment_bundle import ExperimentConfig
+# Bind `import hhemt` to THIS checkout before the first package import: the editable
+# install names ONE `src`, and a bare `python` run of this script from a worktree
+# would otherwise validate against another checkout's schema. See scripts/local_src.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from local_src import bind_local_src  # noqa: E402
+
+bind_local_src(Path(__file__).resolve().parent.parent / "src", {"hhemt"})
+
+from hhemt.config.experiment_bundle import ExperimentConfig  # noqa: E402
 
 REQUIRED_FILES = ("README.md", "rerun.sh")
 

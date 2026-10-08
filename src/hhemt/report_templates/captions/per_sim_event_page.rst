@@ -12,7 +12,7 @@ Scroll the page rather than clicking between figures: each enabled model gets it
 
 **Flood Drivers** carries the event hydrology: the rainfall time series in the upper sub-panel and the boundary-condition water level in the lower one. It is the same forcing for every model on this page, which is what makes the arms comparable.
 
-Colormaps and bounds are configured in ``report_config.yaml`` under ``per_sim.peak_flood_depth`` and ``per_sim.conduit_flow``. See the **System Information** sidebar section for the underlying DEM and boundary geometry.
+Colormaps and bounds are configured in ``cfg_analysis.yaml`` under ``report.per_sim.peak_flood_depth`` and ``report.per_sim.conduit_flow``. See the **System Information** sidebar section for the underlying DEM and boundary geometry.
 
 **Sources:**
 

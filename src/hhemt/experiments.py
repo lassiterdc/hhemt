@@ -15,6 +15,8 @@ Generic API (for any case study):
         system_config_template="template_system_config.yaml",
         analysis_config_template="template_analysis_config.yaml",
         case_config_filename="case.yaml",
+        weather_events_to_simulate="hurricane_irene_event_index.csv",
+        analysis_description="Single Simulation of Hurricane Irene 8-27-2011",
     )
     system = example.system
 
@@ -22,7 +24,8 @@ Case-Specific API (convenience wrappers):
     from hhemt.experiments import NorfolkIreneExperiment
 
     # Load Norfolk example (convenience wrapper)
-    norfolk = NorfolkIreneExperiment.load(hhemt_sha="0123456789abcdef0123456789abcdef01234567")  # the commit you run
+    # hhemt_sha is the commit you run: `git rev-parse HEAD`
+    norfolk = NorfolkIreneExperiment.load(hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT")
     system = norfolk.system
 
 Adding New Case Studies:
@@ -36,6 +39,8 @@ Adding New Case Studies:
                 system_config_template="template_system_config.yaml",
                 analysis_config_template="template_analysis_config.yaml",
                 case_config_filename="case.yaml",
+                weather_events_to_simulate="miami_event_index.csv",
+                analysis_description="Miami flooding example",
                 download_if_exists=download_if_exists,
                 example_data_dir=example_data_dir,
             )
@@ -138,7 +143,7 @@ class TRITON_SWMM_experiment:
                 HPC-specific config an external input by design — so ``from_doi``
                 acquires it and passes it here. REQUIRED for a container-mode
                 experiment (``execution_environment: container``): the ContainerSpec
-                that renders ``apptainer exec {sif_path}`` lives on it
+                that renders ``apptainer exec {sif}`` lives on it
                 (``config/hpc_system.py::ContainerSpec``). ``None`` (default) keeps
                 today's native behavior byte-identical.
         """
@@ -209,6 +214,11 @@ class TRITON_SWMM_experiment:
             Analysis config filename, for example ``template_analysis_config.yaml``.
         case_config_filename : str
             Case metadata filename, for example ``case.yaml``.
+        weather_events_to_simulate : str
+            Filename of the weather-event index CSV, resolved beside the template's
+            placeholder weather path, for example ``hurricane_irene_event_index.csv``.
+        analysis_description : str
+            Free-text description written verbatim into the generated analysis config.
         download_if_exists : bool, default False
             Re-download the HydroShare data even when it is already present.
         example_data_dir : Path or None
@@ -225,14 +235,28 @@ class TRITON_SWMM_experiment:
 
         Examples
         --------
-        >>> from hhemt.constants import *
+        The first six parameters are required. On first use the call fetches the
+        case study's data from its host into the example data directory; a later call
+        finds the data present and skips the fetch unless ``download_if_exists=True``.
+
+        >>> from hhemt.constants import (
+        ...     NORFOLK_ANALYSIS_CONFIG,
+        ...     NORFOLK_CASE_CONFIG,
+        ...     NORFOLK_EX,
+        ...     NORFOLK_SYSTEM_CONFIG,
+        ... )
         >>> example = TRITON_SWMM_experiment.from_case_study(
         ...     case_name=NORFOLK_EX,
         ...     system_config_template=NORFOLK_SYSTEM_CONFIG,
         ...     analysis_config_template=NORFOLK_ANALYSIS_CONFIG,
         ...     case_config_filename=NORFOLK_CASE_CONFIG,
-        ...     hhemt_sha="0123456789abcdef0123456789abcdef01234567",
+        ...     weather_events_to_simulate="hurricane_irene_event_index.csv",
+        ...     analysis_description="Single Simulation of Hurricane Irene 8-27-2011",
+        ...     # hhemt_sha is the commit you run: `git rev-parse HEAD`
+        ...     hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT",
         ... )
+
+        For the shipped Norfolk case, ``NorfolkIreneExperiment.load()`` wraps this call.
         """
         cfg_system_yaml = cls._load_case_system_config(
             case_name=case_name,
@@ -317,13 +341,14 @@ class TRITON_SWMM_experiment:
 
             On the container path ``from_doi`` writes a derived copy at
             ``{software_dir}/hpc_system_config.resolved.yaml`` whose
-            ``container.sif_path`` names the built or transferred SIF, and hands the
-            analysis that path. A derived file rather than an in-memory edit is
-            required: every downstream consumer re-loads the YAML from the path,
-            including ``run_simulation_runner.main``, so an in-memory repoint would
-            never reach the ``apptainer exec`` invocation in
+            ``container.sif_root`` names the directory this run resolves its images
+            under, and hands the analysis that path. A derived file rather than an
+            in-memory edit is required: every downstream consumer re-loads the YAML
+            from the path, including ``run_simulation_runner.main``, so an in-memory
+            repoint would never reach the ``apptainer exec`` invocation in
             ``run_simulation.prepare_simulation_command``. Your original config is
-            never modified.
+            never modified. How the images arrive under that root is the
+            ``sif_build_config_yaml`` entry below.
         validate : bool, default True
             Run preflight validation on the reconstituted experiment before returning,
             mirroring ``Toolkit.from_configs``. This is what makes a container-mode
@@ -405,8 +430,9 @@ class TRITON_SWMM_experiment:
         # ADR-6/ADR-9: the HPC config is the reproducer's, never bundle-carried.
         hpc_cfg_path = cls._resolve_hpc_system_config(hpc_system_config_yaml)
 
-        # ADR-19: build (or fall back to transfer) the SIF, then repoint container.sif_path
-        # at it via a DERIVED config copy. Container-mode only — a native bundle skips this
+        # ADR-21: resolve every carried image under the reproducer's container.sif_root,
+        # rebuilding any that is absent, then point a DERIVED config copy at that root.
+        # Container-mode only — a native bundle skips this
         # entirely and its behavior is byte-identical to today (R9).
         cfg_analysis_dict = read_yaml(analysis_config_path)
         if cfg_analysis_dict.get("execution_environment") == "container":
@@ -1428,7 +1454,8 @@ class NorfolkIreneExperiment:
     Examples
     --------
     >>> from hhemt.experiments import NorfolkIreneExperiment
-    >>> norfolk = NorfolkIreneExperiment.load(hhemt_sha="0123456789abcdef0123456789abcdef01234567")
+    >>> # hhemt_sha is the commit you run: `git rev-parse HEAD`
+    >>> norfolk = NorfolkIreneExperiment.load(hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT")
     >>> system = norfolk.system
     """
 
@@ -1485,7 +1512,8 @@ class NorfolkObservedExperiment:
     Examples
     --------
     >>> from hhemt.experiments import NorfolkObservedExperiment
-    >>> norfolk = NorfolkObservedExperiment.load(hhemt_sha="0123456789abcdef0123456789abcdef01234567")
+    >>> # hhemt_sha is the commit you run: `git rev-parse HEAD`
+    >>> norfolk = NorfolkObservedExperiment.load(hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT")
     >>> system = norfolk.system
     """
 

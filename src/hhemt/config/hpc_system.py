@@ -25,6 +25,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from hhemt.config.base import field_meta
 from hhemt.exceptions import ConfigurationError
 
 # Resources the toolkit emits per-rule whose override via a profile
@@ -222,17 +223,15 @@ class hpc_system_config(BaseModel):
             "rather than being compared against a large number.\n\n"
             "WHEN SET, the per-rule weight is what SLURM METERS, never what the job requests: a "
             "full-node `--exclusive` GPU hold is charged `nodes x cpus_per_node`, measured at 6x "
-            "the requested `tasks x cpus_per_task` on job 14452815 (ReqTRES cpu=16 vs AllocTRES "
-            "cpu=96). A budget that under-counts is worse than no budget, because it permits "
+            "the requested `tasks x cpus_per_task` on one observed allocation (ReqTRES cpu=16 vs "
+            "AllocTRES cpu=96). A budget that under-counts is worse than no budget, because it permits "
             "breaching the ceiling while reporting compliance.\n\n"
             "DENOMINATION CAVEAT -- this budget counts CPUs, and it tracks a site ceiling only "
-            "where that ceiling also meters `cpu`. On UVA it does: `sacctmgr -nP show qos "
-            "standard,normal format=Name,MaxTRESPU,GrpTRES,MaxTRES` returns "
-            "`standard|cpu=1500||cpu=1500`, and no QOS on that cluster meters `billing`. Run that "
-            "same command before relying on this field on any other cluster. Frontier's QOS and "
-            "TRESBillingWeights population is NOT MEASURED by anyone; if a Frontier QOS meters "
-            "`billing` rather than `cpu`, this budget still holds exactly the CPUs it says, but "
-            "it will not track that cluster's own ceiling.\n\n"
+            "where that ceiling also meters `cpu`. Where a QOS meters `billing` instead, this "
+            "budget still holds exactly the CPUs it names, but it will not track that cluster's "
+            "own ceiling. Measure your site's QOS before you rely on this field: see "
+            "[Verify two site caps before you rely on them]"
+            "(../how-to/hpc-profile-setup.md#verify-two-site-caps-before-you-rely-on-them).\n\n"
             "HETEROGENEOUS PARTITIONS -- declare cpus_per_node as the MAXIMUM across the "
             "partition's nodes, not the typical or the minimum. Under --exclusive SLURM "
             "charges the ACTUAL node, so a declared value below the largest node under-counts "
@@ -253,7 +252,7 @@ class hpc_system_config(BaseModel):
             "below this many bytes, the driver CANCELS the in-flight SIMULATIONS, leaves every "
             "processing job running, and exits so a later run resumes via the v2 sentinels. "
             "Leave UNSET (the default) and no polling happens and no branch is taken.\n\n"
-            "SIMS ONLY, NEVER PROCESSING ([Q212]). Processing is what CONVERTS raw output into "
+            "SIMS ONLY, NEVER PROCESSING. Processing is what CONVERTS raw output into "
             "the summaries the campaign is for and is what makes reclaim eligible; cancelling it "
             "during a disk squeeze removes the only thing draining the disk.\n\n"
             "FREE BYTES, not a free fraction: the campaign shares this filesystem, so the "
@@ -261,12 +260,9 @@ class hpc_system_config(BaseModel):
             "VERIFY WHAT statvfs SEES BEFORE RELYING ON THIS. It reports the FILESYSTEM's free "
             "space, which equals a quota only where the quota is a GPFS fileset with filesetdf "
             "enabled; otherwise a quota-exhausted run gets EDQUOT on write while statvfs still "
-            "reports free space and this guard never fires. One command decides it:\n"
-            '    python3 -c "import os,sys; s=os.statvfs(sys.argv[1]); '
-            "print(s.f_blocks*s.f_frsize/1e12,'TB total')\" {analysis_dir}\n"
-            "Measured on UVA /scratch 2026-09-03: 13.19 TB total, i.e. the real filesystem "
-            "ceiling rather than a synthetic 10 TB soft limit, so the guard covers the binding "
-            "one there. Re-run the command on any other cluster.\n\n"
+            "reports free space and this guard never fires. The command that decides it is in "
+            "[Verify two site caps before you rely on them]"
+            "(../how-to/hpc-profile-setup.md#verify-two-site-caps-before-you-rely-on-them).\n\n"
             "The guard runs ONLY while the driver's supervisor loop is running, i.e. when the "
             "workflow was submitted with wait_for_job_completion=True. A fire-and-forget "
             "submission has no guard."
@@ -290,7 +286,7 @@ class hpc_system_config(BaseModel):
             "set-resources / default-resources entries that name toolkit-emitted "
             "resources (tasks, tasks_per_gpu, mpi, gres, slurm_extra, "
             "slurm_partition, runtime, mem_mb, cpus_per_task, nodes). Those are "
-            "correctness-critical per-rule emissions (see Gotcha 32) and may not "
+            "correctness-critical per-rule emissions and may not "
             "be overridden via the profile."
         ),
     )
@@ -409,57 +405,113 @@ class ContainerSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    sif_root: str  # THE ONLY WAY AN IMAGE IS FOUND. `hhemt build-sifs` writes
-    #   {sif_root}/{family}/{stem}.sif + .manifest.json, and preflight / the SIM rung / the
-    #   PROCESS prefix resolve the SAME path from the identity they recompute from config
-    #   (hhemt.sif.identity.resolve_sif). There is deliberately no pointer field: a path an
-    #   operator can type is a path an operator can type wrong, and the 2026-09-11 incident
-    #   was a version wired by a default.
-    builds_containers: bool = False  # positive capability: this host may RUN `hhemt build-sifs`
-    #   (a fakeroot-capable build partition exists here). A target-only config leaves it False.
-    gpu_flag: Literal["--rocm", "--nv"] | None = None  # None => CPU-only cluster
-    binds: list[str] = Field(default_factory=list)  # APPTAINER_BIND entries
-    #   (e.g. "/opt/cray", "/var/spool/slurmd"); analysis_dir same:same is
-    #   appended by the seam, never hand-authored here (it is experiment-scoped).
-    containlibs: list[str] = Field(default_factory=list)  # APPTAINER_CONTAINLIBS
-    apptainerenv_ld_library_path: str | None = None  # the Frontier Cray-MPICH
-    #   recipe as a SHELL-TEMPLATE string (references ${CRAY_MPICH_DIR} etc. that
+    sif_root: str = Field(
+        ...,
+        description="Directory that `hhemt build-sifs` writes images into, and the only place the toolkit looks "
+        "for one. An image is addressed by an identity recomputed from this config rather than by a path you "
+        "type, so there is no image-path field to keep in step with it.",
+    )
+    #   `hhemt build-sifs` writes {sif_root}/{family}/{stem}.sif + .manifest.json, and preflight / the SIM rung /
+    #   the PROCESS prefix resolve the SAME path from the identity they recompute from config
+    #   (hhemt.sif.identity.resolve_sif). There is deliberately no pointer field: a path an operator can type is
+    #   a path an operator can type wrong, and the 2026-09-11 incident was a version wired by a default.
+    builds_containers: bool = Field(
+        False,
+        description="Whether this cluster may RUN `hhemt build-sifs`. Set it only where a fakeroot-capable build "
+        "partition exists; leave it False on a cluster that only consumes images built elsewhere.",
+    )
+    gpu_flag: Literal["--rocm", "--nv"] | None = Field(
+        None,
+        description="GPU passthrough flag added to the container exec. Leave unset on a CPU-only cluster.",
+        json_schema_extra=field_meta(
+            options={
+                "--rocm": "AMD GPUs.",
+                "--nv": "NVIDIA GPUs.",
+            }
+        ),
+    )
+    binds: list[str] = Field(
+        default_factory=list,
+        description="Host paths mounted into the container, as APPTAINER_BIND entries. The analysis directory is "
+        "appended by the toolkit and is never hand-authored here, because it is study-scoped rather than "
+        "cluster-scoped.",
+    )
+    #   (e.g. "/opt/cray", "/var/spool/slurmd").
+    containlibs: list[str] = Field(
+        default_factory=list,
+        description="Host library files bound into the container, as APPTAINER_CONTAINLIBS entries. On a cluster "
+        "whose own helper modules bind the host MPI and GPU closure for you, leave this empty and name those "
+        "modules in pre_exec_modules instead of enumerating libraries here.",
+    )
+    apptainerenv_ld_library_path: str | None = Field(
+        None,
+        description="Shell-template string exported as the container's LD_LIBRARY_PATH. It may reference host "
+        "variables that expand at run time after the modules are loaded, which is how a host-MPI bind is "
+        "expressed. Required whenever cray_mpich_abi_module is set, and unset on a cluster that uses the "
+        "container's own MPI.",
+    )
+    #   The Frontier Cray-MPICH recipe as a SHELL-TEMPLATE string (references ${CRAY_MPICH_DIR} etc. that
     #   expand at runtime AFTER `module load cray-mpich-abi`); None on UVA-CUDA.
-    cray_mpich_abi_module: bool = False  # True on Frontier => the seam emits
-    #   `module load cray-mpich-abi` ahead of the APPTAINERENV export so the
-    #   ${CRAY_*} vars exist when the template expands. False on UVA.
-    pre_exec_modules: list[str] = Field(default_factory=list)  # container-only Lmod
-    #   modules emitted as `module load {m} 2>/dev/null` at the TOP of the container
-    #   host-env segment — BEFORE `module load cray-mpich-abi` and the APPTAINERENV
+    cray_mpich_abi_module: bool = Field(
+        False,
+        description="Whether to load the Cray MPICH ABI module before the container environment is exported, so "
+        "the host MPI variables exist when apptainerenv_ld_library_path expands. Set it on a Cray machine that "
+        "binds host MPI. It requires apptainerenv_ld_library_path, and it is mutually exclusive with srun_mpi, "
+        "which is the container-own-MPI alternative.",
+    )
+    pre_exec_modules: list[str] = Field(
+        default_factory=list,
+        description="Modules loaded at the top of the container host-environment segment, ahead of everything "
+        "else. Name the cluster's own container-helper modules here so the host MPI, GPU and compiler-runtime "
+        "libraries are bound for you rather than enumerated by hand into containlibs.",
+    )
+    #   Emitted as `module load {m} 2>/dev/null` BEFORE `module load cray-mpich-abi` and the APPTAINERENV
     #   exports. Frontier production multi-rank: the OLCF helper set
     #   ["olcf-container-tools","apptainer-enable-mpi","apptainer-enable-gpu"], which
     #   bind the open-ended host MPI+ROCm+compiler-runtime closure (libpgmath/libflang/
     #   …) so it need NOT be hand-enumerated into containlibs (validated probe job
     #   4898044: size=16/2 nodes). Empty on UVA and on the single-rank validation fallback.
-    srun_mpi: str | None = None  # UVA: "pmix" => the seam emits `srun --mpi=pmix`
-    #   for the container-own OpenMPI; None on Frontier (Cray-PALS path, never pmix).
-    exe_in_sif: dict[str, str] = Field(default_factory=dict)  # OD-A: per-model
-    #   in-SIF absolute exe path, keyed by model_type ("triton"/"tritonswmm"/
-    #   "swmm"). Empty => fall back to the convention /opt/hhemt/bin/{name}.
-    python_in_sif: str = "python"  # the interpreter token the CONTAINER-PREFIXED
-    #   process rungs invoke (`apptainer exec {sif} {python_in_sif} -m
-    #   hhemt.process_timeseries_runner`). MUST resolve INSIDE the image: the
-    #   driver's own sys.executable is a HOST path and dies `FATAL: stat …: no
-    #   such file or directory` (Rivanna run 17095105). The default is a bare
-    #   NAME, not a path — every in-repo recipe's %environment prepends
-    #   /opt/hhemt-src/.venv/bin to PATH, so `python` resolves to the in-SIF
-    #   hhemt venv. Override with an absolute in-SIF path for an image whose
-    #   PATH does not front an hhemt-bearing interpreter. NEVER hardcode an
-    #   in-SIF path in src/ (Code Style item 8) — that is what this field is for.
-    extra_exec_args: list[str] = Field(default_factory=list)  # shared escape
-    #   hatch for an unforeseen per-cluster `apptainer exec` flag; applied to
-    #   EVERY class. NEVER put `--cleanenv` here for an MPI cluster (NQ-11).
-    apptainer_module: str | None = None  # cluster Lmod module providing the
-    #   `apptainer` binary. REQUIRED where apptainer is module-only (UVA Rivanna:
-    #   "apptainer/1.5.0") — without it `srun … apptainer exec` dies execve
-    #   (apptainer not on PATH). None on clusters where apptainer is on the default
-    #   PATH (Frontier). The seam emits `module load {apptainer_module}` in container
-    #   mode ONLY (native rows never load it -> native byte-identical).
+    srun_mpi: str | None = Field(
+        None,
+        description="MPI flavor passed to the job launcher when the container carries its own MPI, for example "
+        "pmix for a container-built OpenMPI. Leave unset on a cluster that binds the host MPI instead; it is "
+        "mutually exclusive with cray_mpich_abi_module.",
+    )
+    #   UVA: "pmix" => the seam emits `srun --mpi=pmix` for the container-own OpenMPI;
+    #   None on Frontier (Cray-PALS path, never pmix).
+    exe_in_sif: dict[str, str] = Field(
+        default_factory=dict,
+        description="Absolute in-image path of the simulation executable, keyed by model type (triton, "
+        "tritonswmm, swmm). Leave it empty to use the built-in convention, and set it only for an image that "
+        "installs the executables somewhere else.",
+    )
+    #   OD-A. Empty => fall back to the convention /opt/hhemt/bin/{name}.
+    python_in_sif: str = Field(
+        "python",
+        description="Interpreter token that the container-prefixed processing steps invoke. It must resolve "
+        "INSIDE the image: the driver's own interpreter is a host path and fails to start in the container. The "
+        "default is a bare name, which every in-repo recipe resolves to the image's own environment; override it "
+        "with an absolute in-image path for an image whose PATH does not front one.",
+    )
+    #   Invoked as `apptainer exec {sif} {python_in_sif} -m hhemt.process_timeseries_runner`. The host
+    #   sys.executable dies `FATAL: stat …: no such file or directory` (Rivanna run 17095105). Every in-repo
+    #   recipe's %environment prepends /opt/hhemt-src/.venv/bin to PATH, so `python` resolves to the in-SIF
+    #   hhemt venv. NEVER hardcode an in-SIF path in src/ (Code Style item 8) — that is what this field is for.
+    extra_exec_args: list[str] = Field(
+        default_factory=list,
+        description="Extra container-exec flags applied to every invocation. This is an escape hatch for a "
+        "cluster-specific flag this model does not name; never put --cleanenv here on an MPI cluster, because it "
+        "strips the host fabric environment the launcher needs.",
+    )
+    #   Applied to EVERY class (NQ-11).
+    apptainer_module: str | None = Field(
+        None,
+        description="Cluster module that provides the `apptainer` binary. Required where apptainer is "
+        "module-only, because without it the container launch fails with apptainer not on PATH. Leave it unset "
+        "where apptainer is already on the default PATH. It is loaded in container mode only, so native runs are "
+        "byte-identical either way.",
+    )
+    #   REQUIRED where apptainer is module-only (UVA Rivanna: "apptainer/1.5.0"); None on Frontier.
 
     @model_validator(mode="before")
     @classmethod

@@ -261,9 +261,19 @@ class TRITONSWMM_analysis_post_processing:
         WHAT LANDS in the tree. Do NOT add values that affect only bytes
         (``compression_level``) or provenance (git sha, timestamps) — those change on
         every run and would force a spurious rebuild every time.
+
+        ONE TERM HERE IS NOT A CONFIG VALUE, AND THAT IS DELIBERATE. ``scenario_ids``
+        hashes the SET of scenarios the tree is keyed by. Without it the guard is
+        asymmetric: adding a scenario leaves every config field unchanged, so a
+        complete-and-stamped tree is reused and the new scenario silently never lands.
+        A count would not close it either — remove one scenario and add another and the
+        count is identical. Do NOT remove this term as a contract violation; the
+        contract is about what gates WHAT LANDS, and the scenario set gates it directly.
         """
         import hashlib
         import json
+
+        from hhemt.scenario import compute_event_id_slug
 
         payload = {
             "consolidation_version": self.CONSOLIDATION_VERSION,
@@ -271,6 +281,10 @@ class TRITONSWMM_analysis_post_processing:
                 getattr(self._analysis.cfg_analysis, "toggle_consolidate_timeseries", False)
             ),
             "enabled_model_types": sorted(self._analysis._get_enabled_model_types()),
+            "scenario_ids": sorted(
+                compute_event_id_slug(self._analysis._retrieve_weather_indexer_using_integer_index(ei))
+                for ei in self._analysis.df_sims.index
+            ),
         }
         return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
@@ -432,6 +446,24 @@ class TRITONSWMM_analysis_post_processing:
 
         write_rocrate_sidecar(self._analysis.analysis_paths.analysis_dir, graph_json=_graph_json)
 
+        # ARM REFRESH AT THE WRITE BOUNDARY (D132 clause f). Until now eda() and publish()
+        # were the ONLY sites rewriting this file, so a run that CONSOLIDATED AND STOPPED
+        # left cfg_analysis.yaml asserting the PRIOR arm while the newest store beside it
+        # was the current arm's. Written here, at the boundary that just wrote the store,
+        # the file describes the store it sits next to.
+        # UNCONDITIONAL and idempotent: no read of the on-disk arm is performed, because a
+        # divergence test would have to parse and trust the value this write replaces, and
+        # would decline to fire on a malformed file -- the state most in need of repair.
+        # Perturbs no scheduling: this file is a declared input of NO emitted Snakemake
+        # rule, and the mtime-preserving rewrite primitive is migration-only.
+        # DOES NOT close the file-only residual: an archived tree, a bundle emitted from an
+        # already-stale root, and a migration still cannot detect arm reversion.
+        import yaml as _yaml
+
+        (self._analysis.analysis_paths.analysis_dir / "cfg_analysis.yaml").write_text(
+            _yaml.safe_dump(self._analysis.cfg_analysis.model_dump(mode="json"))
+        )
+
         self._analysis._refresh_log()
         if hasattr(self._analysis.log, "datatree_consolidation_complete"):
             self._analysis.log.datatree_consolidation_complete.set(True)
@@ -519,7 +551,7 @@ class TRITONSWMM_analysis_post_processing:
             )
         return xr.open_datatree(path, engine="zarr", chunks="auto", consolidated=False)
 
-    def _retrieve_combined_timeseries(self, ts_mode: str) -> xr.Dataset:  # type: ignore
+    def _retrieve_combined_timeseries(self, ts_mode: str) -> xr.Dataset:
         """Load per-scenario TIMESERIES zarrs and concatenate them along event_iloc.
 
         Mirrors _retrieve_combined_output but reads the timeseries scenario-path attr
@@ -552,9 +584,9 @@ class TRITONSWMM_analysis_post_processing:
             compute_event_id_slug(self._analysis._retrieve_weather_indexer_using_integer_index(ei))
             for ei in self._analysis.df_sims.index
         ]
-        return ds_ts.assign_coords(event_id=("event_iloc", event_ids))  # type: ignore
+        return ds_ts.assign_coords(event_id=("event_iloc", event_ids))
 
-    def _retrieve_combined_output(self, mode: str) -> xr.Dataset:  # type: ignore
+    def _retrieve_combined_output(self, mode: str) -> xr.Dataset:
         """
         Load pre-created summary files for each scenario and concatenate them.
 
@@ -712,7 +744,7 @@ class TRITONSWMM_analysis_post_processing:
             for ei in self._analysis.df_sims.index
         ]
         ds_combined_outputs = ds_combined_outputs.assign_coords(event_id=("event_iloc", event_ids))
-        return ds_combined_outputs  # type: ignore
+        return ds_combined_outputs
 
     def _chunk_for_writing(
         self,

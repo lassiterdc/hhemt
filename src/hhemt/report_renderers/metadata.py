@@ -533,6 +533,22 @@ def _provenance_software(app: dict, src: dict) -> str:
     return "<h4>2. Software</h4>\n" + _kv_table(rows)
 
 
+#: The `AnalysisPaths` attribute names `_resolve_consolidated_tree` looks up REFLECTIVELY,
+#: in RESOLUTION PRIORITY order -- the sensitivity-master name FIRST, which is the INVERSE
+#: of their declaration order on `AnalysisPaths`. Named rather than inline so a test can
+#: import it and assert both that every entry is still a real field AND that the first
+#: entry is still the sensitivity name. That guard is not optional hygiene: `getattr(...,
+#: None)` below carries a DEFAULT, so a renamed or split field yields None, is dropped by
+#: the `is not None` filter, and the ROOT_TREE_NAMES fallback answers anyway. Measured in
+#: one configuration -- a declared path EQUAL to the analysis-dir fallback -- the renamed
+#: call returns the IDENTICAL path the healthy call returns. Where the declared path
+#: instead points at a RELOCATED store, or where nothing sits at the fallback, the renamed
+#: call returns a DIFFERENT path or None. So the failure is masked in the first case and
+#: wrong in the others, and in none of them does anything raise. It cannot be detected
+#: after the rename that arms it, so this guard has value only while added BEFORE one.
+_DECLARED_TREE_PATH_ATTRS = ("sensitivity_datatree_zarr", "analysis_datatree_zarr")
+
+
 def _resolve_consolidated_tree(analysis_dir: Path, analysis: TRITONSWMM_analysis | None) -> Path | None:
     """Locate the consolidated DataTree store, by existence, HPC- and bundle-alike.
 
@@ -543,12 +559,31 @@ def _resolve_consolidated_tree(analysis_dir: Path, analysis: TRITONSWMM_analysis
     """
     candidates: list[Path] = []
     paths = getattr(analysis, "analysis_paths", None) if analysis is not None else None
-    for attr in ("sensitivity_datatree_zarr", "analysis_datatree_zarr"):
+    for attr in _DECLARED_TREE_PATH_ATTRS:
         declared = getattr(paths, attr, None) if paths is not None else None
         if declared is not None:
             candidates.append(Path(declared))
     from hhemt.utils import ROOT_TREE_NAMES
 
+    if analysis is None:
+        # NO ANALYSIS OBJECT: the declared-attribute loop above contributed nothing, so what
+        # follows would be a pure name walk -- which returns the MIGRATION-TIME store on a
+        # regular two-store root. Recover the ARM from the root's own cfg_analysis.yaml,
+        # which a BUNDLE always ships and which a producer writes at eda(), publish() and
+        # (once `### D132` applies) either consolidation writer.
+        # GUARDED ON `analysis is None`, NOT on `paths is None`: the latter is a SUPERSET
+        # that also catches an analysis object exposing no analysis_paths, and on that state
+        # a supplied arm exists and must win -- consulting the tree there would invert the
+        # clause's supplied-before-discovered order.
+        # arm_from_config_dir returns None when no config is present, and the walk below is
+        # then reached unchanged.
+        from hhemt.utils import EXPERIMENT_TREE_NAME, REGULAR_TREE_NAME, arm_from_config_dir
+
+        _arm = arm_from_config_dir(analysis_dir)
+        if _arm is True:
+            candidates.append(analysis_dir / EXPERIMENT_TREE_NAME)
+        elif _arm is False:
+            candidates.append(analysis_dir / REGULAR_TREE_NAME)
     candidates.extend(analysis_dir / name for name in ROOT_TREE_NAMES)
     return next((c for c in candidates if c.exists()), None)
 

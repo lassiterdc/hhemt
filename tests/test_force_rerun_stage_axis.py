@@ -19,6 +19,7 @@ import pytest
 
 from hhemt.config.analysis import ForceRerunSpec
 from hhemt.exceptions import ConfigurationError
+from hhemt.utils import sidecar_for
 
 
 def _seed_status_and_plots(analysis):
@@ -37,12 +38,16 @@ def _seed_status_and_plots(analysis):
     snakemake_fig = root / "plots" / "sensitivity" / "benchmarking" / "fig.html"
     snakemake_fig.parent.mkdir(parents=True, exist_ok=True)
     snakemake_fig.touch()
-    snakemake_fig.with_suffix(snakemake_fig.suffix + ".manifest.json").touch()
+    # Seeded in the WRITER's convention (`_figure_emission._emit_manifest_sidecar`), which
+    # is stem-based. The suffix-appended form this replaces was the DELETER's convention
+    # and named a path the writer never creates -- so the fixture agreed with the bug and
+    # the assertions below could not see it.
+    sidecar_for(snakemake_fig).touch()
 
     eda_fig = root / "plots" / "eda" / "config_diff_maps.html"
     eda_fig.parent.mkdir(parents=True, exist_ok=True)
     eda_fig.touch()
-    eda_fig.with_suffix(eda_fig.suffix + ".manifest.json").touch()
+    sidecar_for(eda_fig).touch()
 
     return status_dir, flags, snakemake_fig, eda_fig
 
@@ -67,7 +72,7 @@ def test_render_floor_preserves_flags_and_deletes_snakemake_figures(synth_sensit
             f"{name} was deleted under a render floor -- the stage was dropped and the floor fell back to 'simulate'"
         )
     assert not snakemake_fig.exists()
-    assert not snakemake_fig.with_suffix(snakemake_fig.suffix + ".manifest.json").exists()
+    assert not sidecar_for(snakemake_fig).exists()
 
 
 def test_render_floor_exempts_plots_eda(synth_sensitivity_analysis):
@@ -84,7 +89,7 @@ def test_render_floor_exempts_plots_eda(synth_sensitivity_analysis):
     analysis._apply_force_rerun(ForceRerunSpec(subject="all", stage="render"))
 
     assert eda_fig.exists(), "plots/eda/ figure deleted under a render floor"
-    assert eda_fig.with_suffix(eda_fig.suffix + ".manifest.json").exists()
+    assert sidecar_for(eda_fig).exists()
     # The exemption must be narrow: a non-EDA figure is still deleted. This is the
     # differently-positioned satisfying arm -- it catches an exemption written too broadly.
     assert not snakemake_fig.exists()
@@ -244,7 +249,7 @@ def test_render_floor_dry_run_preserves_figures(synth_sensitivity_analysis, monk
     assert snakemake_fig.exists(), (
         "a dry run deleted a Snakemake-rendered figure -- the force-rerun pre-delete ran unguarded on the submit path"
     )
-    assert snakemake_fig.with_suffix(snakemake_fig.suffix + ".manifest.json").exists()
+    assert sidecar_for(snakemake_fig).exists()
     assert eda_fig.exists()
 
 

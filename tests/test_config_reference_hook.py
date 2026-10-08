@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import types
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
@@ -22,7 +23,7 @@ def _load():
     mod = importlib.util.module_from_spec(spec)
     sys.modules["config_reference"] = mod
     spec.loader.exec_module(mod)
-    mod._bind_local_src()
+    mod._load_local_src().bind_local_src(mod._SRC, {"hhemt"})
     return mod
 
 
@@ -137,3 +138,17 @@ def test_every_closure_model_is_tabled_on_the_page():
     page = cfgref._render()
     missing = sorted(m.__name__ for m in cfgref._closure_models() if cfgref._table(m) not in page)
     assert not missing, f"closure members absent from the rendered page: {missing}"
+
+
+def test_on_config_writes_the_generated_page_under_docs_dir(tmp_path):
+    """The hook's ENTRYPOINT, which no other node reaches: the binder call, both
+    lint passes and the write under ``docs_dir``. A wrong argument list at the
+    binder call site raises here instead of at CI's first ``mkdocs build``.
+    Green in both states: it is the coverage node for the retargeted call, not a
+    differential for the wrong-tree defect.
+    """
+    config = types.SimpleNamespace(docs_dir=str(tmp_path))
+    assert cfgref.on_config(config) is config
+    page = (tmp_path / "reference" / "config-schema.md").read_text(encoding="utf-8")
+    assert page.startswith(f"<!-- {cfgref._load_lint().GENERATED_MARKER} -->")
+    assert cfgref._table(cfgref._closure_models()[0]) in page

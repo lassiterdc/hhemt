@@ -33,25 +33,26 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _bind_local_src() -> None:
-    """Bind `import hhemt` to THIS checkout, reusing the config-reference binder.
+    """Bind `import hhemt` to THIS checkout through the shared `scripts/local_src.py`.
 
     Loaded by path rather than imported: mkdocs execs each hook as a standalone
-    module, so `hooks/` is not a package and `from config_reference import ...` does
+    module, so neither `hooks/` nor `scripts/` is a package and a plain import does
     not resolve. This is the same `spec_from_file_location` mechanism
-    `hooks/config_reference.py` already uses to load `scripts/check_docs_content.py`.
-    Reusing it rather than restating it matters because the binder does two things a
-    copy would get wrong: it prepends this checkout's `src` AND drops already-imported
-    `hhemt` modules that an editable install's `.pth` resolved to a different tree.
-    Whether that second half is load-bearing depends on the interpreter: measured on
-    this machine, two environments carry mkdocs and their `.pth` files disagree, one
-    pointing at the worktree and one at the main clone. Nothing in the repo pins which
-    one runs the build, so the binder is what makes the answer not matter.
+    `hooks/config_reference.py` uses to load `scripts/check_docs_content.py` and the
+    binder itself. Reusing the binder rather than restating it matters because it
+    does two things a copy would get wrong: it prepends this checkout's `src` AND
+    drops already-imported `hhemt` modules that an editable install's `.pth`
+    resolved to a different tree. Whether that second half is load-bearing depends
+    on the interpreter: measured on this machine, two environments carry mkdocs and
+    their `.pth` files disagree, one pointing at the worktree and one at the main
+    clone. Nothing in the repo pins which one runs the build, so the binder is what
+    makes the answer not matter.
     """
-    path = _REPO_ROOT / "hooks" / "config_reference.py"
-    spec = importlib.util.spec_from_file_location("_hhemt_config_reference", path)
+    path = _REPO_ROOT / "scripts" / "local_src.py"
+    spec = importlib.util.spec_from_file_location("_hhemt_local_src", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    module._bind_local_src()
+    module.bind_local_src(_REPO_ROOT / "src", {"hhemt"})
 
 
 def kind_records() -> list[dict]:

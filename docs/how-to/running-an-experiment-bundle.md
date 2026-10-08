@@ -21,10 +21,10 @@ experiments/my_experiment/
     └── analysis_config_uva.yaml
 ```
 
-A minimal `experiment.yaml`:
+The descriptor carries no identity key: the bundle is named by its directory, and the
+analysis identity comes from the analysis config. A minimal `experiment.yaml`:
 
 ```yaml
-experiment_id: my_experiment          # must equal the directory name
 description: One-line description.
 system_config: configs/system_config_uva.yaml    # bundle-relative
 analysis_config: configs/analysis_config_uva.yaml # bundle-relative
@@ -45,6 +45,12 @@ container:
 See the [config-filling](config-filling.md) and [HPC-profile setup](hpc-profile-setup.md)
 guides for the system/analysis and `hpc_system_config` contents.
 
+The `container:` block names no recipe. `def_recipe` was retired, and a descriptor still
+carrying that key is refused by name when it loads, with a message naming `container.sif_root`
+as the replacement. Images are addressed by identity under `sif_root` and built by
+`hhemt build-sifs`; `sha256_source` stays, because the digest's authoritative home is still
+the RO-Crate.
+
 ## Run it
 
 ```bash
@@ -58,6 +64,61 @@ hhemt run-experiment --bundle experiments/my_experiment --cluster uva
 `--cluster` selects which `hpc_system_config[<cluster>]` and which per-cluster `destinations`
 apply. The verb loads and validates `experiment.yaml`, resolves the HPC profile, then hands the
 two configs to the toolkit.
+
+In native mode the solver must already be built for the partition the run targets; the
+verb checks for the build and never performs it. Run the `--dry-run` form first: it writes
+the resolved configs to `$SCRATCH_DIR/resolved_configs/`, and those are the two paths the
+compile command on [Compile the solver](compiling-the-solver.md#on-a-cluster) takes.
+
+## Run modes and the wipe guard
+
+`--mode` selects what happens to an analysis directory that already holds work. The default
+is `resume`: a second invocation, or a SLURM requeue, picks up where the last one left off,
+and completed simulations are never deleted under `resume`.
+
+| `--mode` | Behaviour |
+|----------|-----------|
+| `resume` (default) | Continue from the last checkpoint; completed simulations are kept. |
+| `fresh` | Delete the whole analysis directory first, then rebuild everything. Guarded; see below. |
+
+Any other value is refused at parse time (exit 2); `hhemt run-experiment --help` lists the two.
+
+```bash
+# Start over, deleting the analysis directory (refused if it holds completed work):
+hhemt run-experiment --bundle experiments/my_experiment --cluster uva --mode fresh
+
+# Start over even though the directory holds completed work:
+hhemt run-experiment --bundle experiments/my_experiment --cluster uva --mode fresh --override-wipe-nonempty
+```
+
+The wipe guard refuses `--mode fresh` (exit 2) when the analysis directory still holds
+completed simulations, consolidated output, in-flight submission sentinels, or an orchestrator
+sentinel; the refusal names what it found. Pass `--override-wipe-nonempty` to delete that work
+deliberately. This flag is not `--yes`: `--yes` accepts the descriptor-override table (see
+[The override gate](#the-override-gate)) and authorizes no deletion, and
+`--override-wipe-nonempty` authorizes the deletion and accepts no override. To remove an
+analysis rather than re-run it, use `hhemt delete`, which carries its own confirmation.
+
+To re-run completed scenarios without deleting anything, keep `--mode resume` and pass
+`--override-force-rerun`: `all`, `none`, or a JSON subject dict such as
+`'{"event_iloc":[3,7]}'`. It overrides the analysis config's `force_rerun` field for this
+invocation only and clears the completion markers of the targeted scenarios, so Snakemake
+runs them (and everything downstream) again in place. See
+[Forcing and suppressing re-runs](forcing-reruns.md).
+
+```bash
+# Re-run every completed scenario in place, no wipe:
+hhemt run-experiment --bundle experiments/my_experiment --cluster uva --override-force-rerun all
+```
+
+## Waiting for completion
+
+For a SLURM-dispatched run, `--wait` / `--no-wait` control whether the verb blocks until the
+workflow finishes. With neither flag given, the verb waits when running inside an sbatch
+allocation (`$SLURM_JOB_ID` is set, so the detached orchestrator would otherwise die with the
+allocation) and returns immediately on a login node. A detached invocation exits `0` as soon
+as the workflow is submitted; the exit code reports the workflow's outcome only when the verb
+waits.
 
 ## `${VAR}` placeholders in configs
 
@@ -85,15 +146,22 @@ hhemt run-experiment --bundle experiments/my_experiment --cluster uva --yes
 
 Without `--yes`, a non-interactive invocation that would override the descriptor **refuses**
 rather than silently preferring the CLI. When the CLI adds nothing the descriptor does not
-already say, no confirmation is needed: that is the common one-config path.
+already say, no confirmation is needed: that is the common one-config path. `--yes` accepts
+only this table. Deleting completed work with `--mode fresh` goes through a separate gate with
+its own flag; see [Run modes and the wipe guard](#run-modes-and-the-wipe-guard).
 
 ## Exit codes
+
+These are the same codes, with the same meanings, as the
+[CLI reference exit-code table](../reference/cli.md#exit-codes).
 
 | Code | Meaning |
 |------|---------|
 | 0 | success (or `--dry-run` planned cleanly) |
-| 2 | configuration error (bad `experiment.yaml`, unset `${VAR}`, missing/placeholder `default_account` or `container.sif_root`, declined override gate) |
-| 5 | workflow / processing / simulation error |
+| 2 | configuration error (bad `experiment.yaml`, a schema-invalid `system.yaml` or `analysis.yaml`, unset `${VAR}`, missing/placeholder `default_account` or `container.sif_root`, declined override gate, an unknown `--mode` value, `--mode fresh` refused by the wipe guard) |
+| 3 | workflow or compilation failure, including a workflow that ran and reported failure (Snakemake exited non-zero, `sbatch` refused the submission, or a rule failed permanently) and a `--dry-run` whose plan failed; the console output printed just before the exit names the cause |
+| 4 | simulation failure |
+| 5 | processing failure |
 | 10 | unexpected error |
 
 ## Verifying a bundle conforms
@@ -111,9 +179,9 @@ ExperimentConfig.model_validate(yaml.safe_load(open(sys.argv[1] + '/experiment.y
 print('OK')" experiments/my_experiment
 ```
 
-Working from a repo checkout, the fuller checker additionally verifies that `experiment_id`
-matches the directory name, that the declared `system_config`/`analysis_config` paths exist,
-and that `README.md` + `rerun.sh` are present:
+Working from a repo checkout, the fuller checker additionally verifies that the declared
+`system_config`/`analysis_config` paths exist on disk and that `README.md` + `rerun.sh` are
+present:
 
 ```bash
 uv run --locked python scripts/check_experiment_structure.py experiments/my_experiment

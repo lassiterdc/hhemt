@@ -36,22 +36,247 @@ ROOT_TREE_NAMES = (
     "analysis_datatree.zarr",
 )
 EXPERIMENT_TREE_NAME = ROOT_TREE_NAMES[0]
+#: The REGULAR arm's producer-written name. `analysis.py` binds it unconditionally, so a
+#: regular analysis re-creates it on every consolidation whose skip gate does not hold --
+#: `fname_out.exists()` is a conjunct of that gate, so an absent path forces a rebuild.
+#: A ROOT CARRYING BOTH NAMES IS REACHED BY TWO ROUTES AND THEY ARE NOT THE SAME DEFECT.
+#: On the REGULAR arm, V0021 demoted this analysis's store under a member node and the
+#: producer then re-created the flat one: the retired name is the LIVE artifact and the
+#: unified one is a stale derived view of it. On the OTHER route, V0021's `elif` selected
+#: a sensitivity master's store and left a regular one stranded beside it: there the
+#: retired name is an orphan with no writer and no reader.
+#: `V0025__retire_stranded_regular_store` retires the SECOND case only, and refuses rather
+#: than guessing where its arm signals disagree. IT DOES NOT CLOSE THE FIRST, and no
+#: migration does -- a retirement there would move the producer's working store aside. An
+#: arm-aware producer binding does not close it either: on the regular arm that branch
+#: binds the name the unconditional binding already gives it. So the resolution below is
+#: what keeps the returned store correct on the regular arm, and it is not a placeholder
+#: for a repair that is coming.
+REGULAR_TREE_NAME = ROOT_TREE_NAMES[2]
 
 
-def resolve_experiment_tree(root: str | Path) -> Path:
+def arm_from_config_dir(root) -> bool | None:
+    """The ARM (`toggle_sensitivity_analysis`) recovered from a root's own config, or None.
+
+    THE ARM IS THE BASIS OF ROOT-STORE RESOLUTION and the resolvers below hold no analysis
+    object. A root ships `cfg_analysis.yaml` when it is a BUNDLE (copied at emit) or when a
+    producer has written one -- `eda()`, `publish()`, and, once `### D132` applies, either
+    consolidation writer. Presence is therefore CONDITIONAL rather than population-keyed:
+    this returns None on a root that has none, and a caller that gets None keeps its prior
+    behaviour rather than acquiring a default. None means UNKNOWN and is never coerced to
+    False -- a missing config and a regular analysis are different states and a bool would
+    merge them.
+    """
+    import yaml
+
+    cfg = Path(root) / "cfg_analysis.yaml"
+    if not cfg.is_file():
+        return None
+    try:
+        loaded = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return None
+    value = loaded.get("toggle_sensitivity_analysis")
+    return bool(value) if isinstance(value, bool) else None
+
+
+def resolve_experiment_tree(root: str | Path, *, arm: bool | str | None = None) -> Path:
     """Resolve an experiment's ROOT consolidated store by EXISTENCE.
 
     Returns the first existing candidate in ``ROOT_TREE_NAMES`` priority order -- see
     that tuple's note on why the order is not interchangeable. When NONE exists the
     unified name is returned rather than None, so a caller's own absent-tree branch keeps
     its `.exists()` shape and reports against the canonical name instead of a retired one.
+
+    ``arm`` is the OPTIONAL supplied arm and it changes the answer on exactly ONE subset:
+    the two-store ``(experiment, analysis)`` pair, where the two routes disagree about
+    which store is current and the name order alone cannot say. Absent it the body is
+    byte-identical to its prior form, including the warning. Accepts BOTH vocabularies in
+    use -- ``True``/``False`` and ``"sensitivity"``/``"regular"`` -- and RAISES on anything
+    else, because a silent mismatch between them would compare ``False != "regular"`` and
+    report a corroborated call as uncorroborated.
     """
     root = Path(root)
+    if arm is None:
+        _arm: bool | None = None
+    elif isinstance(arm, bool):
+        _arm = arm
+    elif arm in ("sensitivity", "regular"):
+        _arm = arm == "sensitivity"
+    else:
+        raise ValueError(
+            f"resolve_experiment_tree: arm must be True/False, 'sensitivity'/'regular' or None; got {arm!r}"
+        )
+    present = [n for n in ROOT_TREE_NAMES if (root / n).exists()]
+    if present == [EXPERIMENT_TREE_NAME, REGULAR_TREE_NAME]:
+        if _arm is True:
+            # SUPPLIED SENSITIVITY ARM. On this arm the retired-name store cannot be this
+            # analysis's output -- nothing writes it at a master root -- so it is residue
+            # and the unified name is current. That is the OPPOSITE of the branch below,
+            # whose reasoning holds only on the regular arm, and it is why a name order
+            # alone cannot answer this subset.
+            return root / EXPERIMENT_TREE_NAME
+        # THE REGULAR TWO-STORE STATE. V0021 renamed this analysis's store to the unified
+        # name and CONSUMED the retired path; anything now at the retired path was written
+        # AFTER that, by the producer. So the unified name here is the migration-time
+        # snapshot and the retired name is current -- the opposite of the priority order
+        # above, which is correct for every other subset. Returning the producer-written
+        # store is the better of two contract violations, not a satisfaction of the
+        # contract: neither store satisfies "the experiment-level aggregate", because the
+        # migrated one is experiment-shaped and stale while this one is current and FLAT.
+        # That is why the warning is required rather than optional -- the return value
+        # cannot say "no store here is what you asked for", and the warning is also the
+        # only thing that tells an operator the repairing migration exists.
+        #
+        # Deduplication is FREE and deliberately not coded: the default warning filter
+        # keys on the message text, and `root` is interpolated, so one process warns once
+        # per distinct tree however many of this function's callers run.
+        warnings.warn(
+            f"{root} carries both {EXPERIMENT_TREE_NAME} and {REGULAR_TREE_NAME}. "
+            f"Neither is the experiment-level aggregate this resolver promises: the "
+            f"former is the migration-time snapshot, the latter is current but flat. "
+            f"Returning the current one. Run the layout migration to resolve the tree.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return root / REGULAR_TREE_NAME
     for name in ROOT_TREE_NAMES:
         cand = root / name
         if cand.exists():
             return cand
     return root / EXPERIMENT_TREE_NAME
+
+
+#: The member-node name vocabularies, BOTH of them, inside a root consolidated store.
+#: `member_` is the current form: `V0021._resolve_member_group` returns the literal
+#: `member_0` for the regular arm's demoted one-member wrap, and
+#: `sensitivity_analysis.build_sensitivity_datatree` names each master node
+#: `f"{self.member_prefix}{member_id}"` with `member_prefix = "member_"`. `sa_` is the
+#: RETIRED form and it is still live on disk: `V0019__member_vocabulary` renames the
+#: on-disk container and flag tokens but states in its own
+#: `WHAT THIS MIGRATION DELIBERATELY DOES NOT REWRITE` section that "The consolidated
+#: `sensitivity_datatree.zarr` node names are NOT renamed here", so a master that has not
+#: re-consolidated since V0019 still carries `sa_*` nodes at layout 22. This is not a
+#: speculative widening -- `V0022` already enumerates both at `:194-195` and reads member
+#: groups by exactly this test in `_member_group_prefixes`.
+MEMBER_NODE_PREFIXES = ("sa_", "member_")
+
+
+def _member_node_count(store: Path) -> int:
+    """Count MEMBER nodes in a root consolidated store BY NAME, never by child count.
+
+    A bare child count is wrong on both arms and wrong for the same reason: a
+    `parameters` group is written UNCONDITIONALLY beside the members --
+    `MigrationContext._apply_zarr_unify_to_experiment_tree` writes it on the regular arm
+    and `build_sensitivity_datatree` sets `tree_dict["parameters"]` on the sensitivity
+    arm -- so every in-population store carries one group more than it has members.
+    Measured on the committed `tests/fixtures/legacy_layouts/v22` store, which holds ONE
+    member: a bare directory count returns 2, and a `zarr.json`-gated count returns 2 as
+    well, because `parameters` is a real zarr group. Counting by vocabulary returns 1.
+
+    NO `zarr.json` CONJUNCT, and the divergence from `V0023._member_group_count` is
+    DELIBERATE rather than an oversight. This function matches the only member-group
+    reader already landed in this repository, `V0022._member_group_prefixes`, which tests
+    `is_dir()` and the prefix and nothing else. A `zarr.json` conjunct changes the answer
+    on exactly one population -- a member directory that carries no group node, which is
+    the BROKEN hierarchy `_apply_zarr_unify_to_experiment_tree`'s own docstring describes
+    a bare directory move as producing -- and the two readers are right to differ there:
+    `V0023` MOVES a store and must refuse on a malformed tree, while this function
+    RETURNS a classification and would otherwise report less than the evidence supports.
+    """
+    if not store.is_dir():
+        return 0
+    return sum(1 for p in store.iterdir() if p.is_dir() and p.name.startswith(MEMBER_NODE_PREFIXES))
+
+
+def _normalize_arm(arm: bool | str | None) -> bool | None:
+    """Normalize a supplied arm to the `bool | None` form `arm_from_config_dir` returns.
+
+    `"sensitivity"`/`"regular"` is the form the cell enumeration asserts on; the `bool`
+    form is accepted so a caller holding `toggle_sensitivity_analysis` can pass it
+    through untranslated. Anything else RAISES rather than defaulting: a silently
+    ignored arm downgrades a corroborated answer to an uncorroborated one with no signal.
+    """
+    if arm is None or isinstance(arm, bool):
+        return arm
+    if arm == "sensitivity":
+        return True
+    if arm == "regular":
+        return False
+    raise ValueError(f"arm must be None, a bool, 'regular' or 'sensitivity'; got {arm!r}")
+
+
+def classify_analysis_arm(root: str | Path, *, arm: bool | str | None = None) -> tuple[str, str]:
+    """Classify a two-store analysis root by ARM, and disclose the arm's PROVENANCE.
+
+    THE BASIS IS THE ARM -- not a name ordering, and not the in-store generation stamp.
+    The instrument is a THREE-SIGNAL CONJUNCTION: the `members/` container at the
+    analysis root, the member-node cardinality inside the unified store, and the arm,
+    supplied by a caller that holds one and otherwise recovered from the root's own
+    `cfg_analysis.yaml` by `arm_from_config_dir`.
+
+    THE ARM IS AN OPTIONAL PARAMETER, DISCOVERED ONLY AS A FALLBACK. A site holding the
+    arm MUST supply it. Requiring it everywhere is unsatisfiable: `_child_model`
+    (`report_renderers/cross_experiment_disk_utilization.py`) is typed `(child: Path)`
+    and resolves a child root where no analysis object exists.
+
+    NO ON-ROOT DEFAULT IS TAKEN WHEN THE ARM IS ABSENT. An absent signal leaves the
+    conjunction two-membered and ANNOUNCED (`DEGRADED_NO_ARM`); a defaulted one would
+    make it three-membered and silent.
+
+    AN ABSENT ARM IS NOT AN UNNECESSARY ONE. Where the two structural signals decide the
+    root between them the arm is never read and the provenance is `not-needed`. Checking
+    for an absent arm BEFORE that branch reports a degradation that did not occur.
+
+    THE RETURN IS A PAIR, because disclosure is not detection: a classifier returning the
+    classification alone is right on most roots and still unusable, since no caller can
+    separate an answer resting on a corroborated arm from one resting on an
+    uncorroborated file.
+
+    Returns ``(classification, provenance)``. Classification is one of ``route1``,
+    ``route2``, ``INCONSISTENT``, ``UNDECIDED``, ``ARM_REVERTED``, ``ARM_DISAGREEMENT``,
+    ``DEGRADED_NO_ARM``, ``OUT_OF_POPULATION``; provenance is one of ``not-needed``,
+    ``absent``, ``supplied``, ``on-disk-UNCORROBORATED``, ``corroborated``,
+    ``supplied-vs-on-disk-DISAGREE``. This function READS ONLY: it moves nothing,
+    writes nothing, and raises only on an unrecognized `arm` value.
+    """
+    root = Path(root)
+    supplied = _normalize_arm(arm)
+
+    # POPULATION GATE -- exactly the two-store subset `resolve_experiment_tree` warns on.
+    if [n for n in ROOT_TREE_NAMES if (root / n).exists()] != [
+        EXPERIMENT_TREE_NAME,
+        REGULAR_TREE_NAME,
+    ]:
+        return ("OUT_OF_POPULATION", "not-needed")
+
+    has_members = (root / "members").is_dir()
+    member_nodes = _member_node_count(root / EXPERIMENT_TREE_NAME)
+
+    # THE ARM-NOT-NEEDED BRANCH IS FIRST, and its position is the whole of its content.
+    if not has_members:
+        if member_nodes > 1:
+            return ("INCONSISTENT", "not-needed")
+        return ("route1", "not-needed")
+
+    on_disk = arm_from_config_dir(root)
+    if supplied is None and on_disk is None:
+        return ("DEGRADED_NO_ARM", "absent")
+    if supplied is None:
+        effective, provenance = on_disk, "on-disk-UNCORROBORATED"
+    elif on_disk is None:
+        effective, provenance = supplied, "supplied"
+    elif supplied != on_disk:
+        return ("ARM_DISAGREEMENT", "supplied-vs-on-disk-DISAGREE")
+    else:
+        effective, provenance = supplied, "corroborated"
+
+    if effective is False:
+        # The container is a SENSITIVITY artifact; a regular arm beside it is reversion.
+        return ("ARM_REVERTED", provenance)
+    if member_nodes > 1:
+        return ("route2", provenance)
+    return ("UNDECIDED", provenance)
 
 
 class BatchJobSubmissionError(Exception):
@@ -1041,56 +1266,56 @@ def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
         # Machine name
         match = re.search(r"Machine\s*:\s*(.+)", content)
         if match:
-            result["machine"] = match.group(1).strip()  # type: ignore
+            result["machine"] = match.group(1).strip()
 
         # CPU model
         match = re.search(r"^CPU\s*:\s*(.+)$", content, re.M)
         if match:
-            result["cpu"] = match.group(1).strip()  # type: ignore
+            result["cpu"] = match.group(1).strip()
 
         match = re.search(r"^GPU\s*:\s*(.+)$", content, re.M)
         if match:
-            result["gpu"] = match.group(1).strip()  # type: ignore
+            result["gpu"] = match.group(1).strip()
 
         # nTasks
         match = re.search(r"nTasks\s*:\s*(\d+)", content)
         if match:
-            result["nTasks"] = int(match.group(1))  # type: ignore
+            result["nTasks"] = int(match.group(1))
 
         # OMP threads per task
         match = re.search(r"OMP threads per task\s*:\s*(\d+)", content)
         if match:
-            result["omp_threads_per_task"] = int(match.group(1))  # type: ignore
+            result["omp_threads_per_task"] = int(match.group(1))
 
         # GPUs per task (handle "0 (CPU-only)" case)
         match = re.search(r"GPUs per task\s*:\s*(\d+)", content)
         if match:
-            result["gpus_per_task"] = int(match.group(1))  # type: ignore
+            result["gpus_per_task"] = int(match.group(1))
 
         # GPU backend
         match = re.search(r"GPU backend\s*:\s*(\S+)", content)
         if match:
-            result["gpu_backend"] = match.group(1).strip()  # type: ignore
+            result["gpu_backend"] = match.group(1).strip()
 
         # Total GPUs
         match = re.search(r"Total GPUs\s*:\s*(\d+)", content)
         if match:
-            result["total_gpus"] = int(match.group(1))  # type: ignore
+            result["total_gpus"] = int(match.group(1))
 
         # TRITON git version
         match = re.search(r"TRITON_GIT_VERSION\s*:\s*(.+)", content)
         if match:
-            result["triton_git_version"] = match.group(1).strip()  # type: ignore
+            result["triton_git_version"] = match.group(1).strip()
 
         # Build type
         match = re.search(r"Build type\s*:\s*(.+)", content)
         if match:
-            result["build_type"] = match.group(1).strip()  # type: ignore
+            result["build_type"] = match.group(1).strip()
 
         # Wall time
         match = re.search(r"TRITON total wall time \[s\]\s*:\s*([\d.]+)", content)
         if match:
-            result["wall_time_s"] = float(match.group(1))  # type: ignore
+            result["wall_time_s"] = float(match.group(1))
 
         return result
 
@@ -1141,7 +1366,7 @@ def return_dic_zarr_encodings(
     )
 
     # Handle data variables
-    for var in ds.data_vars:  # type: ignore
+    for var in ds.data_vars:
         dtype_kind = ds[var].dtype.kind
         if dtype_kind in {"i", "u", "f"}:  # int / unsigned int / float
             enc = {"compressors": compressor}
@@ -1166,12 +1391,12 @@ def return_dic_zarr_encodings(
         # Optionally handle other types if needed
 
     # Handle coordinate encoding
-    for coord in ds.coords:  # type: ignore
-        dtype_kind = ds[coord].dtype.kind  # type: ignore
+    for coord in ds.coords:
+        dtype_kind = ds[coord].dtype.kind
         if dtype_kind == "U":  # Unicode string coordinates
             max_len_arr = ds[coord].str.len().max()
             max_len = int(max_len_arr.compute() if hasattr(max_len_arr.data, "compute") else max_len_arr.values)
-            encoding[coord] = {"dtype": f"<U{max_len}"}  # type: ignore
+            encoding[coord] = {"dtype": f"<U{max_len}"}
 
     return encoding
 
@@ -1656,3 +1881,154 @@ def convert_datetime_to_str(obj: Any) -> Any:
         return {convert_datetime_to_str(v) for v in obj}
 
     return obj
+
+
+def sidecar_for(figure: Path) -> Path:
+    """The manifest sidecar `_figure_emission._emit_manifest_sidecar` writes for `figure`.
+
+    STEM-based, matching the single writer exactly: `foo.png` -> `foo.manifest.json`,
+    never `foo.png.manifest.json`. The suffix-appending form this replaces produced a
+    path the writer never creates, so every figure deletion silently orphaned its
+    sidecar. Keep this the only place the forward derivation is spelled.
+    """
+    return figure.parent / f"{figure.stem}.manifest.json"
+
+
+def figure_exists_for(sidecar: Path) -> bool:
+    """True when some non-sidecar file shares `sidecar`'s stem in its directory.
+
+    The extension is unknown at this end (both `.png` and `.html` figures are emitted),
+    so the probe is a glob -- and the sidecar-exclusion is load-bearing rather than
+    tidy: `stem + ".*"` matches the sidecar itself, so without the filter this returns
+    True unconditionally and the guards that consume it can never fire.
+    """
+    stem = sidecar.name.removesuffix(".manifest.json")
+    return any(p for p in sidecar.parent.glob(stem + ".*") if not p.name.endswith(".manifest.json"))
+
+
+def select_regenerable_figures(
+    analysis_dir,
+    root,
+    *,
+    keep: "Callable[[Path], bool] | None" = None,
+    on_select: "Callable[[Path], None] | None" = None,
+) -> "list[Path]":
+    """Select regenerable figures under `root`, sparing unregenerable subtrees.
+
+    THE ONE PLACE THIS CODEBASE DECIDES WHICH FIGURES MAY BE DELETED, and the only
+    place the figure/sidecar pairing is spelled. It DELETES NOTHING: it returns the
+    deletion target list (each eligible figure, followed by its sidecar when one
+    exists), and the caller hands that list to ``du_sentinels.delete_and_account``,
+    which removes the paths and performs the single sentinel write. There is no
+    ``dry_run`` parameter because selection has no side effect -- a selector that
+    returned an empty list on a dry run would be lying about what is eligible -- so
+    the dry-run gate lives at each call site, in one expression per site.
+
+    Three callers route through it:
+    Analysis._invalidate_downstream_flags' reprocess pre-delete, workflow.py's
+    force-rerun render floor, and bundle/_emit.py's undeclared-figure prune. Before
+    this helper the eda exemption was present at two of those three and absent at the
+    third, which destroyed user-authored EDA plots on the default reprocess path.
+    Adding a fourth deletion path means calling this, not copying the walk.
+
+    WHAT IS SPARED, and why the key is analysis-dir-relative. Every path under
+    `root` is tested against constants.UNREGENERABLE_ANALYSIS_SUBTREES as a path
+    RELATIVE TO analysis_dir, not to `root`. That is what lets one registry name
+    both `plots/eda` and `eda_local`, which sit at different depths: a caller
+    sweeping `{analysis_dir}/plots` can only ever match the first, and a caller
+    sweeping the analysis root matches both. The subset each caller sees therefore
+    follows from its sweep root and is not a per-caller skip list anyone maintains.
+
+    THE ROOTING PRECONDITION IS THE GUARANTEE, AND IT IS SUFFICIENT ON ITS OWN.
+    The registry key is only computable when `root` is `analysis_dir` or lies under
+    it; on any other pair no entry could ever match and this function would delete
+    everything it walks -- fail-open, in the fix for a fail-open defect. So a
+    non-ancestor pair RAISES rather than being absorbed: it is a caller error, it is
+    a property of the two arguments alone, and it is checkable once.
+
+    NO PER-PATH FALLBACK IS NEEDED, and this paragraph exists so the next author
+    does not add one back. `Path.relative_to` compares path COMPONENTS and never
+    resolves a symlink, and `rglob` yields every result by prefixing `root` -- so if
+    `root` is lexically under `analysis_dir`, every yielded path is too, and a
+    symlink under `root` pointing outside the tree is yielded as the LINK's path,
+    not its target's. Measured: with a file symlink and a directory symlink placed
+    under plots/ and pointing outside the analysis dir, `relative_to` raised on
+    nothing and rglob did not descend through the directory link. A fail-closed
+    `except ValueError: continue` here would be unreachable -- and worse than
+    unreachable if the precondition were ever deleted, because it would convert a
+    loud fail-open into a SILENT no-op: zero deletions, zero bytes, no exception,
+    and on the preserved-flag arm the plot rules would simply stop re-firing.
+
+    THE DRY-RUN GATE IS THE CALLER'S. The cost of suppressing the deletion is that a
+    previewed DAG under-reports the plot rules a real run would fire, because on the
+    preserved-flag arm an absent output is the only remaining re-fire trigger. Which
+    way that trade falls is governed by the `reprocess dry_run performs no destructive
+    mutation` stipulation and is under re-verification; this function takes no
+    position on it and each call site carries the decision in one expression.
+
+    ORPHAN SIDECARS SURVIVE. A `.manifest.json` is skipped at the top of the walk and
+    is selected only as the pair of a figure selected in the same iteration, so a
+    sidecar whose figure is already gone is reached by neither branch. The PAIRING is
+    `sidecar_for`, which is stem-based and therefore matches what the single writer
+    actually emits; the suffix-appending form this replaced named a path that never
+    existed, so every figure deletion silently orphaned its sidecar.
+
+    Parameters
+    ----------
+    analysis_dir : Path
+        Root the registry entries are relative to. Must be `root` or an ancestor of
+        it; anything else raises.
+    root : Path
+        Directory walked. Absent root is not an error; the helper returns an empty
+        list.
+    keep : callable, optional
+        Extra per-path eligibility test. Returning True spares the path. Used by
+        bundle/_emit.py to spare figures the Snakefile still declares; the other two
+        callers pass nothing.
+    on_select : callable, optional
+        Invoked with each eligible FIGURE path (never a sidecar) as it is selected.
+        Used for per-figure logging and for the bundle prune's `removed` list; never
+        for side effects the deletion depends on.
+
+    Returns
+    -------
+    list[Path]
+        The deletion targets, in walk order: each eligible figure followed by its
+        sidecar when one exists. Hand this to
+        ``du_sentinels.delete_and_account(targets, scope_dir=..., scope=...)``, which
+        deletes, measures what it deleted, and performs the single sentinel write.
+
+    Raises
+    ------
+    ValueError
+        When `root` is neither `analysis_dir` nor a descendant of it.
+    """
+    from hhemt.constants import UNREGENERABLE_ANALYSIS_SUBTREES
+
+    analysis_dir = Path(analysis_dir)
+    root = Path(root)
+    if not (root == analysis_dir or root.is_relative_to(analysis_dir)):
+        raise ValueError(
+            f"select_regenerable_figures: root {root} is not under analysis_dir "
+            f"{analysis_dir}, so no UNREGENERABLE_ANALYSIS_SUBTREES entry could "
+            f"match and every walked path would be eligible for deletion. This is a "
+            f"caller error, not a tree state."
+        )
+    if not root.exists():
+        return []
+    targets: list[Path] = []
+    for path in sorted(root.rglob("*")):
+        if path.is_dir() or path.name.endswith(".manifest.json"):
+            continue
+        rel = path.relative_to(analysis_dir).as_posix()
+        if any(rel == p or rel.startswith(p + "/") for p in UNREGENERABLE_ANALYSIS_SUBTREES):
+            continue
+        if keep is not None and keep(path):
+            continue
+        if on_select is not None:
+            on_select(path)
+        sidecar = sidecar_for(path)
+        targets.append(path)
+        if sidecar.exists():
+            targets.append(sidecar)
+    return targets

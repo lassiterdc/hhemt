@@ -671,3 +671,276 @@ def test_report_restamp_skipped_on_regenerate(tmp_path, monkeypatch):
     inst._invalidate_downstream_flags("consolidate", regenerate_existing=False, dry_run=False)
     # Same rule on the default path: ONE accounting call (report+plots), never a restamp.
     assert tool_mock.call_count == 2, "exactly one further accounting call on the regenerate_existing=False path"
+
+
+def test_select_regenerable_figures_raises_on_a_non_ancestor_rooting(tmp_path):
+    """The precondition. A mismatched pair makes every registry entry unreachable.
+
+    Without this the helper fails OPEN: no entry can match a key it cannot compute,
+    so every walked path becomes eligible and the one function whose purpose is
+    sparing stops sparing. Measured before this guard existed: the eda figure did
+    not survive.
+    """
+    import pytest
+
+    from hhemt.utils import select_regenerable_figures
+
+    analysis_dir = tmp_path / "a"
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "plots" / "eda").mkdir(parents=True)
+    authored = elsewhere / "plots" / "eda" / "authored.html"
+    authored.write_text("authored")
+    analysis_dir.mkdir()
+
+    with pytest.raises(ValueError, match="not under analysis_dir"):
+        select_regenerable_figures(analysis_dir, elsewhere / "plots")
+
+    # Belt-and-braces under S1 rather than the discriminating clause: the selector
+    # deletes nothing, so this holds however the guard behaves. The RAISE above is
+    # what discriminates, and it is what fails if the precondition is ever removed.
+    assert authored.exists()
+
+
+def test_select_regenerable_figures_spares_a_path_whose_key_is_uncomputable(tmp_path):
+    """The residual branch: a symlink under root resolving outside analysis_dir.
+
+    The precondition cannot see this -- root IS under analysis_dir -- so the per-path
+    guard is what keeps the guarantee available. It spares rather than raising, so a
+    half-finished sweep is never left indeterminate.
+    """
+    from hhemt.utils import select_regenerable_figures
+
+    analysis_dir = tmp_path / "a"
+    outside = tmp_path / "outside"
+    outside.mkdir(parents=True)
+    (analysis_dir / "plots").mkdir(parents=True)
+    external = outside / "external.html"
+    external.write_text("external")
+    link = analysis_dir / "plots" / "linked.html"
+    link.symlink_to(external)
+    pipeline = analysis_dir / "plots" / "cost_error.html"
+    pipeline.write_text("pipeline")
+
+    targets = select_regenerable_figures(analysis_dir, analysis_dir / "plots")
+
+    # Under S1 the subject is SELECTION, not deletion: the walk yields the LINK's own
+    # path, never its target, so a file outside the analysis dir can never enter the
+    # target list that `delete_and_account` is handed.
+    assert external not in targets, "a path outside the analysis dir must never be selected"
+    assert pipeline in targets, "an ordinary regenerable figure must still be selected"
+
+
+def test_figure_deletion_under_plots_is_pinned_to_the_shared_helper():
+    """A REGRESSION PIN over walks that name a plots directory. NOT a class closure.
+
+    What it delivers: any `glob`/`rglob` walk whose iterable mentions `plots` -- as a
+    literal, an attribute, a bare name, or a local alias bound to such an expression
+    -- with `unlink`, `fast_rmtree` or `rmtree` in its body, in any module but
+    utils.py. Measured against six hand-written evasions of an earlier name-based
+    form: all six are caught, and the four non-deleting `plots_dir` walks in this
+    package are not.
+
+    What it does NOT deliver, stated because a docstring claiming class closure is
+    false however good the predicate is. Closing the class means catching any FIGURE
+    deletion, which requires distinguishing figure deletions from the many legitimate
+    deletions in this package -- status flags, reports, zarr stores, chapter sets. No
+    on-disk property discriminates regenerable from unregenerable; the only
+    discriminator is the DIRECTORY, which is what UNREGENERABLE_ANALYSIS_SUBTREES
+    encodes. A checker strong enough to close the class would re-implement the
+    registry and would then be checking itself. So a walk over a directory named by a
+    different literal, or computed from config, escapes this by construction.
+    """
+    import ast
+    import pathlib
+
+    import hhemt
+
+    deleters = ("unlink", "fast_rmtree", "rmtree")
+
+    def mentions_plots(node, aliases):
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Constant) and isinstance(sub.value, str) and "plots" in sub.value:
+                return True
+            if isinstance(sub, ast.Name) and ("plots" in sub.id or sub.id in aliases):
+                return True
+            if isinstance(sub, ast.Attribute) and "plots" in sub.attr:
+                return True
+        return False
+
+    def is_walk(node):
+        return any(
+            isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr in ("glob", "rglob")
+            for sub in ast.walk(node)
+        )
+
+    def deletes(nodes):
+        for n in nodes:
+            for sub in ast.walk(n):
+                if isinstance(sub, ast.Call):
+                    fn = sub.func
+                    if isinstance(fn, ast.Attribute) and fn.attr in deleters:
+                        return True
+                    if isinstance(fn, ast.Name) and fn.id in deleters:
+                        return True
+        return False
+
+    src = pathlib.Path(hhemt.__file__).parent
+    offenders = []
+    for py in sorted(src.rglob("*.py")):
+        if py.name == "utils.py":
+            continue
+        tree = ast.parse(py.read_text())
+        scopes = [n for n in ast.walk(tree) if isinstance(n, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef))]
+        for scope in scopes:
+            aliases = {
+                t.id
+                for stmt in ast.walk(scope)
+                if isinstance(stmt, ast.Assign) and mentions_plots(stmt.value, set())
+                for t in stmt.targets
+                if isinstance(t, ast.Name)
+            }
+            for node in ast.walk(scope):
+                if isinstance(node, (ast.For, ast.AsyncFor)):
+                    if is_walk(node.iter) and mentions_plots(node.iter, aliases) and deletes(node.body):
+                        offenders.append(f"{py.relative_to(src)}:{node.lineno}")
+                if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+                    gens = [g.iter for g in node.generators]
+                    if (
+                        any(is_walk(g) for g in gens)
+                        and any(mentions_plots(g, aliases) for g in gens)
+                        and deletes([node])
+                    ):
+                        offenders.append(f"{py.relative_to(src)}:{node.lineno}")
+    assert sorted(set(offenders)) == [], (
+        "figure deletion under plots/ must route through utils.select_regenerable_figures; "
+        f"these walk a plots dir and delete inside it: {sorted(set(offenders))}"
+    )
+
+
+def _seed_reprocess_figure_tree(tmp_path):
+    """Seed the minimum tree that separates every wrong resolution of the W1 figure hunk.
+
+    (e) W1 / D131 -- the dry-run figure guard at the reprocess deletion site. This helper
+    and the two nodes below are that section; the file's usual column-0 banner comment is
+    deliberately absent because this block is quoted verbatim into a planning scratch whose
+    porter treats a column-0 ``#`` as a heading and truncates there.
+
+    One unregenerable figure, one regenerable figure, a manifest sidecar for each, and the
+    report shell. Sidecar names are STEM-based because ``utils.sidecar_for`` is (``f.png``
+    -> ``f.manifest.json``); a suffix-appended name would be a file the writer never
+    creates and the sidecar assertions below would pass vacuously.
+    """
+    (tmp_path / "_status").mkdir()
+    (tmp_path / "plots" / "eda").mkdir(parents=True)
+    paths = SimpleNamespace(
+        eda_figure=tmp_path / "plots" / "eda" / "authored.html",
+        eda_sidecar=tmp_path / "plots" / "eda" / "authored.manifest.json",
+        regenerable_figure=tmp_path / "plots" / "flood_depth.png",
+        regenerable_sidecar=tmp_path / "plots" / "flood_depth.manifest.json",
+        report_shell=tmp_path / "analysis_report.html",
+        report_zip=tmp_path / "analysis_report.zip",
+    )
+    for p in vars(paths).values():
+        p.write_text("x", encoding="utf-8")
+    return paths
+
+
+def _drive_reprocess_invalidator(tmp_path, start_with, *, dry_run):
+    """Drive the real ``_invalidate_downstream_flags`` on a duck-typed stand-in.
+
+    No fixture, no cached tree, no compile and no solver: the site's whole dependency chain
+    is a filesystem walk (``utils.select_regenerable_figures`` imports one constant tuple
+    and ``rglob``s), so the compile-free stand-in this module already uses reaches it
+    unchanged.
+
+    THE TWO ARMS THAT REACH THE CLOSURE ARE ``process`` AND ``consolidate`` -- NOT
+    ``render``. ``_delete_report_and_plot_artifacts`` is called at the tail of the
+    ``process`` arm and at the tail of the ``consolidate`` arm. The ``render`` arm never
+    calls it: it deletes the report shell through its own inline call and leaves plots in
+    place deliberately ("the surgical report-shell-only path"). A parametrize that reached
+    for ``render`` would be asserting a different site's contract and would pass
+    regardless of what this site does.
+    """
+    from hhemt.analysis import TRITONSWMM_analysis
+
+    paths = _seed_reprocess_figure_tree(tmp_path)
+    inst = object.__new__(TRITONSWMM_analysis)
+    inst.analysis_paths = SimpleNamespace(
+        analysis_dir=tmp_path,
+        analysis_datatree_zarr=None,  # no zarr -> the destructive delete is a no-op
+    )
+    inst._invalidate_downstream_flags(start_with, regenerate_existing=False, dry_run=dry_run)
+    return paths
+
+
+_REPROCESS_ARMS_REACHING_THE_FIGURE_SITE = ("process", "consolidate")  # see _drive_reprocess_invalidator
+
+
+@pytest.mark.parametrize("start_with", _REPROCESS_ARMS_REACHING_THE_FIGURE_SITE)
+def test_a_dry_run_reprocess_spares_every_figure_and_still_drops_the_report_shell(tmp_path, start_with):
+    """D131: on a dry run at this site ALL figures survive -- and the report shell does not.
+
+    THE RULING THIS PINS. The developer ruled the broad reading: "On a dry run, i think
+    plots should survive." So the dry-run arm spares ``plots/eda/`` AND the regenerable
+    figures alongside it. The narrower reading -- spare only the unregenerable subtrees and
+    delete regenerable figures as the Snakemake mtime trigger -- was put to the developer
+    and DECLINED, and the second assertion below is the only thing in this module that can
+    fail on it.
+
+    WHY THE REPORT-SHELL ASSERTION IS HERE AND MUST NOT BE READ AS OVER-CAUTION. The ruling
+    protects figures and says nothing about the report shell, whose unlink is the mtime
+    trigger the preview exists to produce. An implementation that "fixed" the dry-run path
+    by guarding the whole block satisfies every figure assertion in this module and
+    silently destroys the preview. Measured across the candidate resolutions: that
+    guard-everything shape fails THIS assertion and no other.
+    """
+    paths = _drive_reprocess_invalidator(tmp_path, start_with, dry_run=True)
+
+    assert paths.eda_figure.exists(), (
+        "a dry run deleted an authored plots/eda/ figure -- nothing regenerates that family, and D131 spares it"
+    )
+    assert paths.regenerable_figure.exists(), (
+        "a dry run deleted a REGENERABLE figure under plots/ -- D131 is the broad reading "
+        "and spares every figure, not only the unregenerable subtrees"
+    )
+    assert not paths.report_shell.exists(), (
+        "a dry run left the report shell in place -- the shell unlink is the sanctioned "
+        "mtime trigger that makes the preview meaningful, and guarding it is an "
+        "over-correction the figure assertions above cannot see"
+    )
+
+
+@pytest.mark.parametrize("start_with", _REPROCESS_ARMS_REACHING_THE_FIGURE_SITE)
+def test_a_real_run_reprocess_deletes_regenerable_figures_with_their_sidecars_and_spares_eda(tmp_path, start_with):
+    """The satisfying arm: the deletion still deletes, and the exemption is still narrow.
+
+    WITHOUT THIS NODE the dry-run node above passes against a site that deletes nothing at
+    all, and against one that spares figures on BOTH arms -- the literal over-read of the
+    ruling's four words, which would stop the render stage re-firing forever.
+
+    SIDECARS ARE PART OF THE PROPERTY, NOT A DETAIL. ``select_regenerable_figures`` appends
+    ``sidecar_for(figure)`` per selected figure precisely because the suffix-appending form
+    it replaced "produced a path the writer never creates, so every figure deletion
+    silently orphaned its sidecar". A figure deleted beside a surviving sidecar, and a
+    figure spared beside a deleted sidecar, are both half-states; the two sidecar
+    assertions below are the only ones that can fail on either.
+    """
+    paths = _drive_reprocess_invalidator(tmp_path, start_with, dry_run=False)
+
+    assert not paths.regenerable_figure.exists(), (
+        "a real run left a regenerable figure in place -- the deletion is what re-fires the "
+        "plot rules under --rerun-triggers mtime, and sparing it on both arms disables the "
+        "re-render this site exists to trigger"
+    )
+    assert not paths.regenerable_sidecar.exists(), (
+        "a regenerable figure was deleted and its manifest sidecar was orphaned -- "
+        "select_regenerable_figures appends sidecar_for(figure) for exactly this reason"
+    )
+    assert paths.eda_figure.exists(), (
+        "a real run deleted an authored plots/eda/ figure -- the unregenerable-subtree skip "
+        "is the half of W1's fix that is not about dry runs"
+    )
+    assert paths.eda_sidecar.exists(), (
+        "a real run deleted a plots/eda/ figure's sidecar while sparing the figure -- the "
+        "exemption must cover the pair or the surviving figure loses its provenance"
+    )

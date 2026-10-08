@@ -164,8 +164,8 @@ class SWMMRunoffModeler:
             s_rain = df_allrain[gage]
             df_rain = pd.DataFrame(
                 dict(
-                    date=df_allrain.index.strftime("%m/%d/%Y"),  # type: ignore
-                    time=df_allrain.index.time,  # type: ignore
+                    date=df_allrain.index.strftime("%m/%d/%Y"),
+                    time=df_allrain.index.time,
                     rain=s_rain,
                 )
             )
@@ -204,8 +204,8 @@ class SWMMRunoffModeler:
         # create data frame with proper formatting to be read in SWMM
         df_wlevel = pd.DataFrame(
             dict(
-                date=s_wlevel.index.strftime("%m/%d/%Y"),  # type: ignore
-                time=s_wlevel.index.time,  # type: ignore
+                date=s_wlevel.index.strftime("%m/%d/%Y"),
+                time=s_wlevel.index.time,
                 water_level_m=s_wlevel,
             )
         )
@@ -373,7 +373,7 @@ class SWMMRunoffModeler:
         d_node_gridcell: dict = {}
         lst_nodes_with_inflow = []
         with Output(hydro_outfile) as out:
-            flow_units = out.units["flow"]  # type: ignore
+            flow_units = out.units["flow"]
             inflow_first_line = f"%Runoff for sim {sim_id_str}\n"
             inflow_second_line = f"%Time(hr) Discharge ({flow_units})\n"
             need_to_create_time_series = True
@@ -382,19 +382,15 @@ class SWMMRunoffModeler:
                 d_flows = {}
                 for key in keys:
                     if key not in lst_outfalls:
-                        d_inflow = pd.Series(
-                            out.node_series(key, NodeAttribute.TOTAL_INFLOW)  # type: ignore
-                        )
+                        d_inflow = pd.Series(out.node_series(key, NodeAttribute.TOTAL_INFLOW))
                         if need_to_create_time_series:  # create first column with time in hours
                             # .dt.seconds wraps on a >= 24 h gap; use total_seconds().
-                            tseries = (
-                                pd.Series(d_inflow.index).diff().dt.total_seconds() / 60 / 60  # type: ignore
-                            )
+                            tseries = pd.Series(d_inflow.index).diff().dt.total_seconds() / 60 / 60
                             tseries.iloc[0] = 0
                             d_time_series["time_hr"] = tseries.cumsum().values
                             need_to_create_time_series = False
                         # create dataframe with the flow of all nodes within the gridcell
-                        if d_inflow.sum() > 0:  # type: ignore
+                        if d_inflow.sum() > 0:
                             lst_nodes_with_inflow.append(key)
                             d_flows[key] = d_inflow.values
                             # PER-NODE capture, taken here rather than downstream, and the

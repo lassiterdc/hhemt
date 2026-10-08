@@ -727,7 +727,7 @@ class TRITONSWMM_run:
         df_cfgs["file_line_length"] = -1
         for step, cfg in df_cfgs.iloc[::-1].iterrows():
             file_as_list = read_text_file_as_list_of_strings(cfg["f_cfg"])
-            df_cfgs.loc[step, "file_line_length"] = len(file_as_list)  # type: ignore
+            df_cfgs.loc[step, "file_line_length"] = len(file_as_list)
 
         typical_length = df_cfgs["file_line_length"][df_cfgs["file_line_length"] > 0].mode().iloc[0]
         latest_complete = df_cfgs[df_cfgs["file_line_length"] == typical_length]
@@ -1003,9 +1003,9 @@ class TRITONSWMM_run:
             exe_in_sif = cspec.exe_in_sif.get(model_type) or f"/opt/hhemt/bin/{_DEFAULT_EXE_NAME[model_type]}"
             # Per-arch SIF resolution (multi-SIF cross-hardware, Option A): resolve THIS
             # row's arch (gpu_hardware) from its (member) partition and pick the
-            # matching SIF; fall back to sif_path when no map entry (single-SIF/CPU,
-            # byte-identical to before). Key is gpu_hardware ("a100"/"a6000") — the same
-            # namespace resolve_gpu_target[0] returns and sif_paths_by_arch is keyed on.
+            # matching image by resolving its identity under container.sif_root — there
+            # is no pointer map and no fallback. Key is gpu_hardware ("a100"/"a6000") —
+            # the same namespace resolve_gpu_target[0] returns.
             from hhemt.config.hpc_system import resolve_gpu_target
 
             _row_hw, _ = resolve_gpu_target(

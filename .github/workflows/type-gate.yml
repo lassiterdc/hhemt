@@ -1,0 +1,59 @@
+name: Type gate (certified stack)
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  type-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        # -l is load-bearing: conda's shell hook runs only in a login shell, and
+        # without it `activate-environment` does not reach subsequent `run:` steps
+        # and $CONDA_PREFIX is empty. Lifted from compile-tests.yml, not guessed.
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provision the certified conda env
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: hhemt
+          environment-file: environment.yaml
+          auto-activate-base: false
+
+      - name: Install the SWMM stack (--no-deps)
+        # REQUIRED, not optional. environment.yaml deliberately excludes swmmio /
+        # pyswmm / swmm-toolkit from its pip: block (an invariant enforced by
+        # scripts/check_env_lock_consistency.py), so setup-miniconda alone leaves
+        # them absent. src/hhemt carries 8 unguarded module-level imports of that
+        # stack across 7 files; without this step each becomes an unresolved-import
+        # and the gate measures a different population than the committed overrides
+        # table, failing on entries the table legitimately does not cover.
+        run: pip install --no-deps "swmm-toolkit==0.15.5" "pyswmm==2.1.0" "swmmio==0.8.2"
+
+      - name: Confirm the activated prefix
+        # FIRST-LANDING PROBE. Remove once this has printed a non-empty value once.
+        # It is the observable that confirms $CONDA_PREFIX survives activation into
+        # a run: step; the whole gate's environment selection depends on it.
+        run: echo "CONDA_PREFIX=[$CONDA_PREFIX]"
+
+      - name: Type gate on the certified stack
+        env:
+          HHEMT_TY_ENV: ${{ '' }}
+        run: |
+          export HHEMT_TY_ENV="$CONDA_PREFIX"
+          # JOB-LAYER CONTRACT: the last command in this block is the thing under
+          # test. Do not append an echo, a summary, or a redirect -- the step's
+          # exit status is this gate's verdict and nothing else may carry it.
+          python scripts/generate_ty_overrides.py --check
+          python scripts/check_ty_overrides_in_force.py --gating
+          ty check --error-on-warning

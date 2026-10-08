@@ -74,22 +74,28 @@ def test_analysis_config_accepts_inline_report(tmp_path, stubbed_paths):
 
 
 def test_analysis_config_rejects_missing_report(tmp_path, stubbed_paths):
-    """R12 (rev v2): A cfg_analysis.yaml without a `report:` key raises
-    pydantic ValidationError at yaml_to_model load time. The field is
-    required-no-default; pre-F2 yaml files do not load post-F2."""
+    """R12 (rev v2): A cfg_analysis.yaml without a `report:` key does not load:
+    yaml_to_model raises ConfigurationError wrapping pydantic's ValidationError
+    (`__cause__`). The field is required-no-default; pre-F2 yaml files do not load
+    post-F2."""
     base = _minimum_valid_cfg_analysis_dict(stubbed_paths)
     # Intentionally omit `report:` from base.
     cfg_path = tmp_path / "cfg_analysis.yaml"
     cfg_path.write_text(yaml.safe_dump(base))
-    with pytest.raises(ValidationError) as excinfo:
+    from hhemt.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError) as excinfo:
         yaml_to_model(cfg_path, analysis_config)
-    missing = {e["loc"][0] for e in excinfo.value.errors() if e["type"] == "missing"}
+    assert excinfo.value.config_path == cfg_path
+    cause = excinfo.value.__cause__
+    assert isinstance(cause, ValidationError)
+    missing = {e["loc"][0] for e in cause.errors() if e["type"] == "missing"}
     assert "report" in missing
 
 
 def test_analysis_config_rejects_unknown_report_subkey(tmp_path, stubbed_paths):
     """extra='forbid' on cfgBaseModel propagates into the nested report
-    model — unknown keys raise ValidationError."""
+    model: unknown keys do not load (ConfigurationError wrapping pydantic's error)."""
     base = _minimum_valid_cfg_analysis_dict(stubbed_paths)
     base["report"] = {
         "interactive": {"static_backend": "plotly"},
@@ -97,7 +103,9 @@ def test_analysis_config_rejects_unknown_report_subkey(tmp_path, stubbed_paths):
     }
     cfg_path = tmp_path / "cfg_analysis.yaml"
     cfg_path.write_text(yaml.safe_dump(base))
-    with pytest.raises(ValidationError) as excinfo:
+    from hhemt.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError) as excinfo:
         yaml_to_model(cfg_path, analysis_config)
     # Discriminate, rather than accept ANY ValidationError: a bare `raises` over this
     # hand-enumerated dict is satisfied by any unrelated failure -- measured 2026-09-12,
@@ -116,5 +124,5 @@ def test_analysis_config_rejects_unknown_report_subkey(tmp_path, stubbed_paths):
     # ACCEPTS, so `report_config` could stop forbidding while a grandchild still forbids and
     # this assertion would still pass. Unreachable without editing this test's own literal
     # payload (nothing parametrizes it), which is why it is disclosed rather than closed.
-    forbidden = {e["loc"] for e in excinfo.value.errors() if e["type"] == "extra_forbidden"}
+    forbidden = {e["loc"] for e in excinfo.value.__cause__.errors() if e["type"] == "extra_forbidden"}
     assert any(loc[0] == "report" and loc[-1] == "bogus_key" for loc in forbidden)

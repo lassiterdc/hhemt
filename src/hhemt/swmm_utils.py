@@ -50,7 +50,7 @@ def create_swmm_inp_from_template(
 
     # Calculate timestep interval
     tstep_seconds = (
-        ds_event_ts[weather_time_series_timestep_dimension_name].to_series().diff().mode().iloc[0].total_seconds()  # type:ignore
+        ds_event_ts[weather_time_series_timestep_dimension_name].to_series().diff().mode().iloc[0].total_seconds()
     )
     interval = scenario.seconds_to_hhmmss(tstep_seconds)
 

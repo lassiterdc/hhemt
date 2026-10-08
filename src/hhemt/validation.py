@@ -2014,6 +2014,75 @@ def _validate_resume_interruption_schedule(cfg: analysis_config, result: Validat
         )
 
 
+# TEMPORARY REFUSAL, forward half of a bidirectional marker pair. Remove this helper and
+# its preflight_validate call when the NetCDF converting tail lands at or below
+# process_simulation._streaming_chunked_zarr_write. The removal condition is stated as a
+# CODE SITE rather than as a ticket id deliberately: the party that removes this edits
+# that function and reads that function, and has no reason to open this file. The back
+# half is a comment inside _streaming_chunked_zarr_write's docstring naming this helper
+# by symbol; neither half is locatable alone.
+def _validate_gridded_output_type(
+    cfg_system: system_config,
+    cfg_analysis: analysis_config,
+    result: ValidationResult,
+) -> None:
+    """Refuse ``target_processed_output_type='nc'`` while a gridded TRITON model is on.
+
+    CONDITIONAL, never a narrowing of the field's ``Literal`` to ``['zarr']``. The field
+    is ONE global value governing every artifact class, and ``nc`` is implemented and
+    correct on the classes that route through ``process_simulation._write_output`` -- the
+    per-scenario summaries and the SWMM node/link timeseries. Narrowing the vocabulary
+    would withdraw a working capability in order to fix a broken one.
+
+    The predicate spans TWO config models, so it cannot be a pydantic validator on either
+    of them: the value is an ``analysis_config`` field and the toggles are
+    ``system_config`` fields. ``preflight_validate`` is the surface that holds both, and
+    the in-file precedent is ``_validate_per_member_system_configs`` and
+    ``_validate_selected_event_forcing_extent``, both re-parented there for that reason.
+
+    Deliberately at PREFLIGHT rather than at config LOAD. A load-time refusal would make
+    an analysis that already carries ``nc`` artifacts unloadable, and
+    ``summary_paths.scenario_summaries_present`` -- the remaining detector for that
+    population, since no future run regenerates it -- is reached only from read-side
+    paths that never call ``preflight_validate``. Refusing at load would remove the
+    detector along with the defect.
+    """
+    if cfg_analysis.target_processed_output_type != "nc":
+        return
+    if not (cfg_system.toggle_triton_model or cfg_system.toggle_tritonswmm_model):
+        return
+    enabled = ", ".join(
+        name
+        for name, on in (
+            ("toggle_triton_model", cfg_system.toggle_triton_model),
+            ("toggle_tritonswmm_model", cfg_system.toggle_tritonswmm_model),
+        )
+        if on
+    )
+    result.add_error(
+        field="analysis.target_processed_output_type",
+        message=(
+            "target_processed_output_type='nc' is refused while the TRITON gridded "
+            f"timeseries is enabled ({enabled}). For that artifact class the exporter "
+            "writes a zarr store to the '.nc'-named path "
+            "(process_simulation._streaming_chunked_zarr_write) and the reader then "
+            "opens it with h5netcdf, so the allocation is spent and the read raises. "
+            "'zarr' is supported for every artifact class and is the value to use here. "
+            "'nc' is NOT withdrawn in general: it is implemented and correct for the "
+            "per-scenario summaries and the SWMM node/link timeseries "
+            "(process_simulation._write_output), so a configuration that enables only "
+            "toggle_swmm_model still accepts it. TEMPORARY: this refusal is retired when "
+            "the NetCDF converting tail lands at or below "
+            "process_simulation._streaming_chunked_zarr_write."
+        ),
+        current_value="nc",
+        fix_hint=(
+            "Set target_processed_output_type='zarr', or disable toggle_triton_model and "
+            "toggle_tritonswmm_model if the gridded TRITON timeseries is not needed."
+        ),
+    )
+
+
 def preflight_validate(
     cfg_system: system_config,
     cfg_analysis: analysis_config,
@@ -2104,6 +2173,11 @@ def preflight_validate(
     # R6: a multi-resume interruption schedule is unsafe under
     # multi_sim_run_method='1_job_many_srun_tasks' (no job-end cgroup reap).
     _validate_resume_interruption_schedule(cfg_analysis, result)
+
+    # 'nc' is refused while a gridded TRITON model is enabled. Cross-config, so it is
+    # invoked here rather than from either model's own validator. TEMPORARY -- see
+    # _validate_gridded_output_type's own comment for the removal condition.
+    _validate_gridded_output_type(cfg_system, cfg_analysis, result)
 
     return result
 
