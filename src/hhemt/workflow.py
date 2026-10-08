@@ -8754,7 +8754,6 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         compression_level: int = 5,
         process_system_level_inputs: bool = False,
         overwrite_system_inputs: bool = False,
-        compile_TRITON_SWMM: bool = True,
         recompile_if_already_done_successfully: bool = False,
         prepare_scenarios: bool = True,
         overwrite_scenario_if_already_set_up: bool = False,
@@ -8788,8 +8787,6 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
             If True, process system-level inputs in master setup rule
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
-        compile_TRITON_SWMM : bool
-            If True, compile TRITON-SWMM in master setup rule
         recompile_if_already_done_successfully : bool
             Forwarded to the generated setup rule's ``hhemt.setup_workflow``
             invocation as ``--recompile-if-already-done``, where it has no reachable
@@ -10607,7 +10604,6 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 compression_level=compression_level,
                 process_system_level_inputs=process_system_level_inputs,
                 overwrite_system_inputs=overwrite_system_inputs,
-                compile_TRITON_SWMM=compile_TRITON_SWMM,
                 recompile_if_already_done_successfully=recompile_if_already_done_successfully,
                 prepare_scenarios=prepare_scenarios,
                 overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
@@ -10682,7 +10678,6 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 compression_level=compression_level,
                 process_system_level_inputs=process_system_level_inputs,
                 overwrite_system_inputs=overwrite_system_inputs,
-                compile_TRITON_SWMM=compile_TRITON_SWMM,
                 recompile_if_already_done_successfully=recompile_if_already_done_successfully,
                 prepare_scenarios=prepare_scenarios,
                 overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
@@ -10778,7 +10773,6 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             compression_level=compression_level,
             process_system_level_inputs=process_system_level_inputs,
             overwrite_system_inputs=overwrite_system_inputs,
-            compile_TRITON_SWMM=compile_TRITON_SWMM,
             recompile_if_already_done_successfully=recompile_if_already_done_successfully,
             prepare_scenarios=prepare_scenarios,
             overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,

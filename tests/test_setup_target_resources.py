@@ -186,7 +186,6 @@ def test_setup_target_rule_uses_dedicated_mem_field(synth_sensitivity_analysis):
     analysis.cfg_analysis.hpc_runtime_min_for_setup = 60
     sf = analysis.sensitivity._workflow_builder.generate_master_snakefile_content(
         process_system_level_inputs=True,
-        compile_TRITON_SWMM=True,
         prepare_scenarios=True,
         process_timeseries=True,
     )

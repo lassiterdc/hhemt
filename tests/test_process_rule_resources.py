@@ -25,7 +25,6 @@ import pytest
 
 _GEN_KWARGS = dict(
     process_system_level_inputs=True,
-    compile_TRITON_SWMM=True,
     prepare_scenarios=True,
     process_timeseries=True,
 )
