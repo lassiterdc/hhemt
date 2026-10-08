@@ -57,7 +57,10 @@ _SRC_ROOT = pathlib.Path(av.__file__).parent
 #: campaign has already reached this state once (`01e95a76`, before the WP-1C repair).
 _SHA_UNREGISTERED = "deadbeefcafef00ddeadbeefcafef00ddeadbeef"
 #: The sha the synthetic tier actually builds, per `tests/fixtures/_triton_source_cache.py`.
-_SHA_CURRENT_PIN = "e53c2fa01a64583fb57bc58082245fd687882b8f"
+#: RESTATED, not imported -- and therefore carrying its own tripwire below, because the
+#: restatement's three uses keep PASSING after a pin move (the outgoing sha stays registered)
+#: while this comment's claim becomes false.
+_SHA_CURRENT_PIN = "031ea42b063ce1083e3d965597cdb44da2e748ef"
 #: A build that genuinely carries all three defects — the POSITIVE CONTROL. Without it a
 #: green on the two rows above is indistinguishable from an instrument that reports nothing.
 _SHA_PRE_FIX = "15eb18a5d25afe5da295cb4b559a62669dbe5bc3"
@@ -365,3 +368,19 @@ def test_the_three_numeric_parses_agree_over_the_solver_emitted_shape_family(tmp
     assert token_rule == expected
     assert regex_rule == expected
     assert leaf_rule == expected
+
+
+def test_the_restated_pin_is_the_live_pin():
+    """`_SHA_CURRENT_PIN` must still be the pin the synthetic tier builds.
+
+    The module-level constant is restated rather than imported, and its three uses keep
+    PASSING after a pin move -- the outgoing sha stays in `known_absent_in`, so every
+    `absent`/`known_absent_set` assertion still holds while the comment above the constant
+    becomes false. `scripts/check_live_pin_registered.py` cannot catch that: it audits the
+    REGISTRY against the live pin, not this module's restatement of it. The sibling
+    `tests/test_check_known_resume_defects.py::test_the_restated_pin_is_the_live_pin` is
+    the same mechanism for the same reason.
+    """
+    from tests.fixtures._triton_source_cache import TRITON_PIN
+
+    assert _SHA_CURRENT_PIN == TRITON_PIN

@@ -43,7 +43,7 @@ from hhemt.model_defects import REGISTRY, resolve
 #: `platformdirs` / `hhemt.utils` import weight; `scripts/check_live_pin_registered.py`
 #: is what keeps the restatement honest, and `test_the_restated_pin_is_the_live_pin`
 #: below is the local tripwire.
-_SHA_REGISTERED = "e53c2fa01a64583fb57bc58082245fd687882b8f"
+_SHA_REGISTERED = "031ea42b063ce1083e3d965597cdb44da2e748ef"
 #: In NO registry set -- the state any branch tip occupies before someone registers it.
 _SHA_UNREGISTERED = "deadbeefcafef00ddeadbeefcafef00ddeadbeef"
 #: A build that genuinely carries all three defects. THE POSITIVE CONTROL: without it a

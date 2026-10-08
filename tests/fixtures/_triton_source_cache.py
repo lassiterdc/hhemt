@@ -53,66 +53,87 @@ from hhemt._filelock_compat import resolve_filelock
 #: Never record one without the other — record TRITON_SOURCE_DESCRIPTOR.
 TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 
-#: The `solver-work/replay-precision-accounting` BRANCH TIP on the MAINTAINER FORK
-#: (github.com/lassiterdc/triton.git) — the campaign build carrying the full-precision SWMM
-#: state SNAPSHOT as a second resume mechanism, and the solver the synthetic comparison arms
-#: actually run. A plain clone of the fork does not land here (its default HEAD is `main`),
-#: so the pin is what selects it.
-#: A CROSS-REMOTE MOVE, AND UNLIKE THE PREVIOUS ONE, ANCESTRY HOLDS ACROSS IT. This branch is
-#: built ON TOP OF ORNL upstream, so the outgoing pin is an ANCESTOR of the incoming one
-#: rather than a sibling on an unrelated history. Measured 2026-09-26 in an isolated probe
-#: clone carrying both remotes, not recalled:
-#:   * `git merge-base --is-ancestor a38338b0 658a7a37` -> rc 0  (the outgoing ORNL pin)
-#:   * `git merge-base --is-ancestor 0cf5faff 658a7a37` -> rc 0  (ORNL's ghost-ring fix)
-#:   * `git merge-base --is-ancestor 3a832f7d 658a7a37` -> rc 0  (coupled-resume fix)
-#:   * `git merge-base --is-ancestor 9db367dd 658a7a37` -> rc 0  (depth-scatter fix)
-#: The is-ancestor PROHIBITION the prior comment carried was scoped to the 21e666d6 -> a38338b0
-#: move, where the two shas genuinely shared a name and not a history; it does not generalize to
-#: this move and is not restated. What DOES generalize is the underlying trap — both remotes are
-#: named `triton.git`, so a pin-only record is self-consistent while describing the wrong
-#: repository. Record TRITON_SOURCE_DESCRIPTOR, never a bare pin.
-#: WHAT THE SAFETY ARGUMENT RESTS ON, and it is BROADER than it was for the last move. The
-#: previous pin stays reachable TWO ways again: as an ancestor of the new pin (rc 0 above), and
-#: via its own `refs/pins/{sha}` anchor, which the narrowed `refs/remotes/origin/*` destination
-#: cannot prune. So the canonical's forced re-point is a fast-forward SUPERSET — the fetch only
-#: ADDS objects and no borrower can lose one. The canonical self-heals across the remote change
-#: (`ensure_canonical` re-points origin when it disagrees with TRITON_GIT_URL and forces the
-#: fetch), so no manual removal is owed.
-#: THE SUBMODULE GITLINKS ARE UNCHANGED ACROSS THIS MOVE, which is why the borrow's
+#: `main` ON THE MAINTAINER FORK (github.com/lassiterdc/triton.git), and the sha BOTH live UVA
+#: GPU benchmarking arms declare in their committed `system_config_*.yaml` -- which is what made
+#: this move owed rather than optional. A plain clone of the fork DOES land here (`main` is its
+#: default HEAD), so unlike the outgoing pin this one is what a clone gets by default; the pin is
+#: still what FREEZES it, because `main` advances.
+#: A CROSS-BRANCH MOVE, AND THE DIVERGENCE IS A RE-LANDING RATHER THAN A LOSS. The outgoing pin
+#: `e53c2fa` is NOT an ancestor of this one and this one is NOT an ancestor of it -- `is-ancestor`
+#: answers rc 1 in BOTH directions, `rev-list --count` gives 10 commits on `main` not on the
+#: branch and 46 the other way, and the merge-base is a38338b0. Read alone that says 46 commits'
+#: worth of behaviour would be lost. It is not, and the two commands that decide it are not the
+#: counts: `git diff --name-status e53c2fa 031ea42` returns M and A statuses ONLY -- ZERO D -- and
+#: the removed-non-comment-line census over `src` + `external/swmm` returns nine lines, every one
+#: an old signature or call replaced by its two-argument-wider form in the same hunk. The 46 are
+#: the AUTHORING HISTORY (wip commits, reviewer characterization tests, inventory triage passes)
+#: of work `main` re-lands as 10 squashed commits on top of a38338b0, and `main` then ADDS the two
+#: snapshot cfg keys (`swmm_snapshot_disable`, `swmm_snapshot_keep_all`) the branch does not have.
+#: WHAT THE SAFETY ARGUMENT RESTS ON. `e53c2fa` is NOT reachable as an ancestor of this pin, so the
+#: ancestor half of the prior move's argument does NOT carry across this one. What does carry is
+#: the `refs/pins/{sha}` anchor: the canonical's narrowed `refs/remotes/origin/*` fetch destination
+#: cannot prune `refs/pins/*`, and `refs/pins/e53c2fa01a64583fb57bc58082245fd687882b8f` is present
+#: in the store (measured), so a borrower that has not yet re-provisioned can still resolve it.
+#: The fetch that reaches this pin was a FAST-FORWARD of `origin/main` from a38338b0, so it only
+#: ADDED objects. `ensure_canonical` fetches on pin-absent and self-heals, so no manual removal is
+#: owed -- and no manual cache deletion is owed either: `provision_borrower`'s reuse gate is
+#: checkout-identity-keyed, so the old tier fails it and is `fast_rmtree`'d WITH its nested build
+#: dirs and their `compilation.log`, which is why the log-marker compile gate cannot adopt a stale
+#: build across a pin move. What IS owed is a WARM from a non-chunk session (the role gate refuses
+#: to provision from a suite chunk and names `pytest tests/test_synth_00_compile_models.py`).
+#: THE SUBMODULE GITLINKS ARE UNCHANGED ACROSS THIS MOVE, so the borrow's
 #: `submodule.alternateLocation=superproject` path needs no submodule-side network work:
 #: `git ls-tree {pin} external/kokkos external/yaml-cpp` returns dc1bf738 and a83cd315 at BOTH
-#: a38338b0 and 658a7a37 (measured). A move that changed either would need the canonical's
-#: submodule stores refreshed before any borrow could resolve the new gitlink.
-#: SUPERSEDED 2026-09-29 BY THE MOVE TO e53c2fa, AND THE SENTENCE THIS REPLACES IS NOW FALSE.
-#: It read: `hhemt.model_defects` ALREADY registers this sha ... so this repin owes the
-#: registry no new entry. That was TRUE of the move TO 658a7a37 and is FALSE of the move to
-#: e53c2fa, which was NOT registered. A per-sha registry keyed on a moving branch tip lapses
-#: on EVERY solver commit, and the lapse is NON-FAILING in both consumers -- one returns
-#: applicable=False and the other an affirmative PASS -- so a lapsed registry and a genuinely
-#: clean build are INDISTINGUISHABLE at the exit code. The move therefore DID owe an entry,
-#: and `model_defects.SHA_WP1C_LINKAGE_REPAIR_AND_TEST` is it, carrying re-measured ancestry
-#: for all four fix commits. THE RULE, so the next mover does not re-derive it: MOVING THIS
-#: PIN OWES model_defects A REGISTERED CONSTANT FOR THE NEW SHA, every time.
-#: Why the tier cannot pin at 01e95a76 (WP-1C itself), which IS registered: 01e95a76 does not
-#: LINK without fea07ee, so the buildable tip is e53c2fa.
-#: Measured 2026-09-29 against the INCOMING pin, not inherited:
-#:   * `git merge-base --is-ancestor a38338b0 e53c2fa` -> rc 0
-#:   * `git merge-base --is-ancestor 0cf5faff e53c2fa` -> rc 0
-#:   * `git merge-base --is-ancestor 3a832f7d e53c2fa` -> rc 0
-#:   * `git merge-base --is-ancestor 9db367dd e53c2fa` -> rc 0
-#:   * `git merge-base --is-ancestor 658a7a37 e53c2fa` -> rc 0 (forward-only; adds exactly
-#:     01e95a7, fea07ee, e53c2fa)
+#: e53c2fa and 031ea42 (measured). A move that changed either would need the canonical's submodule
+#: stores refreshed before any borrow could resolve the new gitlink.
+#: THE RULE, carried forward unchanged because it holds at every move: MOVING THIS PIN OWES
+#: model_defects A REGISTERED CONSTANT FOR THE NEW SHA, every time. `model_defects` is per-sha by
+#: construction and the read path has no clone, so an unregistered pin falls through to
+#: `indeterminate`/`ancestry_unresolvable` on every defect. ITS GROUND IS NOW NARROWER THAN THE
+#: SENTENCE THIS REPLACES CLAIMED, and the correction is worth stating because the old wording
+#: would send a reader to the wrong instrument. The lapse is STILL non-failing at the exit code --
+#: `check_known_resume_defects` selects on `status == "present"`, so `indeterminate` collapses into
+#: the passing arm -- but it is no longer INDISTINGUISHABLE in the artifact: that function's
+#: 2026-10-03 disclosure repair names the examined and indeterminate counts in its summary. And the
+#: enforcing mechanism is now a GUARD, `scripts/check_live_pin_registered.py`, which reads this
+#: declaration by AST and refuses unless the registry resolves it ABSENT via the explicit
+#: `known_absent_in` set for every defect. `model_defects.SHA_MAIN_SNAPSHOT_AND_COLUMN_SPLIT` is
+#: this pin's entry. NOTE, because it decides how much the guard is worth: as of this move that
+#: guard is wired into NOTHING -- a grep for it over `.pre-commit-config.yaml`, `.github/` and
+#: `justfile` returns nothing, so its only runner is `tests/test_check_live_pin_registered.py`,
+#: i.e. exactly the vehicle its own docstring rules out. Wiring it was NOT done in this commit.
+#: Measured 2026-10-08 against the INCOMING pin, not inherited:
+#:   * `git merge-base --is-ancestor a38338b0 031ea42` -> rc 0
+#:   * `git merge-base --is-ancestor 0cf5faff 031ea42` -> rc 0
+#:   * `git merge-base --is-ancestor 3a832f7d 031ea42` -> rc 0
+#:   * `git merge-base --is-ancestor 9db367dd 031ea42` -> rc 0
+#:   * `git merge-base --is-ancestor 01e95a76 031ea42` -> rc 1, and the same for 658a7a37, fea07ee
+#:     and e53c2fa: the branch-side commits are NOT ancestors of this pin. Do not claim they are.
 #:   * `git ls-tree {pin} external/kokkos external/yaml-cpp` -> dc1bf738 a83cd315 at BOTH
 #: The prior entry's caveat still applies: two natural probes classify its ghost-ring row
 #: WRONG — `is-ancestor 5d2ad1e8` -> rc 1
 #: and `ls-tree src/ghost_ring.h` -> 0 entries — because both ask the FORK's question of an
 #: ORNL-descended tree. See that constant's comment for the deciding commands.
+#: THE OUTGOING COMMENT'S BUILDABILITY CONSTRAINT IS RETIRED, NOT CARRIED. It read "01e95a76 does
+#: not LINK without fea07ee, so the buildable tip is e53c2fa", and that is a true sentence about a
+#: DIFFERENT build: `git show --stat --oneline fea07ee` lists three files and every one is under
+#: `test/`, which TRITON's top-level CMakeLists gates behind `if(${BUILD_TESTS})` -- a name defined
+#: nowhere else in that file or in `cmake/`. So it constrained a CTest target, never the
+#: `triton.exe`/`swmm5` pair this tier's compile gate asserts. Do not look for its analogue here.
+#: Every build file is blob-identical across the move (`CMakeLists.txt`, `external/CMakeLists.txt`,
+#: `external/swmm/CMakeLists.txt` all `git rev-parse`-equal at both shas; `git diff --name-only
+#: -- cmake` empty), so the target set, the link line and the compile-gate markers are unchanged.
 #: THIS CONSTANT AND `test_case_builder.py`'s config write MUST MOVE TOGETHER: a
 #: provisioner pin that differs from the config pin raises ConfigurationError on every
 #: synth construction (`system.py::_verify_tritonswmm_pin`). `test_case_builder.py:41-42`
 #: IMPORTS both constants rather than restating them, so that coupling is satisfied by
-#: construction and this is ONE edit, not two.
-TRITON_PIN = "e53c2fa01a64583fb57bc58082245fd687882b8f"
+#: construction and this is ONE edit in THIS file -- but it is NOT one edit in the tree: a
+#: tracked literal census (`grep -rF -c` over `tests` + `src`) puts the outgoing sha in four
+#: files, and the other three are `src/hhemt/model_defects.py` (ADD beside, do not move),
+#: `tests/test_check_known_resume_defects.py::_SHA_REGISTERED` (parity-asserted at :258, so a
+#: miss is a LOUD red) and `tests/test_wp2b_resume_mechanism_review.py::_SHA_CURRENT_PIN` (no
+#: tripwire, so a miss is SILENT and only its comment goes false).
+TRITON_PIN = "031ea42b063ce1083e3d965597cdb44da2e748ef"
 
 #: The ONE form every version RECORD prints, so a URL cannot be omitted beside a pin.
 #: Consumed by `model_version_lines()` and by the estate's per-chunk provenance stamp.

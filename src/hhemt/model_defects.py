@@ -304,6 +304,35 @@ SHA_WP1C_SWMM_OUTPUT_APPEND = "01e95a76ba4b7015d13b20423eb0e72ec1fb495c"
 #: Evidentiary strength is the parent's, no stronger: whatever falsifies a38338b0 falsifies this.
 SHA_WP1C_LINKAGE_REPAIR_AND_TEST = "e53c2fa01a64583fb57bc58082245fd687882b8f"
 
+#: `main` ON THE FORK, and the move to it is a CROSS-BRANCH move whose merge-base is a38338b0.
+#: The 46 commits `solver-work/replay-precision-accounting` carries and `main` does not are the
+#: AUTHORING HISTORY of work `main` re-lands as 10 squashed commits on top of a38338b0, plus the
+#: two snapshot cfg keys (`swmm_snapshot_disable`, `swmm_snapshot_keep_all`) the branch does not
+#: have. Measured, not argued: `git diff --name-status e53c2fa 031ea42` returns M and A only --
+#: ZERO D -- and the removed-non-comment-line census over `src` + `external/swmm` returns nine
+#: lines, every one an old signature replaced by its two-argument-wider form in the same hunk.
+#: It is the pin BOTH live UVA benchmarking arms declare in their committed
+#: `system_config_*.yaml`, which is what made registering it owed.
+#:
+#: RE-MEASURED AGAINST THIS SHA, NOT INHERITED -- explicit sets outrank ancestry precisely so a
+#: set can express a revert, so a descendant does not inherit its parent's row. Each probe is
+#: `git merge-base --is-ancestor X 031ea42b` in a fork clone:
+#:   * a38338b0 -> rc 0    * 0cf5faff -> rc 0    * 3a832f7d -> rc 0    * 9db367dd -> rc 0
+#:   * e53c2fa  -> rc 1, and 031ea42 -> e53c2fa is ALSO rc 1: the two DIVERGED. `rev-list --count`
+#:     gives 10 on main not on the branch and 46 the other way; `merge-base` is a38338b0.
+#: Submodule gitlinks are UNCHANGED (`git ls-tree 031ea42b external/kokkos external/yaml-cpp` ->
+#: dc1bf738 and a83cd315, identical at e53c2fa AND at 658a7a37), so the borrow's
+#: `submodule.alternateLocation=superproject` path needs no submodule-side network work.
+#:
+#: THE SAME TWO-PROBE TRAP recurs here and is recorded rather than left for the next reader:
+#: `is-ancestor 5d2ad1e8 031ea42b` -> rc 1 and `ls-tree 031ea42b -- src/ghost_ring.h` -> 0 entries
+#: (control needle src/triton.h -> 1). Read alone those say the ghost-ring defect is PRESENT. Both
+#: ask the FORK's question of an ORNL-descended tree. The deciding commands agree with the parent
+#: entries value for value: `git grep -c "write_output_ghost_ring\|read_output_ghost_ring"
+#: 031ea42b -- src/output.h src/triton.h` -> output.h 5, triton.h 1, identical at e53c2fa.
+#: Evidentiary strength is a38338b0's, no stronger: whatever falsifies a38338b0 falsifies this.
+SHA_MAIN_SNAPSHOT_AND_COLUMN_SPLIT = "031ea42b063ce1083e3d965597cdb44da2e748ef"
+
 REGISTRY: tuple[ModelDefect, ...] = (
     ModelDefect(
         defect_id="TRITON-COUPLED-RESUME-REPLAY",
@@ -324,6 +353,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_WP1C_SWMM_OUTPUT_APPEND,
                 # e53c2fa descends from 01e95a76; re-measured rc 0 against this sha, not inherited.
                 SHA_WP1C_LINKAGE_REPAIR_AND_TEST,
+                # 3a832f7d is an ANCESTOR of 031ea42b -- re-measured rc 0 against this sha.
+                SHA_MAIN_SNAPSHOT_AND_COLUMN_SPLIT,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME}),
@@ -347,6 +378,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_WP1C_SWMM_OUTPUT_APPEND,
                 # e53c2fa descends from 01e95a76; re-measured rc 0 against this sha, not inherited.
                 SHA_WP1C_LINKAGE_REPAIR_AND_TEST,
+                # 9db367dd is an ANCESTOR of 031ea42b -- re-measured rc 0 against this sha.
+                SHA_MAIN_SNAPSHOT_AND_COLUMN_SPLIT,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER}),
@@ -376,6 +409,11 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_WP1C_SWMM_OUTPUT_APPEND,
                 # e53c2fa descends from 01e95a76; re-measured rc 0 against this sha, not inherited.
                 SHA_WP1C_LINKAGE_REPAIR_AND_TEST,
+                # 031ea42b descends from a38338b0 (re-measured rc 0) and inherits that entry's
+                # independent-upstream-implementation verdict on the SAME basis -- listed
+                # explicitly because the read path has no clone to derive it from, and because
+                # ancestry from 5d2ad1e8 answers rc 1 for the reason the constant's comment gives.
+                SHA_MAIN_SNAPSHOT_AND_COLUMN_SPLIT,
             }
         ),
         also_present_in=frozenset(
