@@ -1249,7 +1249,14 @@ def run_experiment_command(
         readable=True,
         help="Path to a schema-conformant experiment bundle directory.",
     ),
-    cluster: str = typer.Option(..., "--cluster", help="Target cluster key, e.g. 'uva'."),
+    cluster: str | None = typer.Option(
+        None,
+        "--cluster",
+        help=(
+            "Target cluster key, e.g. 'uva'. Optional when the bundle declares exactly one "
+            "cluster under hpc_system_config; required when it declares none or several."
+        ),
+    ),
     hpc_system_config: Path = typer.Option(
         None,
         "--hpc-system-config",
@@ -1317,7 +1324,7 @@ def run_experiment_command(
 
         result = run_experiment(
             bundle,
-            cluster,
+            _resolve_experiment_cluster(bundle, cluster),
             dry_run=dry_run,
             hpc_system_config_yaml=hpc_system_config,
             assume_yes=yes,
@@ -1340,6 +1347,122 @@ def run_experiment_command(
     except Exception as exc:
         # One mapping for both workflow verbs: EXIT_CODE_MAP decides the code and the
         # class-keyed label vocabulary decides the stderr prefix.
+        code = map_exception_to_exit_code(exc)
+        console_err.print(f"[bold red]{label_for(exc)}:[/bold red] {escape(str(exc))}")
+        raise typer.Exit(code) from exc
+
+
+def _resolve_experiment_cluster(bundle_dir: Path, cluster: str | None) -> str:
+    """Return the cluster an experiment-bundle verb targets, shared by `run-experiment` and `reset`.
+
+    An explicit `--cluster` is returned unchanged and the bundle is not read: a cluster the
+    bundle does not declare can still resolve its hpc_system_config through the deployment
+    fallbacks, so refusing it here would refuse a working invocation. Without `--cluster`,
+    the bundle's `hpc_system_config` keys are the declared clusters; exactly one is the
+    default, and none or several raise `CLIValidationError` (exit 2) naming what was found,
+    because guessing among several would aim a destructive verb at the wrong tree.
+    """
+    if cluster is not None:
+        return cluster
+    from .experiment_bundle import load_bundle
+
+    declared = sorted(load_bundle(bundle_dir).hpc_system_config)
+    if len(declared) == 1:
+        return declared[0]
+    if not declared:
+        raise CLIValidationError(
+            argument="--cluster",
+            message=f"{bundle_dir}/experiment.yaml declares no cluster under hpc_system_config",
+            fix_hint="Pass --cluster {name}",
+        )
+    raise CLIValidationError(
+        argument="--cluster",
+        message=f"{bundle_dir}/experiment.yaml declares {len(declared)} clusters: {', '.join(declared)}",
+        fix_hint=f"Pass --cluster with one of: {', '.join(declared)}",
+    )
+
+
+@app.command(name="reset")
+def reset_command(
+    experiment: Path = typer.Option(
+        ...,
+        "--experiment",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to the experiment bundle directory (the one holding experiment.yaml).",
+    ),
+    cluster: str | None = typer.Option(
+        None,
+        "--cluster",
+        help=(
+            "Target cluster key. Optional when the bundle declares exactly one cluster under "
+            "hpc_system_config; required when it declares none or several."
+        ),
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Override the bundle's declared hpc_system_config for this cluster.",
+    ),
+    override_in_flight: bool = typer.Option(
+        False,
+        "--override-in-flight",
+        help="Bypass the live-SLURM-sentinel refusal. Use only when you know the jobs are dead.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip the interactive confirmation prompt (use for scripted invocation).",
+    ),
+):
+    """Delete an experiment's whole analysis tree, so its next run starts from nothing.
+
+    Reset is a command and never a config field, so no experiment config can request it. It
+    finds the experiment the way `run-experiment` does, from the bundle directory and its
+    cluster, and then runs the same distributed delete as `hhemt delete`, which refuses while
+    simulations are still in flight. Without `--yes` it asks for confirmation first.
+
+    Example:
+
+        $ hhemt reset --experiment experiments/norfolk_design_storm --yes
+    """
+    from rich.markup import escape
+
+    from .cli_utils import label_for, map_exception_to_exit_code
+
+    try:
+        from .experiment_bundle import build_case_from_bundle, load_bundle
+
+        resolved = _resolve_experiment_cluster(experiment, cluster)
+        tk = build_case_from_bundle(
+            load_bundle(experiment), experiment, resolved, hpc_system_config_yaml=hpc_system_config
+        )
+        analysis = tk.analysis
+        analysis_dir = analysis.analysis_paths.analysis_dir
+        console.print(f"Reset targets cluster {resolved!r}: deletes {analysis_dir}")
+
+        if not yes:
+            response = input("Proceed with reset? Type 'y' or 'yes' to confirm: ").strip().lower()
+            if response not in ("y", "yes"):
+                console_err.print("[yellow]Aborted.[/yellow]")
+                raise typer.Exit(1)
+
+        analysis.delete(override_in_flight=override_in_flight)
+
+        if analysis_dir.exists():
+            console_err.print(
+                "[bold yellow]analysis_dir preserved — see [delete] log messages above for "
+                "missing sentinels.[/bold yellow]"
+            )
+            raise typer.Exit(1)
+        console.print("[green]Experiment reset: analysis tree deleted.[/green]")
+        raise typer.Exit(0)
+    except typer.Exit:
+        raise
+    except Exception as exc:
         code = map_exception_to_exit_code(exc)
         console_err.print(f"[bold red]{label_for(exc)}:[/bold red] {escape(str(exc))}")
         raise typer.Exit(code) from exc
