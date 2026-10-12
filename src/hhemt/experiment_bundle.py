@@ -337,6 +337,7 @@ def run_experiment(
     mode: RunMode = RunMode.resume,
     override_wipe_nonempty: bool = False,
     override_force_rerun: str | dict | None = None,
+    override_clean_restart_member_ids: list[str] | None = None,
     **cli_overrides: object,
 ):
     """Load -> validate -> gate overrides -> build -> run.
@@ -397,4 +398,5 @@ def run_experiment(
         wait_for_completion=wait,
         override_wipe_nonempty=override_wipe_nonempty,
         override_force_rerun=override_force_rerun,
+        override_clean_restart_member_ids=override_clean_restart_member_ids,
     )

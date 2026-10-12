@@ -3702,3 +3702,75 @@ non_breaking_allowlist:
       not the self-certification `### D140` refused.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/log.py
+    layout_signature: 1eefec18e1e0de888f60b48cae89cc3a6f559a153927e9cca78d8fd17739253c
+    justification: >-
+      NON-BREAKING. Work package 1a chunk 1a.1 (item 1) adds ONE field to
+      `TRITONSWMM_model_log`: `consecutive_terminal_failures: LogField[int]`, the durable
+      operand of the consecutive-failure budget gate in `run_simulation_runner`, plus that
+      field's name in the existing int validator and int serializer groups.
+      DECIDING MEASUREMENT, structural rather than textual: both modules were parsed at
+      5e83c4c6 and in the worktree and the annotated class-level field set was compared by
+      (class, name, annotation) -- 99 fields at HEAD, 100 in the worktree, with ADDED
+      exactly [(TRITONSWMM_model_log, consecutive_terminal_failures, LogField[int])] and
+      REMOVED exactly []. No field was renamed, retyped, reordered, or made required, and
+      no class name or order moved.
+      WHY ADDITIVE IS NON-BREAKING HERE: the field is a default-constructed `LogField`, so
+      `LogField.get()` returns None on every pre-existing `log_{model}.json` and the two
+      consumers coalesce None -> 0. Every historical log deserialises unchanged, exactly as
+      the allowlisted additive fields above it do; a RENAME of an on-disk log key is the
+      change class that would owe a LAYOUT_VERSION bump, and this is not one.
+      AUTHORSHIP NOTE: authored by `hhemt-specialist` as the work-package-1a Build coder
+      under `/workshop`; LEFT UNCOMMITTED per developer ruling A-22, so the coordinator
+      commits after independent review. The signature above is the worktree content's
+      sha256 at authoring time.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 5f8419e63be421bc4d1eeef67e191b3422a0640e8384ddf72a3b0e98c2d0b701
+    justification: >-
+      NON-BREAKING. Work package 1a chunks 1a.1, 1a.2 and 1a.3 touch this module three
+      ways, all of which leave the on-disk config layout alone. (1) chunk 1a.1 adds ONE
+      field, `hpc_consecutive_failure_budget_simulate: int = Field(3, ge=0, ...)` -- the
+      durable retry-budget knob. (2) chunk 1a.2 EXTENDS `hpc_restart_times_simulate`'s
+      description string to disclose that the number is per Snakemake PROCESS and that the
+      realised ceiling multiplies across nesting levels; a field DESCRIPTION is not part of
+      the on-disk layout. (3) chunk 1a.3 repairs three force-rerun-subject message strings
+      that named `member_id`, a key the `ForceRerunSubject` Literal does not admit.
+      DECIDING MEASUREMENT, structural rather than textual: parsed at 5e83c4c6 and in the
+      worktree and compared by (class, name, annotation) -- 80 fields at HEAD, 81 in the
+      worktree, ADDED exactly [(analysis_config,
+      hpc_consecutive_failure_budget_simulate, int)] and REMOVED exactly []. The
+      `ForceRerunSubject` type alias is BYTE-UNCHANGED, so the accepted subject-key set is
+      identical and no config value that validated before stops validating.
+      WHY ADDITIVE IS NON-BREAKING HERE: the new field is DEFAULTED (3), so every existing
+      analysis_config.yaml loads unchanged, and 0 is the documented disable that reproduces
+      pre-gate behaviour exactly. No config key, path, filename or persisted structure moved.
+      AUTHORSHIP NOTE: as above -- `hhemt-specialist`, work package 1a, UNCOMMITTED per A-22.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: 6796428b2070fb3b2337314227757f68a0ce376b469e35ed6f86855d9f5c0863
+    justification: >-
+      NON-BREAKING. ONE entry added to the `_FIELD_BUCKET` dict:
+      `"hpc_consecutive_failure_budget_simulate": "hpc"`, bucketed beside the two
+      `hpc_restart_times_*` knobs it is a sibling of.
+      WHY THIS EDIT IS OBLIGATORY RATHER THAN OPTIONAL, recorded because this path is NOT in
+      work package 1a's declared write set and a reader will ask why it changed: the
+      stipulation `the reprex taxonomy is provably total over every config field` makes
+      `all_field_bucket` total over `system_config` union `analysis_config`, and
+      `report_renderers/metadata.py::_config_field_rows` buckets EVERY field through it. So
+      chunk 1a.1's new `analysis_config` field left the function raising `KeyError` on its
+      own name. Measured in the worktree before this entry: `tests/test_reprex_taxonomy.py`
+      reported `1 failed, 36 passed` on `test_field_bucket_is_total`, and the Metadata report
+      renderer could not render at all. After the entry: `37 passed`, and the Reproduction
+      Guide renders both knobs. This is reported to the coordinator as a declaration
+      incompleteness in item 1's edit-surface, not as a silent scope widening.
+      DECIDING MEASUREMENT for non-breaking: `_FIELD_BUCKET` is an IN-MEMORY classification
+      table consumed at render and at reprex-amendment time. It is not serialised, is named
+      by no on-disk artifact, and no analysis tree records it, so no persisted structure can
+      move; the module is layout-relevant only via the blanket `src/hhemt/config/**/*.py`
+      glob rather than by any named path.
+      AUTHORSHIP NOTE: as above -- `hhemt-specialist`, work package 1a, UNCOMMITTED per A-22.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.

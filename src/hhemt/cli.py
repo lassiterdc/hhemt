@@ -78,7 +78,7 @@ def _parse_override_force_rerun(value: str | None) -> str | dict | None:
     except json.JSONDecodeError as exc:
         raise typer.BadParameter(
             f"--override-force-rerun expects 'all', 'none', a JSON subject dict like "
-            f"'{{\"member_id\":[0,5]}}', or a JSON stage form like "
+            f"'{{\"sa_id\":[0,5]}}', or a JSON stage form like "
             f'\'{{"subject":"all","stage":"render"}}\'; got: {value!r} ({exc})'
         ) from exc
 
@@ -175,7 +175,7 @@ def run_command(
         "--override-force-rerun",
         help=(
             'Runtime override for cfg_analysis.force_rerun. Accepts "all", "none", '
-            "or a JSON dict: '{\"member_id\":[0,5,22]}' (sensitivity) or "
+            "or a JSON dict: '{\"sa_id\":[0,5,22]}' (sensitivity) or "
             "'{\"event_iloc\":[3,7]}' (non-sensitivity)."
         ),
         callback=lambda value: _parse_override_force_rerun(value),
@@ -718,7 +718,7 @@ def reprocess_command(
         "--override-force-rerun",
         help=(
             'Runtime override for cfg_analysis.force_rerun. Accepts "all", "none", '
-            "or a JSON dict: '{\"member_id\":[0,5,22]}' (sensitivity) or "
+            "or a JSON dict: '{\"sa_id\":[0,5,22]}' (sensitivity) or "
             "'{\"event_iloc\":[3,7]}' (non-sensitivity)."
         ),
         callback=lambda value: _parse_override_force_rerun(value),
@@ -1280,6 +1280,20 @@ def run_experiment_command(
             "DISTINCT from --yes, which only accepts the override table."
         ),
     ),
+    override_clean_restart_members: str | None = typer.Option(
+        None,
+        "--override-clean-restart-members",
+        help=(
+            "Comma-separated sensitivity member ids to CLEAN-RESTART (e.g. '38,39'). "
+            "Each named member's runtime children are wiped, INCLUDING the per-model log "
+            "that carries n_resumes, so the member re-runs from checkpoint 0 AND its "
+            "resume counter resets to 0. DISTINCT from --override-force-rerun, which "
+            "prunes the checkpoints but leaves n_resumes where it was — a member "
+            "restarted that way runs fresh while still being scored as the RESUME arm of "
+            "a clean/resume pair. Use this one when the member must re-run as a CLEAN "
+            "member."
+        ),
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
@@ -1318,6 +1332,15 @@ def run_experiment_command(
             mode=mode,
             override_wipe_nonempty=override_wipe_nonempty,
             override_force_rerun=override_force_rerun,
+            # Parsed HERE rather than in a typer callback so an empty or
+            # whitespace-only value resolves to None (wipe nothing) instead of to a
+            # one-element list holding the empty string, which `_clean_restart_wipe`
+            # would resolve to a `member_` directory that cannot exist.
+            override_clean_restart_member_ids=(
+                [s.strip() for s in override_clean_restart_members.split(",") if s.strip()] or None
+                if override_clean_restart_members
+                else None
+            ),
         )
         # A refused submit must not read as success to the shell: tk.run RETURNS a
         # WorkflowResult and does not raise (measured on Irene job 18708464). The shared

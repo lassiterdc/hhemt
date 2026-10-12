@@ -86,6 +86,12 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "hpc_time_min_per_sim": "hpc",
     "hpc_restart_times_simulate": "hpc",
     "hpc_restart_times_other": "hpc",
+    # "hpc" and not "experiment": the budget is a resilience knob a reproducer AMENDS for
+    # its own scheduler and nesting depth, exactly like the two retries knobs above it.
+    # It bounds how many times a deterministically-failing sim is relaunched; it does not
+    # participate in the experiment's identity, and two runs differing only in this value
+    # are the same experiment.
+    "hpc_consecutive_failure_budget_simulate": "hpc",
     "hpc_ensemble_partition": "hpc",
     "hpc_setup_and_analysis_processing_partition": "hpc",
     # CPU-only sim partition selector (QOSMinGRES fix, 9db7343); sibling of the two above

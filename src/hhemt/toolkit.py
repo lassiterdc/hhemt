@@ -261,6 +261,7 @@ class Toolkit:
         override_force_rerun=None,
         wait_for_completion: bool | None = None,
         override_wipe_nonempty: bool = False,
+        override_clean_restart_member_ids: list[str] | None = None,
     ) -> WorkflowResult:
         """Run TRITON-SWMM workflow.
 
@@ -297,6 +298,18 @@ class Toolkit:
             only; ``"all"`` re-runs every completed scenario and everything
             downstream without deleting the analysis directory. None, the default,
             reads the config field.
+        override_clean_restart_member_ids : list of str, or None
+            Sensitivity member ids to CLEAN-RESTART: each named member's runtime
+            children are wiped, including the per-model log that carries
+            ``n_resumes``, so the member re-runs from checkpoint 0 and its resume
+            counter resets to zero. This is a DIFFERENT operation from
+            ``override_force_rerun``, and the difference is the counter rather than
+            the checkpoints: a force-rerun prunes the checkpoint set but leaves
+            ``n_resumes`` where it was, so a member restarted that way runs fresh
+            while still being classified as the RESUME arm of a clean/resume pair
+            by ``eda/compute_sensitivity.py`` (which reads ``n_resumes == 0`` as the
+            clean member). Use this when a member must re-run as a CLEAN member.
+            None, the default, wipes nothing.
 
         Returns
         -------
@@ -372,6 +385,7 @@ class Toolkit:
         return self.analysis.run(
             from_scratch=from_scratch,
             override_wipe_nonempty=override_wipe_nonempty,
+            override_clean_restart_member_ids=override_clean_restart_member_ids,
             events=events,
             execution_mode=execution_mode,
             dry_run=dry_run,

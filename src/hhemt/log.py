@@ -709,6 +709,29 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     # lazily-assigned LogField has no parent bound by model_post_init and its set() raises.
     # Legacy logs omit the key; consumers MUST coalesce None -> False.
     force_rerun_pending: LogField[bool] = Field(default_factory=LogField)
+    # consecutive_terminal_failures counts CONSECUTIVE TERMINAL failures for this
+    # (member, event, model_type) -- attempts in which the RUNNER ITSELF concluded the
+    # attempt failed and wrote `_status/_failed/{rule_token}.json`. It is the durable
+    # operand of the consecutive-failure budget gate in run_simulation_runner, which is
+    # what converts Snakemake's MULTIPLICATIVE `retries:` ceiling (a declared 3 produced
+    # TEN solver launches across four SLURM jobs on member 39, every one re-attempting
+    # the same deterministic refusal) into an additive one.
+    #
+    # THREE PROPERTIES, each load-bearing, and the first two are the ones an implementer
+    # gets wrong:
+    #   TERMINAL, not merely incomplete. A walltime-killed attempt is SIGKILLed and never
+    #   reaches a Python-side failure return, so it does NOT increment this counter. That
+    #   is deliberate: the developer armed `hpc_restart_times_simulate` at ruling [Q441]
+    #   precisely so a walltime-killed sim re-dispatches and hotstarts, so a counter that
+    #   grew on a walltime kill would refuse exactly the healthy long-running sims the
+    #   retries exist to serve.
+    #   CONSECUTIVE, not cumulative. Reset to 0 by a COMPLETING attempt.
+    #   ERA-RELATIVE. Reset to 0 when the gate observes `force_rerun_pending`, so a forced
+    #   re-run starts a fresh era rather than inheriting the budget it was forced to escape.
+    # It is NOT `n_resumes`, which counts SUCCESSFUL resumes and is cumulative across
+    # force-rerun eras; gating on that counter would invert this fix.
+    # Legacy logs omit the key; consumers MUST coalesce None -> 0.
+    consecutive_terminal_failures: LogField[int] = Field(default_factory=LogField)
     # resume_reporting_tsteps records the REALIZED resume reporting-step (config_NNNN.cfg
     # NNNN = the reporting step, return_the_reporting_step_from_a_cfg) per resume attempt,
     # appended in run_simulation.py's hotstart branch. First-class durable record of WHERE
@@ -788,6 +811,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
 
     _validate_int_fields = field_validator(
         "n_resumes",
+        "consecutive_terminal_failures",
         mode="before",
     )(_create_logfield_validator(int))
 
@@ -827,6 +851,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
 
     _serialize_int_fields = field_serializer(
         "n_resumes",
+        "consecutive_terminal_failures",
         when_used="json",
     )(lambda self, v: v.get() if v is not None else None)
 

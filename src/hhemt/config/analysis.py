@@ -80,7 +80,7 @@ class ForceRerunSpec(cfgBaseModel):
     """WHICH simulations to force, and from WHICH stage down.
 
     Two ORTHOGONAL axes as separate fields rather than keys in one dict. The subject keys
-    are mutually exclusive by construction -- `member_id` requires `toggle_sensitivity_analysis`
+    are mutually exclusive by construction -- `sa_id` requires `toggle_sensitivity_analysis`
     True and `event_iloc` requires it False -- which is why the shipped validator's
     `next(iter(...))` is correct. A `stage` key added to that same dict would make the
     first-key read insertion-order-dependent and silently skip subject validation.
@@ -194,7 +194,10 @@ class ForceRerunSpec(cfgBaseModel):
                 bad = [str(x) for x in values if not MEMBER_ID_RE.match(str(x))]
                 if bad:
                     raise ValueError(
-                        f"force_rerun.member_id values must match ^[A-Za-z0-9_.]+$ "
+                        # `{key}` rather than a literal: this branch is entered only when
+                        # key == "sa_id", and interpolating the key the type actually
+                        # admits makes a wrong-key message structurally unwritable here.
+                        f"force_rerun.{key} values must match ^[A-Za-z0-9_.]+$ "
                         f"(per accepted decision 'All user-provided identifiers that "
                         f"become Snakemake wildcards must match ^[A-Za-z0-9_.]+$'); "
                         f"got invalid: {bad}"
@@ -641,7 +644,21 @@ class analysis_config(cfgBaseModel):
             "(run_triton/run_tritonswmm/run_swmm/simulation_member_*). A walltime "
             "kill is a SLURM TIMEOUT (retriable); raise this high (e.g. 20) for a "
             "hotstart-resume sweep so a killed sim re-dispatches from its latest "
-            "config_NNNN.cfg checkpoint within ONE analysis.run(). Default 2."
+            "config_NNNN.cfg checkpoint within ONE analysis.run(). Default 2. "
+            "THIS NUMBER IS PER SNAKEMAKE PROCESS AND IS NOT THE NUMBER OF TIMES THE "
+            "SOLVER CAN RUN. Snakemake compares the budget against `job.attempt`, which "
+            "lives on an in-memory job object initialised to 1 when that process builds "
+            "its DAG and is persisted nowhere. Under `--executor slurm` at least two such "
+            "processes exist per rule execution -- the driver that submits the SLURM job, "
+            "and the Snakemake instance running inside the allocation -- so the budget "
+            "restarts at each nesting level and the REALISED ceiling is the PRODUCT across "
+            "them, not this value. Measured on member 39 of the a6000 benchmarking arm: a "
+            "declared 3 produced TEN solver launches across four SLURM jobs. "
+            "The realised TOTAL is bounded instead by "
+            "`hpc_consecutive_failure_budget_simulate`, a durable per-(member, event, "
+            "model_type) cap the runner enforces before each launch; that knob is what "
+            "makes a ceiling additive, and this one governs only how many restarts a "
+            "SINGLE process will attempt."
         ),
     )
     hpc_restart_times_other: int = Field(
@@ -652,6 +669,26 @@ class analysis_config(cfgBaseModel):
             "(prepare/process/consolidate/plot/render), emitted as the GLOBAL "
             "restart-times so directive-less rules inherit it. Idempotent "
             "re-derivations, so a low count suffices. Default 2."
+        ),
+    )
+    hpc_consecutive_failure_budget_simulate: int = Field(
+        3,
+        ge=0,
+        description=(
+            "DURABLE cap on CONSECUTIVE TERMINAL simulation failures per "
+            "(member, event, model_type), enforced in the simulation runner BEFORE the "
+            "solver is launched. This is the knob that makes a retry ceiling REAL: "
+            "`hpc_restart_times_simulate` bounds restarts within ONE Snakemake process "
+            "and does not persist across processes, so under `--executor slurm` the "
+            "realised ceiling MULTIPLIES across nesting levels. This budget persists in "
+            "the per-model log and so bounds the TOTAL. "
+            "A TERMINAL failure is one the runner itself concluded (it wrote "
+            "`_status/_failed/{rule_token}.json`); a WALLTIME KILL is NOT terminal and "
+            "does NOT count, so a hotstart-resume sweep is unaffected however many times "
+            "it resumes. The count resets on a completing attempt and on a forced re-run "
+            "(it is era-relative). Reaching the budget writes the failed marker and exits "
+            "non-zero WITHOUT launching, which is a terminal state an operator then "
+            "clears. Set 0 to DISABLE the gate entirely. Default 3."
         ),
     )
     # Phase-4 (4d): hpc_max_simultaneous_sims RETIRED off analysis_config — it MOVED
@@ -1420,11 +1457,11 @@ class analysis_config(cfgBaseModel):
         if isinstance(subject, dict):
             key = next(iter(subject))
             if key == "sa_id" and not self.toggle_sensitivity_analysis:
-                raise ValueError("force_rerun.member_id requires toggle_sensitivity_analysis=True")
+                raise ValueError("force_rerun.sa_id requires toggle_sensitivity_analysis=True")
             if key == "event_iloc" and self.toggle_sensitivity_analysis:
                 raise ValueError(
                     "force_rerun.event_iloc requires toggle_sensitivity_analysis=False; "
-                    "sensitivity-toggled analyses must use force_rerun.member_id instead"
+                    "sensitivity-toggled analyses must use force_rerun.sa_id instead"
                 )
         return self
 

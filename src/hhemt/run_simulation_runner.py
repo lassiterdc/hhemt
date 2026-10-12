@@ -87,6 +87,65 @@ def _write_failed_marker(ctx: _MarkerCtx | None) -> None:
     os.replace(failed_tmp, failed_marker)
 
 
+def _bump_terminal_failures(scenario, model_type: str) -> int | None:
+    """Increment the durable consecutive-TERMINAL-failure counter; return the new value.
+
+    Called at every runner path that concludes THIS attempt failed -- i.e. beside every
+    ``_write_failed_marker`` call. A walltime kill is SIGKILLed and reaches none of those
+    paths, which is exactly why this counter does not grow on a healthy resume sweep.
+
+    A FRESH ``scenario.get_log`` is taken because ``LogField.set()`` auto-writes the WHOLE
+    log, so writing through a stale object clobbers fields another instance set (the
+    lost-update discipline the terminal write in ``main`` documents). Best-effort and
+    non-fatal: a counter that cannot be persisted must not convert a diagnosable
+    simulation failure into an exception that hides it.
+    """
+    try:
+        _ml = scenario.get_log(model_type)
+        _new = int(_ml.consecutive_terminal_failures.get() or 0) + 1
+        _ml.consecutive_terminal_failures.set(_new)
+        return _new
+    except Exception as exc:  # pragma: no cover - best-effort bookkeeping
+        logger.warning(f"consecutive-failure counter increment failed (non-fatal): {exc}")
+        return None
+
+
+def _consecutive_failure_budget_refusal(scenario, model_type: str, budget: int, event_iloc) -> str | None:
+    """Return a refusal message when the durable budget is spent, else None.
+
+    Reads the counter and applies the ERA RESET in one place, BEFORE the solver launch.
+    The era reset must live HERE and not at the post-``Popen`` ``force_rerun_pending``
+    consume site: a forced re-run exists to escape a budget, so a gate that evaluated the
+    previous era's count before that marker was honoured would refuse the very attempt the
+    force was issued to permit.
+
+    ``budget <= 0`` DISABLES the gate and returns None without reading the log, so an
+    operator who sets 0 gets byte-identical pre-gate behaviour.
+    """
+    if budget <= 0:
+        return None
+    _ml = scenario.get_log(model_type)
+    if _ml.force_rerun_pending.get():
+        if int(_ml.consecutive_terminal_failures.get() or 0) != 0:
+            logger.info(
+                f"[{event_iloc}] force_rerun_pending is set — resetting the consecutive-failure "
+                "counter to 0 (new era) before the budget gate."
+            )
+            _ml.consecutive_terminal_failures.set(0)
+        return None
+    _prior = int(_ml.consecutive_terminal_failures.get() or 0)
+    if _prior >= budget:
+        return (
+            f"consecutive-failure budget SPENT: {_prior} consecutive terminal failures recorded "
+            f"for this (member, event, model_type) against a budget of {budget} "
+            f"(hpc_consecutive_failure_budget_simulate). REFUSING to launch the solver. "
+            "This is a terminal state: the failure is deterministic across attempts, so "
+            "re-dispatching would reproduce it. Diagnose the failure, then clear it with a "
+            "forced re-run (override_force_rerun) or raise the budget."
+        )
+    return None
+
+
 def _record_queue_time(
     *,
     model_logfile: Path,
@@ -383,6 +442,12 @@ def main():
     # ^[A-Za-z0-9_.]+$, so no re-validation is needed here.
     _sentinel: Path | None = None
     _marker_ctx: _MarkerCtx | None = None
+    # Bound AFTER scenario construction and read only by the exception handler's
+    # consecutive-failure increment. Declared out here, beside the two sentinels above and
+    # for the same reason: the try opens before the scenario exists, so an exception raised
+    # during setup reaches the handler with the in-block name unbound, and `locals()`
+    # probing for it is a reflection trick where a declared None is a plain read.
+    _scenario_for_budget = None
 
     try:
         # Import here to avoid import errors if dependencies are missing
@@ -422,6 +487,7 @@ def main():
         logger.info(f"Running {model_type} simulation for event_iloc={event_iloc}")
 
         scenario = TRITONSWMM_scenario(event_iloc, analysis)
+        _scenario_for_budget = scenario
 
         # At-most-once-execution submission sentinel. Written atomically via
         # temp + os.replace; guarded on $SLURM_JOB_ID so the path is a no-op
@@ -514,6 +580,7 @@ def main():
         scenario.log.refresh()
         if not scenario.log.scenario_creation_complete.get():
             logger.error(f"[{event_iloc}] Scenario not prepared. Cannot run simulation.")
+            _bump_terminal_failures(scenario, model_type)
             _write_failed_marker(_marker_ctx)
             return 1
 
@@ -528,6 +595,22 @@ def main():
         _compile_error = _native_compile_error_or_skip_in_container(analysis, system, model_type)
         if _compile_error is not None:
             logger.error(f"[{event_iloc}] {_compile_error}")
+            _bump_terminal_failures(scenario, model_type)
+            _write_failed_marker(_marker_ctx)
+            return 1
+
+        # DURABLE CONSECUTIVE-FAILURE BUDGET GATE. Sited HERE -- after the cheap
+        # deterministic preconditions above and BEFORE prepare_simulation_command -- because
+        # the runner is the only party that both persists state across Snakemake processes
+        # and sits upstream of the solver launch, which is what makes an additive bound
+        # possible at all. The refusal does NOT increment the counter: nothing was launched,
+        # and a refusal that counted itself would inflate the record of what the solver
+        # actually attempted.
+        _budget_refusal = _consecutive_failure_budget_refusal(
+            scenario, model_type, analysis.cfg_analysis.hpc_consecutive_failure_budget_simulate, event_iloc
+        )
+        if _budget_refusal is not None:
+            logger.error(f"[{event_iloc}] {_budget_refusal}")
             _write_failed_marker(_marker_ctx)
             return 1
 
@@ -612,6 +695,7 @@ def main():
         cmd, env, model_logfile, sim_start_reporting_tstep = simprep_result
         if model_logfile is None:
             logger.error(f"[{event_iloc}] Missing logfile path for model_type={model_type}")
+            _bump_terminal_failures(scenario, model_type)
             _write_failed_marker(_marker_ctx)
             return 1
 
@@ -887,16 +971,35 @@ def main():
         # Verify completion via log file check (no refresh needed - we'll check the log file directly)
         if not scenario.run.model_run_completed(model_type):
             logger.error(f"[{event_iloc}] Simulation did not complete successfully")
+            _n_fail = _bump_terminal_failures(scenario, model_type)
+            if _n_fail is not None:
+                logger.error(
+                    f"[{event_iloc}] Consecutive terminal failures for this "
+                    f"(member, event, model_type): {_n_fail} of "
+                    f"{analysis.cfg_analysis.hpc_consecutive_failure_budget_simulate} budgeted."
+                )
             _write_failed_marker(_marker_ctx)
             return 1
 
         logger.info(f"[{event_iloc}] Simulation completed successfully")
+        # A COMPLETING attempt resets the consecutive-failure budget: the counter is
+        # CONSECUTIVE, so progress to completion discharges every failure before it.
+        # Fresh get_log for the same lost-update reason _bump_terminal_failures states.
+        try:
+            scenario.get_log(model_type).consecutive_terminal_failures.set(0)
+        except Exception as _cf_err:  # pragma: no cover - best-effort bookkeeping
+            logger.warning(f"[{event_iloc}] consecutive-failure counter reset failed (non-fatal): {_cf_err}")
         _emit_runner_flag(args)
         return 0
 
     except Exception as e:
         logger.error(f"Exception occurred during simulation execution: {e}")
         logger.error(traceback.format_exc())
+        # An exception path is a TERMINAL failure for budget purposes. `_scenario_for_budget`
+        # is None when the exception preceded scenario construction, in which case there is
+        # no per-model log to count against and nothing is recorded.
+        if _scenario_for_budget is not None:
+            _bump_terminal_failures(_scenario_for_budget, args.model_type)
         _write_failed_marker(_marker_ctx)
         return 1
     finally:

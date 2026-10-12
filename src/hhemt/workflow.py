@@ -1361,6 +1361,51 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             else self.cfg_analysis.hpc_restart_times_simulate
         )
 
+    def _realised_retry_ceiling_disclosure(self) -> str:
+        """The operator-facing statement of what the retry knobs actually bound.
+
+        Returns the text rather than printing it so the claim is assertable by a test
+        without capturing stdout -- the disclosure's CONTENT is the deliverable and its
+        emission is a separate fact.
+
+        Why a disclosure is owed at all: `retries:` is compared against `job.attempt`, an
+        in-memory per-process counter, so under `--executor slurm` the declared number
+        restarts at each nesting level and the realised ceiling is the PRODUCT across them.
+        An operator reading only the declared number reads a bound that does not hold.
+        The durable consecutive-failure budget is what makes the TOTAL additive, so the two
+        numbers are reported together or the disclosure is misleading by omission.
+        """
+        per_process = self._resolved_simulate_retries()
+        budget = self.cfg_analysis.hpc_consecutive_failure_budget_simulate
+        launches_per_process = per_process + 1
+        head = (
+            f"[Retries] hpc_restart_times_simulate={per_process} is PER SNAKEMAKE PROCESS "
+            f"({launches_per_process} solver launches per process, not {launches_per_process} in total); "
+            "under --executor slurm the driver and the in-allocation instance each read it, so the "
+            "realised ceiling MULTIPLIES across nesting levels."
+        )
+        if budget <= 0:
+            return (
+                f"{head} hpc_consecutive_failure_budget_simulate=0 DISABLES the durable gate, so the "
+                "total number of solver launches on a deterministically-failing simulation is "
+                "UNBOUNDED by this toolkit."
+            )
+        return (
+            f"{head} The durable gate bounds the TOTAL: at most {budget} consecutive terminal "
+            "failures per (member, event, model_type) before the runner refuses to launch "
+            "(hpc_consecutive_failure_budget_simulate). A walltime kill is not a terminal failure "
+            "and does not count against it."
+        )
+
+    def _disclose_realised_retry_ceiling(self) -> None:
+        """Print the realised-ceiling disclosure once per submit-path invocation.
+
+        Sited in ``_pre_snakemake_invocation_guards`` because the architecture requires every
+        Snakemake-submitting path to route through that helper, which makes it the one
+        chokepoint where a per-submission disclosure cannot be reached around.
+        """
+        print(self._realised_retry_ceiling_disclosure(), flush=True)
+
     def _sweep_failed_rules(self, analysis_dir: Path, snakemake_stderr: str = "") -> list[dict]:
         """Enumerate permanently-failed rules after a --keep-going run (FQ3).
 
@@ -2004,6 +2049,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             liveness gate is the reprocess concurrency authority. The run/submit
             path passes False (the default), so its behavior is byte-identical.
         """
+        self._disclose_realised_retry_ceiling()
         self._check_and_clear_snakemake_lock(
             snakefile_path,
             dry_run=dry_run,
