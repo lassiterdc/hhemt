@@ -200,7 +200,11 @@ def run_command(
     overwrite: bool = typer.Option(
         False,
         "--overwrite",
-        help="Recreate outputs even if completion logs indicate success",
+        help=(
+            "Re-run every simulation even if completion logs indicate success. Shorthand for "
+            "--override-force-rerun all; never deletes the analysis directory (that is "
+            "--from-scratch)."
+        ),
     ),
     dry_run: bool = typer.Option(
         False,
@@ -376,6 +380,8 @@ def run_command(
             redownload=redownload,
             log_level=log_level,
             walltime=walltime,
+            overwrite=overwrite,
+            override_force_rerun=override_force_rerun,
         )
 
         # ═══════════════════════════════════════════════════════════════
@@ -439,14 +445,15 @@ def run_command(
         # Stage 6: Workflow Orchestration
         # ═══════════════════════════════════════════════════════════════
 
-        # Determine execution mode from CLI flags
-        # Map CLI flags to orchestration layer modes
-        if from_scratch:
-            run_mode = "fresh"
-        elif overwrite:
-            run_mode = "overwrite"
-        else:
-            run_mode = "resume"
+        # Determine execution mode from CLI flags. There are two modes, fresh and resume
+        # (orchestration.RunMode); re-running completed work without a wipe is the
+        # force_rerun axis, so --overwrite is carried THERE rather than as a third mode.
+        # Deliberately NOT a run_mode value: run() has no parameter that could carry one,
+        # so a mode label alone was announced on the console and silently dropped.
+        run_mode = "fresh" if from_scratch else "resume"
+        if overwrite:
+            override_force_rerun = "all"
+            run_mode = f"{run_mode}, force_rerun=all"
 
         # Execution locus is resolved in exactly ONE place, analysis.run()'s
         # `execution_mode == "auto"` branch. This site previously carried its own
@@ -461,7 +468,7 @@ def run_command(
 
         # Execute workflow via high-level orchestration API
         result = analysis.run(
-            from_scratch=run_mode == "fresh",
+            from_scratch=from_scratch,
             events=None,  # Process all events
             execution_mode=execution_mode,
             dry_run=dry_run,
@@ -1970,6 +1977,16 @@ def _validate_cli_arguments(**kwargs) -> None:
             argument="--verbose/--quiet",
             message="Cannot use both --verbose and --quiet",
             fix_hint="Choose one output mode",
+        )
+
+    # --overwrite is shorthand for --override-force-rerun all, so any OTHER explicit
+    # force_rerun value contradicts it. Refused rather than resolved by precedence, because
+    # either silent winner discards half of what the user typed.
+    if kwargs["overwrite"] and kwargs["override_force_rerun"] not in (None, "all"):
+        raise CLIValidationError(
+            argument="--overwrite/--override-force-rerun",
+            message="--overwrite means --override-force-rerun all, which contradicts the value also given",
+            fix_hint="Pass --overwrite alone, or --override-force-rerun alone",
         )
 
     # Model validation
