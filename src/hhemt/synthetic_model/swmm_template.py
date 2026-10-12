@@ -553,6 +553,53 @@ def _outfalls_df(params) -> pd.DataFrame:
     )
 
 
+def _pollutants_df(params) -> pd.DataFrame | None:
+    """POLLUTANTS frame for the regression-instrument knob, or ``None`` when it is off.
+
+    Returning ``None`` is what keeps the default-parameter ``.inp`` byte-identical:
+    `_write_variant` sets `m.inp.pollutants` only on a non-``None`` return, and
+    swmmio appends a `[POLLUTANTS]` section only for a section it was given a frame
+    for. The starter carries no `[POLLUTANTS]` header, so nothing is emitted at the
+    default and the knob's off-state leaves no trace in the output.
+
+    Every concentration is 0.0 deliberately. The coupled solver's snapshot-write
+    guard keys on `Nobjects[POLLUT] > 0` — the pollutant COUNT — and the refusal it
+    guards keys on an outfall's `routeTo < 0`, so neither depends on any pollutant
+    carrying mass. Zero concentrations therefore complete the defect's structural
+    trigger while routing no mass, which leaves every flow and coupling result the
+    model already produces numerically untouched. A non-zero concentration would
+    perturb the comparand this instrument exists to preserve and buy nothing.
+
+    `CoPollutName` is ``*``, SWMM's "no co-pollutant" sentinel; a real name here
+    would declare a co-dependency on a pollutant the model does not define.
+
+    This is a one-row frame on purpose: the guard is a `> 0` test, so a second
+    pollutant adds no reachable state and doubles the snapshot's pollutant arrays.
+
+    Not established: whether SWMM's own engine reports `Nobjects[POLLUT] == 1` for
+    this frame is not re-measured here — that needs a solver run, which is an
+    HPC-venue act. What is measured is that a real SWMM `.inp` reader parses the
+    emitted section back to exactly one pollutant row (see this package's tests).
+    """
+    if not params.pollutant_name:
+        return None
+    return pd.DataFrame(
+        {
+            "MassUnits": ["MG/L"],
+            "RainConcen": [0.0],
+            "GWConcen": [0.0],
+            "I&IConcen": [0.0],
+            "DecayCoeff": [0.0],
+            "SnowOnly": ["NO"],
+            "CoPollutName": ["*"],
+            "CoPollutFraction": [0.0],
+            "DWFConcen": [0.0],
+            "InitConcen": [0.0],
+        },
+        index=pd.Index([params.pollutant_name], name="Name"),
+    )
+
+
 def _conduits_df(params) -> pd.DataFrame:
     conduits = _conduits(params)
     return pd.DataFrame(
@@ -746,6 +793,15 @@ _SECTIONS_NEEDING_DASHES = {
     "TIMESERIES",
     "CURVES",
     "POLYGONS",
+    # POLLUTANTS is emitted only when the regression-instrument knob is set, so this
+    # member changes no default-parameter output. It is here for the same reason as
+    # every other member: swmmio writes one `;;column-names` line where SWMM's own
+    # writer writes two, and this module's job is to restore SWMM's native format.
+    # Not established: whether the coupled C++ parser scans POLLUTANTS at all was
+    # not re-measured for this change, so the membership rests on format fidelity to
+    # SWMM's writer rather than on a measured parser requirement. It is inert if the
+    # parser does not scan the section and required if it does.
+    "POLLUTANTS",
 }
 
 
@@ -840,6 +896,15 @@ def _write_variant(
     m.inp.junctions = _junctions_df(params)
     m.inp.outfalls = _outfalls_df(params)
     m.inp.coordinates = _coordinates_df(params)
+    # POLLUTANTS — emitted in every variant, but only when the regression-instrument
+    # knob is set. The guard is `is not None` rather than a truthiness test on the
+    # frame: a DataFrame has no boolean value and `if frame:` raises ValueError.
+    # `_pollutants_df` owns the on/off decision, which is also what makes the knob's
+    # off-state monkeypatchable as one named seam for the byte-identity gate's own
+    # discrimination check.
+    pollutants = _pollutants_df(params)
+    if pollutants is not None:
+        m.inp.pollutants = pollutants
     if include_hydraulics:
         m.inp.conduits = _conduits_df(params)
         m.inp.xsections = _xsections_df(params)

@@ -68,6 +68,35 @@ class SyntheticModelParams:
     # default 1.2 m per user request.
     manhole_loss_coefficient: float = 0.1
     seed: int = 0
+    # Regression-instrument knob, OFF by default. The synthetic model declares no
+    # pollutant, so the coupled solver's snapshot-write guard (`Nobjects[POLLUT] > 0`)
+    # is false on it and the snapshot-refusal defect cannot occur here at all — a
+    # green b4b verdict from this model is therefore silent about that defect class
+    # rather than evidence against it. Setting this name emits a one-row
+    # `[POLLUTANTS]` section, which makes the guard true; the model's single outfall
+    # already carries no `RouteTo` (see `swmm_template._outfalls_df`), so the two
+    # conjuncts of the defect's trigger are then both satisfied and the fast
+    # synthetic tier can exercise it without an HPC round-trip.
+    #
+    # Deliberately NOT emitted unconditionally: every existing synthetic family was
+    # run against the no-pollutant model, so an unconditional pollutant would make
+    # each cross-family comparison a comparison across two different models and
+    # destroy the comparand the regression work exists to use. Default-off keeps the
+    # emitted `.inp` byte-identical for every existing arm.
+    #
+    # Deliberately NOT placed on `synthetic_experiment_config`: that module is
+    # matched by the `src/hhemt/config/**/*.py` layout-relevance glob, so the knob
+    # would drag `_layout_relevant_files.yaml` into this change's edit surface and
+    # demand a LAYOUT_VERSION bump, a migration module and two golden fixtures.
+    # `scripts/experiments/synth_compute_config.py` constructs `SyntheticModelParams`
+    # directly, so no config-layer field is needed to reach it.
+    #
+    # Expected consequence of adding this field at all: it joins
+    # `dataclasses.asdict(params)` in `cache.py::_cache_key`, so every cached
+    # synthetic model is rebuilt once on the first run after this lands. That is a
+    # one-time rebuild, not a model change — the artifacts are byte-identical at the
+    # default.
+    pollutant_name: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
