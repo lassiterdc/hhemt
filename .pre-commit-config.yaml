@@ -43,8 +43,22 @@ repos:
   #
   # `uv` is a hard prerequisite for committing; see docs/contributing.md.
   #
-  # DEPENDENCY UNION of the nine scripts below: hhemt, openpyxl, packaging,
-  # pyyaml, Python >= 3.11 -- all supplied by the default (no-extra) sync.
+  # DEPENDENCY UNION of the `python scripts/` hooks below: hhemt, openpyxl,
+  # packaging, pyyaml, Python >= 3.11 -- all supplied by the default (no-extra)
+  # sync. THE THREE ty HOOKS ARE THE EXCEPTION and carry `--extra test`: within
+  # pyproject, `ty` is declared ONLY in `[project.optional-dependencies].test`,
+  # which the default sync does not install. They sit outside that union for
+  # TWO different reasons, and both are needed to reason about a future edit:
+  # ty-check and ty-report are not `python scripts/` hooks at all, so its
+  # population never included them; ty-overrides-in-force is in that
+  # population, but spawns bare `ty` through subprocess, which an
+  # import-scoped union cannot see. With the extra missing they also FAIL
+  # DIFFERENTLY: the two `ty check` entries exit 2 with `Failed to spawn: ty`,
+  # while the script raises an uncaught `FileNotFoundError` naming 'ty' and
+  # exits 1. Both are INVISIBLE on a tree whose `.venv` was ever synced with
+  # the extra, because `uv run` is INEXACT by default and never strips it;
+  # they surface only where no `.venv` carrying the extra exists -- the
+  # ephemeral-commit worktree, and any worktree never synced with it.
   # `openpyxl` is a core dependency; `packaging` arrives TRANSITIVELY via core
   # `snakemake`. check_env_lock_consistency.py raises SystemExit without
   # `packaging`, so dropping snakemake from core deps would break that guard.
@@ -264,7 +278,7 @@ repos:
         # a genuine regression in either tier. The authoritative full-scope gate is
         # type-gate.yml, which resolves the certified conda stack.
         entry: >-
-          uv run --locked ty check --ignore all
+          uv run --locked --extra test ty check --ignore all
           --error call-non-callable
           --error invalid-raise
           --error invalid-exception-caught
@@ -282,7 +296,7 @@ repos:
       # the pip tier's findings without them failing the commit.
       - id: ty-report
         name: ty type check (broad, reporting only)
-        entry: uv run --locked ty check --exit-zero --output-format concise
+        entry: uv run --locked --extra test ty check --exit-zero --output-format concise
         language: system
         pass_filenames: false
         always_run: true
@@ -292,7 +306,7 @@ repos:
       # exit-code check can see.
       - id: ty-overrides-in-force
         name: ty overrides table is in force (two-arm canary)
-        entry: uv run --locked python scripts/check_ty_overrides_in_force.py
+        entry: uv run --locked --extra test python scripts/check_ty_overrides_in_force.py
         language: system
         pass_filenames: false
         always_run: true
