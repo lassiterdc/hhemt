@@ -107,5 +107,43 @@ def _triage(
     raise typer.Exit(code=main(_argv(triage=True, toolkit=toolkit, runs_root=runs_root, from_run=from_run or None)))
 
 
+analysis_app = typer.Typer(
+    help="One end-to-end smoke run of YOUR experiment on its own cluster (analysis.test()).",
+    no_args_is_help=True,
+    invoke_without_command=True,
+)
+
+
+@analysis_app.callback()
+def _analysis(
+    experiment: str = typer.Option(..., "--experiment", help="Path to the experiment bundle directory."),
+    cluster: str | None = typer.Option(
+        None, "--cluster", help="Target cluster key. Optional when the bundle declares exactly one cluster."
+    ),
+) -> None:
+    """Run the least demanding slice of the experiment through compile, run, process and report.
+
+    One representative per distinct model, backend, partition and compute configuration runs
+    under the experiment's own `_test/` directory, so a broken build or allocation shows up in
+    minutes rather than after the full ensemble is queued. This SUBMITS real work on the
+    experiment's cluster. Exits 3 when any representative reports failure; a reported success
+    under `batch_job` means the orchestrator exited, so read each representative's logs too.
+    """
+    from pathlib import Path
+
+    from hhemt.cli import _exit_on_error, build_experiment_analysis, console, print_verbatim
+
+    try:
+        result = build_experiment_analysis(Path(experiment), cluster).test()
+    except Exception as exc:  # noqa: BLE001 — mapped to the CLI exit-code contract
+        _exit_on_error(exc)
+    print_verbatim(f"test root: {result.root}")
+    failed = [m.analysis_id for m in result.members if not m.workflow_result.success]
+    for member in result.members:
+        console.print(f"  {member.analysis_id}: success={member.workflow_result.success}")
+    raise typer.Exit(code=3 if failed else 0)
+
+
 # Registration order IS listing order. Append; do not insert.
 register_subject(toolkit_app, name="toolkit")
+register_subject(analysis_app, name="analysis")
