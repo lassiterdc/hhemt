@@ -107,10 +107,13 @@ def _triage(
     raise typer.Exit(code=main(_argv(triage=True, toolkit=toolkit, runs_root=runs_root, from_run=from_run or None)))
 
 
+# No `help=` here, so `--help` renders the callback's docstring, which states what the command
+# submits and how it exits; a `help=` string would replace it. `subcommand_metavar=""` drops the
+# `COMMAND [ARGS]...` a callback-only group otherwise advertises; `no_args_is_help` is unaffected.
 analysis_app = typer.Typer(
-    help="One end-to-end smoke run of YOUR experiment on its own cluster (analysis.test()).",
     no_args_is_help=True,
     invoke_without_command=True,
+    subcommand_metavar="",
 )
 
 
@@ -121,13 +124,14 @@ def _analysis(
         None, "--cluster", help="Target cluster key. Optional when the bundle declares exactly one cluster."
     ),
 ) -> None:
-    """Run the least demanding slice of the experiment through compile, run, process and report.
+    """One end-to-end smoke run of YOUR experiment on its own cluster (analysis.test()).
 
-    One representative per distinct model, backend, partition and compute configuration runs
-    under the experiment's own `_test/` directory, so a broken build or allocation shows up in
-    minutes rather than after the full ensemble is queued. This SUBMITS real work on the
-    experiment's cluster. Exits 3 when any representative reports failure; a reported success
-    under `batch_job` means the orchestrator exited, so read each representative's logs too.
+    Runs the least demanding slice of the experiment through compile, run, process and report:
+    one representative per distinct model, backend, partition and compute configuration, under
+    the experiment's own `_test/` directory, so a broken build or allocation shows up in minutes
+    rather than after the full ensemble is queued. This submits real work on the experiment's
+    cluster. Exits 3 when any representative reports failure; a reported success under
+    `batch_job` means the orchestrator exited, so read each representative's logs too.
     """
     from pathlib import Path
 
