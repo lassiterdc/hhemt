@@ -204,10 +204,13 @@ def run_command(
             "sentinel's origin host, which yields a measurement instead of a belief."
         ),
     ),
+    # False unless typed: resume is already the mode whenever --from-scratch is absent, so this
+    # flag only records whether the user ASKED for it. Deliberately NOT defaulted to True: the
+    # --from-scratch/--resume guard would then refuse every --from-scratch, with no off form.
     resume: bool = typer.Option(
-        True,
+        False,
         "--resume",
-        help="Continue from completed state (default behavior)",
+        help="Continue from completed state. Already the default; cannot be combined with --from-scratch.",
     ),
     overwrite: bool = typer.Option(
         False,
@@ -2447,8 +2450,9 @@ def _print_dry_run_summary(args: dict) -> None:
     console.print("\n[bold]Execution Mode:[/bold]")
     console.print(f"  Model:  {args['model']}")
     console.print(f"  Which:  {args['which']}")
-    console.print(f"  Resume: {args['resume']}")
-    console.print(f"  From scratch: {args['from_scratch']}")
+    # The mode run() receives is decided by --from-scratch alone; --resume only records whether
+    # it was typed, so echoing that flag would report "False" on a dry run that resumes.
+    console.print(f"  Mode:   {'fresh' if args['from_scratch'] else 'resume'}")
 
     # Event selection
     if args["event_ilocs"] or args["event_range"]:

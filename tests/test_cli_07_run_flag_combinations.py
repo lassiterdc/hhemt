@@ -7,12 +7,12 @@ flag silently changes what another flag forwards -- the user is told "fresh" and
 resume. Every test here stubs the analysis, the system and the config loader, invokes the
 real Typer app, and asserts on the keyword arguments `run()` RECEIVED.
 
-`--resume` defaults to True and has no off form on the command line, so `--from-scratch` is
-refused by argument validation before it can be combined with anything. These tests reach
-the combination through Click's `default_map`, which sets the `resume` default to False for
-the `run` subcommand exactly as a configuration-supplied default would, and which leaves
-every other flag on the ordinary argv path. A control test proves the route reaches the
-fresh branch on its own, so a red elsewhere in this file is not the route failing.
+`--from-scratch` is refused by argument validation whenever `resume` is True, and `--resume`
+has no off form on the command line. These tests pin `resume` to False through Click's
+`default_map`, which sets the `run` subcommand's default exactly as a configuration-supplied
+default would and leaves every other flag on the ordinary argv path, so the combination is
+reached whatever `--resume`'s declared default is. A control test proves the route reaches
+the fresh branch on its own, so a red elsewhere in this file is not the route failing.
 
 Nothing here compiles a solver or runs a simulation: `run()` is replaced by a recorder that
 stops the command as soon as it is called.
@@ -28,8 +28,8 @@ from hhemt.cli import app
 
 runner = CliRunner()
 
-# Click context setting: the `run` subcommand starts with resume=False, which the command
-# line cannot express today (single-name boolean defaulting True).
+# Click context setting: the `run` subcommand starts with resume=False regardless of the
+# option's declared default, so the tests do not depend on that default.
 _RESUME_OFF = {"run": {"resume": False}}
 
 
