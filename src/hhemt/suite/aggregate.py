@@ -83,8 +83,10 @@ IMPORT_GUARD_EXIT = 99
 #: a scheduler node, because the three tests in tests/test_doi_roundtrip_e2e.py declare an
 #: operator env gate AHEAD of their scheduler gate and pytest's first truthy skipif wins.
 #: They skip with the OPERATOR reason, land in SKIPPED_INCIDENTAL, and never reach
-#: `structural`. The tuple can therefore match zero AND match one-of-four; both failures
-#: are silent in the reassuring direction.
+#: `structural`. The tuple can therefore match zero (the rename case above) AND, with both
+#: entries current, match only one of the four tests that declare an entry: those three,
+#: plus the one in tests/test_synth_09_from_doi_run_proof.py that carries the "Local
+#: coupled run-proof" reason. Both failures are silent in the reassuring direction.
 STRUCTURAL_SKIP_REASONS: tuple[str, ...] = (
     "Local coupled run-proof; do not launch on an HPC scheduler node.",
     "live-deposit run-proof; do not launch on an HPC scheduler node.",
@@ -363,14 +365,16 @@ def classify_solver_setup(node_ids: list[str], signals: dict[str, list[str]]) ->
     still carried into the rendered evidence, where they corroborate; they just do not
     classify.
 
-    `NO` IS NEVER ASSERTED. These signals detect a DECLARATION; the project's
-    simulation-bearing halt rule defines membership by BEHAVIOUR -- compiles or executes a
-    solver, "directly or through a fixture" -- and the two extensions provably diverge: a
-    test drawing a compile fixture through `request.getfixturevalue()` is simulation-bearing
-    by that rule and emits no signal, because a run-time fixture request never enters the
+    `NO` IS NEVER ASSERTED. These signals detect a DECLARATION, while the project's rule
+    for where a simulation-bearing test may run defines membership by BEHAVIOUR: a test that
+    compiles or executes a solver, "directly or through a fixture", runs on UVA Rivanna and
+    never on a developer laptop. The two extensions provably diverge: a test drawing a
+    compile fixture through `request.getfixturevalue()` is simulation-bearing by that rule
+    and emits no signal, because a run-time fixture request never enters the
     collection-time closure. That is why the field is named for the EVIDENCE. A field
-    wearing the halt rule's word would carry its authority without its extension, and a
-    reader meeting an unsignalled member would read the licence that rule refuses to grant.
+    named "simulation-bearing" would carry the rule's authority without its extension, and
+    a reader meeting an unsignalled member would read it as cleared for a laptop run, which
+    the rule does not grant.
 
     Both counts are BOUNDS. `signalled` is a floor and `unsignalled` bounds this
     classifier's silence, not any property of the tests.
@@ -434,8 +438,8 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
         # harvest has always written it and the summary has never mentioned it, which is
         # the whole defect: an unnamed directory gets read past, and that is what an
         # unnamed directory gets rather than a lapse by the reader.
-        # `kind` is the chunk-PACKING axis: producers write "heavy" (partition.py:520,
-        # :533), "cheap" (:547) and "triage" (_runner.py:1086). The array-versus-complement
+        # `kind` is the chunk-PACKING axis: producers write "heavy" and "cheap"
+        # (`partition.py::build_manifest`) and "triage" (`_runner.py::triage`). The array-versus-complement
         # distinction is a DIFFERENT axis and takes a separate per-chunk field,
         # `covers: "array" | "complement"`, absent-meaning "array" -- NEVER a fourth `kind`
         # value, whose vocabulary already spends the words "heavy" and "cheap" on cost.
@@ -487,8 +491,8 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     # The DECLARED complement (every node id whose declared skipif reasons include a
     # STRUCTURAL_SKIP_REASONS member) is computed at plan time, where every gate is visible.
     #
-    # (b) When STRUCTURAL_SKIP_REASONS matches nothing -- the state this file's own header
-    # comment records for 2026-08-25 -- both `structural` and the declared complement are
+    # (b) When STRUCTURAL_SKIP_REASONS matches nothing -- the state the comment above that
+    # tuple records for 2026-08-25 -- both `structural` and the declared complement are
     # empty, and an emptiness-only predicate would ADMIT the union claim on no evidence.
     # So a POSITIVE conjunct is required: some chunk must have declared `covers=complement`.
     # HOISTED out of the union arm below, which was the only site that consulted these. Both
@@ -524,10 +528,10 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     # bound as a measurement over evidence that was never collected.
     _signals_recorded = "signals" in manifest
     _sig, _unsig = classify_solver_setup(structural, manifest.get("signals") or {})
-    # TYPED, and `None` rather than a magic string. `counts` is the machine surface --
-    # "for humans; this key is for programs", four lines above the dict -- and every other
-    # member is an int, so a string sentinel there would make `counts[...] > 0` a string
-    # comparison, `int(...)` raise, and `"10" < "9"` true. None serializes to JSON null,
+    # TYPED, and `None` rather than a magic string. `counts` is serialized into
+    # summary.json for programs to read, and every other member of it is an int, so a
+    # string sentinel there would make `counts[...] > 0` a string comparison, `int(...)`
+    # raise, and `"10" < "9"` true. None serializes to JSON null,
     # which a consumer can test for without knowing the token. The TOKEN belongs to the
     # verdict LINE, where a reader needs a word; `_fmt_signal_count` is the one place it is
     # produced, so both composers cannot disagree.
@@ -629,9 +633,10 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     # The race class the harness exists to catch: two sessions mutating ONE analysis tree.
     contended_writes = _contention([t for t in observed_cross if entry_class.get(t) == ENTRY_ANALYSIS_TREE])
     # RECLASSIFIED, NOT EXCLUDED. The compiled tier is shared across every chunk by
-    # design, so it is not an analysis-tree race -- but properties 1 and 2 say it is
-    # written ONCE, by the warm, so a chunk writing it is still a finding and excluding it
-    # would make that question permanently unanswerable. It gets its own label, its own
+    # design, so it is not an analysis-tree race -- but the suite harness builds it ONCE, in
+    # the warm step that runs before the chunk array (properties 1 and 2 of the harness
+    # README, the phrase the messages below print), so a chunk writing it is still a
+    # finding, and excluding it would make that question permanently unanswerable. It gets its own label, its own
     # section, and the write samples that say WHAT was written.
     shared_by_design_writes = _contention([t for t in observed_cross if entry_class.get(t) == ENTRY_SHARED_BY_DESIGN])
     ignored_transient = sorted(t for t in observed_cross if entry_class.get(t) == ENTRY_TRANSIENT)
@@ -666,9 +671,11 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
 
     entry_problems: list[str] = []
     # ADVISORY accumulator, sibling of entry_problems and NOT consulted by the verdict.
-    # It exists because three findings below fire on a HEALTHY run and each of them says
-    # so in its own comment. Measured 2026-09-04 against a synthetic run directory with 4
-    # passing tests, both chunks `pytest_exit: 0`, failed=0 unevaluated=0 absent=0:
+    # It exists because some findings below fire on a HEALTHY run -- the four tagged kinds
+    # [classifier-self-check], [shared-by-design-write], [derivation-under-connected] and
+    # [complement-derivation] -- and each says so in its own comment. Measured 2026-09-04
+    # against a synthetic run directory with 4 passing tests, both chunks
+    # `pytest_exit: 0`, failed=0 unevaluated=0 absent=0:
     # `verdict=NOT-GREEN`. An alarm that fires on every healthy run is not an alarm, and
     # the cost is not cosmetic -- a suite green is the gate on an ensemble launch, so a
     # constant NOT-GREEN forces the reader to evaluate the counts and ignore the word,
@@ -720,7 +727,8 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
         # measured 2026-09-04, it is the reason even the triage shape could not reach GREEN.
         # What is given up: a genuine `_version.json` relocation no longer fails a run. It
         # still PRINTS, and a stamp move would break the toolkit's own layout-version CI
-        # first, so this is the cheapest of the three demotions.
+        # first, so demoting this costs less than demoting [derivation-under-connected],
+        # which gives up the run's only under-connection detector.
         entry_advisories.append(
             f"[classifier-self-check] no observed slug-root directory carries "
             f"`{'_version.json'}` -- every one of {sorted(dirs)} classified "
@@ -730,11 +738,12 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
         )
 
     problems: list[str] = list(scope_problems) + list(entry_problems) + list(merge_problems)
-    # Everything BELOW that stays in `problems` is verdict-bearing and unchanged. Only the
-    # three sites this spec set names move, and each moves for a reason its own comment
-    # already gave. `scope_problems` is NOT demoted: a caller asking for a scope the
-    # manifest forbids is a misuse of the instrument, which is a different thing from the
-    # instrument reporting on itself.
+    # Everything BELOW that is appended to `problems` is verdict-bearing. A finding goes to
+    # `advisories` instead only at the sites tagged [classifier-self-check],
+    # [shared-by-design-write], [derivation-under-connected] and [complement-derivation],
+    # and each states its own reason in the comment beside it. `scope_problems` is NOT
+    # demoted: a caller asking for a scope the manifest forbids is a misuse of the
+    # instrument, which is a different thing from the instrument reporting on itself.
     advisories: list[str] = list(entry_advisories)
     for r in chunk_rows:
         if r["state"] != "PASS":
@@ -745,16 +754,12 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
         problems.append(f"{len(uneval)} test(s) UNEVALUATED (setup or teardown raised; the body never ran)")
     if absent:
         problems.append(f"{len(absent)} collected test(s) ABSENT from every junit file")
-    # A test cannot be simultaneously MISSING from the junit and EXTRA in it. When both
-    # sets are non-empty the two sides are naming the same tests in different id shapes,
-    # which is a REPORTING defect, not a coverage one -- and it is self-concealing,
-    # because `absent` can never reach zero and the verdict stays NOT-GREEN forever with
-    # no failing test to chase.
     # A cross-chunk reach with NO observed writer is concurrent READING, which is
-    # benign, so it is recorded in the result and does NOT fail the run. Round 18 made
-    # any cross-chunk reach a problem, which was correct only while the reach was
-    # undifferentiated: failing every concurrent read would make the verdict fire for a
-    # reason other than the one it names -- the defect this harness exists to close.
+    # benign, so it is recorded in the result and does NOT fail the run. Deliberately NOT
+    # failing on every cross-chunk reach, as an earlier version of this check did: that was
+    # correct only while the reach was undifferentiated, and once reads and writes are told
+    # apart, failing every concurrent read would make the verdict fire for a reason other
+    # than the one it names -- the defect this harness exists to close.
     # CAVEAT kept in view: arm B is false-negative-safe, so "no writer observed" is not
     # "no writer"; a write through a C-level open is invisible to it.
     for t, d in contended_writes.items():
@@ -792,7 +797,7 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     # Not-a-lock alone marks two chunks materializing DIFFERENT config files as a race.
     # A real concurrent build -- two chunks both writing
     # `triton/build_tritonswmm_cpu/compilation.log` -- collides on a payload path and is
-    # the case properties 1 and 2 forbid, so it stops the run.
+    # the case the build-once-in-the-warm-step design forbids, so it stops the run.
     for t_, d in shared_by_design_writes.items():
         _by_chunk = d["write_samples_by_chunk"] or {}
         _payload = {cid: {s for s in ss if not _is_coordination_path(s)} for cid, ss in _by_chunk.items()}
@@ -872,6 +877,11 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
             "20260904T074157Z_cd4d8f6d9a91 baseline). While this line is advisory, an "
             "under-connected partition CANNOT fail a run."
         )
+    # A test cannot be simultaneously MISSING from the junit and EXTRA in it. When both
+    # sets are non-empty the two sides are naming the same tests in different id shapes,
+    # which is a REPORTING defect, not a coverage one -- and it is self-concealing,
+    # because `absent` can never reach zero and the verdict stays NOT-GREEN forever with
+    # no failing test to chase.
     if absent and unmatched_junit:
         problems.append(
             f"id-shape mismatch: {len(absent)} collected test(s) have no junit entry AND "
@@ -940,7 +950,8 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
             # ALWAYS emitted, including at zero, exactly as `mechanism=` is. A count that
             # appears only when non-zero teaches a reader to skim for its absence, and an
             # absent count is indistinguishable from a reporting layer too old to emit it
-            # -- the same defect the README records for a bare `GREEN`.
+            # -- the same reason a bare `GREEN` is never printed (see the comment above the
+            # print in main()).
             f"incidental_skips={len(incidental)} "
             f"{_FIELD_SIGNALLED}={_fmt_signal_count(_sig_count)} "
             f"{_FIELD_UNSIGNALLED}={_fmt_signal_count(_unsig_count)} "
@@ -987,11 +998,12 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
         "structurally_excluded": structural,
         # BOTH derivations reach the result dict, each named for what it IS.
         # `structurally_excluded` above is the junit-OBSERVED partition cell and keeps its
-        # meaning exactly -- it is summed in the partition identity below and a change to it
-        # would invalidate that check. These two are the plan-time DECLARATION and its
-        # intersection with what THE SITE DID NOT ATTEMPT -- named for `_EVALUATED_OUTCOMES`'s
-        # own definition rather than for the outcome literal `UNEVALUATED`, which sits inside
-        # that set and means the opposite of what the word suggests here.
+        # meaning exactly -- it is one of the six buckets the partition identity check above
+        # sums (`total = len(passed) + ...`), and a change to it would invalidate that
+        # check. These two are the plan-time DECLARATION and its intersection with what
+        # THE SITE DID NOT ATTEMPT -- named for `_EVALUATED_OUTCOMES`'s own definition
+        # rather than for the outcome literal `UNEVALUATED`, which sits inside that set and
+        # means the opposite of what the word suggests here.
         "declared_complement": sorted(declared_complement),
         "declared_not_attempted": declared_not_attempted,
         "incidental_skips": incidental,
@@ -1010,11 +1022,11 @@ def render_verdict_line(result: dict) -> str:
     """Re-render the verdict line from `result`, byte-identically to aggregate()'s own.
 
     TWO COMPOSERS, DELIBERATELY, AND THE DUPLICATE IS PINNED RATHER THAN REMOVED.
-    aggregate() still builds this string inline inside its return literal (:679) from
-    LOCALS (`passed`, `structural`, ...) rather than from `counts`; collapsing the two
-    would mean restructuring a 56-line dict literal that ten arms in
-    tests/test_verdict_partition.py depend on, in a change whose own purpose is to stop a
-    verdict from lying. The proportionate close is a COMPARISON rather than a refactor:
+    aggregate() still builds this string inline, as the `verdict_line` entry of its return
+    dict literal, from LOCALS (`passed`, `structural`, ...) rather than from `counts`;
+    collapsing the two would mean restructuring that return literal, whose keys the tests
+    in tests/test_verdict_partition.py read one by one. The proportionate close is a
+    COMPARISON rather than a refactor:
     test_the_verdict_line_composer_agrees_with_aggregates_own reddens the moment an
     interpolant is added to one and not the other. Byte-identity was verified by execution
     across six shapes on 2026-09-05 -- healthy array, a real junit failure, a missing chunk
@@ -1296,22 +1308,30 @@ def render_summary_md(result: dict) -> str:
 
     # PER-MEMBER EVIDENCE, NEVER A VERDICT. SPECIFIED BUT NOT YET EMITTED: the per-member
     # table this rule governs is not rendered here today, and the paragraphs below state
-    # what it MUST carry when it lands, not what the code emits now. The counts reach the
-    # verdict line and `counts`; the per-node rows do not.
+    # what it MUST carry when it lands, not what the code emits now. Its members are the
+    # `structural` node ids that `classify_solver_setup` counts in aggregate(); those counts
+    # reach the verdict line and `counts`, and the per-node rows do not.
     #
     # Each row will carry the signal tokens observed for that node id and nothing derived
     # from them: a `classification` cell would be `len(signals) > 0`, which is one question
     # with two answers.
     #
-    # READING RULE, to be emitted beside the rows it qualifies rather than in a header, per
-    # the precedent this harness sets for its SHARED_BY_DESIGN class: signals PRESENT means the
-    # member almost certainly compiles or runs a solver; NO SIGNALS ESTABLISHES NOTHING --
-    # the project's simulation-bearing halt rule decides whether it may be run, and a
-    # signal-derived field carries no permission.
+    # READING RULE, to be emitted beside the rows it qualifies rather than in a header, as
+    # the SHARED_BY_DESIGN caveat in the write-surface section above already is: signals
+    # PRESENT means the member almost certainly compiles or runs a solver; NO SIGNALS
+    # ESTABLISHES NOTHING. Where such a test may run is decided by what it does, not by
+    # these signals: a test that compiles or executes a solver, directly or through a
+    # fixture, runs on UVA Rivanna and never on a developer laptop. An unsignalled member is
+    # therefore not cleared for a laptop run, and no signal-derived field may read as if it
+    # were.
     #
-    # The word for a member listed here is UNEVALUATED, never "deferred": "deferred" grants
-    # a permission the governing ruling withdrew, and any red such a member produces --
-    # whenever and wherever it is run -- must be fixed.
+    # Every member is a test carrying a structural gate that this run did not attempt, so
+    # its label uses the words the Complement section above already prints for that group:
+    # "carrying a structural gate" and "not attempted". Never the outcome word
+    # `UNEVALUATED`, which this module reserves for a test whose setup or teardown raised
+    # (see `parse_junit`), so using it here would merge two populations the verdict line
+    # counts separately. And never "deferred", which reads as leave to skip the test: any
+    # red such a member produces, whenever and wherever it is run, must be fixed.
 
     if result["incidental_skips"]:
         # `.get` is DEFENSIVE: no production path renders a read-back summary.json today
@@ -1379,11 +1399,12 @@ def main(argv: list[str] | None = None) -> int:
         """Append a blocking problem AFTER aggregate() returned, AND re-render the verdict line.
 
         MEASURED DEFECT, not a precaution. `verdict_line` is a PRE-RENDERED f-string built
-        inside aggregate() (:679) from the `problems` list as it stood THERE; mutating
+        inside aggregate()'s return dict from the `problems` list as it stood THERE; mutating
         result["verdict"] afterwards does not update it. Under the previous form of this
         block a run whose only problem was a silent conformance site PRINTED
-        `verdict=GREEN ...` at :1020 and wrote a summary.md carrying that same GREEN line
-        (render_summary_md reads result["verdict_line"] at :742) while summary.json said
+        `verdict=GREEN ...` through main()'s `print(result["verdict_line"])` and wrote a
+        summary.md carrying that same GREEN line (render_summary_md copies
+        result["verdict_line"] into its fenced verdict block) while summary.json said
         NOT-GREEN -- the two operator surfaces disagreeing, with the one an operator reads
         saying GREEN. Executed 2026-09-05 against a copy of this module with the roster
         applied: scenario "chunk-01 silent" printed verdict=GREEN and wrote NOT-GREEN.
@@ -1440,11 +1461,12 @@ def main(argv: list[str] | None = None) -> int:
     # refusing would make a pre-floor run dir unaggregatable.
     #
     # IT FLIPS NOT-GREEN, and the decisive reason is local rather than general: the roster
-    # block six lines above ALREADY flips NOT-GREEN for a purely provenance defect (a site
-    # that left no record). Leaving this branch un-flipped makes one block treat a silent
-    # PEER as disqualifying and an unidentifiable SELF as tolerable. NOT-GREEN here does not
-    # claim a test failed; in this module it claims the run does not support a suite-level
-    # green, and a verdict that cannot name its own source tree does not.
+    # block above (`if _vstatus != "NO_EXPECTATION":`) ALREADY flips NOT-GREEN for a purely
+    # provenance defect (a site that left no record). Leaving this branch un-flipped makes
+    # one block treat a silent PEER as disqualifying and an unidentifiable SELF as
+    # tolerable. NOT-GREEN here does not claim a test failed; in this module it claims the
+    # run does not support a suite-level green, and a verdict that cannot name its own
+    # source tree does not.
     if _vstatus == "UNRESOLVABLE":
         _blocking(
             "verdict job cannot determine which source tree it resolved hhemt from (no `src` "
@@ -1487,6 +1509,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover - module-execution path
-    # `main()` returns 0 (GREEN, or --allow-not-green) / 1 (NOT-GREEN). The Typer
-    # wrapper must convert with `raise typer.Exit(code=...)`; a bare `return` exits 0.
+    # `main()` returns 0 (GREEN, or --allow-not-green) / 1 (NOT-GREEN). Its Typer wrapper,
+    # `src/hhemt/suite/_cli.py::_aggregate`, converts with `raise typer.Exit(code=main(...))`;
+    # a bare `return` there would exit 0 whatever the verdict.
     raise SystemExit(main())
