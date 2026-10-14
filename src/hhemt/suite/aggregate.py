@@ -1145,9 +1145,10 @@ def render_summary_md(result: dict) -> str:
             "",
             "## Advisories — reported, not verdict-bearing",
             "",
-            "These did NOT affect the verdict. Two of the three kinds below describe the "
-            "INSTRUMENT rather than the run, and one names a capability that is currently "
-            "switched off:",
+            "These did NOT affect the verdict. Of the four kinds below, two describe the "
+            "INSTRUMENT rather than the run, one names a capability that is currently "
+            "switched off, and one reports a disagreement between the two records the "
+            "structural complement is read from:",
             "",
             "- `[classifier-self-check]` — the slug-entry classifier reporting on itself.",
             "- `[shared-by-design-write]` — ONE chunk wrote a shared-by-construction entry "
@@ -1157,6 +1158,11 @@ def render_summary_md(result: dict) -> str:
             "under-connected partition, and while it is advisory an under-connected "
             "partition cannot fail a run.** It is advisory because arm A and arm B may not "
             "share a tree vocabulary, not because under-connection stopped mattering.",
+            "- `[complement-derivation]` — the manifest's DECLARED structural gates and the "
+            "junit's OBSERVED structural skips disagree, in either direction. The partition is "
+            "intact either way: a declared gate can be pre-empted by an operator gate or simply "
+            "not fire, and a skip observed but never declared points at a manifest older than "
+            "the run it is being read against.",
             "",
         ]
         lines += [f"- {a}" for a in result["advisories"]]
@@ -1243,11 +1249,12 @@ def render_summary_md(result: dict) -> str:
                 "> **`SHARED_BY_DESIGN` is an ABSENCE of evidence, not evidence of design.**",
                 "> A row carries that label because no `_version.json` was found under it — which is",
                 "> also what a mis-resolved or mis-stat'd entry looks like. Two rows are corroborated",
-                "> INDEPENDENTLY of this classifier: `_software` (this README states the compiled tier",
-                "> is deliberately shared, and `test_case_builder.py` pins `_software_root` to the slug",
-                "> root outside the branch that chooses the runs-root) and `_sensitivity_configs` (a",
-                "> config staging dir, `test_case_catalog.py:843`). **Any OTHER entry above with this",
-                "> label is UNCLASSIFIED, not benign** — treat it as a finding awaiting explanation.",
+                "> INDEPENDENTLY of this classifier: `_software` (`test_case_builder.py` pins",
+                "> `_software_root` to the slug root outside the branch that chooses the runs-root, so the",
+                "> compiled tier is shared on purpose) and `_sensitivity_configs` (a config staging dir",
+                "> written by `test_case_catalog.py`'s `_write_synth_sensitivity_csv`). **Any OTHER entry",
+                "> above with this label is UNCLASSIFIED, not benign** — treat it as a finding awaiting",
+                "> explanation.",
                 ">",
                 "> There is no structural marker for *shared by design* the way `_version.json` is one",
                 "> for *analysis tree*, because the class is defined by the absence of a marker. This",
