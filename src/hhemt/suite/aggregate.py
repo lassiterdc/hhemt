@@ -853,7 +853,7 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
             f"shared-by-design entry written by chunk(s) {d['writers']} (touched by "
             f"{d['readers']}): {_disp(t_)} -- shared across chunks by construction, so NOT an "
             "analysis-tree race; a chunk writing it still wants explaining (for `_software`, "
-            "properties 1 and 2 say the compiled tier is written ONCE, by the warm). "
+            "the compiled tier is written ONCE, by the warm build step that runs before the chunk array). "
             f"Samples: {d['write_samples_by_chunk'] or '(none recorded)'}"
         )
         if _collided or _unwitnessed:
@@ -864,7 +864,8 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
                 "so this entry cannot be shown to be lock acquisition"
             )
             problems.append(
-                f"[concurrent-build] {_sbd} BLOCKING: {_why} under a tier properties 1 and 2 say is written once."
+                f"[concurrent-build] {_sbd} BLOCKING: {_why} under a tier written once, by the warm build step "
+                "that runs before the chunk array."
             )
         else:
             advisories.append(
