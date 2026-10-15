@@ -1,14 +1,26 @@
 """Aggregate per-chunk artifacts into one verdict for an hhemt suite run.
 
+A suite run partitions the collected tests into CHUNKS, each run as one pytest
+session (one element of a SLURM array). The run directory holds a `manifest.json`
+written at plan time -- the collected node ids, the chunk assignment and the source
+sha the run is pinned to -- and, per chunk, a `chunk-NN.status.json` sidecar and a
+`chunk-NN.junit.xml`. `aggregate()` turns those files into one result; `main()` adds the
+version-conformance check and writes the summary `.json` and `.md` beside them.
+
 Two vocabularies, at two granularities, and they are not interchangeable.
 
 CHUNK state
     PASS     ran to completion with no failing or unevaluated test
-    FAIL     ran to completion; at least one test failed
+    FAIL     ran to completion with a non-zero pytest exit and no VOID cause --
+             a failing test, an erroring one, or any other exit code not listed
+             under VOID
     VOID     ran, but its own preconditions were violated, so its numbers are
-             not evidence (source moved under it, two processes in the job
-             resolved hhemt differently, the import guard exited 99, pytest
-             reported INTERRUPTED/INTERNAL_ERROR/USAGE_ERROR, or SLURM killed it)
+             not evidence: an expected session fixture did not complete setup,
+             the source sha differed from the pinned one or moved under it, the
+             tree was dirty, processes disagreed on hhemt.__file__ or none
+             recorded it, the import guard exited 99, pytest reported
+             INTERRUPTED/INTERNAL_ERROR/USAGE_ERROR, SLURM killed it, or it left
+             no junit file. `classify_chunk` is where that list is enforced.
     MISSING  the manifest declares this chunk and no status sidecar exists
 
 TEST outcome
@@ -67,16 +79,18 @@ IMPORT_GUARD_EXIT = 99
 #: local, incidental absence. Exact-match on the junit skip message. Adding a pattern
 #: widens the declared complement; it must never be widened to silence a real skip.
 #:
-#: EXACT-MATCH IS A CROSS-REPO COUPLING TO TOOLKIT PROSE, AND IT HAS ALREADY BROKEN ONCE.
-#: A RETIRED entry, "Only runs on non-HPC systems.", matched 17 tests until the toolkit
-#: deleted every mark carrying
+#: EXACT-MATCH IS A COUPLING TO THE `skipif` REASON STRINGS IN THIS REPO'S OWN TESTS, AND IT
+#: HAS ALREADY BROKEN ONCE. A RETIRED entry, "Only runs on non-HPC systems.", matched 17
+#: tests until every mark carrying
 #: it (see `tests/utils_for_testing.py::on_scheduler_node`, whose docstring records the
 #: deletion). From 2026-08-25 this tuple matched ZERO tests, so `structurally_excluded`
 #: read 0 and `summary.md` printed "None -- every collected test was evaluable at this
 #: scope" while a scheduler-gated test sat in the INCIDENTAL bucket. The failure is
 #: silent in the reassuring direction: a narrowed pattern makes the run look MORE
-#: complete, not less. Nothing in this repo can detect the next rename; when a toolkit
-#: `skipif` reason changes, this tuple must change with it.
+#: complete, not less. No test currently compares this tuple against those reason strings
+#: (they sit in `tests/test_doi_roundtrip_e2e.py` and
+#: `tests/test_synth_09_from_doi_run_proof.py`), so the next rename goes unnoticed; when
+#: such a `skipif` reason changes, this tuple must change with it.
 #:
 #: RUNTIME SHADOWING, a SECOND way this tuple silently under-matches: the entry
 #: "live-deposit run-proof; do not launch on an HPC scheduler node." is never PRODUCED on
@@ -190,7 +204,10 @@ def skip_reasons(path: Path) -> dict[str, str]:
     return reasons
 
 
-#: What a slug-root entry IS, decided from raw evidence rather than from a name list.
+#: What a slug-root entry IS, decided from raw evidence rather than from a name list. The
+#: slug root is the per-worktree runs directory the synthetic test fixtures share,
+#: `.../synthetic_test_runs/{worktree slug}/`; each entry under it is a directory or file
+#: some test created there.
 #: A name list is a derivation with a horizon -- a staging dir added later would fall
 #: through it and be reported as an analysis-tree race, which is the same over-report
 #: this classifier exists to end, one size smaller. The discriminator is the toolkit's
@@ -296,7 +313,7 @@ def classify_chunk(
 _EVALUATED_OUTCOMES = frozenset({"PASSED", "FAILED", "UNEVALUATED"})
 
 #: Severity for resolving a disagreement between two EVALUATED outcomes. Severity, never
-#: arrival order -- resolving by order is the defect this function exists to remove, and
+#: arrival order -- resolving by order is the defect `merge_outcomes` exists to remove, and
 #: it would be absurd to remove it with a rule that still depends on order.
 _OUTCOME_SEVERITY = {"PASSED": 0, "UNEVALUATED": 1, "FAILED": 2}
 
@@ -386,17 +403,22 @@ def classify_solver_setup(node_ids: list[str], signals: dict[str, list[str]]) ->
 
 
 def aggregate(run_dir: Path, scope: str = "array") -> dict:
+    # Reads `manifest.json`, every `chunk-NN.status.json` and every `chunk-NN.junit.xml`
+    # under `run_dir`, and returns the run's result dict: the verdict, the problems and
+    # advisories behind it, per-chunk states, the per-test buckets, and `verdict_line` and
+    # `counts`, which are what `main()` prints. It writes nothing; `main()` persists it.
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     pinned = manifest["source_sha"]
 
     # SCOPE IS BOUND BY THE MANIFEST, NEVER BY THE CALLER ALONE. The run that BUILT this
     # directory recorded what it intended to cover; a downstream reader passing --scope
-    # cannot know better, and the operator path proves it -- rerun.sh's --aggregate and
-    # its verdict job pass no --scope at all, so a triage run aggregated through the
-    # normal entry point would otherwise report `scope=array` and write `summary.json`,
-    # defeating both unmisreadability properties at once. Binding here makes the property
-    # structural rather than dependent on remembering a flag: there is no invocation of
-    # this module that can produce a suite-shaped verdict from a triage manifest.
+    # cannot know better. A caller that passes no --scope at all, such as a scheduled
+    # verdict job, would otherwise mislabel a triage run: it would report `scope=array`
+    # and write `summary.json` rather than `summary.triage.json`, so both the scope label
+    # and the filename that keep a triage result from being read as a suite result would
+    # be wrong at once. Binding here makes that protection structural rather than
+    # dependent on remembering a flag: there is no invocation of this module that can
+    # produce a suite-shaped verdict from a triage manifest.
     scope_problems: list[str] = []
     declared = manifest.get("scope_intent")
     if declared == "triage" and scope != "triage":
@@ -816,12 +838,12 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
         # reads ADVISORY -- measured 2026-09-04, `[[]] * 4` returned GREEN.
         #
         # NOT REACHABLE TODAY, and that is stated rather than hidden so the next reader does
-        # not waste an afternoon constructing it: `run_suite.py`'s audit hook appends a
-        # sample on the FIRST write, so `written=True` implies at least one sample, and the
-        # LEGACY reach shape keys `written_by` on the bare NAME while the modern shape keys
+        # not waste an afternoon constructing it: `_runner.py`'s audit hook (`_reach_hook`)
+        # appends a sample on the FIRST write, so `written=True` implies at least one sample,
+        # and the LEGACY reach shape keys `written_by` on the bare NAME while the modern shape keys
         # on the ABSOLUTE PATH -- measured, they never join, so a legacy writer cannot
         # attach to a SHARED_BY_DESIGN entity. This clause is therefore a CONTRACT test on
-        # an undocumented cross-module invariant (a hook in run_suite.py guaranteeing an
+        # an undocumented cross-module invariant (a hook in `_runner.py` guaranteeing an
         # input property this consumer relies on), not a regression test on an observed
         # failure. It is kept because that invariant is undocumented, lives in a different
         # module from its consumer, and would break silently: a future hook that records a
@@ -1027,7 +1049,8 @@ def render_verdict_line(result: dict) -> str:
     collapsing the two would mean restructuring that return literal, whose keys the tests
     in tests/test_verdict_partition.py read one by one. The proportionate close is a
     COMPARISON rather than a refactor:
-    test_the_verdict_line_composer_agrees_with_aggregates_own reddens the moment an
+    test_the_verdict_line_composer_agrees_with_aggregates_own (in
+    tests/test_suite_version_declaration.py) reddens the moment an
     interpolant is added to one and not the other. Byte-identity was verified by execution
     across six shapes on 2026-09-05 -- healthy array, a real junit failure, a missing chunk
     record at scope=union, a non-zero pytest exit, mechanism=UNREADABLE, and advisories=2 --
@@ -1433,9 +1456,9 @@ def main(argv: list[str] | None = None) -> int:
     # writes no record, and -- with nothing reading _conformance/ -- is INDISTINGUISHABLE from a
     # conforming one. That converts "a mis-resolved participant agrees with itself" into "a
     # mis-resolved participant is silent", which is the same empty-population shape applied to
-    # the floor's own motivating case. The denominator is machine-derived: manifest.json already
-    # carries chunk_count, so no new artifact is needed. Gated on NO_EXPECTATION so a pre-floor
-    # run dir stays aggregatable.
+    # the very case the version declaration exists to catch. The denominator is machine-derived:
+    # manifest.json already carries chunk_count, so no new artifact is needed. Gated on
+    # NO_EXPECTATION so a run dir that predates the version declaration stays aggregatable.
     if _vstatus != "NO_EXPECTATION":
         _n = None
         try:
@@ -1455,17 +1478,21 @@ def main(argv: list[str] | None = None) -> int:
                     "that did not participate is not evidence that it conformed."
                 )
 
-    # BOTH NON-MATCH STATES, and this is the site the whole floor names as unverifiable.
+    # BOTH NON-MATCH STATES, at the one site that cannot be checked by peer agreement.
     # An UNRESOLVABLE verdict job writes its record, SATISFIES the roster (which checks
     # PRESENCE, and the record is present), appended nothing under the MISMATCH-only form,
-    # and the summary stayed GREEN -- at the one site that cannot be checked by peer
-    # agreement, in the configuration it actually runs in (`rerun.sh:471` passes no
-    # --export, no `cd $TOOLKIT` and no PYTHONPATH, so it resolves hhemt from whatever the
-    # env installed, which is the single most likely place in the harness for a non-`src`
-    # layout to appear). The drive/chunk asymmetry applies here with ONE CHANGE OF VERB:
-    # NO_EXPECTATION is a property of the RUN and stays silent; UNRESOLVABLE is a property
-    # of THIS PROCESS and must be surfaced -- by REPORTING rather than raising, because
-    # refusing would make a pre-floor run dir unaggregatable.
+    # and the summary stayed GREEN. UNRESOLVABLE is reachable here because this module is
+    # part of the package it is checking: the tree it reports is wherever the invoking
+    # interpreter found `hhemt`, and neither this module nor `verify_version_conformance`
+    # chooses that. A source checkout puts `hhemt/__init__.py` under a `src` directory and
+    # names its tree; a wheel install, or any layout without that `src` directory, does
+    # not, so `resolved_tree()` returns None and this branch fires. The other conformance
+    # sites -- the drive, triage and each chunk -- RAISE on MISMATCH and on UNRESOLVABLE,
+    # because their declaration was written moments earlier in the same run. This site
+    # treats the same two states with ONE CHANGE OF VERB: it REPORTS them rather than
+    # raising, because refusing would make a run dir that predates the version declaration
+    # unaggregatable. NO_EXPECTATION is a property of the RUN and stays silent at every site;
+    # UNRESOLVABLE is a property of THIS PROCESS and must be surfaced.
     #
     # IT FLIPS NOT-GREEN, and the decisive reason is local rather than general: the roster
     # block above (`if _vstatus != "NO_EXPECTATION":`) ALREADY flips NOT-GREEN for a purely
@@ -1488,10 +1515,10 @@ def main(argv: list[str] | None = None) -> int:
         )
     # THE FILENAME SPLIT, keyed on the BOUND scope rather than on args.scope, because the
     # manifest can override the caller. Without it a triage run in a fresh dir writes a
-    # file that any later reader -- including run_suite.py's own --from-run default
-    # selection -- picks up as a suite summary. The split makes that impossible rather
-    # than unlikely, and it is the second of the two independent arms guarding that path
-    # (the first is the `.triage` run-dir suffix).
+    # file that any later reader -- including `_runner.py`'s own --from-run default
+    # selection (`_select_source_run`) -- picks up as a suite summary. The split makes that
+    # impossible rather than unlikely, and it is the second of the two independent arms
+    # guarding that path (the first is the `.triage` run-dir suffix).
     stem = "summary.triage" if result["scope"] == "triage" else "summary"
     (run_dir / f"{stem}.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (run_dir / f"{stem}.md").write_text(render_summary_md(result), encoding="utf-8")
