@@ -81,9 +81,9 @@ IMPORT_GUARD_EXIT = 99
 #:
 #: EXACT-MATCH IS A COUPLING TO THE `skipif` REASON STRINGS IN THIS REPO'S OWN TESTS, AND IT
 #: HAS ALREADY BROKEN ONCE. A RETIRED entry, "Only runs on non-HPC systems.", matched 17
-#: tests until every mark carrying
-#: it (see `tests/utils_for_testing.py::on_scheduler_node`, whose docstring records the
-#: deletion). From 2026-08-25 this tuple matched ZERO tests, so `structurally_excluded`
+#: tests until every mark carrying it was removed (see
+#: `tests/utils_for_testing.py::on_scheduler_node`, whose docstring records the removal).
+#: From 2026-08-25 this tuple matched ZERO tests, so `structurally_excluded`
 #: read 0 and `summary.md` printed "None -- every collected test was evaluable at this
 #: scope" while a scheduler-gated test sat in the INCIDENTAL bucket. The failure is
 #: silent in the reassuring direction: a narrowed pattern makes the run look MORE
@@ -456,10 +456,11 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
                 reasons_by_fixture.setdefault(k, []).extend(v)
             for k, v in skip_reasons(jp).items():
                 skip_reasons_by_node.setdefault(k, v)
-        # `diagnostics` is threaded so render_summary_md can NAME the directory. The
-        # harvest has always written it and the summary has never mentioned it, which is
-        # the whole defect: an unnamed directory gets read past, and that is what an
-        # unnamed directory gets rather than a lapse by the reader.
+        # `diagnostics` is carried into the chunk row so that `render_summary_md` can name
+        # the harvested directory in its "Failure diagnostics captured" section, which is
+        # where the root cause of a chunk failure normally lives. Before that section
+        # existed, the harvest wrote the directory and the summary did not name it, and a
+        # directory the summary does not name is one a reader walks past.
         # `kind` is the chunk-PACKING axis: producers write "heavy" and "cheap"
         # (`partition.py::build_manifest`) and "triage" (`_runner.py::triage`). The array-versus-complement
         # distinction is a DIFFERENT axis and takes a separate per-chunk field,
@@ -572,8 +573,8 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     # race -- concurrent sessions mutating one on-disk analysis tree. A tree OBSERVED
     # across chunks that arm A did not predict means the derivation under-connected,
     # which is the failure a deeper parse cannot remove: measured 2026-08-23, the reach
-    # ran file -> fixture -> fixture -> helper module. Arm B is false-negative-safe (it
-    # can miss a reach, never invent one), so a finding here is always real.
+    # ran file -> fixture -> fixture -> helper module. Arm B never invents a reach (it can
+    # miss one), so a finding here is always real.
     #
     # CLASSIFY BEFORE JOINING. Arm B records slug-root ENTRIES, and the slug root holds
     # more than analysis trees. Joining before classifying is what produced the 5-for-1
@@ -589,12 +590,16 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
         entries = st.get("reach_entries") or {}
         if entries:
             have_entries = True
-            # KEYED ON THE ABSOLUTE ENTITY PATH the producer resolved -- `tree_root` when
-            # the layout stamp resolved, else `p2`. NOT on the label: two chunks contend
+            # KEYED ON THE ABSOLUTE ENTITY PATH the producer resolved
+            # (`_runner.py::_finalize_reach_entries`): the entry's stamped root -- the
+            # candidate directory under which a `_version.json` layout stamp was found --
+            # and, when no stamp was found, the path two components below the
+            # `synthetic_test_runs` directory, which under the shared layout is
+            # `.../synthetic_test_runs/{slug}/{entry}`. NOT on the label: two chunks contend
             # only when they touched the SAME directory, and a label is not unique across
-            # slugs or across per-session override roots. The `or p2` fallback is
-            # load-bearing rather than defensive: `tree_root` is None for every unstamped
-            # entry BY DEFINITION, so a bare `tree_root` key would collapse `_software`
+            # slugs or across per-session override roots. The fallback to that entry path is
+            # load-bearing rather than defensive: an entry with no stamp has no stamped root
+            # BY DEFINITION, so keying on the stamped root alone would collapse `_software`
             # and `_sensitivity_configs` into one bucket and report contention on a
             # directory that does not exist -- and it would do so in the quietest bucket.
             for key, rec in entries.items():
@@ -655,11 +660,14 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     # The race class the harness exists to catch: two sessions mutating ONE analysis tree.
     contended_writes = _contention([t for t in observed_cross if entry_class.get(t) == ENTRY_ANALYSIS_TREE])
     # RECLASSIFIED, NOT EXCLUDED. The compiled tier is shared across every chunk by
-    # design, so it is not an analysis-tree race -- but the suite harness builds it ONCE, in
-    # the warm step that runs before the chunk array (properties 1 and 2 of the harness
-    # README, the phrase the messages below print), so a chunk writing it is still a
-    # finding, and excluding it would make that question permanently unanswerable. It gets its own label, its own
-    # section, and the write samples that say WHAT was written.
+    # design, so it is not an analysis-tree race -- but it is built ONCE, by the warm step
+    # (`_runner.py::warm`) that runs before the chunk array and refuses to submit the array
+    # when it fails, so no chunk has a reason to write it. A chunk writing it is therefore
+    # still a finding, and excluding the entry would make "why did a chunk write the
+    # compiled tier?" permanently unanswerable. It gets its own label, its own section, and
+    # the write samples that say WHAT was written. The problem and advisory messages built
+    # below restate that fact as "the warm build step that runs before the chunk array",
+    # because a reader of the summary never sees this comment.
     shared_by_design_writes = _contention([t for t in observed_cross if entry_class.get(t) == ENTRY_SHARED_BY_DESIGN])
     ignored_transient = sorted(t for t in observed_cross if entry_class.get(t) == ENTRY_TRANSIENT)
     unknown_entries = sorted(t for t in observed_cross if entry_class.get(t) == ENTRY_UNKNOWN)
@@ -695,10 +703,10 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     # ADVISORY accumulator, sibling of entry_problems and NOT consulted by the verdict.
     # It exists because some findings below fire on a HEALTHY run -- the four tagged kinds
     # [classifier-self-check], [shared-by-design-write], [derivation-under-connected] and
-    # [complement-derivation] -- and each says so in its own comment. Measured 2026-09-04
-    # against a synthetic run directory with 4 passing tests, both chunks
-    # `pytest_exit: 0`, failed=0 unevaluated=0 absent=0:
-    # `verdict=NOT-GREEN`. An alarm that fires on every healthy run is not an alarm, and
+    # [complement-derivation] -- and each says so in its own comment. Measured 2026-09-04,
+    # before these findings were split out of `problems` into this accumulator, against a
+    # synthetic run directory with 4 passing tests, both chunks `pytest_exit: 0`, failed=0
+    # unevaluated=0 absent=0: `verdict=NOT-GREEN`. An alarm that fires on every healthy run is not an alarm, and
     # the cost is not cosmetic -- a suite green is the gate on an ensemble launch, so a
     # constant NOT-GREEN forces the reader to evaluate the counts and ignore the word,
     # which is exactly the habit that makes a REAL NOT-GREEN invisible.
@@ -782,8 +790,9 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     # correct only while the reach was undifferentiated, and once reads and writes are told
     # apart, failing every concurrent read would make the verdict fire for a reason other
     # than the one it names -- the defect this harness exists to close.
-    # CAVEAT kept in view: arm B is false-negative-safe, so "no writer observed" is not
-    # "no writer"; a write through a C-level open is invisible to it.
+    # CAVEAT kept in view: arm B (each chunk's runtime observation) never invents a write
+    # but can miss one, so "no writer observed" is not "no writer"; a write through a
+    # C-level open is invisible to it.
     for t, d in contended_writes.items():
         kind = (
             "concurrent BUILD (two or more chunks wrote it)"
