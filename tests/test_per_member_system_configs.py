@@ -602,6 +602,7 @@ def test_phase4_preflight_invokes_per_member_validator(tmp_path, monkeypatch):
         # single-allocation mode => it early-returns, keeping this test on the
         # per-SA wiring point rather than the partition surface.
         multi_sim_run_method="local",
+        target_processed_output_type="zarr",
         # Minimal analysis-side attrs touched by other preflight validators
         # are bypassed by patching validate_analysis_config and
         # validate_data_consistency to no-ops; this test exercises only the
