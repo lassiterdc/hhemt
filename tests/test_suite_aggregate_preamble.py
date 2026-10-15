@@ -17,6 +17,7 @@ import inspect
 import re
 
 import hhemt.suite.aggregate as aggregate_module
+from tests.test_verdict_partition import SOFTWARE, _build, _entry
 
 _NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8}
 _ADVISORY_LISTS = {"advisories", "entry_advisories"}
@@ -95,4 +96,90 @@ def test_preamble_explains_and_counts_every_emitted_advisory_tag():
     assert counts, f"the preamble states no count of kinds:\n{preamble}"
     assert {_NUMBER_WORDS[c] for c in counts} == {len(listed)}, (
         f"stated count(s) {counts} disagree with the {len(listed)} kinds listed:\n{preamble}"
+    )
+
+
+def test_shared_by_design_reading_rule_states_the_rule_the_verdict_applies(tmp_path):
+    """Property: the preamble's `[shared-by-design-write]` line states the rule `aggregate()`
+    applies when it sorts a write to the shared compiled tier into ADVISORY or BLOCKING.
+
+    Class: every write pattern on a shared-by-construction entry, represented by four inputs
+    that separate the rule's conditions -- two chunks taking the same lock, two chunks writing
+    different files, two chunks writing the same build file, and a chunk recorded as a writer
+    with no record of what it wrote. The verdict for each is read from `aggregate()` itself, so
+    the line is checked against what the code does rather than against a remembered rule. Why
+    it is required: the line tells a reader how to read an advisory that did not affect the
+    verdict, and a line that keys BLOCKING on how many chunks wrote the entry tells the reader
+    that two chunks taking a lock is a failure, when `aggregate()` reports it as advisory; the
+    reader then distrusts a correct GREEN. What kills it: a line that does not say which files
+    count as coordination (the two name tests in `_is_coordination_path`), or whose sentence
+    stating the BLOCKING condition does not confine it to two or more chunks writing a FILE
+    other than a coordination file, or omits the writer that left no record. So each of these
+    is refused: the entry-count form ("TWO or more writing it"), the "same entry" form, the
+    sentence with "that is not a coordination file" deleted, and the same sentence with the
+    negation dropped ("that is a coordination file"). Each of those reads the two-writers-one-
+    lock control above as BLOCKING. A second correct implementation under which it still
+    passes: a line that states the BLOCKING condition BEFORE the word ("Two or more chunks
+    recording a write to one path other than a coordination file ... makes it BLOCKING, as does
+    a writer that left no record of what it wrote"), since the check reads the whole sentence
+    that contains the word rather than the text after it.
+
+    Not established: the negation is matched from a closed vocabulary (not, non-, other than,
+    except, excluding, apart from) placed directly before the coordination class, so a correct
+    line using some other construction is refused, and a wrong line that keeps that phrase
+    while adding a false condition elsewhere in the sentence passes.
+    """
+
+    def verdict(samples_per_chunk: list[list[str]]) -> str:
+        """Run `aggregate()` on a fresh run in which each chunk wrote `_software` with the given
+        samples, and return whether it filed the entry as ADVISORY or BLOCKING."""
+        run = tmp_path / f"run{len(list(tmp_path.iterdir()))}"
+        run.mkdir()
+        _build(
+            run,
+            chunk_entries=[{SOFTWARE: _entry("_software", written=True, samples=s)} for s in samples_per_chunk],
+        )
+        result = aggregate_module.aggregate(run, scope="array")
+        advisory = any(a.startswith("[shared-by-design-write]") for a in result["advisories"])
+        blocking = any(p.startswith("[concurrent-build]") for p in result["problems"])
+        assert advisory != blocking, f"expected exactly one tag: {result['advisories']} {result['problems']}"
+        return "ADVISORY" if advisory else "BLOCKING"
+
+    # Controls on the code, so the line below is compared with the rule the code applies. The
+    # first two have two writers and are ADVISORY, which is why the writer count is not the rule.
+    assert verdict([[".triton.provision.lock"]] * 2) == "ADVISORY"
+    assert verdict([["a.csv"], ["b.csv"]]) == "ADVISORY"
+    assert verdict([["triton/build_tritonswmm_cpu/compilation.log"]] * 2) == "BLOCKING"
+    assert verdict([[".triton.provision.lock"], []]) == "BLOCKING"
+    assert aggregate_module._is_coordination_path(".hidden")
+    assert aggregate_module._is_coordination_path("provision.lock")
+    assert not aggregate_module._is_coordination_path("compilation.log")
+
+    lines = [ln for ln in _rendered_preamble().splitlines() if ln.startswith("- `[shared-by-design-write]`")]
+    assert len(lines) == 1, f"expected one reading-rule line for the tag, found {len(lines)}"
+    line = lines[0]
+    assert ".lock" in line, f"the line does not name the `.lock` coordination form:\n{line}"
+    assert "`.`" in line or "dot" in line, f"the line does not name the leading-dot coordination form:\n{line}"
+    # Read the whole SENTENCE that states the BLOCKING condition, wherever the word sits in it.
+    # Deliberately NOT the text after the word: a correct line may state the condition first.
+    # And NOT the whole line: the ADVISORY sentence already says "except coordination files",
+    # so a whole-line search passes a BLOCKING sentence that lost its own exclusion.
+    sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", line)
+    blocking = [s.lower() for s in sentences if "BLOCKING" in s]
+    assert len(blocking) == 1, f"expected one sentence stating the BLOCKING condition, found {len(blocking)}:\n{line}"
+    sentence = blocking[0]
+    assert re.search(r"\b(two or more|more than one|several|multiple)\b", sentence), (
+        f"the BLOCKING sentence does not require more than one chunk:\n{line}"
+    )
+    assert re.search(r"\b(file|path)s?\b", sentence), (
+        f"the BLOCKING sentence names no file or path, so it keys on the entry:\n{line}"
+    )
+    negated_coordination = (
+        r"(\bnot|\bnon-|\bother than|\bexcept|\bexcluding|\bapart from)\s*(an?\s+|any\s+)?(coordination|lock)"
+    )
+    assert re.search(negated_coordination, sentence), (
+        f"the BLOCKING sentence does not exclude coordination files from the collision:\n{line}"
+    )
+    assert re.search(r"\bno (write )?(record|sample)", sentence), (
+        f"the BLOCKING sentence does not name the writer with no record:\n{line}"
     )

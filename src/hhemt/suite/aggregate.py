@@ -1178,15 +1178,16 @@ def render_summary_md(result: dict) -> str:
             "",
             "## Advisories — reported, not verdict-bearing",
             "",
-            "These did NOT affect the verdict. Of the four kinds below, two describe the "
-            "INSTRUMENT rather than the run, one names a capability that is currently "
-            "switched off, and one reports a disagreement between the two records the "
-            "structural complement is read from:",
+            "These did NOT affect the verdict. Each of the four kinds below states how to read it:",
             "",
             "- `[classifier-self-check]` — the slug-entry classifier reporting on itself.",
-            "- `[shared-by-design-write]` — ONE chunk wrote a shared-by-construction entry "
-            "(a lock being taken). TWO or more writing it is BLOCKING and appears under "
-            "Problems instead.",
+            "- `[shared-by-design-write]` — chunks wrote an entry shared across chunks by "
+            "construction, and no two chunks' recorded writes name the same file except "
+            "coordination files (a file whose name starts with `.` or ends in `.lock`, which is "
+            "how a lock being taken shows up). It is BLOCKING instead, and appears under "
+            "Problems, when two or more chunks recorded a write to the same file that is not a "
+            "coordination file, or when a chunk is recorded as writing the entry but left no "
+            "record of what it wrote.",
             "- `[derivation-under-connected]` — **arm B is this run's only detector of an "
             "under-connected partition, and while it is advisory an under-connected "
             "partition cannot fail a run.** It is advisory because arm A and arm B may not "
