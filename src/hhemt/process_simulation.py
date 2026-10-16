@@ -1,3 +1,17 @@
+"""Turn one scenario's raw solver outputs into processed per-scenario stores, then reclaim what is redundant.
+
+A simulation leaves raw outputs that downstream code cannot read directly: TRITON's
+per-reporting-step binary or ASCII rasters and per-checkpoint performance dumps, and
+SWMM's binary `.out` and text `.rpt` files. `TRITONSWMM_sim_post_processing` converts them
+into per-scenario timeseries stores, reduces those to the per-scenario summaries that
+consolidation concatenates, and records every write in the per-model log so a re-run
+skips finished work. It also removes the raw and intermediate artifacts the analysis
+config elects to remove: `clear_raw` governs the raw solver outputs, and
+`remove_after_processing` the artifacts made redundant once the summaries are provably
+present. The module-level functions are kept free of instance state, so they can be
+imported and called without constructing the class.
+"""
+
 import functools
 import gc
 import json
@@ -47,11 +61,9 @@ from hhemt.utils import (
 # not silently deleted (data-loss failure mode). The coupled-SWMM
 # `hydraulics.rpt` at `out_tritonswmm/swmm/hydraulics.rpt` therefore survives
 # cleanup without an explicit preserve carve-out — its parent `swmm/` is
-# simply not in this allowlist. See the design-recommendation in the Phase 3
-# sidecar (sidecar_phase3_2026-05-21_2020.md) for the full Section 1-4
-# analysis that selected this shape over the original preserve-list.
+# simply not in this allowlist.
 #
-# SECOND load-bearing reason `swmm/` must NEVER join this DELETE allowlist (R7):
+# SECOND load-bearing reason `swmm/` must NEVER join this DELETE allowlist:
 # `out_tritonswmm/**/swmm/{inp}_exchange_replay.bin` is TRITON's persisted
 # coupled-SWMM exchange history. Pinned TRITON 3a832f7d resumes a coupled sim by
 # REPLAYING that side-file; if a mid-workflow clear purged it, every subsequent
@@ -95,7 +107,7 @@ _CLEAR_RAW_DELETE_SUBDIRS: frozenset[str] = frozenset({"H", "QX", "QY", "MH", "b
 # even on the log-True branch. Deleting the .rpt therefore converts every COMPLETED
 # coupled sim into a permanently-incomplete one -- _all_sims_run goes False,
 # check_scenarios_run reports the whole ensemble as failed, and
-# process_timeseries_runner.py:219 refuses to reprocess the scenario. It is also the
+# process_timeseries_runner's model_run_completed check refuses to process the scenario. It is also the
 # reprocess rebuild source (_export_SWMM_outputs reads it).
 #
 # `*_exchange_replay.bin` is likewise absent by construction (it is `.bin`, not `.out`);
@@ -118,7 +130,8 @@ _RECLAIM_COUPLED_SWMM_SUFFIXES: frozenset[str] = frozenset({".out"})
 # cut a summary table mid-table on a large model, and the parser would then read a PARTIAL
 # table rather than fail -- an absent row is indistinguishable from a node that never
 # flooded. Using the same sentinel _scan_metadata_and_summaries uses to find the body start
-# (swmm_output_parser.py:463) is what keeps head and parser from disagreeing.
+# (the body-start test in `_scan_metadata_and_summaries`) is what keeps head and parser from
+# disagreeing.
 _RPT_BODY_START_SENTINEL = "Node Time Series Results"
 # The trailer is captured as a contiguous BLOCK from this sentinel to EOF, never as
 # the single matching line. MEASURED on two real rpts (2026-08-17): both end
@@ -153,7 +166,7 @@ _RPT_TRUNCATION_MARKER = (
 
 
 def _deferred_log_writes(method):
-    """M4: run `method` inside `self.log.deferred_writes()` so every LogField.set() and
+    """Run `method` inside `self.log.deferred_writes()` so every LogField.set() and
     add_sim_processing_entry() it performs collapses into ONE read-modify-write at exit.
 
     Each write is one rename of the log name, and exposure to the measured
@@ -292,16 +305,16 @@ class TRITONSWMM_sim_post_processing:
         # reachable. A converting tail added at or below this function is the condition
         # that retires that refusal: delete the helper and its preflight_validate call in
         # the same change, and delete this comment with them.
-        # Phase 1.2: Chunked processing - calculate optimal chunk size
+        # Chunked processing: size the in-memory load chunk
         from hhemt.utils import estimate_timesteps_per_chunk
 
         memory_budget_MiB = self._analysis.cfg_analysis.process_output_target_chunksize_mb
         flush_budget_MiB = self._analysis.cfg_analysis.process_append_batch_memory_budget_mb
         append_batch_timesteps = self._analysis.cfg_analysis.process_append_batch_timesteps
         # Per-timestep size (float64 H/QX/QY/MH). Computed once; reused by the
-        # floor warning (ANCHOR B) and the batch byte-cap (ANCHOR C). The `* 8`
-        # encodes the float64 storage width — the single site to revisit if a
-        # float32 storage downcast lands (OE-3 follow-up).
+        # floor warning and the batch byte-cap below. The `* 8` encodes the
+        # float64 storage width — the single site to revisit if storage is ever
+        # downcast to float32.
         per_ts_MiB = (len(df_outputs.columns) * len(rds_dem.y) * len(rds_dem.x) * 8) / (1024**2)
         n_variables = len(df_outputs.columns)  # H, QX, QY, MH
 
@@ -337,9 +350,10 @@ class TRITONSWMM_sim_post_processing:
         # OWN store plus a success flag; the unified store is merged at the end and
         # the chapters die only after ITS flag lands.
         #
-        # THE RESUME PREDICATE IS A COORDINATE SET, NEVER A COUNT. The loop below
-        # skips timesteps on three paths, so a count of published timesteps and its
-        # POSITION in timestep_list diverge whenever any timestep is skipped.
+        # THE RESUME PREDICATE IS A COORDINATE SET, NEVER A COUNT. Before the loop,
+        # timestep_list drops every timestep a flagged chapter already covers
+        # (covered_timesteps), which is correct whatever order those chapters were
+        # written in; a count of published timesteps says how many are done, not which.
         _chapters = chapters_dir_for(fname_out)
         _scen_dir = self._scenario.scen_paths.sim_folder
         _chapters.mkdir(parents=True, exist_ok=True)
@@ -354,7 +368,7 @@ class TRITONSWMM_sim_post_processing:
                 stacklevel=2,
             )
             return
-        # Chapter-set build guard ([Q235] / [Q238]). Reuses provenance.py's
+        # Chapter-set build guard. Reuses provenance.py's
         # producing-stamp family: the same (sha, dirty) key append_stage_provenance
         # already writes, and the same refuse-with-declared-bypass shape
         # assert_plots_match_running_build already uses. Placed after the reap and
@@ -379,9 +393,9 @@ class TRITONSWMM_sim_post_processing:
         _freed_bytes = 0
         # THE PER-CHAPTER RAW CLEAR IS GATED ON analysis_config.clear_raw, exactly like
         # every other raw clear in this module. Resolved ONCE here and tested at both
-        # flush sites, mirroring the callers at :797 and :870 which resolve once and then
-        # test per model. Without this the clause-4 clear would bypass the config and the
-        # override_clear_raw escape hatch entirely -- see the Round-15 finding.
+        # flush sites, mirroring the per-model export methods, which resolve once and then
+        # test per model. Without this the per-chapter clear would bypass the config and
+        # the override_clear_raw escape hatch entirely.
         _clear_raw_ok = self._should_clear_raw_for_model(self._resolve_clear_raw(override_clear_raw), model_type)
 
         timestep_list = sorted(df_outputs.index.tolist())
@@ -428,8 +442,9 @@ class TRITONSWMM_sim_post_processing:
 
                 for tstep_min in chunk_timesteps:
                     f = files[tstep_min]
-                    # DELTA 2a -- FAIL-CLOSED. Post-Component-1 the frame is index-equal by
-                    # construction, so a file that vanished between listing and read is a
+                    # FAIL-CLOSED. The frame came from triton_raw_frame_or_raise, which refuses a
+                    # ragged frame, so every variable has a file at every listed timestep and a
+                    # file that vanished between listing and read is a
                     # genuine anomaly. Skipping it produces a chapter with this variable absent
                     # at this timestep, written and FLAGGED complete (verify_and_flag_chapter is
                     # per-variable blind). No guard in this consumer may continue past a missing
@@ -448,7 +463,7 @@ class TRITONSWMM_sim_post_processing:
                     ds_triton_output = load_triton_output_w_xarray(rds_dem, f, varname, raw_out_type)
                     lst_ds_timesteps.append(ds_triton_output)
 
-                # DELTA 2b. Post-Component-1 + Delta 2a the loop above either appended every
+                # Given that non-ragged frame and the refusal above, the loop either appended every
                 # member of chunk_timesteps or raised, so the loaded set IS chunk_timesteps by
                 # construction: no second stat loop, no value guard, and no `continue` --
                 # a skip that drops a whole variable is a worse survivor than the index guard
@@ -466,10 +481,10 @@ class TRITONSWMM_sim_post_processing:
             pending_chunks.append(ds_chunk)
             pending_timesteps += ds_chunk.sizes["timestep_min"]
 
-            # Flush one zarr append per batch: trigger on the timestep count OR
-            # a byte cap of 2x the load budget so the pending buffer stays
-            # bounded. pending_bytes_MiB reuses the hoisted per_ts_MiB (SE
-            # F-I-3) so the float64-width assumption stays single-sited.
+            # Flush one zarr append per batch: trigger on the timestep count OR the
+            # byte cap process_append_batch_memory_budget_mb (flush_budget_MiB), so the
+            # pending buffer stays bounded. pending_bytes_MiB reuses the hoisted
+            # per_ts_MiB so the float64-width assumption stays single-sited.
             pending_bytes_MiB = pending_timesteps * per_ts_MiB
             if pending_timesteps >= append_batch_timesteps or pending_bytes_MiB >= flush_budget_MiB:
                 ds_batch = (
@@ -779,12 +794,12 @@ class TRITONSWMM_sim_post_processing:
         if self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
-            # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
             # terminator below it. Every other `.set()` for this marker sits BELOW an
             # `_already_written` branch, so on the skip pass -- the only pass an
             # already-latched scenario ever takes again -- a set placed lower is
             # unreachable. `is not None`, never bare truthiness: LogField defines no
-            # __bool__, and O3's whole job is the None -> True transition a
+            # __bool__, and this reconciliation's whole job is the None -> True transition a
             # value-based __bool__ would silently block.
             if log_field is not None:
                 log_field.set(True)
@@ -814,7 +829,8 @@ class TRITONSWMM_sim_post_processing:
         # The ledger the corrected aggregator joins on. `self.log` IS the
         # TRITONSWMM_model_log for the active model type (bound in __init__ /
         # _set_active_model_log), so no plumbing is needed -- the exporter has always
-        # held it. Legacy pre-KR-b logs coalesce None -> [] (no claimed resumes).
+        # held it. Logs written before this field existed coalesce None -> [] (no claimed
+        # resumes).
         _resume_steps = list(self.log.resume_reporting_tsteps.get() or [])
         ds = _aggregate_perf_tseries(performance_dir, min_per_tstep=min_per_tstep, resume_steps=_resume_steps)
 
@@ -914,18 +930,16 @@ class TRITONSWMM_sim_post_processing:
         if self._already_written(fname_out) and (not verify_present or self._summary_usable(fname_out)):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
-            # AMENDED with the usability conjunct on the `if` above: the skip pass is NO
-            # LONGER the only pass an already-latched scenario takes. A scenario latched in
-            # the log whose performance summary is absent now reads False above and takes
-            # the BUILD pass, where this marker is set truthfully. O3's reachability is
-            # PRESERVED.
-            # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
             # terminator below it. Every other `.set()` for this marker sits BELOW an
-            # `_already_written` branch, so on the skip pass -- the only pass an
-            # already-latched scenario ever takes again -- a set placed lower is
-            # unreachable. `is not None`, never bare truthiness: LogField defines no
-            # __bool__, and O3's whole job is the None -> True transition a
-            # value-based __bool__ would silently block.
+            # `_already_written` branch, so on the skip pass a set placed lower is
+            # unreachable. The skip pass is taken only by a scenario latched in the log
+            # whose performance summary is also usable (the `_summary_usable` conjunct on
+            # the `if` above); one latched in the log with the summary absent reads False
+            # above and takes the BUILD pass, where this marker is set truthfully.
+            # `is not None`, never bare truthiness: LogField defines no __bool__, and this
+            # reconciliation's whole job is the None -> True transition a value-based
+            # __bool__ would silently block.
             if log_field is not None:
                 log_field.set(True)
             return
@@ -1150,12 +1164,12 @@ class TRITONSWMM_sim_post_processing:
         if self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
-            # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
             # terminator below it. Every other `.set()` for this marker sits BELOW an
             # `_already_written` branch, so on the skip pass -- the only pass an
             # already-latched scenario ever takes again -- a set placed lower is
             # unreachable. `is not None`, never bare truthiness: LogField defines no
-            # __bool__, and O3's whole job is the None -> True transition a
+            # __bool__, and this reconciliation's whole job is the None -> True transition a
             # value-based __bool__ would silently block.
             if self.log.TRITON_timeseries_written is not None:
                 self.log.TRITON_timeseries_written.set(True)
@@ -1226,12 +1240,12 @@ class TRITONSWMM_sim_post_processing:
         if self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
-            # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
             # terminator below it. Every other `.set()` for this marker sits BELOW an
             # `_already_written` branch, so on the skip pass -- the only pass an
             # already-latched scenario ever takes again -- a set placed lower is
             # unreachable. `is not None`, never bare truthiness: LogField defines no
-            # __bool__, and O3's whole job is the None -> True transition a
+            # __bool__, and this reconciliation's whole job is the None -> True transition a
             # value-based __bool__ would silently block.
             if self.log.TRITON_timeseries_written is not None:
                 self.log.TRITON_timeseries_written.set(True)
@@ -1403,7 +1417,7 @@ class TRITONSWMM_sim_post_processing:
         if self.log.SWMM_link_timeseries_written is not None:
             self.log.SWMM_link_timeseries_written.set(True)
 
-        # Phase 1.3: Explicit garbage collection after large dataset operations
+        # Explicit garbage collection after large dataset operations
         del ds_nodes, ds_links
         gc.collect()
 
@@ -1415,25 +1429,25 @@ class TRITONSWMM_sim_post_processing:
     def _resolve_producing_stamp() -> tuple[str, str]:
         """Resolve the ``(producing_git_sha, producing_semver)`` stamp for the running toolkit.
 
-        sha: the toolkit git sha via the provenance layer (``strict=False`` ->
-        ``"unknown"`` when the working tree is dirty / the checkout sha cannot be
-        resolved), the SAME source that feeds the render-bundle ``toolkit_git_sha``.
-        semver: ``importlib.metadata.version("hhemt")``, falling back to
-        ``"0+unknown"`` for an uninstalled/egg-less tree (the version_migration
-        ``state._toolkit_version`` precedent). Called once per write; both values
+        sha: the toolkit git sha via the provenance layer (``running_identity().sha[:12]``,
+        or ``"unknown"`` when ``running_identity()`` refuses, as for a wheel install or a
+        checkout git cannot read; a dirty checkout still resolves to its COMMITTED sha),
+        the SAME source that feeds the render-bundle ``toolkit_git_sha``.
+        semver: ``provenance._describe_version()``, a PEP-440 version derived from
+        ``git describe`` (``{tag}+{N}.g{sha}``); without git it composes the pin with
+        the identity sha, returns the bare pin for a wheel install, and returns
+        ``"0+unknown"`` when the installed version cannot be read. Called once per write; both values
         are process-stable for a given checkout, so re-producing at the same
         checkout yields byte-identical stamps.
         """
         from hhemt.provenance import _toolkit_git_sha
 
         producing_sha = _toolkit_git_sha()
-        # Was `importlib.metadata.version("hhemt")`, which returns the STATIC
-        # pyproject pin "0.1.0" -- unmoved across 241 commits, so it was a constant
-        # that distinguished nothing and was identical on all four arms of the
-        # delivered generation. `_describe_version` derives {tag}+{N}.g{sha} from
-        # `git describe`, which distinguishes generations AND is recomputable from an
-        # archived sha alone. Same fallback contract: never raises, degrades to the
-        # installed metadata version on a wheel install.
+        # Not `importlib.metadata.version("hhemt")`, which returns the STATIC pyproject
+        # pin "0.1.0" that commits do not update, so it cannot tell two builds apart.
+        # `_describe_version` derives {tag}+{N}.g{sha} from `git describe`, which does,
+        # and is recomputable from an archived sha alone. It never raises; without git
+        # it falls back as its own docstring states (the bare pin on a wheel install).
         from hhemt.provenance import _describe_version
 
         producing_version = _describe_version()
@@ -1454,7 +1468,7 @@ class TRITONSWMM_sim_post_processing:
         if isinstance(ds, xr.Dataset):
             apply_cf_attributes(ds, mode)
 
-        # ADR-15 Phase 1: bake the producing git-sha + semver into the FLAT
+        # Bake the producing git-sha + semver into the FLAT
         # per-scenario summary as per-event_iloc COORDINATES. They MUST land here
         # (capture time), NOT post-concat like event_id, so a later reprocess that
         # does not re-run this scenario reads its OLD stamp and yields the divergent
@@ -1525,7 +1539,7 @@ class TRITONSWMM_sim_post_processing:
         previously written successfully.
 
         This gate is the runner-subprocess-level idempotency primitive. It
-        serves three roles in the post-Phase-4 architecture:
+        serves three roles:
 
         - Crash recovery: a worker that dies between writing the zarr and
           the success-flag-touch leaves no log entry; the next runner
@@ -1537,8 +1551,7 @@ class TRITONSWMM_sim_post_processing:
           targeted scenarios BEFORE Snakemake re-plans the DAG, so this
           gate naturally returns False for force-rerun targets.
 
-        Per cleanup-rerun-delete-redesign Phase 4 + B-mechanism. The gate
-        is NOT user-toggleable — the retired rule-shell overwrite
+        The gate is NOT user-toggleable — the retired rule-shell overwrite
         toggle (legacy ``--overwrite-outputs-if-already-created`` flag)
         has been replaced end-to-end by the force-rerun architecture.
         """
@@ -1604,8 +1617,7 @@ class TRITONSWMM_sim_post_processing:
     def _clear_raw_outputs(self, model_type: Literal["tritonswmm", "triton", "swmm"]) -> None:
         """Delete raw model outputs for the named model type.
 
-        Per cleanup-rerun-delete-redesign Phase 3 + the user-corrected
-        semantics:
+        Semantics:
 
         - For ``"tritonswmm"`` or ``"triton"``: under ``out_tritonswmm/`` or
           ``out_triton/``, delete every subdirectory whose name is in
@@ -1615,17 +1627,16 @@ class TRITONSWMM_sim_post_processing:
           not in the allowlist — is preserved. The coupled-SWMM
           ``hydraulics.rpt`` (at ``out_tritonswmm/swmm/hydraulics.rpt``)
           therefore survives because its parent ``swmm/`` is not in the
-          allowlist; no explicit preserve carve-out is required. The
-          phase-doc spec described the .rpt as a "top-level *.rpt", which
-          is incorrect — the path is one level deeper.
+          allowlist; no explicit preserve carve-out is required. It is one
+          level below ``out_tritonswmm/``, not a top-level file.
         - For ``"swmm"``: delete ``self.scen_paths.swmm_full_out_file`` (the
           standalone-SWMM binary ``.out`` file). The standalone-SWMM ``.rpt``
           is preserved automatically — no enumeration of ``out_swmm/`` is
           performed.
 
-        The ``clear raw triton outputs deferred until last allocation``
-        stipulation governs WHEN this helper may fire — callers MUST gate the
-        invocation so it only fires after the final allocation completes.
+        WHEN it may fire: callers MUST gate the invocation so it only fires after
+        the final allocation completes, because an earlier call deletes inputs a
+        later allocation's processing still needs (see Raises).
 
         Raises:
             RuntimeError: when invoked while the owning analysis is still
@@ -1633,11 +1644,10 @@ class TRITONSWMM_sim_post_processing:
                 is True). Deleting raw outputs before the final allocation strips
                 the pre-resume ``performance{N}.txt`` checkpoints that the V0008
                 ``_aggregate_perf_tseries`` aggregator concatenates, silently
-                corrupting cumulative-wallclock metrics. Defense-in-depth backstop
-                for the ``clear raw triton outputs deferred until last allocation``
-                stipulation.
+                corrupting cumulative-wallclock metrics. A defense-in-depth backstop
+                for the caller-side gating above.
         """
-        # Defense-in-depth runtime guard (resume-retry-resilience P3): refuse a
+        # Defense-in-depth runtime guard: refuse a
         # raw-output delete while the analysis is mid-multi-allocation. The field
         # is unset (None) on legacy logs and on single-allocation runs -> coalesce
         # to not-in-progress, so the guard fires ONLY when an active multi-allocation
@@ -1666,7 +1676,7 @@ class TRITONSWMM_sim_post_processing:
                 return
             _targets = [c for c in out_dir.iterdir() if c.is_dir() and c.name in _CLEAR_RAW_DELETE_SUBDIRS]
             delete_and_account(_targets, scope_dir=self.scen_paths.sim_folder, scope="scenario")
-            # Reclaim the coupled-SWMM exchange-replay side-file (R7): it is dead weight
+            # Reclaim the coupled-SWMM exchange-replay side-file: it is dead weight
             # once the FINAL allocation is done (this method is guarded against a
             # mid-multi-allocation invocation above) and grows unbounded in sim length if
             # retained. tritonswmm only — a triton-only tree has no swmm/ subtree.
@@ -1674,7 +1684,7 @@ class TRITONSWMM_sim_post_processing:
                 self._reclaim_exchange_replay_sidefiles()
             # Per-model log bookkeeping: model logs carry both
             # raw_TRITON_outputs_cleared and raw_SWMM_outputs_cleared (for the
-            # coupled tritonswmm case). Phase 3 semantics: the cleanup has
+            # coupled tritonswmm case). The cleanup has
             # "completed per design" once it returns, even when the design
             # intentionally preserves swmm/ + hydraulics.rpt under tritonswmm.
             if getattr(self.log, "raw_TRITON_outputs_cleared", None):
@@ -1691,7 +1701,7 @@ class TRITONSWMM_sim_post_processing:
             raise ValueError(f"Unknown model_type for _clear_raw_outputs: {model_type!r}")
 
     def _reclaim_exchange_replay_sidefiles(self) -> None:
-        """Reclaim TRITON's coupled-SWMM exchange-replay side-file(s) (R7 bounded retention).
+        """Reclaim TRITON's coupled-SWMM exchange-replay side-file(s) (bounded retention).
 
         ``out_tritonswmm/**/swmm/*_exchange_replay.bin`` is the persisted exchange history
         that pinned TRITON 3a832f7d replays to resume a coupled sim. Its size grows with
@@ -1850,7 +1860,7 @@ class TRITONSWMM_sim_post_processing:
                     "model_type parameter is required for SWMM summary generation. Must be 'tritonswmm' or 'swmm'."
                 )
 
-        # Phase 1.3: Explicit garbage collection after summary generation
+        # Explicit garbage collection after summary generation
         gc.collect()
 
         return
@@ -1886,17 +1896,16 @@ class TRITONSWMM_sim_post_processing:
         if self._already_written(fname_out) and self._summary_usable(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
-            # O3 PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
             # terminator below it. Every other `.set()` for this marker sits BELOW an
-            # `_already_written` branch, so on the skip pass -- the only pass an
-            # already-latched scenario ever takes again -- a set placed lower is
-            # unreachable. `is not None`, never bare truthiness: LogField defines no
-            # __bool__, and O3's whole job is the None -> True transition a
-            # value-based __bool__ would silently block.
-            # AMENDED with the usability conjunct on the `if` above: the skip pass is NO
-            # LONGER the only pass an already-latched scenario takes. A scenario latched in
-            # the log whose summary is absent now reads False above and takes the BUILD
-            # pass, where this marker is set truthfully. O3's reachability is PRESERVED.
+            # `_already_written` branch, so on the skip pass a set placed lower is
+            # unreachable. The skip pass is taken only by a scenario latched in the log
+            # whose summary is also usable (the `_summary_usable` conjunct on the `if`
+            # above); one latched in the log with the summary absent reads False above and
+            # takes the BUILD pass, where this marker is set truthfully. `is not None`,
+            # never bare truthiness: LogField defines no __bool__, and this
+            # reconciliation's whole job is the None -> True transition a value-based
+            # __bool__ would silently block.
             if self.log.TRITON_summary_written is not None:
                 self.log.TRITON_summary_written.set(True)
             return
@@ -1912,7 +1921,7 @@ class TRITONSWMM_sim_post_processing:
         # reprocess(start_with="process"), a --rerun-triggers mtime fire) into a hard
         # workflow failure whose message asserts the run is broken when it is not.
         # write_timeseries_outputs does not recreate the timeseries on a re-fire (its own
-        # _already_written gate reads the LOG, Gotcha 28), so the re-fire path always
+        # _already_written gate reads the LOG), so the re-fire path always
         # arrives here with the timeseries absent.
         if timeseries_path is None or not timeseries_path.exists():
             raise FileNotFoundError(
@@ -1989,24 +1998,21 @@ class TRITONSWMM_sim_post_processing:
 
         # The usability conjunct goes IN THE BINDINGS, never on the combined return below:
         # the return form cannot see the partial state (nodes present, links absent) and
-        # would leave the O3 latch firing on an absent artifact.
+        # would leave the reconciliation latch firing on an absent artifact.
         nodes_already_written = self._already_written(f_out_nodes) and self._summary_usable(f_out_nodes)
         links_already_written = self._already_written(f_out_links) and self._summary_usable(f_out_links)
 
-        # O3 PLACEMENT CONSTRAINT: reconcile PER ARM and ABOVE every branch below.
-        # AMENDED with the usability conjunct at the bindings above: the skip pass is NO
-        # LONGER the only pass an already-latched scenario takes. An arm latched in the log
-        # whose artifact is absent now reads False above and takes the BUILD pass, where the
-        # marker is set truthfully (nodes/links build blocks below). O3's reachability is
-        # PRESERVED -- nothing reachable became unreachable; "already-latched" now means
-        # latched AND the artifact is really there.
+        # PLACEMENT CONSTRAINT: reconcile PER ARM and ABOVE every branch below.
         # The combined early return and the two `if not ..._already_written:` blocks
-        # all sit lower, so a set placed in any of them is unreachable on the skip
-        # pass -- which is the only pass an already-latched scenario ever takes again.
+        # all sit lower, so a set placed in any of them is unreachable on the skip pass.
+        # An arm takes the skip pass only when it is latched in the log AND its artifact
+        # is usable (the `_summary_usable` conjunct in the bindings above); an arm
+        # latched in the log whose artifact is absent reads False and takes the BUILD
+        # pass, where the marker is set truthfully (nodes/links build blocks below).
         # PER ARM rather than on the combined condition, because the partial state
         # (nodes written, links not) skips the nodes block without reaching the
         # combined return. `is not None`, never bare truthiness: LogField defines no
-        # __bool__, and O3's whole job is the None -> True transition a value-based
+        # __bool__, and this reconciliation's whole job is the None -> True transition a value-based
         # __bool__ would silently block.
         if nodes_already_written and self.log.SWMM_node_summary_written is not None:
             self.log.SWMM_node_summary_written.set(True)
@@ -2071,11 +2077,13 @@ class TRITONSWMM_sim_post_processing:
         return
 
     # Paired complement of summary_paths._SUMMARY_STEMS_BY_MODEL. ScenarioPaths declares
-    # eight *_summary attrs and exactly eight matching *_timeseries / *_time_series
-    # siblings (paths.py:127-146) -- one per (model, artifact family) -- so the reclaim
-    # drop set is DERIVED from that pairing rather than hand-listed. A ninth summary
-    # family added later without a pairing entry fails the disjointness guard in
-    # tests/test_synth_remove_after_processing.py rather than silently escaping it.
+    # eight *_summary attrs and eight matching *_timeseries / *_time_series siblings --
+    # one per (model, artifact family) -- and this HAND-MAINTAINED table lists the
+    # timeseries half, which is the reclaim drop set. It is not derived from the
+    # canonical table: a ninth summary family added there alone is simply not reclaimed
+    # until it is added here too (the safe direction -- the artifact is retained). The
+    # guards in tests/test_synth_remove_after_processing.py compare this table with the
+    # guard's own copy, not with the canonical table.
     _TIMESERIES_ATTRS_BY_MODEL: dict[str, tuple[str, ...]] = {
         "tritonswmm": (
             "output_tritonswmm_triton_timeseries",
@@ -2177,7 +2185,7 @@ class TRITONSWMM_sim_post_processing:
 
     @staticmethod
     def _remove_reclaimed(path: Path, scenario_dir: Path, verbose: bool) -> None:
-        """Delete one reclaimed artifact through the unified deletion tool (clause 1)."""
+        """Delete one reclaimed artifact through the unified deletion tool."""
         from hhemt.du_sentinels import delete_and_account
 
         if verbose:
@@ -2190,13 +2198,13 @@ class TRITONSWMM_sim_post_processing:
 
         STATICMETHOD, not a closure, and the distinction is the point. As a closure
         inside the reclaim method this could not be reached without running the
-        function that uses it, so its two negative arms would never be asserted --
-        the same shape as the disclosed-denominator defect the architecture doc names
-        for `check_*`. At class scope it is directly testable.
+        function that uses it, so its two negative arms would never be asserted, and a
+        check whose negative arms are never exercised cannot tell "examined and found
+        nothing" from "examined nothing". At class scope it is directly testable.
 
         Openability, not just existence: a zarr store is a DIRECTORY, so `.exists()`
         is True for an empty one and there is no meaningful `st_size` to fall back on.
-        `processing_analysis.py:191` records the same reasoning for the analysis tree --
+        A comment in `processing_analysis` records the same reasoning for the analysis tree --
         "a present-but-corrupt zarr (a write that crashed mid-stream) .exists() as True".
         """
         if path is None or not Path(path).exists():
@@ -2330,8 +2338,8 @@ class TRITONSWMM_sim_post_processing:
             out.write(_RPT_TRUNCATION_MARKER.format(n_dropped=n_dropped))
             out.writelines(trailer_lines)
         os.replace(tmp, rpt_path)
-        # DN-3: an in-place rewrite (os.replace of a smaller file) is a WRITE; the
-        # scenario sentinel is re-derived at consolidate_scenario (clause 10).
+        # An in-place rewrite (os.replace of a smaller file) is a WRITE; the scenario's
+        # DU sentinel is re-derived at consolidate_scenario, so it is not adjusted here.
         if verbose:
             print(f"[reclaim] truncated {rpt_path}: dropped {n_dropped} time-series line(s).", flush=True)
         return True
@@ -2350,12 +2358,13 @@ class TRITONSWMM_sim_post_processing:
         emitted by no Snakefile and therefore unreachable in production. Four defects are
         fixed here and each is load-bearing:
 
-        1. WHERE IT FIRES. The old call sat at process_timeseries_runner.py:360, BEFORE the
-           R6 positive-completion marker at :382-409, so it cleared on the strength of the
-           log alone -- the log-true/disk-absent divergence class Gotchas 28/34/40 document.
-           This function is invoked AFTER that gate and after an openability check, so all
-           three legs of the proof (log field True, path present, store openable) have
-           already passed when it runs.
+        1. WHERE IT FIRES. The process runner calls this only after its completion gate
+           has checked, for this model, that the log records the summaries as written,
+           that the summary files exist on disk, and that they open -- so all three legs
+           of the proof have already passed when it runs -- and BEFORE it writes the
+           d_process completion flag, so a reclaim that raises leaves no flag and the
+           scenario re-runs from raws still on disk. The old call ran before those
+           checks, so it cleared on the strength of the log alone.
         2. WHAT IT GATES ON. The old body re-read ``self.log.*_summary_written``; this one
            does not re-derive the proof at all -- the caller owns it, and a second, weaker
            copy of a gate is how the two drift apart.
@@ -2366,7 +2375,7 @@ class TRITONSWMM_sim_post_processing:
         4. THE PERFORMANCE TIMESERIES. Absent from the old body; present in the pairing.
 
         The policy is read from ``cfg_analysis.remove_after_processing``, which the process
-        runner loads from the PERSISTED config (Gotcha 73: this is a subprocess, so a
+        runner loads from the PERSISTED config (the runner is a subprocess, so a
         driver-side in-memory mutation never reaches here). It NEVER re-derives intent from
         ``clear_raw``; the two are orthogonal axes.
         """
@@ -2396,7 +2405,7 @@ class TRITONSWMM_sim_post_processing:
 
         # coupled_rpt is TRUNCATION, not deletion, so it does not join the _reclaim_paths
         # drop set -- that set is deleted wholesale and the rpt must survive as the
-        # completion signal (Gotcha 70). It is also tritonswmm-only: no other model writes
+        # completion signal. It is also tritonswmm-only: no other model writes
         # out_tritonswmm/swmm/hydraulics.rpt.
         truncated_rpt = False
         if "coupled_rpt" in classes and model_type == "tritonswmm":
@@ -2413,7 +2422,7 @@ class TRITONSWMM_sim_post_processing:
             removed.add(klass)
 
         # Per-scenario disclosure ground truth, written by the ACTOR. analysis_validation's
-        # CheckResult docstring (:58-63) forbids deriving a provenance claim from
+        # CheckResult docstring (its `instrument` field) forbids deriving a provenance claim from
         # cfg_analysis; the symmetric error here would be labelling a scenario "reclaimed"
         # from the config value rather than from what this call actually removed.
         if "timeseries_triton" in removed and getattr(self.log, "full_TRITON_timeseries_cleared", None):
@@ -2456,11 +2465,15 @@ def reclaim_scenario_scoped_classes(scen, classes, *, verbose: bool = False) -> 
     out_tritonswmm/ and is gated on the per-model `clear_raw` axis; `timeseries` is
     per-model by construction.
 
-    WHY NO `_unrun` GUARD HERE. This runs from `rule consolidate_scenario`, which fans
-    in on `d_process_{m}` for every enabled model. Both that flag and the `c_run_{m}`
-    it depends on are SUCCESS markers -- each runner refuses to write its flag and
-    returns 1 on failure -- so arrival here entails that every enabled model both RAN
-    and PROCESSED. That is strictly stronger than the retired runtime guard, which
+    WHY NO `_unrun` GUARD HERE. Both callers supply a stronger precondition.
+    `rule consolidate_scenario` fans in on `d_process_{m}` for every enabled model;
+    both that flag and the `c_run_{m}` it depends on are SUCCESS markers -- each runner
+    refuses to write its flag and returns 1 on failure -- so arrival from it entails
+    that every enabled model both RAN and PROCESSED.
+    `consolidate_workflow.reclaim_unconsolidated_scenarios` reaches events that have no
+    per-scenario consolidate flag, and calls this only after
+    `summary_paths.scenario_summaries_present` confirms every enabled model's summaries
+    are present (its SKIP 2). That is strictly stronger than the retired runtime guard, which
     tested run-completion only and inherited its soundness from a predicate that was a
     fixed point until 2026-08-31. A second, derivative gate behind a structural one is
     a second thing to keep true, not defence in depth.
@@ -2483,8 +2496,8 @@ def reclaim_scenario_scoped_classes(scen, classes, *, verbose: bool = False) -> 
     removed_standalone_rpt = False
 
     # hydro.out is the SWMM hydrology output that write_hydrograph_files reads to build
-    # TRITON's inflow hydrographs. It is safe to reclaim ONLY because spec E gave that
-    # function an already-written gate: without the gate, every subsequent re-prep would
+    # TRITON's inflow hydrographs. It is safe to reclaim ONLY because that function has an
+    # already-written gate: without the gate, every subsequent re-prep would
     # re-open this file and fail. Do NOT enable this class in a tree whose
     # swmm_runoff_modeling.py predates that gate.
     if "hydro_out" in classes:
@@ -2564,7 +2577,7 @@ def reclaim_scenario_scoped_classes(scen, classes, *, verbose: bool = False) -> 
             if _ds is not None and _declared is not None and _captured == _declared:
                 _hydro_cap.parent.mkdir(parents=True, exist_ok=True)
                 _ds.to_zarr(_hydro_cap, mode="w")
-                # DN-3: a WRITE; picked up at the clause-10 reconciliation.
+                # A WRITE; the scenario's DU sentinel is re-derived at consolidate_scenario.
             elif verbose:
                 # THREE reasons and THREE remedies, built together. Splitting the reason
                 # while appending one remedy to all three is the shape this replaced: on a
@@ -2616,8 +2629,8 @@ def reclaim_scenario_scoped_classes(scen, classes, *, verbose: bool = False) -> 
 #: ``combine_attrs="drop_conflicts"`` join precisely when the members disagree --
 #: which is the case being detected -- and a SCALAR coord is wrong under every
 #: available reading of the concat defaults. The dimensioned ``event_iloc`` coord is
-#: the toolkit's own idiom (``processing_analysis.py:560``/``:562``, the ADR-15
-#: producing-sha stamp) and is the ONE shape that survives BOTH joins a site-1 record
+#: the toolkit's own idiom (the per-``event_iloc`` producing-sha coordinates
+#: ``_write_output`` attaches) and is the ONE shape that survives BOTH joins a site-1 record
 #: must cross: the pandas concat here, and the later ``xr.concat`` across members.
 PERF_COLUMN_SET_COORD: str = "perf_column_set_across_allocations"
 
@@ -2725,18 +2738,19 @@ def column_set_verdict(finding: str | None) -> str | None:
     That defeats a mechanism keeping this out of a homogeneous analysis's rendered
     appendix. ``report_renderers/scenario_status_appendix.py`` hid a column whose
     ``nunique(dropna=False)`` was 1; on the raw strings it is 2, so the column rendered on
-    an analysis with no heterogeneity anywhere -- which the developer ruled out explicitly.
+    an analysis with no heterogeneity anywhere, where it carries no information.
     Mapping through here collapses every uniform member to one constant.
 
     THE COLLAPSE IS NECESSARY AND IS NOT SUFFICIENT, and this paragraph previously claimed
-    it was sufficient -- that the hide predicate would then do what the ruling needs
+    it was sufficient -- that the hide predicate would then do what the appendix needs
     "without the renderer learning anything about this column". That is FALSE and is
     retired here rather than deleted, because the reasoning that produced it is the
     reasoning a future reader will repeat. A cardinality test reads only HOW MANY distinct
     values a column holds. A one-member analysis whose sole member is uniform must HIDE the
     column, and a one-member analysis whose sole member is heterogeneous must SHOW it, and
     both hold exactly one distinct value. No cardinality-only predicate is correct on both,
-    so NO change to what this function returns can carry the ruling by itself -- remapping
+    so NO change to what this function returns can make the column hide exactly when no
+    member is heterogeneous, by itself -- remapping
     the null, ignoring nulls, or collapsing the verdicts differently all change WHICH
     values appear and none of them changes that count. The whole value-domain family is
     excluded as a family.
@@ -3018,9 +3032,10 @@ def _aggregate_perf_tseries(
             )
     # Compare in the SAME space the index was built in. `reset_ilocs` holds raw
     # performance{N}.txt file indices, but `full.index`'s first level is
-    # `timestep_min = tstep_iloc * min_per_tstep` (the assignment ~100 lines above), so
+    # `timestep_min = tstep_iloc * min_per_tstep` (the assignment in the parse loop above), so
     # comparing `int(t)` against a file index silently matches NOTHING whenever
-    # min_per_tstep != 1.0 -- and production always passes 600/60 = 10.0 while every test
+    # min_per_tstep != 1.0 -- and production passes TRITON_reporting_timestep_s / 60, which
+    # is 1.0 only for a 60 s reporting interval, while every test
     # and the V0018 migration use the 1.0 default, which is the one value where the two
     # spaces coincide. Measured: member_serial_6_r1 produced 89.51 s (the pure telescope to
     # performance144.txt) instead of 409.30 s, with a correct ledger and correct raw.
@@ -3075,10 +3090,9 @@ def _aggregate_perf_summary(
     convention. Module-level so the V0008 migration and the regression test share one
     source of truth with the corrected aggregator.
 
-    Note: in Phase 1 the production instance method ``_export_performance_summary`` does
-    NOT call this helper — it retains its inline ``mean(Rank)`` aggregation at line ~530.
-    Phase 2 of the ``superlinear-speedup-fixes`` plan wires the instance method through
-    this helper, completing the aggregation-semantic switch.
+    Note: the production instance method ``_export_performance_summary`` does NOT call
+    this helper; it carries its own inline copy of the same ``max(Rank)`` reduction, kept
+    in step with this one (see the comment below).
         ``resume_steps`` is REQUIRED and keyword-only, matching ``_aggregate_perf_tseries``
     exactly. The symmetry is load-bearing, not stylistic: this function's whole body
     forwards to that one, so a DEFAULT here would let ``_aggregate_perf_summary(dir)``
@@ -3088,8 +3102,8 @@ def _aggregate_perf_summary(
     """
     ds = _aggregate_perf_tseries(raw_perf_dir, min_per_tstep=min_per_tstep, resume_steps=resume_steps)
     # KEPT IN STEP WITH `_export_performance_summary`'s inline reduction DELIBERATELY. The
-    # two are duplicated rather than one calling the other (the `superlinear-speedup-fixes`
-    # Phase 2 wiring named in this docstring never landed), so a `skipna` change applied to
+    # two are duplicated rather than one calling the other (the instance method was never
+    # routed through this helper), so a `skipna` change applied to
     # only one of them leaves the OTHER understating -- and this is the arm the V0008 and
     # V0018 migrations call, so the untouched arm would re-write an understated number onto
     # a tree those migrations exist to repair. The full rationale for the asymmetry between
@@ -3176,10 +3190,9 @@ def parse_performance_file(filepath):
     # one element, so those lines are byte-identical in all healthy files.
     # Raise a TYPED error so the aggregator can skip this checkpoint narrowly; a
     # row-drop "repair" here would silently admit mixed-provenance timings.
-    # Do NOT add a NaN check: a TRITON build can legitimately print a non-finite
-    # timing (see the known negative-times artifact warned about in
-    # _aggregate_perf_tseries), and a NaN clause would newly reject files that
-    # parse correctly today.
+    # Do NOT add a NaN check: both interleave shapes above are caught without one
+    # (the Rank-token and Average-presence checks below), so a NaN clause would add a
+    # rejection this detector does not need.
     if "Rank" not in df.columns:
         raise ProcessingError(
             "parse TRITON performance file",
@@ -3290,7 +3303,7 @@ def return_fpath_wlevels(fldr_out_triton: Path, reporting_interval_s: int | floa
     # guards) and exactly ONE wants the refusal. A fail-closed default here was a rule
     # imposed on callers whose requirements this function cannot know, and it broke every
     # one of the seven.
-    # DROPPING an empty Series rather than NAMING it is deliberate and was ruled on. A
+    # DROPPING an empty Series rather than NAMING it is deliberate. A
     # variable that contributed zero files yields a bare unnamed `pd.Series()` from
     # `return_filelist_by_tstep`, and `pd.concat` then labels it POSITIONALLY -- an
     # integer-named all-NaN column describing nothing the solver wrote, which also drops
@@ -3327,8 +3340,8 @@ def triton_raw_frame_or_raise(fldr_out_triton, reporting_interval_s, *, model_la
     read here would break that test from a distance; being a free function makes that
     impossible rather than merely discouraged.
 
-    FOUR conditions, four messages, because they are four genuinely different faults and
-    the remedy differs for each. ORDER IS LOAD-BEARING: the emptiness arm must precede the
+    Each refusal carries its own message, because each is a different fault and the
+    remedy differs for each. ORDER IS LOAD-BEARING: the emptiness arm must precede the
     absent arm, or a `GR_*`-only directory is reported as "a variable is missing" and the
     purpose-built ghost-ring explanation is lost.
     """
@@ -3421,10 +3434,9 @@ def triton_raw_frame_or_raise(fldr_out_triton, reporting_interval_s, *, model_la
 
 def load_triton_output_w_xarray(rds_dem, f_triton_output, varname, raw_out_type):
     """
-    Load TRITON binary/ASCII output directly to xarray DataArray.
+    Load one TRITON binary/ASCII output file into an xarray Dataset holding one (y, x) variable.
 
-    Memory-optimized version that bypasses pandas DataFrame operations,
-    reducing memory footprint by ~85% compared to previous implementation.
+    The array is built from numpy directly, without an intermediate pandas DataFrame.
 
     Parameters
     ----------
