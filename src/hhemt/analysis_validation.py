@@ -1317,7 +1317,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
     # registry verdict into an examined population that the in-loop evidence test then fails.
     #
     # Measured on generation e389264af7b9: synth_cc_resume_triton is stamped 5d2ad1e8, at which
-    # all three registry defects resolve ABSENT, yet the shipped read-model reported
+    # every registry defect resolves ABSENT, yet the shipped read-model reported
     # "28 resumed coupled sim(s) ... lack the exchange-replay marker" -- a FAIL produced by
     # TRITON-RESUME-EXTBC-GHOST-RING (trigger="resumed_any", status="absent") admitting
     # "triton" into _candidate_models on an arm the registry had just cleared.
