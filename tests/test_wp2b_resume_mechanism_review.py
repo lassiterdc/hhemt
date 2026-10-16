@@ -60,9 +60,13 @@ _SHA_UNREGISTERED = "deadbeefcafef00ddeadbeefcafef00ddeadbeef"
 #: RESTATED, not imported -- and therefore carrying its own tripwire below, because the
 #: restatement's three uses keep PASSING after a pin move (the outgoing sha stays registered)
 #: while this comment's claim becomes false.
-_SHA_CURRENT_PIN = "031ea42b063ce1083e3d965597cdb44da2e748ef"
-#: A build that genuinely carries all three defects — the POSITIVE CONTROL. Without it a
+_SHA_CURRENT_PIN = "c7b2fd1da3c2ed48d0d8cc0bf0e4b703b1f86e5e"
+#: A build that genuinely carries all three RESUME defects — the POSITIVE CONTROL. Without it a
 #: green on the two rows above is indistinguishable from an instrument that reports nothing.
+#: It does NOT carry the fourth, snapshot-traversal defect, and that is a fact about the sha
+#: rather than a gap in the control: `external/swmm/src/solver/snapshot.c` does not exist at
+#: this commit, so there is no build here for that guard to be wrong in. The outgoing pin
+#: 031ea42b is the positive control for that one.
 _SHA_PRE_FIX = "15eb18a5d25afe5da295cb4b559a62669dbe5bc3"
 
 

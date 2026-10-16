@@ -125,6 +125,40 @@ repos:
         always_run: true
         stages: [pre-push]
 
+      # LIVE-PIN REGISTRATION GUARD (scripts/check_live_pin_registered.py)
+      # Refuses a commit whose TRITON_PIN is not recorded ABSENT -- via the EXPLICIT
+      # known_absent_in set -- in every src/hhemt/model_defects.py entry.
+      #
+      # WHAT THE OBSERVABLE IS, because an exit code alone does not say why this earns a
+      # venue. model_defects is per-sha by construction and its read path has no clone, so
+      # an unregistered pin resolves `indeterminate`/`ancestry_unresolvable` on every
+      # defect; check_known_resume_defects selects on `status == "present"`, so that
+      # verdict collapses into the PASSING arm. The failure is therefore a green report
+      # over a build nobody assessed, not a red. The campaign has already reached that
+      # state once (01e95a76) and already paid to repair it once.
+      #
+      # WHY pre-commit AND NOT ALL STAGES. Omitting `stages:` would run this at every
+      # installed venue, and the guard reads the WORKTREE (it resolves both tracked files
+      # from REPO_ROOT and read_text()s them). The venue-split comment above this block
+      # establishes that pre-push is not a clean-tree venue -- `stash = not all_files and
+      # not files` reverts unstaged edits while staged-uncommitted ones survive -- so a
+      # worktree read there is unsound in both directions. This is the same reason
+      # check-layout-version-b carries `stages: [pre-commit]` and its pre-push counterpart
+      # is a separate `--range` hook. No `--range` mode exists on this guard, so there is
+      # no sound pre-push arm to wire and none is wired.
+      #
+      # Deliberately NOT a pytest target: a test can be deselected by a marker expression
+      # and a compile-tier test can be skipped by venue, and this invariant must be neither.
+      # tests/test_check_live_pin_registered.py exercises the script's own logic; this hook
+      # is what makes the invariant hold at the moment the pin moves.
+      - id: check-live-pin-registered
+        name: check the live TRITON_PIN is registered in every model-defect entry
+        entry: uv run --locked python scripts/check_live_pin_registered.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       - id: check-caption-pairing
         name: check captioned renderer changes are paired with caption edits
         entry: uv run --locked python scripts/check_caption_pairing.py HEAD~1

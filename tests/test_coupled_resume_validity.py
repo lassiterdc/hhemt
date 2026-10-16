@@ -1241,6 +1241,48 @@ def test_parse_resume_timestep_reads_either_marker(tmp_path):
     assert parse_resume_timestep(none) is None
 
 
+#: The explicit-set rule each decisive status must come from. A registered sha resolves through
+#: one of exactly these two rules, so a status and a rule are not independent facts here --
+#: pinning the pair is what keeps a per-defect table as discriminating as the uniform
+#: `== "known_absent_set"` assertion it replaces.
+_RULE_FOR_STATUS = {"absent": "known_absent_set", "present": "also_present_set"}
+
+
+def _assert_expected_is_registry_total(expected: dict[str, str], *, where: str) -> None:
+    """Bidirectional set-equality between an expected-verdict mapping and the live `REGISTRY`.
+
+    WHY A TABLE AND NOT A UNIVERSAL QUANTIFIER. The assertions below used to read
+    `for d in REGISTRY: assert v.status == "absent"`. That form is an enumeration wearing a
+    quantifier's clothes: it was true only while every registered defect happened to be fixed
+    before these tips, and the fourth registry entry -- the first with `introduced_in` set --
+    falsified it. A universal quantifier fails with no instruction about what to add, which is
+    how one registry addition produced four reds in two files and no guidance in any of them.
+
+    This helper makes GROWTH a named diagnostic instead. An unlisted member and a stale listed
+    one BOTH fail loudly and by name, which is the bidirectional property
+    `test_field_bucket_is_total` already relies on elsewhere in this suite.
+
+    Deliberately NOT a plain `len(expected) == len(REGISTRY)`: equal counts with one swapped
+    id pass that check and leave a defect unasserted under a name nobody notices.
+    """
+    # Imported INSIDE the helper, matching this module's own convention: every other reference
+    # to REGISTRY here is function-local, which is what keeps the module clone-free at import.
+    from hhemt.model_defects import REGISTRY
+
+    listed = set(expected)
+    live = {d.defect_id for d in REGISTRY}
+    unlisted = live - listed
+    stale = listed - live
+    assert not unlisted, (
+        f"{where}: registry gained {sorted(unlisted)} and this table does not expect them. "
+        "Add each one's verdict at this sha -- measure it, do not assume it mirrors a sibling."
+    )
+    assert not stale, (
+        f"{where}: this table expects {sorted(stale)}, which REGISTRY no longer carries. "
+        "Remove the stale row rather than leaving a verdict nothing evaluates."
+    )
+
+
 def test_campaign_branch_tip_resolves_absent_on_every_registered_defect():
     """Sub-item (a): the registry pin gate sits UPSTREAM of every marker arm. An
     unregistered producing sha makes `check_coupled_resume_validity` early-return
@@ -1254,11 +1296,44 @@ def test_campaign_branch_tip_resolves_absent_on_every_registered_defect():
     """
     from hhemt.model_defects import REGISTRY, resolve
 
+    #: Measured at this sha, per defect. The snapshot-traversal entry is PRESENT here because
+    #: 658a7a37 carries the snapshot payload without the fix -- its tree has
+    #: external/swmm/src/solver/snapshot.c with the pre-fix predicate -- and it reaches that
+    #: payload on a lineage the main-side introducer is not an ancestor of, so the verdict rests
+    #: on the explicit set rather than on ancestry.
+    expected = {
+        "TRITON-COUPLED-RESUME-REPLAY": "absent",
+        "TRITON-RESUME-DEPTH-SCATTER": "absent",
+        "TRITON-RESUME-EXTBC-GHOST-RING": "absent",
+        "TRITON-SNAPSHOT-TRAVERSAL-GUARD": "present",
+    }
+    _assert_expected_is_registry_total(expected, where="campaign branch tip")
+
     verdicts = {d.defect_id: resolve(d, _SHA_CAMPAIGN_TIP) for d in REGISTRY}
     assert verdicts, "registry is empty"
+
+    # THE PROPERTY: a registered tip is DECISIVE on every registered defect. This is what the
+    # docstring above actually argues for -- an `indeterminate` verdict is what
+    # `check_known_resume_defects` reads as absent and reports as a clean bill.
     for did, v in verdicts.items():
-        assert v.status == "absent", f"{did} resolved {v.status} ({v.detail}) at the campaign branch tip"
-        assert v.rule == "known_absent_set"
+        assert v.status != "indeterminate", (
+            f"{did} resolved indeterminate ({v.detail}) at the campaign branch tip -- this sha is "
+            "registered, so every defect must resolve from an explicit set"
+        )
+        # The rule is pinned 1:1 to the expected status rather than widened to a two-member
+        # set: a decisive `absent` at a registered sha can only come from the explicit
+        # known-absent set, and a decisive `present` only from the explicit present set. The
+        # earlier form asserted `== "known_absent_set"` for every defect, which was a 1:1
+        # assertion over a uniform table; keeping it 1:1 over a non-uniform table is what
+        # stops this repair from weakening the instrument it edits.
+        assert v.rule == _RULE_FOR_STATUS[expected[did]], (did, v)
+
+    # THE TABLE: per-defect discrimination, so a regression flipping one of the three original
+    # absence claims cannot hide behind the decisiveness property above.
+    for did, v in verdicts.items():
+        assert v.status == expected[did], (
+            f"{did} resolved {v.status} ({v.detail}) at the campaign branch tip; expected {expected[did]}"
+        )
     assert "TRITON-RESUME-EXTBC-GHOST-RING" in verdicts
 
 
@@ -1282,11 +1357,38 @@ def test_wp1c_branch_tip_resolves_absent_on_every_registered_defect():
     """
     from hhemt.model_defects import REGISTRY, resolve
 
+    #: Measured at this sha, per defect. PRESENT on the snapshot-traversal entry for the same
+    #: reason as the campaign tip: 01e95a76 carries the snapshot payload and not the fix.
+    expected = {
+        "TRITON-COUPLED-RESUME-REPLAY": "absent",
+        "TRITON-RESUME-DEPTH-SCATTER": "absent",
+        "TRITON-RESUME-EXTBC-GHOST-RING": "absent",
+        "TRITON-SNAPSHOT-TRAVERSAL-GUARD": "present",
+    }
+    _assert_expected_is_registry_total(expected, where="WP-1C branch tip")
+
     verdicts = {d.defect_id: resolve(d, _SHA_WP1C_TIP) for d in REGISTRY}
     assert verdicts, "registry is empty"
+
+    # THE PROPERTY: decisiveness at a registered tip.
     for did, v in verdicts.items():
-        assert v.status == "absent", f"{did} resolved {v.status} ({v.detail}) at the WP-1C branch tip"
-        assert v.rule == "known_absent_set", (did, v)
+        assert v.status != "indeterminate", (
+            f"{did} resolved indeterminate ({v.detail}) at the WP-1C branch tip -- this sha is "
+            "registered, so every defect must resolve from an explicit set"
+        )
+        # The rule is pinned 1:1 to the expected status rather than widened to a two-member
+        # set: a decisive `absent` at a registered sha can only come from the explicit
+        # known-absent set, and a decisive `present` only from the explicit present set. The
+        # earlier form asserted `== "known_absent_set"` for every defect, which was a 1:1
+        # assertion over a uniform table; keeping it 1:1 over a non-uniform table is what
+        # stops this repair from weakening the instrument it edits.
+        assert v.rule == _RULE_FOR_STATUS[expected[did]], (did, v)
+
+    # THE TABLE: per-defect discrimination.
+    for did, v in verdicts.items():
+        assert v.status == expected[did], (
+            f"{did} resolved {v.status} ({v.detail}) at the WP-1C branch tip; expected {expected[did]}"
+        )
     assert "TRITON-RESUME-EXTBC-GHOST-RING" in verdicts
 
 
@@ -1310,6 +1412,17 @@ def test_registering_a_tip_extends_the_sets_rather_than_widening_the_predicate()
         assert v.status == "indeterminate", (d.defect_id, v)
         assert v.rule == "ancestry_unresolvable", (d.defect_id, v)
 
+    #: Loop 2, as a table. 15eb18a5 predates the snapshot payload entirely -- its tree carries
+    #: no external/swmm/src/solver/snapshot.c -- so the snapshot-traversal entry is ABSENT here,
+    #: and that is a property of the sha rather than a hole in the control. Registering it as
+    #: present to keep this table uniform would assert a defect in code that is not there.
+    expected_pre_replay = {
+        "TRITON-COUPLED-RESUME-REPLAY": "present",
+        "TRITON-RESUME-DEPTH-SCATTER": "present",
+        "TRITON-RESUME-EXTBC-GHOST-RING": "present",
+        "TRITON-SNAPSHOT-TRAVERSAL-GUARD": "absent",
+    }
+    _assert_expected_is_registry_total(expected_pre_replay, where="pre-replay sha")
     for d in REGISTRY:
         v = resolve(d, _SHA_PRE_REPLAY)
-        assert v.status == "present", (d.defect_id, v)
+        assert v.status == expected_pre_replay[d.defect_id], (d.defect_id, v)

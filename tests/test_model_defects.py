@@ -223,17 +223,46 @@ def test_set_override_beats_ancestry_for_a_revert():
 
 
 def test_resolve_for_tree_attrs_reads_only_the_stamped_sha():
+    """Property: the tree-attr entry point derives every verdict from `triton_producing_sha`
+    alone, and reports one verdict per registered defect.
+
+    Class: REGRESSION. The expected mapping was hardcoded at three entries, so the fourth
+    registry entry red it with `Left contains 1 more item` and no instruction about what to add.
+    The guard below turns that into a named diagnostic.
+
+    What kills it: making this entry point read a second tree attr (the stamped booleans it
+    replaced), or dropping a defect from its output.
+
+    A second correct implementation under which it still passes: one that returns the verdicts
+    in any order, or as any iterable -- the assertion is on the id-to-status mapping.
+    """
     got = {
         v.defect_id: v.status
         for v in resolve_for_tree_attrs(
             {"triton_producing_sha": SHA_DEPTH_SCATTER_FIX, "triton_has_swmm_depth_scatter_fix": False}
         )
     }
-    assert got == {
+    #: Measured at SHA_DEPTH_SCATTER_FIX, per defect. The snapshot-traversal entry is ABSENT
+    #: here because that sha predates the snapshot payload -- its tree carries no
+    #: external/swmm/src/solver/snapshot.c -- so there is no guard present to be wrong.
+    expected = {
         "TRITON-COUPLED-RESUME-REPLAY": "absent",
         "TRITON-RESUME-DEPTH-SCATTER": "absent",
         "TRITON-RESUME-EXTBC-GHOST-RING": "present",
+        "TRITON-SNAPSHOT-TRAVERSAL-GUARD": "absent",
     }
+    # BIDIRECTIONAL set-equality against the live registry, so a fifth entry fails HERE, by
+    # name, instead of surfacing as a dict-inequality diff. A len() comparison is deliberately
+    # not used: equal counts with one swapped id pass it and leave a defect unasserted.
+    unlisted = set(REGISTRY_BY_ID) - set(expected)
+    stale = set(expected) - set(REGISTRY_BY_ID)
+    assert not unlisted, (
+        f"registry gained {sorted(unlisted)} and this table does not expect them. Add each "
+        f"one's verdict at {SHA_DEPTH_SCATTER_FIX[:12]} -- measure it, do not assume."
+    )
+    assert not stale, f"this table expects {sorted(stale)}, which REGISTRY no longer carries."
+
+    assert got == expected
     assert all(v.status == "indeterminate" for v in resolve_for_tree_attrs({}))
 
 
@@ -250,11 +279,16 @@ def test_ghost_ring_entry_carries_the_provenance_note():
 def test_introduced_in_arm_excludes_a_build_that_predates_the_defect():
     """The `introduced_in` arm — the ONLY branch of resolve() no shipped entry exercises.
 
-    All three registered defects are present from the repo root, so `introduced_in` is None on
-    every one of them and this arm is dead against the shipped registry. It is NOT dead code:
-    it is the half of the two-sided predicate that a defect INTRODUCED partway through history
-    needs, and shipping it unreached is how a branch rots before its first real user. Covered
-    here with a synthetic defect so the arm has a reaching input class.
+    THREE of the four registered defects are present from the repo root, so `introduced_in` is
+    None on those three. It is NOT None on all of them any more: TRITON-SNAPSHOT-TRAVERSAL-GUARD
+    sets it, because the snapshot payload its guard sits in did not exist at the repo root -- so
+    this arm is NO LONGER dead against the shipped registry, and the sentence that said it was
+    invited deleting a branch that now has a real user.
+
+    What the arm is still worth covering synthetically: the shipped entry resolves through its
+    EXPLICIT sets on the read path, which has no clone, so the ancestry arm this test exercises
+    is not the one that fires in production for it. The synthetic defect below is what gives the
+    arm a reaching input class with ancestry available.
     """
     introduced, fix = "aaaaaaa1111111", "bbbbbbb2222222"
     predates = "ccccccc3333333"

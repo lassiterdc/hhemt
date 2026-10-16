@@ -228,9 +228,9 @@ SHA_PRE_DEPTH_SCATTER = "b3820a448f304b3f732f4b6fac5564adf86ac333"
 #: marker arm runs, and `check_known_resume_defects` selects on `status == "present"`, so
 #: INDETERMINATE reads as ABSENT and returns an affirmative clean bill).
 #:
-#: ALL THREE registry defects resolve ABSENT at this sha, and the third one is the interesting
-#: case because TWO natural probes classify it WRONG. Measured 2026-09-25 against the clone at
-#: `HHEMT_TRITON_CLONE` with HEAD = 658a7a37:
+#: ALL THREE RESUME registry defects resolve ABSENT at this sha; the snapshot-traversal entry
+#: resolves PRESENT here and its basis is its own `also_present_in` record. Measured 2026-09-25
+#: against the clone at `HHEMT_TRITON_CLONE` with HEAD = 658a7a37:
 #:
 #:   * `merge-base --is-ancestor 3a832f7d 658a7a37` -> rc 0   (coupled-resume fix: ancestor)
 #:   * `merge-base --is-ancestor 9db367dd 658a7a37` -> rc 0   (depth-scatter fix: ancestor)
@@ -333,6 +333,53 @@ SHA_WP1C_LINKAGE_REPAIR_AND_TEST = "e53c2fa01a64583fb57bc58082245fd687882b8f"
 #: Evidentiary strength is a38338b0's, no stronger: whatever falsifies a38338b0 falsifies this.
 SHA_MAIN_SNAPSHOT_AND_COLUMN_SPLIT = "031ea42b063ce1083e3d965597cdb44da2e748ef"
 
+#: The commit that INTRODUCES the snapshot traversal-guard defect, by adding the SWMM state
+#: snapshot's dynamic-wave routing payload: `5fadf167` "extend the state snapshot over dynamic-wave
+#: routing state". It is `introduced_in` for TRITON-SNAPSHOT-TRAVERSAL-GUARD, and carrying it is
+#: what keeps the entry from claiming a pre-snapshot build is affected.
+#: ONE SEARCH TRAP, recorded because taking the other answer registers the defect ABSENT on the
+#: pin that carries it: `git log -S` in its `--all` form also surfaces `1a80bcaf`, which is
+#: contained ONLY in the unmerged side branch `solver-work/replay-precision-accounting` and is NOT
+#: an ancestor of any campaign pin. Measured 2026-10-14 against this sha, not inherited:
+#:   * `git merge-base --is-ancestor 5fadf167 031ea42b` -> rc 0
+#:   * `git merge-base --is-ancestor 5fadf167 c7b2fd1d` -> rc 0
+#:   * `git merge-base --is-ancestor 5fadf167 15eb18a5` -> rc 1 (the defect postdates that build)
+SHA_SNAPSHOT_DW_ROUTING_STATE = "5fadf167487a647e9978c2c1aa0bd6ec137e423e"
+
+#: The commit that REMOVES it: `23b75781` "fix(swmm): land work package T1a -- the snapshot
+#: traversal guard's wrong predicate". Re-predicates the per-element guard on `s->routeTo >= 0`,
+#: repositions it, and selects the write target through a three-way chain so a route-less outfall
+#: reaches a placeholder rather than forming an address from NULL.
+#: THE FIX'S OWN SIGNATURE, measured rather than described, with the file confirmed to RESOLVE at
+#: both refs so a zero is an absence and not a missing path:
+#:   * `git grep -c "s->routeTo >= 0" c7b2fd1d -- external/swmm/src/solver/snapshot.c` -> 1
+#:   * the same at `031ea42b` -> 0
+#:   * `#define SNAPSHOT_VERSION` -> 6 at c7b2fd1d, 5 at 031ea42b, so a post-fix READER refuses a
+#:     pre-fix file rather than misreading it. That version bump is why a mixed-pin resume fails
+#:     loudly instead of silently.
+SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX = "23b757810cde67a83a0aeed003689bb6009f6894"
+
+#: THE LIVE PIN as of this move: `c7b2fd1d` "test(swmm): land work package T2a -- killed-write
+#: consultation regression tests", HEAD of `wp1/snapshot-guard` on the fork, 2 commits past
+#: `031ea42b` and pushed (`rev-list --left-right --count HEAD...@{upstream}` -> `0 0`).
+#: It is the `known_absent_in` member for every defect in REGISTRY, which is what
+#: `scripts/check_live_pin_registered.py` asserts at commit time.
+#: Measured 2026-10-14 against THIS sha, never inherited from a parent entry:
+#:   * `git merge-base --is-ancestor a38338b0 c7b2fd1d` -> rc 0
+#:   * `git merge-base --is-ancestor 3a832f7d c7b2fd1d` -> rc 0
+#:   * `git merge-base --is-ancestor 9db367dd c7b2fd1d` -> rc 0
+#:   * `git merge-base --is-ancestor 031ea42b c7b2fd1d` -> rc 0
+#:   * `git merge-base --is-ancestor 23b75781 c7b2fd1d` -> rc 0 (it carries the snapshot fix)
+#:   * `git ls-tree c7b2fd1d external/kokkos external/yaml-cpp` -> dc1bf738 a83cd315, BYTE-EQUAL
+#:     to `031ea42b`; `external/swmm` is a TREE (mode 040000) rather than a gitlink and it DOES
+#:     move (92ccd1b4 -> 4f987437), which is expected because the fix lives inside it.
+#: THE TWO-PROBE TRAP RECURS AND IS RECORDED RATHER THAN LEFT FOR THE NEXT READER:
+#: `is-ancestor 5d2ad1e8 c7b2fd1d` -> rc 1. Read alone that says the ghost-ring defect is PRESENT
+#: here. It asks the FORK's question of an ORNL-descended tree, exactly as it does at `031ea42b`;
+#: the deciding basis is `a38338b0` -> rc 0, and this sha's ghost-ring verdict is that entry's,
+#: no stronger.
+SHA_WP1_SNAPSHOT_GUARD_AND_TESTS = "c7b2fd1da3c2ed48d0d8cc0bf0e4b703b1f86e5e"
+
 REGISTRY: tuple[ModelDefect, ...] = (
     ModelDefect(
         defect_id="TRITON-COUPLED-RESUME-REPLAY",
@@ -355,6 +402,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_WP1C_LINKAGE_REPAIR_AND_TEST,
                 # 3a832f7d is an ANCESTOR of 031ea42b -- re-measured rc 0 against this sha.
                 SHA_MAIN_SNAPSHOT_AND_COLUMN_SPLIT,
+                # 3a832f7d is an ANCESTOR of c7b2fd1d -- re-measured rc 0 against this sha.
+                SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME}),
@@ -380,6 +429,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_WP1C_LINKAGE_REPAIR_AND_TEST,
                 # 9db367dd is an ANCESTOR of 031ea42b -- re-measured rc 0 against this sha.
                 SHA_MAIN_SNAPSHOT_AND_COLUMN_SPLIT,
+                # 9db367dd is an ANCESTOR of c7b2fd1d -- re-measured rc 0 against this sha.
+                SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER}),
@@ -414,6 +465,11 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # explicitly because the read path has no clone to derive it from, and because
                 # ancestry from 5d2ad1e8 answers rc 1 for the reason the constant's comment gives.
                 SHA_MAIN_SNAPSHOT_AND_COLUMN_SPLIT,
+                # c7b2fd1d descends from a38338b0 (re-measured rc 0) and its delta from 031ea42b
+                # touches no ghost-ring path, so it inherits the SAME independent-upstream verdict
+                # on the SAME basis. `is-ancestor 5d2ad1e8 c7b2fd1d` -> rc 1, the same two-probe
+                # trap the parent entries record, which is why this member is listed and not derived.
+                SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
             }
         ),
         also_present_in=frozenset(
@@ -441,6 +497,98 @@ REGISTRY: tuple[ModelDefect, ...] = (
             "not on a content comparison with 5d2ad1e8 -- which no single clone can perform, since "
             "the two shas live on repositories that share a name and not a history. That is one "
             "step weaker than 21e666d6's blob-identical cherry-pick, and it is recorded as weaker."
+        ),
+    ),
+    ModelDefect(
+        defect_id="TRITON-SNAPSHOT-TRAVERSAL-GUARD",
+        title="A route-less outfall aborts the SWMM snapshot traversal, truncating every snapshot written",
+        fixed_in=SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX,
+        #: Set, rather than left None, because the snapshot payload this guard sits in did not
+        #: exist before 5fadf167 on the `main` lineage -- so a pre-snapshot build cannot carry the
+        #: defect and the default-present arm would otherwise claim it does. IT IS A
+        #: LINEAGE-SPECIFIC FACT and NOT the whole story, which is why the explicit sets below
+        #: carry every verdict: the fork side branch `solver-work/replay-precision-accounting`
+        #: introduced its OWN snapshot payload, so `is-ancestor 5fadf167 658a7a37` -> rc 1 while
+        #: `git ls-tree 658a7a37 -- external/swmm/src/solver/snapshot.c` -> 1 entry. Ancestry from
+        #: this constant therefore answers the WRONG LINEAGE's question for three registered shas,
+        #: the same two-probe trap the ghost-ring entry above records. The deciding instrument is
+        #: CONTENT, and it is recorded per member below.
+        introduced_in=SHA_SNAPSHOT_DW_ROUTING_STATE,
+        known_absent_in=frozenset(
+            {
+                SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX,
+                # 23b75781 is an ANCESTOR of c7b2fd1d -- measured rc 0 against this sha.
+                SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
+                # THE SEVEN NO-PAYLOAD SHAS. `external/swmm/src/solver/snapshot.c` does not exist
+                # at any of them (`git ls-tree` -> 0 entries each, against a control needle
+                # `src/triton.h` -> 1 entry each, so the zero is an absence and not a bad path).
+                # There is no guard here to be wrong, so the defect cannot be carried. Listed
+                # EXPLICITLY rather than derived, because the read path has no clone and the
+                # `introduced_in_not_ancestor` arm needs one.
+                SHA_PRE_COUPLED_RESUME,
+                SHA_COUPLED_RESUME_FIX,
+                SHA_PRE_DEPTH_SCATTER,
+                SHA_DEPTH_SCATTER_FIX,
+                SHA_EXTBC_GHOST_RING_FIX,
+                SHA_MAIN_GHOST_RING_AND_GPU,
+                SHA_ORNL_GHOST_RING_AND_GPU,
+            }
+        ),
+        #: THE FOUR PAYLOAD-WITHOUT-FIX SHAS, every one decided by CONTENT rather than by
+        #: ancestry, because ancestry reaches only one of the two lineages that introduced the
+        #: payload. Measured 2026-10-14 over
+        #: `external/swmm/src/solver/snapshot.c`, with the post-fix value as the positive control:
+        #:   sha        s->routeTo>=0   SNAPSHOT_VERSION
+        #:   658a7a37         0               4
+        #:   01e95a76         0               5
+        #:   e53c2fa          0               5
+        #:   031ea42b         0               5
+        #:   23b75781         1               6   <- control: the fix's own signature
+        #:   c7b2fd1d         1               6   <- control
+        #: A zero in that column IS the defective predicate still in place, and the two 1s are
+        #: what establish the matcher reaches this population at all.
+        #: 658a7a37 is the one a reader will question: it is on the UNMERGED side branch
+        #: `solver-work/replay-precision-accounting` (`git branch -a --contains` names only that
+        #: branch) and is NOT an ancestor of the new pin (`is-ancestor 658a7a37 c7b2fd1d` -> rc 1),
+        #: so its payload is that branch's own and the fix will never reach it by descent.
+        #: OPERATIONAL CONSEQUENCE: every snapshot written at any of these four is short by
+        #: 2,287 doubles, and a truncated file passes every pre-payload integrity check because
+        #: the header, shape block and manifest are all written before the abort.
+        also_present_in=frozenset(
+            {
+                SHA_MAIN_SNAPSHOT_AND_COLUMN_SPLIT,
+                SHA_SOLVER_WORK_REPLAY_PRECISION,
+                SHA_WP1C_SWMM_OUTPUT_APPEND,
+                SHA_WP1C_LINKAGE_REPAIR_AND_TEST,
+            }
+        ),
+        trigger="resumed_coupled",
+        remedy=(
+            "Re-run resumed coupled sims at 23b75781 or a descendant. A snapshot written at an "
+            "affected build is unusable rather than degraded, so there is no partial-credit arm: "
+            "the reader refuses it at the first read past the written extent."
+        ),
+        provenance_note=(
+            "WHAT THE DEFECT IS, because the registry's other rows are resume-path defects and this "
+            "one is a WRITE-path defect whose only observable is on resume. A null guard in "
+            "external/swmm/src/solver/snapshot.c tested the pollutant count where the array it "
+            "protects is allocated on a routing field, so it fired on any model whose outfall has no "
+            "routing destination. It sits ABOVE the pollutant loop and the traversal is shared across "
+            "manifest, write and read modes, so it aborted the remainder of every traversal in every "
+            "mode -- a build that cannot write a usable snapshot also cannot read one. "
+            "WHY A TRUNCATED SNAPSHOT PASSED EVERY PRE-PAYLOAD CHECK: the header, the shape block and "
+            "the embedded manifest were all written BEFORE the abort, so integrity checks that read "
+            "only those were satisfied, and the file was correctly refused only at the first read past "
+            "the written extent. A reader looking for a corrupt-file signature will not find one. "
+            "WHY 15eb18a5 IS NOT IN also_present_in, stated because the three sibling entries all list "
+            "it and a reader will expect a fourth: external/swmm/src/solver/snapshot.c does not exist "
+            "at that sha (`git ls-tree` -> 0 entries, against a control needle src/triton.h -> 1), and "
+            "`is-ancestor 5fadf167 15eb18a5` -> rc 1. The defect postdates that build, so listing it "
+            "would be the laundering the live-pin guard's own remedy text forbids. "
+            "ONE CONSEQUENCE FOR MIXED-PIN DATA: SNAPSHOT_VERSION moves 5 -> 6 across the fix, so a "
+            "post-fix reader refuses a pre-fix snapshot loudly rather than misreading it. A campaign "
+            "holding both pins therefore fails fast on a cross-pin resume instead of producing a "
+            "plausible wrong answer."
         ),
     ),
 )
