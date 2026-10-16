@@ -57,8 +57,10 @@ The combined bundle's report opens with a **Combine Provenance & Compatibility**
 section. Its table, *What Was Combined (data provenance)*, lists each combined
 experiment with its role, model, member count, and the toolkit and solver builds
 that produced it. The compatibility check itself runs before the report is built.
-It classifies every field on which the bundles diverge by severity, and it records
-the result in the combined bundle's `combined_compatibility.json`. A non-blocking
+It compares a fixed set of identity, sensitivity and compute fields, plus the
+RO-Crate schema version, and leaves out the analysis id and the toolkit version. It
+classifies each difference it finds by severity, and it records the result in the
+combined bundle's `combined_compatibility.json`. A non-blocking
 divergence that the combine's intended structure does not account for appears as a
 warning row under **Cross-Experiment Errors and Warnings**:
 
