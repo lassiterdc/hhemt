@@ -29,9 +29,10 @@ report that presents them side by side.
   bundles** (each ships `experiment_datatree.zarr` at the bundle root; a bundle
   produced before the store unification ships `analysis_datatree.zarr` or
   `sensitivity_datatree.zarr` and is still accepted). The
-  combine step resolves whichever consolidated tree a bundle ships. The
-  cross-experiment report presents the compatibility table across the combined
-  set plus, for a clean-vs-resume sensitivity-master pair, a
+  combine step resolves whichever consolidated tree a bundle ships. It records
+  the divergences its compatibility check finds in the combined bundle's
+  `combined_compatibility.json`, and the cross-experiment report presents, for a
+  clean-vs-resume sensitivity-master pair, a
   `cross_experiment_intercomparison` panel derived cross-bundle from the two
   consolidated trees (see *Compatibility gates* below).
 
@@ -63,8 +64,8 @@ warning row under **Cross-Experiment Errors and Warnings**:
 
 | Severity | Meaning | Effect |
 |----------|---------|--------|
-| `informational` | An expected divergence (e.g. HPC/compute config). | Surfaced; non-blocking. |
-| `warning` | A surfaced difference that may matter (e.g. a sensitivity-axis field, or an RO-Crate schema-version skew). | Surfaced; non-blocking. |
+| `informational` | An expected divergence (e.g. HPC/compute config). | Recorded only in `combined_compatibility.json`; non-blocking. |
+| `warning` | A surfaced difference that may matter (e.g. a sensitivity-axis field, or an RO-Crate schema-version skew). | Recorded in `combined_compatibility.json`, and also listed under **Cross-Experiment Errors and Warnings** unless the combine expects it (a model toggle between paired arms, `sensitivity_analysis`, or `TRITONSWMM_branch_key`); non-blocking. |
 | `blocking` | A different experiment entirely (e.g. differing weather events or enabled models). | **Aborts** the combine. |
 
 ??? note "How this severity differs from the bug-registry severity"
@@ -79,9 +80,9 @@ warning row under **Cross-Experiment Errors and Warnings**:
 `case_name` divergence (sourced from each bundle's `case.yaml`) is classified
 **blocking** and aborts the combine. A compute-config divergence, a difference in the
 `partitions` map or `gpu_allocation_flavor`, sourced from each bundle's scrubbed
-`hpc_system_config.identity.yaml`, is classified **informational**: it is surfaced as a
-divergence row and does not abort, because comparing the same experiment across UVA
-and Frontier is a supported use. The combined report additionally carries a
+`hpc_system_config.identity.yaml`, is classified **informational**: it is expected, so
+it is recorded only in the combined bundle's `combined_compatibility.json` and does not
+abort, because comparing the same experiment across UVA and Frontier is a supported use. The combined report additionally carries a
 clean-vs-resume `cross_experiment_intercomparison` figure under the "Cross-Experiment
 Results" category, projected from the `combined_intercomparison.json` read-model, so
 `CombinedBundle.regenerate_report()` re-renders it locally with no re-merge.
