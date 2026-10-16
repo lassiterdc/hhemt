@@ -3717,3 +3717,23 @@ non_breaking_allowlist:
       reviewer that never held this file's landing work.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 54460d3d85ae08ad8ef88c27f134a3a839a381fb123079b4acaf838e3cfd7369
+    justification: >-
+      NON-BREAKING for the on-disk layout. The D-35 group's changes to this module:
+      corrected `Field(description=...)` strings; a whole-file comment and docstring repair;
+      and D-52, under which `hpc_time_min_per_sim` (for batch_job) and the two partition
+      selectors (for batch_job and 1_job_many_srun_tasks) declare `required_when` in
+      `json_schema_extra`, with the hand-written presence raise removed.
+      DECIDING MEASUREMENT, and it is structural: the module was parsed at HEAD and in the
+      worktree, and every annotated class-level field is IDENTICAL in name, order and annotation,
+      77 fields on `analysis_config` and 3 on `ForceRerunSpec`, with both class names and their
+      order unchanged. No field was added, removed, renamed, retyped or reordered, so no config
+      key, path, filename or persisted structure moved.
+      WHAT DOES CHANGE, stated rather than elided: D-52 is a STRICTER LOAD-TIME VALIDATION. A
+      batch_job or 1_job_many_srun_tasks config that omits one of those settings now fails at
+      load instead of later. That is an input-config strictness change, not an analysis-tree
+      layout change; it touches no artifact an existing analysis wrote, and LAYOUT_VERSION
+      governs the on-disk analysis tree.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.

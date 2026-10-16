@@ -1,19 +1,34 @@
-"""Dual-write provenance emitter (C2) for the reproducibility-system (ADR-7).
+"""Record which build of hhemt produced each artifact, and refuse to mix artifacts from different builds.
 
-Reads log.py READ-ONLY at consolidation and renders a per-run PROV CreateAction +
-per-output wasGeneratedBy graph. NEVER mutates log.py (the _already_written
-completion-gate is load-bearing across the DAG — Gotchas 28/34/40).
+An analysis's figures, consolidated stores and partial processing outputs are written by
+separate stages, usually in separate processes, so nothing guarantees that the code which
+wrote an artifact is the code now reading it. This module mints the identity stamp a stage
+writes (`producing_stamp`), keeps each stage's append-only history of the builds that
+produced it, and supplies the gates that refuse -- or, when the operator declares it,
+print and proceed -- when a figure set, a consolidated store or a chapter set was written
+by a different build from the one running.
+
+It also renders the RO-Crate provenance graph written at consolidation (`emit_provenance`):
+one PROV `CreateAction` per (event, model) run and a `wasGeneratedBy` edge per output,
+returned twice -- a deterministic core for the consolidated tree's attrs and the full graph
+for the `ro-crate-metadata.json` sidecar. The graph is read from the analysis and per-model
+JSON logs, and nothing in this module sets a log field: the processing runner's
+`_already_written` check decides whether to skip an output by reading those same records,
+so a write from here would make it skip an output that was never written, or rewrite one
+that was.
 """
 
 from __future__ import annotations
 
 import importlib.metadata
 import socket
-from pathlib import Path  # module-scope: the `"Path"` parameter annotations below are
 
-# type-only (this module sets `from __future__ import annotations`), but ruff resolves
-# annotation names against module scope and reported F821 -- which is inside CI's gating
-# `--select=E9,F63,F7,F82` set. Function bodies keep their local `_Path` alias unchanged.
+# Module scope, and needed at run time as well as for typing: several functions below call
+# `Path(...)` on their arguments, and ruff resolves the `Path` annotations against module
+# scope even under `from __future__ import annotations` -- an unresolved one is F821, inside
+# CI's gating `--select=E9,F63,F7,F82` set. Some function bodies still bind a local `_Path`
+# alias; it is the same class.
+from pathlib import Path
 from types import SimpleNamespace
 
 from rocrate.model.contextentity import ContextEntity
@@ -60,16 +75,19 @@ def _toolkit_git_sha() -> str:
 def _describe_version() -> str:
     """PEP-440 local version derived from `git describe`, not from the static pin.
 
-    `pyproject.toml` carries a STATIC `version = "0.1.0"` that has not moved in 241
-    commits, so `importlib.metadata.version("hhemt")` is a constant that distinguishes
-    nothing — it was identical on all four arms of the delivered generation. This
-    derives `{tag}+{N}.g{sha}` from `git describe --tags --long`, which DOES
-    distinguish generations and is deterministically recomputable from an archived
-    sha alone (verified: `git describe --tags --long 01655abb60c2` -> `v0.1.0-241-g01655ab`).
+    `pyproject.toml` carries a STATIC `version = "0.1.0"` that commits do not update,
+    so `importlib.metadata.version("hhemt")` is a constant that cannot tell two builds
+    apart. This derives `{tag}+{N}.g{sha}` from `git describe --tags --long --abbrev=12`,
+    which DOES distinguish builds and is deterministically recomputable from an archived
+    sha alone: `git describe --tags --long --abbrev=12 01655abb60c2` prints
+    `v0.1.0-241-g01655abb60c2`, which this returns as `0.1.0+241.g01655abb60c2`.
 
-    Falls back to the installed metadata version when git is unavailable — a wheel
-    install is the intended fallback case, not a failure. NEVER raises: a provenance
-    minter that can abort a 3-hour consolidation is worse than one that degrades.
+    When `git describe` fails (no git, as in a container image, or no reachable tag),
+    this composes `{pin}+g{sha[:12]}` from `running_identity().sha` when that resolves,
+    returns the bare pin when it does not (a wheel install has no identity), and
+    returns `"0+unknown"` when the installed metadata version itself cannot be read.
+    NEVER raises: a provenance minter that can abort a 3-hour consolidation is worse
+    than one that degrades.
     """
     import subprocess
 
@@ -132,11 +150,14 @@ def _identity_dirty() -> str:
 def _is_dirty() -> bool:
     """True when the toolkit checkout has uncommitted changes to TRACKED files.
 
+    Nothing calls this today: `producing_stamp` takes its dirty flag from
+    `_identity_dirty` above, which reads it from `running_identity()` and reports a
+    toolkit it cannot identify as "unknown" rather than as clean.
+
     False both when there are none and when the question cannot be answered: the
     `except` arm below returns the same False a verified-clean tree returns, so a
-    non-git install reads clean. That is a KNOWN RESIDUAL, not a guarantee -- the
-    two-valued field has no cell for "undeterminable", and widening it is tracked
-    separately.
+    non-git install reads clean. The two-valued result has no value for
+    "undeterminable", which is the property `_identity_dirty` does not share.
 
     Scoped to tracked content deliberately. `git status --porcelain` also reports
     untracked (`??`) paths, and an untracked path is not a change to the checkout:
@@ -146,13 +167,13 @@ def _is_dirty() -> bool:
     stray file, and the stamp then recorded a divergence from HEAD that
     `git diff HEAD` did not show.
 
-    This closes a hole the codebase currently states but does not enforce:
-    `process_simulation._resolve_producing_stamp`'s docstring claims the sha is
-    `"unknown"` when the working tree is dirty, but `_get_toolkit_git_sha` only
-    degrades on CalledProcessError/FileNotFoundError — `git rev-parse HEAD` succeeds
-    on a dirty tree, so a run with uncommitted edits stamps a CLEAN sha and reads
-    authoritative. The only dirty check in the toolkit today is `_carry_source_tree`'s
-    emit-time warning, which fires long after capture. False on any error: an
+    Why a dirty flag has to travel beside the sha at all: `git rev-parse HEAD` succeeds
+    on a dirty tree and returns the COMMITTED sha, so a run with uncommitted edits
+    resolves the same sha as the clean commit and, read alone, looks authoritative.
+    `process_simulation._resolve_producing_stamp`'s docstring says the sha is
+    `"unknown"` when the working tree is dirty; it is not -- `running_identity()`
+    returns the committed sha for a dirty checkout and reports the edits only as
+    `dirty`, which `producing_stamp` stamps as `hhemt_dirty`. False on any error: an
     undeterminable tree must not be asserted dirty.
     """
     import subprocess
@@ -174,14 +195,15 @@ def _is_dirty() -> bool:
 
 
 def producing_stamp() -> dict[str, str]:
-    """THE single minter for every stage's hhemt version-provenance stamp (ADR-15 widening).
+    """THE single minter for every stage's hhemt version-provenance stamp.
 
-    Every stage that writes an artifact calls THIS, at write time, from the running
-    process. Three fields, one shape, six carriers. The minting rule this enforces:
-    a stamp records the code that ACTUALLY ran the stage, so it may never be resolved
-    from a module-level constant, a config field, or a value carried over from an
-    earlier stage. EW-3 is the counter-example — a field stamped from a constant that
-    had no value yet at run time, which read authoritative and was wrong.
+    A stage that stamps an artifact calls THIS, at write time, from the running
+    process, so every carrier holds the same three fields in the same shape. The
+    minting rule this enforces: a stamp records the code that ACTUALLY ran the stage,
+    so it may never be resolved from a module-level constant, a config field, or a value
+    carried over from an earlier stage. The failure that rule rules out is a field
+    stamped from a constant that had no value yet at run time: it read authoritative and
+    was wrong.
 
     Corollary the CALL SITES must honor and this function cannot: if the stage did not
     execute, do not call this. An unconditional stamp cannot distinguish
@@ -194,9 +216,12 @@ def producing_stamp() -> dict[str, str]:
     }
 
 
-#: The append-only per-stage provenance history, relative to analysis_dir. Declared ONCE
-#: here and referenced by no other literal, so a rename is a single edit. Deliberately NOT
-#: one of the consolidated-tree names: this artifact is orthogonal to the zarr layout and
+#: The append-only per-stage provenance history, relative to analysis_dir (or, for the
+#: chapter-set stage, to the chapter set's own directory). Every code path reads the name
+#: from here, but two user-facing message strings also spell it out -- the chapter-set
+#: guard's mismatch message below and the `allow_mixed_version_chapters` field description
+#: in `config/analysis.py` -- so a rename must update those two strings as well. Deliberately
+#: NOT one of the consolidated-tree names: this artifact is orthogonal to the zarr layout and
 #: must not acquire a dependency on a filename that is a live rename candidate.
 _HISTORY_FILENAME = "provenance_history.json"
 
@@ -259,27 +284,31 @@ def _write_consolidate_manifest(analysis_dir: Path, stamp: dict) -> None:
         print(f"[consolidate] consolidate_manifest.json stamp failed (non-fatal): {_e}", flush=True)
 
 
-def append_stage_provenance(analysis_dir: Path, stage: str) -> bool:
+def append_stage_provenance(analysis_dir: Path, stage: str, *, stamp: dict | None = None) -> bool:
     """Append this stage's producing stamp to the analysis's append-only history.
 
-    Contract property 3 ("appends, never overwrites"). Returns True if an entry was
-    appended, False if the stage's latest entry already names this exact build.
+    Appends, never overwrites. Returns True if an entry was appended, False if the
+    stage's latest entry already names this exact build.
 
     WHY THIS IS NOT IN THE RO-CRATE SIDECAR, stated here because the sidecar is the
     intuitive home and is the wrong one. Both `emit_provenance` call sites and both
-    `write_rocrate_sidecar` call sites are inside CONSOLIDATION. Every stage this history
-    is about -- plots, report, bundle, combine -- runs strictly AFTER consolidation, so a
-    history projected into the sidecar could not contain the render that has not happened
-    yet: on a single pass it would record zero render entries, and on the two-renders case
-    this exists for, neither. A standalone read-model written by each stage at its own
-    capture site is the same persist-then-read shape `validation_report.json` already uses,
-    and for the same ordering reason.
+    `write_rocrate_sidecar` call sites are inside CONSOLIDATION. The two stages that write
+    this history into `analysis_dir` -- plots and report -- run strictly AFTER
+    consolidation, so a history projected into the sidecar could not contain the render
+    that has not happened yet: on a single pass it would record zero render entries, and on
+    the two-renders case this exists for, neither. The third caller, the chapter-set stage,
+    records during processing, BEFORE consolidation, and into the chapter set's own
+    directory, so the sidecar is not its home either. A standalone read-model written by
+    each stage at its own capture site is the same persist-then-read shape
+    `validation_report.json` already uses, and for the same ordering reason.
 
-    R4 (Gotcha 59) is preserved BY CONSTRUCTION rather than by keying: this function never
-    touches `ro-crate-metadata.json`, so the sidecar's compare-and-write, `_EMBEDDED_PROV_KEYS`,
-    and the byte-identity goldens are all untouched. The de-duplication below is what keeps
-    THIS file idempotent -- an unchanged build appends nothing and the file's bytes and mtime
-    are preserved, so the Gotcha-38 analysis-scope DU own-files walk is unperturbed too.
+    The sidecar's own idempotence -- a re-consolidation with unchanged content leaves
+    `ro-crate-metadata.json` byte- and mtime-identical -- is preserved BY CONSTRUCTION rather
+    than by keying: this function never touches that file, so the sidecar's compare-and-write,
+    `_EMBEDDED_PROV_KEYS`, and the byte-identity goldens are all untouched. The de-duplication
+    below is what keeps THIS file idempotent -- an unchanged build appends nothing and the
+    file's bytes and mtime are preserved, so the analysis-scope disk-usage total, which counts
+    the analysis directory's own top-level files, is unperturbed too.
 
     The key is `(hhemt_sha, hhemt_dirty)`, not the sha alone: two builds at one commit with
     different working-tree states are different producers, which `producing_stamp` already
@@ -289,11 +318,13 @@ def append_stage_provenance(analysis_dir: Path, stage: str) -> bool:
 
     Best-effort and never raises: a provenance write must not fail a stage that succeeded.
 
-    Annotations are UNQUOTED deliberately, unlike the two older `analysis_dir: "Path"`
-    signatures below. This module sets `from __future__ import annotations` (line 8) and
-    imports `Path` at module scope (line 12), so the quotes buy nothing and ruff flags them
-    UP037 -- the older pair are pre-existing findings, and matching their style would have
-    propagated the debt into new code rather than merely inheriting it.
+    `stamp` is the identity to record, and defaults to `producing_stamp()` called here.
+    The plots and report stages pass nothing and record exactly that. The chapter-set
+    stage (`record_chapter_build`) passes the identity its guard compares against, because
+    the guard names the running build by `processing_build_key()`, which falls back to the
+    container image label when `producing_stamp()` is "unknown"; recording the default
+    there would write "unknown" for a build the guard's message calls by its label, and
+    the guard drops "unknown" entries, so a later run could not compare against it.
     """
     import json as _json
     from pathlib import Path as _Path
@@ -305,7 +336,7 @@ def append_stage_provenance(analysis_dir: Path, stage: str) -> bool:
             loaded = _json.loads(target.read_text(encoding="utf-8"))
             if isinstance(loaded, list):
                 entries = loaded
-        stamp = producing_stamp()
+        stamp = producing_stamp() if stamp is None else stamp
         key = (stamp.get("hhemt_sha"), stamp.get("hhemt_dirty"))
         for prior in reversed(entries):
             if prior.get("stage") == stage:
@@ -423,8 +454,10 @@ def assert_plots_match_running_build(analysis_dir: Path, *, declare_stale_plots:
     msg = (
         f"Report/figure build mismatch: {why}. The figures may not reflect the renderer "
         "code now producing this report. Re-render with force_rerun "
-        '{"subject": "all", "stage": "render"}, or pass --declare-stale-plots to proceed '
-        "and record the mismatch."
+        '{"subject": "all", "stage": "render"}. To proceed anyway, call render_report() on '
+        "the analysis, or regenerate_report() on the bundle, from Python with "
+        "declare_stale_plots=True: the mismatch is then printed to standard output, and "
+        "hhemt does not store it. There is no command-line option for this."
     )
     if declare_stale_plots:
         print(f"[render_report] DECLARED STALE PLOTS: {msg}", flush=True)
@@ -454,31 +487,32 @@ _SENTINEL_SHAS = frozenset({"", "unknown", "0+unknown"})
 def store_build_mismatch(store: Path, stored: str | None) -> str | None:
     """Return a reason string when `store` was NOT produced by the running build, else None.
 
-    The consolidation-tier sibling of `assert_plots_match_running_build` above, and the
-    fifth instance of that pattern. Three properties are inherited deliberately and a
-    reviewer must not soften any of them:
+    The consolidation-tier sibling of `assert_plots_match_running_build` above. Each
+    property below is deliberate, and softening any one of them reopens the failure it
+    closes:
 
     ABSENT IS NEVER EQUAL, including absent on both sides -- and ABSENCE INCLUDES A
-    SENTINEL. A store with no `hhemt_producing_sha` is a MISMATCH, and so is one whose
-    sha is `"unknown"`, because that is what `_toolkit_git_sha` returns when it resolved
-    nothing. A falsy-check does not catch it: `"unknown"` is truthy, so two different
-    wheel installs both stamping `"unknown"` would compare equal and reuse each other's
-    store with no output at all. Reading absence as "no objection" would silently reuse
-    every tree built before the ADR-15 capture site existed, which is precisely the
-    population most likely to be stale. This is the one property that distinguishes this
-    function from `check_provenance_completeness`, whose graceful-absent posture is
-    correct for a REPORT (a provenance check that can abort validate_analysis takes the
-    whole Errors-and-Warnings sidebar down with it) and wrong for a GATE.
+    SENTINEL. A store whose supplied consolidation build stamp is absent is a MISMATCH,
+    and so is one whose stamp is `"unknown"`, because that is what `_toolkit_git_sha`
+    returns when it resolved nothing. A falsy-check does not catch it: `"unknown"` is
+    truthy, so two different wheel installs both stamping `"unknown"` would compare equal
+    and reuse each other's store with no output at all. Reading absence as "no objection"
+    would silently reuse every tree consolidated before consolidation began recording its
+    build stamp, which is precisely the population most likely to be stale. This is the
+    one property that distinguishes this function from `check_provenance_completeness`,
+    whose graceful-absent posture is correct for a REPORT (a provenance check that can
+    abort validate_analysis takes the whole Errors-and-Warnings sidebar down with it) and
+    wrong for a GATE.
 
     A DIRTY RUNNING CHECKOUT IS A MISMATCH WHEN THE SHAS OTHERWISE AGREE, and this arm
     is deliberate rather than incidental. `git rev-parse` succeeds on a dirty tree and
     returns the COMMITTED sha (`_is_dirty`'s own docstring says so), so a developer
     editing a consolidation module and re-running gets an unchanged sha -- which is
-    exactly the workflow this gate exists to serve, and exactly the change class that
-    caused the incident it was written for. When the shas DIFFER the store already
-    rebuilds and dirty adds nothing; when they AGREE the sha check says "reuse" and
-    dirty is precisely the condition under which that verdict cannot be trusted. So the
-    arm fires only in the second case.
+    exactly the workflow this gate exists to serve: the consolidation code changed and the
+    sha did not, so a sha comparison alone would reuse a store the edited code would not
+    have written. When the shas DIFFER the store already rebuilds and dirty adds nothing;
+    when they AGREE the sha check says "reuse" and dirty is precisely the condition under
+    which that verdict cannot be trusted. So the arm fires only in the second case.
 
     THE COST, AND THE PROPERTY THAT COST BUYS: while the checkout is dirty this gate
     DOES NOT CONVERGE -- a rebuild re-stamps the same committed sha against the same
@@ -489,9 +523,10 @@ def store_build_mismatch(store: Path, stored: str | None) -> str | None:
 
     AND THAT COST SCALES LINEARLY IN MEMBER COUNT, which is the part a reader at
     ensemble scale will otherwise be surprised by. One `consolidate_member_*` rule runs
-    per member, so the measured figures are per-tree and not per-analysis: 28.9 s at four
-    synth members, ~60 s at Norfolk case-study scale, and near EIGHT MINUTES at a
-    fifty-member production ensemble. Seconds at development scale and minutes at
+    per member, so the 28.9 s above is a per-tree figure for four synth members, about
+    7 s per member. Projected linearly from that one measurement, and not itself
+    measured, a fifty-member production ensemble would spend about six minutes. Seconds
+    at development scale and minutes at
     ensemble scale is the same non-convergence priced very differently, and an operator
     who knows their edits cannot affect consolidation arms
     HHEMT_DECLARE_STALE_BUILD=1, which prints and reuses.
@@ -500,17 +535,20 @@ def store_build_mismatch(store: Path, stored: str | None) -> str | None:
     here, per its own documented rule that a stamp "may never be resolved from a
     module-level constant, a config field, or a value carried over from an earlier stage."
     The persisted `validation_report.json` is exactly such a carried-over value: it is
-    written AFTER consolidation completes (consolidate_workflow.py, immediately before
-    `_emit_runner_flag`) and by whichever of three call sites ran last
-    (consolidate_workflow, export_scenario_status, analysis.eda), so at the moment this
-    gate runs it is a receipt of indeterminate authorship about a PRIOR run.
+    written after consolidation, by `export_scenario_status` once it has written
+    `scenario_status.csv`, and again by `analysis.eda` after the EDA calc, so whichever
+    of the two ran last wrote it, and at the moment this gate runs it is a receipt of
+    indeterminate authorship about a PRIOR run.
 
-    THE ESCAPE PRINTS AND RECORDS. `HHEMT_DECLARE_STALE_BUILD=1` returns None so the
-    caller reuses the store, but only after emitting the reason to stdout. A silent
-    bypass reintroduces the failure with a flag on it.
+    THE ESCAPE PRINTS, AND THE PRINT IS ITS ONLY TRACE. With `HHEMT_DECLARE_STALE_BUILD=1`
+    this returns None, so the caller reuses the store exactly as it would on a match, but
+    only after printing the reason to stdout. Neither caller stores the declaration: it
+    survives only in the step's log file, which each workflow consolidate rule writes by
+    teeing the step's output, and a consolidation run outside the workflow keeps it
+    nowhere. A silent bypass would reintroduce the failure with a flag on it.
 
-    THE STORED OPERAND IS SUPPLIED, NOT READ OFF THE STORE, and this is the whole of
-    the 2026-09-06 repair. The tree root's `hhemt_producing_sha` is derived by
+    THE STORED OPERAND IS SUPPLIED, NOT READ OFF THE STORE, because the value on the
+    store cannot converge. The tree root's `hhemt_producing_sha` is derived by
     `cf_conventions.apply_producing_stamp` from the per-`event_iloc` coordinates that
     `process_simulation._write_output` freezes at PROCESSING time -- deliberately, so a
     later reprocess reads the OLD stamp. Comparing that against a CONSOLIDATION-stage
@@ -520,7 +558,7 @@ def store_build_mismatch(store: Path, stored: str | None) -> str | None:
     on every rebuild while the running build was e69c4fae7fcb. The caller now passes the
     CONSOLIDATION build stamp its own log recorded at the previous write, which is the
     convergent form already used by `consolidation_inputs_fingerprint` in the same
-    function -- writer and reader agree because they are the same expression.
+    caller -- writer and reader agree because they are the same expression.
 
     `store` is still taken, and only for the existence branch below.
     """
@@ -539,7 +577,7 @@ def store_build_mismatch(store: Path, stored: str | None) -> str | None:
         running = str(_stamp.get("hhemt_sha") or "").strip()
         running_dirty = str(_stamp.get("hhemt_dirty") or "").strip().lower() == "true"
         # Order matters: the two sentinel arms come FIRST so a sentinel can never reach
-        # the equality test, which is the whole of the AB-1 fold.
+        # the equality test, where two builds that both resolved "unknown" compare equal.
         if stored in _SENTINEL_SHAS:
             why = (
                 f"the consolidation build stamp supplied for this store is the sentinel {stored!r} "
@@ -561,7 +599,8 @@ def store_build_mismatch(store: Path, stored: str | None) -> str | None:
         f"Consolidated-store build mismatch at {store}: {why}. The store may not reflect "
         "the consolidation code now reading it. Rebuild it with force_rerun "
         '{"subject": "all", "stage": "consolidate"}, or set '
-        f"{_DECLARE_STALE_BUILD_ENV}=1 to reuse it and record the mismatch."
+        f"{_DECLARE_STALE_BUILD_ENV}=1 to reuse it anyway: the mismatch is then printed to "
+        "standard output and, when the workflow runs this step, kept in that step's log file."
     )
     if os.environ.get(_DECLARE_STALE_BUILD_ENV) == "1":
         print(f"[consolidate] DECLARED STALE BUILD: {msg}", flush=True)
@@ -569,21 +608,26 @@ def store_build_mismatch(store: Path, stored: str | None) -> str | None:
     return msg
 
 
-#: Stage key for the per-chapter-set producing-build history. Declared ONCE here and
-#: referenced by no other literal, exactly as _HISTORY_FILENAME above is.
+#: Stage key for the per-chapter-set producing-build history. `record_chapter_build` (the
+#: writer) and `collect_chapter_build_keys` (the reader) both take it from here, so the two
+#: cannot disagree on the key a chapter set's history is filed under.
 _CHAPTER_STAGE = "chapters"
 
 
 def processing_build_key() -> tuple[str, str]:
     """The (sha, dirty) identity of the build running the PROCESSING stage.
 
-    `producing_stamp()` alone is not sufficient in container mode: the SIF build
-    deletes the toolkit's `.git` (containers/uva-cpu.def), so an in-image
-    `_toolkit_git_sha()` returns "unknown" for every SIF and two different images
-    stamp identically. When the git sha is unresolvable this falls back to the
-    image's own `org.hhemt.hhemt_sha` label, which build_sifs_uva.sh stamps
-    host-side. Graceful-absent on BOTH paths: an unresolvable identity returns
-    "unknown", which every caller treats as NOT-COMPARED rather than as unequal.
+    `producing_stamp()` alone is not sufficient inside a container whose source has been
+    replaced. In an unmodified image it is: `running_identity()` reads the image's staged
+    `HHEMT_SHA`. But it refuses, and `_toolkit_git_sha()` then returns "unknown", when a
+    `.git` sits under the toolkit root inside a container (a development checkout mounted
+    over the image's source) or the staged `HHEMT_SHA` disagrees with the image label.
+    When the sha is unresolvable this falls back to the image's own `org.hhemt.hhemt_sha`
+    label, read from `/.singularity.d/labels.json`, which the SIF recipe writes from the
+    staged `HHEMT_SHA` at build time. The label names the image, not a checkout mounted
+    over it, so edits in such a checkout are invisible to this key. Graceful-absent on
+    BOTH paths: an unresolvable identity returns "unknown", which the chapter-set guard
+    treats as NOT-COMPARED rather than as unequal.
     """
     stamp = producing_stamp()
     sha = str(stamp.get("hhemt_sha") or "").strip()
@@ -606,11 +650,23 @@ def processing_build_key() -> tuple[str, str]:
 def record_chapter_build(chapters_dir) -> bool:
     """Record this process's build in the chapter set's own provenance history.
 
+    The recorded identity is `processing_build_key()` -- the same (sha, dirty) the
+    chapter-set guard compares against and names as "this process" in its message --
+    with the remaining fields of `producing_stamp()`. The two differ only when
+    `producing_stamp()` cannot resolve the running build inside a container (for
+    example a development checkout mounted over the image's source): the guard then
+    names the build by the image's `org.hhemt.hhemt_sha` label, and this records that
+    label rather than "unknown", so the history lists the build the message names and a
+    later run can compare against it. Where neither resolves, both are "unknown" and the
+    guard leaves the entry uncompared, as before.
+
     Delegates to `append_stage_provenance`, which already accepts an arbitrary
     directory, de-duplicates on (sha, dirty), preserves mtime on an unchanged
     build, and never raises.
     """
-    return append_stage_provenance(Path(chapters_dir), _CHAPTER_STAGE)
+    sha, dirty = processing_build_key()
+    stamp = {**producing_stamp(), "hhemt_sha": sha, "hhemt_dirty": dirty}
+    return append_stage_provenance(Path(chapters_dir), _CHAPTER_STAGE, stamp=stamp)
 
 
 def collect_chapter_build_keys(chapters_dir) -> list[tuple[str, str]]:
@@ -672,7 +728,10 @@ def assert_chapters_match_running_build(chapters_dir, *, declare_mixed_version_c
         "built by two processing builds. Either discard the partial chapter set with "
         'force_rerun {"subject": "all", "stage": "process"}, or -- if nothing material '
         "changed -- set allow_mixed_version_chapters: true in the analysis config to "
-        "proceed and record the mixed provenance."
+        "proceed anyway: the mismatch is then printed to standard output and, when the "
+        "workflow runs this step, kept in that step's log file. Once this run flags a "
+        "chapter, provenance_history.json in that directory lists the earlier build(s) "
+        "named above and this one."
     )
     if declare_mixed_version_chapters:
         print(f"[Chunked Processing] DECLARED MIXED-VERSION CHAPTERS: {msg}", flush=True)
@@ -687,9 +746,10 @@ def assert_chapters_match_running_build(chapters_dir, *, declare_mixed_version_c
 def _resolve_case_manifest(analysis):
     """CaseManifest for input File parts, or a minimal stand-in (empty manifest).
 
-    The analysis object does not currently carry a CaseManifest; a thin accessor
-    (`analysis._case_manifest`) is the narrow wiring point. Until it lands, degrade
-    to a minimal descriptor with zero input parts — the crate stays valid.
+    `TRITONSWMM_analysis` sets `_case_manifest` from its `case_manifest_yaml` argument
+    when that file is given and loads, and to None otherwise (no argument, a missing
+    file, or a load or validation failure). On None this degrades to a minimal
+    descriptor with zero input parts, so the crate stays valid.
     """
     cm = getattr(analysis, "_case_manifest", None)
     if cm is not None:
@@ -719,14 +779,14 @@ def _iter_run_units(analysis):
     # analysis (documented above) but silently collapsed every member to the same empty segment,
     # so `#run-{member_id}-{event}-{model}` collided across members inside one crate.
     # `analysis_id` is used WHOLE rather than stripped of `member_prefix`: that prefix is an
-    # instance attribute on the sensitivity object (`sensitivity_analysis.py:280`), not a module
+    # instance attribute set in `TRITONSWMM_sensitivity_analysis`'s constructor, not a module
     # constant, and duplicating the literal here would be a second copy that can drift. Nothing
     # parses these ids -- the only other `#run-` occurrence in the tree is a hand-built test
     # fixture -- so uniqueness is the whole requirement.
     member_id = (
         str(analysis.cfg_analysis.analysis_id) if getattr(analysis.cfg_analysis, "is_experiment_member", False) else ""
     )
-    enabled = analysis._get_enabled_model_types()  # encapsulates self._system.cfg_system.toggle_* (analysis.py:1431)
+    enabled = analysis._get_enabled_model_types()  # reads the system config's toggle_*_model fields
     for event_iloc in analysis.df_sims.index:
         for model_type in enabled:
             yield (member_id, str(event_iloc), model_type)
@@ -740,8 +800,8 @@ def _output_ids(analysis, member_id, event_id, model_type) -> list[str]:
     mlog = scen.get_log(model_type)
     outs = getattr(mlog.processing_log, "outputs", {}) or {}
     # NOTE: the canonical event-id slug lives on the scenario itself (`scen.event_id`,
-    # scenario.py:60 — `self.event_id = self.sim_id_str`), NOT on `scen.scen_paths`
-    # (ScenarioPaths, paths.py:83, carries no event_id). Verified at Phase-2 preflight.
+    # which `TRITONSWMM_scenario`'s constructor sets from `sim_id_str`), NOT on
+    # `scen.scen_paths` (`ScenarioPaths` carries no event_id field).
     return [f"sims/{scen.event_id}/processed/{name}" for name in sorted(outs)]
 
 
@@ -765,9 +825,9 @@ def _sif_spec_from_system_log(analysis) -> dict | None:
 
     NO `downloadUrl`. There is no deposit target, so there is no URL to record, and
     inventing one would be worse than omitting it. The digest still does real work without
-    it: a reproducer who obtains the SIF by ANY route — the documented ADR-2 manual
-    transfer, a colleague's copy, a future deposit — can now verify it is the right image.
-    Today they cannot, by any means.
+    it: a reproducer who obtains the SIF by ANY route — a manual copy between systems, a
+    colleague's copy, a future deposit — can verify it is the right image. Without the
+    entity there is nothing to verify it against.
     """
     _sys_log = getattr(getattr(analysis, "_system", None), "log", None)
     if _sys_log is None:
