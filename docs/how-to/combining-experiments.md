@@ -52,9 +52,14 @@ bundles carry a *blocking* divergence (see below).
 
 ## Read the compatibility report
 
-The combined bundle's report opens with a **Cross-Experiment Compatibility**
-panel summarizing every field on which the bundles diverge, each classified by
-severity:
+The combined bundle's report opens with a **Combine Provenance & Compatibility**
+section. Its table, *What Was Combined (data provenance)*, lists each combined
+experiment with its role, model, member count, and the toolkit and solver builds
+that produced it. The compatibility check itself runs before the report is built.
+It classifies every field on which the bundles diverge by severity, and it records
+the result in the combined bundle's `combined_compatibility.json`. A non-blocking
+divergence that the combine's intended structure does not account for appears as a
+warning row under **Cross-Experiment Errors and Warnings**:
 
 | Severity | Meaning | Effect |
 |----------|---------|--------|
@@ -97,14 +102,23 @@ run `Bundle.from_directory(...).eda()` on a child directory for a per-experiment
 EDA surface (a combined bundle has no aggregate EDA surface).
 
 ??? note "How the combined report is laid out"
-    The combined report is one cohesive Snakemake `--report`. Its sidebar has
-    **Cross-Experiment Compatibility**, **Cross-Experiment Results** (the
-    clean-vs-resume intercomparison), then one native section **per experiment**
-    (each experiment id is a top-level sidebar category whose figures are that
-    experiment's own report content, harvested in place from
-    `child_crates/{experiment_id}/plots/`, with no click-through to a separate
-    document), and a bottom **Errors and Warnings** aggregate rolling up every
-    child's validation status. There is no `index.html` front door: everything is
+    The combined report is one cohesive Snakemake `--report`. Its sidebar opens
+    with four cross-experiment sections, in this order:
+    **Combine Provenance & Compatibility**, **Cross-Experiment Results** (the
+    clean-vs-resume intercomparison, as a table and as maps),
+    **Cross-Experiment Errors and Warnings** (each experiment's validation checks,
+    side by side), and **Cross-Experiment Disk Utilization**. Below them, the
+    combined experiments' own figures are filed under the section each figure has
+    in a single-experiment report (for example System Information). The
+    sub-heading names the experiment, followed by the figure's own sub-heading when
+    it has one. The name is the experiment id without its trailing
+    model token, so `synth_cc_clean_tritonswmm` and `synth_cc_clean_triton` both
+    appear as `synth_cc_clean`. An experiment's TRITON-SWMM and pure-TRITON runs
+    share one page, with the pure-TRITON figure below the TRITON-SWMM one. A figure
+    that no section claims is listed under Other. These pages are composed at
+    combine time under `paired_figures/` from each experiment's figures in
+    `child_crates/{experiment_id}/plots/`, so there is no click-through to a
+    separate document. There is no `index.html` front door: everything is
     navigable inside the single `analysis_report.html` (or the size-friendly
     `analysis_report.zip`).
 
