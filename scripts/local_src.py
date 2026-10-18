@@ -30,8 +30,8 @@ wrong-tree grade is an error instead of a number.
 TWO PREPEND IMPLEMENTATIONS COEXIST BY DESIGN. The repo-root ``conftest.py``
 carries its own ``sys.path`` prepend and cannot consume this module: it is
 copied alone into a bare pytester rootdir by ``tests/test_worktree_guard.py``
-and must stand without siblings. Every other consumer (the three ``scripts/``
-importers and both ``hooks/``) binds through this file, by sibling import or by
+and must stand without siblings. Every other consumer (every ``scripts/``
+importer and both ``hooks/``) binds through this file, by sibling import or by
 ``importlib.util.spec_from_file_location``, because neither ``scripts/`` nor
 ``hooks/`` is a package.
 

@@ -12,9 +12,11 @@ derived from the models themselves and cannot fall behind them.
 
 ## Start from a working profile
 
-This is the UVA Rivanna profile, complete and ready to copy. Anonymized copies of
-this file and its Frontier counterpart also ship in the repository under
-`test_data/norfolk_coastal_flooding/`.
+This is the UVA Rivanna profile, complete and ready to copy. It shows every field
+the profile accepts, the optional ones Rivanna does not use at their default values. Anonymized versions
+of this profile and its Frontier counterpart also ship in the repository under
+`test_data/norfolk_coastal_flooding/`; where the shipped UVA file and this page
+differ, this page is the current one.
 
 ```yaml
 hpc_name: uva_rivanna
@@ -23,6 +25,8 @@ login_node: login1.hpc.virginia.edu
 default_execution_mode: batch_job      # one sbatch per simulation
 gpu_allocation_flavor: gres            # this cluster requests GPUs with --gres=gpu:N
 max_concurrent_jobs: 1000              # how many jobs to keep queued at once
+max_concurrent_cpus: null              # optional CPU budget; measure your QOS first (below)
+halt_sims_below_free_bytes: null       # optional disk floor; measure what statvfs sees first (below)
 additional_modules:
   - gcc/12.4.0
 
@@ -30,6 +34,7 @@ partitions:
   standard:                            # CPU partition
     max_runtime: 4320                  # minutes
     max_mem_mb: 768000
+    max_mem_mb_per_cpu: null           # no per-CPU memory cap declared
     max_cpus_per_task: 96
     max_nodes: 1
     supports_mpi: true
@@ -51,15 +56,22 @@ partitions:
     gpu_compilation_backend: CUDA
 
 container:                             # only read when execution_environment is container
-  sif_root: "/scratch/{your-allocation}/sifs"   # where `hhemt build-sifs` writes; images resolve by identity
+  sif_root: "/scratch/{your-allocation}/sifs"   # CHANGE THIS: where `hhemt build-sifs` writes; images resolve by identity
   builds_containers: true              # this host may run `hhemt build-sifs` (fakeroot-capable)
+  apptainer_module: "apptainer/1.5.0"  # the module that puts `apptainer` on PATH here
   gpu_flag: "--nv"
   srun_mpi: "pmix"
   binds: ["/scratch", "/sfs"]
+  containlibs: []                      # the image carries its own MPI, so no host libraries are bound
+  pre_exec_modules: []
+  cray_mpich_abi_module: false         # Cray host-MPI bind; a Frontier setting
+  apptainerenv_ld_library_path: null   # set only together with cray_mpich_abi_module
   exe_in_sif:
     triton: "/opt/hhemt/bin/triton_only.exe"
     tritonswmm: "/opt/hhemt/bin/triton.exe"
     swmm: "/opt/hhemt/bin/runswmm"
+  python_in_sif: "python"              # the image's own interpreter
+  extra_exec_args: []
 
 executor_profile_extras: {}            # advanced escape hatch; leave empty
 ```
@@ -87,8 +99,17 @@ refuses after the toolkit accepted it.
 
 `executor_profile_extras` stays empty unless you are passing a Snakemake SLURM
 plugin setting the toolkit does not model. Inside `container:`, everything except
-`sif_root` and `builds_containers` describes how this cluster exposes its GPUs and fabric to a container,
-and those values are correct for Rivanna as written.
+`sif_root` and `builds_containers` describes how this cluster runs the container and
+what the image provides. Most of those keys are about the cluster: how it launches a
+container and exposes its GPUs and fabric to it. `exe_in_sif` and `python_in_sif` are
+facts about the image, and both must resolve inside it rather than on the host.
+`exe_in_sif` gives the absolute in-image path of each simulation executable.
+`python_in_sif` is the interpreter command the container's processing steps run, not
+a path: the bare name `python` works because every image recipe the toolkit ships for
+`hhemt build-sifs` puts the image's own Python first on its `PATH`. Set it to an
+absolute in-image path only for an image whose `PATH` does not lead to its own Python,
+such as one built from a recipe of your own. Those values are correct for
+Rivanna as written.
 
 !!! tip "Start native, add containers later"
     Container mode is opt-in; `hhemt build-sifs` creates every image your experiment
@@ -161,7 +182,7 @@ different values, and the differences are worth knowing because they are the one
 that vary most between sites.
 
 ??? example "How the OLCF Frontier profile differs from the UVA one above"
-    Four things differ at the top level:
+    Apart from `hpc_name`, the cluster's own label, four things differ at the top level:
 
     | Field | UVA Rivanna | OLCF Frontier |
     |---|---|---|
@@ -175,10 +196,12 @@ that vary most between sites.
     `gpu_hardware: mi250x`, which is the same partition-derives-hardware rule above
     producing an AMD build instead of an NVIDIA one.
 
-    Its `container:` block is substantially larger, because running a container
+    Its `container:` block carries substantially more, because running a container
     against the Cray MPI and Slingshot fabric needs library paths and bind mounts
-    that a Rivanna container does not. Copy that block as it stands rather than
-    reconstructing it.
+    that a Rivanna container does not: `containlibs`, `pre_exec_modules`,
+    `cray_mpich_abi_module` and `apptainerenv_ld_library_path`, which the profile
+    above leaves at their defaults, are filled there. Copy that block as it stands
+    rather than reconstructing it.
 
     The full file is at
     `test_data/norfolk_coastal_flooding/hpc_system_config_frontier.yaml`.
