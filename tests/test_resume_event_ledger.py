@@ -34,7 +34,7 @@ from hhemt import resume_events as re_mod
 # what it will actually process.
 #
 # A tolerance-arm line: marker literal, then the time as the first whitespace token (the
-# rule `eda/raw_resume_identity.parse_resume_timestep` relies on), then the contract fields
+# rule `eda/raw_byte_identity.parse_resume_timestep` relies on), then the contract fields
 # in a plausible-but-not-emitted punctuation.
 SNAPSHOT_LINE = "[OK] SWMM state restored from snapshot to t=3000 s; checkpoint_id=0042"
 
@@ -182,14 +182,14 @@ def test_a_fresh_exec_produces_no_events_and_writes_no_ledger(tmp_path):
 
 @pytest.mark.parametrize("line,expected", [(SNAPSHOT_LINE, 3000.0), (REPLAY_LINE, 6000.0)])
 def test_resume_time_agrees_with_the_existing_numeric_parse(tmp_path, line, expected):
-    """This module's time parse must agree with `eda/raw_resume_identity.parse_resume_timestep`.
+    """This module's time parse must agree with `eda/raw_byte_identity.parse_resume_timestep`.
 
     That existing consumer is what constrains the emitted line shape in the first place, so
     a divergence here would mean two parsers disagreeing about the same line. The check
     RUNS the existing parser against the same text rather than restating its token rule --
     restating it would make the two agree by construction and prove nothing.
     """
-    from hhemt.eda.raw_resume_identity import parse_resume_timestep
+    from hhemt.eda.raw_byte_identity import parse_resume_timestep
 
     log = tmp_path / "model_tritonswmm_evt0.log"
     log.write_text(f"preamble\n{line}\nSimulation ends\n")

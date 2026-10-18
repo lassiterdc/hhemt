@@ -56,20 +56,6 @@ class AnalysisPaths(MainDataClass):
     analysis_log_directory: Path
     simlog_directory: Path
 
-    # TRITON-SWMM Coupled Model consolidated outputs
-    output_tritonswmm_triton_summary: Path | None = None
-    output_tritonswmm_node_summary: Path | None = None
-    output_tritonswmm_link_summary: Path | None = None
-    output_tritonswmm_performance_summary: Path | None = None
-
-    # TRITON-only consolidated outputs
-    output_triton_only_summary: Path | None = None
-    output_triton_only_performance_summary: Path | None = None
-
-    # SWMM-only consolidated outputs
-    output_swmm_only_node_summary: Path | None = None
-    output_swmm_only_link_summary: Path | None = None
-
     # Hierarchical DataTree zarr — aggregates all enabled modes into one store.
     analysis_datatree_zarr: Path | None = None
 

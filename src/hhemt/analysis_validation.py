@@ -596,7 +596,7 @@ _TRITON_CHECKPOINT_ATTEMPT_MARKER = "Reading checkpoint files"
 #: (``triton.h``: ``if (!try_restore_state_snapshot(...)) replay_exchange_history(...)``).
 #: Emitted at ``swmm_triton.h:963`` @ ``658a7a37``, DELIBERATELY in the same ``...to t=``
 #: shape as the replay marker above so ONE matcher discriminates both and the existing
-#: numeric parse (``_parse_replay_t`` / ``eda/raw_resume_identity.parse_resume_timestep``)
+#: numeric parse (``_parse_replay_t`` / ``eda/raw_byte_identity.parse_resume_timestep``)
 #: works on either unchanged.
 #:
 #: THE TWO MARKERS ARE MUTUALLY EXCLUSIVE WITHIN ONE EXEC, by construction rather than by
@@ -2142,10 +2142,10 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
     # `analysis._retrieve_weather_indexer_using_integer_index(i)` raised `KeyError` on the
     # first index past the event count (measured on the synth fixture: n_scenarios=4,
     # df_sims index=[0] -> KeyError: 1). That raise propagated out of `validate_analysis`,
-    # so `persist_validation_report` -- whose four call sites ALL swallow it as non-fatal
-    # (export_scenario_status.py:444 and :540, consolidate_workflow.py:489,
-    # analysis.py:1081) -- silently wrote NO master-level validation_report.json at all,
-    # while every sub wrote its own. The master scope was also the wrong sims root: a
+    # so `persist_validation_report` -- whose call sites all swallow such a raise as
+    # non-fatal (today there are two: export_scenario_status.main's post-CSV re-persist
+    # and TRITONSWMM_analysis.eda) -- silently wrote NO master-level
+    # validation_report.json at all, while every sub wrote its own. The master scope was also the wrong sims root: a
     # master's `sims/` is empty (scenarios live under `members/member_N/sims/`), so even
     # without the raise this check examined zero scenarios on every sensitivity run.
     for member_id, sub in _iter_members_or_self(analysis):
@@ -2432,7 +2432,8 @@ def validate_analysis(analysis: TRITONSWMM_analysis, *, df_status=None) -> Valid
             check_data_availability(analysis),  # reclaim disclosure: which artifact classes were reclaimed
             check_forcing_tail_influence(analysis),  # regression detector: maxima set after the forcing ended
             # Registered ONLY together with the kwarg repair above, never before it. This
-            # list is built eagerly and all four persist_validation_report call sites swallow
+            # list is built eagerly and both persist_validation_report call sites --
+            # export_scenario_status.main and TRITONSWMM_analysis.eda -- swallow
             # exceptions non-fatally, so a wired-but-raising check leaves the read-model
             # unwritten -- and what that produces FORKS on prior state. On a FRESH tree
             # validation_report.json is missing, workflow.py declares it as an output: of

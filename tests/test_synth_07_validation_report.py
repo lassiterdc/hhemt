@@ -409,7 +409,7 @@ def test_eda_calc_ran_passes_once_a_verdict_artifact_is_present(tmp_path):
 
     eda_dir = tmp_path / "eda"
     eda_dir.mkdir()
-    (eda_dir / "b4b_clean_identity.verdict.json").write_text("{}", encoding="utf-8")
+    (eda_dir / "raw_byte_identity.verdict.json").write_text("{}", encoding="utf-8")
 
     result = check_eda_calc_ran(_eda_stub(tmp_path, ["config_diff_maps"], reporting_set="b4b"))
 

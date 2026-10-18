@@ -139,7 +139,7 @@ _RENDERER_KIND_LABELS: dict[str, str] = {
     "conduit_flow": "Conduit flow",
     "event_page": "Simulation results",
     "config_diff_maps": "Config-diff maps",
-    "b4b_clean_identity": "Cross-hardware raw byte identity over time",
+    "raw_byte_identity": "Cross-hardware raw byte identity over time",
     "eda_cross_sim_identity": "Cross-simulation byte identity",
     "eda_rank_sensitivity": "MPI-rank sensitivity",
     "eda_resume_sensitivity": "Resume sensitivity",
@@ -252,7 +252,16 @@ def event_page_reference(analysis, event_iloc) -> str:
     unconfigured analysis renders unchanged at every call site with no per-site
     fallback expression.
     """
-    label = event_display_name(analysis, event_iloc)
+    return _event_reference_text(event_display_name(analysis, event_iloc), event_iloc)
+
+
+def _event_reference_text(label, event_iloc) -> str:
+    """The one form an event is named in on the report: `{label} (event {iloc})`, or
+    `event {iloc}` when no label is set.
+
+    Shared by the per-simulation page and the sidebar, so the two cannot drift into
+    naming one event two ways.
+    """
     return f"{label} (event {event_iloc})" if label else f"event {event_iloc}"
 
 
@@ -286,6 +295,41 @@ def event_labels_from_status(analysis_dir) -> dict[str, str]:
                 if not scen_dir or not label:
                     continue
                 out[_Path(scen_dir).name] = label
+    except (OSError, ValueError, KeyError):
+        return {}
+    return out
+
+
+def event_sidebar_labels_from_status(analysis_dir) -> dict[str, str]:
+    """``{event_id slug: sidebar event value}`` from scenario_status.csv, or ``{}``.
+
+    Each value is the page's own event reference, `{label} (event {iloc})` or
+    `event {iloc}`, with the `event_iloc` read from the same CSV row as the slug. A
+    slug absent from the map is rendered by `report_label_value`'s fallback,
+    `event {slug}`, which is the one case in which the iloc is unavailable.
+
+    NEVER raises: an absent or unreadable CSV, or a row whose `event_iloc` is not an
+    integer, contributes nothing, so a report renders rather than failing.
+    """
+    import csv as _csv
+    from pathlib import Path as _Path
+
+    path = _Path(analysis_dir) / "scenario_status.csv"
+    if not path.exists():
+        return {}
+    out: dict[str, str] = {}
+    try:
+        with path.open() as fh:
+            for row in _csv.DictReader(fh):
+                scen_dir = str(row.get("scenario_directory") or "")
+                try:
+                    iloc = int(str(row.get("event_iloc") or "").strip())
+                except ValueError:
+                    continue
+                if not scen_dir:
+                    continue
+                label = str(row.get(EVENT_LABEL_COLUMN) or "").strip()
+                out[_Path(scen_dir).name] = _event_reference_text(label, iloc)
     except (OSError, ValueError, KeyError):
         return {}
     return out
@@ -346,12 +390,12 @@ def report_label_value(mapping, key, fallback_prefix) -> str:
 #: one block serves every generator with no path threading.
 LABEL_GLOBALS_BLOCK = """
 from hhemt.report_plot_ids import (
-    event_labels_from_status as _event_labels_from_status,
+    event_sidebar_labels_from_status as _event_sidebar_labels_from_status,
     report_label_value as _report_label_value,
     member_labels_from_status as _member_labels_from_status,
 )
 
-_EVENT_LABELS = _event_labels_from_status(workflow.basedir)
+_EVENT_SIDEBAR_LABELS = _event_sidebar_labels_from_status(workflow.basedir)
 _MEMBER_LABELS = _member_labels_from_status(workflow.basedir)
 """
 

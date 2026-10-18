@@ -147,7 +147,7 @@ def test_reprocess_render_report_rule_carries_reprocess_flag(synth_sensitivity_a
     )
 
 
-def test_phase3_master_snakefile_emits_per_target_setup_rules(
+def test_master_snakefile_emits_per_target_setup_rules(
     synth_sensitivity_analysis,
 ):
     """Phase 3: master Snakefile emits one `rule setup_target_{N}` per unique system target.

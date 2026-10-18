@@ -1,26 +1,29 @@
-"""Per-sim renderer: 3-panel peak-flood-depth + WSE + event hydrology figure.
+"""Per-sim renderer: where one simulated event flooded, how high the water stood, and what drove it.
 
-Iter-3 (2026-04-28) of the per-sim flood-depth figure. Iter-2 user feedback:
+The report needs one figure per event that a reader can lay beside any other event's
+figure and compare by eye. This module draws it as three panels: the peak flood depth
+map, the peak water surface elevation (WSE = depth + DEM) map, and the event's forcing
+-- rainfall above, boundary-condition water level below -- as stacked time series. Both
+maps carry horizontal colorbars beneath them.
 
-- WSE colorbar is too similar to depth's YlGnBu — switch WSE to a perceptually
-  distinct colormap (`cividis` — dark-navy → yellow).
-- Depth colorbar must be quantized (true discrete bins) at 0.01 / 0.05 / 0.10 /
-  0.50 / 1.00 m, matching the user reference at scratch line 1977.
-- Move colorbars below each map panel (saves horizontal width and matches the
-  reference visual).
-- Add a third panel showing the event's rainfall + boundary-condition water
-  level as a stacked time-series, matching the "Event hydrology" reference at
-  scratch line 2007. Y-axis label on the lower sub-panel reads "Boundary
-  condition water level (m)" per user terminology.
+Comparability is the reason most of this file exists. The depth and WSE colorbar ranges
+are computed once across EVERY event (`_shared_depth_max`, `_shared_wse_range`), so the
+same color means the same depth or elevation on every figure; a per-event range would
+make two events' maps look alike when their water was not. Both ranges are
+quantile-clipped over wetted cells -- depth by `PerSimMapConfig.depth_clip_quantile_upper`,
+WSE by its lower/upper quantile pair -- so a few extreme cells cannot stretch the scale
+over the range where most flooding sits. Keep the two clips aligned: they were once
+divergent, and the depth map then had no outlier guard at all.
 
-Dispatches per `_get_enabled_model_types()` (Gotcha 5) — TRITON-SWMM coupled
-fixtures use `output_tritonswmm_triton_summary`; TRITON-only uses
-`output_triton_only_summary`; SWMM-only emits a model-type-skip placeholder.
-
-iter-20 (sub_meter_flood_visibility): depth + WSE colorbars now share the
-quantile-clip pattern — `_shared_depth_max` gained the upper-quantile clip
-(`PerSimMapConfig.depth_clip_quantile_upper`) that `_shared_wse_range` already
-had. Keep them aligned so a future iteration does not re-diverge them.
+Which model's depth field is drawn is resolved from the enabled model types through the
+`_model_arms` matrix; a SWMM-only analysis has no gridded depth field and gets a labeled
+placeholder instead of a figure. There are two render paths: the matplotlib branch (a
+static image, and the only path for publication figures) and the Plotly branch
+(interactive HTML for the report). They share the cross-event range helpers above, but
+each prepares its own rasters, and the two differ: the matplotlib branch treats a cell as
+wet when depth > 0 and frames the maps on the raw DEM bounds, while the Plotly branch
+uses depth > `PerSimMapConfig.dry_threshold_m` and a padded square frame shared with the
+system-overview map.
 """
 
 from __future__ import annotations
@@ -61,9 +64,11 @@ def _build_discrete_depth_colorscale(
     vmax: float,
     base_cmap_name: str,
 ):
-    """Build a Plotly stepped colorscale matching the matplotlib BoundaryNorm
-    behaviour the renderer used pre-iter-19. Returns the colorscale list AND
-    the per-band hex colors so callers can mirror them on a legend.
+    """Build a Plotly stepped colorscale equivalent to a matplotlib BoundaryNorm
+    quantization of depth. Returns the colorscale list AND the per-band hex
+    colors so callers can mirror them on a legend. Neither render path calls it:
+    both now draw depth on a continuous scale, and this is the discrete
+    alternative kept available.
 
     The colorscale has `len(boundaries)` bands. The first band covers
     `[vmin, boundaries[0])` (lowest depth class); each subsequent band covers
@@ -98,11 +103,12 @@ if TYPE_CHECKING:
 
 def _shared_depth_max(analysis, target_crs, map_cfg=None, model_types=None):
     """Return the global vmax for the peak-flood-depth colorbar across every
-    event_iloc (iter-19 user request — depth colorbar must be the same range
-    on every per-event figure). vmin is hard-pinned at the user-locked 0.01
-    "under" threshold; only the upper bound is computed cross-event. Returns
-    None if no event exposes a usable summary (caller falls back to per-event
-    range).
+    event_iloc, so the depth colorbar has the same range on every per-event
+    figure and one color means one depth throughout the report. Only the upper
+    bound is computed here; callers take the lower bound from
+    `PerSimMapConfig.depth_vmin`, below which cells render in the under-color.
+    Returns None if no event exposes a usable summary (caller falls back to
+    per-event range).
     """
     enabled = analysis._get_enabled_model_types()
     if "tritonswmm" not in enabled and "triton" not in enabled:
@@ -115,13 +121,10 @@ def _shared_depth_max(analysis, target_crs, map_cfg=None, model_types=None):
         tree = analysis.process.open_datatree()
     except (ValueError, FileNotFoundError):
         return None
-    # Cross-ARM union (not just cross-event). Before the arm expansion this
-    # resolved ONE group by coupled-wins, which was correct only because one arm
-    # was ever rendered. With every applicable arm on one scrolling page, a
-    # single-group range would be BORROWED by the other arm's figure -- a scale
-    # that looks authoritative and is not. Iterating (group, event) pairs keeps
-    # the loop body at its original indentation, so the accumulation logic below
-    # is untouched.
+    # Cross-ARM union (not just cross-event). Every applicable model arm is drawn
+    # on one scrolling page, so a range computed from a single model's group would
+    # be BORROWED by the other arm's figure -- a scale that looks authoritative and
+    # is not. The range is therefore accumulated over every (group, event) pair.
     groups = [g for g in groups_for("peak_flood_depth", model_types or enabled) if g in tree.groups]
     if not groups:
         return None
@@ -167,22 +170,52 @@ def _shared_depth_max(analysis, target_crs, map_cfg=None, model_types=None):
     return g_max
 
 
+def _wall_threshold_m(sys_cfg, elevation_panel):
+    """Return the DEM elevation at and above which a cell counts as a building or wall.
+
+    The threshold is the lower of whichever DEM sentinel heights are set, minus the
+    configured `wall_threshold_buffer_m`. This is the rule the system-overview map
+    uses for its wall overlay, so a user who changes the buffer or sets only one
+    sentinel moves both maps' masks together. Returns None only when neither
+    sentinel height is set, which callers read as "mask nothing". Deliberately NOT
+    read under `except AttributeError` with a hardcoded fallback: that fallback once
+    hid a misspelled field name, so the user's buffer was silently replaced by 40 m.
+    """
+    sentinels = [h for h in (sys_cfg.dem_building_height, sys_cfg.dem_outside_watershed_height) if h is not None]
+    if not sentinels:
+        return None
+    return min(sentinels) - float(elevation_panel.wall_threshold_buffer_m)
+
+
+def _plotly_map_transforms(dry_threshold, canvas_size, *, use_datashader):
+    """Return the provenance `transform` text for the Plotly depth and WSE panels.
+
+    Built from the dry threshold the depth mask used and, when the rasters were
+    pre-aggregated, the datashader canvas they were aggregated onto, so the manifest
+    states the values the figure was drawn with rather than the defaults.
+    """
+    suffix = f"; datashader pre-rasterized ({canvas_size[0]}x{canvas_size[1]}, max)" if use_datashader else ""
+    depth = f"masked to watershed and depth>{dry_threshold:g} m" + suffix
+    wse = "depth, summed with DEM elevation" + suffix
+    return depth, wse
+
+
 def _shared_wse_range(analysis, target_crs, dem_da, map_cfg=None, model_types=None):
     """Return (vmin, vmax) for the WSE colorbar, computed once across every
-    event_iloc so all per-event figures share a colorbar (iter-15 user
-    request). Walks every event's TRITON summary, masks depth >
-    dry_threshold_m + watershed, builds WSE = depth + DEM, and accumulates
-    the global quantile-clipped range across all wetted cells from all
-    events. Falls back to per-event range if no events expose a usable
-    summary.
+    event_iloc so all per-event figures share a colorbar and a reader can
+    compare water levels between events by eye. Walks every event's TRITON
+    summary, masks depth > dry_threshold_m + watershed, builds WSE = depth +
+    DEM, and accumulates the global quantile-clipped range across all wetted
+    cells from all events. Returns None if no event exposes a usable summary,
+    and the caller then falls back to the per-event range.
 
-    F-I-2 (interactive-report-renderers Phase 3): WSE colorbar range uses
-    quantile clip across the union of wetted cells, not min/max. Suppresses
-    building-on-top dry-cell artifacts that would otherwise dominate the
-    cross-event colorbar scale. Quantiles read from `map_cfg.wse_clip_quantile_lower`
-    / `_upper` when `map_cfg` is supplied; falls back to (q01, q99) when
-    `map_cfg` is None (preserves callability from sites that don't have the
-    cfg in scope).
+    The range is a quantile clip across the union of wetted cells, not
+    min/max, because building-on-top dry-cell artifacts would otherwise
+    dominate the cross-event colorbar scale; cells on a building or wall are also
+    excluded outright (see `_wall_threshold_m`). Quantiles read from
+    `map_cfg.wse_clip_quantile_lower` / `_upper` when `map_cfg` is supplied;
+    falls back to (q01, q99) when `map_cfg` is None (preserves callability
+    from sites that don't have the cfg in scope).
     """
     enabled = analysis._get_enabled_model_types()
     if "tritonswmm" not in enabled and "triton" not in enabled:
@@ -196,17 +229,10 @@ def _shared_wse_range(analysis, target_crs, dem_da, map_cfg=None, model_types=No
     else:
         dry_threshold = 0.0
         q_lower, q_upper = 0.01, 0.99
-    # F-I-2 building filter: exclude cells whose DEM lands on a wall/building
-    # so building-rooftop WSE values do not pollute the cross-event quantile
-    # clip. Threshold mirrors system_overview's wall-overlay rule.
-    sys_cfg = analysis._system.cfg_system
-    wall_th = None
-    if sys_cfg.dem_building_height is not None and sys_cfg.dem_outside_watershed_height is not None:
-        try:
-            buffer_m = analysis.cfg_analysis.report.system_map.elevation_style.wall_threshold_buffer_m
-        except AttributeError:
-            buffer_m = 40.0
-        wall_th = min(sys_cfg.dem_building_height, sys_cfg.dem_outside_watershed_height) - buffer_m
+    # Building filter: exclude cells whose DEM lands on a wall/building so
+    # building-rooftop WSE values do not pollute the cross-event quantile clip.
+    # Threshold mirrors system_overview's wall-overlay rule.
+    wall_th = _wall_threshold_m(analysis._system.cfg_system, analysis.cfg_analysis.report.system_map.elevation_panel)
     try:
         tree = analysis.process.open_datatree()
     except (ValueError, FileNotFoundError):
@@ -267,12 +293,21 @@ def render(
 ) -> Path:
     """Render the 3-panel depth + WSE + hydrology figure for one event_iloc.
 
-    When ``static_cfg`` is provided (publication static-plots path, ADR-8) the
-    matplotlib branch is FORCED (publication is matplotlib-only per ADR-3) and
-    the figure geometry, depth colormap / out-of-range colors, colorbar norm,
+    When ``static_cfg`` is provided (the publication-figure path,
+    ``TRITONSWMM_analysis.static_plots()``, which passes one per-plot static
+    config) the matplotlib branch is FORCED, whatever the report's
+    ``static_backend``: publication figures always come from matplotlib, and the
+    Plotly branch with its best-effort kaleido SVG serves the interactive report
+    only. In that case the figure geometry, depth colormap / out-of-range colors, colorbar norm,
     base typography, and emit format are driven by the PeakFloodDepthStaticConfig
-    rather than report_cfg. ``static_cfg=None`` (the report path) is byte-
-    unchanged. ``event_iloc`` defaults to None only so the dispatcher can omit it
+    rather than report_cfg. With ``static_cfg=None`` (the report path) the
+    report's ``static_backend`` selects the branch. On the default Plotly branch,
+    ``_render_plotly_branch`` emits interactive HTML: its colormaps come from
+    ``report_cfg``, its depth colorbar is a continuous colorscale, and its size is
+    fixed by the ``PER_SIM_FIG_W_PX`` / ``PER_SIM_FIG_H_PX`` constants. On the
+    matplotlib branch the geometry, colormaps and typography come from
+    ``report_cfg``, the depth colorbar is a linear Normalize, and the figure is
+    emitted as PNG. ``event_iloc`` defaults to None only so the dispatcher can omit it
     without a TypeError; the static generator always threads ``--event-iloc``, so
     a per-sim render still receives it. ``**kwargs`` tolerates dispatcher-passed
     keywords this renderer does not consume.
@@ -315,12 +350,17 @@ def render(
         "static_backend",
         "plotly",
     )
-    # Publication path (ADR-3): when static_cfg is provided, FORCE the matplotlib
-    # branch regardless of report_cfg.interactive.static_backend (static plots are
-    # matplotlib-only) and apply the publication base typography (font_family + a
-    # base size) so the publication font fields are not silently inert. Full
-    # per-element FontTarget threading + rc_context isolation is routed to the
-    # post-Phase-1 follow-up. report-mode (static_cfg is None) is unchanged.
+    # Publication path: when static_cfg is provided, FORCE the matplotlib branch
+    # regardless of report_cfg.interactive.static_backend (publication figures
+    # never come from the Plotly branch) and apply the publication base
+    # typography (font_family + a base size) so the publication font fields are
+    # not silently inert. Two limits of what this does: only the axis-label entry
+    # of static_cfg.font_sizes is applied, as the base size, so the other
+    # per-element sizes have no effect yet; and these rcParams are set globally
+    # rather than inside an rc_context, so they stay in effect for any later
+    # figure drawn in the same process. With static_cfg None (the report path)
+    # this block changes nothing: fonts are those `_apply_rcparams(report_cfg)`
+    # set above, and static_backend alone selects the branch.
     if static_cfg is not None:
         from hhemt.config.viz_vocabulary import FontTarget
 
@@ -341,11 +381,12 @@ def render(
     triton_summary_path = analysis.analysis_paths.analysis_datatree_zarr
 
     # ---- Depth raster from consolidated DataTree ------------------------
-    # Consumer-side defense-in-depth (R6): if a partial-completion render
-    # reaches this output-owning entrypoint, soft-skip with a VISIBLE labeled
-    # placeholder (which still writes output_path) rather than raising an opaque
-    # missing-output rule failure (Gotcha 39). _emit_model_type_skip_placeholder
-    # is already imported above for the swmm-only skip path.
+    # Consumer-side defense-in-depth: if a partial-completion render reaches this
+    # output-owning entrypoint, soft-skip with a VISIBLE labeled placeholder
+    # (which still writes output_path) rather than raising, which would leave
+    # output_path unwritten and fail the Snakemake rule with an opaque
+    # missing-output error. _emit_model_type_skip_placeholder is already
+    # imported above for the swmm-only skip path.
     try:
         tree = analysis.process.open_datatree()
     except (ValueError, FileNotFoundError):
@@ -440,7 +481,7 @@ def render(
     )
 
     # ---- Figure layout: 1×3 columns, each column with a sub-gridspec ----
-    # Subiteration 9.5 — sourced from DEM (same source conduit_flow uses) so
+    # Bounds are sourced from the DEM (same source conduit_flow uses) so
     # both per-sim renderers see IDENTICAL bounds + map_aspect, and explicit
     # set_xlim/set_ylim below produce IDENTICAL tick ranges between toggles.
     bounds = (
@@ -456,7 +497,7 @@ def render(
     map_aspect = (bounds[2] - bounds[0]) / max(bounds[3] - bounds[1], 1e-9)
     map_cfg = report_cfg.per_sim.map
     if static_cfg is not None:
-        # Publication exact dimensions (data-viz OE-1): the user owns the figure
+        # Publication exact dimensions: the user owns the figure
         # size via figure_width/height_inches; bypass the report aspect-math width
         # derivation. layout="constrained" auto-fits panel contents within the
         # declared size, and the publication emit uses bbox_inches=None so the
@@ -476,10 +517,10 @@ def render(
     gs_depth_cbar = gs_depth[1, 0].subgridspec(1, 3, width_ratios=list(map_cfg.cbar_inner_width_ratios))
     gs_wse_cbar = gs_wse[1, 0].subgridspec(1, 3, width_ratios=list(map_cfg.cbar_inner_width_ratios))
     # Hydro column: outer 2-row split mirrors map columns so the hydro panel's
-    # vertical extent matches the map (not map+colorbar) — iter-4 feedback:
-    # "boundary height of the event hydrology figure should match the height
-    # of the flood figures". Top row holds the rainfall+BC stack; bottom row
-    # is intentionally empty (aligns with the colorbar slot on the map cols).
+    # vertical extent matches the map (not map+colorbar) and the three panels
+    # read as one row of equal-height figures. Top row holds the rainfall+BC
+    # stack; bottom row is intentionally empty (aligns with the colorbar slot on
+    # the map cols).
     gs_hydro_outer = outer[0, 2].subgridspec(
         2,
         1,
@@ -493,12 +534,12 @@ def render(
     ax_rain = fig.add_subplot(gs_hydro_inner[0, 0])
     ax_bc = fig.add_subplot(gs_hydro_inner[1, 0], sharex=ax_rain)
 
-    # ---- Depth panel: YlGnBu continuous linear --------------------------
-    # Iter-19 (2026-04-29): switched from discrete BoundaryNorm to a continuous
-    # linear Normalize per user request. vmin is pinned at 0.01 m (user-locked
-    # "under" threshold — cells below 0.01 render as white via
-    # `cmap.set_under("white")`). vmax is computed once across every event_iloc
-    # so the depth colorbar shares its range across all per-event figures.
+    # ---- Depth panel: continuous linear color scale ---------------------
+    # The report path uses a continuous linear Normalize, not discrete depth
+    # bins. vmin comes from `map_cfg.depth_vmin`, and cells below it render in
+    # the configured under-color via `cmap.set_under(...)` rather than in the
+    # lowest band. vmax is computed once across every event_iloc so the depth
+    # colorbar shares its range across all per-event figures.
     depth_ref = ProvenanceRef(
         source_path=triton_summary_rel,
         variable=str(wlevel_name) if wlevel_name is not None else "max_wlevel_m",
@@ -507,8 +548,9 @@ def render(
         transform="masked to watershed and depth>0",
     )
     # vmin/vmax: publication static_cfg.vmin/vmax override the report defaults
-    # when set; otherwise the report-path derivation (pinned vmin + shared-or-
-    # local vmax) is byte-unchanged.
+    # when set. Otherwise vmin is `map_cfg.depth_vmin`, and vmax is the cross-event
+    # shared max, falling back to this event's own max, then to
+    # `map_cfg.depth_vmax_fallback`.
     if static_cfg is not None and static_cfg.vmin is not None:
         depth_vmin = float(static_cfg.vmin)
     else:
@@ -537,10 +579,11 @@ def render(
         depth_cmap.set_over(static_cfg.depth_over_color)
     if static_cfg is not None and static_cfg.set_bad_color is not None:
         depth_cmap.set_bad(static_cfg.set_bad_color)
-    # colorbar norm: report path is a continuous linear Normalize (iter-19). The
-    # publication path activates BoundaryNorm/LogNorm/SymLogNorm by colorbar_norm
-    # (new conditional code — these controls have NO map_cfg counterpart, so a
-    # dual-source swap would render them silently inert).
+    # colorbar norm: report path is a continuous linear Normalize. The
+    # publication path activates BoundaryNorm/LogNorm/SymLogNorm by colorbar_norm.
+    # These controls have NO map_cfg counterpart, so they are read under an
+    # explicit static_cfg condition; a dual-source swap would render them
+    # silently inert.
     _cbar_extend = static_cfg.colorbar_extend if static_cfg is not None else "min"
     if static_cfg is not None and static_cfg.colorbar_norm != "linear":
         from matplotlib.colors import BoundaryNorm, LogNorm, SymLogNorm
@@ -627,11 +670,12 @@ def render(
                 linewidth=map_cfg.watershed_overlay_width,
             )
 
-    # ---- WSE panel: cividis linear --------------------------------------
-    # Iter-15 (2026-04-29): the colorbar range is shared across every event
-    # in the analysis so the user can compare WSE between event_iloc figures
-    # by eye. Falls back to per-event range only if the cross-event scan
-    # failed (no other event has a usable summary).
+    # ---- WSE panel: linear color scale ----------------------------------
+    # The colorbar range is shared across every event in the analysis so
+    # the user can compare WSE between event_iloc figures
+    # by eye. Falls back to this event's own range only when the cross-event scan
+    # returns no range: no event, this one included, has a usable summary, or the
+    # quantile range is degenerate.
     shared = _shared_wse_range(analysis, target_crs, dem_da, map_cfg=map_cfg)
     if shared is not None:
         wse_min, wse_max = shared
@@ -687,7 +731,7 @@ def render(
     cbar_w.set_label(units.wse_label(analysis._system.cfg_system.crs.vertical_epsg))
     ax_wse.set_aspect("equal")
     ax_wse.set_title("Water surface elevation")
-    # C8 — middle panel shares y-axis with ax_depth (sharey=ax_depth above);
+    # The middle panel shares y-axis with ax_depth (sharey=ax_depth above);
     # hide redundant y-tick labels and drop the ylabel so the gap between
     # the depth and WSE panels collapses to the bare wspace allocation.
     ax_wse.tick_params(axis="both", labelsize=map_cfg.tick_labelsize)
@@ -714,7 +758,7 @@ def render(
                 linewidth=map_cfg.watershed_overlay_width,
             )
 
-    # Subiteration 9.5 — explicit identical ticks AFTER both panels render
+    # Explicit identical ticks AFTER both panels render
     # (xarray's `.plot()` resets the axis ticks via auto-locator, clobbering
     # any earlier `set_xticks` / `set_yticks` call). Setting on ax_wse here
     # propagates to ax_depth via the existing `sharex=sharey=ax_depth` link.
@@ -726,7 +770,7 @@ def render(
     ax_wse.set_xlim(bounds[0], bounds[2])
     ax_wse.set_ylim(bounds[1], bounds[3])
 
-    # ---- Hydrology panel: delegated to shared helper (Subiteration 9.2 C6/C7)
+    # ---- Hydrology panel: delegated to the helper shared with conduit_flow ---
     bc_min, bc_max = draw_event_hydrology_panel(
         ax_rain,
         ax_bc,
@@ -738,7 +782,6 @@ def render(
         prov=prov,
     )
 
-    # A4 — panel labels
     add_panel_label(ax_depth, "(a)")
     add_panel_label(ax_wse, "(b)")
     add_panel_label(ax_rain, "(c)")
@@ -787,9 +830,8 @@ def _build_peak_flood_depth_figure(
     """Figure-construction seam for the Plotly peak-flood-depth render.
 
     Builds the `go.Figure` and computes the locals the emission portion of
-    `_render_plotly_branch` needs, returning them as a tuple. Extracted
-    verbatim from `_render_plotly_branch` (pure-extraction refactor) so a test
-    can obtain the figure object before HTML serialization.
+    `_render_plotly_branch` needs, returning them as a tuple. It is a separate
+    function so a test can obtain the figure object before HTML serialization.
     """
     from hhemt.config.report import resolve_target_crs
 
@@ -819,7 +861,10 @@ def _build_peak_flood_depth_figure(
     sys_paths = analysis._system.sys_paths
     triton_summary_path = analysis.analysis_paths.analysis_datatree_zarr
 
-    # ---- Data prep (mirror of matplotlib branch) ------------------------
+    # ---- Data prep ------------------------------------------------------
+    # Not a copy of the matplotlib branch: here a cell is wet when depth >
+    # dry_threshold_m (not > 0), and the maps use a padded square frame (not
+    # the raw DEM bounds).
     tree = analysis.process.open_datatree()
     if triton_group not in tree.groups:
         raise AssertionError(
@@ -846,17 +891,18 @@ def _build_peak_flood_depth_figure(
             mask = utils.create_mask_from_shapefile(da, tmp_path)
     else:
         mask = utils.create_mask_from_shapefile(da, watershed_shp)
-    # F-I-3: split mask around configurable dry threshold. Cells inside the
+    # Split mask around configurable dry threshold. Cells inside the
     # watershed with depth at or below `dry_threshold_m` render via a
-    # neutral-grey base trace so the watershed shape stays preattentive.
+    # neutral-grey base fill so the watershed shape stays preattentive.
     dry_threshold = map_cfg.dry_threshold_m
     wet_mask = mask & (da > dry_threshold)
     da_masked = da.where(wet_mask)
-    # Iter6 (2026-05-17): dry-cell rendering uses a watershed-shaped polygon
-    # fill (single go.Scatter with fill="toself") rather than a per-cell
-    # Heatmap indicator. Trims ~3 MB of HTML payload (the per-cell indicator
-    # raster was the dominant payload contributor; the polygon fill is O(N)
-    # in vertex count, ~100s of points). dry_indicator no longer needed.
+    # Dry cells get no raster of their own: they show through as one
+    # watershed-shaped polygon drawn beneath the heatmaps (built in the depth
+    # panel below), whose size grows with its vertex count rather than with the
+    # cell count. Deliberately NOT a per-cell dry-indicator Heatmap: that raster
+    # was the dominant share of the HTML payload, measured at roughly 3 MB when
+    # it was replaced (not re-measured here).
 
     try:
         wse_da = da + dem_da
@@ -930,18 +976,13 @@ def _build_peak_flood_depth_figure(
     if shared_wse is not None:
         wse_min, wse_max = shared_wse
     else:
-        # F-I-2: clip WSE colorbar to quantiles of WETTED + on-real-terrain
+        # Clip WSE colorbar to quantiles of WETTED + on-real-terrain
         # cells.  Suppresses building-on-top artifacts that would otherwise
         # dominate the scale and collapse usable WSE range to <5% of the
-        # colorbar. Building cells reuse system_overview's wall-threshold
-        # pattern: DEM >= min(dem_building_height, dem_outside_watershed_height)
-        # - wall_threshold_buffer_m == building/wall.
-        sys_cfg = analysis._system.cfg_system
-        if sys_cfg.dem_building_height is not None and sys_cfg.dem_outside_watershed_height is not None:
-            wall_th = (
-                min(sys_cfg.dem_building_height, sys_cfg.dem_outside_watershed_height)
-                - report_cfg.system_map.elevation_style.wall_threshold_buffer_m
-            )
+        # colorbar. Building/wall cells are those at or above
+        # `_wall_threshold_m`, the same rule system_overview's wall overlay uses.
+        wall_th = _wall_threshold_m(analysis._system.cfg_system, report_cfg.system_map.elevation_panel)
+        if wall_th is not None:
             terrain_mask = dem_da < wall_th
         else:
             terrain_mask = xr.ones_like(dem_da, dtype=bool)
@@ -958,7 +999,7 @@ def _build_peak_flood_depth_figure(
         else:
             wse_min, wse_max = map_cfg.wse_fallback_range
 
-    # F-I-5: cross-figure bounds parity with system_overview.  Load the same
+    # Cross-figure bounds parity with system_overview.  Load the same
     # SWMM hydro + hydraulics models and call the shared
     # compute_padded_square_bounds helper so per_sim map panels share their
     # x/y extents with system_overview's panels exactly.
@@ -983,13 +1024,19 @@ def _build_peak_flood_depth_figure(
     )
 
     # ---- Datashader pre-raster gate -------------------------------------
-    # MV scope: single-frame pre-aggregation when depth cell count exceeds threshold.
+    # Pre-aggregate the depth and WSE rasters onto a fixed canvas when the depth
+    # cell count exceeds the configured threshold, so a large grid is not inlined
+    # cell by cell into the HTML. Only the single peak frame exists to aggregate:
+    # this figure has no time animation.
     cell_count = int(
         da_masked.notnull().sum().compute()
         if hasattr(da_masked.notnull().sum(), "compute")
         else da_masked.notnull().sum()
     )
     use_datashader = cell_count > interactive_cfg.datashader_threshold_cells
+    _depth_transform, _wse_transform = _plotly_map_transforms(
+        dry_threshold, interactive_cfg.datashader_canvas_size, use_datashader=use_datashader
+    )
     if use_datashader:
         import datashader as ds_lib
         import datashader.reductions as ds_reductions
@@ -1036,21 +1083,18 @@ def _build_peak_flood_depth_figure(
         vertical_spacing=0.06,
         subplot_titles=("Peak flood depth", "Water surface elevation", "Flood Drivers"),
     )
-    # F-I-8: figure title removed (redundant with Snakemake sidebar/result-row labels).
-    # F-I-9: use registered `triton_journal` template instead of plotly_white.
-    # F-I-4 Option B: bottom margin expanded to 130 px to clear horizontal
-    # colorbars repositioned to y=-0.22.
-    # Iteration 2: showlegend=True so the dry-cell legend swatch surfaces.
+    # No figure title: the report's sidebar and result-row labels already name the
+    # figure. showlegend=True so the dry-cell legend swatch surfaces.
     fig.update_layout(
         template="triton_journal",
         showlegend=True,
         legend=dict(
             orientation="h",
-            # BELOW the colorbars, not above them. The user's rule was conditional -- left
-            # of the colorbar if natural space exists, otherwise below -- and the space
-            # left of colorbar 1 measures 9.9 px against a ~162 px legend item, so the
-            # condition resolves to "below". Sitting at y=-0.10 put this strip directly in
-            # the band the colorbar labels occupy.
+            # BELOW the colorbars, not above them. The legend goes left of colorbar 1 only
+            # if a legend item fits there, and otherwise below. The space there measured
+            # 9.9 px against a ~162 px legend item when this placement was chosen (not
+            # re-measured here), so it goes below. Sitting at y=-0.10 put this strip
+            # directly in the band the colorbar labels occupy.
             yanchor="top",
             y=-0.34,
             x=0.5,
@@ -1059,7 +1103,7 @@ def _build_peak_flood_depth_figure(
             bordercolor="lightgrey",
             borderwidth=1,
         ),
-        # Width/height DECLARED (I7-7 prerequisite): the layout previously declared
+        # Width/height DECLARED: the layout previously declared
         # neither while `write_image` hardcoded 1400x600, so the browser render and the
         # SVG export were laid out differently and every paper coordinate was correct
         # for at most one of them. Bottom margin is DERIVED from the colorbar band, not
@@ -1083,10 +1127,9 @@ def _build_peak_flood_depth_figure(
         crs_epsg=target_crs.to_epsg(),
     )
 
-    # Iteration 3: revert to continuous depth colorscale per user feedback
-    # ("go back to the previous color bar"). The discrete BoundaryNorm-style
-    # quantization from iter2 is left as the helper `_build_discrete_depth_colorscale`
-    # for future use, but the live render path passes `map_cfg.depth_cmap` directly.
+    # The depth colorscale is continuous: the live render path passes
+    # `map_cfg.depth_cmap` directly. The discrete BoundaryNorm-style alternative
+    # is available as `_build_discrete_depth_colorscale` and is not called here.
 
     # ---- Depth panel ----------------------------------------------------
     depth_ref = ProvenanceRef(
@@ -1094,14 +1137,12 @@ def _build_peak_flood_depth_figure(
         variable=str(wlevel_name) if wlevel_name is not None else "max_wlevel_m",
         attrs=wlevel_attrs,
         selection={"event_iloc": int(event_iloc)},
-        transform=(
-            "masked to watershed and depth>0" + ("; datashader pre-rasterized (512x512, max)" if use_datashader else "")
-        ),
+        transform=_depth_transform,
     )
-    # Iter6 (2026-05-17): build watershed polygon coords once; reuse on both
-    # map panels as the dry-cell base fill. Plotly's `fill="toself"` connects
-    # the last point back to the first per linestring; multi-polygon
-    # watersheds use None separators so each ring fills as its own region.
+    # Build the watershed polygon rings once; both map panels reuse them as the
+    # dry-cell base fill. Each ring's coordinates end in a None separator so a
+    # multi-polygon watershed keeps its rings apart; the path builder below
+    # splits on that separator and closes each ring as its own region.
     if watershed_gdf.crs is not None:
         ws_proj_fill = watershed_gdf.to_crs(target_crs)
     else:
@@ -1115,10 +1156,10 @@ def _build_peak_flood_depth_figure(
             xs, ys = poly.exterior.coords.xy
             ws_fill_x.extend(list(xs) + [None])
             ws_fill_y.extend(list(ys) + [None])
-    # iter-21 (sub_meter_flood_visibility): the dry-cell base fill MUST render
-    # BELOW the depth/WSE Heatmaps. Plotly draws SVG vector traces (a
-    # Scatter fill) ABOVE the heatmap raster regardless of add_trace order, so
-    # the iter6 `go.Scatter(fill="toself")` occluded the heatmap (all-grey).
+    # The dry-cell base fill MUST render BELOW the depth/WSE Heatmaps. Plotly
+    # draws SVG vector traces (a Scatter fill) ABOVE the heatmap raster
+    # regardless of add_trace order, so a `go.Scatter(fill="toself")` fill
+    # occludes the heatmap and the map renders all-grey.
     # A layout shape with layer="below" is the only mechanism that places fill
     # beneath a go.Heatmap; build the watershed multi-polygon as one SVG path
     # (M x,y L x,y ... Z per ring) reusing the same None-separated coords.
@@ -1159,9 +1200,6 @@ def _build_peak_flood_depth_figure(
             "watershed cells show through this dry_fill_color polygon"
         ),
     )
-    # F-I-3 (iter6): dry-cell base fill rendered as a watershed-shaped polygon
-    # via go.Scatter(fill="toself") on the depth panel. Saves ~1.5 MB vs the
-    # iter1-5 per-cell Heatmap approach.
     with prov.artist(
         axes_id="ax_depth_plotly",
         kind="patch",
@@ -1170,7 +1208,7 @@ def _build_peak_flood_depth_figure(
         a.add_channel("x", dry_ref)
         a.add_channel("y", dry_ref)
         a.add_channel("color", dry_ref, cmap=map_cfg.dry_fill_color)
-        # iter-21: layout shape with layer="below" so the grey watershed base
+        # A layout shape with layer="below" so the grey watershed base
         # renders BENEATH the depth Heatmap and shows through only dry (NaN)
         # cells. A go.Scatter fill would draw ABOVE the raster and occlude it.
         fig.add_shape(
@@ -1196,10 +1234,6 @@ def _build_peak_flood_depth_figure(
             vmin=depth_vmin,
             vmax=depth_vmax,
         )
-        # F-I-1: depth colormap from config (was hardcoded "YlGnBu").
-        # F-I-4 Option B: colorbar pushed to y=-0.22 to clear x-axis labels.
-        # Iteration 3: continuous colorscale (reverted from iter2's quantized
-        # version per user request — "go back to the previous color bar").
         fig.add_trace(
             go.Heatmap(
                 z=depth_z,
@@ -1226,10 +1260,7 @@ def _build_peak_flood_depth_figure(
         variable=str(wlevel_name) if wlevel_name is not None else "max_wlevel_m",
         attrs=wlevel_attrs,
         selection={"event_iloc": int(event_iloc)},
-        transform=(
-            "depth, summed with DEM elevation"
-            + ("; datashader pre-rasterized (512x512, max)" if use_datashader else "")
-        ),
+        transform=_wse_transform,
     )
     wse_ref_dem = ProvenanceRef(
         source_path=dem_rel,
@@ -1237,8 +1268,6 @@ def _build_peak_flood_depth_figure(
         attrs=dem_attrs,
         transform="reprojected to target_crs",
     )
-    # F-I-3 (iter6): dry-cell base fill on the WSE panel — same polygon-fill
-    # approach as the depth panel above; reuses ws_fill_x/ws_fill_y.
     with prov.artist(
         axes_id="ax_wse_plotly",
         kind="patch",
@@ -1247,7 +1276,7 @@ def _build_peak_flood_depth_figure(
         a.add_channel("x", dry_ref)
         a.add_channel("y", dry_ref)
         a.add_channel("color", dry_ref, cmap=map_cfg.dry_fill_color)
-        # iter-21: layout shape with layer="below" — see depth-panel note.
+        # Same below-layer watershed shape as the depth panel — see its note.
         fig.add_shape(
             type="path",
             path=ws_fill_path,
@@ -1272,8 +1301,6 @@ def _build_peak_flood_depth_figure(
             vmin=wse_min,
             vmax=wse_max,
         )
-        # F-I-1: WSE colormap from config (was hardcoded "cividis").
-        # F-I-4 Option B: colorbar pushed to y=-0.22 to clear x-axis labels.
         fig.add_trace(
             go.Heatmap(
                 z=wse_z,
@@ -1294,7 +1321,7 @@ def _build_peak_flood_depth_figure(
             col=2,
         )
 
-    # Iteration 2: dummy-marker legend entry naming the dry-cell fill color +
+    # Dummy-marker legend entry naming the dry-cell fill color +
     # its threshold so the grey is interpretable. Plotly Heatmap traces do not
     # surface in the legend by default; this Scatter trace plots no points
     # (NaN coords) but the marker styling renders the legend swatch.
@@ -1380,13 +1407,13 @@ def _build_peak_flood_depth_figure(
                 mode="lines",
                 line=dict(color=map_cfg.watershed_overlay_color, width=map_cfg.watershed_overlay_width),
                 hoverinfo="skip",
-                # Iter-9 A1: the overlay was drawn but suppressed from the legend, so the
-                # boundary read as an unexplained line. It is now a legend entry, named to
-                # match `eda/_config_diff.py`'s swatch verbatim so one geometry has one name
+                # The overlay was once drawn with no legend key, so the boundary read as an
+                # unexplained line. Its key is the marker proxy below, labeled to match
+                # `eda/_config_diff.py`'s swatch verbatim so one geometry has one name
                 # across figure families. The trace is emitted once per PANEL (depth here,
                 # WSE below); `legendgroup` is what couples them into one toggle.
                 #
-                # Iter-10 D: BOTH boundary traces are now showlegend=False and the entry is
+                # BOTH boundary traces are showlegend=False and the entry is
                 # carried by the marker proxy below. A `mode="lines"` trace renders a LINE
                 # glyph in the legend, and plotly exposes no per-trace override for it — so
                 # the only way to key this geometry with a RECTANGLE, matching the swatch
@@ -1413,7 +1440,7 @@ def _build_peak_flood_depth_figure(
                 mode="lines",
                 line=dict(color=map_cfg.watershed_overlay_color, width=map_cfg.watershed_overlay_width),
                 hoverinfo="skip",
-                # Iter-9 A1: same legendgroup as the depth panel's trace, showlegend=False so
+                # Same legendgroup as the depth panel's trace, showlegend=False so
                 # the shared entry appears exactly ONCE. Toggling it hides both panels'
                 # boundaries together, which is the correct coupling — it is one geometry.
                 showlegend=False,
@@ -1429,7 +1456,7 @@ def _build_peak_flood_depth_figure(
         note="watershed legend key (dummy Scatter, no plotted points)",
     ) as a:
         a.add_channel("x", watershed_ref)
-        # Iter-10 D: the legend GLYPH, carried by a markers-mode proxy that plots no data.
+        # The legend GLYPH, carried by a markers-mode proxy that plots no data.
         # `square-open` is the unfilled square, which is what `watershed_swatch` draws as a
         # rect with `fillcolor="rgba(0,0,0,0)"` — so both figure families now key one
         # geometry with one shape as well as one name.
@@ -1450,11 +1477,11 @@ def _build_peak_flood_depth_figure(
                 ),
                 hoverinfo="skip",
                 showlegend=True,
-                # Iteration-11 item 6: glyph, group and label now all read
-                # `hhemt.figure_panels`. Iteration 10's two measured constraints are
-                # preserved by construction -- this is still a markers-mode proxy, and it is
-                # still emitted OUTSIDE any per-column loop, because this edit changes only
-                # keyword VALUES and moves no `fig.add_trace` call.
+                # Glyph, group and label all read `hhemt.figure_panels`, so this key
+                # matches the other figure families. Two constraints hold: it stays a
+                # markers-mode proxy (a lines-mode trace keys a line, not the rectangle,
+                # as noted above), and it is added once, OUTSIDE any per-column loop -- a
+                # per-column add would put one legend entry per panel.
                 legendgroup=WATERSHED_LEGEND_GROUP,
                 name=WATERSHED_LEGEND_LABEL,
             ),
@@ -1476,7 +1503,7 @@ def _build_peak_flood_depth_figure(
         selection={"event_iloc": int(event_iloc)},
     )
     panel_cfg = report_cfg.per_sim.hydrology_panel
-    # F-I-7: convert times to hours for x-axis display + propagate the units
+    # Convert times to hours for x-axis display + propagate the units
     # change into the provenance channel so the manifest tells the truth.
     times_hr = np.asarray(times_min, dtype=float) / units.MINUTES_PER_HOUR
     bc_ref = ProvenanceRef(
@@ -1521,7 +1548,7 @@ def _build_peak_flood_depth_figure(
 
     target_crs_resolved = resolve_target_crs(analysis, report_cfg)
     crs_for_labels = target_crs_resolved.to_epsg()
-    # F-I-10: link col-2 map axes to col-1 via `matches=` so interactive
+    # Link col-2 map axes to col-1 via `matches=` so interactive
     # pan/zoom on either panel synchronises the other. Plotly's
     # `shared_xaxes` in `make_subplots` does not always emit `matches`.
     # Map x-axis range + cleared x titles are already applied by
@@ -1567,11 +1594,13 @@ def _render_plotly_branch(
     triton_group: str,
     prov,
 ) -> Path:
-    """Plotly MV port (pre-/design-figure): static 3-panel figure with depth raster +
-    WSE raster + event hydrology (rainfall bars + BC water level line).
-    Informationally congruent with the matplotlib branch — no animation,
-    no per-cell hover, no layer-toggle UX. Datashader pre-rasterization fires
-    when the depth-frame cell count exceeds `report_cfg.per_sim.interactive.datashader_threshold_cells`.
+    """Render the interactive Plotly version of the 3-panel figure — depth raster +
+    WSE raster + event hydrology (rainfall bars + BC water level line) — and emit it
+    as HTML, with a best-effort SVG export beside it. Shows the same information as
+    the matplotlib branch, for the peak frame only (no animation). Datashader
+    pre-rasterization fires when the depth-frame cell count exceeds
+    `report_cfg.per_sim.interactive.datashader_threshold_cells`. If the consolidated
+    DataTree is unavailable, writes a labeled placeholder instead of a figure.
     """
     from hhemt.report_renderers._figure_emission import (
         PER_SIM_FIG_H_PX,
@@ -1582,11 +1611,12 @@ def _render_plotly_branch(
         _emit_model_type_skip_placeholder,
     )
 
-    # Consumer-side defense-in-depth (R6): the builder opens the consolidated
+    # Consumer-side defense-in-depth: the builder opens the consolidated
     # DataTree; if a partial-completion render reaches this output-owning plotly
     # entrypoint, soft-skip with a VISIBLE labeled placeholder (which still
-    # writes output_path) rather than raising an opaque missing-output rule
-    # failure (Gotcha 39). The guard wraps the builder CALL (not the open inside
+    # writes output_path) rather than raising, which would leave output_path
+    # unwritten and fail the Snakemake rule with an opaque missing-output
+    # error. The guard wraps the builder CALL (not the open inside
     # it) because the builder returns a 13-tuple this branch unpacks — a
     # placeholder Path returned from inside the builder would break the unpack.
     try:
@@ -1644,9 +1674,10 @@ def _render_plotly_branch(
         config=plotly_config,
     )
 
-    # SWMM .inp sources for ADR-6 provenance. The builder consumes these for its
-    # swmmio.Model construction; only the resolved paths are needed in the caller
-    # scope, so re-calling the pure path resolver (no model build) is cheap.
+    # The builder opened both SWMM .inp files (swmmio models for the shared map
+    # bounds), so both are declared as sources: the figure's manifest must name
+    # every data file the render read. Only the resolved paths are needed in the
+    # caller scope, so re-calling the pure path resolver (no model build) is cheap.
     hydro_inp, hydraulics_inp = _resolve_inp_sources(analysis)
     source_paths: list[Path] = [
         Path(triton_summary_path),

@@ -258,10 +258,10 @@ def write_workflow_summary_md(analysis) -> Path:
         "",
         "## Progress Summary",
         "",
-        f"- **Total Simulations**: {status.total_simulations}",
-        f"- **Completed**: {status.simulations_completed}",
-        f"- **Failed**: {status.simulations_failed}",
-        f"- **Pending**: {status.simulations_pending}",
+        f"- **Total Scenarios**: {status.total_simulations}",
+        f"- **Scenarios with every model run completed**: {status.simulations_completed}",
+        f"- **Scenarios with a model run that started and did not finish**: {status.simulations_failed}",
+        f"- **Scenarios whose unfinished model runs have not started**: {status.simulations_pending}",
         "",
         "---",
         "",
@@ -289,7 +289,7 @@ def write_workflow_summary_md(analysis) -> Path:
         )
 
         if phase.failed_items:
-            md_lines.append(f"- **Failed Items**: {len(phase.failed_items)}")
+            md_lines.append(f"- **Incomplete Items**: {len(phase.failed_items)}")
             md_lines.append("  ```")
             for item in phase.failed_items[:10]:  # Show first 10
                 md_lines.append(f"  {item}")

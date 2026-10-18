@@ -208,7 +208,7 @@ class ForceRerunSpec(cfgBaseModel):
                 bad = [str(x) for x in values if not MEMBER_ID_RE.match(str(x))]
                 if bad:
                     raise ValueError(
-                        f"force_rerun.member_id values must match ^[A-Za-z0-9_.]+$ "
+                        f"force_rerun.sa_id values must match ^[A-Za-z0-9_.]+$ "
                         f"(per accepted decision 'All user-provided identifiers that "
                         f"become Snakemake wildcards must match ^[A-Za-z0-9_.]+$'); "
                         f"got invalid: {bad}"
@@ -884,7 +884,8 @@ class analysis_config(cfgBaseModel):
             "deployment-config reproduction script. What that figure consumes is a "
             "per-timestep max-over-(y,x) reduction (144 values/scenario), not the field; "
             "consolidating the reduction is the cheap, grid-independent extension. "
-            "LAYOUT_VERSION bump (config/analysis.py is allowlisted; the tree-node add is "
+            "Additive, config-schema-only change: no LAYOUT_VERSION bump (config/analysis.py is "
+            "allowlisted; the tree-node add is "
             "additive-read-compatible)."
         ),
     )
@@ -908,8 +909,8 @@ class analysis_config(cfgBaseModel):
         "(process_output_target_chunksize_mb), "
         "so fine grids that floor the load chunk to 1 timestep still emit only ceil(N_timesteps / this) chapters "
         "instead of O(N_timesteps) tiny ones. Independent of the streaming-summary reduction (which writes no "
-        "chapter). Buffer RSS is additionally byte-capped at 2x the load budget at write time, so raising this is "
-        "safe.",
+        "chapter). Buffer RSS is bounded by process_append_batch_memory_budget_mb: the buffer is flushed once it "
+        "reaches that budget, so it holds less than that budget plus one load chunk before each flush.",
     )
     process_append_batch_memory_budget_mb: int | None = Field(
         None,
@@ -1168,13 +1169,22 @@ class analysis_config(cfgBaseModel):
             'default consolidation path reads them); "raw_swmm_binaries" drops '
             "out_tritonswmm/swmm/*.out (hydraulics.out plus the per-node *.out set), and "
             "NEVER *.rpt, which is a live completion predicate via "
-            'run_simulation._coupled_swmm_report_finalized. "raw_swmm_binaries" '
+            'run_simulation._coupled_swmm_report_finalized. "coupled_rpt" '
             "TRUNCATES out_tritonswmm/swmm/hydraulics.rpt in place to its header, "
             "continuity and summary tables plus its trailer -- truncation, NEVER deletion, "
             "because that file is a live completion predicate via "
             'run_simulation._coupled_swmm_report_finalized. "hydro_out" drops the SWMM '
             "hydrology output swmm/hydro.out, which write_hydrograph_files reads; that is "
             "safe only because write_hydrograph_files carries an already-written gate. "
+            '"prep_inputs" drops the weather .dat directory, the external-boundary '
+            "timeseries directory and the weather timeseries file, all regenerable by "
+            're-running scenario preparation with no solver. "hydrographs" drops the '
+            "hydrograph timeseries and locations files ONLY once "
+            "processed/hydrology_inflow_summary.zarr is present and openable, and otherwise "
+            'declines. "standalone_rpt" TRUNCATES the standalone full.rpt in place (never '
+            "deletes it) and deletes the hydrology .rpt only once a "
+            "processed/hydrology_rpt_summary.zarr capture carrying every subcatchment the "
+            "hydrology model declares has been written. "
             '"raw_swmm_binaries" '
             'no-ops (with a logged reason) when clear_raw == "none", because its only '
             "consumer, eda.raw_resume_identity.compare_swmm_raw, also needs the raw "
@@ -1455,11 +1465,11 @@ class analysis_config(cfgBaseModel):
         if isinstance(subject, dict):
             key = next(iter(subject))
             if key == "sa_id" and not self.toggle_sensitivity_analysis:
-                raise ValueError("force_rerun.member_id requires toggle_sensitivity_analysis=True")
+                raise ValueError("force_rerun.sa_id requires toggle_sensitivity_analysis=True")
             if key == "event_iloc" and self.toggle_sensitivity_analysis:
                 raise ValueError(
                     "force_rerun.event_iloc requires toggle_sensitivity_analysis=False; "
-                    "sensitivity-toggled analyses must use force_rerun.member_id instead"
+                    "sensitivity-toggled analyses must use force_rerun.sa_id instead"
                 )
         return self
 

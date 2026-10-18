@@ -53,7 +53,7 @@ def _stub_index_dem(bin_dir: Path, raw_out_type: str = "bin") -> xr.DataArray:
     mismatch across arms would be a FALSE positive. Integer index coords are identical by
     construction across both arms, so compare_variable_exact's ``xr.align(join='exact')`` aligns
     and tests the data. The 2-value float64 header ``[y_dim, x_dim]`` is the documented bin
-    format (load_triton_output_w_xarray, process_simulation.py:1855-1860).
+    format (process_simulation.load_triton_output_w_xarray).
     """
     first = None
     for pref in ("H", "MH", "QX", "QY"):
@@ -138,7 +138,7 @@ def compare_swmm_raw(base_out_tritonswmm: Path, test_out_tritonswmm: Path) -> di
 
     The pairing is base-vs-test, NOT clean-vs-resume: the same kernel serves the
     clean run's config-vs-config comparison and the clean-vs-resume comparison.
-    Reuses retrieve_SWMM_outputs_as_datasets (parse; called exactly as process_simulation.py:947
+    Reuses retrieve_SWMM_outputs_as_datasets (parse; called exactly as process_simulation's _export_SWMM_outputs
     passes ``(hydraulics.inp, hydraulics.rpt)``) + compare_variable_exact (whole-timeseries
     collapse -> one bit per output-type), plus a raw-bytes compare of the timestamp-free
     ``hydraulics.out`` binary (the ``.rpt`` text carries a run-date header, so its bytes are NOT
@@ -371,11 +371,11 @@ def build_binary_timestep_figure(
 
 # --- Promotable calc member (ADR-9): the b4b figures' WITHIN-MASTER producer -----------
 #
-# check_raw_b4b is single-arm by construction (master R12(b)): it reads ONLY the passed
+# check_raw_byte_identity is single-arm by construction (master R12(b)): it reads ONLY the passed
 # master's own members' raw per-timestep rasters and NEVER reaches a sibling master.
 # It writes ONE backing artifact ALWAYS -- real grids or an honest-degradation marker --
 # so the registered report() target never raises WorkflowError:
-#   * eda/b4b_clean_identity.zarr   config-vs-config raw identity over the master's CLEAN
+#   * eda/raw_byte_identity.zarr   config-vs-config raw identity over the master's CLEAN
 #                                   subs (the raw-per-timestep analog of check_cross_sim_identity)
 #   * eda/b4b_clean_vs_resume.zarr  clean-vs-resume raw identity, pairing each resume sub with
 #                                   its clean config-counterpart WITHIN the master. Real only
@@ -679,11 +679,11 @@ def _collapse_replicates(per_config: dict, meta: dict) -> tuple[dict, dict, dict
     return out_pc, out_meta, n_rep
 
 
-def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
+def check_raw_byte_identity(master, *, cfg_analysis, eda_cfg):
     """WITHIN-MASTER raw per-timestep byte-for-byte producer for the b4b ReportingSet.
 
     Reads ONLY the passed master's own subs' raw outputs (single-arm; master R12(b)).
-    Writes eda/b4b_clean_identity.zarr ALWAYS (a real per-family cross-config grid
+    Writes eda/raw_byte_identity.zarr ALWAYS (a real per-family cross-config grid
     or a degraded marker) so the single report() target renders. The comparison is
     PER-FAMILY over the master's OWN subs (each config vs its within-family
     minimum-device reference), so the ONE figure is applicable + non-degraded on BOTH the
@@ -790,7 +790,7 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
         )
 
     eda_dir.mkdir(parents=True, exist_ok=True)
-    plot_id = canonical_plot_id("b4b_clean_identity")
+    plot_id = canonical_plot_id("raw_byte_identity")
     artifact = eda_dir / f"{plot_id}.zarr"
     ds = _b4b_dataset(
         per_config,
@@ -812,7 +812,7 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
     # return_fpath_wlevels globs -- the four MH/H/QX/QY prefixes named in the disclosed-
     # denominator comment below -- so the declaration is those files, per member, deduped.
     # It is NOT the SWMM hydraulics.inp/.rpt: compare_swmm_raw exists in this module but has
-    # no caller, and check_raw_b4b invokes only compare_triton_raw_timeseries.
+    # no caller, and check_raw_byte_identity invokes only compare_triton_raw_timeseries.
     # _validate_source_path refuses a bare non-zarr DIRECTORY but accepts FILES, so the raw
     # dirs are expanded to their enclosed per-timestep files -- the remedy the gate's own
     # rejection message prescribes. Absent files are non-fatal at harvest (ADR-6 D3 skip-with-
@@ -838,7 +838,7 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
         fams = ", ".join(f"{k} (ref {v})" for k, v in sorted(reference_config_by_family.items()))
         # DISCLOSED DENOMINATOR. The comparison is variable-scoped, not tree-wide: its file list
         # comes from return_fpath_wlevels, which globs exactly four hardcoded prefixes
-        # (MH/H/QX/QY, process_simulation.py:1842-1845). Naming them here matters under a SPLIT
+        # (MH/H/QX/QY, process_simulation.return_fpath_wlevels). Naming them here matters under a SPLIT
         # PIN, where the arms' output-file SETS legitimately differ -- a resume arm at 5d2ad1e8
         # also writes one GR_* ghost-ring side-file per checkpoint per rank, which this check
         # neither reads nor should read (the clean arm has none, so a cross-arm comparison of
@@ -867,5 +867,5 @@ def check_raw_b4b(master, *, cfg_analysis, eda_cfg):
         instrument="raw_rasters",
         detection_floor=float(np.finfo(np.float64).eps),
     )
-    (eda_dir / "b4b_clean_identity.verdict.json").write_text(_json.dumps(_dc.asdict(verdict), indent=2, default=str))
-    return EdaResult(verdict=verdict, artifact_path=artifact, plot_id="b4b_clean_identity", skipped=False)
+    (eda_dir / "raw_byte_identity.verdict.json").write_text(_json.dumps(_dc.asdict(verdict), indent=2, default=str))
+    return EdaResult(verdict=verdict, artifact_path=artifact, plot_id="raw_byte_identity", skipped=False)

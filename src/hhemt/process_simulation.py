@@ -2385,7 +2385,7 @@ class TRITONSWMM_sim_post_processing:
             return
 
         # The raw_swmm_binaries class no-ops when clear_raw == "none", and the decline is
-        # LOGGED rather than silent. Its only reader, eda.raw_resume_identity.compare_swmm_raw,
+        # LOGGED rather than silent. Its only reader, eda.raw_byte_identity.compare_swmm_raw,
         # needs out_tritonswmm/swmm/hydraulics.out ALONGSIDE the raw H/QX/QY/MH set that
         # clear_raw governs; on a preserve-raws run those .out files are still live evidence.
         # A policy that silently declines is indistinguishable from one that ran, which is the
@@ -2394,7 +2394,7 @@ class TRITONSWMM_sim_post_processing:
             print(
                 f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: "
                 "'raw_swmm_binaries' is elected but clear_raw == 'none' -- declining that "
-                "class. eda.raw_resume_identity.compare_swmm_raw reads "
+                "class. eda.raw_byte_identity.compare_swmm_raw reads "
                 "out_tritonswmm/swmm/*.out together with the raw H/QX/QY/MH set that "
                 "clear_raw preserves, so those files are still live evidence on this run.",
                 flush=True,
@@ -2938,9 +2938,9 @@ def _aggregate_perf_tseries(
                 "a slightly different formatted length, leaving one writer's overhang "
                 "behind. TRITON's own writer truncates (output.h uses a default-mode "
                 "std::ofstream), so a single process cannot produce this. Treat it as "
-                "evidence of duplicate simulation execution for this scenario (see the "
-                "racing-runner duplication class in the architecture doc's gotchas), "
-                "NOT as a TRITON output-format bug. Every other artifact this sim wrote "
+                "evidence of duplicate simulation execution for this scenario (two "
+                "copies of the simulation running against the same scenario directory "
+                "at once), NOT as a TRITON output-format bug. Every other artifact this sim wrote "
                 "is under the same doubt; the performance dump is merely the only one "
                 "where the interleave is textually visible.\n"
                 f" Skipped files:\n{_detail}"
@@ -3244,7 +3244,7 @@ def parse_performance_file(filepath):
 #: `return_fpath_wlevels` iterates it to build the frame and `triton_raw_frame_or_raise`
 #: inverts it to name a short variable by its PREFIX in the ragged message, so the two
 #: cannot disagree about which name goes with which file.
-#: IT LIVES HERE AND NOT IN eda/raw_resume_identity.py, and the direction is the reason:
+#: IT LIVES HERE AND NOT IN eda/raw_byte_identity.py, and the direction is the reason:
 #: that module imports FROM this one (`from hhemt.process_simulation import ...`), and this
 #: module imports nothing from `hhemt.eda` -- measured, 0 occurrences -- so defining it
 #: there and importing it here would invert the dependency and cycle.
@@ -3298,7 +3298,7 @@ def return_fpath_wlevels(fldr_out_triton: Path, reporting_interval_s: int | floa
     # THIS FUNCTION DESCRIBES WHAT IT FOUND. IT REFUSES NOTHING AND IT INVENTS NOTHING.
     # The refusal moved to `triton_raw_frame_or_raise` below, because it is a POLICY and
     # not a property of enumeration: of the eight consumption points measured at aaefe392,
-    # SEVEN tolerate a partial frame by design (three in eda/raw_resume_identity.py, four
+    # SEVEN tolerate a partial frame by design (three in eda/raw_byte_identity.py, four
     # in the private estate, all of which carry their own `isinstance`/`dropna`/membership
     # guards) and exactly ONE wants the refusal. A fail-closed default here was a rule
     # imposed on callers whose requirements this function cannot know, and it broke every

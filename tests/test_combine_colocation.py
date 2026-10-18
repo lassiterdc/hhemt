@@ -1,8 +1,9 @@
-"""F1 within-page co-location (round-6): both-models stacked on ONE composed page.
+"""Both model arms co-located on ONE composed combined-report page.
 
 For any combined-report page carrying a TRITON-SWMM figure, the pure-TRITON counterpart is
-stacked BELOW it on the SAME page (data-viz R5-1 `.model-stack` layout, inlined into the
-composed page `<head>` because the report `--stylesheet` reaches only the report chrome).
+stacked BELOW it on the SAME page (the `.model-stack` layout, inlined into the composed
+page `<head>` because the stylesheet passed with `--report-stylesheet` styles only the
+report chrome and never reaches a figure's inner document).
 `_compose_model_pair_page` builds the page; `_harvest_per_experiment_rule_specs` emits one
 composed page per (base-experiment, plot_id), carrying the figure's ORIGINAL category.
 """
@@ -28,37 +29,68 @@ _TRI_HTML = "<html><head></head><body><div id='plotly-tri'>pure-TRITON figure</d
 
 
 def test_compose_page_stacks_both_models() -> None:
+    """Property: a composed page carries both model arms as `.model-section` srcdoc iframes
+    inside one `.model-stack`, the TRITON-SWMM section before the pure-TRITON one, and tags the
+    stack with the plot id and the base experiment.
+
+    Why it is required: the page exists to compare the two arms in one view; a missing arm, or
+    the arms in the other order, puts the coupled result out of the position the layout labels.
+    What kills it: dropping either section, emitting them in the other order, or inlining the
+    figure documents instead of embedding each in its own srcdoc iframe.
+    A second correct implementation still passes: one that changes the iframe titles, the
+    loading attribute or the auto-fit script, since none of those is asserted.
+    """
     page = _compose_model_pair_page("synth_cc_clean", "config_diff_maps", _TS_HTML, _TRI_HTML)
-    # the R5-1 stacked wrapper + both arms as data-model sections, tritonswmm ABOVE triton.
+    # the stacked .model-stack wrapper + both arms as data-model sections, tritonswmm ABOVE triton.
     # Anchor on the section <div> element, not a bare data-model= substring (the inlined <head>
     # CSS carries [data-model="triton"] selectors on every page).
     assert 'class="model-stack"' in page
     i_ts = page.index('<div class="model-section" data-model="tritonswmm"')
     i_tri = page.index('<div class="model-section" data-model="triton"')
     assert i_ts < i_tri, "TRITON-SWMM section must be emitted before the pure-TRITON section"
-    # both arms embedded as isolated srcdoc iframes (empirically byte-faithful through the report app)
+    # both arms embedded, each in its own srcdoc iframe: two srcdoc= attributes on the page
     assert page.count("srcdoc=") == 2
     assert 'class="model-arm-frame"' in page
-    # the data-plot / data-config attributes honor R5-1's contract
+    # the data-plot / data-config attributes carry the plot id and the base experiment
     assert 'data-plot="config_diff_maps"' in page
     assert 'data-config="synth_cc_clean"' in page
 
 
 def test_compose_page_inlines_model_stack_css() -> None:
-    # R5-1's .model-stack CSS is INLINED into the composed page <head> (FQ2: report.css reaches
-    # only chrome), including the reconciliation-delta .model-arm-frame height rule.
+    """Property: the composed page's own <head> carries the `.model-stack` CSS, the
+    `.model-arm-frame` height rule, and the two section labels "TRITON-SWMM" and "TRITON".
+
+    Why it is required: the report's --report-stylesheet styles only the report chrome and never
+    reaches a figure's inner document, so CSS that is not inlined leaves the page unstyled and
+    an iframe without an explicit height renders at the browser default.
+    What kills it: moving the stack CSS into report.css, or dropping the arm-frame rule or
+    either label rule.
+    A second correct implementation still passes: one that reorders, rewrites or adds rules in
+    the same inline <style> block, as long as those selectors and labels are present.
+    """
+    # The .model-stack CSS is INLINED into the composed page <head> because report.css reaches
+    # only the report chrome, including the .model-arm-frame height rule an iframe needs.
     page = _compose_model_pair_page("myexp", "peak_flood_depth", _TS_HTML, _TRI_HTML)
     head = page[: page.index("</head>")]
     assert ".model-stack" in head
     assert ".model-arm-frame" in head
-    # branded section labels derived from data-model (R5-1 consumed verbatim).
-    # Q6 (iter-2 dataviz): the pure-TRITON label is "TRITON" — "(uncoupled)" is redundant
-    # (if it doesn't say TRITON-SWMM it's obviously just TRITON), per the user's H relabel.
+    # branded section labels derived from data-model.
+    # The pure-TRITON label is "TRITON": "(uncoupled)" is redundant, because a label that does
+    # not say TRITON-SWMM already reads as TRITON alone.
     assert 'content:"TRITON-SWMM"' in head
     assert 'content:"TRITON"' in head
 
 
 def test_compose_page_coupled_only_single_section() -> None:
+    """Property: with no pure-TRITON counterpart (`tri_html=None`), the composed page has the
+    TRITON-SWMM section only, and exactly one srcdoc iframe.
+
+    Why it is required: an empty second section reads to the viewer as a missing pure-TRITON
+    result, when a coupled-only (SWMM-specific) figure has none by construction.
+    What kills it: emitting the triton section unconditionally, or with an empty iframe.
+    A second correct implementation still passes: one that also prints an explanatory note,
+    provided the note is not a `data-model="triton"` section.
+    """
     # A coupled-only (SWMM-specific) figure has no pure-TRITON counterpart -> one section only.
     page = _compose_model_pair_page("myexp", "conduit_flow", _TS_HTML, None)
     assert '<div class="model-section" data-model="tritonswmm"' in page
@@ -67,11 +99,23 @@ def test_compose_page_coupled_only_single_section() -> None:
 
 
 def test_extract_root_css_vars_reads_root_and_graceful_absent(tmp_path) -> None:
+    """Property: with no staged report.css, `_extract_root_css_vars` returns ""; with one, it
+    returns the stylesheet's `:root{...}` block, which then appears in the composed page's
+    <head>.
+
+    Why it is required: the composed page resolves its `var(--uva-*)` colours only through that
+    block; where report.css is not staged yet, the page must fall back to its neutral colours
+    rather than raise.
+    What kills it: raising on the absent file, returning something other than the `:root`
+    block, or not injecting it into the page.
+    A second correct implementation still passes: one that normalizes whitespace inside the
+    returned block.
+    """
     bundle_root = tmp_path / "combined"
     (bundle_root / "report").mkdir(parents=True)
     # absent report.css -> "" (the composed page falls back to neutral non-brand values)
     assert _extract_root_css_vars(bundle_root) == ""
-    # staged report.css -> the :root{} block flows through (brand_theme stipulation)
+    # staged report.css -> the :root{} block flows through, so brand colours come from brand_theme
     (bundle_root / "report" / "report.css").write_text(
         ":root{--uva-blue:#232D4B;--uva-orange:#E57200;}\nbody{margin:0;}\n", encoding="utf-8"
     )
@@ -96,6 +140,19 @@ def _write_child(bundle_root, eid: str, plot_id: str, body: str) -> None:
 
 
 def test_harvest_stacks_both_models_one_spec_per_plot(tmp_path) -> None:
+    """Property: two child bundles of one base experiment yield exactly ONE spec per plot id. It
+    is written under paired_figures/, stacks both arms, keeps the figure's original category,
+    takes the base experiment as its subcategory, and carries no facet that restates that
+    subcategory.
+
+    Why it is required: one spec per child would put the two arms on separate pages, a base-named
+    category adds a sidebar level per experiment, and a facet equal to the subcategory renders
+    twice and cannot partition the figures beneath it.
+    What kills it: emitting one spec per child, writing under child_crates/, using the base as
+    the category, or reinstating an `experiment` facet.
+    A second correct implementation still passes: one that emits additional facets, provided
+    none of their values equals the subcategory.
+    """
     bundle_root = tmp_path / "combined"
     _write_child(bundle_root, "synth_cc_clean_tritonswmm", "config_diff_maps", _TS_HTML)
     _write_child(bundle_root, "synth_cc_clean_triton", "config_diff_maps", _TRI_HTML)
@@ -119,21 +176,19 @@ def test_harvest_stacks_both_models_one_spec_per_plot(tmp_path) -> None:
     assert spec.report_kwargs["category"] != _base_experiment("synth_cc_clean_tritonswmm")
     assert spec.report_kwargs["subcategory"] == "synth_cc_clean"
     labels = json.loads(spec.report_kwargs["labels"])
-    # Iter-11 items 5+9 retired the `experiment` facet: it restated the subcategory asserted
+    # The `experiment` facet was retired: it restated the subcategory asserted
     # on the line above, so it could never partition the figures beneath that subcategory.
     # Asserted as the invariant -- no facet may restate the subcategory -- rather than as a
     # key-absence check, so a future facet re-introducing the same value under a different
     # key still fails.
     #
-    # Iter-13 CORRECTION. This comment also claimed `models` was retired for the same reason,
-    # "a pure function of `base`". That is FALSE and the claim is removed rather than
-    # annotated, because a false rationale reads as ground truth to the next author. It holds
-    # for which arms a BASE has children for; it fails for which arms a given FIGURE rendered,
-    # since `tri_html` is None whenever the pure-TRITON child has no counterpart at that plot
-    # id. Measured on the delivered bundle: `conduit_flow` occurs 0 times in the pure-TRITON
-    # child and 28 times in the coupled one, so inside one subcategory 28 composed pages carry
-    # one arm and 28+ carry two. `models` is RESTORED and is always populated; it passes the
-    # assertion below because its values name model arms and never a base experiment.
+    # `models` is always populated, and it varies by plot id because a FIGURE's arm set does:
+    # `tri_html` is None whenever the pure-TRITON child has no counterpart at that plot id, so
+    # within one subcategory some composed pages carry one arm and others two. Its values name
+    # model arms and never a base experiment, so it passes the assertion below. Deliberately
+    # NOT treated as a pure function of the base experiment: that holds for which arms a BASE
+    # has children for, not for which arms a given figure rendered, and dropping the facet on
+    # that ground would make one-arm and two-arm pages under one base indistinguishable.
     assert labels, "labels dict is empty — the probe is measuring nothing"
     assert spec.report_kwargs["subcategory"] not in labels.values()
 
@@ -147,10 +202,10 @@ def test_harvest_labels_carry_no_facet_restating_the_result_name(tmp_path) -> No
     result's NAME is shown and a matching facet "renders the label a second time, which is the
     duplicate-heading defect the user reported". Measured against the installed engine, the
     result NAME is rendered as visible text nowhere — its only consumer is a download filename
-    attribute — so no facet can duplicate it. The user report IS real and is quoted at
-    `combined_snakefile_generator.py:290-292` ("there are redundant headers. ## synth_cc_clean
-    — Run metadata appears twice in a row"), but it describes the composed PAGE's <h2>
-    duplicating the report chrome's own name rendering — fixed at Iter-10 K by removing that
+    attribute — so no facet can duplicate it. The user report IS real and is quoted in
+    `combined_snakefile_generator._compose_model_pair_page` ("there are redundant headers.
+    ## synth_cc_clean — Run metadata appears twice in a row"), but it describes the composed
+    PAGE's <h2> duplicating the name the report chrome already shows — fixed by removing that
     <h2> — and has nothing to do with a facet key in the labels table. The rationale borrowed a
     real complaint and misattributed its mechanism.
     The clause blocked the `figure` facet, which is the only column that can identify a row.
@@ -158,13 +213,24 @@ def test_harvest_labels_carry_no_facet_restating_the_result_name(tmp_path) -> No
     What survives is the half that was well-founded: the SUBCATEGORY is visible, so a facet
     restating it renders twice and cannot partition. Asserted as the INVARIANT rather than as a
     key-absence check, so a differently-keyed facet carrying the same value still fails.
+
+    Property: across two plot ids of different segment shapes, every harvested spec carries at
+    least one facet, no empty facet value, and no facet equal to its subcategory, and the two
+    specs' key sets differ.
+    Why it is required: a facet equal to the subcategory renders one row where a figure list
+    belongs, and an empty facet value renders a blank index column.
+    What kills it: reinstating an `experiment` facet, emitting an absent facet as "", or forcing
+    one fixed key set on every spec.
+    A second correct implementation still passes: one that renames the facet keys, or adds
+    facets, as long as no value is empty or equal to the subcategory.
     """
     bundle_root = tmp_path / "combined"
-    # Iter-13 fixture widening. TWO plot ids of DIFFERENT ADR-2 segment shapes, because the
+    # Fixture widening: TWO plot ids of DIFFERENT plot-id segment shapes, because the
     # per-spec assertions below are cross-spec claims and a one-plot-id fixture cannot
     # discriminate: the retired homogeneity clause compared paired[0] against itself and was
-    # true for ANY implementation. `metadata` carries no segment (facets: models only); the
-    # per-sim id carries member. + evt. (facets: member, event, models).
+    # true for ANY implementation. `metadata` carries no segment, so its facets are
+    # {figure, models}; the per-sim id carries member. + evt., so its facets are
+    # {figure, member, event, models}. `figure` is emitted first and unconditionally.
     plot_ids = ("metadata", "peak_flood_depth__member.gpu_0_r1__evt.event_index.0")
     for pid in plot_ids:
         _write_child(bundle_root, "expA_tritonswmm", pid, _TS_HTML)
@@ -195,12 +261,12 @@ def test_harvest_labels_carry_no_facet_restating_the_result_name(tmp_path) -> No
         # The sibling assertion below is NOT retired and is the one that was well-founded:
         # the SUBCATEGORY is visible (it is the menu item the reader clicked), so a facet
         # restating it really does render twice and really cannot partition.
-        # Iter-11 items 5+9: `experiment` was measured DEGENERATE at this level -- it restated
+        # The `experiment` facet was measured DEGENERATE at this level -- it restated
         # the subcategory, so the facet table rendered one row where a figure list belongs.
         # Asserted as the invariant rather than as a key list, so a differently-keyed correct
         # implementation still passes.
         assert spec.report_kwargs["subcategory"] not in labels.values()
-        # Iter-13. The clause that stood here asserted a FIXED key set across harvested specs.
+        # The clause that stood here asserted a FIXED key set across harvested specs.
         # That doctrine is RETIRED by measurement: emitting an absent facet as "" is what
         # produced the blank index columns (18 all-blank rows in the delivered combined
         # report), and heterogeneity is not unvalidated territory -- the per-arm reports
@@ -216,6 +282,14 @@ def test_harvest_labels_carry_no_facet_restating_the_result_name(tmp_path) -> No
 
 
 def test_harvest_no_base_experiment_category(tmp_path) -> None:
+    """Property: no harvested spec's category is a base-experiment name.
+
+    Why it is required: categories are the sidebar's top level, so a base name there adds one
+    navigation level per experiment on top of the child report's own categories.
+    What kills it: setting a spec's category to the base experiment.
+    A second correct implementation still passes: one that files an unclaimed figure under any
+    category other than a base name, such as "Other".
+    """
     bundle_root = tmp_path / "combined"
     _write_child(bundle_root, "expA_tritonswmm", "maps_fig", _TS_HTML)
     _write_child(bundle_root, "expA_triton", "maps_fig", _TRI_HTML)
@@ -225,6 +299,15 @@ def test_harvest_no_base_experiment_category(tmp_path) -> None:
 
 
 def test_harvest_coupled_only_single_section(tmp_path) -> None:
+    """Property: a base with only a TRITON-SWMM child yields one composed page with the
+    TRITON-SWMM section alone and a non-empty labels dict.
+
+    Why it is required: an empty second section reads as a missing result, and an empty labels
+    dict renders a blank index row.
+    What kills it: emitting the triton section without a counterpart, or emitting no facet when
+    only one arm exists.
+    A second correct implementation still passes: one that emits any non-empty facet set.
+    """
     # only a tritonswmm child (no pure-TRITON counterpart) -> the composed page has one section
     bundle_root = tmp_path / "combined"
     _write_child(bundle_root, "swmmonly_tritonswmm", "conduit_flow", _TS_HTML)
@@ -234,15 +317,10 @@ def test_harvest_coupled_only_single_section(tmp_path) -> None:
     page = (bundle_root / paired[0].output_path_template).read_text(encoding="utf-8")
     assert '<div class="model-section" data-model="tritonswmm"' in page
     assert '<div class="model-section" data-model="triton"' not in page
-    # Iter-13 CORRECTION. This comment claimed `models` was retired and that a coupled-only
-    # base "is exactly the case where that facet held ONE value, which is what disqualified
-    # it". Both halves are FALSE and are removed rather than annotated, because a false
-    # rationale reads as ground truth to the next author. A coupled-only base is the case that
-    # VINDICATES the facet: it is where `models` reads `TRITON-SWMM only` and thereby
-    # distinguishes this page from the two-arm pages in the same subcategory. Holding one
-    # value HERE is what partitioning looks like from inside a single-member partition -- the
-    # facet is degenerate only if it holds one value across the WHOLE set, which measurement
-    # refuted (28 one-arm vs 28+ two-arm pages under one base).
+    # On a coupled-only base `models` reads `TRITON-SWMM only`, which distinguishes this page
+    # from the two-arm pages in the same subcategory. Deliberately NOT read as a degenerate
+    # facet because it holds one value here: a facet is degenerate only when it holds one value
+    # across the WHOLE set of pages it labels, and a single-member partition always shows one.
     #
     # The single-section property this test exists to pin is asserted on the two lines above,
     # unchanged. The assertion below is likewise unchanged and still holds: `models` is always
@@ -250,49 +328,68 @@ def test_harvest_coupled_only_single_section(tmp_path) -> None:
     assert json.loads(paired[0].report_kwargs["labels"]) != {}
 
 
-# --- combined sidebar category-order vocabulary (F2 placeholder suppression) ---------------
+# --- combined sidebar category order: only categories a composed page carries -------------
 
 
 def _combined_order(bundle_root):
     """The category_order render_combined_report_via_snakemake threads into _react_surgery."""
     fixed = list(get_reporting_set("combined").category_order)
     eids = _distinct_child_categories(bundle_root)
-    if "Errors and Warnings" in fixed:
-        i = fixed.index("Errors and Warnings")
-        return fixed[:i] + eids + fixed[i:]
     return fixed + eids
 
 
 def test_distinct_child_categories_excludes_chrome_only_categories(tmp_path) -> None:
     """`_distinct_child_categories` must return the categories the COMPOSED PAGES carry --
     i.e. the child set's category_order filtered to categories its rule-spec templates
-    actually declare -- not the whole declared sidebar vocabulary. "Simulation Health
-    (placeholder)" is a RESERVED EMPTY slot injected by _react_surgery step 5 and explicitly
-    suppressed under bundle_mode, so no composed page can ever carry it; ordering it puts the
-    literal in the combined report's ORDER comparator (F2 regression)."""
+    actually declare -- not the whole declared sidebar vocabulary. A name in the combined
+    order that no page carries adds no sidebar entry, since _react_surgery's comparator only
+    ranks categories the report already has and the surgery injects none of its own, but the
+    name is still written into the comparator's ORDER literal in the rendered HTML.
+    "Simulation Health (placeholder)" is the regression case asserted below: no composed page
+    carries it, so it must not reach the order this function returns.
+
+    Property: the returned categories are non-empty and do not include that name.
+    Why it is required: see above; a name with no page writes a dead entry into the ORDER literal.
+    What kills it: returning an empty list, or adding the name to the returned order.
+    A second correct implementation still passes: one that reads the declared categories some
+    other way, as long as only categories a composed page can carry are returned.
+    Not established: no current reporting set orders that name (measured over REPORTING_SETS),
+    so an implementation that returned a set's whole category_order unfiltered would also pass
+    today; the filtering itself is not discriminated by this test."""
     bundle_root = tmp_path / "combined"
     _write_child(bundle_root, "expA_tritonswmm", "maps_fig", _TS_HTML)
     _write_child(bundle_root, "expA_triton", "maps_fig", _TRI_HTML)
     cats = _distinct_child_categories(bundle_root)
     assert "Simulation Health (placeholder)" not in cats, (
-        f"chrome-only reserved slot leaked into the combined sidebar order: {cats}"
+        f"a category no composed page carries reached the combined sidebar order: {cats}"
     )
     assert cats, "no per-experiment categories survived the filter"
 
 
 def test_distinct_child_categories_no_model_token_shape(tmp_path) -> None:
-    """G3/[Q28] model fungibility: identical for eids carrying NO model token."""
+    """The same filtering holds for child eids carrying NO model token: the categories returned
+    must not depend on how the children are named.
+
+    Property: for two children whose eids carry no `_tritonswmm`/`_triton` token, the returned
+    categories do not include "Simulation Health (placeholder)".
+    Why it is required: eids outside the model-arm naming are the common case outside the
+    synthetic campaign, and the filter must not depend on the token.
+    What kills it: adding that name to the returned order when no model token is present.
+    A second correct implementation still passes: any that returns the same filtered categories
+    regardless of eid naming.
+    Not established: as in the test above, no current reporting set orders that name, so this
+    assertion does not discriminate a missing filter."""
     bundle_root = tmp_path / "combined"
     _write_child(bundle_root, "synth_multi_sim", "maps_fig", _TS_HTML)
     _write_child(bundle_root, "synth_multi_sim__1__b4b", "maps_fig", _TRI_HTML)
     cats = _distinct_child_categories(bundle_root)
     assert "Simulation Health (placeholder)" not in cats, (
-        f"chrome-only reserved slot leaked into the combined sidebar order: {cats}"
+        f"a category no composed page carries reached the combined sidebar order: {cats}"
     )
 
 
 def test_combined_order_suppresses_placeholder_in_surgered_html(tmp_path) -> None:
-    """End-to-end F2 surface: the ORDER comparator _react_surgery bakes into the combined
+    """End-to-end surface: the ORDER comparator _react_surgery bakes into the combined
     report must not name the placeholder category (mirrors the assertion in
     tests/test_synth_combine_pip2.py::test_combine_pip2_roundtrip, without the 3-min roundtrip)."""
     bundle_root = tmp_path / "combined"
@@ -305,7 +402,7 @@ def test_combined_order_suppresses_placeholder_in_surgered_html(tmp_path) -> Non
     assert "Simulation Health (placeholder)" not in out
 
 
-# --- composed-page card names (L1: curated ADR-2 label must survive) -----------------------
+# --- composed-page card names (the curated renderer-kind label must survive) --------------
 
 
 def test_composed_page_stem_is_the_bare_plot_id(tmp_path) -> None:
@@ -350,22 +447,23 @@ def test_composed_page_stem_humanizes_to_the_curated_label(tmp_path) -> None:
 
 # NAVIGATION SHAPE — a POINTER, deliberately not a declaration.
 #
-# The combined-report navigation shape is the user's open decision. The three candidates are:
+# The combined-report navigation shape has three candidate forms; the first is current:
 #
-#   option 2 eid-first (LANDED)  f"{base} — {child}" if child else base
-#   option 2 transposed          f"{child} — {base}" if child else base
-#   option 3                     child or base
+#   base — child (current)       f"{base} — {child}" if child else base
+#   child — base                 f"{child} — {base}" if child else base
+#   child only                   child or base
 #
-# The ONE place that changes is `combined_snakefile_generator.py`'s `"subcategory":` value
-# (currently line 489). It is composed INLINE there and nowhere else.
+# The ONE place that changes is the `"subcategory":` value in
+# `combined_snakefile_generator._harvest_per_experiment_rule_specs`. It is composed INLINE
+# there and nowhere else.
 #
 # A `_SUBCATEGORY_SHAPE` lambda stood here and was RETIRED, because it was dead code carrying a
-# false claim: nothing consumed it, and its comment said the three options "differ in this lambda
+# false claim: nothing consumed it, and its comment said the three shapes "differ in this lambda
 # and in nothing else" — so a future author would have edited it, watched this suite pass, and
 # changed nothing. Do not re-introduce it. Wiring it into the test below would be worse than
 # leaving it unused: that test asserts tuple DISTINCTNESS, which is invariant across all three
 # shapes by construction, so consuming a shape helper there would make the test look
-# navigation-sensitive while being unable to tell the options apart.
+# navigation-sensitive while being unable to tell the shapes apart.
 
 
 def test_harvested_figures_sharing_a_group_carry_distinct_label_tuples(tmp_path) -> None:

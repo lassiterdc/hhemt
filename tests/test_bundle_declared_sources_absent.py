@@ -27,7 +27,7 @@ def test_harvest_records_the_absent_source_and_still_plans_the_present_one(tmp_p
     (analysis_dir / "eda").mkdir(parents=True)
     present = analysis_dir / "eda" / "present.zarr"
     present.write_text("x", encoding="utf-8")
-    absent = analysis_dir / "eda" / "b4b_clean_identity.zarr"  # never created
+    absent = analysis_dir / "eda" / "raw_byte_identity.zarr"  # never created
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -35,7 +35,7 @@ def test_harvest_records_the_absent_source_and_still_plans_the_present_one(tmp_p
             {"eda_compute_sensitivity": [present, absent]}, analysis_dir
         )
 
-    assert declared_absent == ["eda/b4b_clean_identity.zarr"], "exactly the absent source"
+    assert declared_absent == ["eda/raw_byte_identity.zarr"], "exactly the absent source"
     assert entries == {"eda/present.zarr": present}, "the present source must still be planned"
     assert shallow == []
 
@@ -64,10 +64,10 @@ def test_manifest_carries_declared_sources_absent_only_when_non_empty(tmp_path):
         sources_by_renderer={"r": [Path("eda/a.zarr")]},
         analysis_id="aid",
         git_sha="deadbeef",
-        declared_sources_absent=["eda/b4b_clean_identity.zarr"],
+        declared_sources_absent=["eda/raw_byte_identity.zarr"],
     )
     manifest = json.loads((staging / "bundle_manifest.json").read_text())
-    assert manifest["declared_sources_absent"] == ["eda/b4b_clean_identity.zarr"]
+    assert manifest["declared_sources_absent"] == ["eda/raw_byte_identity.zarr"]
 
     staging2 = tmp_path / "staging2"
     staging2.mkdir()

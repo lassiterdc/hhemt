@@ -1,16 +1,15 @@
-"""FIX 1 (reprocess rebuild correctness) — driver-side flag + log invalidation.
+"""Reprocess rebuild correctness — driver-side flag + log invalidation, and the deletions around it.
 
 Compile-INDEPENDENT coverage (no GPU / no real simulation pipeline; uses the
-compile-free object fixtures + ``tmp_path``-rooted on-disk trees). The applied
-implementation edits (Option A) ensure the cheap per-model processing-LOG clear
-runs on EVERY reprocess route (SLURM-offload AND in-process), so the rebuilt
-``process_*`` rule's runner actually re-writes its outputs (the
-``process_simulation.py::_already_written`` gate keys on the per-model
-``processing_log.outputs`` dict, Gotcha #28 — NOT on flag presence). Without
+compile-free object fixtures + ``tmp_path``-rooted on-disk trees). The reprocess
+driver runs the cheap per-model processing-LOG clear on EVERY reprocess route
+(SLURM-offload AND in-process), so the rebuilt ``process_*`` rule's runner actually
+re-writes its outputs (the ``process_simulation.py::_already_written`` gate keys on
+the per-model ``processing_log.outputs`` dict — NOT on flag presence). Without
 this clear, a SLURM-routed reprocess would emit fresh flags + a rebuild rule but
 the runner would skip every ``_export_*`` write (stale-zarr silent-failure mode).
 
-The three tests here drive:
+The first three tests drive:
 
 - ``(a)`` SENSITIVITY reprocess SLURM-route: ``d_process_*`` flags deleted +
   per-scenario per-model ``processing_log.outputs`` cleared for every sub.
@@ -19,7 +18,11 @@ The three tests here drive:
   input through that ``d_process`` flag, and the generated Snakefile PARSES via a
   Snakemake dry-run.
 - ``(b2)`` NON-sensitivity reprocess SLURM-route: per-scenario per-model
-  ``processing_log.outputs`` cleared (the CHANGE A1 fix).
+  ``processing_log.outputs`` cleared.
+
+Later sections cover the consolidate-stage preservation of ``processed/``, chaptered
+append batching, the one accounting call per regenerate arm, and the reprocess
+figure-deletion site.
 
 The compile-gated end-to-end rebuild assertion lives in
 ``test_synth_08_sensitivity_reprocess.py::test_reprocess_rebuild_rewrites_summary``.
@@ -74,7 +77,7 @@ def _seed_scenario_processing_log(scen: TRITONSWMM_scenario) -> list[str]:
 def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(synth_sensitivity_analysis, monkeypatch):
     """Sensitivity ``reprocess(start_with='process', regenerate_existing=True)``
     on the SLURM-offload route deletes every sub's ``d_process_*`` flags AND
-    clears every scenario's per-model ``processing_log.outputs`` (FIX 1, hunk 2a)."""
+    clears every scenario's per-model ``processing_log.outputs``."""
     experiment = synth_sensitivity_analysis
     sensitivity = experiment.sensitivity
 
@@ -109,8 +112,8 @@ def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(synth_sensitivit
             event_id = scen.event_id
             model_types = _seed_scenario_processing_log(scen)
             # Seed the RAW rebuild source per enabled model so the d5d0084
-            # self-heal's fail-fast guard (_assert_reprocess_rebuild_sources_present,
-            # analysis.py ~L3291) passes: summaries stay ABSENT (so the self-heal
+            # self-heal's fail-fast guard (TRITONSWMM_analysis.
+            # _assert_reprocess_rebuild_sources_present) passes: summaries stay ABSENT (so the self-heal
             # still reconciles + unlinks the d_process flags, which this test
             # asserts), but the raw out_triton/out_tritonswmm dir (or the swmm
             # .out FILE) must exist + be non-empty or the guard raises
@@ -202,7 +205,7 @@ def test_reprocess_generator_emits_rebuild_after_invalidation(synth_sensitivity_
     model_type = enabled_models[0]
 
     # Seed: every (member, event) gets its c_run flag present, d_process ABSENT
-    # (mirror workflow.py:6675-6678 for the event_id slug derivation).
+    # (the event_id slug comes from scenario.compute_event_id_slug, as in the workflow generators).
     member_event_pairs: list[tuple[str, str]] = []
     for member_id, analysis in experiment.sensitivity.members.items():
         member_str = str(member_id)
@@ -269,7 +272,7 @@ def test_reprocess_generator_emits_rebuild_after_invalidation(synth_sensitivity_
 
 
 # ---------------------------------------------------------------------------
-# (b2) non-sensitivity reprocess SLURM-route — per-model log cleared (CHANGE A1)
+# (b2) non-sensitivity reprocess SLURM-route — per-model log cleared
 # ---------------------------------------------------------------------------
 
 
@@ -278,7 +281,7 @@ def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(
 ):
     """Non-sensitivity ``reprocess(start_with='process', regenerate_existing=True)``
     on the SLURM-offload route clears each scenario's per-model
-    ``processing_log.outputs`` (FIX 1, CHANGE A1)."""
+    ``processing_log.outputs``."""
     analysis = synth_multi_sim_analysis
 
     # Force the SLURM-offload route.
@@ -286,7 +289,8 @@ def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(
 
     # Patch BOTH submission methods so the route fires no real workflow.
     # Must return the real dict shape — reprocess now checks `success` and raises
-    # on failure (analysis.py, parity with sensitivity_analysis.py:743-770).
+    # on failure (TRITONSWMM_analysis.reprocess, matching the same check in
+    # TRITONSWMM_sensitivity_analysis.reprocess).
     monkeypatch.setattr(
         analysis._workflow_builder,
         "submit_reprocess_delete_workflow",
@@ -330,8 +334,8 @@ def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(
 
 # ---------------------------------------------------------------------------
 # (c) consolidate-stage in-process reprocess PRESERVES processed/ (regression
-#     guard — the FIX-1 Phase-1 defect where an unguarded inline processed/
-#     rmtree deleted the rebuild source on the consolidate path, 2026-05-31)
+#     guard — a defect, fixed 2026-05-31, where an unguarded inline processed/
+#     rmtree deleted the rebuild source on the consolidate path)
 # ---------------------------------------------------------------------------
 
 
@@ -340,15 +344,15 @@ def test_reprocess_consolidate_inprocess_preserves_processed(synth_sensitivity_a
     PRESERVE each sub's per-scenario ``processed/`` — that directory is the
     rebuild source the consolidate stage reads from; only a PROCESS-stage
     reprocess may delete it (the ``_delete_processed_outputs_for_reprocess``
-    helper's ``start_with == "process"`` guard, analysis.py ~L2979).
+    helper's ``start_with == "process"`` guard).
 
-    Regression guard for the FIX-1 Phase-1 escape: an inline processed/ rmtree
+    Regression guard for an earlier escape: an inline processed/ rmtree
     in the in-process ``elif`` branch WITHOUT that guard deleted processed/ on a
     consolidate-stage reprocess, so the downstream consolidate Snakemake step
     had no summaries to rebuild from and failed (cascading the synth_08 e2e
     suite). This compile-free test exercises that exact branch in seconds — the
     coverage gap that previously let the defect reach only the ~4-min
-    compile-gated Tier-2 gate.
+    compile-gated end-to-end suite.
     """
     experiment = synth_sensitivity_analysis
     sensitivity = experiment.sensitivity
@@ -390,7 +394,7 @@ def test_reprocess_consolidate_inprocess_preserves_processed(synth_sensitivity_a
 
 
 # ---------------------------------------------------------------------------
-# (c) FIX 2 — append-batch decoupled from load chunk (compile-free, synthetic)
+# (c) append-batch decoupled from load chunk (compile-free, synthetic)
 # ---------------------------------------------------------------------------
 
 
@@ -470,7 +474,8 @@ def test_append_batch_decoupled_from_load_chunk(tmp_path, monkeypatch):
     """With the load chunk floored to 1 timestep (the fine-grid degeneration this
     fix targets), the batching path must emit ceil(N / append_batch_timesteps)
     CHAPTER stores — NOT one store per timestep — and the merged store must hold
-    every timestep (no loss across the merge). R4 + R5 (separate knob).
+    every timestep (no loss across the merge), with the append batch a knob separate
+    from the load chunk.
 
     Counts CHAPTER writes only, classified via utils.chapters_dir_for, because the
     unified merge is a fourth to_zarr call that is not a batch write; a total over
@@ -613,28 +618,31 @@ def test_missing_source_file_raises_rather_than_skipping(tmp_path, monkeypatch):
     # The message this fixture actually produces. The old string exists NOWHERE in
     # src/hhemt/ (measured: 0 hits), so the assertion could only ever fail; this one names
     # the guard the fixture reaches, which makes the test an executing regression for it.
-    # The substring is hardcoded because process_simulation.py:407 builds it as an inline
-    # literal with no importable constant -- the coupling is FORCED, and loosening it would
-    # leave the test unable to say WHICH guard fired, which is the one thing it pins.
+    # The substring is hardcoded because process_simulation.py builds it as an inline literal
+    # inside _streaming_chunked_zarr_write, with no importable constant -- the coupling is
+    # FORCED, and loosening it would leave the test unable to say WHICH guard fired, which is
+    # the one thing it pins.
     with pytest.raises(ProcessingError, match="missing between listing and read"):
         inst._export_TRITONSWMM_TRITON_outputs(verbose=False)
     assert not fname_out.exists()
 
 
 # ---------------------------------------------------------------------------
-# (d) FIX 3 — report-restamp gated on regenerate_existing (compile-free)
+# (d) one accounting call per regenerate arm (compile-free)
 # ---------------------------------------------------------------------------
 
 
-def test_report_restamp_skipped_on_regenerate(tmp_path, monkeypatch):
-    """FIX 3 (R6) + Phase-2 D3: on the regenerate_existing process/consolidate
-    path BOTH the early report-restamp AND the O(1) DU decrement are SKIPPED (a
-    later zarr deletion restamps the tree anyway — gating avoids the redundant
-    multi-minute login-node stat() walk). On the default regenerate_existing=False
-    path the deletion tool (``du_sentinels.delete_and_account``) FIRES exactly once
-    for the report shell + plots. Drives
-    TRITONSWMM_analysis._invalidate_downstream_flags directly; the gate is pure
-    routing logic, so no compile is required."""
+def test_each_regenerate_arm_makes_one_accounting_call(tmp_path, monkeypatch):
+    """Each regenerate_existing arm of the consolidate path makes exactly ONE accounting call.
+
+    ``_invalidate_downstream_flags`` routes the report shell and plots through the
+    deletion tool (``du_sentinels.delete_and_account``) once per call, on the
+    regenerate_existing=True arm and on the default arm alike, and no restamp walk
+    runs on either arm. The zarr branch would add a second call on the
+    regenerate_existing=True arm, but this stub sets ``analysis_datatree_zarr`` to None.
+    The tool is mocked, so the test pins how many accounting calls each arm makes,
+    not what the tool deletes or measures. It drives the method directly, so no
+    compile is required."""
     import hhemt.du_sentinels as du_sentinels
     from hhemt.analysis import TRITONSWMM_analysis
 
@@ -643,31 +651,43 @@ def test_report_restamp_skipped_on_regenerate(tmp_path, monkeypatch):
         analysis_dir=tmp_path,
         analysis_datatree_zarr=None,  # no zarr -> the destructive delete is a no-op
     )
-    # Seed a non-empty report artifact so the default-path decrement has a
-    # child_delta to subtract (the decrement is `if child_deltas:`-gated).
+    from hhemt.report_renderers._reporting_sets import get_reporting_set
+
+    inst._active_reporting_set = get_reporting_set("default")
+    # Seed a non-empty report artifact, as a real reprocess would find on disk. The
+    # deletion tool is mocked below, so no decrement runs in this test and the seed
+    # does not change the call count.
     (tmp_path / "analysis_report.html").write_text("<html></html>")
 
-    # Both helpers are imported method-locally from du_sentinels, so the patch
-    # target is the source module (the local import re-fetches at call time).
-    # After clause 1 every report/zarr deletion routes through the tool; the two
-    # former patch targets no longer exist / are no longer called from this path.
+    # Patch the du_sentinels module ATTRIBUTE. analysis.py imports the du_sentinels
+    # module at the top and calls through it (du_sentinels.delete_and_account for the
+    # zarr, du_sentinels.delete_and_account_unless_dry_run for the report and plots,
+    # which reaches delete_and_account through du_sentinels' own globals), so the name
+    # is looked up at call time and this patch intercepts the report, plot and zarr
+    # deletions. The method's `_status` flag deletions (the d_process flags and
+    # e_consolidate_complete.flag) call Path.unlink directly and are NOT intercepted.
+    # A `from hhemt.du_sentinels import delete_and_account` in analysis.py would bind
+    # its own name and bypass this patch for the calls made through it.
     tool_mock = MagicMock(return_value=0)
     monkeypatch.setattr(du_sentinels, "delete_and_account", tool_mock)
 
-    # regenerate_existing=True: a later zarr deletion restamps -> BOTH skipped.
+    # regenerate_existing=True: the report+plots accounting is NOT skipped on this arm.
+    # It fires here too. The zarr deletion on this arm runs first, in the same call, and
+    # the two cannot double-count because the tool counts each path it deletes exactly once.
     inst._invalidate_downstream_flags("consolidate", regenerate_existing=True, dry_run=False)
     # ONE tool call (report shell + plots); the zarr branch is guarded on
     # `analysis_datatree_zarr`, which this stub sets to None.
     assert tool_mock.call_count == 1, "exactly one accounting call (report+plots) on the regenerate_existing=True path"
 
-    # Re-seed the report artifact: the regenerate_existing=True call above ran
-    # _delete_report_and_plot_artifacts (the report unlink is unconditional; only
-    # the DU restamp/decrement is gated), so the file is now gone. Re-create it so
-    # the default-path decrement has a non-empty child_delta to subtract.
+    # Re-seed the report artifact before the default-arm call. The report deletion is
+    # unconditional of regenerate_existing, so with the real tool the call above would
+    # have removed it. Re-create it so the second call starts from the same seeded
+    # state either way. With the tool mocked the file in fact survives, and the call
+    # count does not depend on whether it exists.
     (tmp_path / "analysis_report.html").write_text("<html></html>")
 
-    # regenerate_existing=False (default): no later deletion -> O(1) decrement FIRES,
-    # the legacy full-tree restamp does NOT (Phase 2 D3 replaced it).
+    # regenerate_existing=False (default): no later deletion. The report+plots
+    # accounting call fires once, and no restamp walk runs.
     inst._invalidate_downstream_flags("consolidate", regenerate_existing=False, dry_run=False)
     # Same rule on the default path: ONE accounting call (report+plots), never a restamp.
     assert tool_mock.call_count == 2, "exactly one further accounting call on the regenerate_existing=False path"
@@ -744,10 +764,11 @@ def test_figure_deletion_under_plots_is_pinned_to_the_shared_helper():
     false however good the predicate is. Closing the class means catching any FIGURE
     deletion, which requires distinguishing figure deletions from the many legitimate
     deletions in this package -- status flags, reports, zarr stores, chapter sets. No
-    on-disk property discriminates regenerable from unregenerable; the only
-    discriminator is the DIRECTORY, which is what UNREGENERABLE_ANALYSIS_SUBTREES
-    encodes. A checker strong enough to close the class would re-implement the
-    registry and would then be checking itself. So a walk over a directory named by a
+    on-disk property discriminates regenerable from unregenerable. There are two
+    discriminators: the DIRECTORY, which is what UNREGENERABLE_ANALYSIS_SUBTREES
+    encodes, and, inside those directories, whether an active report rule writes the
+    figure (``report_rule_stems``). A checker strong enough to close the class would
+    re-implement both and would then be checking itself. So a walk over a directory named by a
     different literal, or computed from config, escapes this by construction.
     """
     import ast
@@ -758,6 +779,9 @@ def test_figure_deletion_under_plots_is_pinned_to_the_shared_helper():
     deleters = ("unlink", "fast_rmtree", "rmtree")
 
     def mentions_plots(node, aliases):
+        """True when ``node`` names a plots directory: a string constant containing
+        "plots", a name containing it or bound in ``aliases``, or an attribute
+        containing it."""
         for sub in ast.walk(node):
             if isinstance(sub, ast.Constant) and isinstance(sub.value, str) and "plots" in sub.value:
                 return True
@@ -768,12 +792,14 @@ def test_figure_deletion_under_plots_is_pinned_to_the_shared_helper():
         return False
 
     def is_walk(node):
+        """True when ``node`` contains a ``.glob(...)`` or ``.rglob(...)`` call."""
         return any(
             isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr in ("glob", "rglob")
             for sub in ast.walk(node)
         )
 
     def deletes(nodes):
+        """True when any of ``nodes`` calls one of ``deleters``, as a method or a bare name."""
         for n in nodes:
             for sub in ast.walk(n):
                 if isinstance(sub, ast.Call):
@@ -818,12 +844,10 @@ def test_figure_deletion_under_plots_is_pinned_to_the_shared_helper():
 
 
 def _seed_reprocess_figure_tree(tmp_path):
-    """Seed the minimum tree that separates every wrong resolution of the W1 figure hunk.
+    """Seed the minimum tree that separates every wrong resolution of the dry-run figure guard.
 
-    (e) W1 / D131 -- the dry-run figure guard at the reprocess deletion site. This helper
-    and the two nodes below are that section; the file's usual column-0 banner comment is
-    deliberately absent because this block is quoted verbatim into a planning scratch whose
-    porter treats a column-0 ``#`` as a heading and truncates there.
+    (e) The dry-run figure guard at the reprocess deletion site. This helper and the two
+    tests below are that section.
 
     One unregenerable figure, one regenerable figure, a manifest sidecar for each, and the
     report shell. Sidecar names are STEM-based because ``utils.sidecar_for`` is (``f.png``
@@ -869,6 +893,9 @@ def _drive_reprocess_invalidator(tmp_path, start_with, *, dry_run):
         analysis_dir=tmp_path,
         analysis_datatree_zarr=None,  # no zarr -> the destructive delete is a no-op
     )
+    from hhemt.report_renderers._reporting_sets import get_reporting_set
+
+    inst._active_reporting_set = get_reporting_set("default")
     inst._invalidate_downstream_flags(start_with, regenerate_existing=False, dry_run=dry_run)
     return paths
 
@@ -878,7 +905,7 @@ _REPROCESS_ARMS_REACHING_THE_FIGURE_SITE = ("process", "consolidate")  # see _dr
 
 @pytest.mark.parametrize("start_with", _REPROCESS_ARMS_REACHING_THE_FIGURE_SITE)
 def test_a_dry_run_reprocess_spares_every_figure_and_still_drops_the_report_shell(tmp_path, start_with):
-    """D131: on a dry run at this site ALL figures survive -- and the report shell does not.
+    """On a dry run at this site ALL figures survive -- and the report shell does not.
 
     THE RULING THIS PINS. The developer ruled the broad reading: "On a dry run, i think
     plots should survive." So the dry-run arm spares ``plots/eda/`` AND the regenerable
@@ -897,10 +924,10 @@ def test_a_dry_run_reprocess_spares_every_figure_and_still_drops_the_report_shel
     paths = _drive_reprocess_invalidator(tmp_path, start_with, dry_run=True)
 
     assert paths.eda_figure.exists(), (
-        "a dry run deleted an authored plots/eda/ figure -- nothing regenerates that family, and D131 spares it"
+        "a dry run deleted an authored plots/eda/ figure -- nothing regenerates that family, and a dry run spares it"
     )
     assert paths.regenerable_figure.exists(), (
-        "a dry run deleted a REGENERABLE figure under plots/ -- D131 is the broad reading "
+        "a dry run deleted a REGENERABLE figure under plots/ -- the dry-run exemption is broad "
         "and spares every figure, not only the unregenerable subtrees"
     )
     assert not paths.report_shell.exists(), (
@@ -915,8 +942,9 @@ def test_a_real_run_reprocess_deletes_regenerable_figures_with_their_sidecars_an
     """The satisfying arm: the deletion still deletes, and the exemption is still narrow.
 
     WITHOUT THIS NODE the dry-run node above passes against a site that deletes nothing at
-    all, and against one that spares figures on BOTH arms -- the literal over-read of the
-    ruling's four words, which would stop the render stage re-firing forever.
+    all, and against one that spares figures on BOTH arms -- an over-reading of the dry-run
+    ruling ("plots should survive") as covering real runs too, which would stop the render
+    stage re-firing forever.
 
     SIDECARS ARE PART OF THE PROPERTY, NOT A DETAIL. ``select_regenerable_figures`` appends
     ``sidecar_for(figure)`` per selected figure precisely because the suffix-appending form
@@ -938,7 +966,7 @@ def test_a_real_run_reprocess_deletes_regenerable_figures_with_their_sidecars_an
     )
     assert paths.eda_figure.exists(), (
         "a real run deleted an authored plots/eda/ figure -- the unregenerable-subtree skip "
-        "is the half of W1's fix that is not about dry runs"
+        "applies on real runs too, not only on dry runs"
     )
     assert paths.eda_sidecar.exists(), (
         "a real run deleted a plots/eda/ figure's sidecar while sparing the figure -- the "

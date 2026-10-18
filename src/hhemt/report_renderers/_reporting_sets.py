@@ -1,17 +1,25 @@
-"""Named reporting-set registry (ADR-5).
+"""Named reporting-set registry: which figures a report carries, and in what order.
 
-A "reporting set" is a first-class registered object keyed by name. Each set
-declares: (a) an ordered renderer selection (consumed by the workflow.py
-dispatcher in Phase P1b), (b) a sidebar category-order list (consumed by the
-render_report facades + _react_surgery in Phase P1a), and (c) a set-specific
-run-entry validator hook (consumed at analysis.run() entry).
+An analysis report is assembled from many renderers, and different kinds of
+analysis want different subsets of them -- an event ensemble wants per-event
+maps, a compute-configuration sweep wants scaling plots, a cross-experiment
+combine wants comparison tables. This module names each such subset once, as a
+"reporting set", so every place that emits, enumerates or orders report figures
+reads the same answer instead of carrying its own list.
 
-Import discipline (stipulation "ReportingSet validated at run-entry"): this
-module MUST stay import-light — it must NOT import renderer modules or
-config.report at module load, or it creates the cycle
-config.report -> report_renderers._reporting_sets -> config.report. Renderer
-selection is expressed as builder-key strings; conditional renderers carry a
-predicate_key string the dispatcher resolves to a callable (P1b).
+Each set declares (a) an ordered renderer selection, which the workflow.py
+dispatcher turns into plot rules; (b) a sidebar category order, which the
+render_report facades pass to _react_surgery; and (c) a validator key plus the
+analysis shape and sweep axes it accepts, which config.report checks at
+analysis.run() entry.
+
+Import discipline: this module MUST stay import-light -- it must NOT import
+renderer modules or config.report at module load. config.report lazy-imports this
+module to validate the active set, so a module-level import back into it closes
+the cycle config.report -> report_renderers._reporting_sets -> config.report and
+the import fails. That is why renderer selection is expressed as builder-key
+strings, and a conditional renderer carries a predicate_key string the dispatcher
+resolves to a callable, rather than either holding the callable itself.
 """
 
 from __future__ import annotations
@@ -21,18 +29,22 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class RuleSpecTemplate:
-    """Bundle-side rule facts for one renderer (P1b).
+    """The Snakemake rule facts for ONE report figure, declared once.
 
-    The bundle generator (`bundle/snakefile_generator.py`) builds stub-shaped
-    `RuleSpec`s from the active set's selection rather than a hand-maintained
-    literal list. Each conditional/unconditional figure renderer that the bundle
-    emits carries the per-renderer facts here so BOTH the source-side builders and
-    the bundle generator read category/caption/wildcards/output-path from one
-    place (closing the source-vs-bundle drift). Consumed by the bundle generator
-    AND -- since the dem-resolution phase's D13 registry-read generalization -- by
-    the source-side `_build_plot_rule_block_eda_compute_sensitivity`, which iterates
-    this tuple instead of hardcoding one figure. Selections that predate that change
-    omit it, so it remains a backward-compatible add (P1a entries omit it).
+    A renderer may produce several figures, so this is per FIGURE, not per renderer.
+    Several generators need the same facts about a figure -- its rule name, output
+    path, caption, category, wildcards. Deliberately NOT a copy per generator: copies
+    drift, and a drifted category files one figure under different sidebar sections
+    in the source-side report and the bundle-regenerated one. Code reaches a template
+    either through a ReportingSet's ``renderer_selection`` -- however the set object
+    was obtained: ``REPORTING_SETS``, ``get_reporting_set``, ``compose_reporting_sets``
+    (called directly, or via config.report's ``resolve_active_reporting_set`` and
+    ``validate_active_reporting_set``), or ``eda_rule_spec_templates`` for the EDA
+    family -- or by importing a ``_TMPL_*`` name directly. Examples of readers, not a
+    complete list: the bundle regeneration generator
+    (`bundle/snakefile_generator.py`) builds its rules entirely from them, and the
+    source-side EDA builder emits one rule per template instead of hardcoding its
+    figures.
 
     renderer_module      : the renderer module the bundle rule shells out to.
     output_path_template : the rule's output path (may contain `{wildcard}`s).
@@ -56,9 +68,15 @@ class RuleSpecTemplate:
     #: Per-TEMPLATE gate, distinct from RendererSelection.predicate_key which gates a
     #: whole selection. A selection may carry N templates that are not all applicable
     #: to the same analysis -- per_sim_per_member carries peak_flood_depth (any model) and
-    #: conduit_flow (SWMM-derived only). Splitting the selection instead is UNSAFE:
-    #: every consumer takes the FIRST selection per builder_key, so a second same-key
-    #: selection is silently dropped. None = always emitted.
+    #: conduit_flow (SWMM-derived only). This field is read by the bundle regeneration
+    #: generator (bundle/snakefile_generator.py); the source-side per_sim_per_member
+    #: builder does not read it and hardcodes the same SWMM test instead. Splitting the
+    #: selection into two same-key selections is UNSAFE: the dispatcher calls the
+    #: builder once per selection, and that builder emits peak_flood_depth on every call
+    #: (and conduit_flow on every call for a SWMM-bearing analysis), so a split would
+    #: emit the same rule twice; for the eda_compute_sensitivity key,
+    #: eda_rule_spec_templates() reads only the FIRST same-key selection, so the second
+    #: is silently dropped. None = always emitted.
     predicate_key: str | None = None
 
 
@@ -66,18 +84,18 @@ class RuleSpecTemplate:
 class RendererSelection:
     """One renderer in a set's ordered selection.
 
-    builder_key        : key into workflow.py's dispatcher builders map (P1b).
+    builder_key        : key into workflow.py's dispatcher builders map, which names
+                         the source-side method that emits this renderer's rules.
     predicate_key      : None for unconditional renderers; a string the dispatcher
                          resolves to a Callable[[inputs], bool] for conditional
                          renderers (e.g. "has_independent_vars",
                          "has_member_event_pairs").
-    rule_spec_template : () for selections the bundle generator does not emit;
-                         a TUPLE of RuleSpecTemplate (one per emitted bundle
-                         figure — most renderers map to one, but per_sim and
-                         per_sim_per_member each expand to two: peak_flood_depth +
-                         conduit_flow) carrying the bundle-side rule facts when the
-                         bundle generator data-drives this renderer (P1b). Consumed
-                         ONLY by the bundle generator.
+    rule_spec_template : a TUPLE of RuleSpecTemplate, one per figure this renderer
+                         produces -- most renderers produce one; per_sim_per_member
+                         produces two (peak_flood_depth + conduit_flow) and the
+                         dem-resolution EDA selection four. Empty only for a renderer
+                         with no figure to declare. Its readers are listed on
+                         RuleSpecTemplate.
     """
 
     builder_key: str
@@ -107,37 +125,43 @@ class ReportingSet:
     #: Sensitivity AXES this set's figures plot against, as ALL-of over the outer
     #: tuple and ANY-of within each inner tuple. Compared at run entry against the
     #: sweep's varied-axis set (sensitivity.analysis_independent_vars union
-    #: system_independent_vars, both already canonical stripped field names). An
-    #: empty tuple means the set imposes no axis requirement -- a real declaration.
-    #: None means UNDECLARED and is refused by the run-entry check, exactly as an
-    #: undeclared shape is: without that distinction, holding a set at the default
-    #: would positively declare "no axis requirement" for a set that has one, which
-    #: is the S16 claim this field exists to encode.
+    #: system_independent_vars, both already canonical stripped field names), so a
+    #: set whose figures need an x-axis the sweep does not vary is refused before
+    #: compute is committed rather than rendering empty plots. An empty tuple means
+    #: the set imposes no axis requirement -- a real declaration. None is meant to
+    #: mean UNDECLARED, by analogy with shape. Not established: the run-entry check
+    #: (config.report.validate_active_reporting_set) tests `if active.required_axes:`,
+    #: so None is falsy and is ACCEPTED exactly as () is -- unlike an undeclared
+    #: shape, which that check does refuse. Every registered set declares a value.
     required_axes: tuple[tuple[str, ...], ...] | None = None
 
 
-# Historical sidebar category order (the pre-ADR-5 _CATEGORY_ORDER, now a per-set
-# field). The default/standard set uses it verbatim; benchmarking reuses it
-# (its figures land under existing categories — "Key Results"/"Benchmarking").
+# The sidebar category order every analysis-scoped set shares -- default,
+# sensitivity, benchmarking and the three EDA sets; only "combined" declares its own.
+# The benchmarking and EDA figures need no category of their own: they file under
+# "Key Results", with "Benchmarking" and the EDA family names as SUBCATEGORIES. This
+# is a ranking, not an inventory: a category absent from it -- the scenario-status
+# appendix's "Appendix" -- still renders, and sorts after every ranked category,
+# alphabetically, under _react_surgery's comparator.
 _STANDARD_CATEGORY_ORDER: tuple[str, ...] = (
     "Workflow Status",
     "Errors and Warnings",
     "Key Results",
     "System Information",
-    "Simulation Health (placeholder)",
     "Per Simulation Results",
     "Workflow performance",
     "Metadata",
 )
 
-# --- Bundle-side RuleSpecTemplates (P1b) -------------------------------------
-# These carry the regeneration-Snakefile rule facts the bundle generator
-# (bundle/snakefile_generator.py) emits, so the registry is the single source for
-# each figure's category/caption/wildcards/output. The `category` here is
-# cross-checked against the source-side `_build_plot_rule_block_*`
-# report(category=) by tests/test_reporting_set_cosourcing.py (drift guard). The
-# five non-conditional figure templates below are SHARED by the default and
-# benchmarking sets (defined once, referenced from both selections).
+# --- Figure RuleSpecTemplates ------------------------------------------------
+# One template per figure, so the registry is the single source for each figure's
+# category/caption/wildcards/output. Where a source-side `_build_plot_rule_block_*`
+# still writes its own report(category=), that string is cross-checked against the
+# template by tests/test_reporting_set_cosourcing.py, which fails on a mismatch. The
+# seven unconditional templates from here through _TMPL_WORKFLOW_PERFORMANCE are
+# defined once and referenced from every analysis-scoped selection; the
+# cross-experiment and EDA templates after them are referenced only by the
+# combined set and the EDA sets respectively.
 _TMPL_SYSTEM_OVERVIEW = RuleSpecTemplate(
     rule_name="plot_system_overview",
     renderer_module="system_overview",
@@ -193,9 +217,9 @@ _TMPL_ERRORS_AND_WARNINGS = RuleSpecTemplate(
     resources_yaml="mem_mb=1000, time_min=5",
     log_path_template="_logs/plots/errors_and_warnings.log",
 )
-# disk_utilization: previously absent from the bundle (intentional +1 drift-fix,
-# P1b BUNDLE DRIFT NOTE). Facts mirror the source-side builder
-# (workflow.py _build_plot_rule_block_disk_utilization); regen-only metadata.
+# disk_utilization: facts mirror the source-side builder
+# (workflow.py _build_plot_rule_block_disk_utilization), which writes its own copy;
+# this template is what the bundle regeneration Snakefile emits.
 _TMPL_DISK_UTILIZATION = RuleSpecTemplate(
     rule_name="plot_disk_utilization",
     renderer_module="disk_utilization",
@@ -209,10 +233,10 @@ _TMPL_DISK_UTILIZATION = RuleSpecTemplate(
     resources_yaml="mem_mb=1000, time_min=5",
     log_path_template="_logs/plots/disk_utilization.log",
 )
-# metadata (ADR-14 / C10): the Metadata page -- RO-Crate provenance summary +
-# reprex reproduction guide + SLURM efficiency. Unconditional table renderer
-# (emits .html under both static backends); shared by the default and
-# benchmarking sets. Facts mirror the source-side builder
+# metadata: the Metadata page -- RO-Crate provenance summary + data availability +
+# reprex reproduction guide (the SLURM efficiency table is on the workflow_performance
+# page below, not here). Unconditional table renderer (emits .html under both static
+# backends). Facts mirror the source-side builder
 # (workflow.py _build_plot_rule_block_metadata); the `category` here is
 # cross-checked against that builder's report(category=) by
 # tests/test_reporting_set_cosourcing.py.
@@ -229,10 +253,10 @@ _TMPL_METADATA = RuleSpecTemplate(
     resources_yaml="mem_mb=1000, time_min=5",
     log_path_template="_logs/plots/metadata.log",
 )
-# workflow_performance ([Q160](7)): the run timeline + SLURM efficiency page, extracted
-# out of metadata because both describe how the workflow RAN rather than what it
-# produced. Unconditional table renderer (emits .html under both static backends);
-# shared by the default and benchmarking sets. Facts mirror the source-side builder
+# workflow_performance: the run timeline + SLURM efficiency page, kept separate from
+# metadata because both tables describe how the workflow RAN rather than what it
+# produced or how to reproduce it. Unconditional table renderer (emits .html under both
+# static backends). Facts mirror the source-side builder
 # (workflow.py _build_plot_rule_block_workflow_performance); the `category` here is
 # cross-checked against that builder's report(category=) by
 # tests/test_reporting_set_cosourcing.py.
@@ -249,9 +273,12 @@ _TMPL_WORKFLOW_PERFORMANCE = RuleSpecTemplate(
     resources_yaml="mem_mb=1000, time_min=5",
     log_path_template="_logs/plots/workflow_performance.log",
 )
-# Cross-experiment combined set (PIP-1 Phase 4). INERT on source/bundle
-# generators (no workflow.py builder, no bundle snakefile rule); consumed ONLY
-# by bundle/_combine.py's emit-time direct-render dispatch (F-B Flag 1(c)).
+# Cross-experiment templates, used only by the "combined" set below. INERT on the
+# analysis-side generators: workflow.py has no builder for them and the single-bundle
+# regeneration Snakefile never selects the combined set. Two readers, both on the
+# combine path: bundle/_combine.py renders each figure directly at combine time, and
+# bundle/combined_snakefile_generator.py emits a report() rule per template so the
+# combined report indexes the already-rendered figure.
 _TMPL_CROSS_EXPERIMENT_COMPATIBILITY = RuleSpecTemplate(
     rule_name="plot_cross_experiment_compatibility",
     renderer_module="cross_experiment_compatibility",
@@ -266,9 +293,8 @@ _TMPL_CROSS_EXPERIMENT_COMPATIBILITY = RuleSpecTemplate(
     log_path_template="_logs/plots/cross_experiment_compatibility.log",
 )
 
-# Cross-experiment INTERCOMPARISON set (Phase 5). Same INERT-on-source posture as
-# the compatibility template above: consumed ONLY by bundle/_combine.py's emit-time
-# direct-render dispatch. Projects the combined_intercomparison.json read-model
+# Cross-experiment INTERCOMPARISON table. Same readers as the compatibility template
+# above. Projects the combined_intercomparison.json read-model
 # (clean-vs-resume per-compute-config identity, derived CROSS-BUNDLE by
 # _combine._write_combined_intercomparison).
 _TMPL_CROSS_EXPERIMENT_INTERCOMPARISON = RuleSpecTemplate(
@@ -285,10 +311,12 @@ _TMPL_CROSS_EXPERIMENT_INTERCOMPARISON = RuleSpecTemplate(
     log_path_template="_logs/plots/cross_experiment_intercomparison.log",
 )
 
-# Cross-experiment INTERCOMPARISON MAPS (b3, Phase 5). Same INERT-on-source posture;
-# direct-rendered by _combine.py. Re-reads child_crates/*/sensitivity_datatree.zarr at
-# render time (Option R — no emit-time artifact, CR4-safe). Lands under the SAME
-# "Cross-Experiment Results" category as the scalar intercomparison table.
+# Cross-experiment INTERCOMPARISON MAPS. Same readers as the compatibility template.
+# Re-reads child_crates/*/sensitivity_datatree.zarr at render time rather than
+# persisting a derived artifact during the combine's emit step -- the step whose crate,
+# read-models and manifest must be byte-identical across two combines of the same
+# bundles. Lands under the SAME "Cross-Experiment Results" category as the scalar
+# intercomparison table.
 _TMPL_CROSS_EXPERIMENT_INTERCOMPARISON_MAPS = RuleSpecTemplate(
     rule_name="plot_cross_experiment_intercomparison_maps",
     renderer_module="cross_experiment_intercomparison_maps",
@@ -303,10 +331,12 @@ _TMPL_CROSS_EXPERIMENT_INTERCOMPARISON_MAPS = RuleSpecTemplate(
     log_path_template="_logs/plots/cross_experiment_intercomparison_maps.log",
 )
 
-# Cross-experiment ERRORS-AND-WARNINGS roll-up (Phase 5, F2). Same INERT-on-source
-# posture; direct-rendered by _combine.py. Reads each child_crates/{eid}/validation_report.json
-# at render time (Option R -- no emit-time artifact, CR4-safe). Restores a DISCOVERABLE
-# top-level E&W surface that v8/a2 removed (the per-experiment E&W stays a {eid} subcategory).
+# Cross-experiment ERRORS-AND-WARNINGS roll-up. Same readers as the compatibility
+# template. Reads each child_crates/{eid}/validation_report.json at render time, for
+# the same emit-determinism reason as the maps above. Gives the combined report ONE
+# top-level health page: without it, each experiment's own errors_and_warnings figure
+# is reachable only one level down, under "Errors and Warnings" in a subcategory whose
+# name starts with that experiment's id (model-arm suffix stripped).
 _TMPL_CROSS_EXPERIMENT_ERRORS_AND_WARNINGS = RuleSpecTemplate(
     rule_name="plot_cross_experiment_errors_and_warnings",
     renderer_module="cross_experiment_errors_and_warnings",
@@ -335,16 +365,17 @@ _TMPL_CROSS_EXPERIMENT_DISK_UTILIZATION = RuleSpecTemplate(
     log_path_template="_logs/plots/cross_experiment_disk_utilization.log",
 )
 
-# eda_compute_sensitivity (R11): the in-report EDA adapter for the
-# compute-sensitivity family. Conditional (predicate has_eda_artifact — gated on
-# the master carrying an EDA artifact). Emits the config_diff_maps figure under
-# master-rooted plots/eda/; lands under "Key Results" (Decision 1, no new sidebar
-# category). The source-side builder
+# eda_compute_sensitivity: the in-report EDA adapter for the compute-sensitivity
+# family. Conditional (predicate has_eda_artifact — gated on the master carrying an
+# EDA artifact). Emits the config_diff_maps figure under master-rooted plots/eda/;
+# lands under the existing "Key Results" category with its own subcategory rather
+# than adding a sidebar category. The source-side builder
 # (workflow.py _build_plot_rule_block_eda_compute_sensitivity) DERIVES its
 # report_kwargs from this template, so category parity is structural rather than
-# test-enforced. Note tests/test_reporting_set_cosourcing.py does NOT cover this
-# template: its two tests exercise the `default` and `benchmarking` sets, neither
-# of which carries the eda_compute_sensitivity selection.
+# test-enforced. tests/test_reporting_set_cosourcing.py checks only that the b4b
+# set carries this template and that its category is one the b4b set ranks; its
+# builder-versus-template comparison covers the `default` and `benchmarking` sets,
+# neither of which carries this template.
 _TMPL_EDA_COMPUTE_SENSITIVITY = RuleSpecTemplate(
     rule_name="plot_eda_compute_sensitivity",
     renderer_module="eda_compute_sensitivity",
@@ -360,10 +391,10 @@ _TMPL_EDA_COMPUTE_SENSITIVITY = RuleSpecTemplate(
     log_path_template="_logs/plots/eda_compute_sensitivity.log",
 )
 
-# dem-resolution (D13): the in-report EDA adapter for the DEM-resolution family.
+# dem-resolution: the in-report EDA adapter for the DEM-resolution family.
 # FOUR figures under ONE RendererSelection reusing builder key
-# eda_compute_sensitivity -- the same one-selection-N-templates shape per_sim and
-# per_sim_per_member already use. All four share renderer_module
+# eda_compute_sensitivity -- the same one-selection-N-templates shape
+# per_sim_per_member uses for its two figures. All four share renderer_module
 # "eda_compute_sensitivity" (the _cli entrypoint and the _OUTPUT_EXT_BY_RENDERER
 # key are per-MODULE, not per-figure), and differ only in plot ID, caption, label
 # and log path. Tuple order is the figures' authored reading order (cost/error
@@ -433,8 +464,7 @@ _TMPL_DEM_RESOLUTION_COUPLING_TABLE = RuleSpecTemplate(
 # The standard multisim set: its eight renderers, in emission order. The count is
 # len(_STANDARD_SELECTION) below, not the intersection with _BENCHMARKING_SELECTION.
 # Emitted by the `_emit_active_set_plot_rules` dispatch in `generate_snakefile_content`
-# (workflow.py), which replaced the hardcoded `_build_plot_rule_block_*` call list this
-# comment used to cite by line number. per_sim expands to two bundle figures.
+# (workflow.py). per_sim declares one figure, the per-event page.
 _STANDARD_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("system_overview", rule_spec_template=(_TMPL_SYSTEM_OVERVIEW,)),
     RendererSelection(
@@ -449,7 +479,7 @@ _STANDARD_SELECTION: tuple[RendererSelection, ...] = (
                     "category": "Per Simulation Results",
                     "labels": (
                         '(lambda w: {"figure": "Simulation results", '
-                        '"event": _report_label_value(_EVENT_LABELS, w.event_id, "event")})'
+                        '"event": _report_label_value(_EVENT_SIDEBAR_LABELS, w.event_id, "event")})'
                     ),
                 },
                 wildcards=("event_id",),
@@ -471,9 +501,8 @@ _STANDARD_SELECTION: tuple[RendererSelection, ...] = (
 # the sensitivity-shaped bundle WITHOUT the benchmarking figure; _BENCHMARKING_SELECTION
 # below extends it with that figure and is the tuple carrying two conditionals. Emitted
 # by the `_emit_active_set_plot_rules` dispatch in `generate_master_snakefile_content`
-# and in `generate_reprocess_master_snakefile_content` (workflow.py), which replaced the
-# hardcoded call lists this comment used to cite by line number. per_sim_per_member
-# expands to two bundle figures.
+# and in `generate_reprocess_master_snakefile_content` (workflow.py). per_sim_per_member
+# declares two figures.
 _SWEEP_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("system_overview", rule_spec_template=(_TMPL_SYSTEM_OVERVIEW,)),
     RendererSelection("per_analysis_summary", rule_spec_template=(_TMPL_PER_ANALYSIS_SUMMARY,)),
@@ -489,12 +518,14 @@ _SWEEP_SELECTION: tuple[RendererSelection, ...] = (
             RuleSpecTemplate(
                 rule_name="plot_per_sim_per_member_peak_flood_depth",
                 # The REAL module; member-routing is via the --member-id flag, not a separate
-                # module. There is no per_sim_per_member_* module on disk, and this field is
-                # copied verbatim into the bundle-side regen RuleSpec
-                # (bundle/snakefile_generator.py), which then shells out to a module that
-                # does not exist. Safe to rename: this field reaches only output_ext_for,
-                # whose per_sim_* and per_sim_per_member_* entries are identical under both
-                # backends; plot IDs are minted from renderer_kind, not from this value.
+                # module. Deliberately NOT a per_sim_per_member_* name to match rule_name:
+                # no such module exists on disk, and this field is copied verbatim into the
+                # bundle-side regen RuleSpec (bundle/snakefile_generator.py), whose rule
+                # would then shell out to a missing module. Naming the real module changes
+                # nothing else: besides that shell-out this field reaches only
+                # output_ext_for, whose per_sim_* and per_sim_per_member_* entries are
+                # identical under both backends, and plot IDs are minted from
+                # renderer_kind, not from this value.
                 renderer_module="per_sim_peak_flood_depth",
                 output_path_template="plots/sensitivity/per_sim/member-{member_id}/{event_id}/peak_flood_depth__member.{member_id}__evt.{event_id}__OUTPUT_EXT__",
                 report_kwargs={
@@ -503,7 +534,7 @@ _SWEEP_SELECTION: tuple[RendererSelection, ...] = (
                     "labels": (
                         '(lambda w: {"figure": "Peak flood depth", '
                         '"member": _report_label_value(_MEMBER_LABELS, w.member_id, "member"), '
-                        '"event": _report_label_value(_EVENT_LABELS, w.event_id, "event")})'
+                        '"event": _report_label_value(_EVENT_SIDEBAR_LABELS, w.event_id, "event")})'
                     ),
                 },
                 wildcards=("member_id", "event_id"),
@@ -521,7 +552,7 @@ _SWEEP_SELECTION: tuple[RendererSelection, ...] = (
                     "labels": (
                         '(lambda w: {"figure": "Conduit flow", '
                         '"member": _report_label_value(_MEMBER_LABELS, w.member_id, "member"), '
-                        '"event": _report_label_value(_EVENT_LABELS, w.event_id, "event")})'
+                        '"event": _report_label_value(_EVENT_SIDEBAR_LABELS, w.event_id, "event")})'
                     ),
                 },
                 wildcards=("member_id", "event_id"),
@@ -566,10 +597,10 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = _SWEEP_SELECTION + (
     ),
 )
 
-# The compute-sensitivity set (R11): the benchmarking (sensitivity-master)
-# selection plus the in-report EDA adapter, gated on has_eda_artifact. Same
-# category_order as benchmarking (the EDA figures land under the existing "Key
-# Results" category — Decision 1, no new sidebar category). Selected via
+# The compute-sensitivity set: the benchmarking (sensitivity-master) selection plus
+# the in-report EDA adapter, gated on has_eda_artifact. Same category_order as
+# benchmarking, because the EDA figures land under the existing "Key Results"
+# category rather than a new sidebar category. Selected via
 # report_config.reporting_set="compute-sensitivity".
 _COMPUTE_SENSITIVITY_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTION + (
     RendererSelection(
@@ -579,7 +610,7 @@ _COMPUTE_SENSITIVITY_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SE
     ),
 )
 
-# The dem-resolution set (D13): the benchmarking (sensitivity-master) selection
+# The dem-resolution set: the benchmarking (sensitivity-master) selection
 # plus the DEM-resolution EDA family, gated on has_eda_artifact. Structurally
 # identical to _COMPUTE_SENSITIVITY_SELECTION -- same builder key, same predicate,
 # same category_order -- differing only in carrying FOUR rule_spec_templates where
@@ -599,25 +630,29 @@ _DEM_RESOLUTION_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTI
     ),
 )
 
-# b4b (raw-output byte-for-byte comparison) -- Phase 4. Two figures under ONE
-# RendererSelection reusing builder key eda_compute_sensitivity (the _cli entrypoint
-# and _OUTPUT_EXT_BY_RENDERER key are per-MODULE, not per-figure), so these templates
-# require ZERO generator edits. predicate_key is has_preserved_raw_outputs (NOT
-# has_eda_artifact): b4b requires raw outputs to have survived; gating on
-# has_eda_artifact would drop every b4b figure from rule all AND emission silently.
+# b4b (raw-output byte-for-byte comparison). Its one figure template below, plus the
+# config_diff_maps template, sit under ONE RendererSelection reusing builder key
+# eda_compute_sensitivity (the _cli entrypoint and _OUTPUT_EXT_BY_RENDERER key are
+# per-MODULE, not per-figure), so the figure needs no generator edit of its own: the
+# existing EDA builder emits one rule per template. predicate_key is
+# has_preserved_raw_outputs (NOT has_eda_artifact) because the b4b figures compare raw
+# solver outputs, which must have survived the post-processing clear for the figures
+# to have anything to read. That predicate gates EMISSION only: the rule-all
+# enumeration of EDA figures is a separate gate in workflow.py, on has_eda_artifact,
+# whatever this predicate_key says (see the comment inside _B4B_SELECTION below).
 _TMPL_B4B_CLEAN_IDENTITY = RuleSpecTemplate(
-    rule_name="plot_b4b_clean_identity",
+    rule_name="plot_raw_byte_identity",
     renderer_module="eda_compute_sensitivity",
-    output_path_template="plots/eda/b4b_clean_identity__OUTPUT_EXT__",
+    output_path_template="plots/eda/raw_byte_identity__OUTPUT_EXT__",
     report_kwargs={
-        "caption": "report/captions/b4b_clean_identity.rst",
+        "caption": "report/captions/raw_byte_identity.rst",
         "category": "Key Results",
         "subcategory": "Byte-for-byte comparison",
         "labels": '{"figure": "Cross-hardware raw byte identity"}',
     },
     wildcards=(),
     resources_yaml="mem_mb=4000, time_min=10",
-    log_path_template="_logs/plots/b4b_clean_identity.log",
+    log_path_template="_logs/plots/raw_byte_identity.log",
 )
 
 _B4B_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTION + (
@@ -627,7 +662,8 @@ _B4B_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTION + (
         # config_diff_maps (the cross-sim byte-identity grouping vs the serial-CPU
         # baseline) joins the b4b set's single eda_compute_sensitivity selection so it
         # renders into analysis_report.html for the b4b masters. It MUST share this ONE
-        # selection: _eda_rule_spec_templates() (workflow.py) returns only the FIRST
+        # selection: eda_rule_spec_templates() below, which the workflow builder calls
+        # for both emission and rule-all enumeration, returns only the FIRST
         # eda_compute_sensitivity selection's templates, so a second same-key selection
         # would be silently dropped from both emission and the rule-all enumeration. It
         # therefore inherits the has_preserved_raw_outputs predicate; that is inert here
@@ -640,9 +676,10 @@ _B4B_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTION + (
 
 #: The compute-configuration sensitivity axes, as canonical stripped analysis_config
 #: field names. A benchmarking-family figure plots against one of these, so a sweep
-#: that varies none of them has no x-axis for it -- which is the S16 compatibility
-#: claim. Compared at run entry against sensitivity.analysis_independent_vars, whose
-#: entries are already stripped of the `analysis.` column prefix.
+#: that varies none of them has no x-axis for it, and the run-entry check refuses the
+#: set rather than letting it render empty. Compared at run entry, via required_axes,
+#: against the sweep's varied axes (sensitivity.analysis_independent_vars union
+#: system_independent_vars), whose entries are already stripped of their column prefix.
 _COMPUTE_CONFIG_AXES: tuple[str, ...] = (
     "run_mode",
     "n_mpi_procs",
@@ -689,13 +726,15 @@ REPORTING_SETS: dict[str, ReportingSet] = {
     ),
     "combined": ReportingSet(
         name="combined",
-        # Option B: the per-experiment categories are DYNAMIC (one per child_crates/{eid},
-        # known only at combine time). This static tuple carries only the FIXED bookend
-        # categories; the combined generator (render_combined_report_via_snakemake) APPENDS
-        # the sorted experiment ids after these fixed bookends and threads the full list
-        # into _react_surgery. (v8/a2: the aggregate "Errors and Warnings" category was
-        # RETIRED — each experiment carries its OWN errors_and_warnings figure natively
-        # under its {eid} section via the per-experiment harvest.)
+        # The rest of the combined sidebar is DYNAMIC: it depends on which child bundles
+        # sit under child_crates/, known only at combine time. This static tuple carries
+        # only the FIXED cross-experiment categories, which rank first. The combined
+        # generator (render_combined_report_via_snakemake) APPENDS the children's own
+        # figure categories -- each child set's category_order, filtered to categories one
+        # of that set's templates declares, de-duplicated across children -- and threads the
+        # full list into _react_surgery. A child's harvested figure keeps its ORIGINAL
+        # category, so each experiment's errors_and_warnings figure sits under "Errors
+        # and Warnings", in a subcategory whose name starts with that experiment's id.
         category_order=(
             "Combine Provenance & Compatibility",
             "Cross-Experiment Results",
@@ -760,8 +799,10 @@ def get_reporting_set(name: str) -> ReportingSet:
 
     Callers that need a validating lookup against config use
     config.report.validate_active_reporting_set (run-entry, lazy-imports this
-    module). This bare accessor is for the render_report facades + dispatcher,
-    which receive an already-validated name.
+    module). This bare accessor is for callers that already hold a registered name
+    -- a hardcoded literal such as "combined" or "default", a name a resolver has
+    already validated, or a key read from ``REPORTING_SETS`` itself -- so an
+    unregistered name here is a programming error and surfaces as KeyError.
     """
     return REPORTING_SETS[name]
 
@@ -769,8 +810,8 @@ def get_reporting_set(name: str) -> ReportingSet:
 def renderer_active(builder_key: str, disabled: list[str] | None) -> bool:
     """Return False when ``builder_key`` is disabled for this invocation.
 
-    The single source of truth for per-plot disable (report_config.disabled_renderers,
-    Phase 3). Every emission site (the workflow.py dispatcher, the bundle harvest)
+    The single source of truth for per-plot disable (report_config.disabled_renderers).
+    Every emission site (the workflow.py dispatcher, the bundle regeneration generator)
     AND every rule all / render_report input-list site calls this — a site that
     filters emission without filtering enumeration yields MissingInputException;
     the inverse yields an orphan rule. An unknown ``builder_key`` (a typo) never
@@ -827,10 +868,13 @@ def compose_reporting_sets(names: list[str] | tuple[str, ...]) -> ReportingSet:
     """Compose a list of registered reporting-set names into ONE ReportingSet.
 
     A ONE-NAME list returns the registered object ITSELF, not a copy, so a
-    single-set config is byte-identical to today at every consumer. Every
-    consumer takes the OBJECT (the workflow dispatcher, the bundle generators,
-    analysis_validation, the render-path category-order blocks), so composition
-    is the whole of the list widening on the registry side.
+    single-set config reaches every consumer exactly as a bare set name does. The
+    consumers that take the OBJECT (the workflow dispatcher, the bundle regeneration
+    generator, analysis_validation, the render-path category-order blocks) need no
+    change for a list, so on the registry side composing it here is the whole of it.
+    The exception is the combine path: bundle/combined_snakefile_generator.py
+    resolves each child bundle's set NAMES itself and raises ConfigurationError on a
+    child run with a composed set, because it reads one set's templates.
 
     Merging is at the TEMPLATE level, not the selection level: two members
     contributing the same builder_key yield ONE selection carrying the union of
@@ -865,7 +909,7 @@ def compose_reporting_sets(names: list[str] | tuple[str, ...]) -> ReportingSet:
             "the same shape."
         )
     orders = {m.category_order for m in members}
-    if len(orders) != 1:  # forward guard: unreachable while all sets share one order
+    if len(orders) != 1:  # forward guard: unreachable while every set of one shape shares one order
         raise ReportingSetCompositionError(
             "report.reporting_set composes sets with differing sidebar category "
             f"orders: {sorted(m.name for m in members)}. A composed report has one "

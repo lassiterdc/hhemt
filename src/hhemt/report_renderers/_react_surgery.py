@@ -6,16 +6,25 @@ addressed via the report-stylesheet alone (e.g., the JS click-handler that
 opens figures, the category-sort comparator, the About menu item, the
 navbar text). This module string-replaces those baked-in pieces.
 
-Applied to:
-  - Single-file HTML output (`format="html"`) — directly on the rendered file.
-  - Zip output (`format="zip"`) — on `analysis_report/report.html` inside the
-    zip, then re-zipped. Without this, zip mode renders the eye-icon-hiding
-    CSS but lacks the JS click-delegate that makes rows clickable, leaving
-    figure tables with no clickable affordance (rows look interactive via
+Two entry points, one per rendered output form; the caller picks the one that
+matches what it rendered (for example ``TRITONSWMM_analysis.render_report(format=...)``
+calls the first for ``"html"`` and the second otherwise):
+  - ``apply_post_process_surgery`` -- on the text of a single-file HTML report.
+  - ``apply_post_process_surgery_to_zip`` -- on the ``report.html`` inside a zip
+    report, which is then re-zipped. Without this, zip mode renders the
+    eye-icon-hiding CSS but lacks the JS click-delegate that makes rows clickable,
+    leaving figure tables with no clickable affordance (rows look interactive via
     CSS but click handlers are absent).
 
-The replacements are idempotent: reapplying does not double-inject
-(checks before each replace).
+Re-applying the surgery to an already-surgeried report page leaves the page
+unchanged. Most steps get this for free: each replaces an OLD literal that is gone
+after the first pass (step 1 also checks for its OLD title literal before
+replacing it). The steps that insert or would otherwise re-match (4c, 6, 6b and 7)
+check for their NEW text first, and the card-name pass (8b) does not re-match a
+humanized name because the humanizer strips the file extension its pattern
+requires. The zip ARCHIVE is not byte-stable under re-application: the zip
+function re-extracts and re-archives it, so every entry gets a new timestamp even
+though the page inside is unchanged.
 """
 
 from __future__ import annotations
@@ -25,25 +34,32 @@ import re
 from hhemt.exceptions import ProcessingError
 from hhemt.report_plot_ids import humanize_plot_id
 
-# Historical default category order (used when no category_order is passed —
-# byte-identical for non-passing callers, mirroring navbar_text's None default).
+# The category order used when the caller passes no category_order
+# (Bundle.regenerate_report is one such caller), mirroring navbar_text's None default:
+# a caller that passes nothing gets this fixed, module-defined order.
 _DEFAULT_CATEGORY_ORDER = (
     "Workflow Status",
     "Errors and Warnings",
     "Key Results",
     "System Information",
-    "Simulation Health (placeholder)",
     "Per Simulation Results",
 )
 
 
 def _order_js(category_order: tuple[str, ...] | list[str]) -> str:
-    """Build the JS ORDER-dict literal from an ordered category list (1-indexed)."""
-    body = ", ".join(f'"{k}": {i}' for i, k in enumerate(category_order, start=1))
+    """Build the JS ORDER-dict literal from an ordered category list (1-indexed).
+
+    Each name is written as a JSON string, so a name carrying ``"`` or ``\\`` cannot end
+    its string early and leave the comparator this literal is spliced into unparseable
+    (step 3 escapes the navbar text for the same reason). A name carrying neither
+    character and no control character comes out byte-identical to plain
+    double-quoting, and ``ensure_ascii=False`` leaves a non-ASCII name unescaped.
+    """
+    import json
+
+    body = ", ".join(f"{json.dumps(k, ensure_ascii=False)}: {i}" for i, k in enumerate(category_order, start=1))
     return "{" + body + "}"
 
-
-_PLACEHOLDER_INJECT = ', "Simulation Health (placeholder)": {"Reserved": []}'
 
 _SHOW_CATEGORY_OLD = "this.setView({ navbarMode: mode, category: category, subcategory: subcategory })\n    }"
 
@@ -103,14 +119,14 @@ function reportRenderGuardPanel(err, where) {
     // INLINE STYLES, NOT TAILWIND CLASSES. Snakemake ships a content-PURGED Tailwind
     // build: only classes its own templates used at ITS build time have CSS rules.
     // This panel is injected by post-process surgery, so the purge never saw it --
-    // measured on the delivered 150,109,331-byte report, `bg-red-50`, `text-red-700`,
-    // `border-red-700`, `font-mono`, `text-sm` and `font-bold` each had ZERO CSS
-    // selector occurrences and appeared exactly once in the document (here), while
-    // Snakemake's own `inline-flex` / `text-right` had 5 and 18 rules. The panel
-    // therefore rendered entirely unstyled and inherited ambient colour, which is why
-    // it was triaged as a BLANK PAGE across three rounds. Any class-based fix has the
-    // same defect regardless of which class is chosen; an inline style needs no
-    // stylesheet. Applies to every future injected VISUAL surface -- the behaviour-only
+    // measured on a rendered report, `bg-red-50`, `text-red-700`, `border-red-700`,
+    // `font-mono`, `text-sm` and `font-bold` each had ZERO CSS selector occurrences
+    // and appeared exactly once in the document (here), while Snakemake's own
+    // `inline-flex` / `text-right` had 5 and 18 rules. A class-styled panel therefore
+    // renders entirely unstyled and inherits the ambient colour, so a reader sees what
+    // looks like a blank page rather than an error. Any class-based fix has the same
+    // defect regardless of which class is chosen; an inline style needs no stylesheet.
+    // Applies to every future injected VISUAL surface -- the behaviour-only
     // injections (_SHOW_CATEGORY_NEW, _CLICK_DELEGATE) are unaffected.
     var _mono = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
     return e(
@@ -150,13 +166,16 @@ function reportRenderGuardPanel(err, where) {
 # -> `handleSelectedResult(undefined)` -> `results[undefined].mime_type` -> TypeError,
 # during RENDER, which is why the guard panel appears on merely opening the category.
 #
-# Fixing the label emission was tried once already (step 4b removed the same 50/50
-# accident from `figure`) and the collision reappeared on `models`; protecting `models`
-# by reordering would put `figure` back in the toggle slice. This guards the LOOKUP
-# instead, which closes the class rather than the instance. Behaviour when the cell IS
+# Fixing the label emission was tried once already (the per-sim rule specs were changed
+# to declare `figure` as their first label, which removed the same 50/50 accident from
+# `figure`) and the collision reappeared on `models`; protecting `models` by reordering
+# would put `figure` back in the toggle slice. This guards the LOOKUP instead, which
+# closes the class rather than the instance. Behaviour when the cell IS
 # populated is byte-identical; when it is not, the row opens its own figure -- which is
-# the desired result for an unpaired entry. Idempotent: the old literals are gone after
-# the first pass.
+# the desired result for an unpaired entry. Idempotent because step 6b checks for each
+# NEW form first and skips a lookup whose NEW form is present, so a second pass changes
+# nothing. The OLD literals' absence is NOT what makes it safe: on a document carrying the
+# toggle machinery, OLD absent with NEW absent raises the match guard's ProcessingError.
 _TOGGLE_CELL_OLD = "            let entryPath = data.entries.get(arrayKey(entryLabels)).get(arrayKey(toggleLabels));"
 
 _TOGGLE_CELL_NEW = (
@@ -175,41 +194,64 @@ _TOGGLE_CB_NEW = (
     "                if (targetPath === undefined) { targetPath = _cbCell.values().next().value; }"
 )
 
-#: TIER-1 FEATURE SENTINEL for the step-6b match guard. Answers "does this document
-#: carry the toggle machinery step 6b patches?", which is the question that separates
-#: a document legitimately WITHOUT the lookup (a fragment fixture; VMS-5 inertness)
-#: from one whose lookup literal has DRIFTED (must fail loudly).
-#:
-#: `arrayKey` is chosen because it is a module-level HELPER that both OLD literals call
-#: twice, so it is a strict WEAKENING of them along every axis that drifts -- indentation,
-#: a refactor of the `.get().get()` chain, or a rename of `renderEntries` itself -- and it
-#: disappears only when the toggle feature is gone upstream, which is exactly when
-#: inertness is correct. The sentinel and the legitimate-absence condition are the same
-#: condition; that is what makes it a sentinel rather than a heuristic.
-#:
-#: Measured 2026-08-13 -- 0 occurrences in all three VMS-5 fixtures, 7 in each delivered
-#: real report. Do NOT substitute `AbstractResults` (1 in the fixtures) or `toggleLabels`
-#: (1, at the fixture body's `.size > 0` line): neither separates the classes.
-#:
-#: Every constant this module INJECTS is sentinel-free (verified), so a second pass cannot
-#: flip tier 1 from absent to present and raise on a document the first pass left alone.
-# Toggle SUPPRESSION (I7-6). The `models` label is promoted to a two-option radio pair by
+# Toggle SUPPRESSION. The `models` label is promoted to a two-option radio pair by
 # `AbstractResults.getData`, rendered as `MODELS` by Tailwind's `uppercase` on the label
 # span (`toggle.js`) -- which is why a grep of the delivered report for "Models" returns
 # only library source. The control is a no-op by construction: its two values are two
 # DIFFERENT figure families, so selecting either re-opens the row's own figure via the
 # lookup guard above.
 #
-# Removing the `models` LABEL was rejected: `labels.slice(1)` would then leave `figure` as
-# the sole candidate, and `figure` is the label whose 50/50 split caused this same defect
-# before step 4b (see the note at the head of this block). Suppressing PROMOTION closes the
-# class; removing one label moves it. One character, and the literal occurs exactly once in
-# the delivered report (measured 2026-08-14: 1).
+# Removing the `models` LABEL was rejected on two grounds. The combined report needs it:
+# it is the axis that campaign exists to expose, and inside one subcategory it separates
+# pages carrying one arm from pages carrying two (bundle/combined_snakefile_generator.py's
+# labels comment). And removing it would not close the class: `getLabels` orders labels by
+# their first-seen key index and `getData` considers every label after the first
+# (`labels.slice(1)`), so any remaining label with a 50/50 split is still promoted. `figure`
+# is outside that slice wherever it is emitted as the first label (index 0) -- the per-sim
+# rule specs and the combined harvest -- which is the move that removed it after its own
+# 50/50 split (see the toggle-cell fallback note above `_TOGGLE_CELL_OLD`). The source-side
+# benchmarking figures declare `independent_var` first, so there `figure` IS in the slice;
+# it is not promoted only because its one constant value ("vs Total runtime") fails the
+# exactly-two-values rule. Suppressing PROMOTION closes the class; removing one
+# label moves it. One character, and the literal occurs exactly once in the delivered
+# report (measured 2026-08-14: 1).
 #
-# Idempotent: after the first pass the OLD literal is gone, so a second pass is inert.
+# Idempotent for the same reason as the lookup patches: step 6b skips this literal when its
+# NEW form is present. On a document carrying the toggle machinery (it contains
+# `arrayKey(`), an absent OLD with an absent NEW raises; a document without it never enters
+# step 6b's loop, so this step leaves it unchanged.
 _TOGGLE_SUPPRESS_OLD = "        if (toggleLabels.size > 1) {"
 _TOGGLE_SUPPRESS_NEW = "        if (toggleLabels.size > 0) {"
 
+#: TIER-1 FEATURE SENTINEL for the step-6b match guard. Answers "does this document
+#: carry the toggle machinery step 6b patches?", which is the question that separates
+#: a document legitimately WITHOUT the lookup (a fragment, such as the render-guard
+#: test fixtures, that must pass through untouched) from one whose lookup literal has
+#: DRIFTED (must fail loudly).
+#:
+#: `arrayKey` is chosen because it is a module-level HELPER that both lookup OLD literals
+#: (`_TOGGLE_CELL_OLD`, `_TOGGLE_CB_OLD`) call twice, so it is a strict WEAKENING of them
+#: along every axis that drifts -- indentation, a refactor of the `.get().get()` chain, or a
+#: rename of `renderEntries` itself -- and it disappears only when the toggle feature is
+#: gone upstream, which is exactly when inertness is correct. The sentinel and the
+#: legitimate-absence condition are the same condition; that is what makes it a sentinel
+#: rather than a heuristic.
+#:
+#: Measured 2026-08-13 -- 0 occurrences in all three fragment fixtures of
+#: tests/test_report_renderer_skip_placeholder.py, 7 in each delivered real report. Do
+#: NOT substitute `AbstractResults` (1 in the fixtures) or `toggleLabels` (1, at the
+#: fixture body's `.size > 0` line): neither separates the classes.
+#:
+#: A second pass cannot flip tier 1 from absent to present, and so cannot raise on a
+#: document the first pass left alone. The only module constants that carry the
+#: sentinel, `_TOGGLE_CELL_NEW` and `_TOGGLE_CB_NEW`, are injected inside the tier-1
+#: branch, so they reach only a document that already carried it. Every other module
+#: constant this function injects (`_SHOW_CATEGORY_NEW`, `_GUARD_RENDER_NEW`,
+#: `_GUARD_DEFS`, `_TOGGLE_SUPPRESS_NEW`, `_CLICK_DELEGATE`) does not contain it.
+#: Not established: none of the four caller-supplied inputs that reach the document is
+#: checked for the sentinel -- `navbar_text`, the `category_order` names, and the
+#: `member_labels` and `event_labels` values that step 8b's `humanize_plot_id` writes into
+#: figure card names.
 _TOGGLE_FEATURE_SENTINEL = "arrayKey("
 
 
@@ -245,22 +287,30 @@ def apply_post_process_surgery(
 ) -> str:
     """Apply all React-bundle post-process replacements and return modified text.
 
-    Idempotent: each replace is conditional on the OLD pattern still being
-    present. Calling twice on the same text does not double-inject.
+    Calling it again on its own output changes nothing; the module docstring
+    states how each step achieves that.
 
-    Replacements applied:
+    Every step, in the order applied (each step's in-body comment carries its
+    reason):
       1. Browser-tab title "Snakemake Report" -> empty
       2. Drop the About menu item from the bundled JS (CSS-only hide infeasible)
       3. Replace bold "Snakemake" navbar span -> ``navbar_text`` (the report's
-         upper-left brand text). When ``navbar_text`` is ``None``, the historical
-         literal "H&H Ensemble Modeling Toolkit" is used (byte-identical for non-passing
-         callers). The facades source it from brand_theme.upper_left_text (ADR-7),
-         defaulting to analysis_id.
+         upper-left brand text). When ``navbar_text`` is ``None``, the fixed literal
+         "H&H Ensemble Modeling Toolkit" is used. The render facades source it from brand_theme.upper_left_text --
+         the same config model that carries the report's colours, so one file
+         rebrands the whole report -- and fall back to analysis_id when it is None.
       4. Patch category-sort comparator -> config-driven category order
-         (``category_order``; None falls back to the historical default,
-         byte-identical for non-passing callers)
-      5. Inject "Simulation Health (placeholder)" entry into categories dict
+         (``category_order``; None uses ``_DEFAULT_CATEGORY_ORDER``)
+      4b. Rewrite the toggle-controls ``entries().map`` call through
+         ``Array.from`` so a browser without ES2025 iterator helpers does not throw
+      4c. Guard the results view's render so a render error shows an error panel
+         instead of a blank page
+      5. (retired) No sidebar category is injected on any path; the sidebar shows
+         exactly the categories the report's figures declare
       6. Patch showCategory to auto-pop the first figure (setTimeout firstBtn.click)
+      6b. On a document carrying the toggle machinery, make the two toggle-cell
+         lookups fall back to the row's own figure and patch the toggle-promotion
+         test (see the notes above ``_TOGGLE_CELL_OLD`` and ``_TOGGLE_SUPPRESS_OLD``)
       7. Inject row-click delegate at LAST `</body>` so clicks anywhere on a
          result row fire the hidden eye-icon button (paired with CSS in
          report.css that hides the eye-icon and styles rows as clickable)
@@ -269,16 +319,25 @@ def apply_post_process_surgery(
          DAG). The home-icon click handler already targets this view; the
          change makes the default-open match. Unconditional — applies to both
          source-side and bundle-side reports.
+      8b. Rewrite each figure card's display name from its file stem to a readable
+         label via ``report_plot_ids.humanize_plot_id``
       9. If ``bundle_mode=True``: drop the Workflow menu item, the Statistics
          menu item, and the "General" ``ListHeading`` from the bundled JS.
          Used by ``Bundle.regenerate_report`` because a bundle's regeneration
          Snakefile only describes plot rules + render_report — the Workflow
          and Statistics panels in a bundle-regenerated report describe only
-         the regeneration DAG (no production-analysis DAG), which is "useless"
-         per user feedback; and the "General" heading is empty once Workflow
+         the regeneration DAG (no production-analysis DAG), so they carry no
+         information about the analysis; and the "General" heading is empty once Workflow
          + Statistics + About are gone. About-drop (step 2) is unconditional
          and applies to source-side too. NOT applied to source-side reports
          where Workflow + Statistics describe real workflow content + runtime.
+
+    Raises
+    ------
+    ProcessingError
+        At step 6b, when the document contains ``arrayKey(`` (it carries the toggle
+        machinery) but one of the three toggle OLD literals occurs other than exactly
+        once while its NEW form is absent -- the bundled code has drifted.
     """
     # 1. Browser-tab title
     if "<title>Snakemake Report</title>" in html_text:
@@ -302,10 +361,11 @@ def apply_post_process_surgery(
         '                        "' + _navbar + '"\n                    )',
     )
 
-    # 4. Category-sort comparator. category_order is config-driven (ADR-5);
-    # None falls back to the historical default (byte-identical for non-passing
-    # callers). Idempotent: after the first pass the localeCompare literal is
-    # gone, so re-application is a no-op.
+    # 4. Category-sort comparator. category_order is the active reporting set's
+    # sidebar order, so each named set ranks its own categories; None uses
+    # _DEFAULT_CATEGORY_ORDER. Idempotent:
+    # after the first pass the localeCompare literal is gone, so re-application is a
+    # no-op.
     _order_js_literal = _order_js(category_order or _DEFAULT_CATEGORY_ORDER)
     _comparator = (
         f"(a, b) => {{const ORDER = {_order_js_literal}; "
@@ -320,11 +380,12 @@ def apply_post_process_surgery(
     # `TypeError: toggleLabels.entries(...).map is not a function` inside React's
     # render, React unmounts the tree, and the category renders as a blank white page.
     # The branch is reached only when a non-first label has exactly two values each
-    # occurring in exactly half the results -- today that is `figure` on the coupled
-    # per-sim category (28 Conduit flow + 28 Peak flood depth = 56). VMS-2 removes that
-    # trigger at the source; this removes the engine dependency for any future category
-    # that hits the same 50/50 accident. Idempotent: the old literal is gone after the
-    # first pass.
+    # occurring in exactly half the results. The coupled per-sim category once hit it on
+    # `figure` (28 Conduit flow + 28 Peak flood depth = 56); the per-sim rule specs now
+    # declare `figure` as their FIRST label, which the heuristic never considers, so that
+    # trigger is gone at the source. This removes the engine dependency for any future
+    # category that hits the same 50/50 accident. Idempotent: the old literal is gone
+    # after the first pass.
     html_text = html_text.replace(
         "return toggleLabels.entries().map(function (entry) {",
         "return Array.from(toggleLabels.entries()).map(function (entry) {",
@@ -351,8 +412,8 @@ def apply_post_process_surgery(
     #
     # Inert when nothing throws: the boundary returns `this.props.children`, so it
     # emits no DOM node and the rendered output is the original element by IDENTITY.
-    # Measured on the delivered 33,221,667-byte report: two `insert` opcodes, zero
-    # `replace`, zero `delete`, +1583 bytes (0.0048%). `key` tracks the category so
+    # Measured on the delivered report: two `insert` opcodes, zero `replace`, zero
+    # `delete`. `key` tracks the category so
     # an errored boundary cannot persist across a category switch.
     #
     # The defs are gated on the render patch having landed, so a report whose
@@ -365,43 +426,44 @@ def apply_post_process_surgery(
         if _guard_body != -1:
             html_text = html_text[:_guard_body] + _GUARD_DEFS + html_text[_guard_body:]
 
-    # 5. Placeholder category injection (idempotent: check before injecting).
-    # F2 (v9): suppress the empty "Simulation Health (placeholder)" reserved slot in
-    # bundle_mode (combined + single-bundle regenerated reports) — it is meaningless chrome
-    # there, and in a cross-experiment report it is actively confusing. This mirrors the
-    # bundle_mode chrome-strip of Workflow/Statistics/General below (step 9). Source-side
-    # reports (bundle_mode=False) keep the reserved slot unchanged.
-    if not bundle_mode and _PLACEHOLDER_INJECT[2:] not in html_text:
-        html_text = html_text.replace(
-            "var categories = {",
-            "var categories = {" + _PLACEHOLDER_INJECT[2:] + ",",
-            1,
-        )
+    # 5. (retired) No category is injected into the sidebar, on any render path.
+    # Deliberately NOT a reserved empty "Simulation Health (placeholder)" slot: the sidebar
+    # lists exactly the keys of the `var categories` global, so an injected key with no
+    # figures renders as an entry that opens an empty page. This holds whatever bundle_mode
+    # is.
 
     # 6. showCategory auto-pop (idempotent: check before injecting)
     if _SHOW_CATEGORY_NEW not in html_text:
         html_text = html_text.replace(_SHOW_CATEGORY_OLD, _SHOW_CATEGORY_NEW, 1)
 
-    # 6b. Toggle-cell fallback. Must run BEFORE the row-click delegate injection so a
-    # delegated click can never reach an undefined result path. See _TOGGLE_CELL_OLD.
+    # 6b. Toggle-cell fallback; the defect and the fix are described above
+    # _TOGGLE_CELL_OLD. Its place before step 7 is not an ordering dependency: the
+    # row-click delegate contains none of this step's OLD or NEW literals nor the
+    # sentinel, and step 7 checks only for its own text, so the two steps give the same
+    # document in either order whenever this one does not raise.
     #
     # MATCH GUARD, not merely an idempotency guard. `if NEW not in html_text` alone makes a
     # drifted OLD literal a SILENT no-op: .replace returns the input unchanged, NEW stays
     # absent, and every later invocation repeats the no-op forever -- indistinguishable from
     # a report that never needed the fix. Assert OLD is present exactly once whenever NEW is
     # absent, and RAISE rather than warn: a warning is swallowed in Snakemake's rule log.
+    # The raise reaches production: none of the four render callers (analysis.py,
+    # sensitivity_analysis.py, bundle/__init__.py and bundle/combined_snakefile_generator.py)
+    # catches it, so a drift fails the render with this message. The un-surgeried report
+    # Snakemake already wrote is left on disk, and the render does not return it as done.
     # TIER-1 GATE. The match guard below is correct only on a document that actually
     # carries the toggle machinery. This function is deliberately fragment-tolerant --
-    # VMS-5 pins that a document whose AbstractResults shape does not match receives
-    # neither the patch nor an error -- so an UNGATED match guard converts that tested
+    # the render-guard tests in tests/test_report_renderer_skip_placeholder.py pin that a
+    # document whose AbstractResults shape does not match receives neither the patch
+    # nor an error -- so an UNGATED match guard converts that tested
     # inertness into a hard failure for the same document class. The two contracts do not
     # conflict; they partition the document space, and this gate is the partition:
     #
-    #   tier 1 absent                          -> inert          (VMS-5)
+    #   tier 1 absent                          -> inert          (fragment)
     #   tier 1 present, exact literal absent   -> drift -> raise (match guard)
     #
-    # Absent the gate, the three VMS-5 fixtures raise -- five red tests, all of them
-    # correct about the contract they defend.
+    # Absent the gate, the three fragment fixtures in that test module raise -- five red
+    # tests, all of them correct about the contract they defend.
     if _TOGGLE_FEATURE_SENTINEL in html_text:
         for _old, _new, _what in (
             (_TOGGLE_CELL_OLD, _TOGGLE_CELL_NEW, "renderEntries"),
@@ -443,15 +505,17 @@ def apply_post_process_surgery(
         'this.content = "metadata";',
     )
 
-    # 8b (iter-3): deterministic grammar-driven card-name humanization. Snakemake derives
-    # the figure-card display name from the OUTPUT-FILENAME stem (= the canonical plot-id,
-    # layout-relevant / un-renameable), and there is no report() kwarg for the card name,
-    # so a post-render pass is the only lever. This replaces the hardcoded n_devices band-aid
-    # with ONE deterministic transform over EVERY card name via the ADR-2 grammar humanizer
-    # (report_plot_ids.humanize_plot_id) — model-fungible, never another per-figure hardcode.
-    # The record KEY, "filename", data_uri filename, and category path-references are left
-    # intact so links/downloads keep working; the charset excludes "/" and ":" so paths/URLs
-    # never match, and the base64 figure blob carries no plain `"name": "<stem>.ext"` fragment.
+    # 8b. Card-name humanization. Snakemake names each figure card after its output-file
+    # stem, which is the canonical plot id and cannot be renamed because the on-disk layout
+    # depends on it, and report() takes no card-name argument, so a pass over the rendered
+    # HTML is the only place the name can change. Every card name goes through
+    # report_plot_ids.humanize_plot_id, which parses the canonical plot-id grammar
+    # (segments joined by "__", "." within a segment), so a figure from a new renderer or
+    # model gets a readable name with no per-figure entry here.
+    # Only the "name" field is rewritten. The record KEY, "filename", data_uri filename and
+    # category path-references keep the stem, so links and downloads still resolve. The
+    # charset excludes "/" and ":" so a path or URL never matches, and the base64 figure
+    # blob carries no plain `"name": "{stem}.{ext}"` fragment.
     def _humanize_card_name(m):
         return '"name": "' + humanize_plot_id(m.group(1), member_labels, event_labels) + '"'
 
@@ -508,12 +572,12 @@ def apply_post_process_surgery_to_zip(
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir_path = Path(tmpdir)
-        # Extract
         with zipfile.ZipFile(zip_path, "r") as zf:
             zf.extractall(tmpdir_path)
-        # Locate the inner report.html (Snakemake's zip layout is
-        # `analysis_report/report.html` — the parent dir name matches the
-        # zip's stem). Robust fallback: glob for the first report.html.
+        # Find the report page by searching the extracted tree. Snakemake 9.15.0 writes
+        # it at `{zip stem}/report.html`; the search takes the first `report.html`
+        # anywhere, so a result file that is also named report.html could be picked
+        # instead, depending on traversal order. With no match the zip is left untouched.
         candidates = list(tmpdir_path.rglob("report.html"))
         if not candidates:
             return
@@ -527,13 +591,11 @@ def apply_post_process_surgery_to_zip(
             event_labels=event_labels,
         )
         inner_html.write_text(modified)
-        # Re-zip. shutil.make_archive writes `<base>.zip` from `root_dir`.
-        # Use a tempfile alongside zip_path then atomic-rename to avoid
-        # leaving a half-written archive on errors.
+        # Write the new archive beside zip_path and only then move it over the original,
+        # so a failure while zipping leaves the original archive intact rather than
+        # half-written. root_dir is the extraction tree, so the archive keeps Snakemake's
+        # top-level `{zip stem}/` directory.
         new_zip_no_ext = zip_path.with_suffix("")
-        # make_archive returns the path it wrote; we then overwrite zip_path.
-        # Snakemake's zip has a top-level dir named after the report stem;
-        # preserve that by zipping the tmpdir's contents (root_dir=tmpdir).
         archive_tmp = Path(
             shutil.make_archive(
                 str(new_zip_no_ext) + ".surgery_tmp",

@@ -1,19 +1,28 @@
-"""Three-panel system-overview renderer.
+"""System-overview renderer: one figure showing the modeled system's inputs before any results.
 
-Iteration 3 (2026-04-27): the original two-panel design conflated two domain
-views in a single SWMM panel. Iteration 3 splits them so each panel's artists
-trace cleanly to one source `.inp` file:
+A reader of the report needs to see what was simulated -- the terrain, the surface
+roughness, and (when SWMM is part of the analysis) the drainage network -- on one page,
+each element traceable to the input file it came from. This module draws that figure as
+a grid:
 
-- **Hydrology panel** (left) — subcatchment polygons, drainage lines from each
-  polygon centroid to its outlet node, and small outlet markers. All artists
-  trace to `swmm_hydro.inp`.
-- **Hydraulics panel** (middle) — junctions, outfalls, conduits with slope
-  labels, node Rim/Inv labels. All artists trace to `swmm_hydraulics.inp`.
-- **TRITON DEM panel** (right) — elevation raster with bathtub-aware colormap
-  clipping, sea-wall row in grey via `cmap.set_over`, and the storm-tide BC
-  line overlay. Unchanged from iteration 2.
+- **TRITON DEM panel** (top left, always) — the elevation raster with its color range
+  confined to the modeled area, wall and outside-watershed fill cells in the configured
+  over-color, and the storm-tide boundary-condition line overlaid when one exists.
+- **Manning's n panel** (top right, always) — the processed roughness raster on the
+  DEM's grid.
+- **Hydrology panel** (bottom left, only when a SWMM model is rendered) — subcatchment
+  polygons, drainage lines from each polygon centroid to its outlet node, and outlet
+  markers, all from the hydrology `.inp`.
+- **Hydraulics panel** (bottom right, only when a SWMM model is rendered) — junctions,
+  outfalls, conduits with slope labels, and node Rim/Inv labels, all from the
+  hydraulics `.inp`.
 
-All three panels share x and y axes pinned to the DEM bounds.
+Hydrology and hydraulics are separate panels so each panel's artists trace to one
+source `.inp`; when only the combined `.inp` exists, both panels cite it. A pure-TRITON
+analysis therefore gets a 1×2 figure and a SWMM-bearing one a 2×2 figure. The
+matplotlib branch shares x and y axes across panels on the DEM bounds; the Plotly
+branch frames every panel on a padded square that also encloses the SWMM nodes, and
+links pan/zoom across panels.
 """
 
 from __future__ import annotations
@@ -51,14 +60,22 @@ def render(
     static_cfg: StaticPlotBaseConfig | None = None,
     **kwargs,
 ) -> Path:
-    """Render the 3-panel hydrology + hydraulics + DEM system-overview figure.
+    """Render the system-overview figure: DEM + Manning's n, plus hydrology +
+    hydraulics panels when a SWMM model is rendered.
 
-    When ``static_cfg`` is provided (publication static-plots path, ADR-8) the
-    matplotlib branch is FORCED (publication is matplotlib-only per ADR-3) and
-    the figure geometry, DEM colormap / over-color, base typography, and emit
-    format are driven by the SystemOverviewStaticConfig rather than report_cfg.
-    ``static_cfg=None`` (the report path) is byte-unchanged. ``**kwargs``
-    tolerates dispatcher-passed keywords this renderer does not consume.
+    When ``static_cfg`` is provided (the publication-figure path,
+    ``TRITONSWMM_analysis.static_plots()``, which passes one per-plot static
+    config) the matplotlib branch is FORCED, whatever the report's
+    ``static_backend``: publication figures always come from matplotlib, and the
+    Plotly branch with its best-effort kaleido SVG serves the interactive report
+    only. In that case the figure geometry, DEM colormap / over-color, base
+    typography, and emit format are driven by the SystemOverviewStaticConfig
+    rather than report_cfg. With ``static_cfg=None`` (the report path) the
+    report's ``static_backend`` selects the branch: the default Plotly branch
+    emits interactive HTML via ``_render_plotly_branch``, and the matplotlib
+    branch takes its geometry, DEM colormap / over-color and typography from
+    ``report_cfg`` and emits PNG. ``**kwargs`` tolerates dispatcher-passed
+    keywords this renderer does not consume.
     """
     from hhemt.config.report import resolve_target_crs
     from hhemt.report_renderers._figure_emission import (
@@ -74,16 +91,20 @@ def render(
         "static_backend",
         "plotly",
     )
-    # Publication path (ADR-3): static_cfg FORCES the matplotlib branch regardless
-    # of report_cfg.interactive.static_backend (static plots are matplotlib-only).
+    # Publication path: static_cfg FORCES the matplotlib branch regardless of
+    # report_cfg.interactive.static_backend (publication figures never come from
+    # the Plotly branch).
     use_plotly = False if static_cfg is not None else (static_backend == "plotly")
 
     if not use_plotly:
         _apply_rcparams(report_cfg)
         # Apply the publication base typography (font_family + a base size) so the
-        # publication font fields are not silently inert. Full per-element
-        # FontTarget threading is routed to the post-Phase-1 follow-up (the _core
-        # extraction). report-mode (static_cfg is None) is unchanged.
+        # publication font fields are not silently inert. Only the axis-label entry
+        # of static_cfg.font_sizes is applied, as the base size, so the other
+        # per-element sizes have no effect yet; and these rcParams are set globally
+        # rather than inside an rc_context, so they stay in effect for any later
+        # figure drawn in the same process. With static_cfg None, fonts are those
+        # `_apply_rcparams(report_cfg)` set just above.
         if static_cfg is not None:
             from hhemt.config.viz_vocabulary import FontTarget
 
@@ -92,13 +113,14 @@ def render(
     target_crs = resolve_target_crs(analysis, report_cfg)
     prov = ProvenanceLog()
 
-    # ---- Load DEM + BC up front so the figure can be sized to data aspect.
+    # ---- Load the DEM up front so the figure can be sized to data aspect. (The
+    # storm-tide BC is only resolved to a path below; the DEM panel reads it.)
     dem = rxr.open_rasterio(sys_paths.dem_processed)
     if dem.rio.crs is not None and dem.rio.crs != target_crs:
         dem = dem.rio.reproject(target_crs)
     dem_bounds = dem.rio.bounds()
 
-    # ---- Load the Manning's-n raster (Q4 Phase-2): the DEM's companion system
+    # ---- Load the Manning's-n raster: the DEM's companion system
     # input, present for BOTH model arms (TRITON and TRITON-SWMM), drawn as the top
     # row of the system-overview grid. Use the `mannings_rds` accessor (NOT a plain
     # open_rasterio): the processed Manning's `.dem` ships without a spatial header, so
@@ -116,8 +138,8 @@ def render(
         if not bc_path.exists():
             bc_path = None
 
-    # ---- Resolve hydro + hydraulics .inp paths (both required, with full.inp
-    # fallback for either when only the combined .inp exists). Q4 (iter-2): a pure-TRITON
+    # ---- Resolve hydro + hydraulics .inp paths (a single existing .inp serves
+    # both panels when the pair is incomplete; see `_resolve_inp_sources`). A pure-TRITON
     # master enables no SWMM model, so the SWMM .inp / swmmio loads / hydrology+hydraulics
     # panels are skipped and system_overview renders the DEM (+Mannings) only.
     _renders_swmm = _master_renders_swmm(analysis)
@@ -166,12 +188,11 @@ def render(
             target_crs=target_crs,
         )
 
-    # Source-paths and manifest-data are shared across both branches. Q4: the SWMM .inp
-    # sources are declared only when SWMM is rendered (a pure-TRITON figure drops ONLY the
-    # SWMM inputs — the fungibility subset relation).
-    # Q4 Phase-2: the DEM and Mannings rasters are BOTH system inputs present for
-    # either arm, so both are declared unconditionally; only the SWMM .inp sources
-    # are conditional (the fungibility subset relation).
+    # Source-paths and manifest-data are shared across both branches. The DEM and
+    # Mannings rasters are system inputs present for every model arm, so both are
+    # declared unconditionally; the SWMM .inp sources are declared only when SWMM is
+    # rendered, so a pure-TRITON figure's sources are a coupled figure's minus ONLY
+    # the SWMM inputs.
     source_paths: list[Path] = [sys_paths.dem_processed, sys_paths.mannings_processed]
     if _renders_swmm:
         source_paths += [Path(hydro_inp), Path(hydraulics_inp)]
@@ -188,11 +209,13 @@ def render(
     )
 
     if use_plotly:
-        # Pull the optional `dem_building_height` from cfg_system. The static
-        # `plot_system.py::create_dem_plot` masks DEM cells equal to this
-        # value before plotting (per the docstring on `SystemConfig`); the
-        # Plotly branch does the same so the colorbar range reflects ground
-        # elevations rather than the building-elevation plateau.
+        # Pull the optional `dem_building_height` and `dem_outside_watershed_height`
+        # sentinels from `system_config`. `plot_system.py`'s
+        # `TRITONSWMM_system_plotting._process_dem_for_plotting` masks DEM cells
+        # equal to either sentinel before plotting. The Plotly branch masks
+        # building-height cells before deriving its colorbar range, so the range
+        # reflects ground elevations rather than the building-elevation plateau,
+        # and uses both sentinels for its wall-overlay threshold.
         building_height = getattr(
             analysis._system.cfg_system,
             "dem_building_height",
@@ -229,14 +252,15 @@ def render(
             vertical_crs_epsg=analysis._system.cfg_system.crs.vertical_epsg,
         )
 
-    # Matplotlib branch (legacy / interactive.enabled=False default). Q4 Phase-2:
-    # model-parametric grid — top row is DEM + Mannings (BOTH arms); the coupled
-    # master adds a bottom row of Hydrology + Hydraulics (2×2). A pure-TRITON master
-    # is the top row alone (1×2). `squeeze=False` keeps `_axes` 2-D for both shapes.
+    # Matplotlib branch: taken when static_cfg is set or static_backend is
+    # "matplotlib" (the report default is "plotly"). Model-parametric grid — top
+    # row is DEM + Mannings (BOTH arms); the coupled master adds a bottom row of
+    # Hydrology + Hydraulics (2×2). A pure-TRITON master is the top row alone
+    # (1×2). `squeeze=False` keeps `_axes` 2-D for both shapes.
     _ncols_mpl = 2
     _nrows_mpl = 2 if _renders_swmm else 1
     if static_cfg is not None:
-        # Publication exact dimensions (data-viz OE-1): the user owns the figure
+        # Publication exact dimensions: the user owns the figure
         # size via figure_width/height_inches; bypass the report aspect-math width
         # derivation. The publication emit uses bbox_inches=None so the saved
         # figure is exactly this size (subplots_adjust below is preserved).
@@ -337,7 +361,7 @@ def _build_manifest_data(
         "ylim": [float(dem_bounds[1]), float(dem_bounds[3])],
     }
     panels: list[dict] = []
-    # Q4 (iter-2): the SWMM hydrology/hydraulics panels are present only when SWMM is rendered
+    # The SWMM hydrology/hydraulics panels are present only when SWMM is rendered
     # (models are None for a pure-TRITON master); the DEM panel is always present.
     if hydro_model is not None and hydraulics_model is not None:
         polygons_df = getattr(hydro_model.inp, "polygons", None)
@@ -378,7 +402,7 @@ def _build_manifest_data(
             "legend_labels": ["Storm tide BC"] if bc_present else [],
         }
     )
-    # Q4 Phase-2: the Manning's-n panel is present for both arms (system input).
+    # The Manning's-n panel is present for both arms (system input).
     panels.append(
         {
             "name": "mannings",
@@ -390,7 +414,8 @@ def _build_manifest_data(
 
 
 # ---------------------------------------------------------------------------
-# Hydrology panel — subcatchments + drainage lines (from swmm_hydro.inp)
+# Hydrology panel — subcatchments + drainage lines (from the hydrology-panel
+# `.inp` that `_resolve_inp_sources` picks)
 # ---------------------------------------------------------------------------
 
 
@@ -551,7 +576,8 @@ def _draw_subcatchments_and_drainage_lines(
 
 
 # ---------------------------------------------------------------------------
-# Hydraulics panel — junctions + outfalls + conduits (from swmm_hydraulics.inp)
+# Hydraulics panel — junctions + outfalls + conduits (from the hydraulics-panel
+# `.inp` that `_resolve_inp_sources` picks)
 # ---------------------------------------------------------------------------
 
 
@@ -749,7 +775,7 @@ def _draw_node_labels(ax, coords_df, junctions_df, outfalls_df, connected_nodes,
 
 
 # ---------------------------------------------------------------------------
-# DEM panel — elevation raster + storm-tide BC overlay (unchanged from iter-2)
+# DEM panel — elevation raster + storm-tide BC overlay
 # ---------------------------------------------------------------------------
 
 
@@ -772,14 +798,15 @@ def _draw_elevation_panel(
     dem_squeezed = dem.squeeze()
     arr = dem_squeezed.values
     valid = arr[np.isfinite(arr)]
-    # Iter-10 wall-aware vmin/vmax: walls (DEM `_WALL_ELEV` ≈ 50 m) dominate
-    # the cell count in the synth fixture (~95% of cells are walls), making
-    # the iter-2 percentile-based bimodal detection fail (median ≈ p95 ≈ 50).
-    # Replace with explicit wall detection: cells within 10% of the global
-    # max are walls; vmin/vmax span only the modeled area, so the corridor's
-    # interior gradient + dropoff occupy the full color range. Walls trigger
-    # `cmap.set_over` (grey, "#808080") and the colorbar's `extend="max"`
-    # arrow makes the modeled-area extent unambiguous on the figure.
+    # Wall-aware vmin/vmax: walls can dominate the cell count -- in the synth
+    # fixture (walls at DEM `_WALL_ELEV` ≈ 50 m) about 95% of cells are walls --
+    # so a percentile-based bimodal detection fails there (median ≈ p95 ≈ 50).
+    # Deliberately NOT percentile-based: walls are detected explicitly, as cells
+    # at or above `ep.wall_threshold_fraction` of the global max, and vmin/vmax
+    # span only the remaining modeled area, so the corridor's interior gradient +
+    # dropoff occupy the full color range. Walls take `cmap.set_over`
+    # (`ep.over_color`) and the colorbar's `extend="max"` arrow makes the
+    # modeled-area extent unambiguous on the figure.
     ep = map_cfg.elevation_panel
     # Dual-source DEM style: publication static_cfg overrides ep.cmap/ep.over_color
     # when provided; None falls back to the report elevation-panel defaults.
@@ -812,13 +839,13 @@ def _draw_elevation_panel(
             "z",
             dem_squeezed,
             source_path=dem_source,
-            transform="modeled-area vmin/vmax clipping (walls → set_over grey)",
+            transform=f"modeled-area vmin/vmax clipping (walls → set_over {_dem_over_color})",
         )
         a.add_xarray_channel(
             "color",
             dem_squeezed,
             source_path=dem_source,
-            transform="modeled-area vmin/vmax clipping (walls → set_over grey)",
+            transform=f"modeled-area vmin/vmax clipping (walls → set_over {_dem_over_color})",
             cmap=_dem_cmap_name,
             vmin=vmin,
             vmax=vmax,
@@ -888,7 +915,7 @@ def _draw_elevation_panel(
 def _master_renders_swmm(analysis: TRITONSWMM_analysis) -> bool:
     """True iff any enabled model type needs a SWMM .inp (coupled tritonswmm or standalone
     swmm). A pure-TRITON master has none, so the SWMM hydrology/hydraulics loads + panels are
-    skipped and system_overview renders the DEM (+Mannings) only. Q4 (iter-2). For a sensitivity
+    skipped and system_overview renders the DEM (+Mannings) only. For a sensitivity
     master, unions across subs (a mixed master with ANY SWMM-bearing sub still renders SWMM)."""
 
     def _enabled(a) -> set:
@@ -908,12 +935,15 @@ def _master_renders_swmm(analysis: TRITONSWMM_analysis) -> bool:
 
 
 def _resolve_inp_sources(analysis: TRITONSWMM_analysis) -> tuple[Path, Path]:
-    """Return `(hydro_inp, hydraulics_inp)` — both required.
+    """Return `(hydro_inp, hydraulics_inp)`, the `.inp` each SWMM panel reads.
 
-    When only the combined `swmm_full_inp` exists (some scenarios), it
-    serves as the source for both panels — the panels still render
-    cleanly but their `source_path` provenance entries cite the same
-    file.
+    The separate hydrology and hydraulics `.inp` files are used when both
+    exist. Otherwise a single existing file serves BOTH panels, tried in the
+    order combined `swmm_full_inp`, hydrology-only, hydraulics-only; the panels
+    still render, but their `source_path` provenance entries cite the same
+    file. Raises FileNotFoundError when none of the three exists. The paths
+    come from the first sim of the analysis, or, for a sensitivity master,
+    from the first sim of its first sub-analysis.
     """
 
     def _pick(scenario_paths) -> tuple[Path, Path]:
@@ -958,12 +988,10 @@ def _apply_rcparams(report_cfg: report_config) -> None:
 
 
 # ===========================================================================
-# Plotly branch (interactive.enabled=True) — informationally congruent with
-# the matplotlib branch above. Authored as the "minimum-viable Plotly port"
-# step described in `Phase 2` plan doc § Pre-/design-figure congruence step.
-# Transcribes matplotlib choices 1:1; interactive-UX refinement (hover field
-# set, layer toggles, attribute filters, color-scale type, palette) is
-# /design-figure's iteration scope.
+# Plotly branch (taken when static_backend == "plotly", the report default, and
+# no static_cfg) — carries the same information as the matplotlib branch above.
+# Where the two differ (the DEM color range and wall overlay, and the map
+# bounds), the difference is stated at the helper that makes it.
 # ===========================================================================
 
 
@@ -999,9 +1027,9 @@ def _build_system_overview_figure(
         emit_plot_with_sources,
     )
 
-    # Q4 Phase-2: model-parametric GRID. Top row = TRITON DEM + Mannings, present for
-    # BOTH arms so the same-named DEM/Mannings panels occupy identical cells/aspect across
-    # models (fungibility-optimal). A coupled master adds a second row of Hydrology +
+    # Model-parametric GRID. Top row = TRITON DEM + Mannings, present for BOTH arms
+    # so the same-named DEM/Mannings panels occupy identical cells/aspect whichever
+    # model is rendered. A coupled master adds a second row of Hydrology +
     # Hydraulics → 2×2; a pure-TRITON master is the top row alone → 1×2. `_cells` is
     # row-major so make_subplots' positional `subplot_titles` and the equal-aspect loop
     # index each cell correctly.
@@ -1028,7 +1056,8 @@ def _build_system_overview_figure(
         height=1040 if _coupled else 560,
         plot_bgcolor="white",
     )
-    # Lock equal-aspect on all panels and pin to DEM bounds.
+    # Lock equal-aspect on all panels and pin them to the padded square
+    # `panel_bounds` computed below.
     # Axis titles label the projected CRS so readers can identify the
     # seven-digit easting/northing values; the CRS authority string is
     # appended to the DEM cell's x-title to show once across the figure.
@@ -1056,8 +1085,8 @@ def _build_system_overview_figure(
         )
         # Defensively link x-axes via `matches="x"` so pan/zoom on any panel
         # synchronizes the others (Plotly's `shared_xaxes=True` in
-        # `make_subplots` does NOT always emit the `matches` property — verified
-        # empirically against this fixture's rendered HTML).
+        # `make_subplots` was observed not to emit the `matches` property on a
+        # rendered report; not re-checked against the pinned Plotly version).
         if _axis_idx > 1:
             x_kwargs["matches"] = "x"
         # `constrain="domain"` on both axes: when `scaleanchor` enforces 1:1
@@ -1080,8 +1109,8 @@ def _build_system_overview_figure(
     # Hydrology (2,1) + Hydraulics (2,2). Each top-row raster carries its OWN colorbar
     # (elevation vs Manning's n are distinct quantities): DEM's docks in the mid-gutter
     # right of col 1, Mannings' at the far right. In a 2×2 they are shortened and raised
-    # to the top-row band; in a 1×2 they span the full height. (Blind-pixel values —
-    # nudged at the final present, per the accepted blind-pixel residual pattern.)
+    # to the top-row band; in a 1×2 they span the full height. The y and len values
+    # below are hand-set placements, not derived from the layout.
     _top_cbar_y = 0.79 if _coupled else None
     _top_cbar_len = 0.42 if _coupled else 0.9
     _draw_elevation_panel_plotly(
@@ -1135,12 +1164,12 @@ def _build_system_overview_figure(
             row=2,
         )
 
-    # Filter the default Plotly modebar to the buttons that map onto the
-    # message of a three-panel pinned-aspect spatial figure (zoom / pan /
-    # reset / static export). Drops lasso/select/spike-lines/compare-on-hover
-    # which add Tab-stops without audience purpose (I3 accessibility + I5
-    # interaction grammar). `toImageButtonOptions` couples the modebar
-    # download to the SVG sibling produced below (I8).
+    # Filter the default Plotly modebar to the buttons that serve a
+    # pinned-aspect spatial figure (zoom / pan / reset / static export). Drops
+    # lasso/select/spike-lines/compare-on-hover, which add keyboard Tab-stops
+    # with no use for this figure. `toImageButtonOptions` makes the modebar
+    # download button export SVG in the viewer's browser; that export is
+    # independent of the kaleido SVG sibling file written below.
     plotly_config = {
         "displayModeBar": True,
         "displaylogo": False,
@@ -1239,9 +1268,8 @@ def _render_plotly_branch(
         config=plotly_config,
     )
     # Inject an accessible <title> tag so screen-readers narrating the
-    # iframe-embedded figure announce the document name rather than the URL
-    # (I3 accessibility floor).
-    # Q4 Phase-2: the doc title names the panels actually rendered — DEM + Mannings for
+    # iframe-embedded figure announce the document name rather than the URL.
+    # The doc title names the panels actually rendered — DEM + Mannings for
     # a pure-TRITON master; DEM + Mannings + Hydrology + Hydraulics (2×2) when coupled.
     _title_panels = (
         "TRITON DEM, Mannings, Hydrology, Hydraulics"
@@ -1254,11 +1282,12 @@ def _render_plotly_branch(
         1,
     )
 
-    # Sibling SVG export for journal-supplement archival (I8). Best-effort:
-    # Kaleido is the Plotly static-export engine and is an optional dep — if
-    # missing, log and continue; the HTML deliverable remains valid.
+    # Sibling SVG export for journal-supplement archival. Best-effort: kaleido
+    # (the Plotly static-export engine, a core dependency) can still raise at
+    # runtime — if the export raises, log and continue; the HTML deliverable
+    # remains valid.
     try:
-        # Q4 Phase-2: the coupled 2×2 grid is taller than the pure-TRITON 1×2 row.
+        # The coupled 2×2 grid is taller than the pure-TRITON 1×2 row.
         _svg_height = 1000 if (hydro_model is not None and hydraulics_model is not None) else 600
         fig.write_image(
             output_path.with_suffix(".svg"),
@@ -1472,8 +1501,8 @@ def _plotly_junction_marker_size(map_cfg) -> int:
     """Junction-and-outlet marker size — 50% of the outfall size.
 
     Shared by the hydrology-panel subcatchment outlets and the
-    hydraulics-panel junctions so a single variable controls both
-    (user Round 6: junctions in both panels must use the same variable).
+    hydraulics-panel junctions so a single variable controls both, and
+    the two panels' small node markers can never drift to different sizes.
     """
     return max(int(_plotly_node_marker_size(map_cfg) * 0.5), 2)
 
@@ -1493,7 +1522,7 @@ def _draw_hydraulics_panel_plotly(
     # Outfalls render at the full unified node-marker size.
     # Junctions render at 50% of that size; the same helper is used by
     # the hydrology-panel subcatchment-outlet trace so a single variable
-    # governs both blue-dot families across both panels (user Round 6).
+    # governs both blue-dot families across both panels.
     hp_node_size = _plotly_node_marker_size(map_cfg)
     hp_junction_size = _plotly_junction_marker_size(map_cfg)
     coords_df = hydraulics_model.inp.coordinates
@@ -1623,8 +1652,7 @@ def _draw_hydraulics_panel_plotly(
     if slope_xs:
         # Hidden by default (legend-toggleable) — the 1000+ text labels overlap
         # at default zoom and obscure the conduit/node geometry. Click the legend
-        # entry "Conduit slopes" to show them. /design-figure Phase C iteration
-        # will likely replace these with hover-only display.
+        # entry "Conduit slopes" to show them.
         with prov.artist(
             axes_id="ax_hydraulics_plotly",
             kind="text",
@@ -1787,7 +1815,7 @@ def _draw_mannings_panel_plotly(
     cbar_y: float | None = None,
     cbar_len: float | None = None,
 ) -> None:
-    """Manning's-n panel (Q4 Phase-2): a viridis ``go.Heatmap`` on the processed
+    """Manning's-n panel: a viridis ``go.Heatmap`` on the processed
     Manning's raster, pinned to the same panel bounds + equal-aspect treatment as the
     DEM panel (the caller sets the axis range/scaleanchor). Mirrors
     ``_draw_elevation_panel_plotly``'s cell-center coordinate construction; no
@@ -1798,12 +1826,10 @@ def _draw_mannings_panel_plotly(
     valid = arr[np.isfinite(arr)]
     vmin = float(valid.min()) if valid.size else 0.0
     vmax = float(valid.max()) if valid.size else 1.0
-    m_bounds = m.rio.bounds()
-    n_y, n_x = arr.shape
-    x0, y0, x1, y1 = m_bounds[0], m_bounds[1], m_bounds[2], m_bounds[3]
-    xs = np.linspace(x0, x1, n_x)
-    # origin="upper": y vector starts at y1 (top) and decreases, matching the DEM panel.
-    ys = np.linspace(y1, y0, n_y)
+    xs = m[m.rio.x_dim].values
+    # The y vector is the raster's own (cell-centre) y coordinate, decreasing for a
+    # north-up raster, so rows render top-to-bottom, matching the DEM panel.
+    ys = m[m.rio.y_dim].values
 
     res_label = f"Manning's n<br>({mannings_res} m)" if mannings_res is not None else "Manning's n"
     _cbar = dict(title=res_label, x=cbar_x)
@@ -1886,40 +1912,37 @@ def _draw_elevation_panel_plotly(
     else:
         vmin, vmax, wall_threshold = 0.0, 1.0, 1.0
 
-    # Cfg-derived wall_threshold override (when both height fields are set on
-    # cfg_system). The threshold separates "real elevation" cells from the
-    # synthetic-fill cells: any cell whose elevation matches or exceeds the
-    # minimum of the two sentinel heights — building height assigned to the
-    # building-footprint cells, and the outside-watershed bathtub elevation —
-    # is recolored to `ep.over_color` (white) by the walls-overlay Heatmap.
+    # Cfg-derived wall_threshold override (when at least one sentinel height is
+    # set on cfg_system). The threshold separates "real elevation" cells from the
+    # synthetic-fill cells -- the building height assigned to building-footprint
+    # cells, and the outside-watershed bathtub elevation. Any cell at or above the
+    # lower of whichever sentinels are set, minus the buffer below, is recolored to
+    # `ep.over_color` (white by default) by the walls-overlay Heatmap.
     cfg_sentinels = [h for h in (dem_building_height, dem_outside_watershed_height) if h is not None]
     if cfg_sentinels:
         # Subtract `ep.wall_threshold_buffer_m` so coarsened-but-still-building
         # cells (DEM cells whose elevation falls below the strict sentinel due
-        # to spatial resampling) are also flagged as walls. Default buffer 30 m
-        # yields threshold 50 m for Norfolk's 80 m building-height sentinel.
+        # to spatial resampling) are also flagged as walls. The default buffer,
+        # 40 m on ElevationPanelStyle, yields a 40 m threshold for Norfolk's 80 m
+        # building-height sentinel.
         wall_threshold = float(min(cfg_sentinels)) - float(ep.wall_threshold_buffer_m)
 
-    # Two-heatmap overlay reproduces matplotlib's `cmap.set_over` behavior:
+    # Two-heatmap overlay, sharing matplotlib's `cmap.set_over` MECHANISM (a
+    # uniform over-color layer above a threshold) but not its threshold, which
+    # differs as `_resolve_dem_color_range` states:
     # bottom layer shows modeled-area gradient (sentinel cells masked NaN);
     # top layer shows sentinel cells as a uniform color (`ep.over_color`,
-    # default white per Round 2 user-feedback).
+    # white by default).
     arr_modeled = np.where(arr < wall_threshold, arr, np.nan)
     arr_walls = np.where(arr >= wall_threshold, 1.0, np.nan)
 
     # Build x/y coordinate vectors for the heatmap (cell centers).
-    n_y, n_x = arr.shape
-    x0, y0, x1, y1 = (
-        dem_bounds[0],
-        dem_bounds[1],
-        dem_bounds[2],
-        dem_bounds[3],
-    )
-    xs = np.linspace(x0, x1, n_x)
-    # DEM is origin="upper" in matplotlib; for Plotly Heatmap with explicit
-    # y vector starting at y1 and decreasing, the rows render top-to-bottom
-    # to match matplotlib's `extent` + `origin="upper"` behavior.
-    ys = np.linspace(y1, y0, n_y)
+    xs = dem_squeezed[dem_squeezed.rio.x_dim].values
+    # DEM is origin="upper" in matplotlib. Here the y vector is the raster's own
+    # (cell-centre) y coordinate, decreasing for a north-up raster, so the
+    # Plotly Heatmap rows render top-to-bottom to match matplotlib's `extent` +
+    # `origin="upper"` behavior.
+    ys = dem_squeezed[dem_squeezed.rio.y_dim].values
 
     cmap_plotly = _matplotlib_cmap_to_plotly_colorscale(ep.cmap)
     with prov.artist(
@@ -1931,13 +1954,13 @@ def _draw_elevation_panel_plotly(
             "z",
             dem_squeezed,
             source_path=dem_source,
-            transform="modeled-area vmin/vmax clipping (walls → grey overlay)",
+            transform=f"modeled-area vmin/vmax clipping (walls → {ep.over_color} overlay)",
         )
         a.add_xarray_channel(
             "color",
             dem_squeezed,
             source_path=dem_source,
-            transform="modeled-area vmin/vmax clipping (walls → grey overlay)",
+            transform=f"modeled-area vmin/vmax clipping (walls → {ep.over_color} overlay)",
             cmap=ep.cmap,
             vmin=vmin,
             vmax=vmax,
@@ -1989,9 +2012,9 @@ def _draw_elevation_panel_plotly(
             col=col,
         )
 
-    # Black bounding box around the TRITON DEM modeled-area extent (per Round 2
-    # user feedback): a 5-point Scatter path tracing dem_bounds. Sits ON TOP of
-    # the Heatmaps but BELOW the BC line + watershed polygon so the user can
+    # Black bounding box around the TRITON DEM modeled-area extent: a 5-point
+    # Scatter path tracing dem_bounds. Sits ON TOP of
+    # the Heatmaps but BELOW the BC line so the user can
     # always see where the gridded modeled region begins/ends.
     with prov.artist(
         axes_id="ax_dem_plotly",
@@ -2089,10 +2112,10 @@ def _draw_elevation_panel_plotly(
 def _matplotlib_marker_to_plotly(matplotlib_marker: str) -> str:
     """Map matplotlib marker strings to Plotly marker symbol names.
 
-    1:1 transcription for the common matplotlib markers system_overview.py
-    uses today (`s` for square, `^` for triangle-up, etc.). Falls back to
-    "circle" for unrecognized markers — Plotly's default and a safe choice
-    since the matplotlib branch is the one that defines the marker contract.
+    1:1 transcription for common matplotlib markers (`s` for square, `^` for
+    triangle-up, etc.). Falls back to "circle" for unrecognized markers —
+    Plotly's default. Nothing calls it: the Plotly branch writes its marker
+    symbols as literals (the outfall marker is `"triangle-up"`).
     """
     mapping = {
         "o": "circle",
@@ -2116,8 +2139,8 @@ def _matplotlib_cmap_to_plotly_colorscale(
     Returns a list of `[t, "rgb(r,g,b)"]` entries with `t` in [0, 1]. This
     preserves the matplotlib visual identity (used by the static branch of
     this renderer) instead of falling back to a Plotly-named approximation.
-    Important for cmaps without a Plotly equivalent — e.g., `terrain`,
-    which is the system_overview default.
+    Important for cmaps without a Plotly equivalent — e.g., `terrain`. (The
+    elevation panel's default, `ElevationPanelStyle.cmap`, is `cividis`.)
     """
     try:
         cmap = plt.get_cmap(cmap_name)
@@ -2139,25 +2162,32 @@ def _resolve_dem_color_range(
     """Resolve (vmin, vmax, overlay_threshold) for the DEM heatmap.
 
     Approach: the dominant DEM regime is real elevations (low values). Walls
-    and bathtub fill cluster well above the elevation regime — for the UVA
-    bundle, real elevations cluster near 0–10 m with some high-terrain spots
-    up to 80 m, while walls span 3000–9000 m and the bathtub fill is 9999 m;
-    for the synth fixture real elevations max near 10 m and walls/bathtub
-    are 50 m. In both cases, restricting to cells below `arr_max / 2`
-    cleanly isolates the real-elevation regime, and the `vmax_percentile`
-    of that subset gives a tight color range that reveals inside-area
-    variation. Cells above vmax but below `arr_max / 2` (e.g., the UVA
-    bundle's 43–80 m high-terrain spots) render at the colormap's max color
-    via Plotly's `zmax` clip — informationally "elevated, exact value
-    suppressed."
+    and bathtub fill cluster well above the elevation regime. In one UVA
+    bundle, real elevations clustered near 0–10 m with some high-terrain spots
+    up to 80 m, while walls spanned 3000–9000 m and the bathtub fill was
+    9999 m (measured when this approach was chosen; not re-measured here).
+    In the synth fixture real elevations max near 10 m and walls/bathtub are
+    50 m. In the synth fixture, restricting to cells below the midpoint
+    `(arr_min + arr_max) / 2` (`half_max`) isolates the real-elevation regime,
+    and the `vmax_percentile` of that subset gives a tight color range that
+    reveals inside-area variation. In that UVA bundle the isolation is only
+    partial: the midpoint falls near 5000 m, so walls between about 3000 m and
+    the midpoint fall into the low regime and the `vmax_percentile` is exposed
+    to them. Cells above vmax but below the midpoint render at the colormap's
+    max color via Plotly's `zmax` clip — informationally "elevated, exact
+    value suppressed." That bundle's 43–80 m high-terrain spots were the
+    original example of such cells; with walls in the low regime, whether
+    they still exceed vmax there is not established.
 
-    `overlay_threshold = arr_max / 2` (decoupled from vmax) so the
-    wall-overlay heatmap renders only walls + bathtub as grey, NOT high-
-    but-real terrain. This differs from the matplotlib branch's strict
-    `cmap.set_over` semantics (which would grey-out everything above vmax)
-    — the trade is intentional: with vmax tightened for inside-area
-    contrast, equating "above vmax = walls" would smear high terrain into
-    the wall category.
+    `overlay_threshold = (arr_min + arr_max) / 2` (decoupled from vmax) so the
+    wall-overlay heatmap paints cells at or above the midpoint in
+    `ep.over_color` (white by default) — every wall and the bathtub in the
+    synth fixture, only the upper walls and the bathtub in that UVA bundle —
+    and NOT high-but-real terrain below it. This differs from the
+    matplotlib branch's strict `cmap.set_over` semantics (which would paint
+    everything above vmax in the over-color) — the trade is intentional: with
+    vmax tightened for inside-area contrast, equating "above vmax = walls"
+    would smear high terrain into the wall category.
     """
     arr_max = float(valid_values.max())
     arr_min = float(valid_values.min())

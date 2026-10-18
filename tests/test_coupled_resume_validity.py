@@ -1226,7 +1226,7 @@ def test_stamp_producer_records_the_mechanism(tmp_path, monkeypatch):
 def test_parse_resume_timestep_reads_either_marker(tmp_path):
     """Fifth consumer (EDA b4b vline). Keyed on the replay literal alone it returned None
     on every snapshot-restored sim -- a silent loss of the figure's resume boundary."""
-    from hhemt.eda.raw_resume_identity import parse_resume_timestep
+    from hhemt.eda.raw_byte_identity import parse_resume_timestep
 
     snap = tmp_path / "snap.log"
     snap.write_text(_CKPT + _SNAPSHOT + _ENDS)

@@ -665,7 +665,7 @@ class SensitivityReportConfig(cfgBaseModel):
             warnings.warn(
                 "report.sensitivity.mode is retired (ADR-5 ReportingSet "
                 "registry). Reporting-set selection now lives on "
-                "report.reporting_set (default 'benchmarking' for "
+                "report.reporting_set (default 'sensitivity' for "
                 "sensitivity analyses). The legacy `mode:` key is ignored this "
                 "cycle and will be rejected in a future release.",
                 DeprecationWarning,
@@ -923,7 +923,7 @@ class report_config(cfgBaseModel):
             "entries in the ReportingSet registry (report_renderers/_reporting_sets.py); "
             "a bare string is normalized to a one-element list, and an empty "
             "list is treated as absent and takes the sentinel path. The sentinel "
-            "'default' resolves at analysis.run() entry to 'benchmarking' when "
+            "'default' resolves at analysis.run() entry to 'sensitivity' when "
             "toggle_sensitivity_analysis is True, else to the standard set, and cannot "
             "be named alongside another set. Validated against the registry at "
             "run-entry (NOT at field-construction time — that would create a "
@@ -1180,7 +1180,7 @@ def resolve_reporting_set_names(
     for raw in requested:
         name = raw
         if name == "default":
-            name = "benchmarking" if is_sensitivity else "default"
+            name = "sensitivity" if is_sensitivity else "default"
         if not isinstance(name, str) or name not in REPORTING_SETS:
             raise ConfigurationError(
                 field="reporting_set",

@@ -16,6 +16,7 @@ hhemt.Toolkit.run
 hhemt.Toolkit.synthetic_experiment
 hhemt.WorkflowError
 hhemt.WorkflowPlanningError
+hhemt.analysis
 hhemt.analysis.TRITONSWMM_analysis
 hhemt.analysis.TRITONSWMM_analysis.bundle_report_data
 hhemt.analysis.TRITONSWMM_analysis.cancel
@@ -78,7 +79,7 @@ hhemt.eda.EdaResult
 hhemt.eda.check_cross_hardware_magnitude
 hhemt.eda.check_cross_sim_identity
 hhemt.eda.check_rank_sensitivity
-hhemt.eda.check_raw_b4b
+hhemt.eda.check_raw_byte_identity
 hhemt.eda.check_resume_sensitivity
 hhemt.eda.config_diff_maps_figure_from_root
 hhemt.eda.dem_resolution_cost_error_figure_from_root
@@ -108,6 +109,7 @@ hhemt.experiments.TRITON_SWMM_experiment
 hhemt.experiments.TRITON_SWMM_experiment.from_case_study
 hhemt.experiments.TRITON_SWMM_experiment.from_doi
 hhemt.experiments.TRITON_SWMM_experiment.retrieve_test_data_directory
+hhemt.sensitivity_analysis
 hhemt.sensitivity_analysis.TRITONSWMM_sensitivity_analysis
 hhemt.sensitivity_analysis.TRITONSWMM_sensitivity_analysis.SWMM_analyses_outputs_consolidated
 hhemt.sensitivity_analysis.TRITONSWMM_sensitivity_analysis.SWMM_time_series_not_processed
@@ -156,9 +158,6 @@ hhemt.sensitivity_analysis.TRITONSWMM_sensitivity_analysis.scenarios_not_created
 hhemt.sensitivity_analysis.TRITONSWMM_sensitivity_analysis.scenarios_not_run
 hhemt.sensitivity_analysis.TRITONSWMM_sensitivity_analysis.submit_workflow
 hhemt.sensitivity_analysis.TRITONSWMM_sensitivity_analysis.system_independent_vars
-hhemt.sensitivity_analysis.TRITONSWMM_sensitivity_analysis.tritonswmm_SWMM_link_summary
-hhemt.sensitivity_analysis.TRITONSWMM_sensitivity_analysis.tritonswmm_SWMM_node_summary
-hhemt.sensitivity_analysis.TRITONSWMM_sensitivity_analysis.tritonswmm_TRITON_summary
 hhemt.synthetic_experiment
 hhemt.synthetic_experiment.assert_coupling_nodes_distinct
 hhemt.synthetic_experiment.build_experiment_matrix

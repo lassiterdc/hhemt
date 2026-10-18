@@ -53,7 +53,13 @@
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
-    renderer_sha256: b0d6d7a258c8927c1245eb0de0a8345823664803897f3d624cd6dcb89f8098fc
+    renderer_sha256: a3feeb11e59567d5ee530081fbe0f604e2a9c3755b05580d756c884115c46ce7
+    justification_2026_10_18: >-
+      Re-read 2026-10-18 (D-93). Package 1e changed one docstring word only
+      (raw_resume_identity -> raw_byte_identity, the module's current name); with docstrings
+      stripped the renderer is AST-identical to HEAD, so no emitted column, unit or panel
+      moved. The caption's words are unchanged; its axis-range paragraph was moved above the
+      Sources heading, where it had been rendering as part of the sources block.
     justification_2026_09_30: >-
       WP-3D: the wallclock-safe allowlist widened from three literals to six, and
       `_WALLCLOCK_SAFE_COLS` moved from a `render()`-local set to a module constant so the
@@ -715,7 +721,13 @@ unpaired_allowlist:
       change to this file rather than on arrival.
   - renderer: system_overview
     caption: src/hhemt/report_templates/captions/system_map.rst
-    renderer_sha256: 0980dcf7fe1f68587343ba9cddc0e964189acf1080ba9e216bf6dd9235f26617
+    renderer_sha256: 3db9f3a5be13ed3fc1ff5854000217e4b29b79fa5f492195389b602ca2318236
+    justification_2026_10_18: >-
+      Re-read 2026-10-18 (D-93). The caption described a watershed/DEM-extent/BC-marker/SWMM
+      overlay map this renderer does not draw; it was rewritten to the figure the renderer
+      emits -- the TRITON DEM and Manning's n panels, plus hydrology and hydraulics panels
+      when SWMM is rendered -- and to resolve_target_crs's precedence. Digest recorded against
+      the package-1e post-image.
     justification: >-
       Vocabulary-rename fallout repair. THIS SUPERSEDES A FORMATTING-ONLY ENTRY AND ITS
       DISCHARGE DOES NOT CARRY OVER. The prior entry recorded digest 43e350a7 and
@@ -826,7 +838,16 @@ unpaired_allowlist:
 
   - renderer: per_sim_peak_flood_depth
     caption: src/hhemt/report_templates/captions/per_sim_peak_flood_depth.rst
-    renderer_sha256: 5f2f050945fddd676c792d3bc3ba6153c0bd677ae66b01cf8caafdf96496c181
+    renderer_sha256: 1f51f4da0826ed8e81e3a696c5de7624295967767388da7ec520afeed6683ae7
+    justification_2026_10_18: >-
+      Re-read 2026-10-18 (D-93, D-94 general watershed wording). Two caption sentences were
+      false of this renderer and were rewritten: the per-cell maximum is taken by the
+      toolkit's post-processing, not by the TRITON solver, and the colormaps and quantile
+      clips come from report.per_sim.map, not report.per_sim.peak_flood_depth (which supplies
+      only figsize_inches). The watershed paragraph now names
+      system_config.watershed_gis_polygon rather than one case study's geography. Package 1e's
+      renderer change (the shared wall-threshold helper and the provenance transform strings)
+      touches no claim the caption makes.
     justification: >-
       Tree-wide ruff pass over the merged file set. IMPORT-ONLY -- discharged by
       measurement, not by judgement. The change is an I001 REORDER of one

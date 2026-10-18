@@ -1,7 +1,7 @@
 r"""The residual disagreement among the THREE in-tree resume-time parses, characterized.
 
 WHAT THIS MODULE IS FOR. The 2026-10-03 repair to
-`eda/raw_resume_identity.parse_resume_timestep` closed the EMPTY-TAIL class across all
+`eda/raw_byte_identity.parse_resume_timestep` closed the EMPTY-TAIL class across all
 three implementations OVER THIS MODULE'S FIXTURE FAMILY -- measured: the other two were
 already total over it, the regex because no match is reachable on an empty tail and the
 leaf because of its explicit `if not parts: return None`, so the repair closed the only
@@ -49,11 +49,11 @@ artifact: the stamp written by `processing_analysis` would carry `resume_t: null
 figure's parser reads `inf`". The second clause is FALSE: the figure does not call that
 parser. Measured at 24be6058 --
 `grep -rnE 'parse_resume_timestep[[:space:]]*\(' --include=*.py src/ scripts/` returns ONE
-hit and it is the `def` line itself (`raw_resume_identity.py:181`), and no module under
+hit and it is the `def` line itself (`raw_byte_identity.py:181`), and no module under
 `src/` or `scripts/` imports the symbol at all. So `parse_resume_timestep` has ZERO
 production call sites, and its callers are six test modules. The two things that actually
 produce a resume boundary in production are `resume_boundaries_from_schedule`
-(`raw_resume_identity.py:227`, called at `:706` from `check_raw_b4b` -- the bit-for-bit
+(`raw_byte_identity.py:227`, called at `:706` from `check_raw_byte_identity` -- the bit-for-bit
 figure) and `processing_analysis._parse_replay_t` (`:950`, called at `:1024-1025` -- the
 durable stamp, and the REGEX rule). There is therefore no second reader for the stamp to
 disagree with, and the divergence this table records is a property of the FUNCTIONS rather
@@ -71,7 +71,7 @@ from __future__ import annotations
 import pytest
 
 import hhemt.analysis_validation as av
-from hhemt.eda.raw_resume_identity import parse_resume_timestep
+from hhemt.eda.raw_byte_identity import parse_resume_timestep
 from hhemt.processing_analysis import _parse_replay_t
 from hhemt.resume_events import _parse_leading_float
 
@@ -114,7 +114,7 @@ def test_the_residual_disagreement_is_exactly_as_measured(tmp_path, tail, expect
     # what the (D) repair bought, and it is the half of the class that IS closed.
     assert repr(leaf) == repr(token), (
         f"the two token-rule implementations have diverged on {tail!r} -- "
-        "eda/raw_resume_identity and resume_events declare the SAME rule by intent"
+        "eda/raw_byte_identity and resume_events declare the SAME rule by intent"
     )
 
 

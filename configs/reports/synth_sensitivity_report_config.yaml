@@ -5,8 +5,8 @@
 # additional CSV columns.
 
 # Pinned explicitly rather than left to the sentinel: with no `reporting_set` key,
-# resolve_reporting_set_name maps "default" -> "benchmarking" on a sensitivity
-# analysis, so this fixture's set is decided by a rule the taxonomy work removes.
+# resolve_reporting_set_names maps "default" -> ("sensitivity",) on a sensitivity
+# analysis, which is not the set this fixture exercises.
 # Pinning it here makes the zero-delta criterion of later golden comparisons a real
 # check. BOTH this file and its mirror are pinned: the byte-identity goldens read the
 # tests/fixtures copy, so pinning only one leaves the golden path unpinned while

@@ -88,7 +88,7 @@ def test_r12_combined_report_assembles_from_two_sensitivity_masters(synthetic_tw
     assert isinstance(combined, CombinedBundle)
     report = out / "analysis_report.html"
     assert report.exists()
-    assert "Cross-Experiment Compatibility" in report.read_text()
+    assert "Combine Provenance & Compatibility" in report.read_text()
     # Regen round-trips against the bundle root (no re-merge; reads the read-model).
     regen = combined.regenerate_report(format="html")
     assert regen.exists()

@@ -37,7 +37,7 @@ _MINTING_MODULES = (
     "analysis_validation.py",
     "eda/compute_sensitivity.py",
     "eda/cross_sim_identity.py",
-    "eda/raw_resume_identity.py",
+    "eda/raw_byte_identity.py",
 )
 
 

@@ -199,7 +199,7 @@ def _within_family(g: dict, serial_grp: dict) -> bool:
 def _identity_cell(identical, g: dict, serial_grp: dict, wad: float, fad: float) -> str:
     """Q1 (iter-2) within-family verdict. `identical` is now computed against g's OWN
     hardware-family minimum-device reference (CPU -> serial-CPU, GPU -> 1-GPU), matching
-    b4b_clean_identity — so a False verdict is ALWAYS a within-family difference (decomposition
+    raw_byte_identity — so a False verdict is ALWAYS a within-family difference (decomposition
     / rank FP non-associativity), never a cross-hardware claim. The vs-serial magnitude still
     appears in the 'max_wlevel_m abs diff' column (a distinct quantity)."""
     if identical is None:
@@ -216,7 +216,7 @@ def _hw_family_key(g: dict) -> str:
     Every GPU group buckets as 'gpu' regardless of hardware token, so a GPU config is
     compared against ONE GPU reference and cross-hardware divergence can SURFACE rather
     than being partitioned out of existence. This is the same axis
-    raw_resume_identity._b4b_family_key uses; it is NOT the axis
+    raw_byte_identity._b4b_family_key uses; it is NOT the axis
     sensitivity_benchmarking._hardware_family uses, which is deliberately per-hardware
     because a scaling baseline must stay within one hardware.
 
@@ -229,7 +229,7 @@ def _hw_family_key(g: dict) -> str:
 
 
 def _device_count_key(g: dict) -> tuple:
-    """Ascending device-count key mirroring raw_resume_identity._b4b_device_key, so a family's
+    """Ascending device-count key mirroring raw_byte_identity._b4b_device_key, so a family's
     MINIMUM-device group (serial-CPU / 1-GPU) is its within-family byte-identity reference."""
     a = g.get("attrs", {})
     return (_to_int(a, "n_nodes"), _to_int(a, "n_gpus"), _to_int(a, "n_mpi_procs"), _to_int(a, "n_omp_threads"))
@@ -238,7 +238,7 @@ def _device_count_key(g: dict) -> tuple:
 def _family_ref_key(g: dict) -> tuple:
     """Within-family reference ordering for a group — deterministic under ties.
 
-    Mirrors raw_resume_identity._b4b_ref_key, and for the same measured reason. Once
+    Mirrors raw_byte_identity._b4b_ref_key, and for the same measured reason. Once
     _hw_family_key collapsed to the device-class axis, GPU x1 (a6000) and GPU x1 (a100-80)
     share a bucket AND tie on _device_count_key at (1, 1, 0, 0), so min() would resolve on
     group arrival order: three of the six orderings of one three-group fixture picked
@@ -262,7 +262,7 @@ class BaselineSpec:
     uses today (the serial-CPU group is the one baseline for the whole figure).
     ``family_keyed=True`` partitions by DEVICE CLASS (``_hw_family_key``: 'cpu' | 'gpu')
     and gives each class its own minimum-device baseline, which is
-    the rule b4b_clean_identity and _family_reference_group already use.
+    the rule raw_byte_identity and _family_reference_group already use.
 
     Consumers MUST run ``_align_to`` against the resolved baseline's DataArray before any
     positional subtraction. build_config_diff_figure documents that alignment as "the only
@@ -302,7 +302,7 @@ def resolve_baseline_groups(groups: list[dict], spec: BaselineSpec) -> dict[str,
 
 def _family_reference_group(g: dict, groups: list[dict]) -> dict:
     """The within-DEVICE-CLASS minimum-device reference group for g (matches
-    b4b_clean_identity: cpu -> serial-CPU, gpu -> the one GPU reference). Ordering is
+    raw_byte_identity: cpu -> serial-CPU, gpu -> the one GPU reference). Ordering is
     _family_ref_key, NOT _device_count_key, because the device count alone ties two
     single-GPU groups on different hardware and min() would then resolve on arrival order.
     Falls back to g when no family peer exists (g is its family's only member)."""
@@ -956,7 +956,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         if labels is None:
             identical = None
         else:
-            # Q1 (iter-2): within-family classification (matches b4b_clean_identity). Compare
+            # Q1 (iter-2): within-family classification (matches raw_byte_identity). Compare
             # each group's byte-identity label to its HARDWARE-FAMILY minimum-device reference
             # group (CPU -> serial-CPU, GPU -> 1-GPU), NOT the global serial group, so a GPU
             # config is never claimed identical-to-serial-CPU. The diff MAPS below stay vs serial.

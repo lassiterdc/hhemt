@@ -16,8 +16,8 @@ import xarray as xr
 from hhemt.processing_analysis import (
     TRITONSWMM_analysis_post_processing,
     ds_memory_req_MiB,
-    prev_power_of_two,
 )
+from hhemt.utils import prev_power_of_two
 
 # ========== Helper Functions ==========
 

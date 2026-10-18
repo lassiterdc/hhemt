@@ -51,7 +51,7 @@ REGEN_RULE_SET = {
     "plot_eda_dem_resolution_diff_maps",
     "plot_eda_dem_resolution_coupling_table",
     # b4b: emitted only for a bundle whose cfg_analysis selects reporting_set="b4b".
-    "plot_b4b_clean_identity",
+    "plot_raw_byte_identity",
 }
 
 NON_REGEN_RULES = {

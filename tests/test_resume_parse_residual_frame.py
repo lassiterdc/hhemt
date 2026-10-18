@@ -15,7 +15,7 @@ two held-constant dimensions, so the frame is stated where the claims are made a
 here; the paragraphs below remain the measurement rather than a second assertion of it.
 Measured at `5c2ef5a3`:
 
-  * TAIL SCOPE. `eda/raw_resume_identity.parse_resume_timestep` takes its tail to END OF
+  * TAIL SCOPE. `eda/raw_byte_identity.parse_resume_timestep` takes its tail to END OF
     FILE (`text.rsplit(marker, 1)[1]`); `resume_events.harvest_resume_events` takes it to
     END OF LINE (`line.split(MARKER, 1)[1]`) before handing it to `_parse_leading_float`.
     Every in-tree fixture builds a SINGLE-LINE text, where file tail == line tail, so the
@@ -34,7 +34,7 @@ corrects a reachability sentence in the sibling module. `parse_resume_timestep` 
 production call sites: `grep -rn 'parse_resume_timestep' --include=*.py src/ scripts/` at
 `5c2ef5a3` returns one definition and three DOCSTRING mentions, and nothing else. The b4b
 figure's resume boundary comes from `resume_boundaries_from_schedule`
-(`raw_resume_identity.py:706`), which that function's own docstring describes as
+(`raw_byte_identity.py:706`), which that function's own docstring describes as
 "Model-agnostic and K-complete, unlike `parse_resume_timestep`"; the durable stamp's
 `resume_t` comes from `processing_analysis._parse_replay_t` (`processing_analysis.py:1024`,
 the REGEX rule). So the sibling module's claim that `inf` "is the one row whose divergence
@@ -71,7 +71,7 @@ from __future__ import annotations
 import pytest
 
 import hhemt.analysis_validation as av
-from hhemt.eda.raw_resume_identity import parse_resume_timestep
+from hhemt.eda.raw_byte_identity import parse_resume_timestep
 from hhemt.processing_analysis import _parse_replay_t
 from hhemt.resume_events import _parse_leading_float, harvest_resume_events
 from tests.test_resume_parse_residual_disagreement import _RESIDUAL

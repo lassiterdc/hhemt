@@ -31,7 +31,7 @@ def _assert_label_map_used(text: str, needle: str) -> None:
             f"source path emits raw wildcards while the registry emits user-defined "
             f"labels: {ln}"
         )
-    assert "_EVENT_LABELS" in text, "the label-globals preamble is absent from the emitted Snakefile"
+    assert "_EVENT_SIDEBAR_LABELS = " in text, "the label-globals preamble is absent from the emitted Snakefile"
 
 
 @pytest.mark.slow

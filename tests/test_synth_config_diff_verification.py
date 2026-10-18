@@ -203,7 +203,7 @@ def _grp_attrs(run_modes, member, attrs) -> dict:
 
 def test_family_reference_group_within_family_min_device():
     # User ruling 2026-08-21: config-diff takes the DEVICE-CLASS axis (cpu | gpu), matching
-    # b4b_clean_identity, so a GPU config is never referenced against serial-CPU but IS
+    # raw_byte_identity, so a GPU config is never referenced against serial-CPU but IS
     # referenced against the single GPU reference regardless of hardware token. Benchmarking
     # keeps the finer per-hardware axis; see sensitivity_benchmarking._hardware_family.
     from hhemt.eda._config_diff import _family_reference_group, _hw_family_key
