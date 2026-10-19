@@ -1,18 +1,25 @@
-"""Unit tests for the Metadata report renderer (ADR-14 / C10).
+"""Unit tests for the Metadata report renderer (`report_renderers/metadata.py`).
 
-HPC-free / compile-free. `metadata.render()` reads exactly two files — the persisted
-RO-Crate sidecar and `validation_report.json` (the Data Availability section) — plus
-in-memory config introspection for the reproduction guide, which reads no file. So every
-case here is driven by a CRAFTED sidecar and a minimal analysis stand-in. Crafting the crate
-is not a convenience — it is the only way to prove the R3 volatile-field exclusion (we must
+HPC-free / compile-free. `metadata.render()` reads the persisted RO-Crate sidecar and
+`validation_report.json` (the Data Availability section), plus, when one exists, the
+consolidated tree's attrs and group names only (declared metadata-only) — and does
+in-memory config introspection for the reproduction guide, which reads no file. So the
+`render()`-driven tests here use a CRAFTED sidecar and a minimal analysis stand-in. Crafting the crate
+is not a convenience — it is the only way to prove the volatile-field exclusion (we must
 plant a KNOWN hostname/wall-clock sentinel and assert it never surfaces) and to exercise the
-R7 crate-shape branches (native run, sensitivity master, empty inputs) that a single real
-fixture cannot produce.
+graceful-degradation crate-shape branches (native run, sensitivity master, empty inputs)
+that a single real fixture cannot produce.
 
 This module ALSO unit-tests `_build_slurm_efficiency_html` and its helpers directly. Those
-still live in `metadata.py`, but since `[Q160]`(7) their only CALLER is
+still live in `metadata.py`, but their only CALLER is
 `workflow_performance.py` — the module HOSTS them, the renderer does not reach them. Do not
 read the SLURM coverage below as evidence that `render()` reads a SLURM CSV; it does not.
+
+Beyond the renderer, the file also tests three populations that are not `render()` calls:
+the `hhemt.config.base` field-metadata machinery (`field_meta`, `when`, `declared`, including
+its class-definition-time refusals); `hhemt.status_flags.harvest_slurm_job_index`; and
+source-text bans that read the source of `hhemt.config.analysis` / `hhemt.config.system`
+and of `metadata.py` for retired helpers and header strings.
 
 End-to-end integration on the production render path is covered separately by
 tests/test_synth_04_multisim_with_snakemake.py and
@@ -35,7 +42,7 @@ from hhemt.report_renderers import metadata
 
 # Sentinels planted in the crafted crate's VOLATILE fields. If either ever
 # reaches the rendered HTML, a bundle-shipped Metadata page would disclose the
-# producing machine and wall-clock (R3 / C-ZERO-USER-INFO).
+# producing machine and wall-clock, which a bundle must not carry.
 _SENTINEL_HOST = "SECRET-PRODUCER-HOST"
 _SENTINEL_TIME = "2026-01-01T03:04:05"
 
@@ -135,12 +142,12 @@ def _full_crate() -> dict:
 def _tabulator_rows(mounted) -> list[dict]:
     """The Tabulator row data a built table carries, as a list of {header: cell} dicts.
 
-    `[Q160]`(7): the run-timeline and SLURM tables are Tabulator data grids now, so a
+    The run-timeline and SLURM tables are Tabulator data grids now, so a
     rendered row is a JSON entry in `tableOptions.data` rather than a server-rendered
     `<tr>`/`<td>`. The DATA is unchanged and the cells are still the same pre-escaped HTML
     fragments; only the carrier moved. Locating a cell BY HEADER KEY here is strictly more
-    robust than the positional `<td>` index this replaces, which the old helper's own
-    docstring warned would "silently follow the wrong column".
+    robust than a positional `<td>` index, which, as `_eff_cell`'s docstring below warns,
+    would "silently follow the wrong column".
 
     Takes the `_MountedTable`, NOT its `.html`: a builder returns page markup (heading,
     summary, mount point) separately from the document-level fragment, and the options
@@ -181,7 +188,7 @@ def _cell_text(value: str) -> str:
 def _rendered_text(mounted) -> str:
     """Page markup PLUS the fragment's script — everything the table renders, in one string.
 
-    `[Q160]`(7): a cell VALUE now lives in the fragment's `tableOptions.data`, while the
+    A cell VALUE now lives in the fragment's `tableOptions.data`, while the
     heading, summary and notes stay in the section markup. A "does this value reach the
     reader" assertion has to look at both, and looking at `.html` alone silently stops
     covering every cell in the grid.
@@ -192,7 +199,7 @@ def _rendered_text(mounted) -> str:
 
 
 def _fake_analysis(analysis_dir: Path):
-    """render() reads exactly two attributes off the analysis object."""
+    """The two attributes render() requires; its other reads off the analysis tolerate absence."""
     return types.SimpleNamespace(
         analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir),
         cfg_analysis=types.SimpleNamespace(analysis_id="A1"),
@@ -200,7 +207,12 @@ def _fake_analysis(analysis_dir: Path):
 
 
 def _render(tmp_path: Path, *, doc: dict | None = None, slurm_csv: str | None = None) -> tuple[str, dict, Path]:
-    """Render into a fresh analysis_dir; return (html, manifest, analysis_dir)."""
+    """Render into a fresh analysis_dir; return (html, manifest, analysis_dir).
+
+    The `slurm_csv` branch below is unused: no test in this file passes `slurm_csv`, and
+    `render()` does not read the directory that branch writes (the SLURM tables are built
+    by `workflow_performance.py`, not by this renderer).
+    """
     analysis_dir = tmp_path / "analysis"
     analysis_dir.mkdir(exist_ok=True)
     if doc is not None:
@@ -220,38 +232,37 @@ def _render(tmp_path: Path, *, doc: dict | None = None, slurm_csv: str | None = 
     return output_path.read_text(), manifest, analysis_dir
 
 
-# --- R2: page structure ------------------------------------------------------
+# --- Page structure ----------------------------------------------------------
 
 
 def test_renderer_emits_three_sections(tmp_path):
-    """R2: the page carries the three <h3 id> sub-section headings."""
+    """The page carries the three <h3 id> sub-section headings."""
     html, _, _ = _render(tmp_path, doc=_full_crate())
     for anchor in _ANCHORS:
         assert f'id="{anchor}"' in html
 
 
 def test_page_title_and_jump_nav(tmp_path):
-    """R2: <h2> page title plus a jump-nav anchoring each sub-section."""
+    """<h2> page title plus a jump-nav anchoring each sub-section."""
     html, _, _ = _render(tmp_path, doc=_full_crate())
     assert "<h2>Metadata — A1</h2>" in html
     for anchor in _ANCHORS:
         assert f'href="#{anchor}"' in html
 
 
-# --- R3: provenance source + volatile-field exclusion -------------------------
+# --- Provenance source + volatile-field exclusion ----------------------------
 
 
 def test_provenance_declares_the_sidecar_and_nothing_undeclared(tmp_path):
-    """R3: the PROVENANCE sub-section's declared source is the RO-Crate sidecar.
+    """The PROVENANCE sub-section's declared source is the RO-Crate sidecar.
 
-    R3 is scoped to that sub-section, not to the page -- both in the plan
-    (reproducibility-system_metadata-report-section.md:65, "The provenance sub-section
-    reads ONLY ...") and in the durable stipulation ("its single PROVENANCE
-    source_paths entry"). The page legitimately grew a fourth sub-section that reads
-    validation_report.json, which Gotcha 53's IO audit REQUIRES it to declare. So the
-    checkable claim is membership plus a closed set, never a snapshot of the list:
-    the closed set is derived from the renderer's own filename constants, so adding a
-    reader means adding a constant at the producer, in view of a reviewer.
+    That rule is scoped to the provenance sub-section, not to the page: the PROVENANCE
+    sub-section reads only the sidecar. The page also carries a Data Availability
+    sub-section that reads validation_report.json, and the renderer-IO provenance audit
+    requires every file a renderer opens to be declared. So the checkable claim is
+    membership plus a closed set, never a snapshot of the list: the closed set is
+    derived from the renderer's own filename constants, so adding a reader means adding
+    a constant at the producer, where a change to it is visible in review.
     """
     _, manifest, _ = _render(tmp_path, doc=_full_crate())
     declared = manifest["source_paths_relative"]
@@ -265,8 +276,8 @@ def test_provenance_declares_the_sidecar_and_nothing_undeclared(tmp_path):
 def test_consolidated_tree_is_declared_metadata_only(tmp_path):
     """The page opens the consolidated tree for attrs + group names only, so it declares the
     store in `source_paths_relative` (audit PREFIX) AND qualifies it under
-    `source_paths_metadata_only` (shallow bundle carry). Pre-fix: the qualifier key is
-    absent from the sidecar and the lookup raises KeyError. The store is a real zarr v3
+    `source_paths_metadata_only` (shallow bundle carry). What kills it: without the
+    qualifier the key is absent from the manifest and the lookup raises KeyError. The store is a real zarr v3
     tree written by xarray, not a directory with a marker file, so `_resolve_consolidated_tree`
     finds it by the same existence test it uses on a completed analysis.
     """
@@ -284,7 +295,7 @@ def test_consolidated_tree_is_declared_metadata_only(tmp_path):
 
 
 def test_volatile_fields_never_reach_the_rendered_page(tmp_path):
-    """R3: the crafted sidecar's startTime + agent(hostname) must not surface.
+    """The crafted sidecar's startTime + agent(hostname) must not surface.
 
     Asserting against a planted sentinel — rather than the real fixture's own
     hostname — is what makes this check meaningful: it fails loudly if a future
@@ -303,27 +314,27 @@ def test_volatile_fields_never_reach_the_rendered_page(tmp_path):
 
 
 def test_prop_refuses_volatile_keys():
-    """R3 fail-closed backstop: reaching for a volatile key is a hard error."""
+    """Fail-closed backstop: reaching for a volatile key is a hard error."""
     for key in ("startTime", "endTime", "agent"):
         with pytest.raises(ValueError, match="volatile"):
             metadata._prop({key: "x"}, key)
 
 
 def test_producer_absolute_path_never_leaks(tmp_path):
-    """C-ZERO-USER-INFO: the producing analysis_dir must not appear in the page."""
+    """No producer-identifying info: the producing analysis_dir must not appear in the page."""
     html, _, analysis_dir = _render(tmp_path, doc=_full_crate())
     assert str(analysis_dir) not in html
 
 
 def test_dynamic_values_are_html_escaped(tmp_path):
-    """Spec 1: RO-Crate values carrying HTML metacharacters are escaped, not injected."""
+    """RO-Crate values carrying HTML metacharacters are escaped, not injected."""
     html, _, _ = _render(tmp_path, doc=_full_crate())
     assert "H&amp;H &lt;Ensemble&gt; Toolkit" in html
     assert "<Ensemble>" not in html
 
 
 def test_verifiability_anchors_and_chain_are_rendered(tmp_path):
-    """R3: the BLUF anchors + the recreation chain are projected from the crate."""
+    """The verifiability anchors + the recreation chain are projected from the crate."""
     html, _, _ = _render(tmp_path, doc=_full_crate())
     assert "Verifiability anchors" in html
     assert "abc123def" in html  # toolkit git SHA
@@ -334,7 +345,7 @@ def test_verifiability_anchors_and_chain_are_rendered(tmp_path):
     assert "water_surface_height_above_reference_datum" in html
 
 
-# --- R4: reproduction guide, zero-user-info ----------------------------------
+# --- Reproduction guide, zero-user-info ---------------------------------------
 
 
 def _user_bucket_field_labels() -> list[str]:
@@ -365,7 +376,7 @@ def _user_bucket_field_labels() -> list[str]:
 
 
 def test_config_field_rows_still_takes_no_analysis_argument():
-    """R4 (structural): the SCHEMA reader cannot leak a value because it never sees one.
+    """Structural: the SCHEMA reader cannot leak a value because it never sees one.
 
     This is the half of the original zero-user-info guard that survives unchanged.
     `_config_field_rows` reads `model_fields` and nothing else; with no values in
@@ -378,7 +389,7 @@ def test_config_field_rows_still_takes_no_analysis_argument():
 def _guide_text(guide) -> str:
     """Every byte the guide contributes to the rendered page.
 
-    [Q148] moved the three tables to Tabulator, so cell CONTENT now lives in each
+    The three tables moved to Tabulator, so cell CONTENT now lives in each
     fragment's `script` (a JSON options blob) rather than in the markup string. A leak
     scan over `guide.html` alone would be blind exactly where the values moved to --
     and, because `guide` is a NamedTuple, `"needle" in guide` silently evaluates
@@ -394,7 +405,7 @@ def _guide_text(guide) -> str:
 
 
 def test_reprex_guide_never_renders_a_user_bucket_value():
-    """R4 (behavioural): no USER-bucket value reaches the page, for EVERY such field.
+    """Behavioural: no USER-bucket value reaches the page, for EVERY such field.
 
     `_build_reprex_guide_html` now accepts a pre-computed {field -> value} map so the
     HPC/EXPERIMENT values — which the bundle already ships in cfg_*.yaml, after
@@ -403,9 +414,12 @@ def test_reprex_guide_never_renders_a_user_bucket_value():
     here, and asserted over the DERIVED user-bucket set rather than a hand-picked
     sample: a unique sentinel is planted in every USER field and none may surface.
 
-    Together with the signature check above this dominates the original guard on both
-    axes — it closes the module-global bypass a signature check cannot see, and it has
-    no unenumerated-field hole a hardcoded sample would have.
+    Together with the signature check above this covers what the signature check alone
+    cannot: that check sees only parameters, so it cannot see a value reaching the page
+    by another route, while this test inspects the rendered output itself. It also has
+    no unenumerated-field hole a hardcoded sample would have. Not established: that it
+    would catch a USER value reaching the page by a route other than the map passed in,
+    because only that map is poisoned.
     """
     user_labels = _user_bucket_field_labels()
     assert user_labels, "derived USER bucket is empty — the enumeration is broken, not clean"
@@ -419,10 +433,13 @@ def test_reprex_guide_never_renders_a_user_bucket_value():
 def test_derived_user_bucket_matches_the_renderer_s_own_supply_block():
     """The leak test's population is the same one the renderer calls USER.
 
-    Derived independently (from `all_field_bucket`) so it is not circular: if the
+    For the `system_config` / `analysis_config` fields the expected set is derived
+    independently (from `all_field_bucket`), so that half is not circular: if the
     renderer's bucketing and the taxonomy ever disagree, the leak test would be
     poisoning a different set than the page renders, and this catches that directly
-    rather than letting the leak test quietly go vacuous.
+    rather than letting the leak test quietly go vacuous. The `reprex_config.*` half is
+    NOT independent: both sides filter it through `metadata._REPREX_SELECTOR_FIELDS`,
+    the renderer's own declaration, so a mis-bucketed reprex field would agree here.
     """
     rows_by_bucket, unclassified = metadata._config_field_rows()
     assert not unclassified, f"unbucketed config fields: {unclassified}"
@@ -431,7 +448,7 @@ def test_derived_user_bucket_matches_the_renderer_s_own_supply_block():
 
 
 def test_reprex_guide_groups_every_field_into_three_buckets(tmp_path):
-    """R4: Supply / Amend / Keep blocks, each with its instruction verb."""
+    """Supply / Amend / Keep blocks, each with its instruction verb."""
     html, _, _ = _render(tmp_path, doc=_full_crate())
     for verb in ("Supply", "Amend", "Keep"):
         assert verb in html
@@ -439,9 +456,9 @@ def test_reprex_guide_groups_every_field_into_three_buckets(tmp_path):
 
 
 def test_reprex_guide_renders_placeholders_not_values(tmp_path):
-    """R4: value cells are placeholders / schema descriptions only.
+    """Value cells are placeholders / schema descriptions only.
 
-    Post-[Q148] the three tables are Tabulator fragments, so these strings are carried
+    The three tables are Tabulator fragments, so these strings are carried
     in the options JSON inside the page's <script>, not as literal table markup. The
     page-level assertion is unchanged in INTENT -- the placeholder text must reach the
     reader -- but `{` and `}` survive `json.dumps` unescaped, so the same substrings
@@ -450,7 +467,7 @@ def test_reprex_guide_renders_placeholders_not_values(tmp_path):
     html, _, _ = _render(tmp_path, doc=_full_crate())
     assert "{amend for your target system}" in html
     assert "{your-default_account}" in html
-    # The EXPERIMENT placeholder contains an em-dash, and post-[Q148] these cells ride
+    # The EXPERIMENT placeholder contains an em-dash, and as Tabulator data these cells ride
     # in the fragment's options JSON. `json.dumps` defaults to ensure_ascii=True, so the
     # em-dash is emitted as the escape `\u2014` -- which renders as an em-dash in the
     # browser but is NOT the literal character in the file. Asserting the literal form
@@ -461,13 +478,13 @@ def test_reprex_guide_renders_placeholders_not_values(tmp_path):
 
 
 def test_reprex_guide_rows_default_to_required_first_then_alphabetical(tmp_path, monkeypatch):
-    """{16}: the guide's rows reach the table already ordered.
+    """The guide's rows reach the table already ordered.
 
     Asserts on the ROW LIST handed to `_df_for`, never on rendered order. The fix is
     DATA-side by design -- Tabulator's `initialSort` sorts the RENDERED `Required` cell
     as TEXT, so ascending puts `<strong>Required</strong>` LAST and descending works only
     by the accident that `R` > `O` > `C`. Asserting rendered order would therefore pass
-    for the wrong reason and would couple this test to the table engine `[Q148]` re-opened.
+    for the wrong reason and would couple this test to the table engine.
 
     BOTH clauses are required and neither is sufficient: (a) alone passes on a
     required-first list that is internally unsorted, and (b) alone passes on a fully
@@ -499,7 +516,7 @@ def test_reprex_guide_rows_default_to_required_first_then_alphabetical(tmp_path,
 
 
 def test_reprex_guide_covers_a_field_from_each_bucket():
-    """R4: the taxonomy actually classifies representative fields into all three buckets."""
+    """The taxonomy actually classifies representative fields into all three buckets."""
     rows_by_bucket, unclassified = metadata._config_field_rows()
     assert not unclassified, f"unbucketed config fields: {unclassified}"
     assert rows_by_bucket["user"], "expected at least one USER-bucket field"
@@ -513,7 +530,7 @@ def _labels(rows: list[list[str]]) -> set[str]:
 
 
 def test_supply_block_names_the_fields_a_reproducer_actually_supplies():
-    """R4 + research Q2: the Supply block is the reprex_config supply set, not just config paths.
+    """The Supply block is the reprex_config supply set, not just config paths.
 
     `all_field_bucket` is total over system_config | analysis_config, and over
     that domain only the two software-directory paths are USER. The fields a
@@ -567,10 +584,11 @@ def test_system_config_values_resolve_through_the_system_object(tmp_path):
     not define, so its graceful-absent `continue` dropped EVERY `system_config.*` key
     and the EXPERIMENT table rendered 33 consecutive blank `Value used` cells.
 
-    Asserted against a two-attribute stand-in rather than a real `system_config`
-    BECAUSE the graceful-absent contract is what hid the bug: the function accepts any
-    object exposing `model_fields`, so a test that builds a real config would pass for
-    reasons unrelated to the traversal being tested.
+    Asserted against a three-attribute stand-in (`analysis_paths`, `cfg_analysis=None`,
+    `_system`) carrying a one-field stub system config, rather than a real analysis,
+    BECAUSE the graceful-absent contract is what hid the bug: here the value is reachable
+    ONLY through `analysis._system.cfg_system`, so the assertion passes only if the
+    traversal goes through `_system`.
     """
     from pydantic import BaseModel
 
@@ -600,7 +618,7 @@ def test_a_swept_parameter_renders_as_varied_not_as_one_arms_value():
     frame = pd.DataFrame({"analysis.run_mode": ["serial", "mpi"]})
     analysis = types.SimpleNamespace(sensitivity=types.SimpleNamespace(_df_setup_full=frame))
     varied = metadata._sensitivity_varied_values(analysis)
-    # [Q148]/item 17: a swept parameter returns (marker, value-list) so the marker can
+    # A swept parameter returns (marker, value-list) so the marker can
     # be the cell and the values can be the hover. Both halves are asserted -- moving
     # the values off the cell must not lose them.
     marker, tooltip = varied["analysis_config.run_mode"]
@@ -657,7 +675,7 @@ def test_a_constant_sweep_column_returns_the_same_shape_as_a_varied_one():
 
 
 def test_every_config_field_appears_exactly_once():
-    """R4: the guide is exhaustive over both configs — nothing silently dropped."""
+    """The guide is exhaustive over both configs — nothing silently dropped."""
     from hhemt.config.analysis import analysis_config
     from hhemt.config.system import system_config
 
@@ -701,7 +719,12 @@ def test_conditional_requirement_is_enforced_and_rendered_from_one_declaration()
 
 
 def test_undeclared_field_renders_byte_identically_to_the_prose_only_form():
-    """Graceful degradation is structural, not best-effort."""
+    """An undeclared field renders as its escaped prose description only, with no `<dl`.
+
+    `analysis_id` carries no `field_meta` declaration, so its description cell must
+    equal the escaped prose description and contain no `<dl` glossary: graceful
+    degradation is structural, not best-effort.
+    """
     from hhemt.config.analysis import analysis_config
 
     field_info = analysis_config.model_fields["analysis_id"]
@@ -720,7 +743,7 @@ def test_option_glossary_renders_every_literal_member():
         field_info = analysis_config.model_fields[name]
         options = declared(field_info, "options")
         assert set(options) == set(get_args(field_info.annotation))
-        # Item 18: the glossary moved from the cell to the column tooltip. The cell
+        # The glossary moved from the cell to the column tooltip. The cell
         # keeps the affordance count; the tooltip carries every member AND its
         # definition. Both are asserted from the ONE `options` declaration.
         cell = metadata._description_cell(field_info)
@@ -765,46 +788,43 @@ def test_required_when_falls_back_to_the_triggers_declared_default():
         _M(mode="batch_job")
 
 
-# --- R5: SLURM efficiency ----------------------------------------------------
-
-
-# --- R7: graceful degradation across every absent-source state ---------------
+# --- Graceful degradation: absent sources and unusual crate shapes -----------
 
 
 def test_absent_sidecar_degrades_gracefully(tmp_path):
-    """R7: no sidecar -> heading present, .banner.info body, source still declared."""
+    """No sidecar -> heading present, .banner.info body, source still declared."""
     html, manifest, _ = _render(tmp_path, doc=None)
     assert 'id="provenance"' in html
     assert "banner info" in html
     assert "ro-crate-metadata.json" in html
-    # ADR-6 D3: the expected source is declared even when ABSENT. Membership, not the
+    # A renderer declares its expected source even when it is ABSENT. Membership, not the
     # whole list -- the list also carries validation_report.json, which is likewise
-    # declared-when-absent and is out of R7's scope here.
+    # declared-when-absent and is not this test's subject.
     assert metadata._SIDECAR_FILENAME in manifest["source_paths_relative"]
 
 
 def test_native_run_crate_has_no_sif_entity(tmp_path):
-    """R7: native run (sif_spec=None) -> explicit reduced-verifiability note, not a blank."""
+    """Native run (sif_spec=None) -> explicit reduced-verifiability note, not a blank."""
     html, _, _ = _render(tmp_path, doc=_crate(_ROOT, _DESCRIPTOR, _APP))
     assert "Native run" in html
     assert "reduced verifiability" in html
 
 
 def test_sensitivity_master_crate_has_no_run_units(tmp_path):
-    """R7: a master crate is emitted with with_run_units=False -> no CreateAction nodes."""
+    """A master crate is emitted with with_run_units=False -> no CreateAction nodes."""
     html, _, _ = _render(tmp_path, doc=_crate(_ROOT, _DESCRIPTOR, _APP, _SIF))
     assert "consolidation-level crate" in html
     assert _SENTINEL_HOST not in html
 
 
 def test_empty_input_parts_degrades_gracefully(tmp_path):
-    """R7: no by-reference File parts -> 'digests not captured', not 'there were no inputs'."""
+    """No by-reference File parts -> 'digests not captured', not 'there were no inputs'."""
     html, _, _ = _render(tmp_path, doc=_crate(_ROOT, _DESCRIPTOR, _APP))
     assert "Input digests not captured" in html
 
 
 def test_minimal_crate_renders_without_exception(tmp_path):
-    """R7: the worst case (bare root + descriptor) still renders all three sections."""
+    """The worst case (bare root + descriptor) still renders all three sections."""
     html, _, _ = _render(tmp_path, doc=_crate(_ROOT, _DESCRIPTOR))
     for anchor in _ANCHORS:
         assert f'id="{anchor}"' in html
@@ -819,7 +839,7 @@ def test_type_may_be_a_list(tmp_path):
     assert 'id="provenance"' in html
 
 
-# --- R5 regression (Q8): efficiency report is a `.csv`-named DIRECTORY ---------
+# --- SLURM efficiency table: locating and merging reports, building its rows --
 
 
 def test_resolve_all_efficiency_csvs_flat_nested_and_absent(tmp_path):
@@ -902,7 +922,8 @@ def test_unrecognised_csv_column_is_disclosed_not_silently_dropped():
 def test_zero_cpu_efficiency_renders_as_not_measured_not_as_a_measured_zero():
     """A `0.0` in a percentage column asserts a measurement; an absent one must not.
 
-    Measured on the delivered report: `CPU eff (%)` read exactly `0.0` on 664 of 664
+    Measured on the delivered report: the efficiency column, then labelled `CPU eff (%)`
+    (its header is now `Billed CPU used`), read exactly `0.0` on 664 of 664
     rows, across jobs whose Elapsed ranged from 18s to 9m. A population that uniform
     over inputs that heterogeneous is a computation that is not running, not a fleet
     of genuinely idle CPUs. Upstream, `parse_sacct_data` maps `RequestedMem_MB` and
@@ -924,10 +945,12 @@ def test_zero_cpu_efficiency_renders_as_not_measured_not_as_a_measured_zero():
     # to report it rather than summing the wrapper alone. Keeping the old shape here would
     # have pinned the over-reach case to a state no job produces.
     measured_row = "0,222.0,python,00:01:40,1,1,512K,,100.0,91.0,500.0,8000.0,222,91.0,6.4\n"
-    # The SUBJECT moved: `CPU eff (%)` is now COMPUTED here rather than read from the
+    # The SUBJECT moved: the efficiency column (formerly `CPU eff (%)`, now `Billed CPU
+    # used`) is now COMPUTED here rather than read from the
     # plugin's own column, and its numerator `TotalCPU` lives only on the job and `.batch`
     # rows the plugin discards -- which is the very mechanism this test's docstring
-    # describes. Stage A recovers them, so a measured arm requires that recovery.
+    # describes. The sacct recovery passed as `recovery` restores them, so a measured arm
+    # requires that recovery.
     recovery = {
         "111": {
             "job": {"JobID": "111", "Elapsed": "00:00:23", "NNodes": "1", "NCPUS": "1"},
@@ -952,7 +975,7 @@ def test_zero_cpu_efficiency_renders_as_not_measured_not_as_a_measured_zero():
     )
 
     def _eff_cell(job_id: str) -> str:
-        """That job's `CPU eff (%)` cell, located BY HEADER rather than by position.
+        """That job's `Billed CPU used` cell (formerly `CPU eff (%)`), located BY HEADER.
 
         A positional index would silently follow the wrong column the next time the column
         order changes, and pass while measuring something else.
@@ -993,7 +1016,8 @@ def test_resume_attempts_are_numbered_in_the_description_column():
     indistinguishable rows -- the exact complaint this closes.
 
     Two arms in ONE render call: a step WITH a recorded attempt must be numbered, and a
-    step WITHOUT one must keep its bare purpose rather than be guessed at.
+    step WITHOUT one must be listed with "attempt not recorded" rather than numbered from
+    its step suffix.
     """
     # `JobName` was incidental filler when this fixture was written -- every step read
     # `python` because the classifier ignored the field. It is now the step's IDENTITY, so
@@ -1031,7 +1055,7 @@ def test_resume_attempts_are_numbered_in_the_description_column():
         )
     )
 
-    # The SUBJECT of both arms moved when the table went to job grain ([Q145]/[Q153]): the
+    # The SUBJECT of both arms moved when the table went to job grain: the
     # per-attempt breakdown is no longer one row per step carrying its own label, it is the
     # `<details>` roster inside the single job row. The invariants are unchanged and are
     # re-attached to that roster; neither was rewritten to match the code.
@@ -1048,6 +1072,9 @@ def test_resume_attempts_are_numbered_in_the_description_column():
     # number rather than labelled "resume 9" from its suffix.
     assert "resume 9" not in html_out
     assert "attempt not recorded" in html_out
+
+
+# --- SLURM efficiency table: joining rows to toolkit records; header names ---
 
 
 def test_slurm_job_index_harvest_reads_the_executor_log_tree(tmp_path):
@@ -1082,8 +1109,9 @@ def test_slurm_job_index_harvest_reads_the_executor_log_tree(tmp_path):
 def test_job_purpose_and_hardware_are_joined_in_from_toolkit_records():
     """The human-readable purpose is NOT read off the job — it is joined in.
 
-    SLURM reports every job step's command name as `python`, and on a cluster that
-    does not store job comments the plugin drops its RuleName column entirely. The
+    SLURM's JobName for a step is its command name -- `python` for the runner's wrapper at
+    `.0`, `triton.exe` for a solver step -- so it does not say what the job was for, and on
+    a cluster that does not store job comments the plugin drops its RuleName column entirely. The
     toolkit's own `_status/*.flag.json` sidecars carry `rule_name` keyed by the
     parent `SLURM_JOB_ID`, which is exactly the CSV's `MainJobID`.
     """
@@ -1117,28 +1145,31 @@ def test_job_purpose_and_hardware_are_joined_in_from_toolkit_records():
     )
     for expected in ("simulate", "gpu_0_r1", "tritonswmm", "gpu-a6000", "a6000"):
         assert expected in html, expected
-    # JobName is `python` for every row, which is precisely why it is not a column; the
-    # joined purpose is. The HEADER was renamed to `Job desc` by user ruling {25} -- the
-    # invariant here is that the joined column exists and carries the joined value, not what
-    # it happens to be called, so the assertion follows the rename rather than pinning the
-    # old string.
+    # JobName is a command name (`python` in this fixture, the runner's wrapper), which is
+    # why it is not a column; the joined purpose is. That column's HEADER was renamed to
+    # `Job desc`, and the two assertions below pin both the new literal and the absence of
+    # the old one.
     assert "Job desc" in html
     assert "What the job did" not in html, "the renamed header must not survive anywhere"
 
 
 def test_no_banned_column_header_survives_anywhere():
-    """Ruling {25} renamed the SLURM header and guarded it; the Run-timeline sibling was
-    left behind because the guard was written over the retired STRING rather than over the
-    CLASS, and was scoped to one builder's output rather than to the module.
+    """Two retired header literals must not appear anywhere in `metadata.py`'s source.
 
-    Population is every header string this module can author, which is why this reads the
-    source rather than one rendered fragment.
+    It searches for "What it did" and "What the job did". When the SLURM header was
+    renamed to `Job desc`, the earlier guard was scoped to one builder's rendered output,
+    and the Run-timeline sibling "What it did" survived. The change here is the SCOPE:
+    the whole module source rather than one fragment. Not established: coverage of the
+    CLASS of such headers -- a retired header worded differently from these two would pass.
     """
     import inspect
 
     src = inspect.getsource(metadata)
     found = [b for b in ("What it did", "What the job did") if b in src]
     assert not found, f"banned column header(s) still authored in metadata.py: {found}"
+
+
+# --- Reader-facing wording of the rendered tables and captions ---------------
 
 
 def test_run_timeline_counts_rules_not_workflow_steps():
@@ -1212,24 +1243,23 @@ def test_reader_visible_prose_uses_one_dash_convention():
     """Reader-visible prose mixed an em dash and an ASCII '--' for the same mark.
 
     SCOPE IS DELIBERATELY NARROWER THAN "all reader-visible prose", and the residual is
-    disclosed rather than hidden. This asserts over `_EFF_UNCAPTURED_NOTE`, the block the
-    dash-convention repair governed, where the count is now ZERO.
+    disclosed rather than hidden. This asserts over `_EFF_UNCAPTURED_NOTE` only, where
+    the count is ZERO.
 
-    `_reduction_caption()` is EXCLUDED and carries 10 ASCII '--' at the time of writing: 8
-    in the six `_Reduction.why`/`.rule` fields and 2 in `apply.__doc__` first lines. Those
-    are not residue of an incomplete repair -- they are prose authored by the
-    `_Reduction.name` round, in a structure that did not exist when the dash convention was
-    enumerated, and the remaining sweep was explicitly declined for this round.
-
-    The second pair is the one worth noticing: rendering `apply.__doc__` promoted DEVELOPER
-    DOCSTRINGS into reader-visible prose, so docstrings are now subject to reader-facing
-    conventions they were never written against. Widening this test to the caption is a
-    one-line change (add `metadata._reduction_caption()` back to the tuple) and should
-    happen in the same pass that sweeps those 10.
+    `_reduction_caption()` is EXCLUDED: at the time of writing it carries 10 ASCII '--'
+    that have not been converted -- 8 in the six `_Reduction.why`/`.rule` fields and 2 in
+    `apply.__doc__` first lines. Rendering `apply.__doc__` makes DEVELOPER DOCSTRINGS
+    reader-visible prose, so those docstrings fall under the same reader-facing
+    convention. Extending this test to the caption means scanning
+    `metadata._reduction_caption()` as well as the note, and it will fail until those
+    10 are converted.
     """
     prose = re.sub(r"<[^>]+>", "", metadata._EFF_UNCAPTURED_NOTE)
     ascii_dash = re.findall(r"(?<![-<!])--(?!>)", prose)
     assert not ascii_dash, f"{len(ascii_dash)} ASCII '--' in prose that elsewhere uses an em dash"
+
+
+# --- Joining SLURM rows to scenario_status.csv records -----------------------
 
 
 def test_scenario_status_registers_the_scenario_directory_slug(tmp_path):
@@ -1301,8 +1331,11 @@ def test_a_total_scenario_join_miss_is_disclosed_not_silent():
     assert "No simulation row matched" not in html_none
 
 
+# --- Sub-dataset path tree ---------------------------------------------------
+
+
 def test_sub_datasets_render_as_a_folder_tree_not_a_flat_run():
-    """Iter-10 H: 'the presentation of sub datasets is unreadable; it's just a massive list
+    """User feedback on a delivered report: 'the presentation of sub datasets is unreadable; it's just a massive list
     of filepaths ... i think a branch structure like people use to display folder structure
     could be good for this.'
 
@@ -1310,11 +1343,12 @@ def test_sub_datasets_render_as_a_folder_tree_not_a_flat_run():
     top-level prefixes. This asserts the tree markup AND that no path is lost -- a renderer
     that dropped entries would otherwise look tidier and score better.
 
-    TWO members, not three, and that is deliberate. Iter-11 item 14 collapses a
+    TWO members, not three, and that is deliberate. A separate sibling-run collapse folds a
     contiguous run of `_TREE_SENTINEL_MIN_SIBLINGS` (3) or more structurally identical
     siblings into one `{stem…} × N` sentinel, which is a DIFFERENT rendering from the
     single-child-chain collapse this test guards. A three-sibling fixture straddles that
-    threshold and would assert the Iter-11 shape while claiming to test the Iter-10 one.
+    threshold and would assert the sibling-sentinel shape while claiming to test the
+    single-child-chain one.
     Two keeps this test in the uncollapsed regime where its subject actually exists; the
     sentinel regime is guarded independently by tests/test_path_tree_collapse.py. Do NOT
     "restore" a third sibling here -- it silently converts this into a different test.
@@ -1339,13 +1373,16 @@ def test_sub_datasets_render_as_a_folder_tree_not_a_flat_run():
     # Single-child chains COLLAPSE: each member is one line carrying both its own
     # directory and its single child, never a directory line plus an indented leaf. Without
     # this the real 28-member population renders 56 lines, half of them the same
-    # filename, which is the unreadability the item is about reached from the other side.
+    # filename, which is the unreadability this test guards against, reached from the other side.
     collapsed = [ln for ln in lines if "member_gpu_0_r1/analysis_datatree.zarr" in ln]
     assert len(collapsed) == 1, f"single-child chain not collapsed: {lines}"
 
     # `members` is a real branch (2 children), so it must NOT be collapsed into its
     # children -- proving the collapse stops at a branch rather than flattening everything.
     assert any(ln.strip().endswith("members") for ln in lines), lines
+
+
+# --- Config declarations the reproduction guide depends on --------------------
 
 
 def test_no_hand_written_conditional_requirement_survives():
@@ -1375,11 +1412,15 @@ def test_every_closed_set_field_declares_its_option_glossary():
     `__pydantic_init_subclass__` already forbids a glossary that DRIFTS from its
     Literal. This is the other half: it forbids a closed-set field with no
     glossary at all, which is where a prose re-enumeration goes.
+
+    An optional closed set (`Literal[...] | None`, such as `dataset_license`) is looked
+    through to its Literal by the same helper the import check uses, so an optional
+    closed-set field with no glossary is still reported rather than read as a non-closed set.
     """
     from typing import get_args
 
     from hhemt.config.analysis import analysis_config
-    from hhemt.config.base import declared
+    from hhemt.config.base import _unwrap_single_optional, declared
     from hhemt.config.reprex_config import reprex_config
     from hhemt.config.system import system_config
 
@@ -1390,7 +1431,7 @@ def test_every_closed_set_field_declares_its_option_glossary():
         ("reprex_config", reprex_config),
     ):
         for name, fi in model.model_fields.items():
-            members = set(get_args(fi.annotation))
+            members = set(get_args(_unwrap_single_optional(fi.annotation)))
             if members and all(isinstance(v, str) for v in members):
                 if declared(fi, "options") is None:
                     missing.append(f"{label}.{name}")
@@ -1399,17 +1440,21 @@ def test_every_closed_set_field_declares_its_option_glossary():
     )
 
 
+# --- Varied-value tooltip affordance -----------------------------------------
+
+
 def test_varied_values_cell_carries_the_tooltip_affordance_as_one_rule():
-    """T-2 / Iter-12 item 17 — the tooltip-bearing cell advertises itself as hoverable.
+    """The tooltip-bearing cell advertises itself as hoverable.
 
     Asserts the three declarations as a SET ON ONE SELECTOR rather than as three
     independent substring hits: a rule carrying only `cursor: help` would satisfy
     three separate `in` checks against the whole stylesheet while rendering no
-    affordance, which is the satisfying-position failure the spec names.
+    affordance -- the checks would pass while nothing a reader sees has changed.
 
     The colour is asserted EQUAL TO the resolved style's own value, never a literal.
-    A hardcoded hex here would re-introduce the second colour source the brand_theme
-    stipulation exists to prevent, and would red on any legitimate brand change.
+    A hardcoded hex here would introduce a second colour source beside `brand_theme`,
+    the one config source of report brand colours, and would red on any legitimate
+    brand change.
     """
     from hhemt.config.report import report_config
     from hhemt.report_renderers.metadata import _resolve_inline_css
@@ -1440,9 +1485,10 @@ def test_varied_values_cell_carries_the_tooltip_affordance_as_one_rule():
 def test_varied_values_affordance_is_absent_from_the_single_value_branch():
     """The single-distinct-value cell returns an EMPTY tooltip, so it carries no affordance.
 
-    Styling it would advertise a hover that shows nothing. This pins the asymmetry
-    rather than the presence, so a future refactor that marks every cell uniformly
-    fails here instead of shipping a dead hover.
+    Styling it would advertise a hover that shows nothing. The check is line-local: it
+    fails only when the empty-tooltip literal `""` and `tip-affordance` appear on ONE
+    source line of `_sensitivity_varied_values`. Not established: that it catches a
+    refactor that applies the affordance to the single-value cell from a different line.
     """
     from hhemt.report_renderers.metadata import _sensitivity_varied_values
 
@@ -1453,17 +1499,20 @@ def test_varied_values_affordance_is_absent_from_the_single_value_branch():
             raise AssertionError(f"single-value branch carries the affordance: {line!r}")
 
 
+# --- SLURM efficiency table: per-attempt roster and queue column ------------
+
+
 def test_attempt_roster_reports_the_step_state_recovered_from_sacct():
     """An attempt's CANCELLED/COMPLETED outcome must reach the per-attempt roster.
 
-    `_build_efficiency_rows` states the stake in its own comment: "the solver steps ARE
-    the resume attempts, and their CANCELLED/COMPLETED breakdown is what [Q143] calls this
-    campaign's subject". Job grain folds N attempts into one row, so the roster is the only
+    `_build_efficiency_rows`'s own comment states the stake: the solver steps ARE the
+    resume attempts, and their CANCELLED/COMPLETED breakdown is what a resumed run's
+    table exists to show. Job grain folds N attempts into one row, so the roster is the only
     place that breakdown survives -- and a roster rendering "state not recorded" for every
-    attempt is a disclosure that discloses nothing, which is the failure [Q153]'s
-    trackability condition exists to prevent.
+    attempt is a disclosure that discloses nothing, which is the failure this roster
+    exists to prevent.
 
-    The field cannot come from the plugin. Measured on this campaign's own efficiency CSVs
+    The field cannot come from the plugin. Measured on a delivered campaign's efficiency CSVs
     (14 files, 928 rows, all numeric steps): the emitted columns are JobID/JobName/Elapsed/
     TotalCPU/NNodes/NCPUS/MaxRSS/ReqMem plus the parsed restatements, MainJobID and two
     precomputed percentages. There is no `State` column at any step kind. It exists only in
@@ -1472,7 +1521,7 @@ def test_attempt_roster_reports_the_step_state_recovered_from_sacct():
 
     TWO ARMS over the SAME code path, because an assertion that only checks the happy case
     cannot tell a working join from a roster that happens to print something. Arm B narrows
-    `_RECOVERED_ONLY_STEP_FIELDS` to the pre-fix set and must reproduce the delivered
+    `_RECOVERED_ONLY_STEP_FIELDS` to a set without `State` and must reproduce the delivered
     artifact's exact string; if both arms rendered alike the test would prove nothing.
     """
     real_state = "CANCELLED by 554635"
@@ -1507,15 +1556,15 @@ def test_attempt_roster_reports_the_step_state_recovered_from_sacct():
     assert real_state in joined
     assert "state not recorded" not in joined
 
-    # Arm B: the pre-fix field set reproduces the defect exactly as the delivered report
+    # Arm B: the field set without `State` reproduces the defect exactly as the delivered report
     # rendered it, which is what makes arm A's pass meaningful rather than incidental.
     unjoined = roster(("TRESUsageInTot",))
     assert "state not recorded" in unjoined
     assert real_state not in unjoined
 
-    # The ATTEMPT NUMBER is deliberately absent from both arms and must stay that way: it is
-    # read only from the ledger, and deriving it from the step index would fabricate a value
-    # for every step the ledger does not record.
+    # The ATTEMPT NUMBER must be absent, asserted here on arm A (`joined`) only: it is read
+    # only from the ledger, and deriving it from the step index would fabricate a value for
+    # every step the ledger does not record.
     assert "attempt not recorded" in joined
 
 
@@ -1526,7 +1575,8 @@ def test_queue_column_falls_back_to_slurm_planned_and_discloses_its_source():
     `_walltime` ledgers a render bundle does not carry. Measured on this campaign (2026-08-20,
     synth_cc_clean_tritonswmm): that map is non-empty on 0 of 28 scenarios and the toolkit's own
     `queue_seconds_coverage` reads `0/1` on all 28, while SLURM's `Planned` is populated on 963
-    of 963 job rows in the recovery CSV this module already reads. The rendered column was an
+    of 963 job rows in the recovery CSV that `metadata.py` (the module under test) already
+    reads. The rendered column was an
     em-dash on 963 of 963 rows with an authoritative value sitting in an already-open file.
 
     Assertions read the CELL, not the page. A substring check over a multi-KB document cannot
@@ -1585,7 +1635,7 @@ def test_queue_column_falls_back_to_slurm_planned_and_discloses_its_source():
     # render as 0 rather than an em-dash. Measured on the artifact: exactly 1 of
     # synth_cc_clean_triton's 672 job rows carries it, and an earlier guard excluding
     # "00:00:00" rendered it identically to a job with no record at all -- the examined-zero
-    # vs not-measured conflation [Q130] forbids. This arm is what separates them.
+    # vs not-measured conflation the column must not make. This arm is what separates them.
     val_zero, why_zero = queue_cell({"777": {"job": {**job, "Planned": "00:00:00"}}}, {})
     assert val_zero == "0", f"a measured zero must render as 0, got {val_zero!r}"
     assert val_zero != "\u2014"

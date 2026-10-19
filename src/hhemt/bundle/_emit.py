@@ -1,24 +1,21 @@
 """Render-bundle emission helpers — the portable artifact for local
 renderer iteration.
 
-Public surface (called from Analysis.bundle_report_data() and
-TRITONSWMM_sensitivity_analysis.bundle_report_data()):
+Public surface:
 
-  emit_bundle(analysis, output_path) -> Path
+  emit_bundle(analysis, output_path=None, exclude_config=None, container_defs=None) -> Path
 
-Helpers (private to this module):
-
-  _harvest_sources(...)
-  _rewrite_paths_to_relative(...)
-  _write_bundle_manifest(...)
-  _emit_bundle_zip(...)
+plus the two consume-side helpers reconstitute_runnable_config() and
+reconstitute_runnable_analysis_config(). The emit pipeline's private helpers include
+_harvest_sources, _rewrite_paths_to_relative, _write_bundle_manifest and
+_emit_bundle_zip.
 
 This module is opt-in only. Importing it does not trigger any side
-effects; the only entry point is emit_bundle(). The method is invoked
-from Analysis.bundle_report_data() (and the sensitivity parallel),
-which is in turn invoked only from the `hhemt bundle`
-CLI command. It is NEVER invoked by Analysis.run() or
-Analysis.submit_workflow().
+effects. emit_bundle() is called only by deliberate, user-invoked bundling: the
+`hhemt bundle` CLI command, Analysis.bundle_report_data() / reprex_bundle() /
+publish_reprex_bundle() (and their sensitivity counterparts), and
+publishing.publish_analysis(deposit_source="reprex_bundle"). It is NEVER invoked by
+Analysis.run() or Analysis.submit_workflow().
 """
 
 from __future__ import annotations
@@ -77,7 +74,8 @@ from hhemt.utils import select_regenerable_figures
 def _figure_stem(name: str) -> str:
     """Figure identity: the canonical plot ID's leading segment, or the bare stem.
 
-    ADR-2 stems are `{renderer_kind}[__{descriptor}][__member.{id}][__evt.{id}]`, so the part
+    Canonical plot-ID stems (``report_plot_ids.py``) are
+    `{renderer_kind}[__{descriptor}][__member.{id}][__evt.{id}]`, so the part
     before the first `__` identifies the figure family. Keying on this rather than on the
     full path is what lets BOTH extension siblings of a live figure survive: a rule declares
     one `output:` with a literal extension, and matplotlib emits .html AND .svg.
@@ -115,15 +113,16 @@ def _prune_undeclared_figures(analysis_dir: Path, plots_dir: Path) -> list[str]:
     """Delete figures whose stem no plot rule declares, with their manifest sidecars.
 
     Returns the analysis-relative paths removed, for carriage in the bundle manifest. A
-    warning would not do: this file records in _harvest_sources' F4 comment that a
+    warning would not do: _harvest_sources' leading comment records that a
     warnings.warn inside a Snakemake rule log "is lost by the time anyone reads the bundle",
     which is why declared_sources_absent is threaded into the manifest instead. A prune whose
     audit trail is lost is a silent deletion.
 
     plots/eda/ is EXEMPT: those figures come from analysis.eda(), a non-Snakemake in-process
     facade, so the Snakefile is not the authority for that subtree and their absence from it
-    is not orphanhood. Measured — without the exemption the count is 29/1 rather than 28/0,
-    the extra being a live eda_cross_hardware_magnitude figure on each arm.
+    is not orphanhood. Without the exemption a live EDA figure such as
+    eda_cross_hardware_magnitude, which no Snakefile rule declares, would be deleted as an
+    orphan.
     """
     declared = _declared_figure_stems(analysis_dir)
     if declared is None or not plots_dir.exists():
@@ -141,7 +140,8 @@ def _prune_undeclared_figures(analysis_dir: Path, plots_dir: Path) -> list[str]:
     # anyone maintains here, which is why the inline exemption this replaced is gone.
     #
     # This prune runs against the LIVE analysis tree (PRUNE-BEFORE-HARVEST), so these are
-    # DU-counted `plots/` bytes: route through the tool (clause 1).
+    # DU-counted `plots/` bytes: route through du_sentinels.delete_and_account so the
+    # analysis-scope DU sentinel is decremented by what is deleted.
     _prune_targets = select_regenerable_figures(
         analysis_dir,
         plots_dir,
@@ -185,8 +185,8 @@ def _render_sha(plots_dir: Path, length: int = 12) -> str:
 #: Relative paths of the one producer/transcriber pair that can silently disagree: the
 #: Errors-and-Warnings figure TRANSCRIBES the persisted read-model (errors_and_warnings.py
 #: reads validation_report.json via load_validation_report and never re-runs
-#: validate_analysis at render time -- the Gotcha-53 Class-Y split). Everything else a
-#: renderer reads is produced inside the DAG that renders it.
+#: validate_analysis at render time, so the figure is only as current as the persisted
+#: read-model). Everything else a renderer reads is produced inside the DAG that renders it.
 _EW_FIGURE_REL = "plots/errors_and_warnings/validation_report.html"
 _VALIDATION_READ_MODEL_REL = "validation_report.json"
 
@@ -198,10 +198,12 @@ def _assert_report_not_older_than_read_model(analysis_dir: Path) -> None:
     `>`: two files written in the same filesystem timestamp tick are a correct tree, and
     asserting strict-later would encode one satisfying position rather than the invariant.
 
-    Why this can happen at all: analysis.eda() re-persists validation_report.json as its
-    LAST act (in ``analysis.publish_reprex_bundle``), it is a non-Snakemake in-process
-    facade by accepted
-    stipulation, and it therefore runs after the report DAG has already exited. Measured on
+    Why this can happen at all: analysis.eda() re-persists validation_report.json near its
+    end (``persist_validation_report``, inside ``eda()`` itself), and eda() is a
+    non-Snakemake in-process facade, so it runs after the report DAG has already exited.
+    eda() now re-renders this one figure right after that re-persist when the figure
+    already exists; this guard is what catches any path that re-persists without doing
+    so. Measured on
     generation e389264af7b9: figure 19:30, read-model 19:40 -- the figure shipped the
     previous generation's read-model, still carrying a check name this branch had retired.
 
@@ -274,17 +276,44 @@ def _crate_license_finding(analysis, staging: Path) -> str | None:
         return f"metadata descriptor points at root {root_id!r}, which is absent from the @graph"
     lic = root.get("license")
     uri = lic.get("@id") if isinstance(lic, dict) else lic
+    cfg_license = analysis.cfg_analysis.dataset_license
+    # An unlicensed config with an unlicensed crate is the normal state of an analysis that
+    # has not chosen a license (one is required only to publish), so it is not a finding.
+    # Reporting it would put the same line in the manifest of every unpublished bundle.
+    if uri is None and cfg_license is None:
+        return None
     if uri is None:
-        return "the crate root declares no license; RO-Crate expects one on the Root Data Entity"
-    cfg_license = str(analysis.cfg_analysis.dataset_license)
-    expected_uri = _SPDX_LICENSE_TABLE[cfg_license]["uri"]
+        return (
+            f"the crate root declares no license, but analysis_config.dataset_license is "
+            f"{cfg_license!r}; the crate predates the config. To write that license into the "
+            f"crate, re-emit it with reprocess(start_with='consolidate', regenerate_existing=True) "
+            f"before depositing. A plain reprocess does NOT re-emit it -- regenerate_existing "
+            f"defaults to False, which deletes no consolidated zarr, so consolidation "
+            f"early-returns. Clearing analysis_config.dataset_license instead makes the bundle "
+            f"agree without a rebuild, but an analysis with no license cannot be published."
+        )
+    # A config with no license against a licensed crate is the same staleness as a mismatch,
+    # and None has no table entry, so it is compared as an expected URI of None.
+    expected_uri = _SPDX_LICENSE_TABLE[cfg_license]["uri"] if cfg_license is not None else None
     if uri != expected_uri:
+        # Two remedies, the no-rebuild one first, as the publish refusal states them: keeping the
+        # crate's license needs only the config line set back, while changing it needs a
+        # re-consolidation. A crate license outside the table has no id to set, so it is named
+        # by its URI and only the re-consolidation route is offered.
+        crate_spdx = next((spdx for spdx, meta in _SPDX_LICENSE_TABLE.items() if meta["uri"] == uri), None)
+        cfg_state = "no license set" if cfg_license is None else f"{cfg_license!r} ({expected_uri!r})"
+        keep = (
+            f"To keep the crate's license, set analysis_config.dataset_license to {crate_spdx!r}; no "
+            f"re-consolidation is needed. "
+            if crate_spdx is not None
+            else ""
+        )
         return (
             f"crate root license {uri!r} disagrees with analysis_config.dataset_license "
-            f"{cfg_license!r} ({expected_uri!r}); the crate predates the config. Re-emit it with "
-            f"reprocess(start_with='consolidate', regenerate_existing=True) before depositing. "
-            f"A plain reprocess does NOT re-emit it -- regenerate_existing defaults to False, "
-            f"which deletes no consolidated zarr, so consolidation early-returns."
+            f"({cfg_state}); the crate predates the config. {keep}To change the license, re-emit "
+            f"the crate with reprocess(start_with='consolidate', regenerate_existing=True) before "
+            f"depositing. A plain reprocess does NOT re-emit it -- regenerate_existing defaults to "
+            f"False, which deletes no consolidated zarr, so consolidation early-returns."
         )
     return None
 
@@ -293,15 +322,17 @@ def emit_bundle(
     analysis: TRITONSWMM_analysis,
     output_path: Path | None = None,
     exclude_config: Path | BundleExcludeConfig | None = None,
-    container_defs: list[Path] | None = None,  # multi-SIF (Option A): one .def per
-    #   distinct arch in the (cross-hardware) matrix. Single-arch => a 1-element list.
+    container_defs: list[Path] | None = None,  # RETIRED: any non-empty value raises
+    #   ConfigurationError below; kept in the signature only so callers get that message.
 ) -> Path:
     """Emit a portable render bundle from a completed HPC analysis.
 
-    The bundle file set is the union of source paths declared via
-    prov.artist().add_channel(...) calls during the most recent
-    render_report() execution, harvested from *.manifest.json sidecars
-    under {analysis_dir}/plots/. Configs are rewritten to relative paths.
+    The bundle file set is the union of source paths each renderer declared
+    during the most recent render (the ``source_paths`` it passed to
+    ``emit_plot_with_sources``, plus any ``prov.artist().add_channel(...)``
+    refs), harvested from *.manifest.json sidecars under
+    {analysis_dir}/plots/ and {analysis_dir}/eda/, together with every
+    cfg-declared input not excluded. Configs are rewritten to relative paths.
     The HPC-baseline analysis_report.{html,zip} are preserved under
     bundle_baseline/.
 
@@ -340,7 +371,7 @@ def emit_bundle(
             f"Run analysis.render_report() on HPC first."
         )
 
-    # SIF quest (ADR-21): a container-mode bundle carries the PRODUCER MANIFEST of the image the
+    # A container-mode bundle carries the PRODUCER MANIFEST of the image the
     # SIMULATIONS RAN IN -- the CARRIED identity source from_doi consumes. Recipes are package
     # data, so no .def and no source tree are carried. Native bundles compute nothing here and
     # their manifest is byte-identical to before.
@@ -468,7 +499,7 @@ def _harvest_sources(
     against a few hundred metadata documents.
 
     A declared source that does not exist on disk is SKIPPED (with a warning),
-    not fatal. ADR-6 D3 lets renderers declare an expected source unconditionally
+    not fatal. Renderers are allowed to declare an expected source unconditionally,
     even when it is legitimately absent — e.g. ``disk_utilization`` declares
     ``_status/_du.json`` and renders a "re-run processing to populate" placeholder
     when the sentinel is missing (a normal state for a sensitivity master, whose
@@ -477,7 +508,7 @@ def _harvest_sources(
     master. The skip keeps the emit side consistent with the declare side; the
     warning preserves auditability (a source that vanished after render shows up
     here rather than failing silently)."""
-    # F4: a declared source that is absent stays NON-FATAL (ADR-6 D3), but the evidence must
+    # A declared source that is absent stays NON-FATAL (see above), but the evidence must
     # survive the run. Accumulate the skipped relative paths and return them so the caller can
     # record them in the bundle manifest — the manifest that made a false claim then also
     # carries the record of it. Without this the only trace is a warnings.warn on stderr
@@ -550,7 +581,7 @@ def _copy_bundle_baseline(analysis_dir: Path, staging: Path) -> None:
 def _copy_reference_outputs(analysis: TRITONSWMM_analysis, staging: Path) -> None:
     """Carry the producer's test()-shaped per-scenario physics summaries into
     ``reference_outputs/`` so a reproducer's ``analysis.test()`` output can be checked
-    for per-arch within-family EXACT equality ([Q8] REQ-1).
+    for per-arch within-family EXACT equality.
 
     Sourced from ``{analysis_dir}/_test/group_*/sims/{event_id}/processed/*_summary.*``
     — the SAME ``n_reporting_timesteps`` truncation the reproducer's test() applies, so
@@ -559,8 +590,9 @@ def _copy_reference_outputs(analysis: TRITONSWMM_analysis, staging: Path) -> Non
     ``*_summary.*`` only (never the timing perf-timeseries or raw ``*_tseries.*``).
 
     CONDITIONAL on ``{analysis_dir}/_test/`` existing: a bundle emitted without a prior
-    producer test() carries no ``reference_outputs/`` and stays byte-identical (ADR-19 R9;
-    the manifest is deliberately NOT extended — the subtree is discoverable by path). The
+    producer test() carries no ``reference_outputs/`` and stays byte-identical to a bundle
+    emitted before this carriage existed (the manifest is deliberately NOT extended — the
+    subtree is discoverable by path). The
     subtree is group-indexed (``group_0``, ``group_1``, ...) so the reproducer maps its own
     ``_test/group_i`` to ``reference_outputs/group_i`` by the shared, deterministic group
     basename."""
@@ -585,8 +617,8 @@ def _copy_configs_with_relative_paths(analysis: TRITONSWMM_analysis, staging: Pa
     ``Path``-typed fields rewritten per the per-field policy table in
     ``_path_policy._PATH_FIELD_POLICY``. Returns a dict keyed by cfg
     attribute (``cfg_system`` / ``cfg_analysis``) mapping to the
-    ``RewriteResult.invariants`` dict from that cfg's rewrite — consumed
-    by the Phase 3 manifest extension (``bundle_root_invariants``)."""
+    ``RewriteResult.invariants`` dict from that cfg's rewrite — which
+    ``_write_bundle_manifest`` writes as the manifest's ``bundle_root_invariants`` key."""
     import yaml
 
     aggregated: dict[str, dict] = {}
@@ -602,8 +634,8 @@ def _copy_configs_with_relative_paths(analysis: TRITONSWMM_analysis, staging: Pa
             analysis_dir=analysis.analysis_paths.analysis_dir,
             system_directory=analysis._system.cfg_system.system_directory,
         )
-        # `result.invariants` is consumed by the Phase 3 manifest extension
-        # (bundle_root_invariants). Plan Phase 3 captures it per-cfg.
+        # `result.invariants` is captured per-cfg and written into the bundle manifest
+        # as bundle_root_invariants (see _write_bundle_manifest).
         aggregated[cfg_attr] = result.invariants
         scrubbed = _scrub_user_bucket_fields(result.cfg_dict, cfg_model=type(cfg))
         (staging / filename).write_text(yaml.safe_dump(scrubbed, sort_keys=False))
@@ -611,8 +643,8 @@ def _copy_configs_with_relative_paths(analysis: TRITONSWMM_analysis, staging: Pa
 
 
 def _scrub_user_bucket_fields(cfg_dict: dict, *, cfg_model: type[cfgBaseModel]) -> dict:
-    """Null every non-Path config field whose reprex bucket is ``"user"`` (ADR-9
-    all-field scrub / C-ZERO-USER-INFO).
+    """Null every non-Path config field whose reprex bucket is ``"user"``, so the
+    bundled configs carry no host-local, user-identifying value.
 
     The Path fields are already scrubbed by their ``_PATH_FIELD_POLICY`` entry (the
     two software-dir fields null via ``IS_NONE_ACCEPTABLE``). This SUPERSET pass walks
@@ -658,7 +690,7 @@ def _rewrite_paths_to_relative(
     Returns:
         ``RewriteResult`` with the rewritten ``cfg_dict`` and a
         per-policy ``invariants`` dict suitable for inclusion in the
-        Phase 3 ``bundle_manifest.json`` ``bundle_root_invariants`` key.
+        ``bundle_manifest.json`` ``bundle_root_invariants`` key.
     """
     analysis_root = analysis_dir.resolve()
     system_root = system_directory.resolve()
@@ -701,8 +733,8 @@ def _apply_policy(
     if policy is PathPolicy.IS_NONE_ACCEPTABLE:
         return None
     if policy is PathPolicy.HELPER_RESOLVED:
-        # Reserved for future runtime-derived fields. Pass through
-        # unchanged in Phase 1.
+        # Reserved for future runtime-derived fields. Passed through
+        # unchanged.
         return value
     if policy is PathPolicy.BUNDLE_RELATIVE_LIST:
         # list[Path] field (e.g. static_plot_configs). A None or empty
@@ -766,15 +798,15 @@ def _rewrite_absolute_to_relative(
 
 
 def _emit_resolved_brand_theme(analysis: TRITONSWMM_analysis, staging: Path) -> None:
-    """D-9: serialize the RESOLVED brand theme into the bundle and repoint the
+    """Serialize the RESOLVED brand theme into the bundle and repoint the
     bundled cfg_analysis.yaml::brand_theme at it, so regenerate_report reproduces
     the deploying lab's colors instead of an unresolvable HPC-side path.
 
-    R-6: source the RESOLVED theme (self._brand_theme, set by run() from the
+    Sources the RESOLVED theme (self._brand_theme, set by run() from the
     explicit-override -> cfg-field -> default ladder) so a run(override_brand_theme=)
     override survives into the bundle. getattr-fallback to the cfg field/default
-    covers a fresh-instance bundle emit that never had run() called (mirrors the
-    render_report EDIT 3c pattern).
+    covers a fresh-instance bundle emit that never had run() called (the same
+    fallback render_report uses for its fresh-instance render path).
     """
     import yaml
 
@@ -801,7 +833,7 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
     # Snakefile is renamed to Snakefile.source so the bundle's regen-only
     # generated Snakefile (written by bundle/snakefile_generator.py at consume
     # time) can take the canonical "Snakefile" filename. The .source variant is
-    # preserved for debugging value per the Phase 2 D1 resolution.
+    # preserved for its debugging value.
     snakefile_src = analysis_dir / "Snakefile"
     if snakefile_src.exists():
         shutil.copy2(snakefile_src, staging / "Snakefile.source")
@@ -845,9 +877,12 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
     # existing crate rather than emitting one: the staging document below is a wholesale
     # copy of the analysis sidecar, and no root entity is constructed anywhere in this
     # module. An operation whose purpose is to move a description intact must not remove a
-    # property the RO-Crate spec makes a MUST on the Root Data Entity, so this set is the
-    # one that has to shrink, and it must shrink WITHOUT moving the combined tier, which
-    # emits a first publication of its own and owes an authored value instead.
+    # property the RO-Crate spec makes a MUST on the Root Data Entity -- `datePublished` --
+    # so this set is the one that has to shrink, and it must shrink WITHOUT moving the
+    # combined tier, which emits a first publication of its own and owes an authored value
+    # instead. NOT YET DONE: _BUNDLE_TRANSFER_STRIP_KEYS still contains `datePublished`
+    # today, so the bundled crate's root currently lacks it; removing it from this set is
+    # pending.
     crate_src = analysis_dir / "ro-crate-metadata.json"
     if crate_src.exists():
         from hhemt.metadata import _BUNDLE_TRANSFER_STRIP_KEYS, canonical_jsonld_from_doc
@@ -859,7 +894,7 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
         (staging / "ro-crate-metadata.json").write_text(canonical_jsonld_from_doc(crate_doc))
     # case.yaml — the case manifest carries case_name (BLOCKING experiment-identity
     # field, already in _compatibility._EXPERIMENT_IDENTITY_FIELDS). Resolved from the
-    # case_manifest_yaml constructor arg (D6); None on paths that do not set it.
+    # case_manifest_yaml constructor arg; None on paths that do not set it.
     # BundleableAnalysis contract attr — direct access (not getattr-None) fails loud on a non-conforming input.
     case_yaml = analysis.case_manifest_yaml
     if case_yaml is not None and Path(case_yaml).exists():
@@ -880,7 +915,7 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
     # ._status_flags_for returns () on that basis. The `*.flag.json` payload sidecars and
     # `_status/_job_index.json` DO reach a bundle, but through the manifest HARVEST, not
     # this copy: report_renderers/workflow_performance.py reads them at regenerate time
-    # and therefore declares every one it opens (Gotcha 53), and _harvest_sources streams
+    # and therefore declares every one it opens, and _harvest_sources streams
     # exactly the declared set -- 22,794 sidecars on a 3,798-event campaign. Their
     # payloads carry `written_at` and `slurm_job_id` (status_flags.write_status_flag);
     # replacing that per-file declaration with a scrubbed read-model is a routed
@@ -902,7 +937,7 @@ HPC_IDENTITY_FILENAME = "hpc_system_config.identity.yaml"
 def _emit_hpc_identity(analysis: TRITONSWMM_analysis, staging: Path) -> None:
     """Emit the SCRUBBED compute-config identity surface for the combine-side checker.
 
-    Allow-list-BY-CONSTRUCTION (D7): reach ONLY for the named compute-config-identity
+    Allow-list-BY-CONSTRUCTION: reach ONLY for the named compute-config-identity
     fields (``partitions`` map + ``gpu_allocation_flavor``) — the fields two experiments
     must agree on for an intercomparison to be meaningful — and NEVER emit any
     USER-bucket scalar (default_account / login_node / container.sif_root). No
@@ -924,10 +959,10 @@ def _emit_hpc_identity(analysis: TRITONSWMM_analysis, staging: Path) -> None:
 def _sha256_file(path: Path) -> str:
     """Streaming 1 MiB-chunk sha256 of a file.
 
-    The chunk size is load-bearing: the ``case manifest sha256 uses streaming chunked
-    read byte identical to whole file`` stipulation binds every sha256 the toolkit emits
-    or verifies, so the emit-side digest and the ingest-side
-    ``_fetch_file_by_url(expected_sha256=...)`` verification agree by construction.
+    Streaming bounds memory on multi-GB inputs. The digest equals a whole-file sha256
+    whatever the chunk size, so it agrees with the ingest-side
+    ``_fetch_file_by_url(expected_sha256=...)`` verification, which reads in the same
+    1 MiB chunks.
     """
     import hashlib
 
@@ -943,7 +978,7 @@ def _copy_declared_inputs(
     staging: Path,
     exclude_config: BundleExcludeConfig | None = None,
 ) -> list[dict]:
-    """Self-contained emit (ADR-9): copy EVERY cfg-declared input file into the bundle
+    """Self-contained emit: copy EVERY cfg-declared input file into the bundle
     at exactly the location ``_rewrite_paths_to_relative`` writes into the cfg, so a
     reconstituted config resolves every declared input on disk.
 
@@ -956,7 +991,7 @@ def _copy_declared_inputs(
     is SKIPPED here;
     ``from_doi``'s fail-closed materialize gate raises on it at ingest.
 
-    ADR-20 (as amended 2026-07-14) — the governed opt-out. When ``exclude_config`` names a
+    The governed opt-out. When ``exclude_config`` names a
     field, its input(s) are NOT carried; instead an ``input_deposit`` block is returned for
     each, and ``_write_bundle_manifest`` records it. The block is FILE-level:
     ``{relpath, sha256, accessed, citation, contentUrl?, url?, identifier?}``. The toolkit
@@ -1060,7 +1095,7 @@ def _copy_declared_inputs(
     return deposits
 
 
-#: Bundle-root filenames for the minimal runnable set (reprex carriage, ADR-10).
+#: Bundle-root filenames for the minimal runnable set (the reprex carriage).
 REPREX_CONFIG_FILENAME = "reprex_config.yaml"
 HPC_TEMPLATE_FILENAME = "hpc_system_config.template.yaml"
 #: The workflow file the WRC mainEntity points at (the bundled, generated Snakefile).
@@ -1073,7 +1108,7 @@ def _emit_runnable_template_set(staging: Path) -> None:
     ``hpc_system_config`` template (the ``{your-allocation}``-placeholder form).
 
     Both files carry ONLY placeholders — never the producer's real account / login-node
-    / SIF path (research-reproducibility finding 5: ship a template + report page, never
+    / SIF path (ship a template, never
     the populated original), so the zero-user-info gate passes trivially. The
     reprex_config key set is sourced from ``reprex_config.model_fields`` so it stays in
     lockstep with the model if a field is added.
@@ -1138,7 +1173,7 @@ def _emit_runnable_template_set(staging: Path) -> None:
 
 
 def _emit_sif_manifests(analysis: TRITONSWMM_analysis) -> list[dict]:
-    """The CARRIED identity source (ADR-21): the producer ``.manifest.json`` of the image the
+    """The CARRIED identity source: the producer ``.manifest.json`` of the image the
     SIMULATIONS RAN IN, resolved by the digest SETUP RECORDED (``system_log.sif_sha256``) rather
     than by an identity recomputed from the running toolkit -- the same digest-keyed lookup
     ``_reprex.py::_verify_sif`` performs on the consume side, so both ends of the round trip name
@@ -1275,10 +1310,10 @@ def _emit_sif_manifests(analysis: TRITONSWMM_analysis) -> list[dict]:
 def _matrix_required_partitions(cfg_analysis, cfg_hpc) -> set[str]:
     """Distinct partition NAMES the analysis matrix requires: the master ensemble partition
     plus, for a sensitivity analysis, every distinct per-row ``hpc.partition`` /
-    ``analysis.hpc_ensemble_partition`` value in the setup table (CSV or XLSX — Gotcha 15:
-    the XLSX is the source of truth). Takes CONFIGS, not an analysis, so ``hhemt.sif.plan``
+    ``analysis.hpc_ensemble_partition`` value in the setup table (CSV or XLSX — when an
+    XLSX is given it is the source of truth). Takes CONFIGS, not an analysis, so ``hhemt.sif.plan``
     and ``hhemt.sif.preflight`` can call it. RAISES on a read failure — the SIF planner must
-    not silently under-plan; ``_matrix_required_arches`` below keeps the never-block contract."""
+    not silently under-plan; ``_matrix_required_arches`` below is the non-raising variant."""
     if cfg_hpc is None:
         return set()
     partitions: set[str] = set()
@@ -1300,7 +1335,8 @@ def _matrix_required_partitions(cfg_analysis, cfg_hpc) -> set[str]:
 def _matrix_required_arches(analysis: TRITONSWMM_analysis) -> set[str]:
     """Distinct ``gpu_hardware`` arches (a100/a6000/...) the analysis matrix requires,
     best-effort: ``_matrix_required_partitions`` mapped via ``resolve_gpu_target[0]``.
-    Returns ``set()`` on any read failure so the emit-time guard never blocks spuriously.
+    Returns ``set()`` on any read failure rather than raising. Nothing in ``src/`` calls it
+    today; its only caller is ``tests/test_experiments_from_doi.py``.
     None/CPU arches (partitions with no GPU) are excluded."""
     from hhemt.config.hpc_system import resolve_gpu_target
 
@@ -1319,7 +1355,7 @@ def _upgrade_crate_to_workflow_run_crate(staging: Path) -> None:
     (``mainEntity`` = the bundled ``Snakefile.source``), in place.
 
     Reuses the by-reference SIF + ``input_parts`` already in the copied sidecar (no
-    ``sif_spec`` reconstruction — sidesteps the ``_case_manifest`` gap) and reserializes
+    ``sif_spec`` reconstruction) and reserializes
     via the canonical byte-deterministic path. No-op when the crate sidecar or the
     ``Snakefile.source`` is absent (a bundle without a workflow file is not a WRC).
     """
@@ -1342,7 +1378,7 @@ def reconstitute_runnable_config(
     target_path: Path | None = None,
     software_dir: Path | None = None,
 ) -> Path:
-    """Synthesize a runnable ``system_config.yaml`` from a reprex bundle (ADR-10, R5).
+    """Synthesize a runnable ``system_config.yaml`` from a reprex bundle.
 
     Reads the bundle's scrubbed ``cfg_system.yaml`` and writes a ``system_config.yaml``
     whose bundle-relative Path fields are resolved to absolute paths under
@@ -1352,7 +1388,8 @@ def reconstitute_runnable_config(
 
     The two software-dir fields (``SWMM_software_directory`` /
     ``TRITONSWMM_software_directory``) are toolkit-owned OUTPUTS — build dirs the toolkit
-    creates at target-side setup, exempt from the load-time existence check (D4). Their
+    creates at target-side setup, exempt from the load-time existence check
+    (``toolkit_owned_output``). Their
     treatment splits by consume path:
 
     - ``software_dir=None`` (the RENDER path): both stay ``null``. Correct for
@@ -1421,8 +1458,8 @@ def reconstitute_runnable_analysis_config(bundle_root: Path, *, target_path: Pat
 def _annotate_crate_excluded_inputs(staging: Path, input_deposits: list[dict]) -> None:
     """Give each EXCLUDED input a by-reference ``File`` entity in the sidecar crate.
 
-    ADR-20 originally ratified "a DESCRIPTIVE (no-``downloadUrl``) File part per excluded
-    input". That clause was a NO-OP and was REVERSED (user-re-ratified 2026-07-14):
+    An earlier design called for "a DESCRIPTIVE (no-``downloadUrl``) File part per excluded
+    input". That was a NO-OP and was REVERSED on 2026-07-14:
     ``build_analysis_crate``'s ``input_parts`` loop ALREADY emits a URL-less ``File`` with a
     bundle-relative ``@id`` for every CARRIED input, so a URL-less part distinguishes
     nothing — the published crate would have asserted a ``File`` at a bundle-relative path
@@ -1438,7 +1475,7 @@ def _annotate_crate_excluded_inputs(staging: Path, input_deposits: list[dict]) -
     Embedded-core safety: ``partition_core_vs_sidecar`` is an ALLOW-LIST filter and none of
     the added keys are in ``_EMBEDDED_PROV_KEYS``, so they are dropped from the
     deterministic embedded core automatically and live only in the sidecar crate — the
-    FAIR-facing artifact. The D3-deferred embedded-core flip is still avoided at zero cost.
+    FAIR-facing artifact. The embedded core therefore needs no change for this annotation.
     """
     if not input_deposits:
         return
@@ -1486,7 +1523,7 @@ def _write_bundle_manifest(
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
         "layout_version": LAYOUT_VERSION,
         "toolkit_git_sha": git_sha,
-        # ADR-15 widening — the BUNDLE-stage capture site. `toolkit_git_sha` is NOT this
+        # The BUNDLE-stage provenance-stamp capture site. `toolkit_git_sha` is NOT this
         # stamp under another name: it is one field where the stamp is three, and it
         # carries no version and no dirty flag. Minting the full triple here is what moves
         # `bundle` from uncaptured to captured; teaching the READER to accept the single
@@ -1500,8 +1537,8 @@ def _write_bundle_manifest(
     if bundle_root_invariants is not None:
         manifest["bundle_root_invariants"] = bundle_root_invariants
     if declared_sources_absent:
-        # F4: renderers that DECLARED a source which was not on disk at harvest time.
-        # Non-fatal by ADR-6 D3, but recorded here so the state is auditable from the
+        # Renderers that DECLARED a source which was not on disk at harvest time.
+        # Non-fatal (see _harvest_sources), but recorded here so the state is auditable from the
         # shipped artifact rather than only from a warning in a rule log. Absent (not
         # empty) when every declared source resolved, so a clean bundle's manifest is
         # byte-identical to what it was before this key existed.
@@ -1522,14 +1559,15 @@ def _write_bundle_manifest(
         # byte-identical to what it was before this key existed.
         manifest["pruned_orphan_figures"] = pruned_orphan_figures
     if input_deposits:
-        # ADR-20: the by-reference record for each EXCLUDED input. Absent (not empty) when
+        # The by-reference record for each EXCLUDED input. Absent (not empty) when
         # the bundle is self-contained, so a self-contained manifest is byte-identical to
         # what it was before this feature existed.
         manifest["input_deposit"] = input_deposits
     if sif_manifests:
-        # SIF quest (ADR-21): the producer manifests of every image the matrix resolves to. ABSENT
-        # (not empty) for a native bundle, so a native manifest is byte-identical to before —
-        # same rule as input_deposit. BUNDLE_SCHEMA_VERSION bumped 5 -> 6 for the container shape.
+        # The producer manifests of the image the matrix resolves to (one: _emit_sif_manifests
+        # refuses a matrix needing more). ABSENT (not empty) for a native bundle, so a native
+        # manifest is byte-identical to before — same rule as input_deposit.
+        # BUNDLE_SCHEMA_VERSION went 5 -> 6 when this key was added.
         manifest["sif_manifests"] = sif_manifests
     if metadata_only_stores:
         # Stores carried SHALLOWLY (zarr metadata documents only, no chunk files) because
@@ -1605,7 +1643,7 @@ def _get_toolkit_git_sha(strict: bool = True) -> str:
     """Resolve the toolkit's git SHA (12-hex) for bundle provenance.
 
     Delegates to ``validation.running_identity`` — the ONE source of the running toolkit's
-    commit ([Q331]) — and keeps this function's two contracts: strict=True (emit-side)
+    commit — and keeps this function's two contracts: strict=True (emit-side)
     raises ConfigurationError when the toolkit has no identity; strict=False
     (consume-side) returns "unknown". The 12-hex width is this function's consumers'
     (bundle manifest, crate, combine) and is a truncation of the one 40-hex value, never a

@@ -1,8 +1,9 @@
-"""Mock-HTTP unit tests for the C6 publishing subsystem (ADR-11).
+"""Mock-HTTP unit tests for ``hhemt.publishing``, which deposits an analysis to a DOI-minting repository.
 
 The Zenodo/HydroShare live deposits are behind the ``publish_e2e`` marker; these tests
-mock the HTTP layer and pin the two-phase control flow + payload shapes so live-API field
-drift (plan Assumption A4 / Risk X4) cannot silently break the contract.
+mock the HTTP layer and pin the two-phase control flow + payload shapes, so that drift in
+the deposit APIs (whose endpoints and payloads ``publishing`` does not verify against a
+pinned API copy) cannot silently break the contract.
 """
 
 from __future__ import annotations
@@ -36,9 +37,10 @@ class _FakeAnalysis:
     def __init__(self, analysis_dir):
         self.analysis_paths = SimpleNamespace(analysis_dir=analysis_dir)
         self.cfg_analysis = _Model({"analysis_id": "a1"})
-        # publish_analysis reads this unconditionally. A real analysis_config always
-        # carries it (optional field, default "CC0-1.0"); _Model exposes no __getattr__,
-        # so it is set as an instance attribute rather than through the payload dict --
+        # publish_analysis reads this on every path that reaches the license comparison. A
+        # real analysis_config always has the attribute (optional field, default None, so
+        # "CC0-1.0" here is this fake's choice, not the real default). _Model exposes no
+        # __getattr__, so it is set as an instance attribute rather than through the payload dict --
         # model_dump() reads _payload and is deliberately left unchanged, which keeps
         # test_deposit_set_contains_configs_sidecar_and_zarr asserting what it did before.
         self.cfg_analysis.dataset_license = "CC0-1.0"
@@ -132,7 +134,7 @@ def _patch_zenodo_session(monkeypatch):
 
 
 # --------------------------------------------------------------------------------------
-# Shared DataCite builders
+# Shared rights / related-identifier builders (DataCite and InvenioRDM shapes)
 # --------------------------------------------------------------------------------------
 
 
@@ -237,12 +239,13 @@ def test_config_license_mismatch_raises(tmp_path):
 
     The reachable state: dataset_license is absent from the consolidation fingerprint
     (processing_analysis._consolidation_inputs_fingerprint hashes consolidation_version,
-    toggle_consolidate_timeseries and enabled_model_types only, and its maintenance
-    contract excludes provenance fields by name), so editing it triggers no rebuild, the
-    consolidate early-return fires, and the sidecar keeps the previous license.
+    toggle_consolidate_timeseries, enabled_model_types and the scenario-id set only, and
+    its maintenance contract excludes provenance values), so editing it triggers no
+    rebuild, the consolidate early-return fires, and the sidecar keeps the previous license.
 
-    Asserted on WHETHER PublishError is raised, not on the message wording, so the test
-    discriminates on behaviour rather than on a string that cannot exist pre-fix.
+    Asserted on PublishError being raised AND on the message naming
+    ``regenerate_existing=True``: without that flag the suggested re-emit early-returns
+    and writes nothing, so a message that omits it leaves the user stuck.
     """
     _write_sidecar(tmp_path, "CC0-1.0")
     analysis = _FakeAnalysis(tmp_path)
@@ -252,9 +255,85 @@ def test_config_license_mismatch_raises(tmp_path):
     assert "regenerate_existing=True" in ei.value.status
 
 
+def _write_unlicensed_sidecar(analysis_dir):
+    doc = {
+        "@context": "https://w3id.org/ro/crate/1.1/context",
+        "@graph": [
+            {"@id": "ro-crate-metadata.json", "@type": "CreativeWork"},
+            {"@id": "./", "@type": "Dataset", "name": "Test Analysis"},
+        ],
+    }
+    (analysis_dir / "ro-crate-metadata.json").write_text(json.dumps(doc))
+
+
+@pytest.mark.parametrize("cfg_license", [None, "CC-BY-SA-4.0"])
+def test_unlicensed_results_are_refused_before_any_deposit_with_the_fix(tmp_path, monkeypatch, cfg_license):
+    """Property: publish refuses results that carry no license, naming the field and the re-emit step.
+
+    Class: every analysis whose consolidated crate has no root license, whether the config
+    still has none (never chosen) or gained one after consolidating. Why required: a deposit
+    must carry a license, and publish never writes one into archived results, so the only
+    fix is to set the field and re-consolidate; a message that does not say so leaves the
+    user with no path. Killed by: depositing anyway, or refusing without naming
+    `dataset_license` and `regenerate_existing=True`. Second correct implementation: the
+    check placed inside `_read_license_from_sidecar` with the same message, instead of
+    before it.
+    """
+    _write_unlicensed_sidecar(tmp_path)
+    analysis = _FakeAnalysis(tmp_path)
+    analysis.cfg_analysis.dataset_license = cfg_license
+    called = []
+    monkeypatch.setitem(publishing._TARGETS, "zenodo", lambda: SimpleNamespace(publish=lambda **kw: called.append(kw)))
+    with pytest.raises(PublishError) as ei:
+        publishing.publish_analysis(analysis, target="zenodo")
+    assert "dataset_license" in ei.value.status
+    assert "regenerate_existing=True" in ei.value.status
+    assert called == []
+
+
+def test_blank_config_against_licensed_results_names_setting_the_license_back(tmp_path, monkeypatch):
+    """Property: a cleared license against licensed results is refused, naming the no-rebuild fix first.
+
+    Class: a config whose `dataset_license` is blank while the archived results carry a
+    license. Why required: re-consolidating with a blank config writes UNLICENSED results,
+    which publish then refuses again, so a message offering only re-consolidation sends the
+    user in a circle; setting the field back to the results' license publishes them with no
+    rebuild. Killed by: depositing anyway, or a message that does not name the results'
+    license as the value to set. Second correct implementation: the same instruction placed
+    in a separate branch for the blank case rather than in the shared mismatch message.
+    """
+    _write_sidecar(tmp_path, "CC0-1.0")
+    analysis = _FakeAnalysis(tmp_path)
+    analysis.cfg_analysis.dataset_license = None
+    called = []
+    monkeypatch.setitem(publishing._TARGETS, "zenodo", lambda: SimpleNamespace(publish=lambda **kw: called.append(kw)))
+    with pytest.raises(PublishError) as ei:
+        publishing.publish_analysis(analysis, target="zenodo")
+    assert "set analysis_config.dataset_license to 'CC0-1.0'" in ei.value.status
+    assert "regenerate_existing=True" in ei.value.status
+    assert called == []
+
+
+def test_every_named_license_reaches_each_rights_builder():
+    """Property: each of the seven named ids builds a DataCite, Zenodo and HydroShare rights entry.
+
+    Class: every key of the single license table. Why required: two of the three builders
+    (`build_datacite_rightslist` and `_hydroshare_rights`) look the id up in the table, so an id
+    the config accepts but a builder cannot map would fail only at deposit; the third,
+    `build_inveniordm_rights`, only lower-cases the id, so for it this pins the lower-casing.
+    Killed by: a table entry missing `name` or `uri`, or a builder keyed on a different table.
+    Second correct implementation: builders that derive the URI from the id.
+    """
+    assert len(publishing._SPDX_LICENSE_TABLE) == 7
+    for spdx in publishing._SPDX_LICENSE_TABLE:
+        assert publishing.build_datacite_rightslist(spdx)[0]["rightsIdentifier"] == spdx
+        assert publishing.build_inveniordm_rights(spdx) == [{"id": spdx.lower()}]
+        assert publishing._hydroshare_rights(spdx)["url"] == f"https://spdx.org/licenses/{spdx}"
+
+
 def test_publish_analysis_reprex_bundle_defaults_container_defs_none(tmp_path, monkeypatch):
-    """Native-mode regression: omitting ``container_defs`` passes ``None`` (byte-identical
-    to the pre-fix behavior — the deposit path is default-preserving)."""
+    """Native-mode regression: omitting ``container_defs`` passes ``None`` to ``emit_bundle``
+    (the same call as before ``container_defs`` existed — the deposit path is default-preserving)."""
     _write_sidecar(tmp_path, "CC0-1.0")
     real_zip = tmp_path / "bundle.zip"
     real_zip.write_bytes(b"PK\x05\x06" + b"\x00" * 18)
@@ -273,7 +352,7 @@ def test_publish_analysis_reprex_bundle_defaults_container_defs_none(tmp_path, m
 
 
 # --------------------------------------------------------------------------------------
-# Zenodo two-phase control-flow + payload-shape test (master FQ3)
+# Zenodo two-phase control-flow + payload-shape test
 # --------------------------------------------------------------------------------------
 
 
@@ -322,7 +401,8 @@ def test_zenodo_lets_zenodo_mint_and_embeds_native_metadata(tmp_path, monkeypatc
     backfill_body = next(b for (m, u, b) in sess.calls if m == "PUT" and u.endswith("/records/999/draft"))
     assert backfill_body["metadata"]["related_identifiers"][0]["relation_type"] == {"id": "issourceof"}
 
-    # The minted DOI is read from the PUBLISH response.
+    # The minted DOI comes from the record GET: the fake publish response carries no
+    # extractable DOI (``pids`` null), so the target falls back to re-reading the record.
     assert result == {
         "target": "zenodo",
         "data_doi": _RecordingSession.MINTED_DOI,
@@ -351,7 +431,7 @@ def test_zenodo_http_error_raises_publisherror(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------------------
-# HydroShare two-invocation adapter — stops before DOI mint
+# HydroShare two-step adapter — stops before DOI mint
 # --------------------------------------------------------------------------------------
 
 
@@ -433,17 +513,16 @@ def test_zenodo_sandbox_e2e():  # pragma: no cover - live-credential path
 
 
 # ---------------------------------------------------------------------------
-# ADR-20 — Option-B pre-upload size validator + attempt-and-surface backstop.
+# Pre-upload size validator (documented limits, warn-only) + attempt-and-surface backstop.
 # ---------------------------------------------------------------------------
 
 
 def test_size_validator_sums_directory_trees_not_inode_size(tmp_path):
-    """OE-2 (a green-check-that-certifies-nothing defect, found at Phase-3 preflight).
+    """Guards a green check that certifies nothing: the size validator must sum directory trees.
 
     ``Path.stat().st_size`` on a DIRECTORY returns the ~4 KB inode size. The deposit set's
     heavyweight member is the consolidated zarr STORE — a directory. Stat-ing it would
-    report a 20 GB deposit as fitting comfortably inside HydroShare's 20 GB quota, which is
-    precisely the "CI check whose green is misleading" class.
+    report a 20 GB deposit as fitting comfortably inside HydroShare's 20 GB quota.
     """
     from hhemt.publishing import _path_size_bytes, validate_deposit_size
 
@@ -480,7 +559,7 @@ def test_size_validator_reports_overflow_and_remediation(tmp_path):
 
 
 def test_classify_storage_error_reframes_quota_signal_and_passes_others_through():
-    """G2 backstop: a quota rejection is reframed with the emit-side delta; a NON-storage
+    """Attempt-and-surface backstop: a quota rejection is reframed with the emit-side delta; a NON-storage
     failure is passed through (returns None) so the caller re-raises it verbatim — a
     mislabelled auth error would send the operator hunting a disk-space problem."""
     from hhemt.publishing import _classify_storage_error
@@ -494,7 +573,7 @@ def test_classify_storage_error_reframes_quota_signal_and_passes_others_through(
 
 
 def test_check_body_window_is_wide_enough_for_a_quota_signal():
-    """OE-3: ``_check`` truncates the server body, and ``_classify_storage_error``
+    """``_check`` truncates the server body, and ``_classify_storage_error``
     string-matches that already-captured body. A quota message sitting past the old 300-char
     window was invisible, silently degrading the backstop to a verbatim passthrough."""
     import inspect

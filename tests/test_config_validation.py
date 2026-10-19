@@ -78,14 +78,35 @@ def _minimal_analysis_config_dict(tmp_path: Path) -> dict:
     }
 
 
-def test_analysis_config_dataset_license_default_and_frozen_vocab(tmp_path: Path):
-    # dataset_license defaults to CC0-1.0 when omitted; both frozen values load; a third is rejected.
+_SEVEN_CC_LICENSES = (
+    "CC0-1.0",
+    "CC-BY-4.0",
+    "CC-BY-SA-4.0",
+    "CC-BY-NC-4.0",
+    "CC-BY-NC-SA-4.0",
+    "CC-BY-ND-4.0",
+    "CC-BY-NC-ND-4.0",
+)
+
+
+def test_analysis_config_dataset_license_is_optional_and_one_of_seven(tmp_path: Path):
+    """Property: the dataset license has NO default and accepts exactly the seven CC licenses.
+
+    Class: a config that omits the field, every one of the seven values, and every value
+    outside them. Why required: a license is needed only to publish, so an omitted one must
+    load as None rather than as a license nobody chose, and an unknown id must fail at load
+    rather than at deposit. Killed by: a default of any license (the omitted case reads that
+    license, not None), or a vocabulary missing or adding a member. Second correct
+    implementation under which this still passes: the same seven declared as a separate
+    Literal alias referenced by the field.
+    """
     cfg = _minimal_analysis_config_dict(tmp_path)
-    assert "dataset_license" not in cfg  # optional field
-    assert analysis_config.model_validate(cfg).dataset_license == "CC0-1.0"
-    cfg["dataset_license"] = "CC-BY-NC-4.0"
-    assert analysis_config.model_validate(cfg).dataset_license == "CC-BY-NC-4.0"
-    cfg["dataset_license"] = "MIT"  # not in the frozen 2-entry SPDX vocab
+    assert "dataset_license" not in cfg
+    assert analysis_config.model_validate(cfg).dataset_license is None
+    for spdx in _SEVEN_CC_LICENSES:
+        cfg["dataset_license"] = spdx
+        assert analysis_config.model_validate(cfg).dataset_license == spdx
+    cfg["dataset_license"] = "MIT"
     with pytest.raises(ValidationError):
         analysis_config.model_validate(cfg)
 
@@ -274,8 +295,8 @@ def test_test_reference_report_scoping_passes_and_guard_intact():
     with pytest.raises(ConfigurationError, match="not a sensitivity analysis"):
         validate_active_reporting_set(unscoped, is_sensitivity=False, sensitivity_csv_path=None)
 
-    # Post-fix state: the overlay-scoping recipe nulls sensitivity and resets
-    # reporting_set to the 'default' sentinel. A non-sensitivity reference now
+    # Scoped state: the overlay-scoping recipe nulls sensitivity and resets
+    # reporting_set to the 'default' sentinel. A non-sensitivity reference then
     # resolves to the standard set and passes validation.
     scoped = report_config.model_validate({**unscoped.model_dump(), "sensitivity": None, "reporting_set": "default"})
     resolved = validate_active_reporting_set(scoped, is_sensitivity=False, sensitivity_csv_path=None)
@@ -966,9 +987,10 @@ def test_force_rerun_event_iloc_requires_no_sensitivity(tmp_path: Path):
 )
 def test_force_rerun_rejects_invalid_dict_shapes(value, match, tmp_path: Path):
     cfg = _minimal_analysis_config_dict(tmp_path)
-    # Use sensitivity-on so the `sa_id` cases (the key the error messages call
-    # member_id) don't trip on the cross-field rule before the per-field validator
-    # gets a chance to fire.
+    # Sensitivity is on so the `sa_id` cases are legal on the toggle axis. It no longer
+    # decides which error fires: the dict-shape rules live on ForceRerunSpec and run
+    # during field validation, ahead of analysis_config's cross-field toggle check, so
+    # their error is raised first even with sensitivity off.
     cfg["toggle_sensitivity_analysis"] = True
     cfg["sensitivity_analysis"] = str(_touch(tmp_path / "inputs" / "sensitivity.csv"))
     cfg["force_rerun"] = value
@@ -1178,6 +1200,12 @@ def test_model_arms_exempt_from_pydantic_protected_namespace():
     assert synthetic_experiment_config.model_config.get("protected_namespaces") == ()
     # The relaxation must not clobber the strictness guard inherited from cfgBaseModel.
     assert synthetic_experiment_config.model_config.get("extra") == "forbid"
+
+
+# ---------------------------------------------------------------------------
+# report.reporting_set field: its own normalization of absent forms, and the
+# values it refuses
+# ---------------------------------------------------------------------------
 
 
 def test_reporting_set_field_treats_every_absent_form_as_the_default():

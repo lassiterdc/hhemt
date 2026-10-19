@@ -61,9 +61,13 @@ def field_meta(
     execution methods and required under only one of them, and a single key
     cannot say that without lying about one of the two.
 
-    `passthrough` carries any pre-existing key (today `toolkit_owned_output` and
-    `toolkit_clones_into`, which the two software-directory fields carry together)
-    so one payload can hold both without stacking.
+    `passthrough` carries any other key (such as `toolkit_owned_output` or
+    `toolkit_clones_into`) so a field that needs one alongside a declaration builds
+    one payload rather than stacking two. Not established by any current caller: no
+    `field_meta()` call passes a passthrough key today. The two software-directory
+    fields, which carry both of those keys together, write them as a plain
+    `json_schema_extra` dict because they declare no `applies_when`, `required_when`
+    or `options`.
     """
     extra: dict[str, Any] = dict(passthrough)
     if applies_when:
@@ -99,6 +103,21 @@ def render_clauses(clauses: list[dict[str, Any]]) -> str:
     return "; ".join(parts)
 
 
+def _unwrap_single_optional(annotation: Any) -> Any:
+    """Return `X` for an annotation `X | None`; return any other annotation unchanged.
+
+    Only a union of exactly ONE non-None member and None is unwrapped. A union with
+    two or more non-None members (a Literal ORed with a list of a Literal) is
+    returned as-is, so the glossary check that calls this still refuses it rather
+    than comparing a glossary against only one of its members.
+    """
+    members = get_args(annotation)
+    non_none = [m for m in members if m is not type(None)]
+    if type(None) in members and len(non_none) == 1:
+        return non_none[0]
+    return annotation
+
+
 class cfgBaseModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -113,7 +132,14 @@ class cfgBaseModel(BaseModel):
     @staticmethod
     def _get_field_optionality(model_cls):
         """
-        Returns a Series with field names as index and True/False for optionality
+        Intended to return a Series with field names as index and True/False for
+        optionality. It does NOT discriminate: under pydantic v2 a required field's
+        default is `PydanticUndefined`, not `...`, so `field.default is not ...` is True
+        for every field and the `or` short-circuits before `field.allow_none` (a
+        pydantic-v1 attribute that v2's FieldInfo does not have) is ever read. Measured
+        on `analysis_config`: 77 of 77 fields report True while 17 are required
+        (`is_required()`).
+        Nothing in src/ or tests/ calls this method.
         """
         data = {}
         for name, field in model_cls.model_fields.items():
@@ -201,18 +227,25 @@ class cfgBaseModel(BaseModel):
         `Literal` without adding it to the glossary raises here, at class-definition
         time, before any test runs.
 
-        Union annotations -- a Literal ORed with a list of that Literal, as on
-        `clear_raw` and `reclaim_after_processing` -- are REFUSED rather than
+        Union annotations -- a Literal ORed with a list of a Literal, as on
+        `clear_raw` and `remove_after_processing` -- are REFUSED rather than
         silently accepted: `get_args` on a union returns the union members, not
         the string values, so the parity check could not actually check anything.
         Fail closed and name the field.
+
+        The one union that IS checked is "a Literal, or None" (an optional
+        closed-set field such as `dataset_license`): `_unwrap_single_optional`
+        strips the None before the parity check, so the glossary is compared
+        with the Literal's own strings. Without that step such a field could
+        carry no glossary at all, because its `get_args` would be the Literal
+        type and NoneType rather than strings.
         """
         super().__pydantic_init_subclass__(**kwargs)
         for name, field_info in cls.model_fields.items():
             options = declared(field_info, "options")
             if options is None:
                 continue
-            legal = set(get_args(field_info.annotation))
+            legal = set(get_args(_unwrap_single_optional(field_info.annotation)))
             if not legal or not all(isinstance(v, str) for v in legal):
                 raise TypeError(
                     f"{cls.__name__}.{name}: options= is declared on a field whose "
@@ -278,7 +311,7 @@ class cfgBaseModel(BaseModel):
     # has already coerced, so a Path-annotated field arrives as a Path whatever the
     # entry shape was and isinstance(v, Path) becomes a CORRECT selector: Path | None is
     # handled by the None short-circuit, and list[Path] correctly declines because
-    # analysis.py::_check_static_plot_configs_exist already owns the element-wise case.
+    # config/analysis.py::_check_static_plot_configs_exist already owns the element-wise case.
     @field_validator("*", mode="after")
     @classmethod
     def _check_paths_exist(cls, v: Any, info) -> Any:

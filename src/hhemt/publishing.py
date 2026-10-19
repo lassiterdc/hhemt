@@ -1,13 +1,16 @@
-"""Publishing subsystem (C6) — deposit an analysis to a DOI-minting repo (ADR-11).
+"""Deposit a consolidated analysis to a DOI-minting repository.
 
-Reads the already-emitted ro-crate-metadata.json sidecar (the license + parts), layers
-DataCite on top, and deposits to Zenodo (programmatic reserve-DOI) or HydroShare
-(two-invocation flow; hsclient v1.1.6 has no programmatic DOI mint). NEVER re-runs
+An analysis's results become citable only once they sit in a public repository under a
+DOI. This module performs that deposit. It reads the already-emitted
+ro-crate-metadata.json sidecar (the license, and the root `name` used as the title),
+layers the target repository's own record metadata on top, and deposits to Zenodo
+(Zenodo mints the DOI when the record is published; nothing is reserved beforehand) or
+HydroShare (two-step flow; hsclient v1.1.6 has no programmatic DOI mint). NEVER re-runs
 emit_provenance (crosswalk consumer, not a crate re-emitter).
 
-Substrate note (plan Assumption A4 / Risk X4): the concrete Zenodo/InvenioRDM deposit
-REST endpoints + payload schemas and the hsclient write-side calls are NOT in specialist
-substrate. The HTTP call bodies below are authored against the InvenioRDM REST reference
+Not established: the concrete Zenodo/InvenioRDM deposit REST endpoints + payload schemas
+and the hsclient write-side calls were not checked against a pinned copy of either API.
+The HTTP call bodies below are authored against the InvenioRDM REST reference
 (``https://inveniordm.docs.cern.ch``, which backs zenodo.org) and the hsclient API; the
 endpoint paths are named module constants (``_ZENODO_*``) so a durable-substrate
 correction is a one-line change. Live deposits run ONLY under the ``publish_e2e`` marker
@@ -32,8 +35,8 @@ import yaml
 from hhemt.exceptions import PublishError
 from hhemt.metadata import _SPDX_LICENSE_TABLE
 
-# D3 (resolved): the data->software relatedIdentifier relationType. Single tunable —
-# one-token fallback to "IsDerivedFrom" if a target registry UI hides IsCompiledBy.
+# The data->software relatedIdentifier relationType, held in one constant so that falling
+# back to "IsDerivedFrom", if a target registry's UI hides IsCompiledBy, is a one-token change.
 _DATA_TO_SOFTWARE_RELATION = "IsCompiledBy"
 # The reciprocal edge written back onto the software record in the Phase-2 backfill.
 _SOFTWARE_TO_DATA_RELATION = "IsSourceOf"
@@ -51,7 +54,8 @@ _DEFAULT_CREATORS: list[dict] = [{"person_or_org": {"type": "organizational", "n
 # PublicationYear/ResourceType) — the others land via the minted DOI + the metadata below.
 _PUBLISHER = "Zenodo"
 
-# InvenioRDM REST endpoint templates (A4/X4: named so a substrate correction is one line).
+# InvenioRDM REST endpoint templates, named so that correcting an unverified path is a
+# one-line change.
 _ZENODO_DEFAULT_BASE = "https://zenodo.org"
 _ZENODO_CREATE = "{base}/api/records"
 _ZENODO_RESERVE_DOI = "{base}/api/records/{recid}/draft/pids/doi"
@@ -76,6 +80,21 @@ def _read_license_from_sidecar(analysis_dir: Path) -> str:
                 if meta["uri"] == uri:
                     return spdx
     raise PublishError(target="?", doi=None, status="no recognizable dataset license in ro-crate sidecar")
+
+
+def _sidecar_declares_license(analysis_dir: Path) -> bool:
+    """Return whether the emitted sidecar's root Dataset carries any `license` at all.
+
+    Distinct from `_read_license_from_sidecar`, which raises on BOTH a missing and an
+    unrecognized license. publish needs to tell the two apart: a missing license is the
+    ordinary state of an analysis consolidated before a license was chosen, and is refused
+    with the steps that fix it, while an unrecognized one is a malformed crate.
+    """
+    doc = json.loads((Path(analysis_dir) / "ro-crate-metadata.json").read_text())
+    for e in doc.get("@graph", []):
+        if e.get("@id") in ("./", ""):
+            return e.get("license") is not None
+    return False
 
 
 def _read_title_from_sidecar(analysis_dir: Path) -> str:
@@ -139,11 +158,13 @@ def build_inveniordm_rights(dataset_license_spdx: str) -> list[dict]:
     InvenioRDM keys its license vocabulary on the LOWERCASED SPDX id; the DataCite
     rightsList names (rights/rightsUri/rightsIdentifier/rightsIdentifierScheme/schemeUri)
     are unknown to the InvenioRDM metadata loader and are silently dropped, so the license
-    never lands unless mapped to this shape. Both frozen-vocab licenses (cc0-1.0,
-    cc-by-nc-4.0) are in Zenodo's SPDX-derived rights vocabulary. If a future SPDX id is
-    ever NOT in the vocabulary, the custom form ``{"title": {"en": name}, "link": uri}``
-    validates without a vocabulary lookup (InvenioRDM accepts either ``id`` OR ``title``,
-    never both).
+    never lands unless mapped to this shape. Not established: that every SPDX id in
+    ``_SPDX_LICENSE_TABLE`` is in Zenodo's SPDX-derived rights vocabulary. The table now
+    carries seven ids; an earlier revision of this docstring asserted that cc0-1.0 and
+    cc-by-nc-4.0 are in it, and that assertion has not been re-verified (the tests here
+    check only the lower-casing). If an id is NOT in the vocabulary, the custom form
+    ``{"title": {"en": name}, "link": uri}`` validates without a vocabulary lookup
+    (InvenioRDM accepts either ``id`` OR ``title``, never both).
     """
     return [{"id": dataset_license_spdx.lower()}]
 
@@ -177,11 +198,11 @@ def build_inveniordm_related(*, software_doi: str | None, paper_doi: str | None 
 
 
 def _deposit_set(analysis, consolidated_zarr_relpath: str) -> list[Path]:
-    """The v1 analysis_dir deposit set: consolidated zarr + sidecar + configs.
+    """The analysis_dir deposit set: consolidated zarr + sidecar + configs.
 
-    Configs are NOT in the live analysis_dir by construction (analysis.py:771-776);
-    materialize the two fixed-name configs into the deposit exactly as analysis.eda()
-    does (analysis.py:779-780). Takes the analysis (not just analysis_dir) so it can
+    Configs are NOT in the live analysis_dir by construction (only a bundle staging dir
+    carries them); materialize the two fixed-name configs into the deposit exactly as
+    analysis.eda() does. Takes the analysis (not just analysis_dir) so it can
     read the config models — see publish_analysis below.
     """
     root = Path(analysis.analysis_paths.analysis_dir)
@@ -214,7 +235,7 @@ def _check(resp, *, target: str, doi: str | None, step: str):
 
 
 def _extract_reserved_doi(payload: dict) -> str | None:
-    """Read the reserved DOI from an InvenioRDM draft (fallback to classic prereserve_doi)."""
+    """Read the minted DOI from an InvenioRDM publish response or record (fallback to prereserve_doi)."""
     pids = payload.get("pids") or {}
     doi = (pids.get("doi") or {}).get("identifier")
     if doi:
@@ -249,7 +270,7 @@ def _resolve_upload(path: Path, staging: Path) -> tuple[Path, str]:
 
 
 # ---------------------------------------------------------------------------
-# ADR-20 — the Option-B pre-upload size validator.
+# Pre-upload size validator: measure the deposit against documented limits and warn.
 #
 # There is NO queryable quota on either platform through hhemt's dependency surface
 # (Zenodo's InvenioRDM records/drafts API exposes no quota field; hsclient v1.1.6 wraps no
@@ -284,8 +305,12 @@ def _path_size_bytes(path: Path) -> int:
 
     ``Path.stat().st_size`` on a DIRECTORY returns the inode size (~4 KB), so stat-ing the
     consolidated zarr store would report a 20 GB deposit as fitting comfortably inside a
-    20 GB quota — a green check that certifies nothing. The tree sum is a conservative
-    upper bound on the resulting ZIP_DEFLATED archive, which errs in the safe direction.
+    20 GB quota — a green check that certifies nothing. The tree sum only APPROXIMATES the
+    resulting ZIP_DEFLATED archive and can UNDER-state it: ZIP adds per-file local and
+    central-directory headers, and DEFLATE cannot shrink already-compressed zarr chunks.
+    Measured on 200 files of 4096 random bytes, the archive came out 2.4-2.7% larger than
+    the tree sum, so a deposit just under a limit can report ``fits`` and still be rejected
+    live (``_classify_storage_error`` reframes that rejection).
     """
     if path.is_dir():
         return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
@@ -293,15 +318,18 @@ def _path_size_bytes(path: Path) -> int:
 
 
 def validate_deposit_size(deposit: list[Path], target: str) -> dict:
-    """Measure the deposit against ``target``'s DOCUMENTED limits (ADR-20, Option B).
+    """Measure the deposit against ``target``'s DOCUMENTED limits.
 
-    Always runs before a deposit. Returns a report; never raises and never blocks — the
-    operator chose self-contained-by-default knowing the HydroShare tension, so this
-    surfaces the tension and lets them decide.
+    Always runs before a deposit. Returns a report; never raises and never blocks — a
+    deposit that carries its inputs can exceed HydroShare's 20 GB default account quota,
+    and whether to proceed anyway is the operator's decision, so this surfaces the
+    overflow and lets them decide.
 
     Returns:
-        ``{fits, total_bytes, limit_bytes, overflow_bytes, n_files, as_of, doc_url,
-        remediation}`` — ``remediation`` is the menu the operator acts on when it overflows.
+        ``{target, fits, reasons, total_bytes, limit_bytes, overflow_bytes, n_files, as_of,
+        doc_url, remediation}`` — ``reasons`` lists each limit exceeded (``fits`` is True
+        iff it is empty, and ``publish_analysis`` joins it into its warning);
+        ``remediation`` is the menu the operator acts on when it overflows.
     """
     limits = _TARGET_LIMITS[target]
     sizes = [_path_size_bytes(p) for p in deposit]
@@ -351,7 +379,7 @@ def validate_deposit_size(deposit: list[Path], target: str) -> dict:
 
 
 def _classify_storage_error(body: str, size_bytes: int, limit_bytes: int) -> str | None:
-    """Reframe a server rejection as a storage/quota failure when the body says so (G2).
+    """Reframe a server rejection as a storage/quota failure when the body says so.
 
     The documented-limit validator above is only as good as its constants. This is the
     attempt-and-surface backstop: if a constant is stale, or the account carries a
@@ -390,7 +418,7 @@ def _classify_storage_error(body: str, size_bytes: int, limit_bytes: int) -> str
 
 
 class _ZenodoTarget:
-    """Programmatic reserve-DOI two-phase flow against the Zenodo/InvenioRDM REST API."""
+    """Two-phase flow against the Zenodo/InvenioRDM REST API; Zenodo mints the DOI on publish."""
 
     def publish(self, *, deposit, license_spdx, software_doi, analysis_dir, creators=None) -> dict:
         # create draft -> embed {InvenioRDM-native mandatory metadata + rights +
@@ -445,7 +473,7 @@ class _ZenodoTarget:
         # Phase 1c — upload the deposit files (init -> PUT content -> commit, per file).
         # Zarr stores are directories; deposit each as a single .zip (Zenodo stores loose
         # files, not directory trees). Temp archives are removed after upload.
-        # OE-1: NOT the default /tmp. _resolve_upload zips a multi-GB zarr store into
+        # NOT the default /tmp. _resolve_upload zips a multi-GB zarr store into
         # this staging dir; on an HPC login node /tmp is typically a small tmpfs, and a
         # 'No space left on device' here strands an in-flight draft.
         data_doi = None
@@ -612,20 +640,20 @@ def publish_analysis(
     deposit_source: Literal["analysis_dir", "reprex_bundle"] | Path = "analysis_dir",
     container_defs: list[Path] | None = None,
 ) -> dict:
-    """Deposit an analysis to a DOI-minting repository (C6, ADR-11).
+    """Deposit an analysis to a DOI-minting repository.
 
     Reads the license baked into the emitted ro-crate sidecar; override_dataset_license
     ASSERTS the caller's expected value against the sidecar (raising PublishError on
     mismatch) rather than re-stamping the archived crate.
 
     Args:
-        deposit_source: WHICH artifact to deposit (D6/R5 — the seam anticipated by the
-            2026-07-08 decision `publish deposits the analysis_dir set not the render
-            bundle`). This is the ONLY new parameter that decision permits, and it is
-            default-preserving:
+        deposit_source: WHICH artifact to deposit. The data DOI's deposit is the
+            analysis_dir set, not the render bundle; this parameter is the single seam
+            for depositing something else, and it is default-preserving, so a caller
+            that passes nothing deposits exactly what publish deposited before it existed:
 
-            - ``"analysis_dir"`` (DEFAULT) — the ADR-11 data-DOI deposit set (consolidated
-              zarr + crate sidecar + configs). Byte-identical to the pre-seam behavior (R9).
+            - ``"analysis_dir"`` (DEFAULT) — the data-DOI deposit set (consolidated
+              zarr + crate sidecar + configs). Byte-identical to the pre-seam behavior.
             - ``"reprex_bundle"`` — the runnable reprex-bundle ZIP, emitted fresh and
               self-contained (no exclusions).
             - a ``Path`` — deposit exactly this artifact. This is how the
@@ -637,11 +665,37 @@ def publish_analysis(
             ``_resolve_upload`` would re-zip a directory with ZIP_DEFLATED and
             ``relative_to(path.parent)`` arcnames, producing a non-deterministic archive
             that extracts to a nested root, so the ingest side's ``Bundle.from_directory``
-            would raise ``FileNotFoundError`` and the round-trip (R8) could not pass.
+            would raise ``FileNotFoundError`` and the deposit-then-ingest round trip could
+            not pass.
     """
     analysis_dir = analysis.analysis_paths.analysis_dir
+    # The publish-time license requirement. A dataset license is optional everywhere else,
+    # so an analysis consolidated without one reaches this point with no license in its
+    # archived results. It is refused here, before any deposit, with the three steps that
+    # fix it. publish does not write the license itself: the crate is baked at consolidation
+    # and this function never re-stamps archived results.
+    if not _sidecar_declares_license(analysis_dir):
+        _shadowed = (
+            f" The override_dataset_license={override_dataset_license!r} you passed was NOT"
+            f" evaluated: an override asserts the license the results already carry, and they carry none."
+            if override_dataset_license is not None
+            else ""
+        )
+        raise PublishError(
+            target=target,
+            doi=None,
+            status=(
+                "this analysis has no dataset license in its archived results, and a deposit needs one. "
+                "Set analysis_config.dataset_license to one of "
+                f"{', '.join(_SPDX_LICENSE_TABLE)} (if it is not already set), then re-run "
+                "reprocess(start_with='consolidate', regenerate_existing=True) so the license is written "
+                "into the results, then publish again. regenerate_existing=True is REQUIRED: it defaults "
+                "to False, which deletes no consolidated zarr, so consolidation early-returns and the "
+                f"license is never written.{_shadowed}"
+            ),
+        )
     license_spdx = _read_license_from_sidecar(analysis_dir)
-    cfg_license = str(analysis.cfg_analysis.dataset_license)
+    cfg_license = analysis.cfg_analysis.dataset_license
     if cfg_license != license_spdx:
         _shadowed = (
             f" The override_dataset_license={override_dataset_license!r} you passed was NOT"
@@ -650,15 +704,25 @@ def publish_analysis(
             if override_dataset_license is not None
             else ""
         )
+        # Two remedies, the no-rebuild one first. Re-consolidating is the right fix only for a
+        # deliberate license CHANGE: for a field that was cleared or edited by mistake it costs
+        # a full re-consolidation, and with a cleared field it writes unlicensed results that
+        # the refusal above then stops, so the message would otherwise send the user in a circle.
+        _cfg_state = (
+            "analysis_config.dataset_license is not set"
+            if cfg_license is None
+            else f"analysis_config.dataset_license is {cfg_license!r}"
+        )
         raise PublishError(
             target=target,
             doi=None,
             status=(
-                f"analysis_config.dataset_license={cfg_license!r} differs from the crate "
-                f"license {license_spdx!r}; the emitted crate is STALE with respect to the "
-                f"config and publish does not re-stamp it. Re-emit the crate with "
-                f"reprocess(start_with='consolidate', regenerate_existing=True), then publish "
-                f"again. regenerate_existing=True is REQUIRED: it defaults to False, which "
+                f"{_cfg_state}, but the archived results carry the license {license_spdx!r}, and "
+                f"publish does not re-stamp them. To publish these results under {license_spdx!r}, "
+                f"set analysis_config.dataset_license to {license_spdx!r} and publish again; no "
+                f"re-consolidation is needed. To publish under a different license, set it and "
+                f"re-emit the crate with reprocess(start_with='consolidate', regenerate_existing=True), "
+                f"then publish again. regenerate_existing=True is REQUIRED: it defaults to False, which "
                 f"deletes no consolidated zarr, so consolidation early-returns and the crate "
                 f"is never re-emitted.{_shadowed}"
             ),
@@ -684,10 +748,11 @@ def publish_analysis(
     else:
         deposit = _deposit_set(analysis, consolidated_zarr_relpath)
 
-    # ADR-20: the size validator ALWAYS runs before an irrevocable deposit. It reports and
-    # warns; it never blocks (the operator elected self-contained-by-default knowing the
-    # HydroShare tension). The measured total is threaded to _classify_storage_error so a
-    # live rejection can be reframed with the real delta.
+    # The size validator ALWAYS runs before an irrevocable deposit. It reports and warns;
+    # it never blocks, because a deposit that carries its inputs can exceed HydroShare's
+    # 20 GB default quota and whether to proceed is the operator's call. The measured total
+    # is threaded to _classify_storage_error so a live rejection can be reframed with the
+    # real delta.
     size_report = validate_deposit_size(deposit, target)
     if not size_report["fits"]:
         warnings.warn(
@@ -709,7 +774,7 @@ def publish_analysis(
             creators=creators,
         )
     except PublishError as exc:
-        # G2 attempt-and-surface backstop: if the documented constant was stale or the
+        # Attempt-and-surface backstop: if the documented constant was stale or the
         # account carries a non-default quota, the LIVE rejection lands here. Reframe it
         # with the emit-side delta; otherwise re-raise verbatim (a non-storage failure must
         # never be mislabelled as a quota problem).

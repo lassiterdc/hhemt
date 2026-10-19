@@ -1,9 +1,18 @@
-"""RO-Crate metadata layer (C3) for the reproducibility-system (ADR-5/6/7).
+"""Machine-readable provenance for a consolidated analysis, written as an RO-Crate.
 
-Builds the RO-Crate @graph for one HHEMT analysis, serializes it byte-deterministically
-(canonical post-process over crate.metadata.generate() — NEVER crate.write(), which
-copies multi-GB data bytes), partitions the deterministic core from volatile provenance,
-and compare-and-write-emits the co-located ro-crate-metadata.json sidecar.
+A consolidated analysis output is reusable by someone else only if it says what produced
+it: which toolkit commit, which container image, which input files, and which variables
+the deposited store contains. This module writes that description in the RO-Crate JSON-LD
+format, so a repository or a reproducer can read it without this toolkit installed.
+
+The description has to be byte-deterministic. Its core is embedded in the consolidated
+tree's attributes, and the co-located ro-crate-metadata.json sidecar is emitted at every
+consolidation, so a byte that varied between two consolidations of the same run would
+rewrite the sidecar and bump its mtime on a re-consolidation that changed nothing. So the
+module builds the @graph for one HHEMT analysis, serializes it canonically (a
+post-process over crate.metadata.generate() — NEVER crate.write(), which copies the
+multi-GB data bytes), partitions the deterministic core from volatile provenance, and
+writes the sidecar only when its content changed.
 """
 
 from __future__ import annotations
@@ -25,11 +34,14 @@ if TYPE_CHECKING:  # type-only edge — no runtime metadata->config coupling / i
 _CF_PROFILE_ID = "https://cfconventions.org/cf-conventions/cf-conventions.html"
 # Frozen, pinned context (RO-Crate 1.2). Pinning makes the serialized @context
 # byte-deterministic even if add_workflow()/extra_terms would otherwise mutate it.
-# Confirm the exact profile URIs against the live w3id registry at impl time (Follow-up Ideas).
+# Not established here: that this URI and the profile URIs below resolve in the live w3id
+# registry. Nothing in this module fetches them, so a wrong URI would surface only in a
+# consumer that dereferences it.
 _CANONICAL_CONTEXT = "https://w3id.org/ro/crate/1.2/context"
 
-# Root-level profile set for the round-trip Workflow-Run-Crate (ADR-9 primary,
-# D1/NQ-7 resolved: a GENERATED Snakefile is a valid mainEntity ComputationalWorkflow).
+# Root-level profile set for the round-trip Workflow-Run-Crate. A GENERATED Snakefile is a
+# valid mainEntity ComputationalWorkflow: whether a workflow file was written by hand or by
+# a program is not visible to the spec, so the toolkit-generated one qualifies.
 # Profiles go on the ROOT per the RO-Crate spec (NOT the descriptor, where ro-crate-py's
 # add_workflow puts WORKFLOW_PROFILE); the descriptor keeps only the version permalink.
 _WFRUN_ROOT_PROFILES: tuple[str, ...] = (
@@ -41,18 +53,44 @@ _WFRUN_ROOT_PROFILES: tuple[str, ...] = (
 # ro-crate-py's built-in Snakemake ComputerLanguage @id (rocrate/model/computerlanguage.py::snakemake).
 _SNAKEMAKE_LANG_ID = "https://w3id.org/workflowhub/workflow-ro-crate#snakemake"
 
-# Single source of truth for the frozen 2-entry dataset-license vocab (ADR-8). Feeds BOTH
+# Single source of truth for the dataset-license vocabulary, keyed by SPDX id. Feeds BOTH
 # the RO-Crate root Dataset.license CreativeWork entity (here) AND the DataCite rightsList
-# (publishing.py, Phase 4) — the two serializations can never drift.
+# that publishing.py builds, and bundle/_emit.py checks a bundled crate's license URI
+# against it — so the serializations of one dataset's license cannot name different terms.
 _SPDX_LICENSE_TABLE: dict[str, dict[str, str]] = {
     "CC0-1.0": {
         "name": "Creative Commons Zero v1.0 Universal",
         "uri": "https://spdx.org/licenses/CC0-1.0",
         "scheme_uri": "https://spdx.org/licenses/",
     },
+    "CC-BY-4.0": {
+        "name": "Creative Commons Attribution 4.0 International",
+        "uri": "https://spdx.org/licenses/CC-BY-4.0",
+        "scheme_uri": "https://spdx.org/licenses/",
+    },
+    "CC-BY-SA-4.0": {
+        "name": "Creative Commons Attribution Share Alike 4.0 International",
+        "uri": "https://spdx.org/licenses/CC-BY-SA-4.0",
+        "scheme_uri": "https://spdx.org/licenses/",
+    },
     "CC-BY-NC-4.0": {
         "name": "Creative Commons Attribution Non Commercial 4.0 International",
         "uri": "https://spdx.org/licenses/CC-BY-NC-4.0",
+        "scheme_uri": "https://spdx.org/licenses/",
+    },
+    "CC-BY-NC-SA-4.0": {
+        "name": "Creative Commons Attribution Non Commercial Share Alike 4.0 International",
+        "uri": "https://spdx.org/licenses/CC-BY-NC-SA-4.0",
+        "scheme_uri": "https://spdx.org/licenses/",
+    },
+    "CC-BY-ND-4.0": {
+        "name": "Creative Commons Attribution No Derivatives 4.0 International",
+        "uri": "https://spdx.org/licenses/CC-BY-ND-4.0",
+        "scheme_uri": "https://spdx.org/licenses/",
+    },
+    "CC-BY-NC-ND-4.0": {
+        "name": "Creative Commons Attribution Non Commercial No Derivatives 4.0 International",
+        "uri": "https://spdx.org/licenses/CC-BY-NC-ND-4.0",
         "scheme_uri": "https://spdx.org/licenses/",
     },
 }
@@ -87,8 +125,8 @@ _EMBEDDED_PROV_KEYS: frozenset[str] = frozenset(
         "measurementTechnique",
         "wasGeneratedBy",
         "license",
-        # C8 Workflow-Run-Crate mainEntity (deterministic; bundle-side upgrade only,
-        # NOT emitted at consolidation — see upgrade_doc_to_workflow_run_crate):
+        # Workflow-Run-Crate mainEntity keys (deterministic). Only the bundle-side
+        # upgrade_doc_to_workflow_run_crate adds them; consolidation never emits them:
         "programmingLanguage",  # mainEntity ComputationalWorkflow runtime ref
         "mainEntity",  # Root focus -> the workflow
         "url",  # ComputerLanguage.url (fixed vocab URI)
@@ -167,7 +205,8 @@ _COMBINED_EMIT_STRIP_KEYS: frozenset[str] = frozenset(
 # the graph is a stable function of the RUN'S LOG, not of emit time -- `startTime` reads
 # the persisted `workflow_submission_time` LogField and `agent` reads
 # `workflow_submission_node`, so an idempotent re-consolidation regenerates byte-identical
-# content and Gotcha-59 R4 holds. Add ANY emit-time clock read to the graph and R4 breaks
+# content and the compare-and-write skips, leaving the sidecar's bytes and mtime unchanged.
+# Add ANY emit-time clock read to the graph and every re-consolidation rewrites the sidecar
 # immediately; the remedy then is to name that key here, which is what this set is for.
 _VOLATILE_GRAPH_KEYS: set[str] = set()
 
@@ -180,7 +219,7 @@ def build_analysis_crate(
     toolkit_git_sha: str,
     code_repository: str,
     cfg_case,  # CaseManifest
-    dataset_license: str = "CC0-1.0",  # frozen 2-entry SPDX id (ADR-8 D1); strategy owned by reprex-specialist
+    dataset_license: str | None = None,  # one of the SPDX ids in _SPDX_LICENSE_TABLE, or None: no license written
     sif_spec,  # {@id, softwareVersion, sha256, downloadUrl} | None (native run)
     consolidated_zarr_relpath: str,  # e.g. "analysis_datatree.zarr"
     input_parts: list[dict],  # [{"@id", "sha256", "contentSize", "encodingFormat"}]
@@ -190,7 +229,7 @@ def build_analysis_crate(
     # themselves, deliberately: both callers already iterate the tree to build `emitted_vars`
     # and can fill this in the same pass, and this module then gains no xarray dependency.
     emitted_attrs: dict[str, dict[str, str | None]] | None = None,
-    sub_dataset_relpaths: list[str] | None = None,  # D5: master hasPart-refs each sub Dataset (FLAT)
+    sub_dataset_relpaths: list[str] | None = None,  # experiment crate hasPart-refs each member Dataset (FLAT)
 ) -> ROCrate:
     crate = ROCrate()  # seeds Root Dataset (./) + Metadata descriptor
     root = crate.root_dataset
@@ -201,15 +240,20 @@ def build_analysis_crate(
         root["system_id"] = system_id
     root["schemaVersion"] = str(layout_version)
 
-    _lic = _SPDX_LICENSE_TABLE[dataset_license]
-    crate.add(
-        ContextEntity(
-            crate,
-            _lic["uri"],
-            properties={"@type": "CreativeWork", "name": _lic["name"]},
+    # No license is a legitimate state: a dataset license is required only to PUBLISH, so an
+    # unlicensed analysis consolidates with no root `license` and no license entity, and
+    # publish refuses it until one is chosen. Writing a placeholder license here instead
+    # would make an unpublished dataset assert terms its owner never chose.
+    if dataset_license is not None:
+        _lic = _SPDX_LICENSE_TABLE[dataset_license]
+        crate.add(
+            ContextEntity(
+                crate,
+                _lic["uri"],
+                properties={"@type": "CreativeWork", "name": _lic["name"]},
+            )
         )
-    )
-    root["license"] = {"@id": _lic["uri"]}
+        root["license"] = {"@id": _lic["uri"]}
 
     toolkit_src = crate.add(
         ContextEntity(
@@ -244,13 +288,14 @@ def build_analysis_crate(
                 properties={
                     "@type": "SoftwareApplication",
                     "name": sif_spec.get("name", "TRITON-SWMM Apptainer container"),
-                    # sha256 is the ONLY REQUIRED field, and that is the ADR-19 (ii-a)
-                    # split: a digest is emittable today from the image the run used,
-                    # while a downloadUrl requires a deposit target that does not yet
-                    # exist. Requiring the URL would have made the digest unemittable —
-                    # `sif_spec["downloadUrl"]` raised KeyError on a digest-only spec, so
-                    # the two halves of "referenced by DOI + SHA-256" were welded into one
-                    # all-or-nothing feature and neither shipped.
+                    # Besides the entity's @id, sha256 is the only required field (both are
+                    # indexed unguarded, so a spec missing either raises KeyError), because
+                    # the digest and the URL split apart: a digest is emittable today from
+                    # the image the run used, while a downloadUrl requires a deposit target
+                    # that does not yet exist. Requiring the URL would have made the digest
+                    # unemittable — `sif_spec["downloadUrl"]` raised KeyError on a
+                    # digest-only spec, so the two halves of "referenced by DOI + SHA-256"
+                    # were welded into one all-or-nothing feature and neither shipped.
                     #
                     # softwareVersion is likewise optional: reading it means an
                     # `apptainer inspect` label read, and NO consumer requires it —
@@ -304,8 +349,8 @@ def build_analysis_crate(
     # cannot diverge from the stamp because it IS the stamp.
     #
     # UNTIL THIS LANDED, THE CRATE WAS OVERRIDE-BLIND, and the recorded consequence is kept here
-    # rather than deleted with the defect. This module reads `_CF_VARIABLE_MAP` and
-    # `_CF_PERFORMANCE_VARIABLES` and read `_CF_VARIABLE_OVERRIDES_BY_MODE` NOT AT ALL
+    # rather than deleted with the defect. Before it landed, this module read `_CF_VARIABLE_MAP`
+    # and `_CF_PERFORMANCE_VARIABLES` and read `_CF_VARIABLE_OVERRIDES_BY_MODE` NOT AT ALL
     # (`grep -c '_CF_VARIABLE_OVERRIDES_BY_MODE' src/hhemt/metadata.py` was 0 against 2 in
     # `cf_conventions.py`), so a link-mode deposit published a `long_name` and a `cell_methods`
     # that its own store contradicted. Two override modes carry that entry and they are
@@ -365,7 +410,7 @@ def build_analysis_crate(
         },
     )
 
-    if sub_dataset_relpaths:  # D5: master crate hasPart-references each sub Dataset (FLAT, not Subcrate)
+    if sub_dataset_relpaths:  # experiment crate hasPart-references each member Dataset (FLAT, not Subcrate)
         existing = root.get("hasPart") or []
         root["hasPart"] = list(existing) + [{"@id": rel} for rel in sub_dataset_relpaths]
     return crate
@@ -395,20 +440,20 @@ def canonical_jsonld(crate, *, context: str = _CANONICAL_CONTEXT) -> str:
 def upgrade_doc_to_workflow_run_crate(doc: dict, *, workflow_relpath: str) -> dict:
     """Upgrade a built RO-Crate ``{"@context","@graph"}`` doc to a Workflow-Run-Crate.
 
-    D1/NQ-7 (data-management FQ1, Option B): types the (already-bundled, generated)
-    Snakefile as the crate ``mainEntity`` ``ComputationalWorkflow`` with a Snakemake
-    ``programmingLanguage``, and appends the ``wfrun`` profiles to the ROOT
-    ``conformsTo`` (spec-correct placement — profiles attach to the Root Data Entity,
-    NOT the descriptor). A GENERATED Snakefile is a spec-valid ``mainEntity``; "generated
-    vs hand-written" is not a spec-visible property of the file.
+    Types the (already-bundled, generated) Snakefile as the crate ``mainEntity``
+    ``ComputationalWorkflow`` with a Snakemake ``programmingLanguage``, and appends the
+    ``wfrun`` profiles to the ROOT ``conformsTo`` (spec-correct placement — profiles
+    attach to the Root Data Entity, NOT the descriptor). A GENERATED Snakefile is a
+    spec-valid ``mainEntity``; "generated vs hand-written" is not a spec-visible
+    property of the file.
 
     This is a pure doc-level transform (mutates and returns ``doc``) so callers on the
     hand-emit + :func:`canonical_jsonld_from_doc` byte-deterministic path — the
     ``bundle/_combine.py`` pattern — can patch a copied ``ro-crate-metadata.json`` in
     place, reusing the by-reference SIF + ``input_parts`` already present without
-    reconstructing ``sif_spec`` (sidesteps the ``_case_manifest`` gap). It is NOT wired
-    into the consolidation-time :func:`build_analysis_crate` emit, so the on-disk
-    embedded core stays byte-unchanged. Idempotent.
+    reconstructing ``sif_spec``. It is NOT wired into the consolidation-time
+    :func:`build_analysis_crate` emit, so the on-disk embedded core stays
+    byte-unchanged. Idempotent.
     """
     graph = doc["@graph"]
     # Snakemake ComputerLanguage context entity (fixed vocab term; add once).
@@ -462,7 +507,8 @@ def write_rocrate_sidecar(analysis_dir: Path, *, graph_json: str) -> bool:
 
     Returns True if (re)written, False if skipped (mtime + bytes preserved). Mirrors
     du_sentinels.write_du_sentinel so an idempotent re-consolidation does NOT bump the
-    file's mtime NOR perturb the Gotcha-38 analysis-scope DU own-files walk.
+    file's mtime. The file sits directly under analysis_dir, where the analysis-scope
+    disk-usage walk counts it, so a skipped write also leaves that walk's input unchanged.
     """
     sidecar = Path(analysis_dir) / "ro-crate-metadata.json"
     new_obj = json.loads(graph_json)
@@ -491,29 +537,31 @@ def write_rocrate_sidecar(analysis_dir: Path, *, graph_json: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# ADR-17 invalidating-fix quality-annotation projection (D7 — pure, deferred).
+# Invalidating-fix quality annotations: registry entry -> schema.org / DataCite.
 #
-# These functions are the data-management-owned registry -> schema.org/DataCite
-# crosswalk. They are SIDE-EFFECT-FREE and are deliberately NOT wired into
-# build_analysis_crate / the consolidation-time emit path: a known-issue annotation
-# is registry-state-dependent and time-varying (a bug can be registered AFTER an
-# analysis's final consolidation), so baking it would either trip the
-# _EMBEDDED_PROV_KEYS byte-determinism grep-guard (if in the embedded core) or churn
-# the compare-and-write sidecar + strand post-consolidation bugs (if in the sidecar).
-# Crate materialization + DOI relations + the report page defer to
-# reproducibility-system_metadata-report-section (ADR-14). This plan ships the pure
-# mapping + unit tests only, keeping the projection importable without pulling in the
-# recompute resolver. Adding these adds ZERO keys to _EMBEDDED_PROV_KEYS.
+# When a registered fix invalidates results an analysis already produced, a published
+# record should be able to say so. These functions are the crosswalk from one entry of the
+# invalidating-fix registry to that statement. They are SIDE-EFFECT-FREE and are
+# deliberately NOT wired into build_analysis_crate / the consolidation-time emit path: a
+# known-issue annotation is registry-state-dependent and time-varying (a bug can be
+# registered AFTER an analysis's final consolidation), so baking it would either trip the
+# _EMBEDDED_PROV_KEYS byte-determinism grep-guard (if in the embedded core) or churn the
+# compare-and-write sidecar + strand post-consolidation bugs (if in the sidecar).
+# Materializing them into a crate, emitting the DOI relations, and rendering them in a
+# report are not done in this module: it holds only the pure mapping, which keeps the
+# projection importable without pulling in the recompute resolver. These functions add
+# ZERO keys to _EMBEDDED_PROV_KEYS.
 # --------------------------------------------------------------------------- #
 def project_invalidating_fix(entry: InvalidatingFix, affected_part_id: str) -> dict:
-    """Pure registry-entry -> ``schema:Comment`` quality-annotation (ADR-17 / D7).
+    """Pure registry-entry -> ``schema:Comment`` quality-annotation.
 
     Returns the known-issue annotation node for ``affected_part_id`` (an existing
     File/Dataset ``@id`` in a crate @graph). The annotation is a ``schema:Comment``
     (subset of ``CreativeWork``) attached via ``Comment.about``, carrying
     severity / recommended-action / version as nested ``schema:PropertyValue``
-    machine-readable fields (severity as a controlled VALUE token, D1 — forward-
-    compatible with a future ``{info, warning, error}`` widening). ``additionalProperty``
+    machine-readable fields. Severity is a controlled VALUE token rather than a property
+    of its own, so widening its vocabulary later (to ``{info, warning, error}``, say)
+    changes the value and not the record's shape. ``additionalProperty``
     on a ``CreativeWork`` is used as an RO-Crate extra term (RO-Crate tolerates extra
     terms; every field stays a schema.org-native ``PropertyValue``).
     """
@@ -552,15 +600,16 @@ def project_invalidating_fix(entry: InvalidatingFix, affected_part_id: str) -> d
 
 
 def datacite_supersession_descriptor(*, recomputed_doi: str, affected_doi: str) -> dict:
-    """Pure DataCite ``IsNewVersionOf`` / ``IsPreviousVersionOf`` pair (ADR-17 / D-Q4).
+    """Pure DataCite ``IsNewVersionOf`` / ``IsPreviousVersionOf`` pair.
 
     DOI-granularity supersession — the DATASET-level counterpart of the part-level
     ``Comment.about`` back-reference in :func:`project_invalidating_fix`. The
     re-computed dataset's record carries ``isNewVersionOf`` -> the affected DOI; the
     affected dataset's record carries the inverse ``isPreviousVersionOf`` -> the
     re-computed DOI. Verified against DataCite Metadata Schema 4.6: the controlled
-    ``relationType`` list contains ``IsNewVersionOf`` / ``IsPreviousVersionOf`` (the
-    ADR-17-named baseline pair) and NO ``IsCorrectedBy`` / ``Corrects``.
+    ``relationType`` list contains ``IsNewVersionOf`` / ``IsPreviousVersionOf`` and NO
+    ``IsCorrectedBy`` / ``Corrects``, which is why a re-computation is recorded as a new
+    version of the affected dataset rather than as a correction of it.
     """
     return {
         "isNewVersionOf": {
