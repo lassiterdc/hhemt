@@ -3770,3 +3770,35 @@ non_breaking_allowlist:
       union with two or more non-None members is still refused as before.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 7525806ad4ded0eec3bdf6388f7bf242970e653669979f0adb5f3adc8186d2b6
+    justification: >-
+      NON-BREAKING. Package 3d (item I66, the nc second arm): under target_processed_output_type
+      'nc' both gridded TRITON exports now publish ONE NetCDF FILE at the '.nc' path through
+      publish_chapters_to_netcdf (temporary name, os.replace, then the .done flag, then the
+      chapters deleted), where they previously published a zarr store at that path; and
+      zarr.consolidate_metadata now runs only under 'zarr'. Under 'zarr', the default, the
+      published store is unchanged: the same merge_chapters_to_unified call on the same path.
+      GROUND, and it is a statement about which COMPLETED trees can exist, because LAYOUT_VERSION
+      describes the state a completed analysis carries: every completed nc-gridded tree that can
+      exist was written before 2026-02-13 (e9cf3b98), at layout 0, which
+      MINIMUM_SUPPORTED_VERSION = 0 keeps supported, and carries a NetCDF FILE at the '.nc' path
+      -- the kind this change writes -- so no completed state moves. Runs between e9cf3b98 and
+      b00f8f77 published a zarr store there and never completed (the summary step raised on it),
+      and after b00f8f77 preflight refused the configuration. No migration under
+      version_migration/versions/ names the gridded timeseries or a '.nc' path.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 9910afd9b0b12884ea5b81f84bb0351c94c4d1574647db69d8ea7549793005da
+    justification: >-
+      NON-BREAKING. Package 3d (item I66): the option glossary strings of
+      target_processed_output_type are rewritten, because the nc refusal they described is
+      retired. Only description strings inside json_schema_extra changed; no field is added,
+      removed, renamed, retyped or reordered, so no config key, path, filename or persisted
+      structure moves. The ground for the behaviour the new text describes is the same as the
+      process_simulation.py row above: every completed nc-gridded tree that can exist was
+      written before 2026-02-13 (e9cf3b98), at layout 0, which MINIMUM_SUPPORTED_VERSION = 0
+      keeps supported, and carries a NetCDF FILE at the '.nc' path, so no completed state moves.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.

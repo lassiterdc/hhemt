@@ -14,17 +14,18 @@ hhemt writes results at four tiers, and they differ in both shape and format.
 
 | Tier | Artifact | Format |
 |---|---|---|
-| Per-scenario | `sims/{event_id}/processed/` | Flat Zarr (default) or NetCDF, selected by `target_processed_output_type` (NetCDF is not supported when a TRITON model is enabled; see below) |
+| Per-scenario | `sims/{event_id}/processed/` | Flat Zarr (default) or NetCDF, selected by `target_processed_output_type`; see below |
 | Per-analysis | `analysis_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr |
 | Per-experiment | `experiment_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr |
 | Per-system | `system_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr |
 
-NetCDF is not available for every model. `hhemt run` and `Toolkit.from_configs`
-refuse `target_processed_output_type: nc` at preflight whenever
-`toggle_triton_model` or `toggle_tritonswmm_model` is enabled, because the
-gridded TRITON timeseries does not support NetCDF output. With only
-`toggle_swmm_model` enabled, `nc` is accepted and applies to the per-scenario
-summaries and the SWMM node and link timeseries.
+NetCDF is available for every model. With `target_processed_output_type: nc`,
+each per-scenario artifact the output type governs is one NetCDF file under
+`sims/{event_id}/processed/` in place of a Zarr store, whichever of
+`toggle_triton_model`, `toggle_tritonswmm_model` and `toggle_swmm_model` are
+enabled. Those artifacts are the gridded TRITON timeseries and summaries, the performance timeseries
+and summaries, and the SWMM node and link timeseries and summaries. The hydrology capture summaries,
+`hydrology_inflow_summary.zarr` and `hydrology_rpt_summary.zarr`, stay Zarr under either output type.
 
 A regular analysis writes the per-scenario and per-analysis tiers in its own
 directory, and writes no experiment tree. A sensitivity analysis writes one
