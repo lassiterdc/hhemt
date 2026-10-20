@@ -42,64 +42,43 @@ def resolve_hpc_system_config(
 
     Non-mutating: reads the deployment config, never edits a tracked file.
 
-    Precedence (highest first):
-      1. explicit ``override`` (the ``--hpc-system-config`` CLI argument / argv[2]).
-      2. the bundle's declared ``hpc_system_config[cluster]`` — deployment-config-relative,
-         resolved against ``$HHEMT_DEPLOYMENT_CONFIG`` (or, absent that, the bundle's
-         grandparent, i.e. ``{deployment_config}/experiments/{slug} ->
-         {deployment_config}``). Consulted ONLY
-         when a ``bundle`` is supplied and declares this cluster.
-      3. ``$HHEMT_HPC_SYSTEM_CONFIG``.
-      4. ``$HHEMT_DEPLOYMENT_CONFIG/hpc/hpc_system_config_{cluster}.yaml``.
+    Two sources, highest first, and nothing else:
+      1. explicit ``override`` (the ``--hpc-system-config`` CLI argument).
+      2. the bundle's declared ``hpc_system_config[cluster]``: absolute, or relative to the
+         bundle directory's grandparent (``{deployment_config}/experiments/{slug} ->
+         {deployment_config}``), which is right only for a bundle at that layout. With no
+         ``bundle_dir``, a relative entry resolves against the working directory.
 
-    Steps 1/3/4 are the precedence chain moved verbatim from the retired
-    ``container_validation._resolve_hpc_system_config`` (D1 — already correct). Step 2
-    is the additive bundle-declared source; with ``bundle=None`` the resolution is
-    byte-identical to the retired script helper, which is why the demoted
-    ``container_validation.build_case`` imports THIS function unchanged.
+    With neither, this raises ``ConfigurationError`` naming both. Environment variables are
+    deliberately NOT consulted: an HPC config chosen by the shell rather than by the command
+    line or the experiment descriptor is not recorded anywhere the run's record can see.
     """
     if override:
         path = Path(override).expanduser()
     elif bundle is not None and cluster in bundle.hpc_system_config:
-        rel = bundle.hpc_system_config[cluster]
-        declared = Path(rel).expanduser()
+        declared = Path(bundle.hpc_system_config[cluster]).expanduser()
         if declared.is_absolute():
             path = declared
         else:
-            deployment_config = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
-            if deployment_config:
-                deployment_config_root = Path(deployment_config).expanduser()
-            elif bundle_dir is not None:
-                # {deployment_config}/experiments/{slug} -> {deployment_config}
-                deployment_config_root = Path(bundle_dir).expanduser().resolve().parent.parent
-            else:
-                deployment_config_root = Path.cwd()
-            path = deployment_config_root / rel
-    elif os.environ.get("HHEMT_HPC_SYSTEM_CONFIG"):
-        path = Path(os.environ["HHEMT_HPC_SYSTEM_CONFIG"]).expanduser()
+            # {deployment_config}/experiments/{slug} -> {deployment_config}
+            root = Path(bundle_dir).expanduser().resolve().parent.parent if bundle_dir is not None else Path.cwd()
+            path = root / declared
     else:
-        deployment_config = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
-        if not deployment_config:
-            raise ConfigurationError(
-                field="hpc_system_config",
-                message=(
-                    f"No hpc_system_config source for cluster {cluster!r}: the bundle declares "
-                    f"none and no fallback is set. Declare hpc_system_config[{cluster!r}] in "
-                    "experiment.yaml, set $HHEMT_DEPLOYMENT_CONFIG to your compute-visible "
-                    "deployment-config checkout, set $HHEMT_HPC_SYSTEM_CONFIG, or pass "
-                    "--hpc-system-config."
-                ),
-                config_path=None,
-            )
-        path = Path(deployment_config).expanduser() / "hpc" / f"hpc_system_config_{cluster}.yaml"
+        raise ConfigurationError(
+            field="hpc_system_config",
+            message=(
+                f"No hpc_system_config source for cluster {cluster!r}: pass --hpc-system-config, "
+                f"or declare hpc_system_config[{cluster!r}] in experiment.yaml."
+            ),
+            config_path=None,
+        )
     if not path.is_file():
         raise ConfigurationError(
             field="hpc_system_config",
             message=(
-                f"No hpc_system_config for cluster {cluster!r} at {path}. On the cluster, set "
-                "$HHEMT_DEPLOYMENT_CONFIG to your compute-visible deployment-config checkout and "
-                "`git pull` it, then reconstruct the per-cluster config (fill default_account). "
-                "Or set $HHEMT_HPC_SYSTEM_CONFIG, or pass --hpc-system-config."
+                f"No hpc_system_config for cluster {cluster!r} at {path}. Reconstruct the per-cluster "
+                "config there (fill default_account), or point --hpc-system-config or "
+                f"hpc_system_config[{cluster!r}] in experiment.yaml at an existing one."
             ),
             config_path=path,
         )

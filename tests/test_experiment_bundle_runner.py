@@ -179,34 +179,79 @@ def test_resolve_hpc_system_config_override_wins(tmp_path, monkeypatch):
     assert eb.resolve_hpc_system_config("uva", override=override) == override.resolve()
 
 
-def test_resolve_hpc_system_config_env_fallback_no_bundle(tmp_path, monkeypatch):
+def test_resolve_hpc_system_config_ignores_both_env_vars_and_raises_naming_the_two_sources(tmp_path, monkeypatch):
+    """Property: with no override and no descriptor entry, resolution refuses even when the env names files.
+
+    Class: no `--hpc-system-config`, no `hpc_system_config[cluster]`, and both
+    `$HHEMT_HPC_SYSTEM_CONFIG` and `$HHEMT_DEPLOYMENT_CONFIG` set to existing files. Why
+    required: the HPC config must come from the command line or the experiment descriptor,
+    where the run's record can see it, so a shell variable must not silently choose it. Killed
+    by: any environment fallback, or a refusal that does not name both real sources. Second
+    correct implementation: refusing from a separate validator called before resolution.
+    """
     env_cfg = tmp_path / "env.yaml"
     env_cfg.write_text("y", encoding="utf-8")
-    monkeypatch.delenv("HHEMT_DEPLOYMENT_CONFIG", raising=False)
+    deployment_config = tmp_path / "estate"
+    (deployment_config / "hpc").mkdir(parents=True)
+    (deployment_config / "hpc" / "hpc_system_config_uva.yaml").write_text("z", encoding="utf-8")
     monkeypatch.setenv("HHEMT_HPC_SYSTEM_CONFIG", str(env_cfg))
-    assert eb.resolve_hpc_system_config("uva", override=None, bundle=None) == env_cfg.resolve()
+    monkeypatch.setenv("HHEMT_DEPLOYMENT_CONFIG", str(deployment_config))
+    with pytest.raises(ConfigurationError) as ei:
+        eb.resolve_hpc_system_config("uva", override=None, bundle=None)
+    message = str(ei.value)
+    assert "--hpc-system-config" in message
+    assert "hpc_system_config['uva']" in message
+    # Bare names, so a mention without the leading `$` also fails.
+    assert "HHEMT_HPC_SYSTEM_CONFIG" not in message
+    assert "HHEMT_DEPLOYMENT_CONFIG" not in message
 
 
-def test_resolve_hpc_system_config_bundle_declared_deployment_config_relative(tmp_path, monkeypatch):
-    # estate/experiments/exp_test is the bundle dir; hpc/uva.yaml is estate-relative.
+def test_resolve_hpc_system_config_missing_file_message_names_no_environment_variable(tmp_path, monkeypatch):
+    """Property: the missing-file refusal points only at the two real sources, never at an env var.
+
+    Class: an override (or a descriptor entry) naming a path that does not exist, so resolution
+    reaches the missing-file check; this is the only arm that reaches that message. Why
+    required: the environment is no longer a source, so a message telling the user to set
+    `HHEMT_DEPLOYMENT_CONFIG` or `HHEMT_HPC_SYSTEM_CONFIG` sends them to a fix that changes
+    nothing and the run fails the same way again. Killed by: any missing-file message that names
+    either variable, with or without the leading `$`. Second correct implementation: a message
+    that names only the missing path and says nothing about where else to look.
+    """
+    missing = tmp_path / "absent" / "hpc_system_config_uva.yaml"
+    monkeypatch.delenv("HHEMT_HPC_SYSTEM_CONFIG", raising=False)
+    monkeypatch.delenv("HHEMT_DEPLOYMENT_CONFIG", raising=False)
+    with pytest.raises(ConfigurationError) as ei:
+        eb.resolve_hpc_system_config("uva", override=missing)
+    message = str(ei.value)
+    assert "HHEMT_HPC_SYSTEM_CONFIG" not in message
+    assert "HHEMT_DEPLOYMENT_CONFIG" not in message
+
+
+def test_resolve_hpc_system_config_relative_entry_uses_bundle_grandparent_not_the_env_root(tmp_path, monkeypatch):
+    """Property: a relative descriptor entry resolves against the bundle's grandparent, whatever the env says.
+
+    Class: a relative `hpc_system_config[cluster]` for a bundle at
+    `{deployment_config}/experiments/{slug}`, while `$HHEMT_DEPLOYMENT_CONFIG` names a different
+    root that also holds a file at that relative path. Why required: the descriptor travels with
+    the bundle, so its relative entry must mean the same file wherever the shell points. Killed
+    by: resolving against the env root, or against the working directory when a bundle_dir is
+    given. Second correct implementation: deriving the root from the descriptor file's own path
+    instead of from `bundle_dir`.
+    """
     deployment_config = tmp_path / "estate"
     (deployment_config / "experiments" / "exp_test").mkdir(parents=True)
     (deployment_config / "hpc").mkdir()
     cfg = deployment_config / "hpc" / "uva.yaml"
     cfg.write_text("z", encoding="utf-8")
-    monkeypatch.setenv("HHEMT_DEPLOYMENT_CONFIG", str(deployment_config))
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "hpc").mkdir(parents=True)
+    (elsewhere / "hpc" / "uva.yaml").write_text("wrong", encoding="utf-8")
+    monkeypatch.setenv("HHEMT_DEPLOYMENT_CONFIG", str(elsewhere))
     bundle = _make_bundle(hpc={"uva": "hpc/uva.yaml"})
     resolved = eb.resolve_hpc_system_config(
         "uva", bundle=bundle, bundle_dir=deployment_config / "experiments" / "exp_test"
     )
     assert resolved == cfg.resolve()
-
-
-def test_resolve_hpc_system_config_unresolvable_raises(tmp_path, monkeypatch):
-    monkeypatch.delenv("HHEMT_DEPLOYMENT_CONFIG", raising=False)
-    monkeypatch.delenv("HHEMT_HPC_SYSTEM_CONFIG", raising=False)
-    with pytest.raises(ConfigurationError, match="hpc_system_config"):
-        eb.resolve_hpc_system_config("uva", bundle=None)
 
 
 # ---- ${VAR} expansion in bundle configs (Phase-7 friction: runner never loaded a real ${VAR} config) ----
@@ -347,3 +392,49 @@ def test_run_experiment_forwards_mode_to_tk_run(tmp_path, monkeypatch):
     captured.clear()
     eb.run_experiment(bundle_dir, "uva", hpc_system_config_yaml="/other/path.yaml", assume_yes=True)
     assert captured["mode"] == "resume"
+
+
+@pytest.mark.parametrize(
+    "declared_hpc",
+    [
+        pytest.param(None, id="descriptor-declares-no-hpc-config"),
+        pytest.param({"frontier": "hpc/hpc_system_config_frontier.yaml"}, id="descriptor-declares-another-cluster"),
+    ],
+)
+def test_resolve_hpc_system_config_bundle_without_this_cluster_ignores_env_and_raises(
+    tmp_path, monkeypatch, declared_hpc
+):
+    """Property: a supplied descriptor with no entry for the cluster still refuses, whatever the env names.
+
+    Class: no override, a bundle and its bundle_dir supplied (the arguments that
+    `build_case_from_bundle` and the CLI pass, which is what `run-experiment` reaches), the
+    descriptor declaring either no `hpc_system_config` or only other clusters, and both
+    `$HHEMT_HPC_SYSTEM_CONFIG` and `$HHEMT_DEPLOYMENT_CONFIG` naming existing files. Why
+    required: the env-free arm above passes `bundle=None`, the arguments the
+    container-validation driver passes, so an environment fallback restored only for the
+    bundle-supplied path, which is the path every production caller takes, would pass it; this
+    arm is the same refusal at the position production occupies. Killed by: any environment
+    read reachable when a bundle is supplied without this cluster's entry, for example an
+    `elif bundle is not None and os.environ.get("HHEMT_HPC_SYSTEM_CONFIG")` branch before the
+    refusal. Second correct implementation: looking the entry up with
+    `bundle.hpc_system_config.get(cluster)` and refusing on `None` with differently worded text
+    that still names `--hpc-system-config` and `hpc_system_config['uva']`.
+    """
+    deployment_config = tmp_path / "estate"
+    bundle_dir = deployment_config / "experiments" / "exp_test"
+    bundle_dir.mkdir(parents=True)
+    (deployment_config / "hpc").mkdir()
+    (deployment_config / "hpc" / "hpc_system_config_uva.yaml").write_text("z", encoding="utf-8")
+    env_cfg = tmp_path / "env.yaml"
+    env_cfg.write_text("y", encoding="utf-8")
+    monkeypatch.setenv("HHEMT_HPC_SYSTEM_CONFIG", str(env_cfg))
+    monkeypatch.setenv("HHEMT_DEPLOYMENT_CONFIG", str(deployment_config))
+    bundle = _make_bundle(hpc=declared_hpc)
+    with pytest.raises(ConfigurationError) as ei:
+        eb.resolve_hpc_system_config("uva", override=None, bundle=bundle, bundle_dir=bundle_dir)
+    message = str(ei.value)
+    assert "--hpc-system-config" in message
+    assert "hpc_system_config['uva']" in message
+    # Bare names, so a mention without the leading `$` also fails.
+    assert "HHEMT_HPC_SYSTEM_CONFIG" not in message
+    assert "HHEMT_DEPLOYMENT_CONFIG" not in message
