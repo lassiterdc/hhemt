@@ -1,9 +1,10 @@
-"""Tests for the wheel-shipped descriptor-driven experiment-bundle runner.
+"""Tests for the wheel-shipped descriptor-driven experiment-bundle runner (``hhemt.experiment_bundle``).
 
-Covers the Phase-5 Validation Plan entry 2 (a-e) — the R8 override gate and the
-fail-fast guards — plus the shared ``resolve_hpc_system_config`` precedence contract
-that the demoted ``scripts/experiments/container_validation.py`` now imports (so a
-regression in the moved resolver is caught here, not on a cluster).
+Covers the CLI-versus-descriptor override gate and the fail-fast guards; the shared
+``resolve_hpc_system_config`` precedence contract that
+``scripts/experiments/container_validation.py`` imports (so a regression in the resolver is
+caught here, not on a cluster); ``${VAR}`` expansion in bundle configs; and what
+``run_experiment`` forwards to ``Toolkit.run``.
 """
 
 from __future__ import annotations
@@ -74,7 +75,7 @@ def _write_hpc_config(tmp_path: Path, *, default_account: str, container: bool =
     return p
 
 
-# ---- (a) one-config path: resolve_overrides returns [] when the CLI adds nothing ----
+# ---- one-config path: resolve_overrides returns [] when the CLI adds nothing ----
 
 
 def test_resolve_overrides_empty_when_cli_adds_nothing():
@@ -88,7 +89,7 @@ def test_resolve_overrides_empty_when_cli_adds_nothing():
     assert eb.resolve_overrides(bundle_silent, {"cluster": "uva", "hpc_system_config_yaml": "/x.yaml"}) == []
 
 
-# ---- (b) one OverrideReport per divergent field ----
+# ---- one OverrideReport per divergent field ----
 
 
 def test_resolve_overrides_reports_divergent_field():
@@ -101,7 +102,7 @@ def test_resolve_overrides_reports_divergent_field():
     assert r.cli_value == "/other/path.yaml"
 
 
-# ---- (d, table) the gate table names BOTH values ----
+# ---- the gate table names BOTH values ----
 
 
 def test_format_override_gate_names_both_values():
@@ -112,7 +113,7 @@ def test_format_override_gate_names_both_values():
     assert "hpc_system_config[uva]" in gate
 
 
-# ---- (c) non-TTY + non-empty override + assume_yes=False => REFUSE ----
+# ---- non-TTY + non-empty override + assume_yes=False => REFUSE ----
 
 
 def test_run_experiment_non_tty_refuses_override(tmp_path, monkeypatch):
@@ -130,7 +131,7 @@ def test_run_experiment_non_tty_refuses_override(tmp_path, monkeypatch):
         eb.run_experiment(bundle_dir, "uva", hpc_system_config_yaml="/other/path.yaml", assume_yes=False)
 
 
-# ---- (d) assume_yes=True proceeds past the gate ----
+# ---- assume_yes=True proceeds past the gate ----
 
 
 def test_run_experiment_assume_yes_proceeds(tmp_path, monkeypatch):
@@ -148,7 +149,8 @@ def test_run_experiment_assume_yes_proceeds(tmp_path, monkeypatch):
     assert result is sentinel
 
 
-# ---- (e) placeholder default_account raises the fail-fast ----
+# ---- placeholder values in the HPC config raise the fail-fast: default_account, and ----
+# ---- container.sif_root when the descriptor declares a container ----
 
 
 def test_build_case_from_bundle_rejects_placeholder_account(tmp_path):
@@ -165,7 +167,7 @@ def test_build_case_from_bundle_rejects_placeholder_sif_when_container_declared(
         eb.build_case_from_bundle(bundle, tmp_path, "uva", hpc_system_config_yaml=hpc_path)
 
 
-# ---- shared resolver precedence (the contract container_validation.py now imports) ----
+# ---- shared resolver precedence (the contract scripts/experiments/container_validation.py imports) ----
 
 
 def test_resolve_hpc_system_config_override_wins(tmp_path, monkeypatch):
@@ -174,8 +176,10 @@ def test_resolve_hpc_system_config_override_wins(tmp_path, monkeypatch):
     other = tmp_path / "env.yaml"
     other.write_text("y", encoding="utf-8")
     monkeypatch.setenv("HHEMT_HPC_SYSTEM_CONFIG", str(other))
-    # override beats the env var; bundle=None => env-fallback branch is what the demoted
-    # container_validation.build_case exercises.
+    # The override wins with $HHEMT_HPC_SYSTEM_CONFIG naming another existing file: the
+    # resolver consults no environment variable. This is the call shape
+    # container_validation.build_case uses (override only, bundle=None), where the override
+    # is the only source the resolver accepts; without it, the resolver raises.
     assert eb.resolve_hpc_system_config("uva", override=override) == override.resolve()
 
 
@@ -254,7 +258,7 @@ def test_resolve_hpc_system_config_relative_entry_uses_bundle_grandparent_not_th
     assert resolved == cfg.resolve()
 
 
-# ---- ${VAR} expansion in bundle configs (Phase-7 friction: runner never loaded a real ${VAR} config) ----
+# ---- ${VAR} expansion in bundle configs (the runner must load a config written with ${VAR}) ----
 
 
 def test_expand_config_vars_resolves_and_materializes(tmp_path, monkeypatch):
@@ -307,7 +311,7 @@ def test_build_case_from_bundle_expands_config_vars(tmp_path, monkeypatch):
         assert "${" not in p.read_text(encoding="utf-8")
 
 
-# ---- (g) batch_job wait auto-detect from $SLURM_JOB_ID (V4-fix) ----
+# ---- batch_job wait auto-detect from $SLURM_JOB_ID ----
 
 
 @pytest.mark.parametrize(
@@ -343,6 +347,9 @@ def test_run_experiment_wait_autodetect(tmp_path, monkeypatch, wait_arg, dry_run
         wait=wait_arg,
     )
     assert captured["wait_for_completion"] is expected_wait
+
+
+# ---- what run_experiment forwards to tk.run: override_force_rerun and mode ----
 
 
 def test_run_experiment_threads_override_force_rerun_to_tk_run(tmp_path, monkeypatch):
@@ -392,6 +399,9 @@ def test_run_experiment_forwards_mode_to_tk_run(tmp_path, monkeypatch):
     captured.clear()
     eb.run_experiment(bundle_dir, "uva", hpc_system_config_yaml="/other/path.yaml", assume_yes=True)
     assert captured["mode"] == "resume"
+
+
+# ---- resolver precedence with a bundle supplied: no entry for this cluster still refuses ----
 
 
 @pytest.mark.parametrize(
