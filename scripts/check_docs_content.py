@@ -261,6 +261,13 @@ DOCS_SOURCE_FILENAMES: tuple[tuple[str, str, str, str, int], ...] = (
         "_SUPERSEDED",
         1,
     ),
+    (
+        "reference/output-data-model.md",
+        "analysis_datatree.zarr.superseded-v0025",
+        "hhemt.version_migration.versions.V0025__retire_stranded_regular_store",
+        "_SUPERSEDED",
+        1,
+    ),
 )
 
 #: Filename-shaped inline literals, for the unregistered residual only -- never
