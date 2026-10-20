@@ -170,7 +170,7 @@ voice and is not held to the project's prose conventions.
 
 ## Branching and releases
 
-`develop` is the default branch; all work branches from and merges back into `develop`. `main` is release-only and advances only via a validated `develop` → `main` release pull request (all tests green, docs complete), tagged `vX.Y.Z`. See [Branching and release model](explanation/branching-and-release-model.md) for the two branches, how to branch as a contributor, what counts as a release, and the two independent version axes.
+`develop` is the default branch; all work branches from and merges back into `develop`. `main` is release-only and advances only via a validated `develop` → `main` release pull request (all tests green, docs complete), tagged `vX.Y.Z`. See [Branching and release model](explanation/branching-and-release-model.md) for the two branches, how to branch as a contributor, what counts as a release, the tests that carry a structural gate, and the two independent version axes.
 
 ---
 

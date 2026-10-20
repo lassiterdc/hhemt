@@ -28,10 +28,13 @@ theme:
     #
     # `navigation.indexes` is PRESENT and is the structural fix for two pages
     # sharing one name: it attaches a section's `index.md` to the section NODE,
-    # so "How-To Guides" in the sidebar opens the index instead of expanding to
-    # reveal a child also called "How-To Guides". It requires each section's
-    # first nav entry to be a bare `{section}/index.md`, which this nav already
-    # satisfies for all four sections.
+    # so clicking a section in the sidebar opens its index page instead of
+    # expanding to reveal a first child carrying the same label as the section.
+    # It acts only where a section's first nav entry is a bare `index.md`. In
+    # this nav every top-level section node except `Contributing` has such a
+    # first child, which `navigation.indexes` attaches as the node's page;
+    # `Contributing`'s first child is the titled `contributing.md`, so it
+    # carries none.
     - navigation.indexes
     - navigation.top
   palette:
@@ -136,7 +139,8 @@ nav:
       - Capabilities: explanation/capabilities.md
       - Limitations and constraints: explanation/limitations.md
       - Software availability: explanation/software-availability.md
-      - Branching and release model: explanation/branching-and-release-model.md
       - Exploratory analysis: explanation/exploratory-analysis.md
       - Testing the toolkit: explanation/testing-the-toolkit.md
-  - Contributing: contributing.md
+  - Contributing:
+      - Contributing guide: contributing.md
+      - Branching and release model: explanation/branching-and-release-model.md
