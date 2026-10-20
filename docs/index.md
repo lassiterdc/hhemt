@@ -110,5 +110,3 @@ machine-readable form, and GitHub renders it as a "Cite this repository" button.
   from configuring a run to publishing a dataset.
 - **[Reference](reference/index.md)**: the API surface, the config schema, and what
   the toolkit produces.
-- **[Explanation](explanation/index.md)**: why the design is what it is, and what it
-  can and cannot do.

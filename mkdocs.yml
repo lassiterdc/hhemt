@@ -102,7 +102,11 @@ exclude_docs: |
   _snippets/
 
 nav:
-  - Home: index.md
+  - Home:
+      - index.md
+      - Capabilities: explanation/capabilities.md
+      - Limitations and constraints: explanation/limitations.md
+      - Software availability: explanation/software-availability.md
   - Installation: how-to/installation.md
   - Tutorials:
       - tutorials/index.md
@@ -121,6 +125,7 @@ nav:
       - Combining experiments: how-to/combining-experiments.md
       - Synthetic compute-sensitivity experiment: how-to/synthetic-compute-sensitivity-experiment.md
       - Running the exploratory analysis: how-to/running-eda.md
+      - Exploratory analysis: explanation/exploratory-analysis.md
       - Publishing and fetching: how-to/publishing.md
       - Reprex round-trip: how-to/reprex-roundtrip.md
       - DOI round-trip (operator): how-to/doi-roundtrip-e2e.md
@@ -134,13 +139,7 @@ nav:
       - Reporting sets: reference/reporting-sets.md
       - The interactive analysis report: reference/example-report.md
   - FAQ: explanation/rerun-faq.md
-  - Explanation:
-      - explanation/index.md
-      - Capabilities: explanation/capabilities.md
-      - Limitations and constraints: explanation/limitations.md
-      - Software availability: explanation/software-availability.md
-      - Exploratory analysis: explanation/exploratory-analysis.md
-      - Testing the toolkit: explanation/testing-the-toolkit.md
   - Contributing:
       - Contributing guide: contributing.md
       - Branching and release model: explanation/branching-and-release-model.md
+      - Testing the toolkit: explanation/testing-the-toolkit.md
