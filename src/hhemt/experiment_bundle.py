@@ -61,7 +61,7 @@ def resolve_hpc_system_config(
             path = declared
         else:
             # {deployment_config}/experiments/{slug} -> {deployment_config}
-            root = Path(bundle_dir).expanduser().resolve().parent.parent if bundle_dir is not None else Path.cwd()
+            root = Path(bundle_dir).expanduser().resolve() if bundle_dir is not None else Path.cwd()
             path = root / declared
     else:
         raise ConfigurationError(

@@ -231,7 +231,12 @@ def test_resolve_hpc_system_config_missing_file_message_names_no_environment_var
     assert "HHEMT_DEPLOYMENT_CONFIG" not in message
 
 
-def test_resolve_hpc_system_config_relative_entry_uses_bundle_grandparent_not_the_env_root(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "layout",
+    [("experiments", "exp_test"), ("experiments", "group", "exp_test")],
+    ids=["two-below-root", "three-below-root"],
+)
+def test_resolve_hpc_system_config_relative_entry_resolves_against_the_bundle_directory(tmp_path, monkeypatch, layout):
     """Property: a relative descriptor entry resolves against the bundle's grandparent, whatever the env says.
 
     Class: a relative `hpc_system_config[cluster]` for a bundle at
@@ -242,20 +247,41 @@ def test_resolve_hpc_system_config_relative_entry_uses_bundle_grandparent_not_th
     given. Second correct implementation: deriving the root from the descriptor file's own path
     instead of from `bundle_dir`.
     """
-    deployment_config = tmp_path / "estate"
-    (deployment_config / "experiments" / "exp_test").mkdir(parents=True)
-    (deployment_config / "hpc").mkdir()
-    cfg = deployment_config / "hpc" / "uva.yaml"
-    cfg.write_text("z", encoding="utf-8")
+    bundle_dir = (tmp_path / "root").joinpath(*layout)
+    (bundle_dir / "hpc").mkdir(parents=True)
+    (bundle_dir / "hpc" / "uva.yaml").write_text("target", encoding="utf-8")
+    grandparent_decoy = bundle_dir.parent.parent / "hpc" / "uva.yaml"
+    grandparent_decoy.parent.mkdir(parents=True, exist_ok=True)
+    grandparent_decoy.write_text("grandparent decoy", encoding="utf-8")
     elsewhere = tmp_path / "elsewhere"
     (elsewhere / "hpc").mkdir(parents=True)
-    (elsewhere / "hpc" / "uva.yaml").write_text("wrong", encoding="utf-8")
+    (elsewhere / "hpc" / "uva.yaml").write_text("env decoy", encoding="utf-8")
     monkeypatch.setenv("HHEMT_DEPLOYMENT_CONFIG", str(elsewhere))
     bundle = _make_bundle(hpc={"uva": "hpc/uva.yaml"})
-    resolved = eb.resolve_hpc_system_config(
-        "uva", bundle=bundle, bundle_dir=deployment_config / "experiments" / "exp_test"
-    )
-    assert resolved == cfg.resolve()
+    resolved = eb.resolve_hpc_system_config("uva", bundle=bundle, bundle_dir=bundle_dir)
+    assert resolved == (bundle_dir / "hpc" / "uva.yaml").resolve()
+
+
+def test_resolve_hpc_system_config_relative_entry_absent_from_the_bundle_directory_is_refused(tmp_path):
+    """Property: a relative entry is looked up in the bundle directory only, never in a folder above it.
+
+    Class: a relative `hpc_system_config[cluster]` whose file is missing under the bundle
+    directory but present under the bundle's parent and grandparent. Why required: the entry
+    means the file beside `experiment.yaml`; quietly using a same-named file further up would
+    run the experiment on another bundle's cluster settings with no message. Killed by:
+    resolving against the grandparent, or searching upward until a match is found (the parent's
+    copy). Second correct implementation: checking existence before building the path and
+    raising with the same path named.
+    """
+    bundle_dir = tmp_path / "root" / "experiments" / "exp_test"
+    bundle_dir.mkdir(parents=True)
+    for above in (bundle_dir.parent, bundle_dir.parent.parent):
+        (above / "hpc").mkdir(parents=True, exist_ok=True)
+        (above / "hpc" / "uva.yaml").write_text("not this one", encoding="utf-8")
+    bundle = _make_bundle(hpc={"uva": "hpc/uva.yaml"})
+    with pytest.raises(ConfigurationError) as ei:
+        eb.resolve_hpc_system_config("uva", bundle=bundle, bundle_dir=bundle_dir)
+    assert str(bundle_dir.resolve() / "hpc" / "uva.yaml") in str(ei.value)
 
 
 # ---- ${VAR} expansion in bundle configs (the runner must load a config written with ${VAR}) ----

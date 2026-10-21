@@ -3802,3 +3802,17 @@ non_breaking_allowlist:
       keeps supported, and carries a NetCDF FILE at the '.nc' path, so no completed state moves.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/experiment_bundle.py
+    layout_signature: "6343438ce86fec5c11a190046d85e7cc05771c4dc469ffa4a7c5ea656e379bdc"
+    justification: >-
+      NON-BREAKING. Package 2d, chunk 2d.3 (item I83, ruling D-114): the description string of
+      ExperimentConfig.hpc_system_config is rewritten to state that a relative entry is
+      measured from the bundle directory, the directory holding experiment.yaml, which is the
+      base the resolver now uses. Only that description changes. The runtime model reports
+      the same 7 fields, in the same order, with the same requiredness before and after
+      (description, system_config, analysis_config and toolkit_pin required; hpc_system_config,
+      inputs and container optional). A description is schema metadata read by the
+      documentation renderer and absent from every serialized artifact, so no config key,
+      path, filename or persisted structure moves and no migration has anything to act on.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.

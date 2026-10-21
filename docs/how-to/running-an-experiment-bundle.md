@@ -29,7 +29,7 @@ description: One-line description.
 system_config: configs/system_config_uva.yaml    # bundle-relative
 analysis_config: configs/analysis_config_uva.yaml # bundle-relative
 hpc_system_config:
-  uva: hpc/hpc_system_config_uva.yaml   # absolute, or relative to the directory two levels above this bundle
+  uva: ../../hpc/hpc_system_config_uva.yaml   # absolute, or relative to this bundle directory (the one holding experiment.yaml)
 inputs:
   - name: weather
     local_path: "${HHEMT_DATA_ROOT}/weather/forcing.nc"   # ${VAR}-templated, never a literal operator path

@@ -41,6 +41,7 @@ Run from the repo root so ``tests/`` is importable.
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys as _sys
 import time
@@ -100,19 +101,12 @@ def _resolve_hpc_system_config(override: str | None = None) -> Path:
     the copy-me source, never the live config (mirrors ``container_validation`` — the public
     repo bakes in no estate path and no account).
     """
-    if override:
-        path = Path(override).expanduser()
-    elif os.environ.get("HHEMT_HPC_SYSTEM_CONFIG"):
-        path = Path(os.environ["HHEMT_HPC_SYSTEM_CONFIG"]).expanduser()
-    else:
-        deployment_config = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
-        if not deployment_config:
-            raise FileNotFoundError(
-                "No hpc_system_config source: set $HHEMT_DEPLOYMENT_CONFIG to your "
-                "compute-visible private deployment-config checkout (or set "
-                "$HHEMT_HPC_SYSTEM_CONFIG, or pass the path as argv[1])."
-            )
-        path = Path(deployment_config).expanduser() / "hpc" / "hpc_system_config_uva.yaml"
+    if not override:
+        raise FileNotFoundError(
+            "No hpc_system_config given: pass --hpc-system-config {path to your UVA "
+            "hpc_system_config.yaml} to this stage."
+        )
+    path = Path(override).expanduser()
     if not path.is_file():
         raise FileNotFoundError(
             f"No UVA hpc_system_config at {path}.\n"
@@ -123,6 +117,27 @@ def _resolve_hpc_system_config(override: str | None = None) -> Path:
             f"(a100 via --gres=gpu:a100:N), standard (CPU)."
         )
     return path.resolve()
+
+
+def _parse_cli(argv: list[str]) -> argparse.Namespace:
+    """Parse this driver's command line into a stage and that stage's arguments.
+
+    ``emit-bundle`` and ``verify`` each take ``--hpc-system-config``, the only place their HPC
+    config comes from; ``deposit`` takes none, because it runs on the local machine and never
+    touches a cluster. With no arguments the stage is ``emit-bundle``, as it was before the
+    option existed. Parsing does not resolve the path: an absent option is refused by
+    ``_resolve_hpc_system_config``, so a caller can parse without a config on disk.
+    """
+    parser = argparse.ArgumentParser(prog="doi_emitter_and_ingestion_verification")
+    stages = parser.add_subparsers(dest="stage", required=True)
+    emit = stages.add_parser("emit-bundle")
+    emit.add_argument("--hpc-system-config", default=None)
+    dep = stages.add_parser("deposit")
+    dep.add_argument("bundle_zip")
+    ver = stages.add_parser("verify")
+    ver.add_argument("doi")
+    ver.add_argument("--hpc-system-config", default=None)
+    return parser.parse_args(argv or ["emit-bundle"])
 
 
 def build_case(
@@ -622,16 +637,14 @@ if __name__ == "__main__":
     #       export HHEMT_SIF_CACHE_DIR=/scratch/$USER/q8_reproducer_sif_cache; rm -rf "$HHEMT_SIF_CACHE_DIR"
     #       export HHEMT_ZENODO_BASE_URL=<same host the deposit published to>   # non-secret
     #       python -m scripts.experiments.doi_emitter_and_ingestion_verification verify <DOI>
-    stage = _sys.argv[1] if len(_sys.argv) > 1 else "emit-bundle"
-    if stage == "emit-bundle":
-        emit_bundle_only()
-    elif stage == "deposit":
-        if len(_sys.argv) < 3:
-            raise SystemExit("deposit needs a bundle zip path: ... deposit <bundle_zip>")
-        deposit(_sys.argv[2])
-    elif stage == "verify":
-        if len(_sys.argv) < 3:
-            raise SystemExit("verify needs a DOI: ... verify <DOI>")
-        _sys.exit(0 if verify(_sys.argv[2]) else 1)
+    args = _parse_cli(_sys.argv[1:])
+    if args.stage == "deposit":
+        deposit(args.bundle_zip)
     else:
-        raise SystemExit(f"unknown stage {stage!r} (expected 'emit-bundle', 'deposit', or 'verify')")
+        # Resolved here, before either stage body runs, so a missing or wrong path is refused
+        # before any provisioning, fetch or SLURM submission starts.
+        cfg = str(_resolve_hpc_system_config(args.hpc_system_config))
+        if args.stage == "emit-bundle":
+            emit_bundle_only(hpc_system_config_yaml=cfg)
+        else:
+            _sys.exit(0 if verify(args.doi, hpc_system_config_yaml=cfg) else 1)

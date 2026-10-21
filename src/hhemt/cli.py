@@ -1673,7 +1673,7 @@ def reprex_check_command(
     hpc_system_config: Path | None = typer.Option(
         None,
         "--hpc-system-config",
-        help="Your cluster's hpc_system_config YAML. Falls back to $HHEMT_HPC_SYSTEM_CONFIG.",
+        help="Your cluster's hpc_system_config YAML. Required: the check runs against this file.",
     ),
 ) -> None:
     """Check whether a reprex bundle can run on your cluster, and print what to amend.
@@ -1686,18 +1686,16 @@ def reprex_check_command(
     Exits 0 when the bundle fits your cluster, 1 when it does not, and 2 or above when the
     check could not run.
     """
-    import os
-
     try:
         from .bundle import Bundle
         from .config.loaders import load_hpc_system_config, yaml_to_model
         from .config.reprex_config import reprex_config
 
-        hpc_path = hpc_system_config or os.environ.get("HHEMT_HPC_SYSTEM_CONFIG")
+        hpc_path = hpc_system_config
         if not hpc_path:
             raise CLIValidationError(
                 argument="--hpc-system-config",
-                message="No hpc_system_config given and $HHEMT_HPC_SYSTEM_CONFIG is unset",
+                message="No hpc_system_config given: pass --hpc-system-config",
                 fix_hint="Pass --hpc-system-config {your cluster's hpc_system_config.yaml}",
             )
         result = Bundle.from_directory(bundle).reprex(
@@ -2831,8 +2829,8 @@ def ingest_command(
         None,
         "--hpc-system-config",
         help=(
-            "Path to YOUR cluster's hpc_system_config.yaml (ADR-6). Falls back to "
-            "$HHEMT_HPC_SYSTEM_CONFIG. The bundle never carries one (ADR-9), and it is "
+            "Path to YOUR cluster's hpc_system_config.yaml (ADR-6); this option is the only "
+            "place it comes from. The bundle never carries one (ADR-9), and it is "
             "REQUIRED for a container-mode bundle: the ContainerSpec that renders "
             "`apptainer exec {sif}` lives on it. Start from a worked example at "
             "test_data/norfolk_coastal_flooding/hpc_system_config_{uva,frontier}.yaml, "

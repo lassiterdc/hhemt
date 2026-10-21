@@ -267,6 +267,15 @@ if __name__ == "__main__":
 
     cluster = sys.argv[1] if len(sys.argv) > 1 else "uva"
     cfg_override = sys.argv[2] if len(sys.argv) > 2 else None
+    # argv[2] is this driver's only HPC-config channel. Without this guard a bare run surfaces
+    # the library resolver's refusal, which names --hpc-system-config and experiment.yaml,
+    # neither of which this script reads, so the operator is pointed at a fix that cannot work.
+    if cfg_override is None:
+        sys.exit(
+            "container_validation.py: pass your cluster's hpc_system_config YAML as argv[2], e.g.\n"
+            f"  python scripts/experiments/container_validation.py {cluster} "
+            f"/path/to/hpc_system_config_{cluster}.yaml"
+        )
     # run_and_verdict returns True only for a REAL within-family pass (no-data guarded);
     # exit non-zero otherwise so the SLURM job state reflects the result.
     sys.exit(0 if run_and_verdict(cluster, hpc_system_config_yaml=cfg_override) else 1)

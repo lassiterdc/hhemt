@@ -444,7 +444,7 @@ class TRITON_SWMM_experiment:
                         "but no hpc_system_config was supplied. The bundle deliberately does "
                         "not carry one (ADR-9: the reproducer's HPC-specific config is an "
                         "external input). Pass hpc_system_config_yaml=... (or `hhemt ingest "
-                        "--hpc-system-config ...`), or set $HHEMT_HPC_SYSTEM_CONFIG. Start "
+                        "--hpc-system-config ...`). Start "
                         "from a worked example: "
                         "test_data/norfolk_coastal_flooding/hpc_system_config_uva.yaml, or "
                         f"the shape sketched at {bundle_root}/hpc_system_config.template.yaml."
@@ -524,16 +524,10 @@ class TRITON_SWMM_experiment:
         Raises FileNotFoundError when a source names a path that does not exist, so a typo
         fails loudly rather than silently degrading to native.
         """
-        import os
-
-        if override is not None:
-            path = Path(override).expanduser()
-            source = "hpc_system_config_yaml argument"
-        elif os.environ.get("HHEMT_HPC_SYSTEM_CONFIG"):
-            path = Path(os.environ["HHEMT_HPC_SYSTEM_CONFIG"]).expanduser()
-            source = "$HHEMT_HPC_SYSTEM_CONFIG"
-        else:
+        if override is None:
             return None
+        path = Path(override).expanduser()
+        source = "hpc_system_config_yaml argument"
         if not path.is_file():
             raise FileNotFoundError(f"hpc_system_config not found at {path} (from {source}).")
         print(f"[Ingest] hpc_system_config: {path} (from {source})", flush=True)
