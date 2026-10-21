@@ -237,15 +237,17 @@ def test_resolve_hpc_system_config_missing_file_message_names_no_environment_var
     ids=["two-below-root", "three-below-root"],
 )
 def test_resolve_hpc_system_config_relative_entry_resolves_against_the_bundle_directory(tmp_path, monkeypatch, layout):
-    """Property: a relative descriptor entry resolves against the bundle's grandparent, whatever the env says.
+    """Property: a relative descriptor entry resolves against the bundle directory, whatever the env says.
 
-    Class: a relative `hpc_system_config[cluster]` for a bundle at
-    `{deployment_config}/experiments/{slug}`, while `$HHEMT_DEPLOYMENT_CONFIG` names a different
-    root that also holds a file at that relative path. Why required: the descriptor travels with
-    the bundle, so its relative entry must mean the same file wherever the shell points. Killed
-    by: resolving against the env root, or against the working directory when a bundle_dir is
-    given. Second correct implementation: deriving the root from the descriptor file's own path
-    instead of from `bundle_dir`.
+    Class: a relative `hpc_system_config[cluster]` for a bundle directory (the folder holding
+    `experiment.yaml`) at two depths, `root/experiments/exp_test` and
+    `root/experiments/group/exp_test`, with a same-named file planted under the bundle's
+    grandparent and under the directory `$HHEMT_DEPLOYMENT_CONFIG` names. Why required: the
+    descriptor travels with the bundle, so its relative entry must mean the file beside
+    `experiment.yaml` wherever the bundle sits and wherever the shell points. Killed by:
+    resolving against the grandparent, the env root, or the working directory when a
+    bundle_dir is given. Second correct implementation: deriving the base from the descriptor
+    file's own path instead of from `bundle_dir`.
     """
     bundle_dir = (tmp_path / "root").joinpath(*layout)
     (bundle_dir / "hpc").mkdir(parents=True)
