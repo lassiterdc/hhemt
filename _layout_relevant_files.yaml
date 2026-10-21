@@ -3774,3 +3774,17 @@ non_breaking_allowlist:
       AUTHORSHIP NOTE: as above -- `hhemt-specialist`, work package 1a, UNCOMMITTED per A-22.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/log.py
+    layout_signature: e35dfb27d53b37ad6fc58b8131747e01cb3f29e219e70a967b775741c7bb6896
+    justification: >-
+      NON-BREAKING. Three changes, none altering persisted log shape: (1) comment and docstring
+      wording only (the n_resumes and consecutive_terminal_failures comments, and prose repairs);
+      (2) "prep_inputs_reclaimed", "hydrographs_reclaimed" and "standalone_rpt_reclaimed" are
+      ADDED to TRITONSWMM_model_log's bool validator and bool serializer name lists, where they
+      were declared fields that could be neither loaded as true nor written (546c8dcf).
+      DECIDING MEASUREMENT: no field is added, removed, renamed, retyped or re-defaulted; at the
+      default None all three already serialize to null and still do (the serializer maps None to
+      None), so no persisted log_{model}.json changes shape; no writer of the three exists in
+      src/, so no persisted log holds them as true. KNOWN EXPIRY: the next change to this path.
+      AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 3, UNCOMMITTED per A-22; the
+      layout_signature is the file's sha256 at this write and must equal it AS COMMITTED.

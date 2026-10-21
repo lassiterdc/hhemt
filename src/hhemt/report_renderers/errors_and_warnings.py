@@ -1,22 +1,25 @@
 """Errors and Warnings sidebar renderer.
 
-Reads the PERSISTED `validation_report.json` read-model via `load_validation_report`
-(never `validate_analysis()` at render time — Gotcha 53 Class-Y) and renders the resulting
-ValidationReport as an inline-styled HTML document organized into 4 sections
-per the user's requested grouping:
+A finished analysis needs one page saying whether the workflow completed cleanly and, when
+it did not, which checks failed and for which scenarios. This module renders that page.
+
+It reads the PERSISTED `validation_report.json` read-model via `load_validation_report`,
+never `validate_analysis()` at render time: a render-time call inspects the whole analysis
+tree, which a render bundle does not carry, so a bundle could not re-render this page
+faithfully. The resulting ValidationReport becomes an inline-styled HTML document in five
+sections:
 
 1. Overall pass/fail banner.
 2. System-Level Checks (compilation, summaries, CSV integrity).
 3. Aggregate Per-Scenario Checks (N of M setup / ran / processed). Carries the same
-   Name / Check / Status / Details columns as the other two check tables ([Q154]).
+   Name / Check / Status / Details columns as the other two check tables.
 4. Resource-Utilization Mismatches (status table always; per-scenario mismatch table
    only when a mismatch exists -- no "all clear" banner, it duplicates the status row).
 5. Granular Per-Scenario Failures (table when failures exist; the whole section is
    ABSENT when there are none -- it applies no check, so it renders nothing to placehold).
 
-Snakemake's report engine renders `.html` outputs in an iframe; the embedded
-HTML must carry inline `<style>` for any visual styling (per snakemake-specialist
-consult 18:09).
+Snakemake's report engine renders `.html` outputs in an iframe, so the embedded HTML
+must carry inline `<style>` for any visual styling.
 """
 
 from __future__ import annotations
@@ -30,21 +33,21 @@ if TYPE_CHECKING:
     from hhemt.config.report import report_config
 
 
-#: Display vocabulary for the two `Check` tables ONLY -- the `system`-level and
+#: Display vocabulary for every check table on this page -- the `system`-, `aggregate`- and
 #: `resource`-level checks. Keyed on `CheckResult.name`, which stays the stable MACHINE
 #: key: `cross_experiment_errors_and_warnings.py` joins children across bundles on that
 #: string, so a producer-side rename splits the combined matrix into two rows with `-`
 #: cells whenever bundles from either side of the rename are combined. The display name
 #: and the description are therefore RENDERER-side, and the producer is untouched.
 #:
-#: Convention, enforced by tests/test_iter7_check_vocabulary.py: the display name is a
-#: Sentence-case noun phrase naming the SUBJECT under test, carrying no verb and no raw
-#: file/identifier token. The verb belongs in the description, which states what is
-#: LOOKED FOR rather than what the check is called.
-#:
-#: NOT extended to the `aggregate` (`Stage`) table by ruling: the user scoped cross-table
-#: naming consistency to the `Check` tables. Eleven further live names route there, five
-#: of them minted in `src/hhemt/eda/` and read back via `_read_persisted_eda_verdicts`.
+#: Convention: the display name is a Sentence-case noun phrase naming the SUBJECT under
+#: test, carrying no verb and no raw file/identifier token. The verb belongs in the
+#: description, which states what is LOOKED FOR rather than what the check is called.
+#: tests/test_iter7_check_vocabulary.py enforces the mechanical half -- Sentence case, no
+#: `_` or `.` in the display name, a full-sentence description -- and also requires this map
+#: to cover exactly the checks minted at those three levels, including the ones minted in
+#: `src/hhemt/eda/` and read back via `_read_persisted_eda_verdicts`, so no check reaches a
+#: table without an entry and no entry outlives its check.
 _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     "System setup": (
         "System setup",
@@ -73,11 +76,10 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
         "Every scenario runs on the MPI ranks, OMP threads, GPUs, GPU backend and "
         "build type its configuration requested.",
     ),
-    # --- aggregate-level checks ([Q154]: this table now carries the same columns as
-    # the other two, so it needs the same descriptions). Authored in ONE pass with the
-    # four above, from each check's own predicate, to the convention stated at the top
-    # of this block -- [Q155] requires the VALUES be derived alike, and a single
-    # authoring event is what makes that true rather than asserted.
+    # --- aggregate-level checks. The aggregate table carries the same Name / Check columns
+    # as the system and resource tables, so these need descriptions too, each written from
+    # the check's own predicate to the convention stated at the top of this block.
+    # (`provenance_completeness`, above, is aggregate-level as well.)
     "Scenarios setup": (
         "Scenario setup",
         "Every scenario the analysis defines exists on disk with its inputs written.",
@@ -112,6 +114,12 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     "Resume schedule honored": (
         "Resume schedule",
         "Every resumed sim's realized resume count and boundary match the schedule its configuration requested.",
+    ),
+    "resume event evidence": (
+        "Resume evidence",
+        "Every sim that attempted a resume left a durable record of each attempt, with no sim "
+        "missing that record for some or all of its attempts and no alarm row in its "
+        "resume-event record.",
     ),
     "EDA calc ran": (
         "EDA calculation",
@@ -159,17 +167,18 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
 }
 
 #: The one cell an unregistered check name renders. NOT prose invented for a predicate
-#: this module cannot read -- [Q154] forbids force-populating word salad, and a name that
+#: this module cannot read: a description guessed from a name could state a predicate the
+#: check does not have, and a reader acts on a description as the check's own. A name that
 #: reaches here came from a persisted `validation_report.json` whose producer we may not
-#: have. One fixed string is the honest, deterministic, non-overlapping answer, and it is
-#: uniform across every such name, which is what [Q155] asks of the derivation.
+#: have. One fixed string is deterministic, overlaps no registered description, and is the
+#: same for every such name.
 #:
 #: On any tree the vocabulary guard passes this is UNREACHABLE for a toolkit-minted name:
 #: tests/test_iter7_check_vocabulary.py fails when a renderable check has no entry. It is
 #: reachable only from a bundle produced by a toolkit whose vocabulary is ahead of this one.
 _UNDESCRIBED = "No description registered for this check."
 
-#: What the `Details` column may carry, recorded in code (Iter-11 item 8). Every check
+#: What the `Details` column may carry, recorded in code. Every check
 #: table on this page -- system-level, aggregate, and the resource status table -- renders
 #: its last column under this header, and this constant is the single statement of what is
 #: admissible there. It is a CONTRACT, not documentation of current behaviour: a future
@@ -185,8 +194,8 @@ _UNDESCRIBED = "No description registered for this check."
 #: INADMISSIBLE, and this is the distinction the column exists to preserve: anything that
 #: is a per-CHECK fact rather than a per-RUN fact. What a check LOOKS FOR belongs in the
 #: `Check` column, sourced from `_CHECK_VOCABULARY`. A `Details` cell that describes the
-#: check rather than this run's outcome re-creates the `Summary`-vs-`Check` redundancy
-#: that item 8 retired.
+#: check rather than this run's outcome repeats the `Check` cell beside it, so the row
+#: states one per-check fact twice.
 _DETAILS_COLUMN_CONTRACT = "summary; optional precision qualifier; per-issue detail lines on failure"
 
 
@@ -203,25 +212,23 @@ def _vocab(c: CheckResult) -> tuple[str, str]:
 
 
 def _render_overall_banner(report: ValidationReport) -> str:
-    # Iter-11 item 7: `n_total` and `n_na` retired with the precision tally that read them.
-    # The not-applicable count is now stated once, by the single omission caption `render()`
-    # emits, so recomputing it here would be the redundancy item 7 removed.
+    # The not-applicable count is deliberately NOT computed here: `render()` states it once,
+    # in the omission caption directly beneath this banner, and stating it here as well
+    # would print the same figure twice.
     applicable = [c for c in report.checks if getattr(c, "applicable", True)]
     n_passed = sum(1 for c in applicable if c.passed)
     n_qualified = sum(1 for c in applicable if c.passed and getattr(c, "instrument", None) not in (None, "raw_rasters"))
     if report.overall_passed:
-        # Iter-11 item 7: the PROMINENT precision tally is retired. It spent the banner --
-        # the one line every reader reads -- on a three-way split of a distinction that is
-        # already disclosed exactly where it bears, inline beside the row it qualifies
-        # (_status_of returns the qualifier; both Check tables render it). A tally repeated
-        # at the top is the redundancy, not the disclosure, and nothing here relaxes the
-        # ruling that a derived-tier pass must be marked: it still is, per row.
+        # Deliberately NOT a precision tally: it would spend the banner -- the one line every
+        # reader reads -- on a three-way split of a distinction that is already disclosed
+        # exactly where it bears, inline beside the row it qualifies (_status_of returns the
+        # qualifier; the system and aggregate tables render it). A tally repeated at the top
+        # is the redundancy, not the disclosure. A derived-tier pass is still marked, per row,
+        # because an unqualified tick over a coarser-than-raw comparison overstates it.
         #
-        # The `info` class survives when any pass is qualified, so the banner still stops
-        # reading as an unqualified all-clear -- that is the substance the tally carried,
-        # and it is kept while the enumeration is dropped. The not-applicable COUNT moves
-        # to the single omission caption `render()` emits once (item 7's "one economical
-        # omission caption"), so it is stated in exactly one place on the page.
+        # The `info` class is used when any pass is qualified, so the banner does not read as
+        # an unqualified all-clear. The not-applicable COUNT is stated by the single omission
+        # caption `render()` emits, so it appears in exactly one place on the page.
         cls = "pass" if not n_qualified else "info"
         return f'<div class="banner {cls}">✓ {n_passed} of {len(applicable)} applicable checks passed.</div>'
     n_failed = len(applicable) - n_passed
@@ -248,7 +255,8 @@ def _status_of(c: CheckResult) -> tuple[str, str, str]:
     tri-state itself serves, one level up: a disclaimer that fires on every row is
     one no reader attends to, which would destroy the signal for the checks that
     genuinely need it. A check that DOES compare numerically is responsible for
-    stamping its instrument, and a regression test pins the one that does today.
+    stamping its instrument; several stamp ``"summary_tier"`` today. Not established:
+    that a regression test pins every stamper.
 
     getattr-with-default throughout: a validation_report.json written before these
     fields existed deserializes without them, and must keep rendering.
@@ -269,18 +277,17 @@ def _status_of(c: CheckResult) -> tuple[str, str, str]:
 def _partition_applicable(checks: list[CheckResult]) -> tuple[list[CheckResult], int]:
     """Split off the checks that cannot apply to this analysis. Returns (kept, n_omitted).
 
-    Iter-10 E: a check whose arm cannot produce the thing being checked was rendering a
+    A check whose arm cannot produce the thing being checked would otherwise render a
     full N/A row -- "Resume schedule honored" on a CLEAN arm is N/A on every clean report,
     for every scenario, forever. Those rows are noise proportional to the vocabulary rather
     than to the run.
 
-    This does NOT relax the ruling that produced the N/A state in the first place: that
-    ruling forbade rendering an examined-zero check as a PASS carrying its denominator,
-    because a green cell over a check that examined nothing is a false claim. Omitting the
-    row makes no claim at all, which is the opposite failure mode from the one it fixed.
+    Deliberately NOT rendered as a PASS carrying its denominator instead: a green cell over
+    a check that examined nothing is a false claim. Omitting the row makes no claim at all.
     What omission WOULD lose is the reader's ability to tell "this check passed" from "this
-    check never ran" -- so every caller discloses the omitted COUNT beneath its table. The
-    count is the disclosure; the rows are the noise.
+    check never ran" -- so the page discloses the omitted COUNT once, in the caption
+    `render()` places beneath the banner. The count is the disclosure; the rows are the
+    noise.
 
     `applicable` defaults True via getattr: a validation_report.json written before the
     field existed deserializes without it and must keep rendering every row.
@@ -292,16 +299,14 @@ def _partition_applicable(checks: list[CheckResult]) -> tuple[list[CheckResult],
 def _omitted_note(n_omitted: int) -> str:
     """The page's SINGLE omission disclosure. Empty when nothing was cut.
 
-    Iter-11 item 7: one economical caption, no examples, no redundancy. This was
-    previously appended by each filtered table, so a report that omitted checks at two
-    levels said the same thing twice, at length, with a worked example. `render()` now
-    calls it exactly once over the whole check set.
+    One short caption, no examples. `render()` calls it exactly once over the whole check
+    set; deliberately NOT once per filtered table, because a report omitting checks at two
+    levels would then say the same thing twice.
 
-    What it must NOT lose, and does not: Iter-10 E introduced this disclosure precisely
-    so a reader can tell "this check passed" from "this check never ran", and [Q130]
-    rules that an examined-zero check renders N/A rather than a PASS carrying its
-    denominator. The COUNT is the disclosure and the count survives; only the prose
-    around it is economised.
+    What it must NOT lose is the COUNT, which is what lets a reader tell "this check
+    passed" from "this check never ran". An examined-zero check is N/A rather than a PASS
+    carrying its denominator, and an N/A check is omitted from the check tables, so this
+    count is how the page still accounts for it.
     """
     if n_omitted <= 0:
         return ""
@@ -317,22 +322,20 @@ def _render_system_level_table(checks: list[CheckResult]) -> str:
         return ""
     checks, _n_omitted = _partition_applicable(checks)
     if not checks:
-        # Iter-11 item 7: no per-table caption. `render()` emits ONE omission caption
-        # over the whole check set, so a table that filtered every row simply renders
-        # nothing rather than repeating the page-level disclosure.
+        # No per-table caption: `render()` emits ONE omission caption over the whole check
+        # set, so a table that filtered every row simply renders nothing rather than
+        # repeating the page-level disclosure.
         return ""
     rows = []
     for c in checks:
         status_cls, status_glyph, qualifier = _status_of(c)
-        # I7-4: the `Check` cell now DESCRIBES what is looked for; the check's name moves
-        # to its own column. Both come from _CHECK_VOCABULARY so the two `Check` tables
-        # cannot drift from each other.
+        # `Name` and `Check` both come from _CHECK_VOCABULARY through the accessor every
+        # check table uses, so no two tables can name or describe one check differently.
         display_name, description = _vocab(c)
-        # Show the summary for both pass and fail; on fail, also list per-issue details.
-        # `Details` keeps a distinct job from the new description column: this is a
-        # per-RUN fact (this run's issues, this run's detection floor), the description
-        # is a per-CHECK fact. Both branches below are preserved verbatim -- the failing
-        # branch is exercised by no delivered arm, so it must survive by construction.
+        # `Details` carries this run's outcome -- its summary, its detection floor, and on
+        # failure each issue -- a per-RUN fact kept apart from the per-CHECK description in
+        # the `Check` cell. No passing report reaches the failing branch, so nothing in a
+        # passing report would reveal it broken: keep it when editing the passing path.
         detail_text = c.summary
         if qualifier:
             detail_text += f'<br><span class="floor-note">{qualifier}</span>'
@@ -356,14 +359,14 @@ def _render_aggregate_table(checks: list[CheckResult]) -> str:
         return ""
     checks, _n_omitted = _partition_applicable(checks)
     if not checks:
-        # Iter-11 item 7: no per-table caption; render() emits one for the whole page.
+        # No per-table caption; render() emits one for the whole page.
         return ""
     rows = []
     for c in checks:
         status_cls, status_glyph, qualifier = _status_of(c)
-        # [Q154]: same columns as the other two check tables, populated from the same
-        # registry through the same accessor. The display name also replaces the raw
-        # `c.name` here, which is what makes the three tables name one check one way.
+        # Same columns as the other two check tables, populated from the same registry
+        # through the same accessor. The display name replaces the raw `c.name` here too,
+        # which is what makes the three tables name one check one way.
         display_name, description = _vocab(c)
         _details = c.summary
         if qualifier:
@@ -372,24 +375,15 @@ def _render_aggregate_table(checks: list[CheckResult]) -> str:
             f"<tr><td>{display_name}</td><td>{description}</td>"
             f'<td class="{status_cls}">{status_glyph}</td><td>{_details}</td></tr>'
         )
-    # Iter-11 item 8. `Summary` is retired: it named the SAME datum (`c.summary`, plus the
-    # same optional precision qualifier) that the two `Check` tables render under `Details`,
-    # so one delivered report used two header words for one column's content -- which is the
-    # redundancy the item names. `Stage` becomes `Name` for the same reason: the first column
-    # of every check table on this page now says `Name`.
+    # The header row matches the other two check tables word for word -- `Name`, `Check`,
+    # `Status`, `Details` -- because this table's last column carries the same datum
+    # (`c.summary`, plus the same optional precision qualifier) that they render under
+    # `Details`, and two header words for one datum on one page read as two different things.
     #
-    # SUPERSEDED by [Q154], and corrected here rather than left contradicting shipped
-    # behaviour. This comment previously said a `Check` column was deliberately absent
-    # because the vocabulary was scoped by ruling to the two `Check`-level tables and
-    # this table had no descriptions to put in one. Both halves are now false: [Q154]
-    # rules that all check tables carry the same columns, and _CHECK_VOCABULARY was
-    # widened in the same change to cover every renderable check, so the column it
-    # feared would be degenerate is fully populated.
-    #
-    # Its underlying objection was sound and is answered rather than overridden: a blank
-    # column WOULD be worse than a naming inconsistency. The answer is the vocabulary
-    # guard, which fails CI when a renderable check has no entry, so the blank-column
-    # state cannot ship.
+    # The `Check` column is fully populated: _CHECK_VOCABULARY covers every aggregate-level
+    # check. A blank column WOULD be worse than a naming inconsistency, and what prevents one
+    # is the vocabulary guard in tests/test_iter7_check_vocabulary.py, which fails when a
+    # renderable check has no entry.
     return (
         "<h3>Aggregate Per-Scenario Checks</h3>\n"
         '<div class="table-scroll">\n<table>\n'
@@ -400,12 +394,11 @@ def _render_aggregate_table(checks: list[CheckResult]) -> str:
 
 def _render_granular_failures_table(granular: list[dict]) -> str:
     if not granular:
-        # I7-3 / ledger P9: a section that does not apply is ABSENT, not placeheld. The
-        # empty string is filtered by render()'s `if b` join, so heading AND banner both
-        # vanish with no call-site edit. Measured: all four delivered arms have every
-        # check passing, so `granular_failures` is empty and this is the ONLY branch the
-        # delivered generation reaches -- the green "No per-scenario failures" banner was
-        # on every page, which is what the user was looking at.
+        # A section that does not apply is ABSENT, not placeheld: it applies no check, so a
+        # "no failures" banner would only repeat the overall banner. The empty string is
+        # filtered by render()'s `if b` join, so the heading vanishes with no call-site edit.
+        # `granular_failures` is empty whenever every check passes, so without this branch
+        # every fully passing report would carry a green "No per-scenario failures" banner.
         return ""
     rows = []
     for d in granular:
@@ -433,15 +426,12 @@ def _render_resource_mismatches_table(checks: list[CheckResult]) -> str:
     for c in checks:
         if not c.passed:
             all_issues.extend(c.details)
-    # Resource-level checks reached NO status row: this section was written as a
-    # mismatch table (it read `c.details` off FAILING checks only), so the single
-    # `level="resource"` check -- `Resource usage matches config` -- was counted in
-    # the banner's 15 and rendered as one of only 14 rows. That is a different defect
-    # from the three aggregate-level siblings, which render as soon as their level is
-    # set. Emit the status rows first, then the mismatch detail. Reclassifying the
-    # check to `level="system"` would ALSO have made it render -- and would have
-    # emptied `by_level["resource"]`, deleting the per-scenario expected-vs-actual
-    # detail table below on failure. The status table is the fix that keeps both.
+    # Every resource-level check gets a status ROW, passing or failing, ahead of any
+    # mismatch detail. A table built only from failing checks' `details` would leave a
+    # passing `Resource usage matches config` counted in the banner yet shown in no table.
+    # Deliberately NOT reclassifying the check to `level="system"` to make it render there:
+    # that would empty `by_level["resource"]` and so drop the per-scenario
+    # expected-vs-actual detail table below on failure. The status table keeps both.
     status_rows = "\n    ".join(
         f"<tr><td>{_vocab(c)[0]}</td><td>{_vocab(c)[1]}</td>"
         f'<td class="{_status_of(c)[0]}">{_status_of(c)[1]}</td><td>{c.summary}</td></tr>'
@@ -453,12 +443,11 @@ def _render_resource_mismatches_table(checks: list[CheckResult]) -> str:
         "  <tbody>\n    " + status_rows + "\n  </tbody>\n</table>\n</div>"
     )
     if not all_issues:
-        # I7-3: the "No resource mismatches" banner is deleted as redundant with the
-        # status row directly above it, which already renders `Resource usage / OK /
-        # All scenarios used expected compute resources`. The SECTION and its status
-        # table stay: `Resource usage matches config` is a `Check`-table row, so
-        # omitting the section here would omit a check. That is the principled
-        # asymmetry with the granular section below, which carries no check at all.
+        # No "all clear" banner: the status row directly above already reports the check
+        # as passed. The SECTION and its status table stay even with nothing mismatched:
+        # `Resource usage matches config` is a check-table row, so omitting the section here
+        # would omit a check. That is the principled asymmetry with the granular section,
+        # which carries no check at all and is omitted when empty.
         return "<h3>Resource-Utilization Mismatches</h3>\n" + status_table
     rows = []
     for d in all_issues:
@@ -467,11 +456,11 @@ def _render_resource_mismatches_table(checks: list[CheckResult]) -> str:
         expected = d.get("expected", "")
         actual = d.get("actual", "")
         rows.append(f"<tr><td>{scenario}</td><td>{resource}</td><td>{expected}</td><td>{actual}</td></tr>")
-    # The FAILING branch needs the status row as much as the passing one -- more so.
-    # This is the only branch a run with a real resource mismatch reaches, and it is
-    # the branch no delivered arm exercises (all four pass), so landing only the
-    # early-return above would leave the check invisible on precisely the runs the
-    # section exists to serve, with no artifact revealing it.
+    # The FAILING branch needs the status row as much as the passing one -- more so. It is
+    # the only branch a run with a real resource mismatch reaches, and no passing report
+    # exercises it, so a status row present only in the early return above would leave the
+    # check invisible on precisely the runs the section exists to serve, with nothing in a
+    # passing report revealing it.
     return (
         "<h3>Resource-Utilization Mismatches</h3>\n" + status_table + '\n<div class="table-scroll">\n<table>\n'
         "  <thead><tr><th>Scenario</th><th>Resource</th><th>Expected</th><th>Actual</th></tr></thead>\n"
@@ -521,19 +510,20 @@ def render(
             "data",
             ProvenanceRef(source_path=_VALIDATION_REPORT_FILENAME),
         )
-        # Option D (Class-Y resolution): read the persisted read-model artifact
-        # produced at consolidation, NOT a render-time validate_analysis() whole-tree
-        # inspection. Graceful-absent -> empty report. See analysis_validation.
+        # Read the persisted read-model artifact produced at consolidation, NOT a
+        # render-time validate_analysis() whole-tree inspection, so this renderer's only
+        # input is a file a bundle carries. Graceful-absent -> empty report. See
+        # analysis_validation.
         report = load_validation_report(analysis)
     by_level = report.by_level
-    # I7-3: `Granular Per-Scenario Failures` moves LAST. It is the one section that
-    # applies no check -- it re-presents the detail rows of checks already listed above --
-    # so putting it between the aggregate and resource tables separated two check tables
-    # with a non-check table. Check-bearing sections are now contiguous.
-    # Iter-11 item 7: ONE omission caption for the whole page, computed over the whole
-    # check set rather than per table. It sits directly under the banner -- which no longer
-    # carries the not-applicable count -- so the page states the omission exactly once and
-    # in the place a reader looking at the headline figure will see it.
+    # `Granular Per-Scenario Failures` goes LAST. It is the one section that applies no
+    # check -- it re-presents the detail rows of checks already listed above -- so placing
+    # it between the aggregate and resource tables would separate two check tables with a
+    # non-check table. Check-bearing sections stay contiguous.
+    # ONE omission caption for the whole page, computed over the whole check set rather
+    # than per table. It sits directly under the banner -- which does not carry the
+    # not-applicable count -- so the page states the omission exactly once and in the place
+    # a reader looking at the headline figure will see it.
     _n_omitted = sum(1 for c in report.checks if not getattr(c, "applicable", True))
     body_parts = [
         _render_overall_banner(report),
@@ -553,11 +543,12 @@ def render(
     return emit_plot_with_sources(
         html,
         output_path,
-        # Option D: the renderer's sole data source is the persisted ValidationReport
-        # read-model (validation_report.json), produced at consolidation. It already
-        # folds in the eda/*.verdict.json (validate_analysis appends them at persist
-        # time), so the renderer declares exactly one file -> tight audit catch-power
-        # + faithful bundle re-render.
+        # The renderer's sole data source is the persisted ValidationReport read-model
+        # (validation_report.json), produced at consolidation. It already folds in the
+        # eda/*.verdict.json (validate_analysis appends them at persist time), so the
+        # renderer declares exactly one file: a provenance audit comparing declared against
+        # actual reads has one file to match, and a bundle carrying that file re-renders
+        # this page faithfully.
         [analysis_dir / _VALIDATION_REPORT_FILENAME],
         analysis_dir=analysis_dir,
         output_format="html",

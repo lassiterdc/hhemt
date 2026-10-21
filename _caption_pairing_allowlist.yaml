@@ -282,7 +282,7 @@ unpaired_allowlist:
       the rename, so the exemption expires on the next change to this renderer.
   - renderer: errors_and_warnings
     caption: src/hhemt/report_templates/captions/errors_and_warnings.rst
-    renderer_sha256: 5a52e2b55a36cb7b2238b06bb3a367427bb1b6f601643e077cfcb4df68e53748
+    renderer_sha256: 1cc22d337b9b56b7c44d3752d4355b87a7409262a7813fef649ad271ce2ff6ef
     justification: >-
       docs-and-experiment-system merge. Caption re-read against a MEASURED diff
       rather than a read-through. The merge-authored delta to this renderer --
@@ -405,6 +405,21 @@ unpaired_allowlist:
       description pair inside the aggregate table. No section, column or unit moved. This
       is a pairing discharge on a re-read, not a formatting exemption; the digest expires
       on the next change to this renderer.
+    justification_2026_10_20: >-
+      RE-RECORDED at package 2a's commit of the repair-first round and chunk 2a.2.
+      MEASURED delta to this renderer since the digest above: an ast diff of HEAD
+      against the working tree with docstrings removed shows ONE changed statement,
+      the _CHECK_VOCABULARY literal, gaining ONE entry keyed "resume event
+      evidence" (display "Resume evidence" plus its description). Every other hunk
+      is a docstring or comment of the repair-first round. The caption was RE-READ
+      against that delta: it describes the read-model it surfaces, the pass/fail
+      banner, the omitted-count line and the page order (system-level, aggregate
+      per-scenario, resource-utilization, granular per-scenario); it enumerates NO
+      check name and NO vocabulary string, so no caption claim is reachable by a
+      row-level display-name / description pair inside the aggregate table. No
+      section, column or unit moved. This is a pairing discharge on a re-read, not
+      a formatting exemption; the digest expires on the next change to this
+      renderer.
   - renderer: cross_experiment_disk_utilization
     caption: src/hhemt/report_templates/captions/cross_experiment_disk_utilization.rst
     renderer_sha256: b698ad22092661e1f49fa70f4e0df587f056383716bcad95ddd2f9c71e509d2d
