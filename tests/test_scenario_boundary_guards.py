@@ -810,6 +810,68 @@ def test_the_standalone_models_template_is_checked(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+class _FakeOutput:
+    """Stands in for pyswmm's Output: one unit, and the same series for every node."""
+
+    def __init__(self, units, series):
+        self.units = {"system": "SI", "flow": units}
+        self._series = series
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def node_series(self, key, attribute):
+        """The same series for every node, ignoring which attribute is asked for."""
+        return dict(self._series)
+
+
+@pytest.mark.parametrize(("units", "raw", "cms"), [("LPS", 1000.0, 1.0), ("CFS", 1.0, 0.028317), ("CMS", 2.5, 2.5)])
+def test_hydrographs_and_the_node_capture_are_converted_to_cms(tmp_path, monkeypatch, units, raw, cms):
+    """Property: the hydrograph and the per-node capture both carry the series in m3/s.
+
+    Class: hydrology models in any SWMM flow unit. Why: TRITON applies the hydrographs as
+    m3/s, and an LPS model's arrived 1000 times too large. What kills it: converting only the
+    hydrograph and not the capture, or neither. Second correct implementation: converting each
+    consumer separately with the same factor; the assertion reads both outputs' values.
+    """
+    import xarray as xr
+
+    from hhemt import swmm_runoff_modeling as srm
+
+    dem = _dem(tmp_path / "dem.tif")
+    hydro = _inp(tmp_path / "hydro.inp", "[JUNCTIONS]\nJ1 1 2 0 0 0\n\n[COORDINATES]\nJ1 5 5\n")
+    (tmp_path / "hydro.out").write_text("")
+    t0 = pd.Timestamp("2020-01-01")
+    series = {t0 + pd.Timedelta(hours=h): raw for h in range(3)}
+    monkeypatch.setattr(srm, "Output", lambda path: _FakeOutput(units, series))
+    field = lambda: SimpleNamespace(get=lambda: False, set=lambda v: None)  # noqa: E731
+    scenario = SimpleNamespace(
+        scen_paths=SimpleNamespace(
+            swmm_hydro_inp=hydro,
+            hyg_timeseries=tmp_path / "tseries.hyg",
+            hyg_locs=tmp_path / "loc.txt",
+            sim_folder=tmp_path / "sim",
+        ),
+        sim_id_str="evt",
+        event_iloc=0,
+        log=SimpleNamespace(hyg_timeseries_created=field(), hyg_locs_created=field()),
+    )
+    modeler = srm.SWMMRunoffModeler.__new__(srm.SWMMRunoffModeler)
+    modeler.scenario = scenario
+    modeler.system = SimpleNamespace(sys_paths=SimpleNamespace(dem_processed=dem))
+    modeler.write_hydrograph_files()
+    lines = (tmp_path / "tseries.hyg").read_text().splitlines()
+    assert lines[1] == "%Time(hr) Discharge (m3/s)"
+    assert float(lines[2].split(",")[1]) == pytest.approx(cms, rel=1e-6)
+    capture = xr.open_zarr(tmp_path / "sim" / "processed" / "hydrology_inflow_summary.zarr")
+    assert float(capture["inflow_cms"].values.max()) == pytest.approx(cms, rel=1e-6)
+    assert float(capture["total_inflow_volume_m3"].values.max()) == pytest.approx(cms * 2 * 3600, rel=1e-6)
+    assert capture.attrs["flow_units"] == units
+
+
 @pytest.mark.parametrize(("line", "refused"), [("", True), ("FLOW_UNITS GPM", True), ("flow_units cms", False)])
 def test_us_flow_units_are_refused_at_preparation(tmp_path, line, refused):
     """Property, with its control: a US-unit model, or one with no FLOW_UNITS line, is refused.
