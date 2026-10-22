@@ -45,9 +45,10 @@ def resolve_hpc_system_config(
     Two sources, highest first, and nothing else:
       1. explicit ``override`` (the ``--hpc-system-config`` CLI argument).
       2. the bundle's declared ``hpc_system_config[cluster]``: absolute, or relative to the
-         bundle directory's grandparent (``{deployment_config}/experiments/{slug} ->
-         {deployment_config}``), which is right only for a bundle at that layout. With no
-         ``bundle_dir``, a relative entry resolves against the working directory.
+         bundle directory itself (the folder holding ``experiment.yaml``), so the entry
+         means the file beside the descriptor wherever the bundle sits, and nothing above
+         it is searched. With no ``bundle_dir``, a relative entry resolves against the
+         working directory.
 
     With neither, this raises ``ConfigurationError`` naming both. Environment variables are
     deliberately NOT consulted: an HPC config chosen by the shell rather than by the command
@@ -60,7 +61,8 @@ def resolve_hpc_system_config(
         if declared.is_absolute():
             path = declared
         else:
-            # {deployment_config}/experiments/{slug} -> {deployment_config}
+            # Relative to the bundle directory itself (never a parent of it); the working
+            # directory only when the caller gives no bundle_dir.
             root = Path(bundle_dir).expanduser().resolve() if bundle_dir is not None else Path.cwd()
             path = root / declared
     else:
@@ -121,10 +123,11 @@ def expand_config_vars(cfg_path: str | Path, *, dest_dir: str | Path | None = No
     """Expand ``${VAR}`` env references in a config file, materialize a resolved copy, return its path.
 
     The toolkit config loader applies ``expanduser`` but NEVER ``expandvars`` — a
-    ``${DATA_DIR}``-style placeholder reaches the preflight path-existence check
-    (``validation.py::_validate_system_paths``) verbatim and fails
-    ``"Path does not exist for DEM_fullres: ${DATA_DIR}/dem.tif"``. So expand the
-    placeholders against ``os.environ`` here, before ``Toolkit.from_configs``.
+    ``${DATA_DIR}``-style placeholder reaches the config-load path-existence check
+    (``config/base.py::cfgBaseModel._check_paths_exist``, which ``Toolkit.from_configs``
+    reaches through ``load_system_config`` before any preflight runs) verbatim, and the
+    load raises ``ConfigurationError`` wrapping ``ValueError(f"File does not exist: {p}")``. So expand
+    the placeholders against ``os.environ`` here, before ``Toolkit.from_configs``.
 
     Materialization: the resolved copy is written to ``$SCRATCH_DIR/resolved_configs/``
     (a SHARED filesystem, so ``batch_job`` Snakemake rules dispatched to OTHER compute
@@ -295,9 +298,12 @@ def build_case_from_bundle(
 
     # Expand ${VAR} placeholders (${DATA_DIR}/${SCRATCH_DIR}/${PACKAGE_DIR}/${HHEMT_*})
     # in the two bundle-relative configs before from_configs — the loader does expanduser
-    # but not expandvars, so an unexpanded placeholder fails preflight path-existence.
-    # The hpc config path is already an absolute, env-resolved path (resolve_hpc_system_config),
-    # and its contents are operator-filled real values, so it is passed through unmodified.
+    # but not expandvars, so an unexpanded placeholder fails the config-load path-existence
+    # check (cfgBaseModel._check_paths_exist) with a ConfigurationError, before any preflight.
+    # The hpc config path is passed through unmodified: resolve_hpc_system_config took it from
+    # the --hpc-system-config override or from the descriptor's hpc_system_config[cluster]
+    # entry and returned it absolute, and its contents are operator-filled real values, so no
+    # ${VAR} expansion is applied to it.
     return Toolkit.from_configs(
         system_config=expand_config_vars(bundle_dir / bundle.system_config),
         analysis_config=expand_config_vars(bundle_dir / bundle.analysis_config),
