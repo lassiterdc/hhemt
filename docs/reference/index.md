@@ -1,4 +1,4 @@
-# Reference
+# Reference Table of Contents
 
 Information-oriented lookup material: the API surface, the configuration
 schema, and what the toolkit produces.
