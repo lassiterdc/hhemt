@@ -282,7 +282,7 @@ unpaired_allowlist:
       the rename, so the exemption expires on the next change to this renderer.
   - renderer: errors_and_warnings
     caption: src/hhemt/report_templates/captions/errors_and_warnings.rst
-    renderer_sha256: 1cc22d337b9b56b7c44d3752d4355b87a7409262a7813fef649ad271ce2ff6ef
+    renderer_sha256: 3fe80a2c96127f6447a89a96384e3af91330b72023eca596a695b775baaa72cb
     justification: >-
       docs-and-experiment-system merge. Caption re-read against a MEASURED diff
       rather than a read-through. The merge-authored delta to this renderer --
@@ -419,6 +419,24 @@ unpaired_allowlist:
       row-level display-name / description pair inside the aggregate table. No
       section, column or unit moved. This is a pairing discharge on a re-read, not
       a formatting exemption; the digest expires on the next change to this
+      renderer.
+    justification_2026_10_21: >-
+      RE-RECORDED at package 2a's chunk 2a.5 (item 17, the one-node-per-cell option's
+      inflow-node reduction disclosure). MEASURED delta to this renderer since the
+      digest above: an ast diff of HEAD against the working tree with docstrings
+      removed shows TWO changed statements. (1) The _CHECK_VOCABULARY literal gains ONE
+      entry keyed "inflow node reduction" (display "Inflow node reduction" plus its
+      description). (2) The aggregate per-scenario table lists the detail rows of that
+      ONE check, keyed on its name, when it passes; every other check renders exactly
+      as before. The caption was RE-READ against that delta: it describes the
+      read-model it surfaces, the pass/fail banner, the omitted-count line and the page
+      order (system-level, aggregate per-scenario, resource-utilization, granular
+      per-scenario, the last re-presenting the detail rows of the checks above it); it
+      enumerates NO check name and NO vocabulary string, and it says nothing about which
+      rows the aggregate table lists, so no caption claim is reachable by a disclosure
+      row inside that table. The granular table still carries failing checks' rows
+      only. No section, column or unit moved. This is a pairing discharge on a re-read,
+      not a formatting exemption; the digest expires on the next change to this
       renderer.
   - renderer: cross_experiment_disk_utilization
     caption: src/hhemt/report_templates/captions/cross_experiment_disk_utilization.rst

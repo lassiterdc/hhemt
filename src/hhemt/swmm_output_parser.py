@@ -169,6 +169,25 @@ def return_swmm_outputs(
             dict_system_results,
             valid,
         ) = parse_rpt_single_pass(swmm_timeseries_result_file)
+        # The coupled model's report is read as m3/s with no conversion, and SWMM writes its
+        # flows in the model's own unit, so a report in any other unit is refused here --
+        # the guard for reports the preparation check never saw, such as a reprocess of an
+        # existing analysis. Deliberately NOT in `_build_system_results`, which the
+        # hydrology report summary also reaches, and the hydrology model accepts LPS and
+        # MLD because its flows are converted.
+        if dict_system_results["flow_units"] != "cms":
+            from hhemt.exceptions import ProcessingError
+
+            raise ProcessingError(
+                operation="return_swmm_outputs",
+                filepath=Path(swmm_timeseries_result_file),
+                reason=(
+                    f"SWMM report flow units are {dict_system_results['flow_units'].upper()!r}; "
+                    "the toolkit reads the coupled model's report flows as m3/s without "
+                    "conversion, so the hydraulics model's [OPTIONS] FLOW_UNITS must be CMS. "
+                    "Fix it in the SWMM template named by system_config."
+                ),
+            )
         if valid is False:
             print(f"The RPT file seems to not contain any information: {swmm_timeseries_result_file}")
         # make sure the data arrays are data type float
@@ -287,8 +306,9 @@ def return_swmm_system_outputs(rpt_lines):
 
     - "Flow Routing Continuity" — gated on `Nobjects[NODE] > 0 && !IgnoreRouting`
       (massbal.c:299), so a link-free or `IGNORE_ROUTING YES` model omits it.
-    - "Analysis ended on" — written only at clean termination, so a coupled run
-      whose embedded SWMM never reached `swmm_report()` omits it.
+    - "Analysis ended on" — written by `swmm_close` on every run that reaches the
+      close, a clean finish or a run closed after an input or start error; a run
+      killed or aborted before the close omits it.
     - "Flow Units" / "Flooding Loss" — present on any complete `.rpt`
       (report.c:267 is unconditional inside `report_writeOptions()`), but absent
       from a zero-byte or header-truncated file, which `Path.exists()` does not
@@ -558,17 +578,18 @@ def _iter_rpt_lines(f_rpt: Path):
 
 
 def rpt_is_complete(f_rpt: Path) -> bool:
-    """Return True iff an SWMM `.rpt` proves the engine ran `swmm_report()` to completion.
+    """Return True iff an SWMM `.rpt` exists, is non-empty, carries the trailer and carries no SWMM error line.
 
-    The coupled TRITON-SWMM `hydraulics.rpt` (and any SWMM `.rpt`) writes its
-    summary/continuity tables and the ``Analysis ended on`` trailer ONLY at the
-    terminal ``swmm_end()`` -> ``swmm_report()`` step. SWMM has no report-resume
-    or report-append mechanism, so an ``.rpt`` that exists but lacks the trailer
-    is from a run that was killed/short-circuited before finalization (e.g. a
-    walltime-killed hotstart attempt). The ``Analysis ended on`` trailer is the
-    definitive completeness signal: ``Flow Units`` and ``Element Count`` are
-    written near ``swmm_start`` and can survive in a truncated `.rpt`, whereas
-    the trailer is present only when ``swmm_report()`` finished.
+    SWMM writes the ``Analysis ended on`` trailer from ``swmm_close`` (through
+    ``report_writeSysTime``) on EVERY run that reaches the close: a clean finish, and
+    also a run closed after an input or start error, whose report carries an
+    ``ERROR`` block beside the trailer. So a finalized report carrying an ``ERROR``
+    block is NOT complete, and the trailer alone is not a success signal. The trailer
+    is absent only from a run killed or aborted before the close (e.g. a
+    walltime-killed hotstart attempt); SWMM has no report-resume or report-append
+    mechanism. ``Flow Units`` and ``Element Count`` are written near ``swmm_start``
+    and can survive in a truncated `.rpt`; the trailer does not survive a kill
+    before the close.
 
     Consumed by coupled-sim completion detection to reject a false-positive
     "completed" marker on a resumed run whose embedded SWMM engine never emitted
@@ -578,15 +599,16 @@ def rpt_is_complete(f_rpt: Path) -> bool:
     f_rpt = Path(f_rpt)
     if not f_rpt.exists() or f_rpt.stat().st_size == 0:
         return False
-    return rpt_status(f_rpt).finalized
+    _st = rpt_status(f_rpt)
+    return _st.finalized and not _st.has_errors
 
 
 class RptStatus(NamedTuple):
     """Both facts a SWMM `.rpt` can testify to, read in ONE pass.
 
     `finalized` is the terminal `Analysis ended on` trailer -- the engine reached
-    `swmm_report()`. `has_errors` is an `  ERROR {n}:` block -- the run reported a
-    fatal input or runtime error.
+    `swmm_close`, after a clean finish or after an error. `has_errors` is an
+    `  ERROR {n}:` block -- the run reported a fatal input or runtime error.
 
     THEY ARE INDEPENDENT, and that is the whole reason this returns a pair rather
     than a bool. A run that aborts during input validation writes the trailer AND
@@ -903,7 +925,12 @@ def return_node_time_series_results_from_outfile(f_outfile):
         d_links = out.links
         d_nodes = out.nodes
         units = out.units
-        if units["system"] != "SI":
+        # The FLOW unit, not the unit system: every series below is stored as m3/s with no
+        # conversion, and SWMM writes them in the model's own flow unit, so an SI model in
+        # LPS or MLD would pass a unit-system test and be read 1000 or 86.4 times too large.
+        # This is the standalone model's guard for outputs the preparation check never saw,
+        # such as a reprocess of an existing analysis.
+        if units["flow"] != "CMS":
             # RAISE, never sys.exit. SystemExit derives from BaseException, so no
             # `except Exception` in any caller catches it and the process dies with
             # no traceback -- the un-diagnosable shape that made an unrelated
@@ -915,11 +942,12 @@ def return_node_time_series_results_from_outfile(f_outfile):
                 operation="return_node_time_series_results_from_outfile",
                 filepath=Path(f_outfile),
                 reason=(
-                    f"SWMM outputs are not in SI units (unit system reported: "
-                    f"{units['system']!r}). The model's [OPTIONS] FLOW_UNITS must be one of "
-                    "CMS, LPS or MLD; CFS, GPM and MGD are US units, and an ABSENT "
-                    "FLOW_UNITS line defaults to CFS. Fix it in the SWMM template named by "
-                    "system_config, not in the generated per-scenario .inp, which inherits it."
+                    f"SWMM outputs are not in cubic metres per second (flow unit reported: "
+                    f"{units['flow']!r}, unit system {units['system']!r}). The toolkit reads the "
+                    "standalone model's flows as m3/s without conversion, so its [OPTIONS] "
+                    "FLOW_UNITS must be CMS; an ABSENT FLOW_UNITS line defaults to CFS. Fix it "
+                    "in the SWMM template named by system_config, not in the generated "
+                    "per-scenario .inp, which inherits it."
                 ),
             )
         # PROCESSING NODES

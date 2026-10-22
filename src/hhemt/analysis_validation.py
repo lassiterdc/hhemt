@@ -1808,7 +1808,7 @@ def check_resume_event_evidence(analysis: TRITONSWMM_analysis, *, df_status=None
         if audit["verdict"] in counts or audit["alarms"]:
             detail = {"scenario": scen, "detail": f"{row['model_type']}: {audit['summary']}"}
             if _member is not None:
-                detail["member_id"] = str(_member)
+                detail["sa_id"] = f"member_{_member}"
             details.append(detail)
 
     _denom = f"{examined} resumed sim(s) examined"
@@ -2529,6 +2529,86 @@ def check_log_recoveries(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
+#: Name of the inflow-node reduction disclosure; the renderer lists this one check's details
+#: when it passes, keyed on this string.
+INFLOW_NODE_REDUCTION_CHECK = "inflow node reduction"
+
+
+def check_inflow_node_reduction(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Disclose each DEM cell whose inflow nodes the one-node-per-cell option reduced to one.
+
+    A DISCLOSURE, not a failure: ``passed`` is always True, so it never flips
+    ``overall_passed``. One detail row per reduced cell, naming the kept node and each dropped
+    node with its reason. The per-scenario record ``_status/inflow_node_selection.json`` is
+    written for every scenario prepared with the option on, empty when no cell was reduced, so
+    a scenario WITHOUT the file is counted as NOT MEASURED, never as one with no reduced cell:
+    it was prepared without the option, or before this build (a pre-change analysis
+    re-consolidated through ``reprocess(start_with="consolidate")`` carries none). The summary
+    names the scenarios examined, measured and not measured, and with none measured the check
+    is not applicable.
+    """
+    import json
+
+    from hhemt.scenario import compute_event_id_slug
+
+    details: list[dict] = []
+    examined = measured = n_cells = n_dropped = 0
+    for member_id, sub in _iter_members_or_self(analysis):
+        try:
+            sim_dir = Path(sub.analysis_paths.simulation_directory)
+            event_ilocs = list(sub.df_sims.index)
+        except Exception:  # noqa: BLE001 -- a sub we cannot address is not measured, not failed
+            continue
+        for event_iloc in event_ilocs:
+            examined += 1
+            event_id = compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(event_iloc))
+            record = sim_dir / event_id / "_status" / "inflow_node_selection.json"
+            try:
+                cells = json.loads(record.read_text()).get("cells", [])
+            except (OSError, ValueError, AttributeError):
+                continue
+            measured += 1
+            for cell in cells:
+                dropped = cell.get("dropped", [])
+                n_cells += 1
+                n_dropped += len(dropped)
+                dropped_text = ", ".join(f"{d.get('node')} ({d.get('reason')})" for d in dropped)
+                row = {
+                    "scenario": event_id,
+                    "scenario_dir": str(sim_dir / event_id),
+                    "detail": (
+                        f"DEM cell ({cell.get('dem_x_coord')}, {cell.get('dem_y_coord')}): kept "
+                        f"{cell.get('kept')}; dropped {dropped_text}"
+                    ),
+                }
+                if member_id is not None:
+                    row["sa_id"] = f"member_{member_id}"
+                details.append(row)
+    denominator = (
+        f"{examined} scenario(s) examined, {measured} measured, {examined - measured} not measured "
+        "(no selection record: prepared without the one-node-per-cell option, or before it existed)"
+    )
+    if measured == 0:
+        return CheckResult(
+            name=INFLOW_NODE_REDUCTION_CHECK,
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary=f"No scenario carries an inflow-node selection record — inflow node reduction N/A ({denominator}).",
+            details=[],
+        )
+    return CheckResult(
+        name=INFLOW_NODE_REDUCTION_CHECK,
+        level="aggregate",
+        passed=True,
+        summary=(
+            f"{n_cells} DEM cell(s) reduced to one coupled inflow node, {n_dropped} inflow node(s) "
+            f"dropped ({denominator})."
+        ),
+        details=details,
+    )
+
+
 def validate_analysis(analysis: TRITONSWMM_analysis, *, df_status=None) -> ValidationReport:
     """Run all core checks; return aggregated ValidationReport.
 
@@ -2593,6 +2673,7 @@ def validate_analysis(analysis: TRITONSWMM_analysis, *, df_status=None) -> Valid
             # ordering protects against; the fresh case would report itself.
             check_provenance_completeness(analysis),  # per-stage version coverage
             check_log_recoveries(analysis),  # quarantine-and-reconstruct events on any log tier
+            check_inflow_node_reduction(analysis),  # one-node-per-cell option: cells reduced
         ]
         + _read_persisted_eda_verdicts(analysis)
     )

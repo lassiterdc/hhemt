@@ -121,6 +121,12 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
         "missing that record for some or all of its attempts and no alarm row in its "
         "resume-event record.",
     ),
+    "inflow node reduction": (
+        "Inflow node reduction",
+        "Lists each DEM cell whose inflow nodes the one-node-per-cell option reduced to a "
+        "single coupled node, with the node kept and each node dropped; a disclosure that "
+        "never fails.",
+    ),
     "EDA calc ran": (
         "EDA calculation",
         "Every EDA figure enumerated as a report target has a corresponding verdict "
@@ -371,6 +377,11 @@ def _render_aggregate_table(checks: list[CheckResult]) -> str:
         _details = c.summary
         if qualifier:
             _details += f'<br><span class="floor-note">{qualifier}</span>'
+        # The one aggregate check whose details are listed when it PASSES: it is a disclosure,
+        # so its rows never reach the failures-only granular table below and would otherwise
+        # appear nowhere on the page.
+        if c.name == "inflow node reduction" and c.details:
+            _details += "<br>" + "<br>".join(f"&nbsp;&nbsp;• {d.get('detail', '')}" for d in c.details)
         rows.append(
             f"<tr><td>{display_name}</td><td>{description}</td>"
             f'<td class="{status_cls}">{status_glyph}</td><td>{_details}</td></tr>'

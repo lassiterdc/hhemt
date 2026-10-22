@@ -3788,3 +3788,94 @@ non_breaking_allowlist:
       src/, so no persisted log holds them as true. KNOWN EXPIRY: the next change to this path.
       AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 3, UNCOMMITTED per A-22; the
       layout_signature is the file's sha256 at this write and must equal it AS COMMITTED.
+  - path: src/hhemt/scenario.py
+    layout_signature: 0ceafbf01e57d3cfba2820fee429452436428fe05612e886682d5a26814da670
+    justification: >-
+      NON-BREAKING. Work package 2a, the no-result-change part of item 17 and item 22 (a).
+      (1) ADDS one module constant, `SWMM_SNAPSHOT_KEEP_PREVIOUS_KEY`, and one pure helper,
+      `set_swmm_snapshot_keep_previous(cfg_path, keep)`, beside the two sibling snapshot-key
+      helpers; the launcher calls it at a coupled clean start to set or remove one cfg line in
+      the scenario's base TRITON-SWMM cfg, so preparation emits byte-identical cfgs. (2) Repairs
+      pre-existing guards: an unknown boundary side raises ProcessingError instead of an
+      UnboundLocalError, the two sys.exit calls raise ProcessingError, and the out-of-bounds
+      node list is accumulated and warned rather than discarded. (3) ADDS the shared SWMM
+      tokenizer and section helpers and `undefined_inflow_nodes`, which reads a template as SWMM
+      does for the run-entry refusal; preparation refuses a hydraulics model, and the standalone
+      model when it is enabled, in any flow unit but CMS, and a US-unit hydrology model, each
+      before the hydrology model runs. (4) Item 22 (a): ADDS the module constants
+      `SWMM_NODE_RIM_FROM_DEM_KEY`, `SWMM_NODE_RIM_FROM_DEM_FIRST_SHA` and
+      `SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS` and two pure helpers, `append_swmm_node_rim_from_dem`
+      and `require_dem_rim_capable_triton`; the coupled cfg generator, when
+      `swmm_node_rim_from_dem` is True, first refuses a TRITON build not known to read the key
+      and then appends the line `swmm_node_rim_from_dem=1`; when False it writes the same bytes.
+      DECIDING MEASUREMENT for non-breaking: no function signature, `ScenarioPaths` field,
+      scenario-log field, section name or generated file name changes, so no prepared tree is
+      invalidated, and with every new field at its default no persisted file changes content.
+      AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 17, UNCOMMITTED per A-22; the
+      layout_signature is the file's sha256 at this write and must equal it AS COMMITTED.
+      KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 86e502e6e9c5348bded63491352e68a76350c0bbe893c5088ba67663ca76c870
+    justification: >-
+      NON-BREAKING. ADDS a `debug: bool = False` keyword to
+      `TRITONSWMM_sensitivity_analysis.submit_workflow`, its docstring entry, and its
+      pass-through to the workflow builder (six lines). The run argument reaches the
+      run-simulation rule shells as `--debug` only when True.
+      DECIDING MEASUREMENT for non-breaking: no persisted structure, member directory name,
+      fingerprint payload or status-flag name changes; with the default False every emitted
+      Snakefile is byte-identical to before this change.
+      AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 17, UNCOMMITTED per A-22.
+      KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 7f4622ab1cab13d21aa1bf541ae2b54a59ea15a813f9506a0a85f2a69ec6934b
+    justification: >-
+      NON-BREAKING. IN-MEMORY RE-STAMP at the two consolidation loaders: each per-scenario
+      summary store opened by `_retrieve_combined_output`, and each per-scenario timeseries
+      store opened by `_retrieve_combined_timeseries`, gets `event_iloc` assigned from its
+      current `df_sims` loop position before the concat, so an untouched scenario's stale
+      stamped position can no longer publish a duplicated coordinate after an add/remove
+      rerun (measured [0, 2, 2] before, [0, 1, 2] after).
+      DECIDING MEASUREMENT for non-breaking: no per-scenario store on disk is rewritten (the
+      re-stamp is on the opened in-memory dataset only); no tree path, group, variable or file
+      name changes; on an analysis whose events were never added or removed every stamp
+      already equals its position, so the summary node is value-identical. The timeseries node
+      gains an `event_iloc` index equal to the positions the concat already produced, because
+      the per-scenario timeseries stores carry none today; no data value changes.
+      AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 20, UNCOMMITTED per A-22.
+      KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 4c1364febd90cc754b3415da461cf3b9bebeb8cf77b02ac1e5c46b8c635846b1
+    justification: >-
+      NON-BREAKING. Work package 2a, item 22 (a). ADDS ONE field beside `manhole_diameter`,
+      `swmm_node_rim_from_dem: bool = Field(default=False, ...)`. DECIDING MEASUREMENT: the
+      field is DEFAULTED, so every existing analysis_config.yaml loads unchanged; no field is
+      removed or renamed and no config key, path or persisted structure moves.
+      AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 22 (a), UNCOMMITTED per A-22;
+      the layout_signature is the file's sha256 at this write and must equal it AS COMMITTED.
+      KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: c1295b60080c3f2a40daf2548edeeaf3cc3469547e158f57d11c739583ff85ee
+    justification: >-
+      NON-BREAKING. Work package 2a, item 22 (a). ONE entry added to `_FIELD_BUCKET`:
+      `"swmm_node_rim_from_dem": "experiment"`, which the totality test
+      `test_field_bucket_is_total` requires for the new analysis_config field.
+      DECIDING MEASUREMENT: `_FIELD_BUCKET` is an in-memory classification table; it is not
+      serialised and no analysis tree records it, so no persisted structure can move.
+      AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 22 (a), UNCOMMITTED per A-22;
+      the layout_signature is the file's sha256 at this write and must equal it AS COMMITTED.
+      KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/system.py
+    layout_signature: 514f26af385b73a5619afb1fedc7c3cd1869bc14200db4725da3dd9a80e20aa9
+    justification: >-
+      NON-BREAKING. Work package 2a, item 17 (toolkit section 12, [Q526]). The config-load
+      validator `validate_swmm_templates_are_si` now judges each SWMM template against its own
+      accepted set (CMS for SWMM_hydraulics and SWMM_full; CMS, LPS or MLD for SWMM_hydrology),
+      reads FLOW_UNITS through the shared `swmm_runoff_modeling.flow_units_from_inp_text` (the
+      last valued line across every [OPTION section, prefix-matched) instead of a local
+      first-line regex, widens its no-OPTIONS skip to SWMM's [OPTION prefix, and restates its
+      message and docstring. DECIDING MEASUREMENT: no field is added, removed, renamed,
+      retyped or re-defaulted, so every persisted system_config.yaml keeps its shape; the change
+      is which template contents a load accepts, which writes nothing to disk.
+      AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 17, UNCOMMITTED per A-22; the
+      layout_signature is the file's sha256 at this write and must equal it AS COMMITTED.
+      KNOWN EXPIRY: this row expires on the next change to this path.

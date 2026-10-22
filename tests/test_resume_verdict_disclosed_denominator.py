@@ -198,3 +198,32 @@ def test_the_check_passes_a_complete_ledger_and_still_names_the_denominator(tmp_
     assert res.passed is True
     assert res.applicable is True
     assert "1 resumed sim(s) examined" in res.summary
+
+
+def test_a_members_failing_row_reaches_the_granular_table_with_its_member_tag(tmp_path):
+    """Property: a failing row for member 3 carries ``sa_id == "member_3"`` and the rendered label shows it.
+
+    Class: every failing ``resume event evidence`` row of a sensitivity member. Why: the
+    granular-failures table reads the member tag under ``sa_id``, the key the module's six
+    other producers write; this check wrote ``member_id``, so its rows rendered with no member
+    label. What kills it: writing the tag under any other key. Second correct implementation:
+    building the tag through a shared helper used by every producer; the assertion reads the
+    row and the rendered HTML.
+    """
+    from hhemt.analysis_validation import ValidationReport
+    from hhemt.report_renderers.errors_and_warnings import _render_granular_failures_table
+
+    member = SimpleNamespace(
+        analysis_paths=SimpleNamespace(simlog_directory=tmp_path / "logs" / "sims"),
+        cfg_analysis=SimpleNamespace(is_experiment_member=False, toggle_sensitivity_analysis=False),
+    )
+    master = SimpleNamespace(
+        cfg_analysis=SimpleNamespace(is_experiment_member=False, toggle_sensitivity_analysis=True),
+        sensitivity=SimpleNamespace(members={"3": member}),
+    )
+    status = _status(4).assign(member_id=[3])
+    res = check_resume_event_evidence(master, df_status=status)
+    assert res.passed is False
+    rows = ValidationReport(checks=[res]).granular_failures
+    assert len(rows) == 1 and rows[0]["sa_id"] == "member_3"
+    assert "member_3" in _render_granular_failures_table(rows)

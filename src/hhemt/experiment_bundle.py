@@ -1,13 +1,18 @@
 """Descriptor-driven experiment-bundle runner.
 
-Mirrors the ``synthetic_experiment.py`` + ``config/synthetic_experiment.py`` pair
-(Gotcha 67a): the FRAMEWORK lives in ``src/hhemt/`` so it ships in the wheel and is
-importable without ``tests/`` or ``scripts/``; the operator's deployment-config
-repository holds experiment IDENTITY (``experiment.yaml``) and a thin caller.
+An experiment bundle is a directory whose ``experiment.yaml`` names the system config,
+the analysis config, and a per-cluster ``hpc_system_config``. This module turns one
+bundle into a run: load and validate the descriptor, refuse any CLI argument that would
+silently override it, build the analysis, and run it.
+
+It follows the same split as the ``synthetic_experiment.py`` +
+``config/synthetic_experiment.py`` pair: the FRAMEWORK lives in ``src/hhemt/`` so it
+ships in the wheel and is importable without ``tests/`` or ``scripts/``; the operator's
+deployment-config repository holds experiment IDENTITY (``experiment.yaml``) and a thin
+caller.
 
 This module MUST NOT import from ``tests`` or ``scripts`` — a ``src -> tests`` or
-``src -> scripts`` import breaks ``pip install -e .`` (the stipulation that forced the
-synthetic-experiment matrix builder out of ``scripts/experiments/_matrix_builder.py``).
+``src -> scripts`` import breaks ``pip install -e .``.
 """
 
 from __future__ import annotations
@@ -43,7 +48,8 @@ def resolve_hpc_system_config(
     Non-mutating: reads the deployment config, never edits a tracked file.
 
     Precedence (highest first):
-      1. explicit ``override`` (the ``--hpc-system-config`` CLI argument / argv[2]).
+      1. explicit ``override`` (``hhemt run-experiment --hpc-system-config``, or the
+         second positional argument of ``container_validation.py``).
       2. the bundle's declared ``hpc_system_config[cluster]`` — deployment-config-relative,
          resolved against ``$HHEMT_DEPLOYMENT_CONFIG`` (or, absent that, the bundle's
          grandparent, i.e. ``{deployment_config}/experiments/{slug} ->
@@ -52,11 +58,10 @@ def resolve_hpc_system_config(
       3. ``$HHEMT_HPC_SYSTEM_CONFIG``.
       4. ``$HHEMT_DEPLOYMENT_CONFIG/hpc/hpc_system_config_{cluster}.yaml``.
 
-    Steps 1/3/4 are the precedence chain moved verbatim from the retired
-    ``container_validation._resolve_hpc_system_config`` (D1 — already correct). Step 2
-    is the additive bundle-declared source; with ``bundle=None`` the resolution is
-    byte-identical to the retired script helper, which is why the demoted
-    ``container_validation.build_case`` imports THIS function unchanged.
+    With ``bundle=None`` the resolution is steps 1, 3 and 4 alone.
+    ``scripts/experiments/container_validation.py``'s ``build_case`` calls this function
+    that way, with no bundle, so a change to any of those three steps changes that
+    script's resolution too.
     """
     if override:
         path = Path(override).expanduser()
@@ -107,7 +112,7 @@ def resolve_hpc_system_config(
 
 
 def bundle_experiment_id(bundle_dir: str | Path) -> str:
-    """The experiment's identity is the bundle directory's NAME (the estate's rule: an experiment
+    """The experiment's identity is the bundle directory's NAME (by convention: an experiment
     descriptor carries no id field — `ExperimentConfig` is `extra="forbid"` — and the directory
     that holds `experiment.yaml` is what names it). Resolved first so a trailing slash or a
     relative `.` still yields the real directory name."""
@@ -154,9 +159,11 @@ def expand_config_vars(cfg_path: str | Path, *, dest_dir: str | Path | None = No
     is an ephemeral INPUT, not an analysis OUTPUT, so it is compatible with a
     ``dry_run`` that writes nothing to the analysis output tree.
 
-    Lifts the deployment-config driver's ``run_analysis_test.py::_resolve_config`` into
-    the wheel (the same drift-free move Phase 5 made for ``resolve_hpc_system_config``),
-    but raises ``ConfigurationError`` (CLI exit 2) instead of ``SystemExit``.
+    This lives in the wheel, like ``resolve_hpc_system_config`` above, so every
+    deployment-config caller imports one copy instead of carrying its own. An unresolved
+    placeholder raises ``ConfigurationError`` (CLI exit 2) rather than ``SystemExit``,
+    because ``SystemExit`` is not an ``Exception`` and passes straight through a caller's
+    ``except Exception``.
     """
     cfg_path = Path(cfg_path)
     resolved_text = os.path.expandvars(cfg_path.read_text(encoding="utf-8"))
@@ -187,7 +194,7 @@ def resolve_overrides(bundle: ExperimentConfig, cli_args: dict[str, object]) -> 
     An empty list means the CLI adds nothing the descriptor does not already say —
     the one-config path, no confirmation needed.
 
-    Gateable-field mapping (R8): the CLI verb wires only ``--hpc-system-config`` as a
+    Which arguments the override gate sees: the CLI verb wires only ``--hpc-system-config`` as a
     real config override. ``dry_run``/``yes`` are controls, not overrides, so they are
     never reported here. An argument is an OVERRIDE only when the descriptor already
     DECLARES a value for it and the CLI value DIFFERS — supplying a value the descriptor
@@ -212,8 +219,8 @@ def resolve_overrides(bundle: ExperimentConfig, cli_args: dict[str, object]) -> 
 def format_override_gate(reports: list[OverrideReport]) -> str:
     """Render the side-by-side config-vs-CLI table for the confirmation prompt.
 
-    R8 requires BOTH values be printed, not just the winner — a user who cannot see
-    what they are overriding cannot consent to it.
+    BOTH values are printed, not just the winner — a user who cannot see what they are
+    overriding cannot consent to it.
     """
     fw = max([len("field")] + [len(r.field) for r in reports])
     cw = max([len("descriptor (config)")] + [len(r.config_value) for r in reports])
@@ -230,7 +237,8 @@ def format_override_gate(reports: list[OverrideReport]) -> str:
 
 
 def _confirm_override_gate(reports: list[OverrideReport], *, assume_yes: bool) -> None:
-    """Enforce the R8 override contract for a non-empty override set.
+    """Enforce the override contract for a non-empty override set: no CLI argument wins
+    over the descriptor without the operator having seen both values and consented.
 
     - ``assume_yes`` => accept without prompting.
     - non-TTY without ``assume_yes`` => REFUSE (raise) rather than silently preferring
@@ -278,12 +286,15 @@ def build_case_from_bundle(
     """Construct the analysis for `bundle` on `cluster`.
 
     Generalizes ``container_validation.py::build_case`` with NO hardcoded cluster map:
-    the per-cluster knobs come from ``bundle.hpc_system_config[cluster]`` and the
-    resolved ``hpc_system_config``'s ``PartitionSpec``, not from a module-level dict.
+    ``bundle.hpc_system_config[cluster]`` names the per-cluster ``hpc_system_config``
+    file, not a module-level dict. That resolved file is handed whole to
+    ``Toolkit.from_configs``; this function itself reads only its ``default_account``
+    and ``container`` fields, for the two guards below.
 
-    Preserves the landed fail-fast guards verbatim: a ``default_account`` that is unset
-    or still a ``{your-...}`` placeholder raises; a missing or placeholder
-    ``container.sif_root`` raises when the bundle declares a container. Config
+    Carries the same two fail-fast guards as that script, raising ``ConfigurationError``
+    where the script raises ``ValueError``: a ``default_account`` that is unset or still a
+    ``{your-...}`` placeholder raises; a missing or placeholder ``container.sif_root``
+    raises when the bundle declares a container (the script checks it unconditionally). Config
     resolution is NON-MUTATING — it reads the deployment config, never edits a tracked file.
     """
     from hhemt.config.loaders import load_hpc_system_config
@@ -338,6 +349,7 @@ def run_experiment(
     override_wipe_nonempty: bool = False,
     override_force_rerun: str | dict | None = None,
     override_clean_restart_member_ids: list[str] | None = None,
+    debug: bool = False,
     **cli_overrides: object,
 ):
     """Load -> validate -> gate overrides -> build -> run.
@@ -353,7 +365,12 @@ def run_experiment(
     ``Toolkit.run``. None, the default, reads the config field. This is the honest route to
     re-running completed scenarios without a wipe; it is a knob, not a mode.
 
-    The override gate is the R8 contract: if `resolve_overrides` returns a non-empty
+    debug: the run's debug flag, threaded untouched into ``Toolkit.run``. Named here rather
+    than left to ``**cli_overrides`` because it is a run argument, not a config override, and
+    ``resolve_overrides`` would otherwise compare it against the bundle's configs. Today it does
+    one thing: a coupled clean start asks the solver to keep the previous run's snapshot files.
+
+    The override gate: if `resolve_overrides` returns a non-empty
     list, print the side-by-side table and require explicit confirmation. A non-TTY
     invocation without `assume_yes` REFUSES rather than silently preferring either
     source — silently preferring the CLI is how a bare `run_mode=gpu` ran a CUDA-only
@@ -380,18 +397,21 @@ def run_experiment(
     # independently, so fire-and-forget is correct. --wait/--no-wait overrides.
     if wait is None:
         wait = (not dry_run) and ("SLURM_JOB_ID" in os.environ)
-    # RESUME IS THE DEFAULT ([Q144]). This previously hardcoded mode="fresh", which was not a
-    # considered choice -- it arrived with the runner in 34fd5904 and no message defends it -- and
-    # which is DESTRUCTIVE rather than merely non-resuming: toolkit.py:309 maps mode=="fresh" to
-    # from_scratch, and analysis.run() then fast_rmtree()s the whole analysis_dir. A requeue or a
-    # re-run therefore discarded completed sims, status flags, hotstart checkpoints and consolidated
-    # outputs, which is why experiments/norfolk/benchmarking/cpu_uva/submit_benchmarking_cpu_uva.sh
-    # grew a REQUEUE GUARD that refuses rather than re-running. This line retires that workaround.
+    # RESUME IS THE DEFAULT; fresh must be asked for. Deliberately NOT fresh as the default:
+    # fresh is DESTRUCTIVE rather than merely non-resuming. `Toolkit.run` maps mode=fresh to
+    # from_scratch, and analysis.run() then deletes the whole analysis_dir with fast_rmtree --
+    # completed sims, status flags, hotstart checkpoints and consolidated outputs. On a tree that
+    # already holds work that delete is refused (`wipe_guard.assert_wipe_is_deliberate` raises
+    # ConfigurationError) unless override_wipe_nonempty is passed, so under a fresh default a
+    # requeue or a plain re-run of an existing analysis would fail instead of continuing.
     #
-    # `mode` moves FIVE flags at once (orchestration.py:381/389 + toolkit.py:309): the three
-    # redo-completed-work flags, `pickup_where_leftoff` (whether an individual sim hotstarts from
-    # config_NNNN.cfg), and the analysis_dir wipe. To decouple the sim-level half from the rest,
-    # use analysis.run(override_pickup_where_leftoff=...), which exists for exactly that.
+    # `mode` moves FIVE things at once (`orchestration.translate_mode`'s MODE_TRANSLATION plus
+    # `Toolkit.run`'s from_scratch mapping): three redo-completed-work flags
+    # (overwrite_system_inputs, overwrite_scenario_if_already_set_up,
+    # rerun_swmm_hydro_if_outputs_exist), `pickup_where_leftoff` (whether an individual sim
+    # hotstarts from config_NNNN.cfg), and the analysis_dir wipe. To decouple the sim-level half
+    # from the rest, use analysis.run(override_pickup_where_leftoff=...), which exists for exactly
+    # that.
     return tk.run(
         mode=mode,
         dry_run=dry_run,
@@ -399,4 +419,5 @@ def run_experiment(
         override_wipe_nonempty=override_wipe_nonempty,
         override_force_rerun=override_force_rerun,
         override_clean_restart_member_ids=override_clean_restart_member_ids,
+        debug=debug,
     )

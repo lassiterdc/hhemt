@@ -561,13 +561,13 @@ def main() -> int:
                 # disagree on shape alone. No sha is recorded: a SIF label carries none,
                 # and inferring one from the tag would fabricate a measurement.
                 #
-                # HONESTY NOTE, deliberately left visible rather than papered over: this
-                # label is DECLARED in the recipe (containers/*.def), hand-synced to the
-                # `git clone --branch` directive beside it. It is NOT a measurement of the
-                # built tree, so it does not satisfy the contract's measured-never-declared
-                # property. Recording it is strictly better than the prior silence, but the
-                # durable fix is a build-time-substituted label (the pattern
-                # org.hhemt.hhemt_sha already uses via HHEMT_SHA_UNSET).
+                # Both labels are MEASURED from the built tree, not declared: every recipe
+                # under src/hhemt/sif/recipes/ writes them in %post, the TRITON sha from
+                # `git -C /opt/triton rev-parse HEAD` (the build fails when it differs from
+                # the requested sha) and the SWMM tag from `git -C /opt/swmm-src describe
+                # --tags --exact-match HEAD`. Preflight then compares the TRITON label with
+                # the configured sha, and the SWMM label with the declared tag when one is
+                # declared (sif/preflight.py).
                 _swmm_ver = _labels.get(SWMM_VERSION_LABEL)
                 if _swmm_ver:
                     system.log.standalone_swmm_producing_version.set(str(_swmm_ver).lstrip("vV"))

@@ -405,6 +405,16 @@ def main():
         ),
     )
     parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=False,
+        help=(
+            "The run's debug flag. Today it does one thing: a coupled clean start keeps the "
+            "previous run's snapshot files (the base cfg carries swmm_snapshot_keep_previous=1) "
+            "instead of removing them."
+        ),
+    )
+    parser.add_argument(
         "--execution-locus",
         type=str,
         choices=["local", "slurm"],
@@ -682,6 +692,7 @@ def main():
             verbose=True,
             model_type=model_type,
             execution_locus=args.execution_locus,
+            debug=args.debug,
         )
 
         # Check if simulation already completed
@@ -859,6 +870,15 @@ def main():
         try:
             _re_ledger = resume_events.ledger_path_for(model_logfile)
             _re_events = resume_events.harvest_from_logfile(model_logfile)
+            # The coupled snapshot step-back the picker took for THIS launch, if any, goes into
+            # this exec's snapshot row -- here, immediately after the harvest, because the
+            # picker ran in this same process and its record is the decision's own input.
+            # The solver's Row-5 line, when present, is read only to corroborate it.
+            _re_events = resume_events.annotate_stepback(
+                _re_events,
+                getattr(run, "stepback_record", None),
+                resume_events.stepback_confirmations_from_logfile(model_logfile),
+            )
             _re_outcome = resume_events.append_resume_events(
                 _re_ledger,
                 _re_events,
@@ -884,7 +904,7 @@ def main():
             _re_audit = resume_events.audit_resume_evidence(
                 resume_events.read_resume_events(_re_ledger), n_resumes=int(_n_done)
             )
-            if _re_audit["verdict"] == "evidence-shortfall":
+            if _re_audit["verdict"] in ("evidence-shortfall", "evidence-absent") or _re_audit.get("alarms"):
                 logger.warning(f"[{event_iloc}] resume-event ledger: {_re_audit['summary']}")
             else:
                 logger.info(f"[{event_iloc}] resume-event ledger audit: {_re_audit['summary']}")

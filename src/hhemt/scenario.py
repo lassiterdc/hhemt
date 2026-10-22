@@ -1,5 +1,4 @@
 # %%
-import sys
 import threading
 import warnings
 from datetime import datetime
@@ -23,7 +22,7 @@ from hhemt.paths import ScenarioPaths
 from hhemt.scenario_inputs import ScenarioInputGenerator
 from hhemt.subprocess_utils import run_subprocess_with_tee
 from hhemt.swmm_full_model import SWMMFullModelBuilder
-from hhemt.swmm_runoff_modeling import SWMMRunoffModeler
+from hhemt.swmm_runoff_modeling import SWMMRunoffModeler, refuse_non_cms_flow_units, refuse_us_flow_units
 
 lock = threading.Lock()
 
@@ -188,11 +187,13 @@ def _assert_forcing_complete(ds, time_dim, event_indexers, weather_path, forcing
 def _weather_step_seconds(ds, time_dim) -> float:
     """The weather axis interval, with a UNIFORMITY ASSERTION rather than a mode.
 
-    swmm_utils.py:55 takes `.mode()` of the coordinate diff, which silently tolerates a
-    non-uniform axis and misdescribes the interval to SWMM while the .dat rows carry
-    true stamps. Spec 8's equality guard consumes this quantity, so taking a mode here
-    would put that tolerance INSIDE the guard that is supposed to be the strong one.
-    hhemt's only uniformity gate today is the estate producer's, in another repo.
+    swmm_utils.create_swmm_inp_from_template takes `.mode()` of the coordinate diff, which
+    silently tolerates a non-uniform axis and misdescribes the interval to SWMM while the
+    .dat rows carry true stamps. The equality guard in
+    `_assert_scenario_forcing_window_agreement` consumes this quantity, so taking a mode
+    here would put that tolerance INSIDE the guard that is supposed to be the strong one.
+    Outside this function, hhemt has no uniformity gate; the only other one is the weather
+    producer's, in the deployment-config repository.
     """
     steps = np.unique(np.diff(ds[time_dim].values))
     if steps.size != 1:
@@ -211,12 +212,15 @@ def assert_window_columns_declared(cfg_analysis, columns, csv) -> None:
     """Two checks, in ORDER, on the window CSV's two column-name fields.
 
     Shared by `resolve_event_window` (the consumer, which reaches it on every scenario)
-    and `validation._validate_event_window_columns` (preflight, which reaches it once at
-    submit time), for the same reason `_forcing_variables` is shared: preflight and the
-    choke point must not be able to disagree about what "declared" means. Preflight is
-    NOT on the production path -- `Toolkit.run` never calls it and `run_experiment` ends
-    at `tk.run(...)` -- so the consumer-side call is the one that always fires and the
-    preflight call is the one that fires early enough to save an allocation.
+    and `validation._validate_event_window_columns` (preflight, which reaches it once,
+    when the case is built), for the same reason `_forcing_variables` is shared:
+    preflight and the choke point must not be able to disagree about what "declared"
+    means. Preflight runs at case build through `Toolkit.from_configs(validate=True)`
+    -> `analysis.validate()` -> `preflight_validate`, which covers `run-experiment` and
+    any `from_configs` caller that keeps the default; a caller passing `validate=False`
+    skips it. So the consumer-side call is the one that fires on every prepare however
+    the case was built, and the preflight call is the one that fires early enough to
+    save an allocation.
 
     STAGE 1 -- still the sentinel. Reaching here with WEATHER_EVENT_WINDOW_COLUMN_UNSPECIFIED
     intact means a window CSV was supplied and the user never said which of its columns
@@ -287,8 +291,8 @@ def resolve_event_window(cfg_analysis, weather_event_indexers, cache=None):
 
     NO-CSV PATH returns the axis endpoints exactly. That is not derivation-from-
     missingness -- it never asks which values are present, it takes the axis as the
-    file declares it, which is "run what it's given". Spec 2's endpoint-equality
-    assertion is a tautology on this branch BECAUSE of that exactness, and would
+    file declares it, which is "run what it's given". The endpoint-equality assertion
+    in `_write_sim_weather_nc` is a tautology on this branch BECAUSE of that exactness, and would
     become a real check if this ever returned anything else.
 
     A CSV that is PRESENT but malformed raises: a stated intent that cannot be
@@ -442,6 +446,170 @@ def append_swmm_snapshot_keep_all(cfg_content: str, keep_all: bool) -> str:
     return f"{cfg_content}{separator}{SWMM_SNAPSHOT_KEEP_ALL_KEY}=1\n"
 
 
+#: The TRITON cfg key that asks a CLEAN START to keep the previous run's snapshot files instead
+#: of removing them. The contract with the solver: at a clean start it disposes of every
+#: earlier snapshot and its ``.part`` / ``.killed`` markers before the new run writes its first
+#: checkpoint -- removing them without this key, renaming each to ``{name}.prev{k}`` and keeping
+#: it with ``=1`` -- and it reads the key additively,
+#: ``argsd("swmm_snapshot_keep_previous", argmap, "0")``, so an absent line means "remove". A
+#: solver build older than that contract does not read the key and keeps today's behaviour.
+#:
+#: WHY THE DEFAULT REMOVES. The new run writes ``config_N.cfg`` and publishes snapshot N a
+#: little later; in that gap an earlier run's snapshot N still sits at the published name, the
+#: resume picker reads "published" from the name alone, and the solver loads whatever is there.
+#: A run killed in that gap would resume from the EARLIER run's state with no error.
+#:
+#: SET PER INVOCATION, NOT PER SCENARIO, and that is why it is not appended at scenario
+#: preparation like its two siblings: preparation is skipped once complete, so a value written
+#: there would ignore ``--debug`` on every later run. The launcher writes it into the coupled
+#: base cfg at each clean-start launch (``run_simulation.TRITONSWMM_run.prepare_simulation_command``),
+#: so the base cfg always records whether the last clean start was a debug run.
+#:
+#: THIS SPELLING IS A CROSS-REPOSITORY CONTRACT, not a local name: the solver's ``argsd`` read
+#: must spell it identically, and a misspelled read defaults to "0" -- so ``--debug`` would
+#: delete exactly the files it was asked to keep, with no error. Check the solver's read in
+#: code-expression form (``argsd("swmm_snapshot_keep_previous"``) whenever the solver pin moves.
+SWMM_SNAPSHOT_KEEP_PREVIOUS_KEY = "swmm_snapshot_keep_previous"
+
+
+#: The TRITON cfg key that makes the solver take a coupled node's rim from the DEM: the cell's
+#: elevation minus the node's invert, instead of the depth SWMM uses for the node. The solver
+#: reads it with ``atoi((argsd("swmm_node_rim_from_dem", argmap, "0")).c_str())``, so the value
+#: must be the digit ``1`` (``True`` would read as 0), and it splits each cfg line on ``=``
+#: without trimming the key, so no space may stand around the ``=``.
+#:
+#: THIS SPELLING IS A CROSS-REPOSITORY CONTRACT, not a local name: a misspelled read defaults
+#: to "0", so the option would silently do nothing. Check the solver's read in code-expression
+#: form whenever the solver pin moves.
+SWMM_NODE_RIM_FROM_DEM_KEY = "swmm_node_rim_from_dem"
+
+#: The first TRITON commit whose cfg reader honours ``swmm_node_rim_from_dem`` (solver package
+#: T7a.1's landing commit). A build older than it reads only the keys it asks for and ignores
+#: this one without an error, so the option is refused for such a build rather than written.
+SWMM_NODE_RIM_FROM_DEM_FIRST_SHA = "1b797e6d0ea45b6d139e597fd6f4c2b29b17a1f7"
+
+#: The TRITON commits a CONTAINER image may carry for the option to be honoured. A container
+#: run has no host clone, so ancestry cannot be tested there; membership in this set is the
+#: test instead. Each member is admitted by content: ``git show {sha}:src/config_utils.h``
+#: carries the key's read. Extend it when an image is built at a later commit that reads it.
+SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS = frozenset({SWMM_NODE_RIM_FROM_DEM_FIRST_SHA})
+
+
+def append_swmm_node_rim_from_dem(cfg_content: str, enabled: bool) -> str:
+    """Append the line ``swmm_node_rim_from_dem=1`` when ``enabled``, else return the text UNCHANGED.
+
+    Same contract as the two snapshot-key appenders above, and for the same reasons: a pure
+    text transform rather than a template placeholder, so user cfg templates need no new
+    placeholder; ``enabled=False`` returns the SAME object, so the default cannot perturb a
+    byte; a newline is written first when the text does not end with one; and an input
+    already carrying the key at line start is returned unchanged, so a re-prepared scenario
+    does not accumulate duplicate lines.
+    """
+    if not enabled:
+        return cfg_content
+    if f"\n{SWMM_NODE_RIM_FROM_DEM_KEY}=" in f"\n{cfg_content}":
+        return cfg_content
+    separator = "" if cfg_content.endswith("\n") else "\n"
+    return f"{cfg_content}{separator}{SWMM_NODE_RIM_FROM_DEM_KEY}=1\n"
+
+
+def require_dem_rim_capable_triton(
+    *,
+    execution_environment: str,
+    software_directory,
+    branch_key,
+    recorded_sha,
+    required_sha: str = SWMM_NODE_RIM_FROM_DEM_FIRST_SHA,
+    container_shas: frozenset = SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS,
+) -> None:
+    """Refuse ``swmm_node_rim_from_dem`` unless the TRITON build the run uses reads the key.
+
+    TRITON reads only the cfg keys it asks for, so a build older than ``required_sha`` would
+    ignore the line and run with SWMM's rims while the configuration says DEM rims, with no
+    error. This raises ``ConfigurationError`` instead, naming the field, the build's commit
+    and what was required.
+
+    Native mode: the clone in ``software_directory`` must have ``required_sha`` as an ancestor
+    of its HEAD (``git merge-base --is-ancestor``). A missing clone, or a ``required_sha`` the
+    clone's objects do not contain, is "cannot be resolved" and refuses too. Container mode:
+    there is no host clone, so the commit recorded from the image (``recorded_sha``, the
+    system log's ``triton_head_sha``) must be present, must equal ``branch_key``, and must be
+    a member of ``container_shas``.
+    """
+    import subprocess
+
+    field = "swmm_node_rim_from_dem"
+    if execution_environment == "container":
+        if recorded_sha and branch_key and str(recorded_sha) == str(branch_key) and str(recorded_sha) in container_shas:
+            return
+        recorded = str(recorded_sha) if recorded_sha else "(no TRITON commit recorded for the image)"
+        raise ConfigurationError(
+            field=field,
+            message=(
+                f"swmm_node_rim_from_dem is True, but the container's TRITON build cannot be shown "
+                f"to read it: the recorded image commit is {recorded}, the configured "
+                f"TRITONSWMM_branch_key is {branch_key!r}, and the option needs the two to be equal "
+                f"and one of the commits known to read the key: {sorted(container_shas)}. An older "
+                "build would ignore the key and run with SWMM's rims. Build the image at a listed "
+                "commit, or set swmm_node_rim_from_dem to False."
+            ),
+        )
+    d = Path(software_directory) if software_directory is not None else None
+    head = None
+    verdict = None
+    if d is not None and (d / ".git").exists():
+        r = subprocess.run(
+            ["git", "-C", str(d), "rev-parse", "--verify", "HEAD^{commit}"], capture_output=True, text=True
+        )
+        head = r.stdout.strip() if r.returncode == 0 else None
+        if head is not None:
+            verdict = subprocess.run(
+                ["git", "-C", str(d), "merge-base", "--is-ancestor", required_sha, "HEAD"],
+                capture_output=True,
+                text=True,
+            ).returncode
+    if verdict == 0:
+        return
+    if verdict == 1:
+        why = "it does not descend from"
+    else:
+        why = "whether it descends from it cannot be resolved (no clone, or the clone lacks)"
+    raise ConfigurationError(
+        field=field,
+        message=(
+            f"swmm_node_rim_from_dem is True, but the TRITON build at {d} (commit "
+            f"{head or 'unresolved'}) is not known to read it: {why} the required commit "
+            f"{required_sha}, the first that reads the key. An older build would ignore the key "
+            "and run with SWMM's rims. Move TRITONSWMM_branch_key to a commit at or after it and "
+            "rebuild, or set swmm_node_rim_from_dem to False."
+        ),
+    )
+
+
+def set_swmm_snapshot_keep_previous(cfg_path: Path, keep: bool) -> bool:
+    """Make ``cfg_path`` carry exactly one ``swmm_snapshot_keep_previous=1`` line iff ``keep``.
+
+    ``keep=True`` leaves one ``=1`` line (adding it if absent, collapsing duplicates or a
+    different value); ``keep=False`` removes every line whose key is this one. COMPARE-AND-
+    WRITE: the file is rewritten only when its text changes, so a launch whose flag matches the
+    file leaves its bytes and modification time untouched. Returns whether it wrote.
+
+    Unlike its two append-only siblings this one must also REMOVE, because the base cfg is
+    reused across invocations: a debug run followed by a plain run must not inherit the key.
+    """
+    text = cfg_path.read_text()
+    prefix = f"{SWMM_SNAPSHOT_KEEP_PREVIOUS_KEY}="
+    kept = [line for line in text.splitlines(keepends=True) if not line.strip().startswith(prefix)]
+    new = "".join(kept)
+    if keep:
+        separator = "" if (new == "" or new.endswith("\n")) else "\n"
+        new = f"{new}{separator}{SWMM_SNAPSHOT_KEEP_PREVIOUS_KEY}=1\n"
+    if new == text:
+        return False
+    cfg_path.write_text(new)
+    return True
+
+
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
 
@@ -461,7 +629,7 @@ class TRITONSWMM_scenario:
         self.sim_id_str = self._retrieve_sim_id_str()
         self.event_id = self.sim_id_str
         sim_folder = analysis_simulations_folder / self.sim_id_str
-        # Clause 3: captured BEFORE the first mkdir below -- True exactly once per scenario
+        # Captured BEFORE the first mkdir below -- True exactly once per scenario
         # lifetime; `_create_directories` seeds the DU sentinel only when this is True.
         self._created_now = not sim_folder.exists()
         processed_output_folder = sim_folder / "processed"
@@ -495,7 +663,7 @@ class TRITONSWMM_scenario:
             swmm_hydraulics_inp=swmm_folder / "hydraulics.inp",  # TRITON-SWMM .inp for modeling hydraulics
             swmm_hydraulics_rpt=(
                 out_tritonswmm / "swmm" / "hydraulics.rpt" if out_tritonswmm else None
-            ),  # runoff generation output
+            ),  # coupled TRITON-SWMM hydraulics report
             swmm_full_inp=swmm_folder / "full.inp",  # full SWMM model
             swmm_full_rpt_file=(out_swmm / "full.rpt" if out_swmm else None),  # full swmm RPT
             swmm_full_out_file=(out_swmm / "full.out" if out_swmm else None),  # full swmm binary output file
@@ -578,7 +746,7 @@ class TRITONSWMM_scenario:
             output_triton_only_summary=(
                 processed_output_folder / f"TRITON_only_summary.{out_type}" if cfg_sys.toggle_triton_model else None
             ),
-            # SWMM-only Standalone Model Outputs (in swmm/ folder)
+            # SWMM-only Standalone Model Outputs (in processed/)
             output_swmm_only_link_time_series=(
                 processed_output_folder / f"SWMM_only_link_tseries.{out_type}" if cfg_sys.toggle_swmm_model else None
             ),
@@ -624,7 +792,7 @@ class TRITONSWMM_scenario:
         """
         log_file = self.scen_paths.sim_folder / f"log_{model_type}.json"
 
-        # ONE name resolution (M1, read side): open the document; absent -> defaults.
+        # ONE name resolution: open the document; absent -> defaults.
         # The former .exists()-then-from_json pair asked two syscalls about one name and
         # a stale negative on the first handed callers a fresh default log that their
         # next .set() would have written -- and from_json's own open() ENOENT was uncaught.
@@ -728,9 +896,10 @@ class TRITONSWMM_scenario:
         model_type: Literal["triton", "tritonswmm", "swmm"],
         astype: Literal["dt", "str"] = "dt",
     ) -> datetime | str:
-        """Get the simulation datetime from the specified model's log.
+        """Return ``datetime.min`` (or ``""`` when ``astype="str"``) for every model type.
 
-        Returns datetime.min / "" — run timestamp is not currently persisted in the log.
+        It always returns that placeholder because the run timestamp is not currently
+        persisted in the log.
         """
         return datetime.min if astype == "dt" else ""
 
@@ -750,11 +919,11 @@ class TRITONSWMM_scenario:
         if self.scen_paths.out_tritonswmm:
             self.scen_paths.out_tritonswmm.mkdir(parents=True, exist_ok=True)
 
-        # CLAUSE 3: the scenario-scope DU sentinel is born with the scenario, seeded by a
-        # bounded own-walk of the near-empty directory. It is NOT re-seeded on later
-        # instantiations (clause 13 forbids lazy seed-on-first-touch; the 3,798 pre-existing
-        # scenarios are seeded once by the operator procedure). SAFE ONLY BECAUSE clauses 1-2
-        # landed first: no per-file deletion can reach an ancestor-walking restamp any more.
+        # The scenario-scope DU sentinel is born with the scenario, seeded by a bounded
+        # own-walk of the near-empty directory. It is NOT re-seeded on later instantiations:
+        # lazy seed-on-first-touch is ruled out, and pre-existing scenarios are seeded once
+        # by an operator procedure. Safe only because no per-file deletion can reach an
+        # ancestor-walking restamp any more.
         if self._created_now:
             from hhemt.du_sentinels import compute_and_write_scope_sentinel
 
@@ -780,8 +949,9 @@ class TRITONSWMM_scenario:
     def _n_hydrograph_sources(self) -> int:
         """Count of TRITON inflow sources, 0 when SWMM hydrology is disabled.
 
-        `strmflow/loc.txt` is written by `write_hydrograph_files`, which the S12
-        gate correctly skips when `toggle_use_swmm_for_hydrology` is False -- so
+        `strmflow/loc.txt` is written by `write_hydrograph_files`, which the
+        `toggle_use_swmm_for_hydrology` gate in `prepare_scenario` correctly skips
+        when `toggle_use_swmm_for_hydrology` is False -- so
         both cfg generators' `pd.read_csv(hyg_locs)` died on a file that is
         absent by design. Zero is not a fallback value here: with hydrology off
         there are no inflow hydrographs at all, so it is the count.
@@ -797,14 +967,14 @@ class TRITONSWMM_scenario:
         """The `.inp` to read `[OPTIONS]` START/END from when computing SIM_DUR_S.
 
         `hydro.inp` is written ONLY inside the `toggle_use_swmm_for_hydrology`
-        block (scenario.py:833-837), but both TRITON cfg generators read it
+        block of `prepare_scenario`, but both TRITON cfg generators read it
         unconditionally -- so a hydrology-off scenario died at `swmmio.Model`
-        with a bare FileNotFoundError, one line after the S12 gate correctly
+        with a bare FileNotFoundError, one line after that same gate correctly
         skipped the hydrograph build.
 
         The fallback is the SAME NUMBER, not a substitute for it. Every
         per-scenario `.inp` is filled by `swmm_utils.create_swmm_inp_from_template`,
-        which sets START_DATE/START_TIME/END_DATE/END_TIME once (swmm_utils.py:105-110)
+        which sets START_DATE/START_TIME/END_DATE/END_TIME once
         from one `first_tstep`/`last_tstep` pair, so `hydraulics.inp` -- written
         unconditionally -- carries an identical simulation window by construction.
 
@@ -895,6 +1065,17 @@ class TRITONSWMM_scenario:
         # immaterial to the solver (argsd reads an unordered argmap) but is fixed here so the
         # emitted bytes are deterministic for a member that sets both.
         cfg_content = append_swmm_snapshot_keep_all(cfg_content, self._analysis.cfg_analysis.swmm_snapshot_keep_all)
+        # The DEM-rim key, on the same coupled surface: the guard runs FIRST, so a build that
+        # would ignore the key stops preparation instead of running with SWMM's rims.
+        if self._analysis.cfg_analysis.swmm_node_rim_from_dem:
+            cfg_system = self._system.cfg_system
+            require_dem_rim_capable_triton(
+                execution_environment=self._analysis.cfg_analysis.execution_environment,
+                software_directory=cfg_system.TRITONSWMM_software_directory,
+                branch_key=cfg_system.TRITONSWMM_branch_key,
+                recorded_sha=self._system.log.triton_head_sha.get(),
+            )
+        cfg_content = append_swmm_node_rim_from_dem(cfg_content, self._analysis.cfg_analysis.swmm_node_rim_from_dem)
         if cfg_content != cfg_as_written:
             self.scen_paths.triton_swmm_cfg.write_text(cfg_content)
 
@@ -995,10 +1176,8 @@ class TRITONSWMM_scenario:
         """
         Symlink TRITON-SWMM build folder into simulation directory.
 
-        Parameters
-        ----------
-        backend : str
-            Which backend build to symlink ("cpu" or "gpu")
+        Takes no backend argument: the build is chosen by ``self.backend`` ("cpu" or
+        "gpu"), and its compilation is verified before the link is made.
         """
         # Select source build directory
         if self.backend == "cpu":
@@ -1106,10 +1285,10 @@ class TRITONSWMM_scenario:
             )
 
         # Remove any existing target path (dir/file/symlink) so symlink creation is deterministic.
-        # PATTERN A/B per du-sentinels mutation-site stipulation: symlink replacements are
-        # DU-immaterial (symlinks themselves are tiny; rglob does not follow symlinks), but
-        # if target_link was a real directory the rmtree IS material — pass analysis_dir
-        # through fast_rmtree so the EXEMPT short-circuit fires when appropriate.
+        # Symlink replacements are DU-immaterial (symlinks themselves are tiny; rglob does not
+        # follow symlinks). If target_link was a real directory the rmtree does remove counted
+        # bytes; each removal below carries the audited `EXEMPT-DU: system-dir` annotation
+        # rather than a sentinel re-stamp, and fast_rmtree is called without analysis_dir.
         if target_link.exists() or target_link.is_symlink():
             if target_link.is_symlink() or target_link.is_file():
                 # EXEMPT-DU: system-dir
@@ -1168,7 +1347,8 @@ class TRITONSWMM_scenario:
                 # THE TOOLKIT DOES NOT DECIDE THIS WINDOW. It reads the one the user
                 # declared and clips to it. The retired code inferred a window from
                 # which values were missing -- an analysis of input weather, forbidden
-                # by [Q85]: it silently disagreed with the forcing actually written, it
+                # by this toolkit's rule that input weather is run as given, never
+                # analysed or modified: it silently disagreed with the forcing actually written, it
                 # was maintained in triplicate, and its own preflight detector shared
                 # the defect and reported a 52.9%-padded file as 0.0% padded.
                 _axis = ds_event_ts[tdim].values
@@ -1263,8 +1443,6 @@ class TRITONSWMM_scenario:
             If True, overwrite existing scenario
         rerun_swmm_hydro_if_outputs_exist : bool
             If True, rerun SWMM hydrology model even if outputs exist
-        backend : Optional[str]
-            Force specific backend ("cpu" or "gpu"). If None, auto-selects based on run_mode.
         """
         # Halt if scenario already complete
         if self.log.scenario_creation_complete.get() and not overwrite_scenario_if_already_set_up:
@@ -1300,6 +1478,7 @@ class TRITONSWMM_scenario:
             self.scen_paths.swmm_hydraulics_inp,
         )
         self.log.inp_hydraulics_model_created_successfully.set(True)
+        refuse_non_cms_flow_units([self.scen_paths.swmm_hydraulics_inp])
 
         # Optional: Full SWMM model (standalone SWMM execution)
         if self._system.cfg_system.toggle_swmm_model:
@@ -1307,6 +1486,9 @@ class TRITONSWMM_scenario:
                 self._system.cfg_system.SWMM_full,
                 self.scen_paths.swmm_full_inp,
             )
+            # Checked here, before the hydrology model runs below, so a standalone model in
+            # the wrong unit fails at preparation rather than after its own SWMM run.
+            refuse_non_cms_flow_units([self.scen_paths.swmm_full_inp])
             # Update THREADS parameter to match n_omp_threads configuration
             self._input_generator.update_swmm_threads_in_inp_file(self.scen_paths.swmm_full_inp)
             self.log.inp_full_model_created_successfully.set(True)
@@ -1319,6 +1501,8 @@ class TRITONSWMM_scenario:
             )
             # Update THREADS parameter to match n_omp_threads configuration
             self._input_generator.update_swmm_threads_in_inp_file(self.scen_paths.swmm_hydro_inp)
+            # The hydrographs come from this model, so its unit is checked too.
+            refuse_us_flow_units([self.scen_paths.swmm_hydro_inp])
             self._runoff_modeler.run_swmm_hydro_model(
                 rerun_if_exists=rerun_swmm_hydro_if_outputs_exist,
                 verbose=False,
@@ -1331,7 +1515,7 @@ class TRITONSWMM_scenario:
         # the TRITON inflow hydrographs from swmm/hydro.out, whose producer
         # (run_swmm_hydro_model, above) is itself gated on this toggle. Calling it
         # unconditionally means that with toggle_use_swmm_for_hydrology=False -- a
-        # SUPPORTED config, warned-about-but-permitted at validation.py:317-323 --
+        # SUPPORTED config, warned-about-but-permitted by preflight validation --
         # hydrograph_outputs_gate finds the hydrographs absent AND their rebuild source
         # absent and raises ProcessingError, so scenario preparation cannot complete.
         # The gate cannot succeed under any configuration in which it was reached, so
@@ -1346,8 +1530,8 @@ class TRITONSWMM_scenario:
 
         # Link native build folders into the sim (native mode only) and fail fast
         # if a toggled model was not compiled. No-op in container mode where the sim
-        # runs `apptainer exec {sif} {exe_in_sif}` (run_simulation.py:404-422), so the
-        # per-sim native build symlink is never consumed.
+        # runs `apptainer exec {sif} {exe_in_sif}` (run_simulation.py,
+        # `prepare_simulation_command`), so the per-sim native build symlink is never consumed.
         self._link_native_builds_into_sim()
 
         # Cross-artifact invariant (fail-fast, mirrors _assert_dem_integrity):
@@ -1402,7 +1586,7 @@ class TRITONSWMM_scenario:
                 else self._system.compilation_triton_only_cpu_successful
             )
             if not cpu_ok:
-                # defect-10: distinguish "never built" from "built and failed".
+                # Distinguish "never built" from "built and failed".
                 # Every prep-rung call site passes the hardcoded literal
                 # return_code=1 even though no process ran, and
                 # compilation_logfile_cpu is a DERIVED path, so the plain
@@ -1432,23 +1616,23 @@ class TRITONSWMM_scenario:
                 )
 
     def _link_native_builds_into_sim(self) -> None:
-        """Native mode: copy the compiled build folders into the sim dir,
+        """Native mode: symlink the compiled build folders into the sim dir,
         failing fast if a toggled model was not compiled. Container mode: no-op.
 
         Mirrors setup_workflow.py's container compile-skip. In container mode the
-        sim runs `apptainer exec {sif} {exe_in_sif}` (run_simulation.py:404-422), so
-        the per-sim native build symlink is never consumed.
+        sim runs `apptainer exec {sif} {exe_in_sif}` (run_simulation.py,
+        `prepare_simulation_command`), so the per-sim native build symlink is never consumed.
         """
         if self._analysis.cfg_analysis.execution_environment == "container":
             return
 
-        # Copy build folders - FAIL FAST if toggle ON but not compiled
+        # Symlink build folders - FAIL FAST if toggle ON but not compiled
         # TRITON-SWMM: Check toggle and compilation status
         if self._system.cfg_system.toggle_tritonswmm_model:
             if not (
                 # PROPERTY, not `log.compilation_*.get()`. The log field is a
                 # SNAPSHOT, not an empty field: `_sync_compilation_status_on_init`
-                # (system.py:219) reads all five compile properties once, at
+                # (system.py) reads all five compile properties once, at
                 # __init__, and persists each verdict into
                 # system_dir/"system_log.json". The property is a LIVE read of the
                 # build tier. The two diverge only when the tier is built AFTER
@@ -1458,7 +1642,7 @@ class TRITONSWMM_scenario:
                 # This particular raise is UNREACHABLE and is kept only so the
                 # redundant check cannot disagree with the reachable one:
                 # prepare_scenario calls _verify_native_build_or_skip_in_container
-                # (:1159) before _link_native_builds_into_sim (:1227), and on
+                # before _link_native_builds_into_sim, and on
                 # toggle_tritonswmm_model=True that verify already selects these
                 # same two properties and raises.
                 self._system.compilation_cpu_successful or self._system.compilation_gpu_successful
@@ -1475,9 +1659,9 @@ class TRITONSWMM_scenario:
             if not (
                 # PROPERTY, not the log field. The log field is the __init__-time
                 # snapshot written by _sync_compilation_status_on_init
-                # (system.py:219); the property is a live read of
-                # TRITON_build_dir_cpu/"compilation.log" (system.py:180,
-                # 1869-1876). Measured three ways: tier already warm when this
+                # (system.py); the property is a live read of
+                # TRITON_build_dir_cpu/"compilation.log" (system.py's
+                # compilation_triton_only_cpu_successful). Measured three ways: tier already warm when this
                 # system was constructed -> both read True; tier absent -> both
                 # falsy; tier built after construction -> snapshot None (the
                 # absent-artifact branch abstains rather than persisting False)
@@ -1498,16 +1682,17 @@ class TRITONSWMM_scenario:
         # Note: SWMM doesn't need build folder copying - uses absolute path to executable
         if self._system.cfg_system.toggle_swmm_model:
             # PROPERTY, not the log field: the log field is the __init__-time
-            # snapshot (_sync_compilation_status_on_init, system.py:219) and the
+            # snapshot (_sync_compilation_status_on_init, system.py) and the
             # property is a live read of SWMM_build_dir/"compilation.log"
-            # (system.py:2147-2176). NOT symmetric with the two guards above in
+            # (system.py's compilation_swmm_successful). NOT symmetric with the two guards above in
             # one respect: an absent log under a resolvable SWMM_build_dir is
             # persisted here as a measured False, whereas the triton-only term
             # abstains. SWMM_build_dir is also None when toggle_swmm_model is off
-            # OR SWMM_software_directory is unset (system.py:185 is a
-            # conjunction), and the property then abstains to False — so this
+            # OR SWMM_software_directory is unset (system.py builds
+            # sys_paths.SWMM_build_dir from that conjunction), and the property then abstains to False — so this
             # guard raises at prep rather than deferring a None executable into
-            # command construction at sim time (run_simulation.py:891).
+            # command construction at sim time (run_simulation.py's
+            # prepare_simulation_command).
             if not self._system.compilation_swmm_successful:
                 raise RuntimeError(
                     "toggle_swmm_model is enabled but SWMM was not successfully compiled. "
@@ -1529,8 +1714,6 @@ class TRITONSWMM_scenario:
 
         Parameters
         ----------
-        event_iloc : int
-            Integer index of the scenario to prepare
         overwrite_scenario_if_already_set_up : bool
             If True, overwrite existing scenario
         rerun_swmm_hydro_if_outputs_exist : bool
@@ -1655,11 +1838,28 @@ def find_closest_dem_coord(x_val, y_val, BC_side, rds_dem):
         x_coord = dem_xs[np.argmin(np.abs(dem_xs - x_val))]
         y_coord = min(dem_ys)
     else:
-        print("boundary condition location not defined")
+        # A print here used to fall through to the extent checks below, which then read the
+        # never-assigned x_coord and raised an UnboundLocalError naming neither the side nor
+        # the accepted values.
+        raise ProcessingError(
+            operation="find_closest_dem_coord",
+            filepath="boundary condition",
+            reason=f"unknown boundary side {BC_side!r}; expected one of 'left', 'right', 'top', 'bottom'",
+        )
+    # Kept as guards although every named side takes its coordinates from the DEM's own axes,
+    # so neither can fire on a path above. Library code raises rather than ending the process.
     if (x_coord < min(dem_xs)) or (x_coord > max(dem_xs)):
-        sys.exit("This x coordinate falls outside the domain of the DEM")
+        raise ProcessingError(
+            operation="find_closest_dem_coord",
+            filepath="boundary condition",
+            reason=f"x coordinate {x_coord} falls outside the domain of the DEM",
+        )
     if (y_coord < min(dem_ys)) or (y_coord > max(dem_ys)):
-        sys.exit("This y coordinate falls outside the domain of the DEM")
+        raise ProcessingError(
+            operation="find_closest_dem_coord",
+            filepath="boundary condition",
+            reason=f"y coordinate {y_coord} falls outside the domain of the DEM",
+        )
     return x_coord, y_coord
 
 
@@ -1678,6 +1878,128 @@ def find_lowest_inv(node_to_keep, nodes):
     return node_to_keep
 
 
+#: The four SWMM node sections, keyed by the section-keyword prefix SWMM itself matches on
+#: (``text.h``) and mapped to the node type the coupled-inflow rules key on. They are SWMM's
+#: only NODE object sections, so a node defined anywhere else does not exist for SWMM.
+_SWMM_NODE_SECTION_PREFIXES = {
+    "[JUNC": "JUNCTION",
+    "[OUTFALL": "OUTFALL",
+    "[STORAGE": "STORAGE",
+    "[DIVIDER": "DIVIDER",
+}
+#: SWMM's keyword for the external-inflow section. SWMM matches a section header by PREFIX, so
+#: ``[INFLOW]`` and ``[INFLOWS]`` open the same section, and SWMM's own report labels it
+#: ``[INFLOW]``.
+_SWMM_INFLOW_SECTION_PREFIX = "[INFLOW"
+_SWMM_SECTION_PREFIXES = {**_SWMM_NODE_SECTION_PREFIXES, _SWMM_INFLOW_SECTION_PREFIX: "INFLOW"}
+
+
+def _swmm_fold(text: str) -> str:
+    """Upper-case ASCII ``a``-``z`` and nothing else, as SWMM compares names and keywords.
+
+    Deliberately NOT ``str.upper()`` or ``str.casefold()``: both also fold non-ASCII letters,
+    which SWMM keeps distinct, so ``é1`` and ``É1`` would match here and not in SWMM.
+    """
+    return "".join(chr(ord(c) - 32) if "a" <= c <= "z" else c for c in text)
+
+
+def _swmm_tokens(line: str) -> list[str]:
+    """Split one ``.inp`` line into tokens the way SWMM's ``getTokens`` does.
+
+    Text from the first ``;`` is dropped FIRST, even inside quotes; tokens are separated by
+    space, tab, CR or LF; a token that begins with ``"`` runs to the next ``"`` or the end of
+    the line, and neither quote is part of it. A line with no tokens returns an empty list.
+    """
+    text = line.split(";", 1)[0]
+    tokens: list[str] = []
+    i, n = 0, len(text)
+    separators = " \t\r\n"
+    while i < n:
+        if text[i] in separators:
+            i += 1
+            continue
+        if text[i] == '"':
+            close = text.find('"', i + 1)
+            stop = n if close == -1 else close
+            tokens.append(text[i + 1 : stop].rstrip("\r\n"))
+            i = stop + 1
+            continue
+        j = i
+        while j < n and text[j] not in separators:
+            j += 1
+        tokens.append(text[i:j])
+        i = j
+    return tokens
+
+
+def _swmm_section_of(header_token: str) -> str | None:
+    """The section a ``[``-token opens, as one of this module's five keys, or None.
+
+    SWMM recognises a header by an ASCII-folded PREFIX match against its keyword list and takes
+    the first match. None of SWMM's 57 section keywords is a prefix of, or prefixed by, any of
+    the five read here, so first-match order assigns no token differently from this lookup.
+    """
+    folded = _swmm_fold(header_token.lstrip())
+    for prefix, section in _SWMM_SECTION_PREFIXES.items():
+        if folded.startswith(prefix):
+            return section
+    return None
+
+
+def _swmm_inp_section_lines(lines: list[str]) -> list[tuple[int, str, list[str]]]:
+    """Every tokenized line of the four node sections and the inflow section, in file order.
+
+    Returns ``(line_index, section, tokens)`` triples, where ``section`` is ``JUNCTION``,
+    ``OUTFALL``, ``STORAGE``, ``DIVIDER`` or ``INFLOW``. Header lines, lines with no tokens and
+    lines of every other section are omitted. This is the ONE reader shared by the undefined-
+    inflow check and the ``[INFLOWS]`` writer, so both find exactly the lines SWMM reads.
+    """
+    out: list[tuple[int, str, list[str]]] = []
+    current: str | None = None
+    for idx, line in enumerate(lines):
+        tokens = _swmm_tokens(line)
+        if not tokens:
+            continue
+        if tokens[0].startswith("["):
+            current = _swmm_section_of(tokens[0])
+            continue
+        if current is not None:
+            out.append((idx, current, tokens))
+    return out
+
+
+def undefined_inflow_nodes(inp_path) -> list[str]:
+    """Inflow-section node names that no node section of ``inp_path`` defines.
+
+    Reads the file as SWMM 5.2.3 reads it: SWMM's tokenizer, its prefix section rule, and its
+    ASCII-only case fold for every comparison. Every inflow line counts, FLOW and pollutant
+    alike, because SWMM looks the node up before it reads the constituent. A name containing
+    ``$`` is an unfilled template placeholder whose value is not known until preparation: it is
+    skipped and named in one warning. Names are returned in file order, one per undefined line.
+    """
+    lines = Path(inp_path).read_text().splitlines()
+    parsed = _swmm_inp_section_lines(lines)
+    defined = {_swmm_fold(tokens[0]) for _idx, section, tokens in parsed if section != "INFLOW"}
+    undefined: list[str] = []
+    placeholders: list[str] = []
+    for idx, section, tokens in parsed:
+        if section != "INFLOW":
+            continue
+        name = tokens[0]
+        if "$" in name:
+            placeholders.append(f"line {idx + 1}: {lines[idx].strip()}")
+            continue
+        if _swmm_fold(name) not in defined:
+            undefined.append(name)
+    if placeholders:
+        warnings.warn(
+            f"{inp_path}: inflow lines naming an unfilled template placeholder were not checked "
+            f"for an undefined node: {placeholders}",
+            stacklevel=2,
+        )
+    return undefined
+
+
 def return_df_of_nodes_grouped_by_DEM_gridcell(f_inp, dem_processed, verbose=False):
     rds_dem = rxr.open_rasterio(dem_processed)
     model = swmmio.Model(str(f_inp))
@@ -1689,6 +2011,7 @@ def return_df_of_nodes_grouped_by_DEM_gridcell(f_inp, dem_processed, verbose=Fal
     lst_outfalls = list(model.nodes.geodataframe["OutfallType"].dropna().index)
     ## creating a row for each group of nodes associated with a single DEM cell
     ## (this is to make sure there is only 1 inflow node per gridcell)
+    lst_out_of_bounds_nodes = []
     for node_id in node_coords.index:
         # verify that the node is within the dem
         node = node_coords[node_id]
@@ -1699,7 +2022,6 @@ def return_df_of_nodes_grouped_by_DEM_gridcell(f_inp, dem_processed, verbose=Fal
         d_node_locs["node_key"].append(node_id)
         d_node_locs["dem_x_coord"].append(dem_xs[closest_dem_cell_x_ind])
         d_node_locs["dem_y_coord"].append(dem_ys[closest_dem_cell_y_ind])
-        lst_out_of_bounds_nodes = []
         if (x_coord < dem_xs.min()) or (x_coord > dem_xs.max()) or (y_coord < dem_ys.min()) or (y_coord > dem_ys.max()):
             if verbose:
                 print(f"WARNING: node out bounds. Node ID: {node_id}")
@@ -1709,6 +2031,14 @@ def return_df_of_nodes_grouped_by_DEM_gridcell(f_inp, dem_processed, verbose=Fal
                 )
                 print(f"node coords: {x_coord}, {y_coord}")
             lst_out_of_bounds_nodes.append(node_id)
+    # Accumulated across the loop and reported once, whatever `verbose` is: the list used to be
+    # reset inside the loop and never read, so out-of-domain nodes vanished without a trace.
+    if lst_out_of_bounds_nodes:
+        warnings.warn(
+            f"{len(lst_out_of_bounds_nodes)} SWMM node(s) lie outside the DEM and were placed at "
+            f"the nearest DEM cell: {lst_out_of_bounds_nodes}",
+            stacklevel=2,
+        )
     ## create dataframe with node key and associated dem x and y coordinate for grouping
     df_node_locs = pd.DataFrame(d_node_locs)
     return df_node_locs, lst_outfalls

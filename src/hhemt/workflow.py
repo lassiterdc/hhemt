@@ -79,7 +79,7 @@ if TYPE_CHECKING:
 
 from dataclasses import dataclass
 
-# T15(iii) Part 2: seconds between DU-guard statvfs polls. A module CONSTANT and
+# Seconds between DU-guard statvfs polls. A module CONSTANT and
 # not a config field: a knob that is inert whenever the feature is off is a knob
 # nobody can tune meaningfully.
 _DU_POLL_INTERVAL_S = 60
@@ -106,8 +106,6 @@ class ResolvedForceRerunSpec:
     axis the ``tokens`` index into, eliminating the same-type-different-content
     failure mode where ints could be either user-supplied event_ilocs or
     already-resolved slug strings.
-
-    Per cleanup-rerun-delete-redesign Phase 4.
     """
 
     scope: Literal["all", "none", "member", "event"]
@@ -123,8 +121,7 @@ class ResolvedForceRerunSpec:
     # invalidated that nobody asked to touch. A default of "every enabled model" would
     # also be the most aggressive value applied silently, which is the same shape as
     # `stage`'s "simulate". The PUBLIC model defaults; this one does not. That split is
-    # already this pair's pattern for `stage`, and the developer ratified it by approving
-    # the corrected size this requirement produces and rejecting the defaulted variant.
+    # already this pair's pattern for `stage`.
     #
     # Resolved to a concrete tuple by `_build_force_rerun_spec`, the SINGLE resolution
     # point, so the three consumers never re-derive "all enabled".
@@ -140,9 +137,8 @@ class SnakemakeDiagnostics:
     instance matches prior behavior: no ``--verbose``, no log capture
     (``--printshellcmds`` remains unconditional outside this dataclass).
 
-    The ``reason`` field is retained for API compatibility with the Phase 1
-    design surface (sources: synth-test-isolation-and-runtime master plan
-    Decision D1) but is a no-op against snakemake 8/9 — the standalone
+    The ``reason`` field is retained for API compatibility but is a no-op
+    against snakemake 8/9 — the standalone
     ``--reason`` CLI flag was removed in snakemake 8; per-job rerun reasons
     are now emitted automatically when ``--verbose`` is set. Setting
     ``reason=True`` therefore implies ``verbose=True`` to preserve intent
@@ -190,7 +186,7 @@ class RuleEmissionContext:
     is_sensitivity : bool
         Selects multi-sim vs. sensitivity-master rule-set shape.
     static_backend : Literal["matplotlib", "plotly"]
-        Per D3 — selects ``output_ext`` per renderer (".png" for matplotlib,
+        Selects ``output_ext`` per renderer (".png" for matplotlib,
         ".html" for plotly chart figures so Snakemake's report engine
         dispatches via iframe instead of <img>). Required; no in-code default.
     report_tail_slurm_partition : str
@@ -279,8 +275,7 @@ class RuleSpec:
     additional_inputs: tuple[str, ...] = ()
 
 
-# ADR-2 (reporting-system_canonical-plot-id): _OUTPUT_EXT_BY_RENDERER, the
-# canonical-plot-ID grammar (_plot_output_template), and _output_ext_for are the
+# _OUTPUT_EXT_BY_RENDERER, the canonical-plot-ID grammar (_plot_output_template), and _output_ext_for are the
 # single source of truth for figure stems, lifted into the dedicated
 # `report_plot_ids` module (the layout-relevant artifact; see
 # _layout_relevant_files.yaml) and imported at module top. They remain
@@ -325,8 +320,7 @@ def _registry_report_kwargs(rule_name: str) -> dict[str, str]:
     being true rather than silently picking whichever set was iterated first.
 
     Raises rather than falling back. A fallback to a local default would restore exactly
-    the divergence this function exists to remove, and would do it silently -- the failure
-    mode that cost two rounds to find.
+    the divergence this function exists to remove, and would do it silently.
     """
     from hhemt.report_renderers._reporting_sets import REPORTING_SETS, get_reporting_set
 
@@ -352,7 +346,7 @@ def _registry_report_kwargs(rule_name: str) -> dict[str, str]:
 def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
     """Emit a single Snakemake plot rule as a string.
 
-    Single-f-string-template assembly per VMS-5. Per-spec variability
+    Single-f-string-template assembly. Per-spec variability
     (literal vs function source_paths, optional event_iloc param,
     optional --event-iloc shell flag, report-kwargs shape) is encoded
     as pre-computed sub-strings consumed by the template. No
@@ -382,7 +376,7 @@ def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
     # output: report(...) wrapper. report_kwargs carries caption,
     # category, optional subcategory, and labels as pre-formatted dict.
     # report_kwargs is None for static-plot / non-report rules: emit a bare
-    # output path with no report() wrapper (R3). The dict branch below is
+    # output path with no report() wrapper. The dict branch below is
     # byte-identical to the prior unconditional form, so existing report-rule
     # callers are unchanged.
     if spec.report_kwargs is None:
@@ -431,7 +425,7 @@ def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
     # and --output. Each emitted on its own indented continuation line.
     extra_flags_block = "".join(f"            {flag} \\\n" for flag in spec.extra_cli_flags)
 
-    # ADR-2 OE-2: constrain each output wildcard to the enforced charset
+    # Constrain each output wildcard to the enforced charset
     # ^[A-Za-z0-9_.]+$ so the "." within-segment separator of a canonical plot
     # ID can never be mis-inferred as a greedy multi-segment wildcard match if
     # two figures ever share a directory. Derived from spec.wildcards (empty for
@@ -567,7 +561,7 @@ def _per_sim_per_member_rule_all_inputs(
         return []
     _e_pfd = ext["per_sim_per_member_peak_flood_depth"]
     _e_cf = ext["per_sim_per_member_conduit_flow"]
-    # ADR-2 OE-1: per-member input stems derive from the single-source helper
+    # Per-member input stems derive from the single-source helper
     # so a future stem-grammar change cannot desync them from the outputs.
     _pfd_member = _plot_output_template(
         renderer_kind="peak_flood_depth",
@@ -584,7 +578,7 @@ def _per_sim_per_member_rule_all_inputs(
     entries = [
         f'expand("{_pfd_member}", zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT)',
     ]
-    # FQ1 ENUMERATION half. Its EMISSION counterpart gates _emit_plot_rule(conduit_emit)
+    # ENUMERATION half of the conduit-figure gate. Its EMISSION counterpart gates _emit_plot_rule(conduit_emit)
     # on the identical expression; both derive from _get_enabled_model_types(), so they
     # cannot disagree. Enumerating a figure emission drops yields MissingInputException;
     # emitting one enumeration drops yields an orphan rule.
@@ -628,12 +622,12 @@ def _assert_snakefile_package_current(snakefile_path: Path) -> None:
     converts that into a sub-second ``ConfigurationError`` (CLI exit 2). No-ops on
     a current or absent Snakefile.
 
-    The second class is the S8a member rename. Only ``render_report(reprocess=True)``
+    The second class is the member rename. Only ``render_report(reprocess=True)``
     reads an existing Snakefile without regenerating it -- the execution path calls
     ``write_reprocess_snakefile``, which overwrites -- so a stale file reaches
     ``snakemake --report`` still enumerating ``report()`` targets at pre-rename figure
     paths that ``V0019`` has moved, and the report engine raises "marked for report but
-    does not exist" (Gotcha 39). Same remedy, same exit code, one read of the file.
+    does not exist". Same remedy, same exit code, one read of the file.
     """
     if not snakefile_path.exists():
         return
@@ -695,8 +689,7 @@ def _emit_report_artifacts(
     renders all .rst files through Jinja2 — the .j2 extension is a
     repo-side convention, not a Snakemake one.
 
-    Lifted to module scope at Plan Phase 2 (per VMS-1 + F-I3 resolution) so
-    the bundle-side consume path (Bundle.regenerate_report) can call it
+    Lives at module scope so the bundle-side consume path (Bundle.regenerate_report) can call it
     without an analysis-instance dependency.
     """
     try:
@@ -737,8 +730,6 @@ def _sanitize_rule_name(token: str) -> str:
     pattern ``run_{model_type}_evt-{event_id}`` (multisim) or
     ``simulation_member_{member_id}_evt-{event_id}`` (sensitivity); both contain
     literal hyphens that must be replaced for use as a Snakemake rule name.
-
-    Per sentinel-system-v2 Phase 2.
     """
     return token.replace("-", "_").replace(".", "_")
 
@@ -789,7 +780,7 @@ def _write_snakefile_atomic(path: Path, content: str) -> Path:
     ``Snakefile`` (three multisim + three sensitivity-master branches), the
     ``Snakefile.reprocess`` pair, the three ``Snakefile.delete`` /
     ``Snakefile.reprocess_delete`` writers, and ``Snakefile.static``. The
-    reprocess pair matters most after the production file: per Gotcha 39,
+    reprocess pair matters most after the production file:
     ``render_report(reprocess=True)`` runs ``snakemake --report`` against
     ``Snakefile.reprocess``, so a clobber there reaches a RENDERED REPORT rather
     than only an operator's diagnosis.
@@ -882,22 +873,26 @@ def _raise_if_dry_run_failed(dry_run_result: dict, *, phase: str) -> None:
 
 def _max_plausible_job_lifetime_min(cfg_analysis, *, slack_min: int = 30) -> int:
     """Upper bound on how long a sim job could plausibly run: its own SLURM
-    walltime + slack (queue/startup/accounting lag). Single source of truth for
-    BOTH the wait-rule poll cap (R-WAITCAP) and the R-STALE UNKNOWN-bucket
-    mtime-age fail-safe. Falls back to hpc_max_wait_for_inflight_min only when
-    hpc_total_job_duration_min is unset (e.g. local mode)."""
+    walltime + slack (queue/startup/accounting lag). The bound for the two
+    mtime-age fail-safes on unanswerable liveness -- the UNKNOWN bucket of
+    ``_classify_stale_via_sacct`` and ``_orchestrator_liveness_gate``.
+    Deliberately NOT the wait-rule poll cap or the ``_queued/`` age-out, which
+    read hpc_max_wait_for_inflight_min directly: a queued job's age is queue
+    time, which routinely exceeds run time. Falls back to
+    hpc_max_wait_for_inflight_min only when hpc_total_job_duration_min is unset
+    (e.g. local mode)."""
     base = cfg_analysis.hpc_total_job_duration_min
     if base is None:
         return cfg_analysis.hpc_max_wait_for_inflight_min
     return base + slack_min
 
 
-# Tmux orchestrator-log parse (FQ5, 2026-09-12). Snakemake prints one `rule {name}:` block per
+# Tmux orchestrator-log parse. Snakemake prints one `rule {name}:` block per
 # selected job (4-space `input:/output:/log:/jobid:/reason:/wildcards:/…` lines — `jobid:`
 # precedes `wildcards:`) and, once sbatch returns, `Job {n} has been submitted with SLURM jobid
 # {m} (log: …)`. The token is read from the block's FLAG PATH (`output:`, or the `reason:` line
 # that repeats it), which carries the REAL event id in both generators; the master's rule NAME is
-# sanitized (`.`/`-` -> `_`, workflow.py ~:8927) and the multisim `wildcards:` line arrives after
+# sanitized (`.`/`-` -> `_`, in generate_master_snakefile_content) and the multisim `wildcards:` line arrives after
 # `jobid:`, so neither is used.
 _TMUX_SUBMIT_RE = re.compile(r"^Job (\d+) has been submitted with SLURM jobid (\d+)")
 _TMUX_RULE_RE = re.compile(r"^rule (\S+):\s*$")
@@ -977,7 +972,7 @@ def _squeue_live_jobids(run_uuids: tuple[str, ...], *, timeout_s: float = 20.0) 
 
 
 def _rekey_queued_from_tmux_logs(queued_dir: Path, pending_tokens: list[str], log_dir: Path | None) -> list[str]:
-    """FQ5 re-keying (2026-09-12): rewrite ``_queued/{token}.json`` with the jobid the executor
+    """Re-key queued sentinels: rewrite ``_queued/{token}.json`` with the jobid the executor
     was OBSERVED to submit, and unlink tokens that were planned but never submitted.
 
     ``_write_queued_sentinels`` writes the FULL planned token set at launch, so under a
@@ -987,11 +982,11 @@ def _rekey_queued_from_tmux_logs(queued_dir: Path, pending_tokens: list[str], lo
     log; the newest submission of a token wins). Returns the tokens that SURVIVE. NO-OP —
     returns ``pending_tokens`` unchanged and unlinks nothing — when ``log_dir`` is None/absent
     or holds no tmux log: absence of evidence is not evidence of non-submission. KNOWN
-    LIMITATION (C7, 2026-09-12): that guard is directory-level — if an OLDER tmux log of a
+    LIMITATION: that guard is directory-level — if an OLDER tmux log of a
     resumable campaign is pruned while a newer one exists, or the driver is killed inside the
     sbatch-return->print window, a live token's sentinel is dropped and the sim re-runs
     (double submission). Operators must not prune older tmux logs of a resumable campaign;
-    a per-log guard is a tracked follow-up, not this round's change.
+    a per-log guard would close this gap and is not implemented.
     """
     if not pending_tokens or log_dir is None or not Path(log_dir).is_dir():
         return list(pending_tokens)
@@ -1032,8 +1027,9 @@ def _rekey_queued_from_tmux_logs(queued_dir: Path, pending_tokens: list[str], lo
 
 
 class _ClearedToken(NamedTuple):
-    """Self-describing record for an R-STALE-reclaimed stale token (replaces the
-    positional 4-tuple so the reconcile surface and tests read field names)."""
+    """Self-describing record for a token ``_classify_stale_via_sacct`` reclaimed as
+    stale (replaces the positional 4-tuple so the reconcile surface and tests read
+    field names)."""
 
     rule_token: str
     job_id: str
@@ -1043,7 +1039,7 @@ class _ClearedToken(NamedTuple):
 
 class _ReportingSetDispatchMixin:
     """Registry-driven plot-rule dispatcher shared by the multisim and
-    sensitivity-master/reprocess generators (P1b / TO-8).
+    sensitivity-master/reprocess generators.
 
     Replaces the hardcoded `_build_plot_rule_block_*` call lists (duplicated
     across `generate_snakefile_content`, `generate_master_snakefile_content`, and
@@ -1061,11 +1057,11 @@ class _ReportingSetDispatchMixin:
     # Predicate-key -> predicate over the per-call predicate_inputs dict. The
     # values (independent_vars, member_event_pairs_member) are METHOD-LOCALs inside the
     # master/reprocess generators (NOT instance attributes), threaded in via
-    # predicate_inputs; getattr-on-self would always be None. (F-I-2)
+    # predicate_inputs; getattr-on-self would always be None.
     _RENDERER_PREDICATES = {
         "has_independent_vars": lambda inp: bool(inp.get("independent_vars")),
         "has_member_event_pairs": lambda inp: bool(inp.get("member_event_pairs_member")),
-        # R11: the compute-sensitivity EDA adapter fires only when the master
+        # The compute-sensitivity EDA adapter fires only when the master
         # carries an EDA artifact (the eda calc ran, producing plots/eda/*.zarr).
         # Threaded via predicate_inputs["has_eda_artifact"] at the generator sites.
         "has_eda_artifact": lambda inp: bool(inp.get("has_eda_artifact")),
@@ -1074,7 +1070,7 @@ class _ReportingSetDispatchMixin:
         # an on-disk sweep here is O(configs x events) login-node work. The
         # renderer carries the on-disk check and degrades honestly.
         "has_preserved_raw_outputs": lambda inp: bool(inp.get("has_preserved_raw_outputs")),
-        # FQ1: a SWMM-derived figure (conduit flow) is not applicable to a TRITON-only
+        # A SWMM-derived figure (conduit flow) is not applicable to a TRITON-only
         # analysis. Threaded from analysis._get_enabled_model_types() at the generator
         # sites. Consumed PER TEMPLATE (RuleSpecTemplate.predicate_key), not per
         # selection: per_sim_per_member's two templates differ in applicability.
@@ -1082,15 +1078,15 @@ class _ReportingSetDispatchMixin:
     }
 
     def _resolve_active_reporting_set(self, analysis):
-        """Resolve ``analysis``'s active ReportingSet (TO-8 dispatch source).
+        """Resolve ``analysis``'s active ReportingSet (the plot-rule dispatch source).
 
-        `_active_reporting_set` is set only at analysis.run() entry (F-B-1), so a
+        `_active_reporting_set` is set only at analysis.run() entry, so a
         generate-without-run() path (e.g. the byte-identity test, which configures
         but never runs the analysis; render_report_runner on a fresh instance)
         must fall back to the CSV-free name resolver — mirroring the established
         getattr-fallback in `analysis.render_report`'s category-order block. The
         fallback resolves to the SAME set the run-entry attr would hold (default
-        for multisim, benchmarking for sensitivity), preserving byte-identity (R6).
+        for multisim, benchmarking for sensitivity), preserving Snakefile byte-identity.
         """
         active = getattr(analysis, "_active_reporting_set", None)
         if active is not None:
@@ -1106,7 +1102,7 @@ class _ReportingSetDispatchMixin:
         )
 
     def _resolve_disabled_renderers(self, analysis) -> list[str]:
-        """Resolve ``analysis``'s report_config.disabled_renderers (Phase 3).
+        """Resolve ``analysis``'s report_config.disabled_renderers.
 
         Mirrors _resolve_active_reporting_set's cfg-report lookup: prefer the
         run-entry snapshot (`_cfg_report`, set at analysis.run() entry), falling
@@ -1122,10 +1118,10 @@ class _ReportingSetDispatchMixin:
         return list(cfg_report.disabled_renderers)
 
     def _builder_call_kwargs(self, builder_key, input_flag, ctx, inputs):
-        """Resolve the exact kwargs for one builder_key (Option A — the 8
+        """Resolve the exact kwargs for one builder_key (the 8
         `_build_plot_rule_block_*` builders are LEFT UNCHANGED, so their
         heterogeneous signatures are honored here rather than normalized). Keeps
-        R6 byte-identity free: no builder body is touched, so the proof reduces to
+        Snakefile byte-identity free: no builder body is touched, so the proof reduces to
         "the resolver yields the historical call args."
         """
         if builder_key in (
@@ -1156,7 +1152,7 @@ class _ReportingSetDispatchMixin:
         interleave_after_unconditional=None,
         disabled: "list[str] | None" = None,
     ) -> str:
-        """Emit every plot rule for the active reporting set, in set order (TO-8).
+        """Emit every plot rule for the active reporting set, in set order.
 
         The set's `renderer_selection` is the single source of which renderers fire
         and in what order; each entry names a builder method (by key) and an
@@ -1164,13 +1160,13 @@ class _ReportingSetDispatchMixin:
         `input_flag` is threaded per generator (multisim: e_consolidate_complete;
         master/reprocess: f_consolidate_experiment_complete).
 
-        `interleave_after_unconditional` (B-i hook) is a zero-arg callable flushed
+        `interleave_after_unconditional` is a zero-arg callable flushed
         ONCE immediately before the first predicate-keyed entry — so the export
         rule lands BETWEEN the unconditional and conditional renderers at
         master/reprocess, byte-matching the pre-refactor emission order. Multisim
         (no conditional entries) passes None and keeps a trailing export sibling.
 
-        `disabled` (Phase 3, report_config.disabled_renderers) is the builder_key
+        `disabled` (report_config.disabled_renderers) is the builder_key
         list dropped from emission — checked AFTER the interleave flush so disabling
         a conditional renderer still lands the export rule in its historical slot,
         and in lockstep with the rule all / render_report enumeration filter.
@@ -1206,7 +1202,7 @@ class _ReportingSetDispatchMixin:
                     interleaved = True
                 if not self._RENDERER_PREDICATES[sel.predicate_key](inputs):
                     continue
-            # Phase 3: per-plot disable — skip a renderer the config turned off, so
+            # Per-plot disable — skip a renderer the config turned off, so
             # emission matches the rule all / render_report enumeration filter.
             if not renderer_active(sel.builder_key, disabled):
                 continue
@@ -1245,7 +1241,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         self.analysis = analysis
         self.cfg_analysis = analysis.cfg_analysis
         self.system = analysis._system
-        # Phase 2 (R3): the per-HPC-system config (None when no
+        # The per-HPC-system config (None when no
         # --hpc-system-config was supplied). The batch_job emitter resolution
         # helpers prefer it when present and fall back to the legacy
         # cfg_analysis/cfg_system reads otherwise (byte-identical when None).
@@ -1259,16 +1255,16 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             self.python_executable = sys.executable
         else:
             self.python_executable = configured_python
-        # Runtime retry overrides (resume-retry-resilience P1, Decision 4). Set by
+        # Runtime retry overrides. Set by
         # submit_workflow before generate_snakemake_config runs; None means "read the
         # config knob". Stored on the builder rather than threaded through
-        # generate_snakemake_config's ~5 call sites (FQ3 SITE 5). _simulate resolves at
+        # generate_snakemake_config's ~5 call sites. _simulate resolves at
         # the per-rule retries: on the simulate rules; _other at the global restart-times
         # baseline that directive-less rules inherit.
         self._override_hpc_restart_times_simulate: int | None = None
         self._override_hpc_restart_times_other: int | None = None
 
-        # [Q8] Defect 2: the resolved execution LOCUS (local vs slurm) of the
+        # The resolved execution LOCUS (local vs slurm) of the
         # emitted Snakefile. Set by submit_workflow's standard branch (and the
         # sensitivity submit_workflow, on this base builder) AFTER mode
         # resolution and BEFORE generate_snakefile_content /
@@ -1281,16 +1277,16 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # _make_rule_emission_context callers.
         self._resolved_execution_locus: Literal["local", "slurm"] | None = None
 
-        # ADR-1: the container prefix for the PROCESS rungs only (sim rungs wrap
+        # The container prefix for the PROCESS rungs only (sim rungs wrap
         # inside run_simulation.py; plot/consolidate/render stay native). Empty in
-        # native mode (keeps generated Snakefiles byte-identical, R2/TO-1).
+        # native mode (keeps generated Snakefiles byte-identical).
         _cspec = resolve_container_spec(self.cfg_hpc_system)
         if getattr(self.cfg_analysis, "execution_environment", "native") == "container" and _cspec is not None:
-            # FB2: the process rung MUST bind analysis_dir (+ cluster binds) — the
+            # The process rung MUST bind analysis_dir (+ cluster binds) — the
             # in-container process runner loads configs (firing _check_paths_exist on
             # host paths) and reads out_*/writes processed/+_status under analysis_dir,
             # which on Frontier ($MEMBERWORK) / Rivanna (/scratch) is OUTSIDE Apptainer's
-            # default $HOME/CWD binds. This mirrors the sim rung's bind (R7); without it
+            # default $HOME/CWD binds. This mirrors the sim rung's bind; without it
             # container-mode processing fails at config-load or write on every real cluster.
             _adir = self.analysis_paths.analysis_dir
             _proc_binds = ",".join(
@@ -1305,7 +1301,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # module dies `apptainer: command not found` (exit 127) BEFORE the
             # shell's `> {log} 2>&1` produces anything — the 0-byte-rule-log
             # signature seen on Rivanna runs 17095105 and 17096574. The sim rung
-            # already prepends this (run_simulation.py:590-592); the process rung
+            # already prepends this (``TRITONSWMM_run.prepare_simulation_command``); the process rung
             # did not, so the two container entry points disagreed and only the
             # sim one was self-sufficient. Empirically confirmed: `srun … bash -c
             # 'command -v apptainer'` on a standard-partition compute node with no
@@ -1318,7 +1314,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             )
             self._container_process_prefix = f'{_mod}export APPTAINER_BIND="{_proc_binds}"; apptainer exec {_sif} '
             # The interpreter must resolve INSIDE the image. self.python_executable
-            # is the DRIVER's host interpreter (sys.executable at :813) and dies
+            # is the DRIVER's host interpreter (set above from the configured python or
+            # sys.executable) and dies
             # `FATAL: stat …: no such file or directory` under apptainer exec.
             # `-I` (isolated) on the CONTAINER token ONLY. It implies -E (ignore
             # PYTHON* env), -s (no user site), and -P (no CWD/script dir), which
@@ -1326,15 +1323,16 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # host configuration — instead of enumerating variables to delete.
             # Deletion is not available: measured at apptainer 1.5.0, every
             # APPTAINERENV/--env/--env-file/--no-eval form yields SET-but-empty,
-            # --unsetenv does not exist, and --cleanenv is prohibited by NQ-11.
+            # --unsetenv does not exist, and --cleanenv is ruled out: it strips the host
+            # environment the cluster's MPI wireup reads inside the container, so MPI launch breaks.
             #
             # CONTAINER-ONLY IS LOAD-BEARING, NOT TIDINESS. -E would break a
-            # documented dependency on the NATIVE path: conftest.py:14-18 exports
-            # PYTHONPATH transitively to every subprocess, and cli.py:96 records
+            # documented dependency on the NATIVE path: the root conftest.py exports
+            # PYTHONPATH transitively to every subprocess, and the ``_root`` callback in cli.py records
             # that the runner __main__ blocks "inherit PYTHONPATH from the parent."
             # Applying -I natively makes every worktree PWI and the pytest synth
             # tier import the INSTALLED toolkit instead of the tree under test —
-            # Gotcha 68's exact failure, re-created while fixing its sibling.
+            # the installed-toolkit shadowing the PYTHONPATH export exists to prevent.
             # Baking it here rather than at the three `-m ...` emission sites keeps
             # native emission byte-identical and touches no call list.
             self._container_process_python = f"{_cspec.python_in_sif} -I"
@@ -1343,11 +1341,11 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             self._container_process_python = ""
         # Native: fall back to this class's own token (sys.executable here,
         # the literal "python" on the sensitivity builder) so native-mode
-        # emission stays byte-identical for BOTH classes (R2/TO-1).
+        # emission stays byte-identical for BOTH classes.
         self._process_python_executable = self._container_process_python or self.python_executable
 
     def _resolved_simulate_retries(self) -> int:
-        """Per-rule ``retries:`` for the simulate rules: override-or-config (P1 Decision 4).
+        """Per-rule ``retries:`` for the simulate rules: override-or-config.
 
         Mirrors the ``override_hpc_total_nodes`` consume-site idiom. Returns the runtime
         override when set, else the ``hpc_restart_times_simulate`` config knob. Emitted as
@@ -1400,18 +1398,18 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
     def _disclose_realised_retry_ceiling(self) -> None:
         """Print the realised-ceiling disclosure once per submit-path invocation.
 
-        Sited in ``_pre_snakemake_invocation_guards`` because the architecture requires every
-        Snakemake-submitting path to route through that helper, which makes it the one
-        chokepoint where a per-submission disclosure cannot be reached around.
+        Sited in ``_pre_snakemake_invocation_guards`` because every Snakemake-submitting path
+        routes through that helper (it is threaded into every submit-path call site), which
+        makes it the one chokepoint where a per-submission disclosure cannot be reached around.
         """
         print(self._realised_retry_ceiling_disclosure(), flush=True)
 
     def _sweep_failed_rules(self, analysis_dir: Path, snakemake_stderr: str = "") -> list[dict]:
-        """Enumerate permanently-failed rules after a --keep-going run (FQ3).
+        """Enumerate permanently-failed rules after a --keep-going run.
 
         Layered source: (1) _status/_failed/*.json markers (precise rule_token +
-        jobid + reason; written by the v2 sim/wait/delete runners' try/finally,
-        Gotcha 30/43) for the sim class; (2) a Snakemake-stderr scan for
+        jobid + reason; written by the v2 sim/wait/delete runners' try/finally)
+        for the sim class; (2) a Snakemake-stderr scan for
         ``Error in rule (\\w+):`` to catch the process/consolidate/plot/render
         classes that emit NO _failed/ marker (their shells do not run the v2
         submission-sentinel try/finally). Union the two.
@@ -1435,7 +1433,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         return records
 
     def _augment_result_with_partial_failures(self, result: dict) -> dict:
-        """Sweep permanently-failed rules into a blocking-mode submit result (FQ3).
+        """Sweep permanently-failed rules into a blocking-mode submit result.
 
         Reads the merged stdout+stderr Snakemake log (``result["snakemake_logfile"]``,
         written with ``stderr=subprocess.STDOUT``) and unions it with the
@@ -1448,7 +1446,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         ``1_job_many_srun_tasks`` with ``wait_for_completion=True``). A detached run
         (``batch_job`` tmux, or 1-job sbatch-and-return) has no in-process completion
         point — sweeping there reads an in-progress/empty ``_failed/`` dir and reports a
-        false-clean (captured follow-up: post-hoc get_status sweep).
+        false-clean, so detached runs are not swept here.
         """
         if not isinstance(result, dict):
             return result
@@ -1563,8 +1561,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # the env var unset and fall through to the prompt below; batch
         # submissions have no TTY and are refused there with an actionable
         # unlock command rather than prompting.
-        # Phase 1 of synth-test-isolation-and-runtime — Decision D1-Option-D
-        # routes the unconditional pre-snakemake clear through this site so
+        # The unconditional pre-snakemake clear is routed through this site so
         # fixtures don't need to clear separately. metadata/ is deliberately
         # untouched: start_from_scratch=True wipes the entire analysis_dir on
         # the from-scratch path, and on the cached path metadata must persist
@@ -1673,7 +1670,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             uses ``self.analysis_paths.analysis_dir`` (multisim / master). The
             sensitivity path passes each per-member dir
             (``master/members/{analysis_id}``) because sensitivity markers
-            live under the member dir, not the master dir (Spec D).
+            live under the member dir, not the master dir.
 
         Returns
         -------
@@ -1701,7 +1698,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # _queued}/ sentinel classes record that a state-transition occurred
             # (presence == transition), distinct from the _already_written()/
             # processing-log CONTENT-success gate used for processed outputs — raw
-            # .exists() is the correct predicate here (F-I Flag 8).
+            # .exists() is the correct predicate here.
             return not any(
                 (base_dir / "_status" / d / f"{tok}.json").exists() for d in ("_submitted", "_completed", "_failed")
             )
@@ -1709,7 +1706,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         pending_tokens = [t for t in queued_tokens if _still_queued(t)]
 
         # Fast path: a genuinely-fresh analysis (no _submitted/ sentinels AND no
-        # still-_queued/ tokens) returns [] with ZERO sacct calls (R6). A previously-
+        # still-_queued/ tokens) returns [] with ZERO sacct calls. A previously-
         # submitted analysis with an empty _submitted/ but live _queued/ tokens must
         # NOT fast-return — it falls through to the PENDING-recovery sweep below.
         if not sentinels and not pending_tokens:
@@ -1719,9 +1716,10 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # The wait-rule emission layer consumes the alive set to substitute
         # wait-on-sentinel rules for the in-flight set.
         marker_less = self._classify_via_state_markers(sentinels, reclaim_completed=True, analysis_dir=base_dir)
-        # R-STALE: authoritatively classify the marker-less set via ONE batched
+        # Authoritatively classify the marker-less set via ONE batched
         # sacct call so a dead-without-marker token is never held alive (and
-        # never blocks the 8h wait-rule cap). DEAD tokens are reclaimed here.
+        # never holds a wait-rule open until the hpc_max_wait_for_inflight_min
+        # backstop fires). DEAD tokens are reclaimed here.
         alive, cleared = self._classify_stale_via_sacct(marker_less, analysis_dir=base_dir)
         if cleared:
             print(
@@ -1739,11 +1737,11 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
 
         # mechanism (b): merge PENDING-recovered tokens into the alive set so the
         # emission layer substitutes wait_for_{token} rules for still-queued sims
-        # (R1, R5 — applied in the SHARED reconcile so the multisim and sensitivity
+        # (applied in the SHARED reconcile so the multisim and sensitivity
         # emission sites both inherit it). Each recovered token is a canonical
         # rule-token (the toolkit wrote _queued/{rule_token}.json), so it flows
         # through _emit_wait_for_sim_rule_block unchanged — no comment:-token
-        # normalization (mechanism (a) eliminated). Token-keyed dedup (SE Flag 2):
+        # normalization is needed. Token-keyed dedup:
         # a _submitted/-derived (token, jobid) entry ALWAYS wins over a _queued/-
         # derived (token, "") for the same logical token — a hard-kill between the
         # runner's os.replace and its _queued/ unlink can transiently leave BOTH —
@@ -1769,19 +1767,19 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
 
         - Toolkit-owns-sbatch (the _queued/ payload carries an allocation jobid, e.g.
           Frontier 1_job_many_srun_tasks): classify via _sacct_states_batched with the
-          SAME F2 srun-step aliasing guard as _classify_stale_via_sacct (a shared
+          SAME srun-step aliasing guard as _classify_stale_via_sacct (a shared
           allocation jobid is aliasing-unsafe). DEAD -> drop the _queued/ sentinel
           (re-runs); ALIVE or sacct-UNKNOWN -> hold, returning (token, jid).
         - Executor-owns-sbatch (payload jobid null, e.g. UVA & all --executor slurm
-          batch_job — the executor assigns per-rule ids the toolkit never sees): F1-O3
+          batch_job — the executor assigns per-rule ids the toolkit never sees):
           hold-on-PRESENCE, returning (token, ""), bounded by the mtime-age fail-safe
-          (R12) — a _queued/ older than _max_plausible_job_lifetime_min is a stale
+          — a _queued/ older than the hpc_max_wait_for_inflight_min ceiling is a stale
           orphan, dropped (re-runs).
 
         NO sacct --name= run-UUID cross-check ships (mechanism (c) struck — the
-        executor's run-UUID JobName is not toolkit-controllable; F1-O1 toolkit-minted
-        identity is the named enabled future). Returns [] for an empty input with no
-        sacct call (R6 fast-path politeness)."""
+        executor's run-UUID JobName is not toolkit-controllable; it would need a
+        toolkit-minted job identity). Returns [] for an empty input with no
+        sacct call."""
         if not pending_tokens:
             return []
         queued_dir = base_dir / "_status" / "_queued"
@@ -1799,7 +1797,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         cap_min = self.cfg_analysis.hpc_max_wait_for_inflight_min
         max_plausible_s = cap_min * 60
 
-        # FQ5 (2026-09-12): rewrite planned-only sentinels with the jobid the executor was
+        # Rewrite planned-only sentinels with the jobid the executor was
         # OBSERVED to submit (tmux log), and drop the planned-never-submitted ones. No-op when
         # no tmux log exists (local mode / pruned logs) — see _rekey_queued_from_tmux_logs.
         # SCOPE NOTE (sensitivity path): the master builder calls this reconcile once per sub
@@ -1823,11 +1821,11 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             except (json.JSONDecodeError, OSError):
                 jobid_by_token[tok] = None
 
-        # Toolkit-owns set: ONE batched sacct call (R6 — only when jobid-bearing
+        # Toolkit-owns set: ONE batched sacct call (only when jobid-bearing
         # pending tokens exist; an executor-owns-only / fresh set makes no call).
         toolkit_owned_jids = [j for j in jobid_by_token.values() if j]
         states = _sacct_states_batched(toolkit_owned_jids) if toolkit_owned_jids else {}
-        # F2 srun-step aliasing guard for the _queued/ set too: a jobid shared by
+        # Srun-step aliasing guard for the _queued/ set too: a jobid shared by
         # >=2 pending tokens is not per-token authoritative -> mtime fail-safe.
         _jid_counts = Counter(toolkit_owned_jids)
         _aliased_jids = {j for j, c in _jid_counts.items() if c >= 2}
@@ -1846,7 +1844,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                         continue
                     recovered.append((tok, jid))  # alive (toolkit-owns)
                     continue
-                # jid present but sacct-UNKNOWN -> run-UUID squeue tier (FQ5), then mtime.
+                # jid present but sacct-UNKNOWN -> run-UUID squeue tier, then mtime.
                 if _squeue_live is not None:
                     if jid in _squeue_live:
                         recovered.append((tok, jid))  # PENDING/RUNNING under this run's uuid
@@ -1861,9 +1859,9 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                 age_s = max_plausible_s + 1
             if age_s >= max_plausible_s:
                 # EXEMPT-DU: status-dir-cleanup
-                qpath.unlink(missing_ok=True)  # stale orphan -> re-run (R12)
+                qpath.unlink(missing_ok=True)  # stale orphan -> re-run (mtime-age fail-safe)
                 continue
-            recovered.append((tok, jid or ""))  # held on presence (F1-O3)
+            recovered.append((tok, jid or ""))  # held on presence
         return recovered
 
     def _planned_sim_tokens(self) -> list[str]:
@@ -1890,22 +1888,22 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
 
     def _write_queued_sentinels(self, planned_tokens: list[str], alloc_jobid: str | None, analysis_dir: Path) -> None:
         """mechanism (b) PENDING-recovery writer: at submit, AFTER the snakemake
-        submission call returns success (F2-OC write-after-launch — a pre-launch
+        submission call returns success (write-after-launch — a pre-launch
         exception leaves no orphan), write _status/_queued/{rule_token}.json for every
         planned sim rule-token so a still-PENDING sim is discoverable at the next
         _reconcile_inflight_submissions BEFORE its worker writes _submitted/.
 
         Compare-and-write (mtime-preserving): the payload carries NO timestamp, so a
         re-submit of the same (token, jobid) is byte-identical and PRESERVES mtime —
-        the R12 mtime-age fail-safe therefore measures age-since-first-submit and ages
+        the mtime-age fail-safe in ``_recover_pending_from_queued`` therefore measures age-since-first-submit and ages
         out genuinely-stale orphans even across driver re-invocations (a written_at
         field would bump mtime on every submit and defeat the age-out). Toolkit-owns-
         sbatch (1_job_many_srun_tasks) records the allocation jobid (→ wait-runner
-        in-loop probe, R8); executor-owns-sbatch (batch_job) records null. The worker
+        in-loop probe); executor-owns-sbatch (batch_job) records null. The worker
         unlinks its own _queued/{token}.json at the _submitted/ write (queued→submitted
         handoff). The top-level slurm_jobid key is byte-key-equal to the _submitted/
         payload so wait_for_sentinel_runner._read_submitted_jobid reads it unchanged on
-        the _queued/ fallback (SE Flag 3)."""
+        the _queued/ fallback."""
         qdir = Path(analysis_dir) / "_status" / "_queued"
         qdir.mkdir(parents=True, exist_ok=True)
         for tok in planned_tokens:
@@ -1929,10 +1927,10 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         the executor plugin sets (``rule_{job.name}_wildcards_{...}``). Live
         jobs whose ids are not already in ``known_jobids`` are returned.
 
-        Empirical-tripwire (Phase 1 DoD note): the assumption that
+        Empirical tripwire: the assumption that
         ``sacct -o Comment`` returns the executor's
         ``rule_{job.name}_wildcards_{...}`` string on this cluster is
-        unconfirmed for UVA Rivanna / Frontier at Phase 1 close. To make the
+        unconfirmed for UVA Rivanna / Frontier. To make the
         assumption grep-detectable in HPC stderr logs rather than silently
         elided, this method emits a one-line summary of every invocation
         when sacct returned any rows: how many rows scanned, how many had
@@ -1961,7 +1959,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # partition-visibility filter, so `sacct -u $USER` returns jobs in SLURM Hidden
         # partitions (e.g. UVA shen GPU partitions) where `squeue -u $USER` is blind.
         # Do NOT "fix" this to squeue. (Empirically: sacct returns hidden-partition
-        # PENDING rows; see library/knowledge/slurm/hidden_partition_makes_per_user_squeue_blind.md.)
+        # PENDING rows.)
         out = subprocess.run(
             [
                 "sacct",
@@ -1993,8 +1991,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                         found.append((f"comment:{comment}", jid))
         # Empirical-tripwire stderr line — only when sacct returned data, to
         # avoid noise on fresh clusters with no recent user jobs. The line
-        # is the falsifiable artifact for the Phase 1 DoD's pending empirical
-        # confirmation step.
+        # is the falsifiable artifact for confirming, on a real cluster, the
+        # comment-format assumption the docstring names.
         if rows_scanned > 0:
             print(
                 f"[reconcile] sacct-comment recovery: {rows_scanned} rows scanned, "
@@ -2036,7 +2034,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             should be cleared by the lock check. When ``None`` (the
             run/submit default), the lock check falls through to
             ``self.analysis_paths.analysis_dir`` — the existing behavior on
-            every Phase-1 caller, unchanged. The reprocess path shares the
+            every existing caller, unchanged. The reprocess path shares the
             main ``analysis_dir/.snakemake/`` and passes ``skip_lock_check=True``
             instead (the lock check is bypassed for reprocess). The
             reconciliation guard is unaffected by ``working_dir`` — it sweeps
@@ -2066,8 +2064,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # additionally call _reconcile_inflight_submissions to CAPTURE the
             # alive set for wait-rule emission. The double call is idempotent:
             # reconcile only reclaims completed/failed markers and returns a
-            # stable alive set. Per sentinel-system-v2 Phase 2 (Spec C — guard
-            # call-site fan-out).
+            # stable alive set.
             self._reconcile_inflight_submissions()
         # Provenance: the executor/jobstep versions this submission runs under. The GPU
         # inner-srun form (SLURM Ticket 24862 workaround) was validated against 2.1.0/0.4.0.
@@ -2100,7 +2097,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         system_config_yaml : Path | None
             If provided, use this system config instead of self.system.system_config_yaml.
             Threaded by SensitivityAnalysisWorkflowBuilder so each member rule
-            invokes its runner script with the correct per-member system config (Phase 3).
+            invokes its runner script with the correct per-member system config.
         hpc_system_config_yaml : Path | None
             If provided, use this HPC-system config instead of
             self.analysis.hpc_system_config_yaml. Emitted as ``--hpc-system-config``
@@ -2108,7 +2105,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             no ``hpc_system_config.yaml`` was supplied) — so the emitted string is
             byte-identical to today when the third config is absent.
         target_partition : str | None
-            Phase-4 (4c): the partition whose PartitionSpec GPU hardware/backend the
+            The partition whose PartitionSpec GPU hardware/backend the
             GPU-compile runners (setup_workflow, run_simulation_runner) resolve +
             inject into ``TRITONSWMM_system``. Emitted as ``--target-partition`` ONLY
             when provided — the shared/non-GPU-compile rule emissions pass None and
@@ -2142,13 +2139,12 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         """Pre-delete `_status/*.flag` markers so Snakemake's MTIME trigger
         re-fires the dependent rules on the next workflow invocation.
 
-        Per cleanup-rerun-delete-redesign Phase 4 + R10. Snakemake's DAG
-        re-planning cascades downstream invalidation automatically once an
+        Snakemake's DAG re-planning cascades downstream invalidation automatically once an
         upstream input flag is deleted — the helper itself only deletes the
         directly-matched flags + their `.flag.json` sidecars.
 
-        Glob anchors use delimiter-anchored separators per the FQ3 canonical
-        flag-name table — ``*member-{v}_*.flag`` (non-terminal) AND
+        Glob anchors use delimiter-anchored separators —
+        ``*member-{v}_*.flag`` (non-terminal) AND
         ``*member-{v}.flag`` (terminal). Substring-only ``*member-{v}*.flag`` is
         NOT used because it false-matches `member-1` against `member-10`, `member-11`,
         `member-100`.
@@ -2187,7 +2183,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         def _subject_matches(name: str) -> bool:
             """True when a flag belongs to the requested subject.
 
-            Delimiter-anchored per the FQ3 canonical flag-name table -- ``member-{v}_``
+            Delimiter-anchored on the canonical flag names -- ``member-{v}_``
             (non-terminal) and ``member-{v}.flag`` (terminal). Substring-only matching is NOT
             used: it false-matches `member-1` against `member-10`, `member-11`, `member-100`.
             """
@@ -2243,8 +2239,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             sidecar.unlink(missing_ok=True)
 
         # The `render` floor has no completion flag to delete, so the CALLER must invalidate
-        # what the plot/export/render rules read -- reprocess_snakefile_generator.py:39-42
-        # says exactly that ("Snakemake's mtime trigger re-fires only what the caller
+        # what the plot/export/render rules read -- the reprocess_snakefile_generator
+        # module docstring says exactly that ("Snakemake's mtime trigger re-fires only what the caller
         # invalidated"), and today no caller does. That is why a Snakefile regeneration at
         # 2026-08-05 17:19 left 28 figures from 2026-08-04 13:59 untouched.
         #
@@ -2261,7 +2257,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # `and not dry_run`: a dry run previews the DAG and must not destroy the deliverable
         # it is previewing. This block is the ONLY member of the force-rerun pre-delete family
         # that removes rendered CONTENT rather than a zero-byte trigger, and unlike the flag
-        # and report-artifact deletions the governing stipulation admits, nothing on a dry-run
+        # and report-artifact deletions elsewhere in this family, nothing on a dry-run
         # path regenerates it -- a measured serial report render is 63 minutes. Its preview
         # yield is also zero: at a render floor `_FLOOR_FLAG_PREFIXES["render"]` is empty, so
         # deleting the figures would only reveal "every plot rule re-fires", which restates the
@@ -2282,8 +2278,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                 self.analysis_paths.analysis_dir / "plots",
                 on_select=lambda p: logger.info("force_rerun[stage=render]: deleting figure %s", p),
             )
-            # Clause 1: ONE accounting call for every figure + sidecar (Gotcha 38's O(1)
-            # decrement now lives inside the tool).
+            # ONE accounting call for every figure + sidecar (the O(1) DU-sentinel
+            # decrement lives inside the tool).
             from hhemt.du_sentinels import delete_and_account
 
             delete_and_account(_render_targets, scope_dir=self.analysis_paths.analysis_dir, scope="analysis")
@@ -2306,8 +2302,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         same partition, e.g. Frontier ``batch``).
 
         A token ``--gres=gpu:1`` on the GPU partition is deliberately NOT used: it holds
-        a GPU idle for a serial run and trips the RC 0%-GPU-utilization auto-cancel
-        (architecture-doc Gotcha 32), trading a fail-fast submit rejection for a
+        a GPU idle for a serial run and trips the RC 0%-GPU-utilization auto-cancel,
+        trading a fail-fast submit rejection for a
         mid-run kill.
         """
         return (
@@ -2336,7 +2332,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         Parameters
         ----------
         partition : str | None
-            SLURM partition name (defaults to "standard" if None)
+            SLURM partition name. Required outside local mode (None raises ValueError);
+            in local mode a None is interpolated as the literal "None".
         runtime_min : int
             Runtime limit in minutes
         mem_mb : int
@@ -2393,7 +2390,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # GPU binding is re-established by run_simulation.py's inner gres srun. Since
         # 19ef9fa4 that srun is `--ntasks=N --gpus-per-task=1` (tres_bind per_task:1)
         # with NO --overlap (SLURM Ticket 24862, 2026-09-21) and the hhemt.gpu_bind_guard
-        # wrapper; the older `--ntasks-per-gpu=1 -> single:1` form (P1-b) survives only
+        # wrapper; the older `--ntasks-per-gpu=1 -> single:1` form survives only
         # on the single-GPU / 1_job_many_srun_tasks branch.
         #
         # Single-GPU gres (gpus_total==1), Frontier gpus-mode, and CPU jobs are
@@ -2402,8 +2399,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # --exclusive (whole-node hold) is correct ONLY when the sim wants every GPU
         # on the node. For a strict subset (2 <= n_gpus < gpus_per_node) we allocate
         # exactly n_gpus GPUs + cpus_per_task=1 (no carve). NOTE (2026-09-21): the
-        # partial-node grant does NOT by itself guarantee N bound GPUs -- §B.10's PASSes
-        # measured placements (SLURM Ticket 24862 makes an --overlap step short on a
+        # partial-node grant does NOT by itself guarantee N bound GPUs, even where measured
+        # placements passed (SLURM Ticket 24862 makes an --overlap step short on a
         # mixed-locality grant; member 40 ran 4 ranks on 2 GPUs). Binding is now
         # guaranteed by the inner srun (no --overlap) + hhemt.gpu_bind_guard, not by
         # this grant. gpus_total >= gpus_per_node_config also covers multi-node
@@ -2438,14 +2435,13 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # --exclusive (whole-node hold) is emitted ONLY for a full-node GPU sim
             # (n_gpus >= gpus_per_node — single full node or multi-node full-GPU). It
             # upgrades the grant to whole-node so every GPU's gres.conf affinity cores
-            # are held -> all N bind (the sa_36 fix; Matrix C/D + knowledge doc
-            # single_vs_per_task_gres_binding_on_shared_affinity_topology.md).
+            # are held -> all N bind.
             # For a STRICT SUBSET (2 <= n_gpus < gpus_per_node) --exclusive is OMITTED:
             # the partial-node grant (gres/gpu=N, cpus_per_task=1) binds all N GPUs on
-            # both a6000 and a100 (Appendix B.10, 2026-06-10), and holding the whole
+            # both a6000 and a100 (measured 2026-06-10), and holding the whole
             # node would strand the unused GPUs and trip the RC 0%-util auto-cancel.
             # Do NOT carve cpus_per_task for subsets — the per-GPU carve half-binds
-            # a100 (B.10/B.3). slurm_extra is the executor passthrough; the bare
+            # a100. slurm_extra is the executor passthrough; the bare
             # exclusive=True resource key is NOT recognized.
             if full_node_gpu:
                 block += ',\n        slurm_extra="--exclusive"'
@@ -2461,7 +2457,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                 else:
                     block += f',\n        gres="gpu:{gpus_per_node}"'
 
-        # ---- T15(iii): the global in-flight CPU weight. -----------------------
+        # ---- the global in-flight CPU weight. -----------------------
         # ABSENT-NOT-INFINITE: when max_concurrent_cpus is unset we append NOTHING,
         # so this block is byte-identical to a tree without the feature and both
         # Snakefile goldens are untouched. The name is namespaced so it can never
@@ -2472,7 +2468,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # partition eligibility.
         #
         # THE WEIGHT IS WHAT SLURM METERS, NEVER WHAT THE JOB REQUESTS. Under
-        # `--exclusive` (Gotcha 32's full-node hold) SLURM charges the WHOLE NODE
+        # `--exclusive` (a full-node hold) SLURM charges the WHOLE NODE
         # while tasks*cpus_per_task under-counts it -- MEASURED at 6x on job
         # 14452815 (ReqTRES cpu=16 vs AllocTRES cpu=96, a 2-node a6000 hold at
         # 48 CPU/node). A budget that under-counts permits breaching the ceiling
@@ -2537,16 +2533,16 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         return max(1, math.ceil(total_gpus / gpus_per_node))
 
     def _get_report_cfg_static_backend(self) -> Literal["matplotlib", "plotly"]:
-        # Post-F2 (R1): cfg_analysis.report is required by analysis_config
+        # cfg_analysis.report is required by analysis_config
         # Pydantic schema; sourcing static_backend inline removes the need
         # for the legacy peer-file path resolution.
         return self.cfg_analysis.report.interactive.static_backend
 
     def _resolve_account(self) -> str | None:
-        """Phase-2 (R3): SLURM account default-resource.
+        """SLURM account default-resource.
 
         Returns cfg_hpc_system.default_account when the per-HPC-system config is
-        present; else None (Phase-4 4d: the legacy cfg_analysis.hpc_account is
+        present; else None (the legacy cfg_analysis.hpc_account is
         retired — a LOCAL analysis has no account and emits none, byte-identical
         to the prior null read).
         """
@@ -2555,26 +2551,26 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         return None
 
     def _resolve_gpu_alloc_mode(self) -> Literal["gres", "gpus"]:
-        """Phase-2 (R3): gres-vs-gpus GPU allocation channel.
+        """Gres-vs-gpus GPU allocation channel.
 
         Prefer cfg_hpc_system.gpu_allocation_flavor; default to "gpus" when no
-        flavor is declared (Phase-4 4c: the legacy
+        flavor is declared (the legacy
         cfg_system.preferred_slurm_option_for_allocating_gpus is retired; the
         "gpus" default preserves the legacy ``or "gpus"`` behavior).
         """
         if self.cfg_hpc_system is not None and self.cfg_hpc_system.gpu_allocation_flavor is not None:
             return self.cfg_hpc_system.gpu_allocation_flavor
-        # Phase-4 (4c): legacy cfg_system.preferred_slurm_option_for_allocating_gpus
+        # Legacy cfg_system.preferred_slurm_option_for_allocating_gpus
         # retired; default to "gpus" when no flavor is declared (byte-identical to
         # the legacy ``or "gpus"`` default).
         return "gpus"
 
     def _resolve_gpus_per_node(self, partition_name: str | None) -> int:
-        """Phase-2 (R3): per-node GPU topology for the given (sim) partition.
+        """Per-node GPU topology for the given (sim) partition.
 
         Prefer the PartitionSpec.gpus_per_node of the named partition when
         cfg_hpc_system is present AND the partition is declared AND it carries a
-        gpus_per_node value; else 0 (Phase-4 4d: the legacy
+        gpus_per_node value; else 0 (the legacy
         cfg_analysis.hpc_gpus_per_node is retired; 0 == no GPU topology per the
         _build_resource_block contract).
         """
@@ -2585,13 +2581,13 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         return 0
 
     def _resolve_cpus_per_node(self, partition_name: str | None) -> int | None:
-        """Phase-4 (4a, unconsumed): per-node CPU topology for the given partition.
+        """Per-node CPU topology for the given partition.
 
         Prefer the PartitionSpec.cpus_per_node of the named partition when
         cfg_hpc_system is present AND the partition is declared AND it carries a
-        cpus_per_node value; else None (Phase-4 4d: the legacy
-        cfg_analysis.hpc_cpus_per_node is retired; the `not isinstance(..., int)`
-        guard at the one-big-job dry-run preserves graceful-skip on None).
+        cpus_per_node value; else None (the legacy cfg_analysis.hpc_cpus_per_node
+        is retired). Consumed by the full-node GPU branch of the global CPU weight
+        in ``_build_resource_block``, which raises ConfigurationError on None.
         """
         if self.cfg_hpc_system is not None and partition_name is not None:
             spec = self.cfg_hpc_system.partitions.get(partition_name)
@@ -2600,35 +2596,34 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         return None
 
     def _resolve_gpu_hardware(self, partition_name: str | None) -> str | None:
-        """Phase-4 (4a, unconsumed): the GPU arch string for the given partition.
+        """The GPU arch string for the given partition.
 
-        Prefer the PartitionSpec.gpu_hardware of the named partition (D1 Option-A:
-        gpu_hardware lives on the partition spec) when cfg_hpc_system is present
-        AND the partition is declared AND it carries a gpu_hardware value; else
-        None (Phase-4 4c: the legacy cfg_system.gpu_hardware is retired). The
-        system.py reads switched to the DI'd attribute in 4c; this builder helper
-        resolves the per-partition value to inject + to emit in SLURM directives.
+        Prefer the PartitionSpec.gpu_hardware of the named partition (gpu_hardware
+        lives on the partition spec) when cfg_hpc_system is present AND the
+        partition is declared AND it carries a gpu_hardware value; else None (the
+        legacy cfg_system.gpu_hardware is retired). system.py reads the injected
+        attribute; this builder helper resolves the per-partition value to inject
+        and to emit in SLURM directives, for ``generate_snakefile_content`` and
+        ``_generate_single_job_submission_script``.
         """
         if self.cfg_hpc_system is not None and partition_name is not None:
             spec = self.cfg_hpc_system.partitions.get(partition_name)
             if spec is not None and spec.gpu_hardware is not None:
                 return spec.gpu_hardware
-        # Phase-4 (4c): legacy cfg_system.gpu_hardware retired; None when the
+        # Legacy cfg_system.gpu_hardware retired; None when the
         # partition declares no GPU hardware / no hpc_system_config is present.
         return None
 
     def _resolve_additional_modules(self) -> str | None:
-        """Phase-4 (4a, unconsumed): the `module load` argument string.
+        """The `module load` argument string.
 
-        Prefer cfg_hpc_system.additional_modules (a ``list[str]``) joined on a
-        single space into the ``str`` the `module load {modules}` emitters expect
-        (module names are space-free, so the join is lossless — D1 str↔list
-        bridge); else the legacy cfg_system field (already a space-joined str).
-        Returns None when neither source supplies modules so the existing
-        ``if modules:`` guards stay byte-identical. Added additive/unconsumed in
-        4a; consumers wire when the legacy fields are removed in 4c.
+        cfg_hpc_system.additional_modules (a ``list[str]``) joined on a single
+        space into the ``str`` the `module load {modules}` emitters expect (module
+        names are space-free, so the join is lossless). There is no cfg_system
+        fallback. Returns None when no modules are configured so the existing
+        ``if modules:`` guards stay byte-identical.
         """
-        # Phase-4 (4c): single join site is the config.hpc_system free function
+        # The single join site is the config.hpc_system free function
         # (also used by the GPU-compile runners, which have no builder instance);
         # the legacy cfg_system fallback is retired.
         return resolve_additional_modules(self.cfg_hpc_system)
@@ -2636,7 +2631,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
     def _make_rule_emission_context(self, *, static_backend: Literal["matplotlib", "plotly"]) -> RuleEmissionContext:
         """Build the shared per-Snakefile-emission context the new
         module-level rule helpers (_emit_plot_rule, _emit_render_report_rule,
-        _emit_rule_all) consume. Post-F2: all renderer + runner rules read
+        _emit_rule_all) consume. All renderer + runner rules read
         their report cfg inline from cfg_analysis.report, so a single
         config-args string suffices.
         """
@@ -2645,7 +2640,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # `--executor slurm` (matching render_report/setup/process/consolidate).
         # Empty in `local` mode so the emitted Snakefile is byte-identical there
         # and no literal "None" partition leaks.
-        # [Q8] Defect 2: emit the CPU processing partition when the report-tail
+        # Emit the CPU processing partition when the report-tail
         # plot rules will run under `--executor slurm`. That is true for the
         # NATIVE dispatch families (multi_sim_run_method != "local", e.g.
         # 1_job_many_srun_tasks / batch_job — the pre-fix clause, unchanged) AND
@@ -2664,7 +2659,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             str(self.cfg_analysis.hpc_setup_and_analysis_processing_partition or "") if _runs_under_slurm else ""
         )
         # Local import: keeps workflow.py's module-level import set unchanged and matches
-        # this file's existing habit for report_renderers symbols (:486, :727, :808, :2697).
+        # this file's existing habit of importing report_renderers symbols locally.
         from hhemt.report_renderers._model_arms import arm_label as _arm_label
 
         return RuleEmissionContext(
@@ -2696,9 +2691,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
     ) -> str:
         """Generate the Snakemake rule for the 2-panel system-overview plot.
 
-        Left panel is the SWMM model elements view (R5); right panel is the
-        DEM elevation raster. Combined into one figure per iteration-4
-        feedback from the Phase 2 STOP gate.
+        Left panel is the SWMM model elements view; right panel is the
+        DEM elevation raster, combined into one figure.
 
         ``input_flag`` defaults to the regular multisim consolidation flag
         (`e_consolidate_complete`); the sensitivity master Snakefile passes
@@ -2767,7 +2761,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
     ) -> str:
         """Emit the Snakemake rule for the Disk Utilization sidebar card.
 
-        Reads the analysis-level `_status/_du.json` written by Phase 1's
+        Reads the analysis-level `_status/_du.json` written by the
         analysis-scope consolidate path; renders a compact HTML table.
         """
         if ctx is None:
@@ -2803,7 +2797,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         *,
         ctx: RuleEmissionContext | None = None,
     ) -> str:
-        """Emit the Snakemake rule for the Metadata report page (ADR-14 / C10).
+        """Emit the Snakemake rule for the Metadata report page.
 
         Projects the `ro-crate-metadata.json` provenance sidecar written at
         consolidation, the reprex reproduction guide (pure config-schema
@@ -2845,7 +2839,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         *,
         ctx: RuleEmissionContext | None = None,
     ) -> str:
-        """Emit the Snakemake rule for the Workflow performance page (`[Q160]`(7)).
+        """Emit the Snakemake rule for the Workflow performance page.
 
         The whole-experiment run timeline (projected from the per-rule
         `_status/*.flag.json` sidecars) and the SLURM resource-efficiency table, both
@@ -2903,8 +2897,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         Clearing is driven by ``cfg_analysis.clear_raw`` + the
         ``--override-clear-raw`` runtime override (this method's
         ``override_clear_raw`` parameter); force-rerun is handled by
-        ``--override-force-rerun`` via login-side flag pre-deletion (per
-        cleanup-rerun-delete-redesign Phase 4).
+        ``--override-force-rerun`` via login-side flag pre-deletion.
         """
         override_clear_raw_arg = (
             f"--override-clear-raw '{json.dumps(override_clear_raw)}' " if override_clear_raw is not None else ""
@@ -2994,7 +2987,7 @@ rule process_{model_type}:
         unexpected sim absence still fails fast.
 
         Force-rerun is handled by ``--override-force-rerun`` via login-side
-        flag pre-deletion (per cleanup-rerun-delete-redesign Phase 4).
+        flag pre-deletion.
         """
         return f'''
 rule consolidate:
@@ -3038,7 +3031,7 @@ rule consolidate:
 
         This rule is deliberately NOT a member of the ``process_evt_{event_id}`` Snakemake group
         (removed 2026-07-19; the three ``process_{model_type}`` rules RETAIN their grouping, so
-        Gotcha 29's per-event scheduling-cost optimization is preserved for them).
+        the per-event scheduling-cost saving that grouping buys is preserved for them).
 
         ESTABLISHED (empirical, four cluster runs — see below): adding this rule to the group
         prevents the WHOLE group from being dispatched. No submission line, no
@@ -3049,7 +3042,7 @@ rule consolidate:
         DISPROVEN (do not reinstate this explanation): an earlier version of this docstring, and
         the message of commit 351818f, attributed the failure to ``GroupJob.is_local`` returning
         ``any(...)`` (``jobs.py:1708-1710``) routing the group to the local executor. That
-        mechanism CANNOT fire for a grouped rule. ``workflow.py:737-741`` gates the localrules
+        mechanism CANNOT fire for a grouped rule. Snakemake's own ``workflow.py:737-741`` gates the localrules
         path behind ``rule.group is None``, so ``workflow.is_local`` is False for every grouped
         rule regardless of ``localrules:`` / ``norun`` / ``is_template_engine``; the only other
         disjunct (``jobs.py:1039-1044``) requires ``SharedFSUsage.INPUT_OUTPUT not in
@@ -3124,6 +3117,7 @@ rule consolidate_scenario:
         override_clear_raw: ClearRawValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
+        debug: bool = False,
         report_formats: list[str] | None = None,
         alive_by_token: dict[str, str] | None = None,
     ) -> str:
@@ -3149,14 +3143,14 @@ rule consolidate_scenario:
             ``process_system_level_inputs`` are both False the rule only touches its
             completion flag. It does NOT compile: no emitted setup rule carries a
             ``--compile-*`` flag, so the rule ASSERTS the solver tier rather than
-            building it (ASSERT-NOT-BUILD, D84). In container mode it performs no
+            building it (ASSERT-NOT-BUILD). In container mode it performs no
             such check, because the SIF carries the binary.
         recompile_if_already_done_successfully : bool
             Forwarded to the generated setup rule's ``hhemt.setup_workflow``
             invocation as ``--recompile-if-already-done``, where it has no reachable
             consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
             sits behind an ``args.compile_*`` gate that no emitted rule sets
-            (ASSERT-NOT-BUILD, D84). The parameter itself is NOT dead —
+            (ASSERT-NOT-BUILD). The parameter itself is NOT dead —
             ``TRITONSWMM_system.compile_TRITON_SWMM`` / ``compile_TRITON_only`` /
             ``compile_SWMM`` each read it — but only when called directly, never
             through this workflow.
@@ -3178,6 +3172,10 @@ rule consolidate_scenario:
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
             If True, resume simulations from last checkpoint
+        debug : bool
+            The run's ``--debug`` flag, emitted as ``--debug`` on every run-simulation rule
+            shell when True and on none when False, so the runner can make a coupled clean
+            start keep the previous run's snapshot files.
 
         Returns
         -------
@@ -3214,9 +3212,9 @@ rule consolidate_scenario:
         # Conservative estimate: 2GB per CPU (can be made configurable later)
         mem_mb_per_sim = self.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
         n_nodes = self.cfg_analysis.n_nodes or 1
-        # Phase 2 (R3): prefer the partition-sourced GPU topology + allocation
+        # Prefer the partition-sourced GPU topology + allocation
         # flavor from cfg_hpc_system when present; byte-identical legacy reads
-        # when absent. The sim rules target hpc_ensemble_partition (1591/1772),
+        # when absent. The sim rules target hpc_ensemble_partition,
         # so the topology is keyed on that partition's PartitionSpec.
         gpus_per_node_config = self._resolve_gpus_per_node(self.cfg_analysis.hpc_ensemble_partition)
         gpu_alloc_mode = self._resolve_gpu_alloc_mode()
@@ -3224,7 +3222,7 @@ rule consolidate_scenario:
         # Get absolute path to conda environment file using helper
         conda_env_path = self._get_conda_env_path()
         config_args = self._get_config_args()
-        # Phase-4 (4c): the SETUP rule (which in native mode asserts the GPU build)
+        # The SETUP rule (which in native mode asserts the GPU build)
         # and the SIM rule (which runs it) resolve GPU hardware/backend from the
         # ENSEMBLE (sim) partition's PartitionSpec via --target-partition. NB: the
         # ensemble partition (NOT the processing partition) is the source for the
@@ -3277,7 +3275,7 @@ rule consolidate_scenario:
             cpus_per_task=1,
         )
 
-        # Option A (in-rule processing, 2026-09-12): when the toggle is on AND processing is
+        # In-rule processing: when the toggle is on AND processing is
         # requested, the sim rule absorbs the process step, so its allocation must cover
         # both: mem = max(sim, process), runtime = sim + process. OFF => +0 / max(x, 0),
         # byte-identical to a tree that has never heard of the field.
@@ -3334,10 +3332,11 @@ rule consolidate_scenario:
         # inputs MUST match or Snakemake's DAG planner cannot resolve the wildcards.
         _ext = _resolve_rule_all_extensions(self._get_report_cfg_static_backend())
 
-        # ADR-2 (OE-1 anti-drift): the rule_all + render_report input stems for
+        # Anti-drift: the rule_all + render_report input stems for
         # the per-sim figures derive from the SAME single-source helper as the
         # rule OUTPUTS, so a future stem-grammar change in report_plot_ids cannot
-        # desync inputs from outputs (-> MissingInputException / Gotcha 37/39).
+        # desync inputs from outputs (-> MissingInputException, or the report
+        # engine's "marked for report but does not exist").
         # {event_id} stays a literal Snakemake wildcard for the emitted expand().
         _ep_per_sim = _plot_output_template(
             renderer_kind="event_page",
@@ -3347,7 +3346,7 @@ rule consolidate_scenario:
 
         _formats = report_formats if report_formats is not None else ["zip"]
         render_targets_in_rule_all = "".join(f',\n        "analysis_report.{fmt}"' for fmt in _formats)
-        # Phase 3: per-plot disable. The multisim rule all + render_report inputs are
+        # Per-plot disable. The multisim rule all + render_report inputs are
         # literal lists (not renderer_selection loops), so build the active plot-input
         # items here — in the standard set's renderer order, filtered by
         # disabled_renderers — and interpolate them into BOTH so emission (the
@@ -3364,7 +3363,7 @@ rule consolidate_scenario:
             # This list feeds BOTH `rule all` and `render_report` (the
             # _render_report_input_block below reuses it), so the two surfaces
             # cannot drift out of lockstep -- which is what would otherwise
-            # produce the Gotcha 37/39 "marked for report but does not exist"
+            # produce the "marked for report but does not exist"
             # WorkflowError.
             _plot_items.append(f'expand("{_ep_per_sim}", event_id=SIM_IDS)')
         if renderer_active("per_analysis_summary", _disabled):
@@ -3519,10 +3518,10 @@ rule prepare_scenario:
                 model_threads = snakemake_threads
 
             _loc = self._resolved_execution_locus
-            # Option A / D2 (2026-09-12). OFF => every operand collapses to today's literal.
+            # In-rule processing. OFF => every operand collapses to today's literal.
             _sim_priority = (
                 20 if model_type == "swmm" else 0
-            )  # D2 ladder: consolidate 100 > swmm 20 > prepare 10 > TRITON 0
+            )  # priority ladder: consolidate 100 > swmm 20 > prepare 10 > TRITON 0
             if _in_rule:
                 _which_arg_by_model = {"triton": "TRITON", "tritonswmm": "both", "swmm": "SWMM"}
                 _in_rule_clear_raw_arg = (
@@ -3577,7 +3576,7 @@ rule run_{model_type}:
             --event-iloc {{params.event_iloc}} \\
             {gpu_compile_config_args} \\
             --model-type {model_type} \\
-            {"--pickup-where-leftoff " if pickup_where_leftoff else ""}{_run_defer_arg}\\
+            {"--pickup-where-leftoff " if pickup_where_leftoff else ""}{"--debug " if debug else ""}{_run_defer_arg}\\
             --flag-output {_run_flag_ref} \\
             --rule-name run_{model_type} {"--execution-locus " + _loc + " " if _loc else ""}\\
             --event-id {{wildcards.event_id}} \\
@@ -3593,12 +3592,11 @@ rule run_{model_type}:
             # explicit ruleorder; the wildcard-vs-concrete output overlap IS
             # that ambiguity, and the ruleorder line is the documented
             # resolution (Snakemake docs § Handling Ambiguous Rules).
-            # R-WAITCAP: cap the wait-rule poll at the waited-on sim's own
-            # walltime+slack, bounded above by the optional override ceiling.
-            # The wait-rule now detects job death in-loop (SLURM-liveness probe
-            # in wait_for_sentinel_runner.py), so the cap is a pure backstop —
-            # the operator's hpc_max_wait_for_inflight_min ceiling directly, not
-            # the old walltime-derived min(). Queue-time is no longer truncated.
+            # Cap the wait-rule poll at the operator's hpc_max_wait_for_inflight_min
+            # ceiling. The wait-rule detects job death in-loop (SLURM-liveness probe
+            # in wait_for_sentinel_runner.py), so the cap is a pure backstop.
+            # Deliberately NOT the waited-on sim's walltime+slack: a waited-on job
+            # may still be QUEUED, and a walltime-derived cap would truncate queue time.
             wait_walltime_cap_min = self.cfg_analysis.hpc_max_wait_for_inflight_min
             _prefix = f"run_{model_type}_evt-"
             for rule_token in sorted(alive_by_token or {}):
@@ -3625,7 +3623,7 @@ rule run_{model_type}:
 
         # Add output processing rules (one per model type) if requested
         if process_timeseries:
-            # Option A: with in-rule processing the run rules already produce d_process;
+            # With in-rule processing the run rules already produce d_process;
             # a separate process rule would be a second producer of the same output.
             for model_type in [] if _in_rule else enabled_models:
                 # Determine --which flag based on model type
@@ -3651,8 +3649,9 @@ rule run_{model_type}:
 
             # Per-scenario consolidate rule: fans-in on all enabled model_types' process flags
             # for a given event_id and writes the per-scenario _du.json sentinel exactly once.
-            # Resource block is intentionally lightweight; SLURM grouping absorbs the wall-clock
-            # cost into the per-event process-rule allocation (see _build_process_rule_block).
+            # Resource block is intentionally lightweight: the rule only fans in the process flags
+            # and writes one small DU sentinel. It is NOT grouped with the per-event process rules
+            # (_build_consolidate_scenario_rule_block says why), so it is submitted as its own job.
             consolidate_scenario_resources = self._build_resource_block(
                 partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
                 runtime_min=10,
@@ -3700,7 +3699,7 @@ rule run_{model_type}:
             consolidate_resources=consolidate_resources,
             compression_level=compression_level,
         )
-        # Registry-driven plot-rule dispatch (P1b / TO-8): the active set's
+        # Registry-driven plot-rule dispatch: the active set's
         # renderer_selection (default → its eight renderers in order) is the
         # single source of which renderers fire. Replaces the hardcoded call list.
         snakefile_content += self._emit_active_set_plot_rules(
@@ -3710,7 +3709,7 @@ rule run_{model_type}:
         )
         # export_scenario_status: set-invariant, non-figure workflow rule
         # (scenario_status.csv + a top-level localrules:); intentionally NOT a
-        # renderer_selection entry (Option B); emitted as a dispatcher sibling in
+        # renderer_selection entry; emitted as a dispatcher sibling in
         # its historical trailing position (multisim has no conditional renderers,
         # so no interleave hook).
         snakefile_content += self._build_export_scenario_status_rule(
@@ -3755,9 +3754,10 @@ rule render_report:
     def _collect_per_analysis_summary_source_paths(self) -> list[dict]:
         """Return analysis-dir-relative .rpt + TRITON-log descriptors the renderer reads.
 
-        Per Gotcha 5: dispatch on enabled model types — `swmm_hydraulics_rpt`
-        for TRITON-SWMM coupled mode, `swmm_full_rpt_file` for SWMM-only;
-        `log_run_tritonswmm` / `log_run_triton` for TRITON-side logs.
+        Dispatches on enabled model types — `swmm_hydraulics_rpt` for TRITON-SWMM
+        coupled mode, `swmm_full_rpt_file` for SWMM-only; and, per enabled model
+        type, the model-state JSON log `sim_folder/log_{mt}.json`, which is what the
+        renderer reads for status counts (NOT the `log_run_*` execution logs).
 
         Each returned dict has the schema ``{"path": str, "variables": list[str]}``
         — the variable list names which fields the renderer parses from each
@@ -3767,8 +3767,7 @@ rule render_report:
 
         Sensitivity-master detection: if the analysis is a sensitivity master,
         iterate per-member scenarios so the master per_analysis_summary
-        table has provenance for every member's status counts (per
-        Iteration 6 "show all members" scope).
+        table has provenance for every member's status counts.
         """
         import os as _os
 
@@ -3847,12 +3846,12 @@ rule render_report:
         *,
         ctx: RuleEmissionContext | None = None,
     ) -> str:
-        """Generate the Snakemake rule for the per-analysis summary table (R7).
+        """Generate the Snakemake rule for the per-analysis summary table.
 
         Produces `plots/per_analysis/summary_table.html` — a Tabulator data
         grid (n sims, expected total, n successful/pending/failed, enabled
         model types, sensitivity-analysis mode). HTML emit replaced the prior
-        matplotlib SVG path at Phase 6.
+        matplotlib SVG path.
 
         ``input_flag`` defaults to the regular multisim consolidation flag
         (`e_consolidate_complete`); the sensitivity master Snakefile passes
@@ -3883,7 +3882,7 @@ rule render_report:
             # two rules race after the flag; when this plot rule wins the CSV is
             # absent and the renderer's fallback path reads per-scenario logs +
             # the coupled `out_tritonswmm/swmm/hydraulics.rpt`, which the
-            # renderer-IO audit (Gotcha 53) flags as an undeclared read. Making
+            # renderer-IO audit flags as an undeclared read. Making
             # the CSV a hard DAG input forces the renderer's CSV-authoritative
             # path (reads only the CSV), matching plot_scenario_status_appendix
             # and plot_errors_and_warnings, which already declare it.
@@ -3899,7 +3898,7 @@ rule render_report:
     ) -> str:
         """Generate the Snakemake rule for the scenario_status.csv Appendix table.
 
-        Iter 8 agenda item 3: produces `plots/appendix/scenario_status.html` —
+        Produces `plots/appendix/scenario_status.html` —
         an inline-styled HTML table rendered from `analysis_dir / scenario_status.csv`
         (written by the `export_scenario_status` Snakemake rule on the success
         path; the `onerror:` hook is retained as a partial-run debugging
@@ -3952,12 +3951,11 @@ rule render_report:
     ) -> str:
         """Generate the Snakemake rule for the Errors and Warnings validation report.
 
-        Iter 9 agenda: produces `plots/errors_and_warnings/validation_report.html`
-        — calls `analysis_validation.validate_analysis(analysis)` and renders
-        a structured pass/fail report organized into 4 sections (system-level
-        checks; aggregate per-scenario; granular per-scenario failures;
-        resource-utilization mismatches). Replaces the placeholder injection
-        for "Errors and Warnings" added in Subiteration 8.1.
+        Produces `plots/errors_and_warnings/validation_report.html` — renders the
+        persisted `validation_report.json` read-model (via `load_validation_report`,
+        never `validate_analysis` at render time) as a structured pass/fail report:
+        overall banner; system-level checks; aggregate per-scenario checks;
+        resource-utilization mismatches; granular per-scenario failures.
 
         ``input_flag`` defaults to the regular multisim consolidation flag;
         the sensitivity master Snakefile passes the master flag instead.
@@ -4015,14 +4013,14 @@ rule render_report:
             log_path_template="logs/plots/errors_and_warnings.log",
             # validation_report.json is the READ-MODEL this renderer transcribes
             # (errors_and_warnings.render -> load_validation_report; never
-            # validate_analysis at render time, Gotcha 53 Class-Y). Without it as a
+            # validate_analysis at render time). Without it as a
             # declared input, Snakemake has no dependency on the read-model and a
-            # re-persist never re-renders. Measured on delivered generation
+            # re-persist never re-renders. Observed on a report built at toolkit commit
             # 01655abb60c2: the persisted JSON carried 14 checks all passing while the
             # shipped HTML rendered an 11-check model with `EDA calc ran` FAILING at
             # `eda_dir_exists=False` -- the HTML predated analysis.eda(), and
-            # persist_validation_report re-ran afterwards (consolidate_workflow.py:487,
-            # export_scenario_status.py:444 and :477) with no re-render.
+            # persist_validation_report re-ran afterwards (for example from
+            # export_scenario_status) with no re-render.
             additional_inputs=("scenario_status.csv", "validation_report.json"),
         )
         return _emit_plot_rule(spec, ctx)
@@ -4101,7 +4099,7 @@ rule export_scenario_status:
 '''
 
     def _build_plot_rule_block_per_sim(self, *, ctx: RuleEmissionContext | None = None) -> str:
-        """Generate two per-sim plot rules wildcarded over event_id (Phase 3, R6).
+        """Generate two per-sim plot rules wildcarded over event_id.
 
         `params.source_paths` for each rule is a function-based lookup
         (`_per_sim_*_sources`) that reads event-scoped paths at rule-schedule
@@ -4198,14 +4196,15 @@ def _per_sim_event_page_sources(wildcards):
             "printshellcmds": True,
             "rerun-incomplete": True,
             "keep-going": True,
-            # Phase 1 (v2 post-death-recovery hardening): narrow to mtime only so a
+            # Post-death-recovery hardening: narrow to mtime only so a
             # resume after driver/orchestrator death cannot re-fire COMPLETED sims via
             # the `input` trigger (which would waste GPU-days). The mtime trigger still
             # covers every legitimate rerun the toolkit relies on — including the
             # per-member_id fingerprint mechanism (member-{id}_inputs.json bumps mtime on
-            # content change; see Gotcha 17 and the comment near the fingerprint write
-            # site) and missing-output reruns after Phase 2 DEAD-token reclaim. The
-            # delete (:5045 → mtime,input) and reprocess (:4546/:7044 → mtime) paths
+            # content change; see the comment near the fingerprint write
+            # site) and missing-output reruns after DEAD-token reclaim. The
+            # delete (`_submit_delete_snakemake` → mtime,input) and reprocess
+            # (`submit_reprocess_workflow` → mtime) paths
             # set --rerun-triggers explicitly on the CLI, which overrides this profile
             # default under configargparse precedence, so they are unaffected.
             "rerun-triggers": ["mtime"],
@@ -4232,7 +4231,7 @@ def _per_sim_event_page_sources(wildcards):
         else:  # slurm
             # SLURM mode: support both modern executor and legacy cluster modes
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition
-            # Phase-4 (4d): concurrency cap moved to hpc_system_config.max_concurrent_jobs.
+            # The concurrency cap lives on hpc_system_config.max_concurrent_jobs.
             max_concurrent = self.cfg_hpc_system.max_concurrent_jobs if self.cfg_hpc_system else None
             assert isinstance(max_concurrent, int), (
                 "hpc_system_config.max_concurrent_jobs is required for generate_snakemake_config (slurm mode)"
@@ -4280,7 +4279,7 @@ def _per_sim_event_page_sources(wildcards):
                     # plot/render carry no per-rule retries:, so they inherit this).
                     # Simulate rules carry an explicit retries: {simulate} directive
                     # that OVERRIDES this (snakemake 9.15.0 Rule.restart_times,
-                    # rules.py:158-165). Override-resolved per the FQ3 consume-site.
+                    # rules.py:158-165). Override-resolved from _override_hpc_restart_times_other.
                     "restart-times": (
                         self._override_hpc_restart_times_other
                         if self._override_hpc_restart_times_other is not None
@@ -4293,7 +4292,7 @@ def _per_sim_event_page_sources(wildcards):
                         f"slurm_partition={slurm_partition}",
                         f"slurm_account={self._resolve_account()}",
                     ],
-                    # T15(iii): the global in-flight CPU bag, registered ONLY when
+                    # The global in-flight CPU bag, registered ONLY when
                     # hpc_system_config.max_concurrent_cpus is set. Absent-not-null:
                     # the dict-splat contributes no key when unset, so the emitted
                     # config.yaml gains no line and is byte-identical to today's.
@@ -4307,10 +4306,10 @@ def _per_sim_event_page_sources(wildcards):
                         else {}
                     ),
                     # NOTE: the legacy `slurm: {sbatch: {...}}` block was deleted
-                    # in Phase 2 — it is a `--cluster`-generic-executor key shape
+                    # — it is a `--cluster`-generic-executor key shape
                     # the modern `executor: slurm` plugin ignores (slurm_partition/
                     # slurm_account come from default-resources above); snakemake 9's
-                    # profile parser silently drops it. (snakemake FQ2 open-finding 2.)
+                    # profile parser silently drops it.
                 }
             )
 
@@ -4482,9 +4481,9 @@ echo ""
         gpu_cli_arg = ""
 
         if n_gpus_per_sim > 0:
-            # Phase-3 (R4): per-node GPU topology for the sbatch --gres header.
+            # Per-node GPU topology for the sbatch --gres header.
             # Prefer cfg_hpc_system.partitions[hpc_ensemble_partition].gpus_per_node;
-            # else the legacy cfg_analysis.hpc_gpus_per_node. The `> 0` guard
+            # else 0 (no legacy fallback). The `> 0` guard
             # preserves the original assert's intent (GPUs requested ⇒ a positive
             # per-node count is required) — _resolve_gpus_per_node resolves an
             # absent value to 0, which is a misconfiguration in the GPU branch.
@@ -4689,8 +4688,8 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
             if dry_run:
                 cmd_args.append("--dry-run")
 
-            # Diagnostic flags from SnakemakeDiagnostics (Phase 1, synth-test-
-            # isolation-and-runtime): --verbose is opt-in per call. The reason
+            # Diagnostic flags from SnakemakeDiagnostics: --verbose is opt-in
+            # per call. The reason
             # intent folds into --verbose because snakemake 8+ removed the
             # standalone --reason flag and now auto-emits per-job rerun
             # reasons whenever --verbose is set.
@@ -5381,14 +5380,14 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
             # blocking wait, because the caller's post-return site cannot distinguish
             # submission-success from completion-success and is never reached at all
             # when the driver dies mid-wait. toolkit-owns-sbatch => the allocation
-            # jobid is recorded so the wait-runner's in-loop liveness probe (R8) has
+            # jobid is recorded so the wait-runner's in-loop liveness probe has
             # a job to probe.
             if on_launch is not None:
                 on_launch(job_id)
 
-            # E2: persist orchestrator identity so a live single-job driver is
-            # detectable by the reprocess orchestration-liveness gate (Phase 2).
-            # Mirrors the tmux path's persistence at ~workflow.py:4071-4076.
+            # Persist orchestrator identity so a live single-job driver is
+            # detectable by the reprocess orchestration-liveness gate.
+            # Mirrors the tmux path's persistence in _submit_tmux_workflow.
             if job_id:
                 self.analysis.log.orchestrator_slurm_jobid.set(job_id)
                 self.analysis.log.workflow_submission_mode.set("1_job_many_srun_tasks")
@@ -5730,7 +5729,7 @@ env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin
             return submission_node
         return login_node or submission_node
 
-    # ---- SIF quest ([Q315] 6(b)): the build DAG hosted INSIDE this mode's detached driver ----
+    # ---- SIF build: the build DAG hosted INSIDE this mode's detached driver ----
     sif_prestep: "tuple[Path, set[str], list[str], bool] | None" = None
     #   (Snakefile.sif, planned keys, [recheck argv-strings], no_wait) — set by
     #   TRITONSWMM_analysis._build_sifs_prestep under batch_job; None => byte-identical script.
@@ -6019,7 +6018,7 @@ exit $snakemake_status
             # Determine the node to use in reattach commands. See _resolve_reattach_node for the
             # rule: the session can only live on submission_node, and the configured login_node is
             # a reachability hint that must not win inside a Slurm allocation.
-            # Phase-4 (4d): login_node moved to hpc_system_config.login_node.
+            # login_node lives on hpc_system_config.login_node.
             import os
 
             _login_node = self.cfg_hpc_system.login_node if self.cfg_hpc_system else None
@@ -6328,14 +6327,15 @@ exit $snakemake_status
         # payload records null there by construction -- but the uuid SET can, because
         # the plugin sets --job-name to the run_uuid precisely to make --name
         # filtering work. Union-querying attributes no row to any token, so the
-        # Gotcha-47 srun-step aliasing hazard does not arise here.
+        # srun-step job-id aliasing hazard (see the aliasing guard in
+        # _classify_stale_via_sacct) does not arise here.
         #
         # The uuid set is read from ALL tmux logs, NOT captured by the caller before
         # the new log is created. A caller-side capture is correct only by read
         # ORDERING -- an edit that moves the log creation earlier, or that adds a
         # second call site after it, silently returns the current uuid alone and
         # restores exactly the blindness described above. extra_run_uuids is retained
-        # as the seam for a future toolkit-minted identity (F1-O1); no production
+        # as the seam for a future toolkit-minted identity; no production
         # caller sets it.
         _seen: dict[str, None] = {}
         for _u in (*run_uuids, *extra_run_uuids):
@@ -6523,7 +6523,7 @@ exit $snakemake_status
                         "message": f"Workflow failed: tmux session ended with snakemake exit {exit_code}",
                     }
 
-                # T15(iii) Part 2: the DU guard. UNSET -> no statvfs, no branch.
+                # The DU guard. UNSET -> no statvfs, no branch.
                 # OWN CLOCK, deliberately: the loop's `now` is not bound until two
                 # lines below, and borrowing a name bound elsewhere in the loop is
                 # exactly what produced the defect this corrects. A self-contained
@@ -6610,7 +6610,7 @@ exit $snakemake_status
                     # protect. The durable fix is to make the fail-open {"PENDING"}
                     # distinguishable from a real PENDING, so this arm can decline to
                     # suppress on an outage while the stall watchdog keeps its assume-live
-                    # reading; that is a return-contract change and is tracked separately.
+                    # reading; that is a return-contract change and is not made here.
                     if adopted_token_count:
                         all_pending_since = None
                     elif live_states == {"PENDING"}:
@@ -6686,6 +6686,7 @@ exit $snakemake_status
         which: Literal["TRITON", "SWMM", "both"] = "both",
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
+        debug: bool = False,
         wait_for_completion: bool = False,
         dry_run: bool = False,
         verbose: bool = True,
@@ -6704,9 +6705,10 @@ exit $snakemake_status
         Parameters
         ----------
         mode : Literal["local", "slurm", "auto"]
-            Execution mode. If "auto", detects based on SLURM environment variables.
+            Execution mode. "auto" resolves from config (``multi_sim_run_method``) via
+            ``resolve_execution_locus``, never from SLURM environment variables.
         process_system_level_inputs : bool
-            If True, process system-level inputs (DEM, Mannings) in Phase 1
+            If True, process system-level inputs (DEM, Mannings) in the setup rule
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
@@ -6715,14 +6717,14 @@ exit $snakemake_status
             ``process_system_level_inputs`` are both False the rule only touches its
             completion flag. It does NOT compile: no emitted setup rule carries a
             ``--compile-*`` flag, so the rule ASSERTS the solver tier rather than
-            building it (ASSERT-NOT-BUILD, D84). In container mode it performs no
+            building it (ASSERT-NOT-BUILD). In container mode it performs no
             such check, because the SIF carries the binary.
         recompile_if_already_done_successfully : bool
             Forwarded to the generated setup rule's ``hhemt.setup_workflow``
             invocation as ``--recompile-if-already-done``, where it has no reachable
             consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
             sits behind an ``args.compile_*`` gate that no emitted rule sets
-            (ASSERT-NOT-BUILD, D84). The parameter itself is NOT dead —
+            (ASSERT-NOT-BUILD). The parameter itself is NOT dead —
             ``TRITONSWMM_system.compile_TRITON_SWMM`` / ``compile_TRITON_only`` /
             ``compile_SWMM`` each read it — but only when called directly, never
             through this workflow.
@@ -6746,6 +6748,10 @@ exit $snakemake_status
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
             If True, resume simulations from last checkpoint
+        debug : bool
+            The run's ``--debug`` flag, emitted as ``--debug`` on every run-simulation rule
+            shell when True and on none when False, so the runner can make a coupled clean
+            start keep the previous run's snapshot files.
         wait_for_completion : bool
             If True, wait for workflow completion (relevant for slurm jobs only)
         dry_run : bool
@@ -6756,7 +6762,8 @@ exit $snakemake_status
         Returns
         -------
         dict
-            Status dictionary with keys defined by run_snakemake_local or run_snakemake_slurm
+            Status dictionary with keys defined by run_snakemake_local or
+            _run_snakemake_slurm_detached
         """
         # Stash the diagnostics dataclass so the snakemake cmd-arg construction
         # sites (run_snakemake_local, _run_snakemake_slurm_detached,
@@ -6765,7 +6772,7 @@ exit $snakemake_status
         # A default-constructed instance is equivalent to passing None.
         self._active_snakemake_diagnostics = snakemake_diagnostics or SnakemakeDiagnostics()
 
-        # Stash the retry overrides on the builder (P1 Decision 4, FQ3 SITE 5) BEFORE
+        # Stash the retry overrides on the builder BEFORE
         # any generate_snakefile_content/generate_snakemake_config call below, so the
         # global-baseline (_other) and per-rule simulate (_simulate) emission sites read
         # them. None means "use the config knob". Stored here rather than threaded
@@ -6815,7 +6822,7 @@ exit $snakemake_status
                 )
 
             # v2 graceful-rerun: reconcile before Snakefile build so the alive
-            # set substitutes wait-rules for run-rules at emit time (Phase 2).
+            # set substitutes wait-rules for run-rules at emit time.
             alive_by_token = dict(self._reconcile_inflight_submissions())
             # Generate Snakefile content
             snakefile_content = self.generate_snakefile_content(
@@ -6831,6 +6838,7 @@ exit $snakemake_status
                 override_clear_raw=override_clear_raw,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
+                debug=debug,
                 report_formats=report_formats,
                 alive_by_token=alive_by_token,
             )
@@ -6865,7 +6873,7 @@ exit $snakemake_status
                 # mechanism (b) -- see the sibling note at the batch_job call site.
                 # 1_job_many_srun_tasks is toolkit-owns-sbatch, so the allocation
                 # jobid is recorded and the wait-runner's in-loop liveness probe
-                # (R8) has a job to probe.
+                # has a job to probe.
                 on_launch=lambda jid: self._write_queued_sentinels(
                     self._planned_sim_tokens(), jid, self.analysis_paths.analysis_dir
                 ),
@@ -6875,7 +6883,7 @@ exit $snakemake_status
             # allocation. _submit_single_job_workflow sbatch-submits and returns the
             # job_id without blocking unless wait_for_completion=True; sweeping a
             # still-running allocation would read an empty _status/_failed/ and report a
-            # false-clean (the detached-mode hazard — captured follow-up otherwise).
+            # false-clean (the detached-mode hazard; detached runs are not swept).
             if wait_for_completion:
                 result = self._augment_result_with_partial_failures(result)
 
@@ -6889,7 +6897,7 @@ exit $snakemake_status
                     flush=True,
                 )
 
-            # v2 graceful-rerun: reconcile before Snakefile build (Phase 2).
+            # v2 graceful-rerun: reconcile before Snakefile build.
             alive_by_token = dict(self._reconcile_inflight_submissions())
             snakefile_content = self.generate_snakefile_content(
                 process_system_level_inputs=process_system_level_inputs,
@@ -6904,6 +6912,7 @@ exit $snakemake_status
                 override_clear_raw=override_clear_raw,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
+                debug=debug,
                 report_formats=report_formats,
                 alive_by_token=alive_by_token,
             )
@@ -6956,7 +6965,7 @@ exit $snakemake_status
         # dependence on that reachability invariant holding forever.
         mode = resolve_execution_locus(mode, self.cfg_analysis.multi_sim_run_method)
 
-        # [Q8] Defect 2: publish the resolved execution LOCUS to the report-tail
+        # Publish the resolved execution LOCUS to the report-tail
         # partition predicate in _make_rule_emission_context, which runs inside
         # the generate_snakefile_content call below. Set here (post-resolution,
         # pre-generate) so a `local` dispatch-family run under `--executor slurm`
@@ -6968,7 +6977,7 @@ exit $snakemake_status
         if verbose:
             print(f"[Snakemake] Submitting workflow in {mode} mode", flush=True)
 
-        # v2 graceful-rerun: reconcile before Snakefile build (Phase 2).
+        # v2 graceful-rerun: reconcile before Snakefile build.
         alive_by_token = dict(self._reconcile_inflight_submissions())
         # Generate Snakefile content
         snakefile_content = self.generate_snakefile_content(
@@ -6984,6 +6993,7 @@ exit $snakemake_status
             override_clear_raw=override_clear_raw,
             compression_level=compression_level,
             pickup_where_leftoff=pickup_where_leftoff,
+            debug=debug,
             report_formats=report_formats,
             alive_by_token=alive_by_token,
         )
@@ -7027,7 +7037,7 @@ exit $snakemake_status
             result = self._augment_result_with_partial_failures(result)
         else:  # slurm
             # Detached (_run_snakemake_slurm_detached returns before the run finishes):
-            # no in-process completion point to sweep — captured follow-up.
+            # no in-process completion point to sweep, so detached runs are not swept.
             result = self._run_snakemake_slurm_detached(
                 snakefile_path=snakefile_path,
                 wait_for_completion=wait_for_completion,
@@ -7063,8 +7073,9 @@ exit $snakemake_status
             :func:`hhemt.reprocess_snakefile_generator.generate_reprocess_snakefile`
             for the stage → re-emitted rule mapping.
         execution_mode
-            ``"auto"`` detects SLURM context; ``"local"`` forces local
-            subprocess execution; ``"slurm"`` forces SLURM submission.
+            ``"auto"`` resolves from config via ``resolve_execution_locus`` (never
+            from the SLURM environment); ``"local"`` forces local subprocess
+            execution; ``"slurm"`` forces SLURM submission.
         multi_sim_run_method_override
             When set, takes precedence over the analysis's configured
             ``multi_sim_run_method`` for execution dispatch. Used by
@@ -7117,8 +7128,8 @@ exit $snakemake_status
         logfile_name = "snakemake_reprocess_dry_run.log" if dry_run else "snakemake_reprocess.log"
         snakemake_logfile = logs_dir / logfile_name
 
-        # Snakemake working directory: ``analysis_dir`` itself. The plan's
-        # original design used ``--directory analysis_dir/.snakemake_reprocess``
+        # Snakemake working directory: ``analysis_dir`` itself. An earlier
+        # design used ``--directory analysis_dir/.snakemake_reprocess``
         # to isolate the reprocess driver's ``.snakemake/`` state from a
         # parallel live sim driver, but Snakemake's ``--directory`` flag also
         # re-roots every relative path in the Snakefile (rule inputs/outputs)
@@ -7132,8 +7143,7 @@ exit $snakemake_status
         # distinct Snakefile provides NO lock isolation. Coexistence with a
         # live ``rule run_*`` driver is therefore handled by ``--nolock`` on
         # the reprocess invocation plus the ``_status/_orchestrator/`` liveness
-        # gate, which is the concurrency authority (see the "reprocess uses
-        # --nolock + orchestrator-liveness sentinel" decision doc).
+        # gate, which is the concurrency authority.
         reprocess_working_dir = self.analysis_paths.analysis_dir
 
         # Build the snakemake command. Reuses the run/submit base command and
@@ -7172,10 +7182,10 @@ exit $snakemake_status
         if dry_run:
             cmd_args.append("--dry-run")
 
-        # Reprocess concurrency gate (R3): refuse fast with a WorkflowError —
+        # Reprocess concurrency gate: refuse fast with a WorkflowError —
         # never input() — when a live orchestration DRIVER for this analysis
-        # exists. Default-safe when no _orchestrator/ sentinel is present (R6),
-        # and coexists with queued/running _submitted/ sim WORKERS (R2). Skipped
+        # exists. Default-safe when no _orchestrator/ sentinel is present,
+        # and coexists with queued/running _submitted/ sim WORKERS. Skipped
         # for dry runs (planning only — nothing is submitted, no zarr is written).
         # When the FACADE already claimed (claimed_driver_id, via
         # _acquire_reprocess_driver_claim) the gate ran BEFORE the facade's
@@ -7201,7 +7211,7 @@ exit $snakemake_status
             )
             if gate_err is not None:
                 raise gate_err
-            # Reprocess self-sentinel (R5): write-own-then-scan-others mutual
+            # Reprocess self-sentinel: write-own-then-scan-others mutual
             # exclusion vs a second reprocess. Always mode="local"/pid=os.getpid()
             # — reprocess overrides 1_job_many_srun_tasks -> batch_job but never
             # allocates its own tmux/sbatch driver, so it never produces a
@@ -7220,8 +7230,9 @@ exit $snakemake_status
             # Facade — reconciliation against analysis_dir/_status/_submitted/.
             # skip_lock_check=True bypasses the toolkit-side input() prompt; the
             # orchestrator-liveness gate above is the concurrency authority and
-            # --nolock is on the subprocess. Phase 1's at-most-once guard still
-            # protects reprocess from a parallel live sim driver double-submitting.
+            # --nolock is on the subprocess. The at-most-once reconciliation that the
+            # guards call below runs still protects reprocess from a parallel live
+            # sim driver double-submitting.
             self._pre_snakemake_invocation_guards(
                 snakefile_path,
                 dry_run=dry_run,
@@ -7305,7 +7316,7 @@ exit $snakemake_status
         dry_run: bool = False,
         verbose: bool = True,
     ) -> dict:
-        """Submit the publication static-plots workflow (ADR-8).
+        """Submit the publication static-plots workflow.
 
         Writes ``{analysis_dir}/Snakefile.static`` (one bare-output rule per
         static-plot ID + ``rule all``; NO ``render_report``, NO ``report()``
@@ -7328,13 +7339,14 @@ exit $snakemake_status
             The override-resolved list of per-plot config YAML paths, computed
             at the :meth:`TRITONSWMM_analysis.static_plots` facade and threaded
             DOWN (NOT re-read from ``cfg_analysis`` here) so a passed override is
-            honored — the anti-facade-drift contract (master Decision-threading).
+            honored — the anti-facade-drift contract.
         static_config_ids
             When non-None, restrict the emitted rules to configs whose
             ``plot_id`` is in this set; None emits a rule for every resolved
             config.
         execution_mode
-            ``"auto"`` detects SLURM context; ``"local"`` / ``"slurm"`` force it.
+            ``"auto"`` resolves from config via ``resolve_execution_locus`` (never
+            from the SLURM environment); ``"local"`` / ``"slurm"`` force it.
         dry_run
             If True, runs ``snakemake --dry-run`` only and returns.
         verbose
@@ -7533,9 +7545,8 @@ exit $snakemake_status
         from the delete path so the destructive sentinel sweep is owned by
         the delete workflow itself (not by the preflight guard).
 
-        Per cleanup-rerun-delete-redesign Phase 2 (extracted from the body of
-        :meth:`_reconcile_inflight_submissions` so the delete-path guard can
-        share the classification primitive).
+        Extracted from the body of :meth:`_reconcile_inflight_submissions` so
+        the delete-path guard can share the classification primitive.
         """
         import json
 
@@ -7596,8 +7607,6 @@ exit $snakemake_status
         dead-side behavior differs: :meth:`_classify_live_sentinels`
         returns from squeue state; this helper returns from marker
         presence.
-
-        Per cleanup-rerun-delete-redesign + sentinel-system-v2 Phase A.
         """
         import json
 
@@ -7618,7 +7627,7 @@ exit $snakemake_status
                 jid = str(json.loads(s.read_text()).get("slurm_jobid") or "")
             except (json.JSONDecodeError, OSError):
                 # Corrupt sentinel; classify as alive conservatively (a
-                # subsequent wait-rule will time out via walltime cap).
+                # subsequent wait-rule will time out at the hpc_max_wait_for_inflight_min cap).
                 jid = ""
             alive.append((rule_token, jid))
         return alive
@@ -7630,9 +7639,9 @@ exit $snakemake_status
         analysis_dir: Path | None = None,
         walltime_slack_min: int = 30,
     ) -> tuple[list[tuple[str, str]], list[_ClearedToken]]:
-        """R-STALE second pass: authoritatively classify the marker-less set.
+        """Second pass of the stale reconcile: authoritatively classify the marker-less set.
 
-        Three-state classification per the FQ1 table:
+        Three-state classification:
         - sacct State in _SACCT_DEAD_STATES        -> DEAD-stale (reclaim + surface)
         - sacct State present, not in dead set     -> ALIVE (keep as wait-rule)
         - job-id absent from sacct OR blank job-id -> UNKNOWN, resolved by the
@@ -7640,8 +7649,8 @@ exit $snakemake_status
 
         DEAD-classified submitted-sentinels are unlinked in-place. Returns
         ``(still_alive, cleared)`` where ``cleared`` is
-        ``(rule_token, job_id, state, reason)`` for the R-STALE surface.
-        ONE sacct call regardless of |marker_less_alive| (R5); zero-call no-op
+        ``(rule_token, job_id, state, reason)`` for the stale-token report.
+        ONE sacct call regardless of |marker_less_alive|; zero-call no-op
         when the input is empty (the common all-markers case).
         """
         if not marker_less_alive:
@@ -7658,15 +7667,15 @@ exit $snakemake_status
         job_ids = [j for _, j in marker_less_alive if j]
         states = _sacct_states_batched(job_ids)
 
-        # F2 srun-step job-id-aliasing guard: under 1_job_many_srun_tasks every
+        # Srun-step job-id-aliasing guard: under 1_job_many_srun_tasks every
         # concurrent srun-step sim records the SAME allocation $SLURM_JOB_ID, so
         # `sacct -X` returns ONE allocation-summary row for N tokens. A terminal
         # allocation State would then mass-classify all N still-running tokens
         # DEAD (empirically confirmed 2026-06-13: a TIMEOUT allocation row is read
         # by every aliased token). For any jobid shared by >=2 tokens, refuse to
         # classify from the shared allocation row — fall through to the mtime-age
-        # fail-safe instead. (F1 step-level `sacct -j` per-token classification is
-        # the optional precision upgrade; F2 guard is the minimum-correctness fix.)
+        # fail-safe instead. (Per-token classification via step-level `sacct -j` would
+        # be more precise; this guard is the minimum needed for correctness.)
         _jid_counts = Counter(j for _, j in marker_less_alive if j)
         _aliased_jids = {j for j, c in _jid_counts.items() if c >= 2}
 
@@ -7820,8 +7829,8 @@ exit $snakemake_status
     ) -> str | None:
         """Gate, then CLAIM, before run()/submit_workflow() launches a driver.
 
-        The submit path has WRITTEN an orchestrator sentinel since Phase 2 of
-        the reprocess concurrency gate and has never READ one. Writing is not
+        Before this gate, the submit path WROTE an orchestrator sentinel and
+        never READ one. Writing is not
         gating: every ``_orchestrator_liveness_gate`` call site was a reprocess
         or static-plots entry, so two ``run()`` drivers stacked on one analysis
         tree with nothing refusing. Measured 2026-08-31 on the
@@ -7972,7 +7981,7 @@ exit $snakemake_status
 
         Reuses ``_slurm_job_is_live`` (jobid arm, host-agnostic) and the
         cancel_workflow ps/tmux probe family — no new liveness PRIMITIVE is
-        authored (R10); ``_tmux_session_is_live`` only wraps the existing tmux
+        authored; ``_tmux_session_is_live`` only wraps the existing tmux
         probe in this file's own ``bash -c`` + module-load-prefix idiom.
         """
         import subprocess
@@ -7984,11 +7993,11 @@ exit $snakemake_status
         base = analysis_dir if analysis_dir is not None else self.analysis_paths.analysis_dir
         sentinels = [s for s in read_orchestrator_sentinels(base) if s.get("driver_id") != exclude_driver_id]
         if not sentinels:
-            return None  # default-safe: no sentinel ⇒ proceed (R6)
+            return None  # default-safe: no sentinel ⇒ proceed
 
         this_host = socket.gethostname()
-        # Same single-source-of-truth bound the wait-rule poll cap and the
-        # R-STALE UNKNOWN bucket use. NOT a new tunable.
+        # Same bound the UNKNOWN bucket of _classify_stale_via_sacct uses (the
+        # wait-rule poll cap does not use it). NOT a new tunable.
         max_plausible_s = _max_plausible_job_lifetime_min(self.cfg_analysis) * 60
 
         live: list[str] = []
@@ -8046,7 +8055,7 @@ exit $snakemake_status
 
             if alive is None:
                 # UNKNOWN -> hold-alive, BOUNDED by the mtime-age fail-safe so an
-                # unanswerable sentinel cannot block forever (R4 still holds).
+                # unanswerable sentinel cannot block forever.
                 try:
                     age_s = time.time() - path.stat().st_mtime
                 except OSError:
@@ -8063,7 +8072,7 @@ exit $snakemake_status
                 reason = "dead-on-evidence"
 
             # EXEMPT-DU: status-flag
-            path.unlink(missing_ok=True)  # reclaim dead/stale (R4)
+            path.unlink(missing_ok=True)  # reclaim dead/stale
             print(
                 f"[orchestrator-gate] reclaimed sentinel {s.get('driver_id')} "
                 f"(mode={mode}, host={origin_host or 'unrecorded'}, {reason}) at {path}",
@@ -8113,7 +8122,7 @@ exit $snakemake_status
         - Is declared local via the Snakefile's ``localrules: wait_for_*``
           preamble entry so it runs as a Snakemake-local task (no sbatch).
         - Declares ``output:`` matching the run-rule's flag path exactly.
-        - Declares ``input:`` as the run-rule's input set (R7 — a superset is
+        - Declares ``input:`` as the run-rule's input set (a superset is
           permitted; here the equal set satisfies the superset constraint),
           ensuring downstream rules' INPUT trigger does not fire spuriously
           after wait -> run transitions on subsequent driver invocations.
@@ -8147,8 +8156,6 @@ exit $snakemake_status
         ``sensitivity_analysis.consolidate_outputs``), not the
         master dir — without the override the wait-runner would poll the wrong
         directory and always hit the walltime cap.
-
-        Per sentinel-system-v2 Phase 2 (resolves D-Q5=A, D-Q2=A, R7, Spec D).
         """
         sanitized = _sanitize_rule_name(rule_token)
         inputs_block = "\n        ".join(f'"{p}",' for p in sorted(set(run_rule_inputs)))
@@ -8171,7 +8178,7 @@ exit $snakemake_status
             # Fail-fast: a wait-rule observing a _failed/ marker means the original
             # sim died; re-polling cannot change that. retries: 0 keeps the wait-rule
             # from inheriting the global restart-times baseline (= hpc_restart_times_other)
-            # and re-dispatching the poll-runner (FQ2). Correctness, not just cost.
+            # and re-dispatching the poll-runner. Correctness, not just cost.
             f"    retries: 0\n"
             f"    resources: cpus_per_task=1, mem_mb=100\n"
             f"    shell:\n"
@@ -8201,17 +8208,14 @@ exit $snakemake_status
         does not silently admit a delete against a live analysis. Refuses
         with :class:`ConfigurationError` when any live job is detected and
         ``override_in_flight`` is False.
-
-        Per cleanup-rerun-delete-redesign Phase 2 (D-DeleteSentinelInteraction
-        resolution + design recommendations C.4 and C.5).
         """
         analysis_dir = self.analysis_paths.analysis_dir
 
-        # (1) Lock-check scoped to the (parametrized) delete namespace (C.5).
+        # (1) Lock-check scoped to the (parametrized) delete namespace.
         # Defaults preserve analysis.delete()'s Snakefile.delete + .snakemake_delete/;
         # the scoped reprocess-delete path passes Snakefile.reprocess_delete +
         # .snakemake_reprocess_delete/ so the guard inspects the correct lock dir
-        # (F-I Flag 2 — without this the guard would gate on the wrong namespace).
+        # (without this the guard would gate on the wrong namespace).
         snakefile_delete = analysis_dir / snakefile_name
         if snakefile_delete.exists():
             self._check_and_clear_snakemake_lock(
@@ -8237,7 +8241,7 @@ exit $snakemake_status
         # provably-dead or never-submitted jobs ARE unlinked by the shared classifier).
         queued_dir = analysis_dir / "_status" / "_queued"
         if queued_dir.is_dir():
-            # FQ5 (2026-09-12): the SAME classifier as the run-path reconcile — re-keys from
+            # The SAME classifier as the run-path reconcile — re-keys from
             # the tmux log, drops planned-never-submitted tokens, sacct/squeue-classifies the
             # rest, ages out the remainder. A guard that refused a tree nobody could resume
             # (10,884 planned-only sentinels, 2026-09-12) is a guard that is always overridden.
@@ -8251,7 +8255,7 @@ exit $snakemake_status
             ]
             alive += self._recover_pending_from_queued(_pending, analysis_dir)
 
-        # (3) Comment-recovery for the lost-sentinel window (C.4).
+        # (3) Comment-recovery for the lost-sentinel window.
         alive += self._recover_inflight_via_comment(known_jobids={j for _, j in alive})
 
         if alive and not override_in_flight:
@@ -8276,9 +8280,10 @@ exit $snakemake_status
 
     # Delete-rule resources. Delete rules are CPU-only filesystem work, so under
     # `--executor slurm` they must target the CPU processing partition — exactly
-    # like the report-tail plot rules (see the `report_tail_slurm_partition`
-    # comment at ~:359). Without an explicit slurm_partition they inherit
-    # `default-resources`' slurm_partition={hpc_ensemble_partition} (:3177),
+    # like the report-tail plot rules (see `RuleEmissionContext.report_tail_slurm_partition`
+    # and its consumer in _emit_plot_rule). Without an explicit slurm_partition they
+    # inherit `default-resources`' slurm_partition={hpc_ensemble_partition} (set in
+    # generate_snakemake_config),
     # which is the GPU ensemble partition, and are submitted with ZERO GRES —
     # rejected at sbatch on a GPU-only partition. Observed 2026-07-20: 112
     # uniform `Error in rule delete_member_reprocess` failures on
@@ -8289,7 +8294,7 @@ exit $snakemake_status
     # NOTE this deliberately does NOT route through _build_resource_block: that
     # helper RAISES when partition is None and multi_sim_run_method != "local",
     # and preflight does not require hpc_setup_and_analysis_processing_partition
-    # (validation.py:932 requires only hpc_ensemble_partition), so routing here
+    # (validation.py's preflight requires only hpc_ensemble_partition), so routing here
     # would turn a working analysis.delete() into a hard failure on configs that
     # legitimately omit it. Converge on _build_resource_block only after that
     # field becomes preflight-required.
@@ -8305,7 +8310,6 @@ exit $snakemake_status
     def _build_delete_snakefile_content(self) -> str:
         """Build the non-sensitivity delete Snakefile content.
 
-        Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
         Uses absolute paths in rule outputs so resolution is robust regardless
         of Snakemake's ``--directory`` flag.
         """
@@ -8357,7 +8361,6 @@ exit $snakemake_status
     def _build_delete_sensitivity_snakefile_content(self, member_ids: list[str]) -> str:
         """Build the sensitivity-master delete Snakefile content.
 
-        Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
         Per-member delete rules + analysis-level consolidation rule.
         """
         analysis_dir = str(self.analysis_paths.analysis_dir)
@@ -8409,7 +8412,7 @@ exit $snakemake_status
         ``None`` or ``"local"`` → ``"local"``; ``"batch_job"`` or
         ``"1_job_many_srun_tasks"`` → ``"slurm"``. Thin delegation to
         ``orchestration.resolve_execution_locus``, which states the rule once; this
-        method is KEPT rather than inlined so its callers and its V-P3.1 tests bind
+        method is KEPT rather than inlined so its callers and its tests bind
         to a stable name. The ``None`` branch covers the
         ``override_multi_sim_run_method`` parameter's "no override" value — NOT an
         unset config field, which Pydantic defaults to ``"local"``.
@@ -8427,12 +8430,11 @@ exit $snakemake_status
     ) -> dict:
         """Invoke the delete Snakefile via subprocess.
 
-        Per cleanup-rerun-delete-redesign Phase 2 + distributed-delete-and-du-
-        recording Phase 3: supports both local (``--cores N``) and slurm
+        Supports both local (``--cores N``) and slurm
         (``--executor slurm --profile <config_dir>``) execution. Mode is
         resolved from ``analysis_config.multi_sim_run_method`` unless an
-        explicit ``override_multi_sim_run_method`` is supplied (read-config-
-        when-None per the override-prefix convention stipulation).
+        explicit ``override_multi_sim_run_method`` is supplied (``None``
+        reads the config).
         """
         analysis_dir = self.analysis_paths.analysis_dir
         snakemake_dir = analysis_dir / working_subdir
@@ -8495,7 +8497,6 @@ exit $snakemake_status
     ) -> dict:
         """Generate and submit the distributed delete Snakefile (non-sensitivity).
 
-        Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
         Runs :meth:`_pre_delete_guards` first so the live-sentinel refusal
         fires before any Snakefile is written.
         """
@@ -8509,10 +8510,10 @@ exit $snakemake_status
         )
 
     def _build_reprocess_delete_snakefile_content(self, *, start_with: str) -> str:
-        """Build the SCOPED reprocess-delete Snakefile (R8). Non-sensitivity:
+        """Build the SCOPED reprocess-delete Snakefile. Non-sensitivity:
         per-scenario delete_processed_{slug} (processed/-only) when
         start_with=='process' + one delete_reprocess_consolidation (master zarr).
-        Sensitivity (D-scope Option C — per-sub fan-out mirroring the existing
+        Sensitivity (per-sub fan-out mirroring the existing
         delete_member_{member} granularity): one delete_member_reprocess_{member}
         per sub (deletes that sub's processed/ across all events when
         start_with=='process' + that sub's analysis_datatree.zarr) + one master
@@ -8566,7 +8567,7 @@ exit $snakemake_status
             )
 
         def _analysis_rule(rule_suffix: str, member_id: str, sub_dir: str, flag: str, start_with: str) -> str:
-            # D-scope Option C: ONE rule per member (mirrors the existing
+            # ONE rule per member (mirrors the existing
             # delete_member_{member} granularity). The runner deletes the sub's
             # processed/ across ALL its events (only when start_with=='process')
             # + the sub's analysis_datatree.zarr.
@@ -8595,13 +8596,13 @@ exit $snakemake_status
             cons_flag = f"{master_dir}/_status/_deleting_reprocess/reprocess_consolidation.flag"
             rules.append(_zarr_rule("consolidation", master_dir, cons_flag, leaf_flags))
         else:
-            # D-scope → Option C: PER-SUB-ANALYSIS fan-out mirroring the EXISTING
+            # PER-SUB-ANALYSIS fan-out mirroring the EXISTING
             # _build_delete_sensitivity_snakefile_content granularity
-            # (delete_member_{member}, workflow.py:5316) — ONE rule per sub, NOT
+            # (delete_member_{member}) — ONE rule per sub, NOT
             # per-(member, event). Each per-sub rule deletes that sub's processed/
             # (across all its events, only when start_with=='process') + that
             # sub's analysis_datatree.zarr via delete_member_reprocess_runner
-            # (item 5b). A master rule then deletes sensitivity_datatree.zarr,
+            # A master rule then deletes sensitivity_datatree.zarr,
             # fanning in on the per-sub flags. Rationale (vs the rejected
             # per-(member,evt) shape): ~n_member jobs instead of ~n_member*n_evt tiny SLURM
             # jobs (avoids scheduler flood on large suites), and reuses the
@@ -8628,7 +8629,7 @@ exit $snakemake_status
         override_in_flight: bool = False,
         override_multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None,
     ) -> dict:
-        """Submit the SCOPED reprocess-delete workflow (R8). Routes the opt-in
+        """Submit the SCOPED reprocess-delete workflow. Routes the opt-in
         consolidated-zarr (+ processed/ when start_with=='process') deletion
         through the EXISTING delete-executor dispatch so the heavy GPFS deletion
         offloads to SLURM exactly as analysis.delete() does. Runs
@@ -8661,7 +8662,6 @@ exit $snakemake_status
     ) -> dict:
         """Generate and submit the sensitivity-master delete Snakefile.
 
-        Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
         Per-member fan-out + analysis-level consolidation.
         """
         self._pre_delete_guards(override_in_flight=override_in_flight)
@@ -8711,8 +8711,8 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         self.system = self.experiment._system
         self.analysis_paths = self.experiment.analysis_paths
         self.python_executable = self.experiment._python_executable
-        # Phase 3: unique compile targets (deduplicated by compile-relevant tuple
-        # in Phase 1). One Snakemake `rule setup_target_{N}` is emitted per entry
+        # Unique compile targets (deduplicated by the compile-relevant tuple).
+        # One Snakemake `rule setup_target_{N}` is emitted per entry
         # so a sensitivity study spanning different gpu_hardware / DEM resolution
         # values gets one setup rule per DISTINCT target rather than one per member.
         # Those rules assert an existing build (native mode); they do not compile.
@@ -8720,14 +8720,14 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
 
         # Compose base workflow builder for common patterns
         self._base_builder = SnakemakeWorkflowBuilder(self.experiment)
-        # ADR-1: the sensitivity-master + reprocess-master process_{model} shells
+        # The sensitivity-master + reprocess-master process_{model} shells
         # reference self._container_process_prefix; delegate to the base builder's
         # resolved token so all three process-rung sites carry the identical prefix
-        # (empty in native mode → generated Snakefiles byte-identical, R2/TO-1).
+        # (empty in native mode → generated Snakefiles byte-identical).
         self._container_process_prefix = self._base_builder._container_process_prefix
         # Same delegation for the in-SIF interpreter token. The `or` fallback is
         # load-bearing: this class's native token is the literal "python"
-        # (:6787), NOT the base builder's sys.executable, so falling back to the
+        # (self.experiment._python_executable), NOT the base builder's sys.executable, so falling back to the
         # base builder's resolved attribute would change native emission and
         # break the byte-identity goldens.
         self._process_python_executable = self._base_builder._container_process_python or self.python_executable
@@ -8746,8 +8746,6 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         on the composed base builder. Pre-delete guards (live-sentinel
         refusal, scoped lock-check, comment-recovery) fire inside the base
         builder's method.
-
-        Per cleanup-rerun-delete-redesign Phase 2.
         """
         member_ids = self.sensitivity_analysis.df_setup.index.astype(str).tolist()
         return self._base_builder.submit_delete_workflow_sensitivity(
@@ -8767,7 +8765,7 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         (``MEMBER_EVENT_PAIRS_MEMBER`` / ``MEMBER_EVENT_PAIRS_EVT``).
 
         Shared by ``generate_master_snakefile_content`` and
-        ``generate_reprocess_master_snakefile_content`` (R13/D10 hardening: one
+        ``generate_reprocess_master_snakefile_content`` (hardening: one
         tested ``except`` instead of two byte-identical copies). On ANY failure
         it logs a WARNING naming the exception type and returns two EMPTY lists,
         so ``rule all`` does not demand the per-sim panels and the master report
@@ -8817,6 +8815,7 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         process_timeseries: bool = True,
         override_clear_raw: ClearRawValue | None = None,
         pickup_where_leftoff: bool = True,
+        debug: bool = False,
         report_formats: list[str] | None = None,
         alive_by_token: dict[str, str] | None = None,
         alive_token_to_dir: dict[str, str] | None = None,
@@ -8848,7 +8847,7 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
             invocation as ``--recompile-if-already-done``, where it has no reachable
             consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
             sits behind an ``args.compile_*`` gate that no emitted rule sets
-            (ASSERT-NOT-BUILD, D84). The parameter itself is NOT dead —
+            (ASSERT-NOT-BUILD). The parameter itself is NOT dead —
             ``TRITONSWMM_system.compile_TRITON_SWMM`` / ``compile_TRITON_only`` /
             ``compile_SWMM`` each read it — but only when called directly, never
             through this workflow.
@@ -8864,6 +8863,10 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
             Runtime override for ``cfg_analysis.clear_raw`` (None reads YAML).
         pickup_where_leftoff : bool
             If True, resume simulations from last checkpoint
+        debug : bool
+            The run's ``--debug`` flag, emitted as ``--debug`` on every run-simulation rule
+            shell when True and on none when False, so the runner can make a coupled clean
+            start keep the previous run's snapshot files.
 
         Returns
         -------
@@ -8892,7 +8895,7 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
             analysis_config_yaml=self.experiment.analysis_config_yaml
         )
 
-        # Post-F2 (R1): report cfg is inline on cfg_analysis; source the
+        # Report cfg is inline on cfg_analysis; source the
         # sensitivity benchmarking independent_vars directly from there so
         # the master Snakefile can wildcard the plot rule per independent_var.
         _report_cfg = self.experiment.cfg_analysis.report
@@ -9032,7 +9035,7 @@ onerror:
         for member_id in self.sensitivity_analysis.members.keys():
             consolidation_flags.append(f"_status/e_consolidate_member-{member_id}_complete.flag")
 
-        # Phase 3: per-target setup flags. Listed explicitly in rule_all_inputs so
+        # Per-target setup flags. Listed explicitly in rule_all_inputs so
         # the DAG planner can reach setup_target rules even for members whose
         # df_sims is empty (otherwise only reachable via transitive deps through
         # prepare_member rules).
@@ -9054,12 +9057,11 @@ onerror:
         # System-overview at master scope: the DEM and SWMM topology are shared
         # across members, so a single system_overview.png in the master
         # report is the natural place to surface them. Per-analysis summary at
-        # master scope renders one row per member (Iteration 6 "show all
-        # members" scope). Per-sim plots wildcarded over (member_id, event_id)
-        # pairs (Iteration 7 Change 3b — "show all" panel parity per the user's
-        # scope expansion: identical-looking panels across members are a QC
-        # signal; expected variation is also visible).
-        # Phase 3: per-plot disable — each common-renderer append is gated by
+        # master scope renders one row per member. Per-sim plots wildcarded over
+        # (member_id, event_id) pairs ("show all" panel parity: identical-looking
+        # panels across members are a QC signal; expected variation is also
+        # visible).
+        # Per-plot disable — each common-renderer append is gated by
         # renderer_active so a disabled key drops from rule all AND the derived
         # render_report subset (render_rule_input_items below); _disabled resolves
         # to [] for an unconfigured run, preserving byte-identity.
@@ -9103,7 +9105,7 @@ onerror:
             and renderer_active("sensitivity_benchmarking", _disabled)
         ):
             _e_bench = _ext["sensitivity_benchmarking"]
-            # ADR-2 OE-1 + D3: benchmarking input stem derives from the helper
+            # The benchmarking input stem derives from the helper
             # (renderer_kind=benchmarking, descriptor={independent_var}.vs.total).
             _bench_path = _plot_output_template(
                 renderer_kind="benchmarking",
@@ -9111,12 +9113,12 @@ onerror:
                 descriptor="{independent_var}.vs.total",
             ).replace("__OUTPUT_EXT__", _e_bench)
             rule_all_inputs.append(f'expand("{_bench_path}", independent_var={_independent_vars!r})')
-        # R11: gate the compute-sensitivity EDA figure on (a) the active set carrying
+        # Gate the compute-sensitivity EDA figure on (a) the active set carrying
         # the eda renderer AND (b) eda being configured (enabled_plots non-empty).
         # Inert for the benchmarking/default sets (no eda renderer in the selection),
         # so byte-identity for those sets is preserved.
         _has_eda_artifact = bool(self.experiment.cfg_analysis.eda.enabled_plots)
-        # b4b (Phase 4): the resolved clear-raw policy (runtime override wins, else the
+        # b4b: the resolved clear-raw policy (runtime override wins, else the
         # config value). ClearRawValue = Literal["all","none"] | list[...] (config/analysis.py):
         # None is NOT a member, and a LIST form that does not name THIS master's model leaves
         # the raw TRITON binaries the b4b comparison reads intact, so a bare `in ("none",)`
@@ -9127,7 +9129,7 @@ onerror:
         _has_preserved_raw_outputs = _resolved_clear_raw == "none" or (
             isinstance(_resolved_clear_raw, list) and model_type not in _resolved_clear_raw
         )
-        # D13 (registry-read): enumerate one entry PER registry template, from the same
+        # Registry-read: enumerate one entry PER registry template, from the same
         # single source the emission site reads, so a four-figure family lists all four
         # here. () for default/benchmarking keeps those sets byte-identical.
         _eda_templates = self._eda_rule_spec_templates()
@@ -9152,7 +9154,7 @@ onerror:
 
 """
 
-        # Phase 3: emit one setup rule per unique compile target. For a sensitivity
+        # Emit one setup rule per unique compile target. For a sensitivity
         # study that varies gpu_hardware or target_dem_resolution across members,
         # this materializes one setup rule per DISTINCT build target rather than one
         # per member. Those rules assert an existing build (native mode) and never
@@ -9233,7 +9235,7 @@ onerror:
                 analysis_config_yaml=analysis.analysis_config_yaml,
                 system_config_yaml=analysis._system.system_config_yaml,
             )
-            # Phase 6 (DQ7b): the run_simulation_runner resolves + injects the GPU
+            # The run_simulation_runner resolves + injects the GPU
             # hardware from --target-partition. Pass the per-sub ensemble partition
             # so the sim runs (and any per-sim GPU compile) target the right hardware.
             sub_gpu_compile_config_args = self._base_builder._get_config_args(
@@ -9242,12 +9244,12 @@ onerror:
                 target_partition=analysis.cfg_analysis.hpc_ensemble_partition,
             )
 
-            # Phase 3: per-member system config sources gpu_alloc_mode + gpu_hw so a
-            # sensitivity study spanning UVA (gres) and Frontier (gpus) emits the
-            # correct SLURM directive per member.
+            # gpu_alloc_mode comes from the shared hpc_system_config (one value for
+            # the whole master), while gpu_hw below is resolved per member from that
+            # member's ensemble partition.
             gpu_alloc_mode = self._base_builder._resolve_gpu_alloc_mode()
 
-            # Setup-target flag this member depends on (Phase 3). Keyed by
+            # Setup-target flag this member depends on. Keyed by
             # str(member_id) to match the map built before the rule_all section.
             setup_target_flag = f"_status/a_setup_target_{member_id_to_target_id[str(member_id)]}_complete.flag"
 
@@ -9268,9 +9270,10 @@ onerror:
             # scheduler's local concurrency accounting and the --cpus-per-task fallback.
             snakemake_threads = cpus_per_sim
 
-            # gpu_hardware comes directly from the per-target cfg_system. Under the
-            # prefixed-column overlay mechanism, `system.gpu_hardware` overlay values
-            # already populated this field via the synthesized per-target YAML.
+            # gpu_hardware resolves from the HPC-system config -- the ensemble
+            # partition's PartitionSpec, via resolve_gpu_target -- never from
+            # cfg_system: gpu_hardware is retired from system_config, whose loader
+            # pops it with a warning, so a `system.gpu_hardware` column reaches nothing.
             gpu_hw = resolve_gpu_target(analysis.cfg_hpc_system, analysis.cfg_analysis.hpc_ensemble_partition)[0]
             sim_resources_member = self._base_builder._build_resource_block(
                 partition=analysis.cfg_analysis.hpc_ensemble_partition,
@@ -9346,7 +9349,7 @@ onerror:
                 # ``simulation_member_{member_id}_evt-{event_id}`` (literal hyphen). The
                 # wait-rule's ``--analysis-dir`` MUST be the per-member dir
                 # (markers live under master/members/{id}/_status/, NOT the
-                # master dir — Spec D). Distinct concrete rule names mean no
+                # master dir). Distinct concrete rule names mean no
                 # ``ruleorder`` is needed (unlike the multisim wildcard path).
                 _sentinel_token = f"simulation_member_{member_id}_evt-{event_id}"
                 if _sentinel_token in (alive_by_token or {}):
@@ -9381,7 +9384,7 @@ onerror:
             {sub_gpu_compile_config_args} \\
             --model-type {model_type} \\
             --member-id {member_id} \\
-            {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
+            {"--pickup-where-leftoff " if pickup_where_leftoff else ""}{"--debug " if debug else ""}\\
             --flag-output {{output}} \\
             --rule-name {sim_rule_name} {"--execution-locus " + _loc + " " if _loc else ""}\\
             --event-id {event_id} \\
@@ -9502,13 +9505,13 @@ onerror:
         """
 '''
 
-        # Registry-driven plot-rule dispatch at master scope (P1b / TO-8). The
+        # Registry-driven plot-rule dispatch at master scope. The
         # benchmarking set drives the seven unconditional renderers + the two conditional
         # sensitivity renderers (per_sim_per_member, sensitivity_benchmarking), gated
         # by predicate_key against the method-local member_event_pairs_member /
         # _independent_vars threaded in via predicate_inputs. The export rule is a
-        # set-invariant non-figure rule (Option B — NOT a renderer_selection
-        # entry); the B-i interleave hook flushes it BETWEEN the unconditional and
+        # set-invariant non-figure rule (NOT a renderer_selection
+        # entry); the interleave hook flushes it BETWEEN the unconditional and
         # conditional renderers, byte-matching the pre-refactor emission order.
         # Master uses f_consolidate_experiment_complete.flag (NOT the multisim
         # e_consolidate_complete flag).
@@ -9586,8 +9589,8 @@ rule render_report:
         - Under ``start_with='process'``: for each (member_id, event_id) whose
           ``c_run_*`` flag exists AND whose ``d_process_*`` flag does NOT
           exist on disk, emit a per-member per-event ``rule process_{model_type}_member_{member_id}_evt_{event_id}``
-          mirroring the canonical sensitivity workflow generator's process
-          emit (workflow.py:4920-4954). The per-member consolidate's input list
+          mirroring the process rule that
+          :meth:`generate_master_snakefile_content` emits. The per-member consolidate's input list
           dynamically mixes ``d_process_*`` flags (newly-emitted process rules)
           and ``c_run_*`` flags (events already processed). The per-member
           consolidate shell appends ``--allow-incomplete`` ONLY when at least
@@ -9604,15 +9607,14 @@ rule render_report:
           reusing the same helpers as the production master Snakefile so the
           rendered report is identical.
 
-        The reprocess driver invokes this Snakefile via
-        ``submit_reprocess_workflow``-equivalent dispatch in
-        :meth:`TRITONSWMM_sensitivity_analysis.reprocess` against the same
-        ``analysis_dir/.snakemake/`` lock dir as the full master Snakefile.
-        Per-Snakefile locking (distinct ``Snakefile`` vs ``Snakefile.reprocess``
-        paths) preserves coexistence safety for local tests + CLI smoke; true
-        coexistence with a concurrent live ``rule simulation_*`` driver is
-        tracked as a Phase 2 follow-up (see ``submit_reprocess_workflow``'s
-        body comment).
+        The reprocess driver invokes this Snakefile through
+        :meth:`submit_reprocess_workflow` (reached from
+        :meth:`TRITONSWMM_sensitivity_analysis.reprocess`) against the same
+        ``analysis_dir/.snakemake/`` directory as the full master Snakefile.
+        A distinct ``Snakefile.reprocess`` path gives no lock isolation,
+        because Snakemake keys its lock on the input/output file set, so
+        coexistence with a live driver rests on ``--nolock`` plus the
+        ``_status/_orchestrator/`` liveness gate in that method.
 
         Parameters
         ----------
@@ -9625,7 +9627,7 @@ rule render_report:
             List of report formats to render; defaults to ``["zip"]``.
         start_with
             Stage to re-fire from. ``"process"`` enables conditional per-member
-            per-event process_timeseries emission (Option C: only emit for
+            per-event process_timeseries emission (only emit for
             (member_id, event_id) pairs whose d_process flag is missing).
             ``"consolidate"`` and ``"render"`` skip process emission entirely
             and the per-member consolidate consumes c_run flags directly.
@@ -9689,8 +9691,8 @@ rule render_report:
         # Paired (member_id, event_id) lists for per-member per-event plot rules.
         # Report-target invariant: only include a sub's (member_id, event_id) pairs
         # when the sub passes the shared summary-existence predicate (matches
-        # consolidate_sensitivity_datatree's whole-sub skip, Gotcha 36). The
-        # c_run_* flag is a STRICTLY WEAKER signal (Gotcha 34) — a sim can have
+        # consolidate_sensitivity_datatree's whole-sub skip). The
+        # c_run_* flag is a STRICTLY WEAKER signal — a sim can have
         # run with its summary absent — so enumerating a per-sim plot/report
         # target on c_run produces an unsatisfiable target the renderer fails on.
         from hhemt.constants import sim_run_flag_per_member
@@ -9699,15 +9701,16 @@ rule render_report:
 
         def _sub_included_for_reprocess(member_id, sub) -> bool:
             """Shared sub-inclusion predicate for MEMBER_EVENT_PAIRS, completed_member_ids,
-            and the per-member consolidate-emission loop, so the ~6785 equality
-            assertion holds. On the consolidate/render paths a sub is included
+            and the per-member consolidate-emission loop, so the
+            ``analysis_flags == _expected_analysis_flags`` sanity check later in this
+            method holds. On the consolidate/render paths a sub is included
             iff ALL its summaries exist (matches consolidate_sensitivity_datatree's
-            whole-sub skip, Gotcha 36 -> no per-member consolidate FileNotFoundError:
+            whole-sub skip -> no per-member consolidate FileNotFoundError:
             the per-member consolidate is a pure summary CONSUMER via
             consolidate_to_datatree/_retrieve_combined_output, which has no
             per-sub allow_incomplete). On the process path a sub with >=1
             completed sim (c_run) is ALSO included so its self-healed divergent
-            events get a process rebuild rule: the FIX-2 self-heal
+            events get a process rebuild rule: the self-heal
             (_reconcile_stale_process_flags_against_summaries) unlinked the stale
             d_process flag at reprocess entry (c_run present, summary absent); the
             per-EVENT c_run filter in the per-member loop admits those events; the
@@ -9784,7 +9787,7 @@ onerror:
         # errors_and_warnings, scenario_status.csv, workflow_summary.md, per-member
         # per-event plots, sensitivity-benchmarking plots, analysis_report.*).
         # Determine the set of members that will actually emit per-member
-        # consolidate rules — Option C invariant: only members with at
+        # consolidate rules — invariant: only members with at
         # least one c_run_* flag on disk get a per-member consolidate rule (the
         # per-member loop further down enforces this with the same predicate).
         # rule_all's consolidation_flags list initializes from THIS filtered
@@ -9798,15 +9801,15 @@ onerror:
         completed_member_ids: list[str] = []
         for member_id_check, sub_check in self.sensitivity_analysis.members.items():
             # Shared start_with-aware sub-inclusion predicate (lockstep with
-            # MEMBER_EVENT_PAIRS and the per-member loop) — keeps the ~6785 equality
-            # assertion true. Summary-existence on consolidate/render;
+            # MEMBER_EVENT_PAIRS and the per-member loop) — keeps the analysis_flags
+            # equality sanity check (below, raises RuntimeError) true. Summary-existence on consolidate/render;
             # + rebuildable-on-process. Replaces the prior per-event c_run scan.
             if _sub_included_for_reprocess(member_id_check, sub_check):
                 completed_member_ids.append(str(member_id_check))
         consolidation_flags = [consolidate_analysis_flag(member_id) for member_id in completed_member_ids]
         rule_all_inputs = [f'"{flag}"' for flag in consolidation_flags]
         rule_all_inputs.append(f'"{consolidate_experiment_flag()}"')
-        # Phase 3: per-plot disable — mirrors the production-master rule_all_inputs
+        # Per-plot disable — mirrors the production-master rule_all_inputs
         # site: each common-renderer append gated by renderer_active so a disabled
         # key drops from rule all AND the derived render_report subset; _disabled
         # resolves to [] for an unconfigured run, preserving byte-identity.
@@ -9847,7 +9850,7 @@ onerror:
             and renderer_active("sensitivity_benchmarking", _disabled)
         ):
             _e_bench = _ext["sensitivity_benchmarking"]
-            # ADR-2 OE-1 + D3: benchmarking input stem derives from the helper
+            # The benchmarking input stem derives from the helper
             # (renderer_kind=benchmarking, descriptor={independent_var}.vs.total).
             _bench_path = _plot_output_template(
                 renderer_kind="benchmarking",
@@ -9855,19 +9858,19 @@ onerror:
                 descriptor="{independent_var}.vs.total",
             ).replace("__OUTPUT_EXT__", _e_bench)
             rule_all_inputs.append(f'expand("{_bench_path}", independent_var={_independent_vars!r})')
-        # R11: gate the compute-sensitivity EDA figure on (a) the active set carrying
+        # Gate the compute-sensitivity EDA figure on (a) the active set carrying
         # the eda renderer AND (b) eda being configured (enabled_plots non-empty).
         # Inert for the benchmarking/default sets (no eda renderer in the selection),
         # so byte-identity for those sets is preserved.
         _has_eda_artifact = bool(self.experiment.cfg_analysis.eda.enabled_plots)
-        # b4b (Phase 4): the reprocess generator runs no sims and takes no clear-raw runtime
+        # b4b: the reprocess generator runs no sims and takes no clear-raw runtime
         # override (override_clear_raw is NOT in this method's scope), so the resolved policy
         # is the config value alone. Same list-aware test as the master generator.
         _resolved_clear_raw = self.experiment.cfg_analysis.clear_raw
         _has_preserved_raw_outputs = _resolved_clear_raw == "none" or (
             isinstance(_resolved_clear_raw, list) and model_type not in _resolved_clear_raw
         )
-        # D13 (registry-read): enumerate one entry PER registry template, from the same
+        # Registry-read: enumerate one entry PER registry template, from the same
         # single source the emission site reads, so a four-figure family lists all four
         # here. () for default/benchmarking keeps those sets byte-identical.
         _eda_templates = self._eda_rule_spec_templates()
@@ -9885,14 +9888,14 @@ onerror:
 
 """
 
-        # Per-member emit block — Option C (2026-05-21):
+        # Per-member emit block:
         #   1. Filter members to those with at least one c_run_* flag on
-        #      disk (Issue A fix: skip emit entirely for un-completed
+        #      disk (skip emit entirely for un-completed
         #      members, no fingerprint fallback).
         #   2. Under start_with='process': for each (member_id, event_id) with
         #      c_run flag present but d_process flag missing, emit a per-member
         #      per-event process_timeseries rule mirroring the canonical
-        #      sensitivity workflow generator (workflow.py:4920-4954).
+        #      sensitivity workflow generator (generate_master_snakefile_content).
         #   3. Per-member consolidate input list mixes d_process flags (newly-
         #      emitted process rules) and c_run flags (already-processed
         #      events). Per-member consolidate shell appends --allow-incomplete
@@ -9902,10 +9905,10 @@ onerror:
         #   4. Per-member process_resources_member is computed INSIDE the
         #      loop so per-row cfg overrides (e.g., member-33's bumped
         #      hpc_mem_allocation_for_sim_output_processing_mb for 1.1m DEM)
-        #      are honored — mirrors canonical generator at workflow.py:4850.
+        #      are honored — mirrors the canonical generate_master_snakefile_content.
         # Flag-name builders live in hhemt.constants (single
-        # source of truth for new code; existing hardcoded sites are
-        # tracked as a follow-up refactor).
+        # source of truth for new code; some existing sites still
+        # hardcode flag names).
         from hhemt.constants import (
             consolidate_analysis_flag,
             member_inputs_fingerprint_flag,
@@ -9920,7 +9923,7 @@ onerror:
 
         for member_id, analysis in self.sensitivity_analysis.members.items():
             # Lockstep sub-inclusion gate (same shared closure as MEMBER_EVENT_PAIRS
-            # and completed_member_ids) — keeps the ~6785 equality assertion true. A
+            # and completed_member_ids) — keeps the analysis_flags equality sanity check true. A
             # summary-absent sub on the consolidate/render path gets NO per-member
             # consolidate rule (its consolidate_to_datatree would raise
             # FileNotFoundError — there is no per-sub allow_incomplete). The
@@ -9934,7 +9937,7 @@ onerror:
                 system_config_yaml=analysis._system.system_config_yaml,
             )
             # Per-member process resources sourced from THIS member's
-            # cfg (mirrors canonical sensitivity workflow at workflow.py:4850);
+            # cfg (mirrors the canonical generate_master_snakefile_content);
             # honors per-member overrides via the `analysis.*` overlay
             # column convention.
             process_resources_member = self._base_builder._build_resource_block(
@@ -9959,7 +9962,7 @@ onerror:
                 if not c_run_path.exists():
                     # Sim never completed → exclude from DAG for this reprocess.
                     continue
-                # (R10) Architecture note — the emit gate below and the
+                # Architecture note — the emit gate below and the
                 # consolidate-input routing at the d_process/c_run append sites
                 # are CORRECT. The reprocess rebuild rule's correctness under
                 # --rerun-triggers comes from (i) the deleted/absent d_process
@@ -10014,9 +10017,9 @@ onerror:
                     consolidate_inputs.append(f'"{c_run_flag}"')
 
             if not consolidate_inputs:
-                # Issue A fix: this member has zero completed sims;
+                # This member has zero completed sims;
                 # skip emitting the per-member consolidate rule entirely. No
-                # fingerprint fallback. Spec 5's rule_all reconciliation
+                # fingerprint fallback. The completed_member_ids filter on rule all
                 # excludes this member_id from rule_all's input list.
                 continue
 
@@ -10028,7 +10031,7 @@ onerror:
                 snakefile_content += process_rule_block
 
             # Conditional --allow-incomplete: only emit when truly mixed
-            # state (option (a) from the SE specialist's plan review).
+            # state.
             # Fully-complete members retain consolidate's fail-fast.
             allow_incomplete_line = "            --allow-incomplete \\\n" if had_conditional_process_emit else ""
             analysis_flag = consolidate_analysis_flag(str(member_id))
@@ -10070,7 +10073,7 @@ onerror:
         # SAME shared _sub_included_for_reprocess predicate (whole-sub summary-
         # existence on consolidate/render; + rebuildable-on-process). Equality
         # (NOT subset) is the correct invariant: a mismatch in EITHER direction
-        # is the workflow.py line-142 integration risk. Over-count -> the loop
+        # is a real integration failure. Over-count -> the loop
         # emits a consolidate_{member} flag rule all does not depend on (orphan
         # rule). Under-count -> rule all demands a consolidate_member flag
         # the loop never emitted -> Snakemake MissingInputException at DAG build.
@@ -10086,12 +10089,12 @@ onerror:
                 f"up-front completed_member_ids derivation={_expected_analysis_flags!r}; "
                 "shared sub-inclusion invariant violated — the per-member consolidate-"
                 "emission gate and the completed_member_ids gate must both call "
-                "_sub_included_for_reprocess (workflow.py line-142 integration risk)."
+                "_sub_included_for_reprocess."
             )
 
         # Master consolidation — aggregates the EMITTED per-member flags into the
         # master flag + sensitivity_datatree.zarr; overwrite + allow-incomplete
-        # baked. Uses the central flag-name builder for the master flag (Spec 1).
+        # baked. Uses the central flag-name builder for the master flag.
 
         snakefile_content += f'''rule experiment_consolidation:
     input: {", ".join([f'"{flag}"' for flag in analysis_flags])}
@@ -10124,8 +10127,8 @@ onerror:
         """
 '''
 
-        # Plot + export + render rules — registry-driven dispatch (P1b / TO-8),
-        # identical to the production master (same benchmarking set + B-i
+        # Plot + export + render rules — registry-driven dispatch,
+        # identical to the production master (same benchmarking set + same
         # interleave hook), so the rendered report set is byte-equivalent. The
         # dispatcher running the SAME set on both surfaces makes the
         # historically hand-maintained "byte-equivalent" guarantee structural.
@@ -10189,7 +10192,7 @@ rule render_report:
         SINGLE SOURCE for both the rule emission
         (``_build_plot_rule_block_eda_compute_sensitivity``) and the two rule all /
         render_report enumeration sites, so an N-figure EDA family cannot desync its
-        emitted rules from its ``rule all`` entries (D13). Returns () for a set whose
+        emitted rules from its ``rule all`` entries. Returns () for a set whose
         selection carries no EDA renderer (default / benchmarking), which is what keeps
         those sets byte-identical.
         """
@@ -10198,7 +10201,7 @@ rule render_report:
         return eda_rule_spec_templates(self._resolve_active_reporting_set(self.experiment))
 
     def _build_plot_rule_block_eda_compute_sensitivity(self, *, ctx: RuleEmissionContext | None = None) -> str:
-        """Generate the EDA adapter plot rules for the active reporting set (R11, D13).
+        """Generate the EDA adapter plot rules for the active reporting set.
 
         Emits ONE report()-annotated rule PER ``RuleSpecTemplate`` carried by the active
         set's ``eda_compute_sensitivity`` selection — one figure for
@@ -10210,10 +10213,10 @@ rule render_report:
         caption Sources block. Gated on the has_eda_artifact predicate at the dispatcher,
         so it fires only when the master carries an EDA artifact.
 
-        D13 (registry-read): rule name, output path, caption/category/labels, wildcards,
+        Registry-read: rule name, output path, caption/category/labels, wildcards,
         resources and log path all come from the registry template rather than being
         hardcoded here — the ReportingSet registry is the single source of renderer
-        selection per the single-source stipulation. For ``compute-sensitivity`` the
+        selection. For ``compute-sensitivity`` the
         registry values reproduce the previously-hardcoded literals byte-for-byte EXCEPT
         the log path, which is deliberately reconciled ``logs/`` -> ``_logs/`` (this
         builder was the lone outlier; the registry template and every other rule already
@@ -10247,7 +10250,7 @@ rule render_report:
     ) -> str:
         """Generate the sensitivity benchmarking plot rule, wildcarded over independent_var.
 
-        Charset validation for independent_var names is upstream, at Phase 1's
+        Charset validation for independent_var names is upstream, at
         ``validate_sensitivity_independent_vars()``; names reaching here are guaranteed
         Snakemake-safe.
 
@@ -10293,7 +10296,7 @@ def _sensitivity_source_paths(wildcards):
             # scenario_status.csv carries the OBSERVED per-sim device identity this
             # figure groups on. It is written by the separate `export_scenario_status`
             # rule, so without it as a declared input the read is unordered -- the same
-            # defect class as the errors_and_warnings read-model (Gotcha 53 v9/F3).
+            # defect class as the errors_and_warnings read-model.
             additional_inputs=("scenario_status.csv",),
             output_path_template=_plot_output_template(
                 renderer_kind="benchmarking",
@@ -10306,7 +10309,7 @@ def _sensitivity_source_paths(wildcards):
             extra_params=(),
             report_kwargs={
                 # SOURCED from the registry, not restated. This method previously carried a
-                # byte-identical hand-written copy, so Spec 10's registry edit reached the
+                # byte-identical hand-written copy, so an edit to the registry's labels reached the
                 # bundle path (which harvests the registry) and NOT the master path (which
                 # did not) -- the whole labels channel was inert on the only path where the
                 # benchmarking figure exists. Two strings that must agree is the condition.
@@ -10325,8 +10328,8 @@ def _sensitivity_source_paths(wildcards):
     def _build_plot_rule_block_per_sim_per_member(self, *, ctx: RuleEmissionContext | None = None) -> str:
         """Generate per-member per-event plot rules for the sensitivity master Snakefile.
 
-        Realizes Iteration 7 Change 3b ("show all members" panel parity per
-        the user's scope expansion). For each (member_id, event_id) pair in
+        Shows every member's per-event panels on the master report (panel parity
+        across members). For each (member_id, event_id) pair in
         MEMBER_EVENT_PAIRS, emits two plot rules: peak_flood_depth + conduit_flow.
         Both rules dispatch the per-sim renderer with `--member-id {wildcards.member_id}`
         + `--event-iloc {params.event_iloc}` so the renderer (via _cli.py
@@ -10441,7 +10444,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             input_label="master",
         )
         conduit_emit = RuleSpec(**{**conduit_spec.__dict__, "renderer_module": "per_sim_conduit_flow"})
-        # FQ1: conduit flow is SWMM-derived and not applicable to a TRITON-only
+        # Conduit flow is SWMM-derived and not applicable to a TRITON-only
         # analysis. This is the EMISSION half; the ENUMERATION half is the same
         # predicate inside _per_sim_per_member_rule_all_inputs. Both read
         # _get_enabled_model_types() so they cannot disagree — a renderer dropped
@@ -10458,14 +10461,12 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
 
         Sensitivity markers live under each member's own ``analysis_dir``
         (``master/members/{analysis_id}``), not the master dir — so the
-        master-dir reconcile would miss them (Spec D). This sweeps every
+        master-dir reconcile would miss them. This sweeps every
         member dir and returns two maps keyed by sentinel rule_token:
         ``alive_by_token`` (token -> slurm_jobid) for the run-vs-wait branch in
         :meth:`generate_master_snakefile_content`, and ``alive_token_to_dir``
         (token -> member dir str) so each wait-rule polls the directory
         where its markers actually land.
-
-        Per sentinel-system-v2 Phase 2 (Spec 9 + Spec D).
         """
         alive_by_token: dict[str, str] = {}
         alive_token_to_dir: dict[str, str] = {}
@@ -10480,14 +10481,14 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
         """mechanism (b) PENDING-recovery writer for the sensitivity path: write
         _status/_queued/{simulation_member_{member_id}_evt-{event_id}}.json under EACH
         member's OWN analysis_dir (sensitivity markers/sentinels live per-sub,
-        Spec D — the master-dir reconcile would miss them), for the full planned
+        so the master-dir reconcile would miss them), for the full planned
         per-sub sim-token set, AFTER submit-success. The sensitivity sentinel token is
         per-(member_id, event_id) with NO model_type segment (matching
         run_simulation_runner.py's _rule_token when args.member_id is set, and the
         generate_master_snakefile_content emission gate). Toolkit-owns-sbatch (1_job)
         records the master allocation jobid; executor-owns-sbatch (batch_job) null.
         Delegates the atomic compare-and-write to the base builder's writer so the
-        mtime-preserving contract (R12) is single-sourced."""
+        mtime-preserving contract is single-sourced."""
         from hhemt.scenario import compute_event_id_slug
 
         for member_id, sub in self.sensitivity_analysis.members.items():  # type: ignore[attr-defined]
@@ -10514,6 +10515,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
         which: Literal["TRITON", "SWMM", "both"] = "both",
         compression_level: int = 5,
         pickup_where_leftoff: bool = True,
+        debug: bool = False,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
         dry_run: bool = False,
         verbose: bool = True,
@@ -10533,7 +10535,8 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
         Parameters
         ----------
         mode : Literal["local", "slurm", "auto"]
-            Execution mode. If "auto", detects based on SLURM environment variables.
+            Execution mode. "auto" resolves from config (``multi_sim_run_method``),
+            never from SLURM environment variables.
         process_system_level_inputs : bool
             If True, process system-level inputs (DEM, Mannings)
         overwrite_system_inputs : bool
@@ -10552,7 +10555,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             invocation as ``--recompile-if-already-done``, where it has no reachable
             consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
             sits behind an ``args.compile_*`` gate that no emitted rule sets
-            (ASSERT-NOT-BUILD, D84). The parameter itself is NOT dead —
+            (ASSERT-NOT-BUILD). The parameter itself is NOT dead —
             ``TRITONSWMM_system.compile_TRITON_SWMM`` / ``compile_TRITON_only`` /
             ``compile_SWMM`` each read it — but only when called directly, never
             through this workflow.
@@ -10574,6 +10577,10 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
             If True, resume simulations from last checkpoint
+        debug : bool
+            The run's ``--debug`` flag, emitted as ``--debug`` on every run-simulation rule
+            shell when True and on none when False, so the runner can make a coupled clean
+            start keep the previous run's snapshot files.
         dry_run : bool
             If True, only perform a dry run and return that result
         verbose : bool
@@ -10593,7 +10600,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
         # _validate_batch_job_dry_run on _base_builder) pick them up.
         self._base_builder._active_snakemake_diagnostics = snakemake_diagnostics or SnakemakeDiagnostics()
 
-        # Retry overrides (P1 Decision 4, FQ3 SITE 5): the sensitivity path emits
+        # Retry overrides: the sensitivity path emits
         # rules via _base_builder (generate_snakemake_config global baseline +
         # _resolved_simulate_retries on the simulation_member rules), so stash the
         # override knobs there, mirroring the diagnostics stash above.
@@ -10653,7 +10660,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                     flush=True,
                 )
 
-            # v2 graceful-rerun: reconcile per member before build (Phase 2, Spec 9/D).
+            # v2 graceful-rerun: reconcile per member before build.
             alive_by_token, alive_token_to_dir = self._reconcile_sensitivity_alive()
             # Generate master Snakefile
             master_snakefile_content = self.generate_master_snakefile_content(
@@ -10668,6 +10675,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 process_timeseries=process_timeseries,
                 override_clear_raw=override_clear_raw,
                 pickup_where_leftoff=pickup_where_leftoff,
+                debug=debug,
                 report_formats=report_formats,
                 alive_by_token=alive_by_token,
                 alive_token_to_dir=alive_token_to_dir,
@@ -10728,7 +10736,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                     flush=True,
                 )
 
-            # v2 graceful-rerun: reconcile per member before build (Phase 2, Spec 9/D).
+            # v2 graceful-rerun: reconcile per member before build.
             alive_by_token, alive_token_to_dir = self._reconcile_sensitivity_alive()
             master_snakefile_content = self.generate_master_snakefile_content(
                 which=which,
@@ -10742,6 +10750,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 process_timeseries=process_timeseries,
                 override_clear_raw=override_clear_raw,
                 pickup_where_leftoff=pickup_where_leftoff,
+                debug=debug,
                 report_formats=report_formats,
                 alive_by_token=alive_by_token,
                 alive_token_to_dir=alive_token_to_dir,
@@ -10799,7 +10808,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             # with multi_sim_run_method == "local".
             mode = "local"
 
-        # [Q8] Defect 2: the sensitivity plot-rule builders call
+        # The sensitivity plot-rule builders call
         # self._base_builder._make_rule_emission_context, so the resolved locus
         # must land on the BASE builder (not on this
         # SensitivityAnalysisWorkflowBuilder). Set post-resolution /
@@ -10815,7 +10824,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 flush=True,
             )
 
-        # v2 graceful-rerun: reconcile per member before build (Phase 2, Spec 9/D).
+        # v2 graceful-rerun: reconcile per member before build.
         alive_by_token, alive_token_to_dir = self._reconcile_sensitivity_alive()
         # Generate master Snakefile with flattened hierarchy
         # (no nested Snakemake calls - all rules in one file)
@@ -10831,6 +10840,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             process_timeseries=process_timeseries,
             override_clear_raw=override_clear_raw,
             pickup_where_leftoff=pickup_where_leftoff,
+            debug=debug,
             report_formats=report_formats,
             alive_by_token=alive_by_token,
             alive_token_to_dir=alive_token_to_dir,
@@ -10924,7 +10934,8 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
         Sibling to :meth:`submit_workflow`. Writes the scoped master Snakefile
         to ``{analysis_dir}/Snakefile.reprocess`` via
         :meth:`generate_reprocess_master_snakefile_content` (overwrite baked),
-        runs the Phase-1 reconciliation guard, and invokes Snakemake with
+        runs the in-flight reconciliation guard (``_pre_snakemake_invocation_guards``),
+        and invokes Snakemake with
         ``--rerun-triggers mtime`` so downstream rules only re-fire when
         their outputs are missing or older than their inputs.
 
@@ -10950,8 +10961,8 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             entirely (handled by the upstream invalidation in
             :meth:`TRITONSWMM_sensitivity_analysis.reprocess`).
         execution_mode
-            ``"auto"`` (default) detects SLURM context; ``"local"`` / ``"slurm"``
-            force the mode.
+            ``"auto"`` (default) resolves from config via ``resolve_execution_locus``
+            (never from the SLURM environment); ``"local"`` / ``"slurm"`` force the mode.
         which
             ``"both"`` / ``"TRITON"`` / ``"SWMM"`` — threaded into the
             consolidate rule shells' ``--which`` flag.
@@ -11039,11 +11050,11 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
         if dry_run:
             cmd_args.append("--dry-run")
 
-        # Reprocess concurrency gate (R3): refuse fast with a WorkflowError —
+        # Reprocess concurrency gate: refuse fast with a WorkflowError —
         # never input() — when a live orchestration DRIVER for this master
         # analysis exists. Default-safe when no _orchestrator/ sentinel is
-        # present (R6), and coexists with queued/running _submitted/ sim
-        # WORKERS (R2). Skipped for dry runs (planning only — nothing is
+        # present, and coexists with queued/running _submitted/ sim
+        # WORKERS. Skipped for dry runs (planning only — nothing is
         # submitted, no zarr is written). When the FACADE already claimed
         # (claimed_driver_id, via _base_builder._acquire_reprocess_driver_claim)
         # the gate ran BEFORE the facade's destructive invalidation and the
@@ -11067,7 +11078,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             )
             if gate_err is not None:
                 raise gate_err
-            # Reprocess self-sentinel (R5): write-own-then-scan-others mutual
+            # Reprocess self-sentinel: write-own-then-scan-others mutual
             # exclusion vs a second reprocess. Always mode="local"/pid=os.getpid()
             # — reprocess overrides 1_job_many_srun_tasks -> batch_job but never
             # allocates its own tmux/sbatch driver, so it never produces a
@@ -11086,8 +11097,9 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             # Facade — reconciliation against analysis_dir/_status/_submitted/.
             # skip_lock_check=True bypasses the toolkit-side input() prompt; the
             # orchestrator-liveness gate above is the concurrency authority and
-            # --nolock is on the subprocess. Phase 1's at-most-once guard still
-            # protects reprocess from a parallel live sim driver double-submitting.
+            # --nolock is on the subprocess. The at-most-once reconciliation that the
+            # guards call below runs still protects reprocess from a parallel live
+            # sim driver double-submitting.
             self._base_builder._pre_snakemake_invocation_guards(
                 snakefile_path,
                 dry_run=dry_run,

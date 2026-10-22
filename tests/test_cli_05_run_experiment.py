@@ -287,14 +287,19 @@ def test_run_and_run_experiment_share_the_result_reporter(bundle_dir, tmp_path, 
         def __init__(self, *args, **kwargs):
             pass
 
-        def validate(self):
+        def validate(self, **kwargs):
             return SimpleNamespace(is_valid=True, has_warnings=False, warnings=[], errors=[])
 
         def run(self, **kwargs):
             return run_result
 
+    import hhemt.validation as validation_mod
+
     monkeypatch.setattr(system_mod, "TRITONSWMM_system", _FakeSystem)
     monkeypatch.setattr(analysis_mod, "TRITONSWMM_analysis", _FakeAnalysis)
+    # `run` calls assert_both_configs_load(...) before constructing the stubbed classes,
+    # and imports it in-body, so the module attribute is the seam.
+    monkeypatch.setattr(validation_mod, "assert_both_configs_load", lambda *a, **k: None)
     system_cfg = tmp_path / "system.yaml"
     analysis_cfg = tmp_path / "analysis.yaml"
     system_cfg.write_text("version: 1\n")

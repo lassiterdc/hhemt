@@ -1008,6 +1008,21 @@ class analysis_config(cfgBaseModel):
         ...,
         description="Loss coefficient of TRITON-SWMM interactions occuring at manholes.",
     )
+    swmm_node_rim_from_dem: bool = Field(
+        default=False,
+        description=(
+            "When True, the toolkit writes the line `swmm_node_rim_from_dem=1` into each "
+            "coupled scenario's TRITON cfg, and TRITON then takes a coupled node's rim (the "
+            "height of its surface connection) as the DEM cell's elevation minus the node's "
+            "invert, instead of the depth SWMM itself uses for the node. When False (the "
+            "default) the line is not written and the rim is SWMM's own depth. Only TRITON builds "
+            "that read the key honour it, so preparation refuses a True value unless the build "
+            "the run uses is known to read it: in native mode the TRITON clone must descend "
+            "from the commit that added the key; in container mode the image's recorded TRITON "
+            "commit must equal TRITONSWMM_branch_key and be one of the commits known to read it. "
+            "It changes hydraulic results when True."
+        ),
+    )
     hydraulic_timestep_s: float = Field(
         ...,
         description="Timestep for hydraulic computations in seconds.",

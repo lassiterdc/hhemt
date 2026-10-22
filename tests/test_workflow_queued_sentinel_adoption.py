@@ -26,6 +26,9 @@ def builder(tmp_path):
     analysis.cfg_analysis.hpc_max_wait_for_inflight_min = 10080
     analysis.cfg_analysis.hpc_max_queue_wait_min = None
     analysis.cfg_analysis.hpc_no_progress_timeout_min = None
+    # Read by the retry-ceiling disclosure in _pre_snakemake_invocation_guards (schema defaults).
+    analysis.cfg_analysis.hpc_restart_times_simulate = 2
+    analysis.cfg_analysis.hpc_consecutive_failure_budget_simulate = 3
     analysis.analysis_paths = Mock()
     analysis.analysis_paths.analysis_dir = tmp_path
     _logs = tmp_path / "logs"
