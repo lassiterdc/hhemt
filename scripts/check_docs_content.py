@@ -641,10 +641,19 @@ def _scanned_markdown(docs_dir: Path) -> list[Path]:
 
     A UNION of two halves, and both are load-bearing:
 
-    * every `.md` git tracks in the repository. `rglob` over a directory
-      expressed "what is on disk under `docs/`", which was never this gate's
-      population: thirteen tracked `.md` files sit outside it, and published
-      pages name two of them.
+    * every `.md` git tracks in the repository AND whose file is present in
+      the working tree. `rglob` over a directory expressed "what is on disk
+      under `docs/`", which was never this gate's population: thirteen tracked
+      `.md` files sit outside it, and published pages name two of them. The
+      presence test is what keeps a deleted page out before its deletion is
+      staged: `git ls-files` lists every path the index still records, so a
+      page removed from disk whose deletion is not yet staged stays listed,
+      while a staged deletion is already gone from the list. Without the test,
+      every caller that reads each member's text -- the three marker finders,
+      `scan` and `scan_advisory` -- raised `FileNotFoundError`, and
+      `mkdocs build` reaches the three finders through
+      `hooks/marker_governance_table.py`. An absent page ships nothing, so
+      leaving it out narrows nothing that ships.
     * every `.md` on disk under `docs_dir`. The generated config-schema page is
       BUILD OUTPUT and this project gitignores it, so a tracked-only population
       drops it -- which would pin `main()`'s generated-file count at 0 forever
@@ -684,6 +693,7 @@ def _scanned_markdown(docs_dir: Path) -> list[Path]:
             f"the derivation exists to remove."
         ) from exc
     tracked = {repo_root / rel for rel in out.split("\0") if rel}
+    tracked = {path for path in tracked if path.exists()}
     return sorted(tracked | set(docs_dir.resolve().rglob("*.md")))
 
 
