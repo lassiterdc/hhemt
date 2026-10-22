@@ -6,7 +6,7 @@ Get from a fresh clone to a running coupled TRITON-SWMM simulation in a few minu
 
 --8<-- "platform-support.md"
 
-- A working install. See [Installation](../how-to/installation.md).
+- What [Installation](../how-to/installation.md) lists under *Before you start*. Step 1 below performs the install itself.
 - `git` and `make` on your `PATH`: the solver build uses both. No HPC and no CLI:
   this tutorial drives everything from an interactive Python session.
 
