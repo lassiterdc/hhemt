@@ -38,14 +38,17 @@ import pytest
 from hhemt.synthetic_model import swmm_template
 from hhemt.synthetic_model._build import SyntheticModelParams, build_synthetic_case
 
-# sha256 of each default-parameter variant, taken from the generator as it stood
-# BEFORE the knob existed (base 5e83c4c6, two independent builds agreeing). These
-# are the operand of the byte-identity gate: the knob is a no-op at its default iff
-# the post-change generator still reproduces them.
+# sha256 of each default-parameter variant (pollutant knob off), taken from the generator
+# AFTER the rim change that set every node's depth to the conduit crown, NOT from the
+# pre-knob base 5e83c4c6: that change moves every junction's invert and MaxDepth, which
+# every variant writes, so it changes the default emission by design. These are a
+# regression pin on the default emission; the knob-is-a-no-op property they were first
+# taken for was measured against the independent base 5e83c4c6 when the knob landed, and
+# is not re-measured by this re-take.
 _PRE_CHANGE_INP_SHA256 = {
-    "swmm_hydraulics.inp": "9c583983cb5f743356be6869243947f61063000a66599d42533b6175e39d8e0a",
-    "swmm_hydrology.inp": "40a51e39d2dd15110007588acf8f2e61c21b530c7800959bc36d827089408a04",
-    "swmm_full.inp": "9fabedff6f478cc0080bddcd3df5a5206f91ec38fb2fce7c3d5487321dfdc9a4",
+    "swmm_hydraulics.inp": "95613c7d0101fde2ffee948ade0b43d80c49b01164f8a8d8dfcf0bda15f34b2a",
+    "swmm_hydrology.inp": "db131d125b769f79e4b6d602117279c69c3fb581dd4ac1191960544a7da5fa92",
+    "swmm_full.inp": "7b4bb7b28af86cfbbdeab0beef73a470dd51d72f11d9ac84d9664d5ee9b4b399",
 }
 
 # Scoped to the `.inp` variants deliberately. The knob reaches no other artifact,
@@ -100,10 +103,14 @@ def _always_emit_pollutant(params):  # noqa: ARG001 — signature parity with th
 def test_default_inp_is_byte_identical_to_the_pre_knob_generator(tmp_path):
     """Property: at the default parameter every emitted `.inp` is byte-unchanged.
 
-    Class: NEW CAPABILITY. A pre-change run of this assertion is green by
-    construction — the golden was taken from the pre-change generator — so its
-    pre-change state carries no information and the regression bar does not apply.
-    The plausible wrong implementation is an unconditional pollutant, and
+    Class: REGRESSION PIN on the default emission. The golden is the current
+    generator's own default output, re-taken after the rim change that moved every
+    junction's depth to the conduit crown, so a run against the code it was taken
+    from is green by construction and carries no information about that code. What
+    it pins is that no later edit moves the default bytes. The knob-is-a-no-op
+    property it was written for was measured against the independent base 5e83c4c6
+    when the knob landed, and is not re-measured here. The plausible wrong
+    implementation is an unconditional pollutant, and
     `test_the_byte_identity_gate_reds_under_an_unconditional_pollutant` runs it and
     shows this assertion red under it.
 
