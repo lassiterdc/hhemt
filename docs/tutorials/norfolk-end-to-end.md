@@ -2,7 +2,9 @@
 
 ## Prerequisites
 
---8<-- "prerequisites-base.md"
+--8<-- "platform-support.md"
+
+- A working install. See [Installation](../how-to/installation.md).
 - The [Quickstart](quickstart.md) completed. This tutorial runs the Norfolk-Irene
   case study, and the fully-worked path runs locally with no HPC.
 
