@@ -124,7 +124,7 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #: `tests/test_check_known_resume_defects.py::_SHA_REGISTERED` (parity-asserted, so a
 #: miss is a LOUD red) and `tests/test_wp2b_resume_mechanism_review.py::_SHA_CURRENT_PIN` (no
 #: tripwire, so a miss is SILENT and only its comment goes false).
-TRITON_PIN = "c7b2fd1da3c2ed48d0d8cc0bf0e4b703b1f86e5e"
+TRITON_PIN = "320b3313c99c3e929e77a258ff6e4b041bae2927"
 
 #: The ONE form every version RECORD prints, so a URL cannot be omitted beside a pin.
 #: Consumed by `model_version_lines()` and by the estate's per-chunk provenance stamp.

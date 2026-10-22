@@ -1306,6 +1306,9 @@ def test_campaign_branch_tip_resolves_absent_on_every_registered_defect():
         "TRITON-RESUME-DEPTH-SCATTER": "absent",
         "TRITON-RESUME-EXTBC-GHOST-RING": "absent",
         "TRITON-SNAPSHOT-TRAVERSAL-GUARD": "present",
+        # Measured: snapshot.c present, the clean-start disposal key absent, and cf357e4b not
+        # an ancestor (rc 1), so the T4a stale-snapshot defect is carried here.
+        "TRITON-SNAPSHOT-STALE-AT-CLEAN-START": "present",
     }
     _assert_expected_is_registry_total(expected, where="campaign branch tip")
 
@@ -1364,6 +1367,9 @@ def test_wp1c_branch_tip_resolves_absent_on_every_registered_defect():
         "TRITON-RESUME-DEPTH-SCATTER": "absent",
         "TRITON-RESUME-EXTBC-GHOST-RING": "absent",
         "TRITON-SNAPSHOT-TRAVERSAL-GUARD": "present",
+        # Measured: snapshot.c present, the clean-start disposal key absent, and cf357e4b not
+        # an ancestor (rc 1), so the T4a stale-snapshot defect is carried here.
+        "TRITON-SNAPSHOT-STALE-AT-CLEAN-START": "present",
     }
     _assert_expected_is_registry_total(expected, where="WP-1C branch tip")
 
@@ -1421,6 +1427,8 @@ def test_registering_a_tip_extends_the_sets_rather_than_widening_the_predicate()
         "TRITON-RESUME-DEPTH-SCATTER": "present",
         "TRITON-RESUME-EXTBC-GHOST-RING": "present",
         "TRITON-SNAPSHOT-TRAVERSAL-GUARD": "absent",
+        # No snapshot payload at 15eb18a5 (snapshot.c -> 0 entries), so no snapshot to leave.
+        "TRITON-SNAPSHOT-STALE-AT-CLEAN-START": "absent",
     }
     _assert_expected_is_registry_total(expected_pre_replay, where="pre-replay sha")
     for d in REGISTRY:

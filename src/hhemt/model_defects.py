@@ -380,6 +380,19 @@ SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX = "23b757810cde67a83a0aeed003689bb6009f6894"
 #: no stronger.
 SHA_WP1_SNAPSHOT_GUARD_AND_TESTS = "c7b2fd1da3c2ed48d0d8cc0bf0e4b703b1f86e5e"
 
+#: T4a's landing commit on the fork: a coupled CLEAN START disposes of the earlier run's SWMM
+#: snapshot artifacts (the disposal reads the cfg key `swmm_snapshot_keep_previous`), and a
+#: refused snapshot save stops the restart. Registered as the fix of
+#: TRITON-SNAPSHOT-STALE-AT-CLEAN-START below.
+SHA_SNAPSHOT_CLEAN_START_FIX = "cf357e4b4c4cf2cc1bfb2af2ad2210808b75d1a0"
+
+#: The solver pin of package 3a (`3a.1`): the fork head after packages T7a and T8a, which also
+#: carries WP1's T1b-T6a (`c7b2fd1d` is its ancestor). Measured against this sha on the fork
+#: clone, each `git merge-base --is-ancestor {fix} 320b3313`: 3a832f7d rc 0, 9db367dd rc 0,
+#: 23b75781 rc 0, cf357e4b rc 0, a38338b0 rc 0; and 5d2ad1e8 rc 1 -- the same two-probe trap
+#: the ghost-ring entry records, so that entry's verdict here rests on a38338b0, as at c7b2fd1d.
+SHA_SNAPSHOT_REFUSAL_PIN = "320b3313c99c3e929e77a258ff6e4b041bae2927"
+
 REGISTRY: tuple[ModelDefect, ...] = (
     ModelDefect(
         defect_id="TRITON-COUPLED-RESUME-REPLAY",
@@ -404,6 +417,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_MAIN_SNAPSHOT_AND_COLUMN_SPLIT,
                 # 3a832f7d is an ANCESTOR of c7b2fd1d -- re-measured rc 0 against this sha.
                 SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
+                # 3a832f7d is an ANCESTOR of 320b3313 -- measured rc 0 against this sha.
+                SHA_SNAPSHOT_REFUSAL_PIN,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME}),
@@ -431,6 +446,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_MAIN_SNAPSHOT_AND_COLUMN_SPLIT,
                 # 9db367dd is an ANCESTOR of c7b2fd1d -- re-measured rc 0 against this sha.
                 SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
+                # 9db367dd is an ANCESTOR of 320b3313 -- measured rc 0 against this sha.
+                SHA_SNAPSHOT_REFUSAL_PIN,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER}),
@@ -470,6 +487,10 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # on the SAME basis. `is-ancestor 5d2ad1e8 c7b2fd1d` -> rc 1, the same two-probe
                 # trap the parent entries record, which is why this member is listed and not derived.
                 SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
+                # 320b3313 descends from c7b2fd1d and from a38338b0 (both measured rc 0) and
+                # inherits the SAME independent-upstream verdict on the SAME basis;
+                # `is-ancestor 5d2ad1e8 320b3313` -> rc 1, the same trap, so it is listed.
+                SHA_SNAPSHOT_REFUSAL_PIN,
             }
         ),
         also_present_in=frozenset(
@@ -519,6 +540,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX,
                 # 23b75781 is an ANCESTOR of c7b2fd1d -- measured rc 0 against this sha.
                 SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
+                # 23b75781 is an ANCESTOR of 320b3313 -- measured rc 0 against this sha.
+                SHA_SNAPSHOT_REFUSAL_PIN,
                 # THE SEVEN NO-PAYLOAD SHAS. `external/swmm/src/solver/snapshot.c` does not exist
                 # at any of them (`git ls-tree` -> 0 entries each, against a control needle
                 # `src/triton.h` -> 1 entry each, so the zero is an absence and not a bad path).
@@ -590,6 +613,54 @@ REGISTRY: tuple[ModelDefect, ...] = (
             "holding both pins therefore fails fast on a cross-pin resume instead of producing a "
             "plausible wrong answer."
         ),
+    ),
+    ModelDefect(
+        defect_id="TRITON-SNAPSHOT-STALE-AT-CLEAN-START",
+        title=(
+            "A coupled run's clean start left an earlier run's SWMM snapshots in place, so after a "
+            "failed or refused snapshot save a resume could load the earlier run's SWMM state"
+        ),
+        fixed_in=SHA_SNAPSHOT_CLEAN_START_FIX,
+        #: Set, rather than left None, for the traversal entry's reason: a build with no
+        #: snapshot payload writes no snapshot, so it has none to leave behind.
+        introduced_in=SHA_SNAPSHOT_DW_ROUTING_STATE,
+        #: Every verdict below is decided by CONTENT and listed explicitly, because the read
+        #: path has no clone. Measured on the fork clone per registered sha:
+        #: `git ls-tree {sha} -- external/swmm/src/solver/snapshot.c` (the payload; control
+        #: `src/triton.h` -> 1 entry at every sha) and
+        #: `git show {sha}:src/swmm_triton.h | grep -c swmm_snapshot_keep_previous` (the
+        #: clean-start disposal's cfg key). No payload -> absent; payload and disposal -> absent;
+        #: payload without disposal -> present.
+        known_absent_in=frozenset(
+            {
+                # payload 1, disposal 5 at both (and cf357e4b is an ancestor of 320b3313, rc 0).
+                SHA_SNAPSHOT_CLEAN_START_FIX,
+                SHA_SNAPSHOT_REFUSAL_PIN,
+                # THE SEVEN NO-PAYLOAD SHAS: snapshot.c -> 0 entries at each.
+                SHA_PRE_COUPLED_RESUME,
+                SHA_COUPLED_RESUME_FIX,
+                SHA_PRE_DEPTH_SCATTER,
+                SHA_DEPTH_SCATTER_FIX,
+                SHA_EXTBC_GHOST_RING_FIX,
+                SHA_MAIN_GHOST_RING_AND_GPU,
+                SHA_ORNL_GHOST_RING_AND_GPU,
+            }
+        ),
+        #: THE SEVEN PAYLOAD-WITHOUT-DISPOSAL SHAS: snapshot.c -> 1 entry, the disposal key -> 0
+        #: lines, and `is-ancestor cf357e4b {sha}` -> rc 1 at each.
+        also_present_in=frozenset(
+            {
+                SHA_SOLVER_WORK_REPLAY_PRECISION,
+                SHA_WP1C_SWMM_OUTPUT_APPEND,
+                SHA_WP1C_LINKAGE_REPAIR_AND_TEST,
+                SHA_MAIN_SNAPSHOT_AND_COLUMN_SPLIT,
+                SHA_SNAPSHOT_DW_ROUTING_STATE,
+                SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX,
+                SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
+            }
+        ),
+        trigger="resumed_coupled",
+        remedy="Re-run resumed coupled sims at cf357e4b or a descendant.",
     ),
 )
 

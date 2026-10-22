@@ -250,6 +250,8 @@ def test_resolve_for_tree_attrs_reads_only_the_stamped_sha():
         "TRITON-RESUME-DEPTH-SCATTER": "absent",
         "TRITON-RESUME-EXTBC-GHOST-RING": "present",
         "TRITON-SNAPSHOT-TRAVERSAL-GUARD": "absent",
+        # 9db367dd predates the snapshot payload too, so it has no snapshot to leave behind.
+        "TRITON-SNAPSHOT-STALE-AT-CLEAN-START": "absent",
     }
     # BIDIRECTIONAL set-equality against the live registry, so a fifth entry fails HERE, by
     # name, instead of surfacing as a dict-inequality diff. A len() comparison is deliberately
@@ -317,3 +319,55 @@ def test_a_sha_shorter_than_gits_abbreviation_floor_never_matches():
     assert v.rule == "default_present", v
     # the full sha DOES match the same set
     assert resolve(d, SHA_DEPTH_SCATTER_FIX).rule == "known_absent_set"
+
+
+def test_the_clean_start_stale_snapshot_entry_resolves_by_content_at_every_registered_sha():
+    """Property: the T4a entry is present exactly where a snapshot payload exists without the disposal.
+
+    Class: every registered solver sha, read without a clone (the read path's only rule is the
+    explicit sets). Why: a clean start that leaves an earlier run's SWMM snapshots in place lets
+    a resume after a failed or refused save load the earlier run's state, which is possible only
+    where snapshots are written and the clean-start disposal (`cf357e4b`) is missing. What kills
+    it: listing the pre-fix pin `c7b2fd1d` as absent, or a no-payload sha as present. Second
+    correct implementation: one table per sha built from the two content probes in the entry's
+    comment; the assertions read only status and rule.
+    """
+    from hhemt.model_defects import (
+        SHA_DEPTH_SCATTER_FIX,
+        SHA_SNAPSHOT_CLEAN_START_FIX,
+        SHA_SNAPSHOT_REFUSAL_PIN,
+        SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
+    )
+
+    entry = REGISTRY_BY_ID["TRITON-SNAPSHOT-STALE-AT-CLEAN-START"]
+    assert entry.title == (
+        "A coupled run's clean start left an earlier run's SWMM snapshots in place, so after a "
+        "failed or refused snapshot save a resume could load the earlier run's SWMM state"
+    )
+    assert entry.trigger == "resumed_coupled"
+    assert entry.fixed_in == SHA_SNAPSHOT_CLEAN_START_FIX
+    for sha, status in (
+        (SHA_WP1_SNAPSHOT_GUARD_AND_TESTS, "present"),
+        (SHA_SNAPSHOT_CLEAN_START_FIX, "absent"),
+        (SHA_SNAPSHOT_REFUSAL_PIN, "absent"),
+        (SHA_DEPTH_SCATTER_FIX, "absent"),
+    ):
+        v = resolve(entry, sha)
+        assert v.status == status, (sha, v)
+        assert v.rule == ("known_absent_set" if status == "absent" else "also_present_set"), (sha, v)
+
+
+def test_every_registered_defect_is_absent_at_the_package_3a_pin():
+    """Property: the live solver pin resolves ABSENT on every defect from the explicit sets.
+
+    Class: every REGISTRY entry at `320b3313`, the pin `3a.1` moves to. Why: an entry missing the
+    pin reads `ancestry_unresolvable` on the read path, which never fails a check and so hides a
+    regression. What kills it: dropping the pin from one entry's `known_absent_in`. Second correct
+    implementation: deriving the membership from the pin file at import; the assertion reads the
+    verdicts only.
+    """
+    from hhemt.model_defects import SHA_SNAPSHOT_REFUSAL_PIN
+
+    for did, d in REGISTRY_BY_ID.items():
+        v = resolve(d, SHA_SNAPSHOT_REFUSAL_PIN)
+        assert (v.status, v.rule) == ("absent", "known_absent_set"), (did, v)

@@ -60,7 +60,7 @@ _SHA_UNREGISTERED = "deadbeefcafef00ddeadbeefcafef00ddeadbeef"
 #: RESTATED, not imported -- and therefore carrying its own tripwire below, because the
 #: restatement's three uses keep PASSING after a pin move (the outgoing sha stays registered)
 #: while this comment's claim becomes false.
-_SHA_CURRENT_PIN = "c7b2fd1da3c2ed48d0d8cc0bf0e4b703b1f86e5e"
+_SHA_CURRENT_PIN = "320b3313c99c3e929e77a258ff6e4b041bae2927"
 #: A build that genuinely carries all three RESUME defects — the POSITIVE CONTROL. Without it a
 #: green on the two rows above is indistinguishable from an instrument that reports nothing.
 #: It does NOT carry the fourth, snapshot-traversal defect, and that is a fact about the sha

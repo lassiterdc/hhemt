@@ -221,17 +221,11 @@ def test_marker_literals_match_analysis_validation_byte_for_byte():
 def _marker_family():
     """The solver log literals whose emitter is readable at ``TRITON_PIN``, as (name, value).
 
-    The family is seven bound constants: the two resume markers, the three TRITON
-    progress/completion markers, and the two EPA SWMM end-of-run clauses. It is a HAND
-    enumeration, not a derivation, so a literal the toolkit reads can be missing from it
-    while every test stays green; a new constant is a one-line addition here.
-
-    It is NOT every solver log literal production code reads. The four step-back prefixes in
-    ``resume_events.py`` (``STEPBACK_REQUIRED_PREFIX``, ``STOP_PREFIX``,
-    ``STEPBACK_IMPOSSIBLE_PREFIX``, ``STEPBACK_TAKEN_PREFIX``) are read by the ledger harvest
-    but are absent from the solver source at the current ``TRITON_PIN``, so adding them here
-    would red this test on a correct tree. They join when ``TRITON_PIN`` advances to a solver
-    head that emits them; until then nothing in this file checks them.
+    The family is eleven bound constants: the two resume markers, the four snapshot
+    step-back prefixes the ledger harvest reads, the three TRITON progress/completion
+    markers, and the two EPA SWMM end-of-run clauses. It is a HAND enumeration, not a
+    derivation, so a literal the toolkit reads can be missing from it while every test stays
+    green; a new constant is a one-line addition here.
 
     The two EPA SWMM constants are checked against the TRITON fork's vendored copy, by proxy
     for the standalone build: the toolkit reads them only from a ``model_type == "swmm"`` run,
@@ -248,6 +242,10 @@ def _marker_family():
     return [
         ("resume_events.SNAPSHOT_MARKER", re_mod.SNAPSHOT_MARKER),
         ("resume_events.REPLAY_MARKER", re_mod.REPLAY_MARKER),
+        ("resume_events.STEPBACK_REQUIRED_PREFIX", re_mod.STEPBACK_REQUIRED_PREFIX),
+        ("resume_events.STOP_PREFIX", re_mod.STOP_PREFIX),
+        ("resume_events.STEPBACK_IMPOSSIBLE_PREFIX", re_mod.STEPBACK_IMPOSSIBLE_PREFIX),
+        ("resume_events.STEPBACK_TAKEN_PREFIX", re_mod.STEPBACK_TAKEN_PREFIX),
         ("analysis_validation._TRITON_COMPLETION_MARKER", av._TRITON_COMPLETION_MARKER),
         ("analysis_validation._TRITON_CHECKPOINT_READ_MARKER", av._TRITON_CHECKPOINT_READ_MARKER),
         ("analysis_validation._TRITON_CHECKPOINT_ATTEMPT_MARKER", av._TRITON_CHECKPOINT_ATTEMPT_MARKER),
@@ -293,7 +291,7 @@ def _occurrences_at_pin(canonical, pin, literal):
 def test_every_toolkit_marker_constant_is_emitted_at_the_pin():
     """Property: every member of ``_marker_family`` exists in the solver source at ``TRITON_PIN``.
 
-    Class: the seven-member marker family in ``_marker_family``, each read against the solver's
+    Class: the eleven-member marker family in ``_marker_family``, each read against the solver's
     own bytes at the pinned commit through the toolkit's canonical object store, over ``src``
     and ``external/swmm/src``. The family is not every literal the toolkit reads, and its two
     EPA SWMM members are read here by proxy; ``_marker_family``'s docstring states both limits.

@@ -43,7 +43,7 @@ from hhemt.model_defects import REGISTRY, resolve
 #: `platformdirs` / `hhemt.utils` import weight; `scripts/check_live_pin_registered.py`
 #: is what keeps the restatement honest, and `test_the_restated_pin_is_the_live_pin`
 #: below is the local tripwire.
-_SHA_REGISTERED = "c7b2fd1da3c2ed48d0d8cc0bf0e4b703b1f86e5e"
+_SHA_REGISTERED = "320b3313c99c3e929e77a258ff6e4b041bae2927"
 #: In NO registry set -- the state any branch tip occupies before someone registers it.
 _SHA_UNREGISTERED = "deadbeefcafef00ddeadbeefcafef00ddeadbeef"
 #: A build that genuinely carries all three RESUME defects. THE POSITIVE CONTROL: without it a
@@ -225,6 +225,7 @@ def test_the_snapshot_defect_is_present_below_the_fix_and_absent_at_and_above_it
     explicit set the only reachable one.
     """
     from hhemt.model_defects import (
+        SHA_SNAPSHOT_REFUSAL_PIN,
         SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX,
         SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
     )
@@ -235,7 +236,7 @@ def test_the_snapshot_defect_is_present_below_the_fix_and_absent_at_and_above_it
     assert below.status == "present", below
     assert below.rule == "also_present_set", below
 
-    for sha in (SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS):
+    for sha in (SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS, SHA_SNAPSHOT_REFUSAL_PIN):
         at_or_above = resolve(entry, sha)
         assert at_or_above.status == "absent", (sha, at_or_above)
         assert at_or_above.rule == "known_absent_set", (sha, at_or_above)
@@ -244,8 +245,8 @@ def test_the_snapshot_defect_is_present_below_the_fix_and_absent_at_and_above_it
     # FAILS and the live pin PASSES. Without this half the test would pass over a resolver whose
     # verdict no consumer reads.
     assert _run(monkeypatch, _SHA_PRE_SNAPSHOT_FIX).passed is False
-    assert _run(monkeypatch, _SHA_WP1_LIVE := SHA_WP1_SNAPSHOT_GUARD_AND_TESTS).passed is True
-    assert _SHA_WP1_LIVE == _SHA_REGISTERED, "the live pin constant drifted from the registry's"
+    assert _run(monkeypatch, _SHA_LIVE := SHA_SNAPSHOT_REFUSAL_PIN).passed is True
+    assert _SHA_LIVE == _SHA_REGISTERED, "the live pin constant drifted from the registry's"
 
 
 # -------------------------------------------------------------------------------------
@@ -346,15 +347,16 @@ def test_indeterminate_is_not_a_third_verdict(monkeypatch):
 # -------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("coupled,expected", [(True, 4), (False, 1)])
+@pytest.mark.parametrize("coupled,expected", [(True, 5), (False, 1)])
 def test_trigger_scoping_sets_the_denominator(monkeypatch, coupled, expected):
     """A `resumed_coupled` defect is out of scope for a pure-TRITON arm.
 
-    Three of the four registered defects carry `trigger="resumed_coupled"` and one carries
+    Four of the five registered defects carry `trigger="resumed_coupled"` and one carries
     `resumed_any`, so a pure-TRITON arm has ONE applicable defect. The expected values are
     DERIVED from the registry below as well as stated, so a registry addition fails here
     loudly instead of making the literal silently wrong -- which is what it did when the
-    snapshot-traversal entry landed, and the literal moved 3 -> 4 on that red.
+    snapshot-traversal entry landed, and the literal moved 3 -> 4 on that red, and again
+    4 -> 5 when the clean-start stale-snapshot entry landed.
     """
     derived = sum(1 for d in REGISTRY if not (d.trigger == "resumed_coupled" and not coupled))
     assert derived == expected, f"registry membership changed: derived={derived} literal={expected}"
