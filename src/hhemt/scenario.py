@@ -1,6 +1,7 @@
 # %%
 import threading
 import warnings
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -2000,23 +2001,153 @@ def undefined_inflow_nodes(inp_path) -> list[str]:
     return undefined
 
 
+def remove_inflow_lines(inp_path, drop_nodes) -> list[str]:
+    """Delete the inflow-section lines of ``inp_path`` whose node is in ``drop_nodes``.
+
+    The section and each line's node are found by the same reader SWMM's own parse is mirrored
+    in (``_swmm_inp_section_lines``), so an ``[INFLOW]``-headed template, a section that ends
+    at any header or at end of file, and a long node name that leaves fewer than four spaces
+    before the next column are all handled; the writer this replaces matched the literal
+    ``[INFLOWS]``, required a following ``[CURVES]`` header, and split names on four spaces.
+    Names are compared with SWMM's case fold, because a line SWMM resolves to a dropped node is
+    that node's inflow line. Delete-only: no line is added, moved or rewritten. Returns the
+    removed lines, and leaves the file untouched when there is nothing to remove.
+    """
+    drop = {_swmm_fold(str(n)) for n in drop_nodes}
+    if not drop:
+        return []
+    path = Path(inp_path)
+    lines = path.read_text().splitlines(keepends=True)
+    remove = {
+        idx
+        for idx, section, tokens in _swmm_inp_section_lines(lines)
+        if section == "INFLOW" and _swmm_fold(tokens[0]) in drop
+    }
+    if not remove:
+        return []
+    path.write_text("".join(line for i, line in enumerate(lines) if i not in remove))
+    return [lines[i] for i in sorted(remove)]
+
+
+#: The node section of every SWMM node type, and the column swmmio names its elevation.
+_NODE_SECTIONS = (
+    ("junctions", "JUNCTION", "InvertElev"),
+    ("outfalls", "OUTFALL", "InvertElev"),
+    ("storage", "STORAGE", "InvertElev"),
+    ("dividers", "DIVIDER", "Elevation"),
+)
+#: The link sections, and the link type each row carries.
+_LINK_SECTIONS = (
+    ("conduits", "CONDUIT"),
+    ("orifices", "ORIFICE"),
+    ("weirs", "WEIR"),
+    ("pumps", "PUMP"),
+    ("outlets", "OUTLET"),
+)
+#: Link types whose ``[XSECTIONS]`` row SWMM reads, so only these have a flow area.
+_CROSS_SECTION_LINK_TYPES = frozenset({"CONDUIT", "ORIFICE", "WEIR"})
+
+
+def inp_node_table(model) -> pd.DataFrame:
+    """Every node of every SWMM node section, indexed by name, with ``NodeType`` and ``InvertElev``.
+
+    Read from the four ``.inp`` sections rather than from ``model.nodes``, whose frame omits
+    ``[DIVIDERS]``: a divider missing there was never grouped into its DEM cell, so it was
+    neither dropped from ``[INFLOWS]`` nor counted in its cell's surface hydrograph.
+    """
+    frames = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for attr, node_type, elev_col in _NODE_SECTIONS:
+            df = getattr(model.inp, attr)
+            if df is None or len(df) == 0:
+                continue
+            frames.append(
+                pd.DataFrame(
+                    {"NodeType": node_type, "InvertElev": pd.to_numeric(df[elev_col], errors="coerce")},
+                    index=df.index.astype(str),
+                )
+            )
+    if not frames:
+        return pd.DataFrame({"NodeType": pd.Series(dtype=str), "InvertElev": pd.Series(dtype=float)})
+    return pd.concat(frames)
+
+
+def inp_link_table(model) -> pd.DataFrame:
+    """Every link of every SWMM link section, indexed by name, with its type and cross-section.
+
+    Columns: ``InletNode``, ``OutletNode``, ``LinkType``, and ``Shape``, ``Geom1``-``Geom4``,
+    ``Barrels`` from ``[XSECTIONS]`` (missing for pumps and outlets, which have no row there).
+    """
+    frames = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for attr, link_type in _LINK_SECTIONS:
+            df = getattr(model.inp, attr)
+            if df is None or len(df) == 0:
+                continue
+            frames.append(
+                pd.DataFrame(
+                    {
+                        "InletNode": df["InletNode"].astype(str),
+                        "OutletNode": df["OutletNode"].astype(str),
+                        "LinkType": link_type,
+                    },
+                    index=df.index.astype(str),
+                )
+            )
+        xsections = model.inp.xsections
+    columns = ["InletNode", "OutletNode", "LinkType", "Shape", "Geom1", "Geom2", "Geom3", "Geom4", "Barrels"]
+    if not frames:
+        return pd.DataFrame(columns=columns)
+    links = pd.concat(frames)
+    if xsections is not None and len(xsections):
+        xs = xsections.copy()
+        xs.index = xs.index.astype(str)
+        links = links.join(xs[[c for c in columns[3:] if c in xs.columns]], how="left")
+    for col in columns[3:]:
+        if col not in links.columns:
+            links[col] = np.nan
+    return links[columns]
+
+
 def return_df_of_nodes_grouped_by_DEM_gridcell(f_inp, dem_processed, verbose=False):
+    """One row per SWMM node with the DEM cell nearest it, plus the outfall names.
+
+    Returns ``(df_node_locs, lst_outfalls)``: ``df_node_locs`` has ``node_key``,
+    ``dem_x_coord`` and ``dem_y_coord``, so a caller groups nodes by cell; ``lst_outfalls`` is
+    the ``[OUTFALLS]`` names. Nodes come from all four node sections and coordinates from
+    ``[COORDINATES]``, so a divider is grouped like any other node. A node with no
+    ``[COORDINATES]`` row raises ``ProcessingError`` naming it and its section, where swmmio's
+    geodataframe raised an unnamed ``TypeError``. Nodes outside the DEM are still placed at the
+    nearest cell, and are named together in one warning.
+    """
     rds_dem = rxr.open_rasterio(dem_processed)
     model = swmmio.Model(str(f_inp))
     warnings.filterwarnings("ignore", category=UserWarning, module=r"swmmio\.utils\.dataframes")
-    node_coords = model.nodes.geodataframe["geometry"]
+    nodes = inp_node_table(model)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        coords = model.inp.coordinates
+    coords = coords.copy() if coords is not None else pd.DataFrame(columns=["X", "Y"])
+    coords.index = coords.index.astype(str)
     dem_xs = rds_dem.x.values  # type: ignore
     dem_ys = rds_dem.y.values  # type: ignore
     d_node_locs = dict(node_key=[], dem_x_coord=[], dem_y_coord=[])
-    lst_outfalls = list(model.nodes.geodataframe["OutfallType"].dropna().index)
-    ## creating a row for each group of nodes associated with a single DEM cell
-    ## (this is to make sure there is only 1 inflow node per gridcell)
+    lst_outfalls = list(nodes.index[nodes["NodeType"] == "OUTFALL"])
     lst_out_of_bounds_nodes = []
-    for node_id in node_coords.index:
-        # verify that the node is within the dem
-        node = node_coords[node_id]
-        x_coord = node.x
-        y_coord = node.y
+    for node_id, node_type in nodes["NodeType"].items():
+        if node_id not in coords.index:
+            section = {"JUNCTION": "[JUNCTIONS]", "OUTFALL": "[OUTFALLS]", "STORAGE": "[STORAGE]"}.get(
+                node_type, "[DIVIDERS]"
+            )
+            raise ProcessingError(
+                operation="return_df_of_nodes_grouped_by_DEM_gridcell",
+                filepath=Path(f_inp),
+                reason=f"node {node_id!r} of {section} has no [COORDINATES] row, so its DEM cell is unknown",
+            )
+        x_coord = float(coords.loc[node_id, "X"])
+        y_coord = float(coords.loc[node_id, "Y"])
         closest_dem_cell_x_ind = pd.Series(abs(dem_xs - x_coord)).idxmin()
         closest_dem_cell_y_ind = pd.Series(abs(dem_ys - y_coord)).idxmin()
         d_node_locs["node_key"].append(node_id)
@@ -2039,37 +2170,204 @@ def return_df_of_nodes_grouped_by_DEM_gridcell(f_inp, dem_processed, verbose=Fal
             f"the nearest DEM cell: {lst_out_of_bounds_nodes}",
             stacklevel=2,
         )
-    ## create dataframe with node key and associated dem x and y coordinate for grouping
     df_node_locs = pd.DataFrame(d_node_locs)
     return df_node_locs, lst_outfalls
 
 
+def _geom(row, name: str) -> float:
+    """A cross-section dimension as a float, reading a missing or NaN value as 0."""
+    value = getattr(row, name, None)
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return 0.0 if np.isnan(value) else value
+
+
 def calc_area(row):
-    """calculate the cross-sectional area of a sewer segment. If the segment
-    is multi-barrel, the area will reflect the total of all barrels"""
-    if row.Shape == "ARCH":  # TREATING AS RECTANGULAR FOR SIMPLICITY
-        h = row.Geom1
-        w = row.Geom2
-        area = h * w
-        # print("Encountered arch cross sectional shape. Currently calculating a
-        # rectangular area assuming it's close enough.")
-        return area * row.Barrels
-    elif row.Shape in [
-        "CIRCULAR",
-        "HORIZ_ELLIPSE",
-    ]:  # assuming horizontal ellipse is circular area
-        d = row.Geom1
-        area = 3.1415 * (d * d) / 4
-        return round((area * row.Barrels), 2)
-    elif "RECT" in row.Shape:
-        # assume triangular bottom sections (geom3) deepens the excavated box
-        return (row.Geom1 + row.Geom3) * float(row.Geom2) * row.Barrels
-    elif row.Shape == "EGG":
-        # assume geom1 is the span
-        return row.Geom1 * 1.5 * row.Barrels
+    """Full flow area of a link's cross-section, times its barrel count, as SWMM 5.2.3 computes it.
+
+    ``row`` is one link with ``Shape``, ``Geom1``-``Geom4`` and ``Barrels``. The shape is matched
+    after stripping surrounding blanks and upper-casing, because SWMM reads shape keywords
+    case-insensitively; an exact match then follows, so a token SWMM would accept only as a
+    prefix (``EGGX``) stays unrecognized. A missing barrel count is read as one barrel: SWMM
+    gives barrels to conduits only, and an orifice or weir is one opening.
+
+    Returns None for a shape this function cannot size: a missing shape, a keyword not
+    handled below, and the size-coded forms of ``HORIZ_ELLIPSE`` and ``ARCH``, whose
+    ``Geom1`` is a standard-size code rather than a length. ADDITIONAL PIPE SHAPES CAN BE ADDED
+    HERE, as further arms carrying SWMM's own full-area formula (``xsect.c``).
+    """
+    shape = row.Shape
+    if not isinstance(shape, str):
+        return None
+    shape = shape.strip().upper()
+    barrels = _geom(row, "Barrels") or 1.0
+    g1, g2, g3 = _geom(row, "Geom1"), _geom(row, "Geom2"), _geom(row, "Geom3")
+    if shape == "CIRCULAR":
+        return round(3.1415 * (g1 * g1) / 4 * barrels, 2)
+    if shape == "EGG":
+        # Geom1 is the egg's full HEIGHT in SWMM (the span is 2/3 of it): aFull = 0.5105 * yFull^2.
+        return 0.5105 * g1**2 * barrels
+    if shape in ("RECT_CLOSED", "RECT_OPEN"):
+        # Geom3 of RECT_OPEN counts the sides to ignore in friction; it is not a length.
+        return g1 * g2 * barrels
+    if shape == "RECT_TRIANGULAR":
+        # Geom3 is the height of the bottom triangle, INSIDE the full height Geom1.
+        return g2 * (g1 - g3 / 2) * barrels
+    if shape == "RECT_ROUND":
+        # SWMM raises the bottom radius to at least half the width before using it.
+        radius = max(g3, g2 / 2)
+        theta = 2 * np.arcsin(g2 / (2 * radius))
+        area_bottom = radius * radius / 2 * (theta - np.sin(theta))
+        depth_bottom = radius * (1 - np.cos(theta / 2))
+        return (g2 * (g1 - depth_bottom) + area_bottom) * barrels
+    if shape == "HORIZ_ELLIPSE":
+        if g2 > 0 and g3 == 0:
+            return 1.2692 * g1**2 * barrels
+        return None
+    if shape == "ARCH":
+        if g2 > 0 and g3 == 0:
+            return 0.7879 * g1 * g2 * barrels
+        return None
+    return None
+
+
+#: Why each node type other than a junction is not coupled in this build, as the eligibility
+#: error states it. Outfalls for a physical reason; storage and dividers as a solver limitation.
+_INELIGIBLE_NODE_REASONS = {
+    "OUTFALL": (
+        "Outfall {id} carries an [INFLOWS] line, but TRITON-SWMM cannot couple an outfall: SWMM "
+        "sets an outfall's water level as a boundary condition, so the manhole exchange "
+        "TRITON-SWMM uses does not apply. If this outfall's receiving water is outside the "
+        "surface model, remove the [INFLOWS] line. If it discharges onto ground the surface "
+        "model covers, coupling it needs a solver change this build does not have; moving the "
+        "line to an upstream junction would make water leave the pipes there instead of at the "
+        "outfall."
+    ),
+    "STORAGE": (
+        "Storage node {id} carries an [INFLOWS] line, but TRITON-SWMM does not yet couple "
+        "storage nodes correctly (it reads max depth for junctions only). This is a solver "
+        "limitation, not a judgement that the node should not receive surface flow."
+    ),
+    "DIVIDER": (
+        "Divider node {id} carries an [INFLOWS] line, but TRITON-SWMM does not yet couple "
+        "divider nodes correctly (it reads max depth for junctions only). Under dynamic wave a "
+        "divider acts as a junction; this is a solver limitation."
+    ),
+}
+
+
+@dataclass(frozen=True)
+class CellInflowResolution:
+    """Which of one DEM cell's inflow-carrying nodes stay coupled, and why each other one does not.
+
+    ``kept`` and ``dropped`` partition the cell's inflow-carrying nodes; ``drop_reasons`` maps
+    each dropped node to ``"eligibility"`` (a node type TRITON-SWMM cannot couple) or
+    ``"ranking"`` (the one-node-per-cell option kept a different node); ``node_types`` gives
+    every inflow-carrying node's SWMM node type.
+    """
+
+    kept: tuple[str, ...]
+    dropped: tuple[str, ...]
+    drop_reasons: dict
+    node_types: dict
+
+
+def _unsizable_link_error(link_id, shape, node_id) -> ProcessingError:
+    return ProcessingError(
+        operation="resolve_cell_inflow_nodes",
+        filepath=None,
+        reason=(
+            f"link {link_id!r} of node {node_id!r} has cross-section shape {shape!r}, whose flow "
+            "area the one-node-per-DEM-cell option cannot compute, so it cannot rank this cell's "
+            "manholes. Additional pipe shapes CAN be added: add the shape's full-area formula to "
+            "calc_area in src/hhemt/scenario.py."
+        ),
+    )
+
+
+def _node_rank_key(node_id: str, links: pd.DataFrame) -> float:
+    """The node's ranking key: the largest flow area of its own outgoing cross-section links.
+
+    A node with no such outgoing link takes its largest INCOMING cross-section link instead,
+    because under dynamic wave that is the pipe it drains through by reverse flow; a node with
+    neither ranks below every keyed node. Pumps and outlets have no cross-section and are never
+    keyed. An unsizable shape raises, naming the link, the shape and the node.
+    """
+    folded = _swmm_fold(node_id)
+    has_xs = links["LinkType"].isin(_CROSS_SECTION_LINK_TYPES)
+    for end in ("InletNode", "OutletNode"):
+        candidates = links[has_xs & (links[end].map(_swmm_fold) == folded)]
+        if len(candidates):
+            areas = []
+            for link_id, row in candidates.iterrows():
+                area = calc_area(row)
+                if area is None:
+                    raise _unsizable_link_error(link_id, row.Shape, node_id)
+                areas.append(area)
+            return max(areas)
+    return float("-inf")
+
+
+def resolve_cell_inflow_nodes(
+    cell_nodes, nodes: pd.DataFrame, links: pd.DataFrame, inflow_node_ids, *, one_per_cell: bool = False
+) -> CellInflowResolution:
+    """Decide which of one DEM cell's ``[INFLOWS]``-carrying nodes TRITON-SWMM couples to the surface.
+
+    ``cell_nodes`` are the cell's node names, ``nodes`` the model's node table (``NodeType``,
+    ``InvertElev``), ``links`` its link table (``inp_link_table``), and ``inflow_node_ids`` the
+    names carrying an ``[INFLOWS]`` line, matched with SWMM's case fold.
+
+    Only junctions are eligible; outfalls, storage nodes and dividers are dropped. A cell whose
+    inflow-carrying nodes are ALL ineligible raises ``ProcessingError`` with each node's reason,
+    since the toolkit would otherwise couple nothing there while the model asks for an inflow.
+    By default every eligible node stays coupled, so the number of exchange points does not
+    depend on the DEM resolution.
+
+    With ``one_per_cell`` the cell keeps ONE eligible node: the one whose own outgoing link has
+    the largest flow area (``_node_rank_key``); on a tie at the largest key, the eligible node
+    whose outgoing link leaves the cell, then the lowest invert, then the first. That choice is
+    among ALL eligible nodes, so a tie can hand the cell to its exit node even when that node's
+    key is smaller. No area is computed when only one node is eligible.
+    """
+    cell_nodes = [str(n) for n in cell_nodes]
+    inflow = {_swmm_fold(str(n)) for n in inflow_node_ids}
+    carrying = [n for n in cell_nodes if _swmm_fold(n) in inflow]
+    node_types = {n: str(nodes.loc[n, "NodeType"]) for n in carrying}
+    eligible = [n for n in carrying if node_types[n] == "JUNCTION"]
+    ineligible = [n for n in carrying if node_types[n] != "JUNCTION"]
+    if carrying and not eligible:
+        reasons = " ".join(_INELIGIBLE_NODE_REASONS[node_types[n]].format(id=n) for n in ineligible)
+        raise ProcessingError(
+            operation="resolve_cell_inflow_nodes",
+            filepath=None,
+            reason=f"no node of this DEM cell can be coupled to the surface. {reasons}",
+        )
+    reasons = {n: "eligibility" for n in ineligible}
+    if not one_per_cell or len(eligible) <= 1:
+        return CellInflowResolution(tuple(eligible), tuple(ineligible), reasons, node_types)
+    keys = {n: _node_rank_key(n, links) for n in eligible}
+    best = max(keys.values())
+    tied = [n for n in eligible if keys[n] == best]
+    if len(tied) == 1:
+        keeper = tied[0]
     else:
-        print("shape not recognized in calc_area")
-    return
+        in_cell = {_swmm_fold(n) for n in cell_nodes}
+        exits = [
+            n
+            for n in eligible
+            if any(
+                _swmm_fold(o) not in in_cell
+                for o in links.loc[links["InletNode"].map(_swmm_fold) == _swmm_fold(n), "OutletNode"]
+            )
+        ]
+        pool = exits if exits else eligible
+        keeper = find_lowest_inv(np.asarray(pool), nodes)[0]
+    dropped = [n for n in carrying if n != keeper]
+    for n in dropped:
+        reasons.setdefault(n, "ranking")
+    return CellInflowResolution((keeper,), tuple(dropped), reasons, node_types)
 
 
 # %%

@@ -127,6 +127,9 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "landuse_plot_color_colname": "experiment",
     "manhole_diameter": "experiment",
     "manhole_loss_coefficient": "experiment",
+    # "experiment": it decides which manholes exchange water with the surface, so it is part
+    # of what was modelled and a reproducer keeps it.
+    "one_coupled_inflow_node_per_dem_cell": "experiment",
     # "experiment": it decides where each coupled manhole's rim sits, so it is part of what was
     # modelled and a reproducer keeps it.
     "swmm_node_rim_from_dem": "experiment",

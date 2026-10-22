@@ -3789,20 +3789,33 @@ non_breaking_allowlist:
       AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 3, UNCOMMITTED per A-22; the
       layout_signature is the file's sha256 at this write and must equal it AS COMMITTED.
   - path: src/hhemt/scenario.py
-    layout_signature: 0ceafbf01e57d3cfba2820fee429452436428fe05612e886682d5a26814da670
+    layout_signature: 36b31a3bf19543d5411095b9bd2718dc8bf6704875c12f7393a87f98b459726b
     justification: >-
-      NON-BREAKING. Work package 2a, the no-result-change part of item 17 and item 22 (a).
-      (1) ADDS one module constant, `SWMM_SNAPSHOT_KEEP_PREVIOUS_KEY`, and one pure helper,
+      NON-BREAKING. Work package 2a, item 17. (1) ADDS one module constant,
+      `SWMM_SNAPSHOT_KEEP_PREVIOUS_KEY`, and one pure helper,
       `set_swmm_snapshot_keep_previous(cfg_path, keep)`, beside the two sibling snapshot-key
       helpers; the launcher calls it at a coupled clean start to set or remove one cfg line in
       the scenario's base TRITON-SWMM cfg, so preparation emits byte-identical cfgs. (2) Repairs
       pre-existing guards: an unknown boundary side raises ProcessingError instead of an
       UnboundLocalError, the two sys.exit calls raise ProcessingError, and the out-of-bounds
-      node list is accumulated and warned rather than discarded. (3) ADDS the shared SWMM
-      tokenizer and section helpers and `undefined_inflow_nodes`, which reads a template as SWMM
-      does for the run-entry refusal; preparation refuses a hydraulics model, and the standalone
-      model when it is enabled, in any flow unit but CMS, and a US-unit hydrology model, each
-      before the hydrology model runs. (4) Item 22 (a): ADDS the module constants
+      node list is accumulated and warned rather than discarded. (3) calc_area returns SWMM's
+      full areas: EGG 0.5105 x Geom1^2 instead of a length, the four rectangle shapes no longer
+      add Geom3 to the height, the horizontal-ellipse and arch rows use SWMM's own areas with
+      their size-coded forms treated as unsizable, a missing barrel count is one barrel, and
+      shape keywords match regardless of letter case. (4) The DEM-cell overlap resolver is
+      replaced by one rule run on every cell holding an [INFLOWS] node: junctions are eligible;
+      outfalls, and in this build storage nodes and dividers, are not, and lose their inflow
+      line with a warning; a cell whose inflow nodes are all ineligible raises a named error.
+      By default every eligible junction stays coupled; with
+      `one_coupled_inflow_node_per_dem_cell` the cell keeps the junction whose own outgoing link
+      has the largest flow area, ties by the cell's exit node and then the lowest invert, and
+      ranking a shape calc_area cannot size raises a named error stating that shapes can be
+      added in calc_area. (5) The shared cell grouping reads nodes from all four node sections
+      and names a node without coordinates; the [INFLOWS] writer removes every dropped node's
+      line by SWMM's own tokenizer and section rule; `undefined_inflow_nodes` reads a template
+      as SWMM does for the run-entry refusal; preparation refuses a hydraulics model, and the
+      standalone model when it is enabled, in any flow unit but CMS, and a US-unit hydrology
+      model, each before the hydrology model runs. (6) Item 22 (a): ADDS the module constants
       `SWMM_NODE_RIM_FROM_DEM_KEY`, `SWMM_NODE_RIM_FROM_DEM_FIRST_SHA` and
       `SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS` and two pure helpers, `append_swmm_node_rim_from_dem`
       and `require_dem_rim_capable_triton`; the coupled cfg generator, when
@@ -3810,7 +3823,11 @@ non_breaking_allowlist:
       and then appends the line `swmm_node_rim_from_dem=1`; when False it writes the same bytes.
       DECIDING MEASUREMENT for non-breaking: no function signature, `ScenarioPaths` field,
       scenario-log field, section name or generated file name changes, so no prepared tree is
-      invalidated, and with every new field at its default no persisted file changes content.
+      invalidated. Persisted CONTENT can change: because TRITON couples to the surface exactly
+      the nodes listed in [INFLOWS], the coupled manholes of a model whose cells hold more than
+      one inflow node, or an ineligible one, can change, appear or disappear. With the option
+      on, each prepared scenario also writes `_status/inflow_node_selection.json`; an older tree
+      simply lacks it, which the report's disclosure counts as not measured.
       AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 17, UNCOMMITTED per A-22; the
       layout_signature is the file's sha256 at this write and must equal it AS COMMITTED.
       KNOWN EXPIRY: this row expires on the next change to this path.
@@ -3843,26 +3860,45 @@ non_breaking_allowlist:
       the per-scenario timeseries stores carry none today; no data value changes.
       AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 20, UNCOMMITTED per A-22.
       KNOWN EXPIRY: this row expires on the next change to this path.
-  - path: src/hhemt/config/analysis.py
-    layout_signature: 4c1364febd90cc754b3415da461cf3b9bebeb8cf77b02ac1e5c46b8c635846b1
+  - path: src/hhemt/scenario_inputs.py
+    layout_signature: 31b5920aaa24d382b3c5feab8979e7ae29ff880a0fb0a396a2cb7a368b0b75fe
     justification: >-
-      NON-BREAKING. Work package 2a, item 22 (a). ADDS ONE field beside `manhole_diameter`,
-      `swmm_node_rim_from_dem: bool = Field(default=False, ...)`. DECIDING MEASUREMENT: the
-      field is DEFAULTED, so every existing analysis_config.yaml loads unchanged; no field is
-      removed or renamed and no config key, path or persisted structure moves.
-      AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 22 (a), UNCOMMITTED per A-22;
-      the layout_signature is the file's sha256 at this write and must equal it AS COMMITTED.
+      NON-BREAKING. Work package 2a, item 17. The inline DEM-cell overlap resolver is replaced
+      by a call to scenario.py's coupled-node rule, run on every cell holding an [INFLOWS] node
+      (it ran only on cells of two or more nodes), with the cell grouping's nodes read from all
+      four SWMM node sections (dividers were missing); its [INFLOWS] writer moves to scenario.py,
+      where it reads node names by token and ends the section at the next header. The unused
+      `find_lowest_inv` wrapper and the numpy/scipy imports it alone used are removed.
+      DECIDING MEASUREMENT for non-breaking: no existing file path, filename, section, log field
+      or return value changes; the method keeps its name and signature and still sets
+      `inflow_nodes_in_hydraulic_inp_assigned`. With `one_coupled_inflow_node_per_dem_cell` on,
+      the per-scenario selection record `_status/inflow_node_selection.json` is added.
+      AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 17, UNCOMMITTED per A-22; the
+      layout_signature is the file's sha256 at this write and must equal it AS COMMITTED.
+      KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 1def4b2db35f160ad751e72bbb56742dc15c976e3edd939708c90d133dfb19e8
+    justification: >-
+      NON-BREAKING. Work package 2a, item 17. ADDS TWO fields beside `manhole_diameter`, each
+      `bool = Field(default=False, ...)`: `one_coupled_inflow_node_per_dem_cell` (toolkit row
+      T21, option (b)) and `swmm_node_rim_from_dem` (item 22 (a)). DECIDING MEASUREMENT: both
+      fields are DEFAULTED, so every existing
+      analysis_config.yaml loads unchanged; no field is removed or renamed and no config key,
+      path or persisted structure moves.
+      AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 17, UNCOMMITTED per A-22; the
+      layout_signature is the file's sha256 at this write and must equal it AS COMMITTED.
       KNOWN EXPIRY: this row expires on the next change to this path.
   - path: src/hhemt/config/reprex_taxonomy.py
-    layout_signature: c1295b60080c3f2a40daf2548edeeaf3cc3469547e158f57d11c739583ff85ee
+    layout_signature: 5ad5b7f575af7185506a64bf93c6c5ea40a391f562ba3ac4d3c43167ebabe826
     justification: >-
-      NON-BREAKING. Work package 2a, item 22 (a). ONE entry added to `_FIELD_BUCKET`:
+      NON-BREAKING. Work package 2a, item 17. TWO entries added to `_FIELD_BUCKET`:
+      `"one_coupled_inflow_node_per_dem_cell": "experiment"` and
       `"swmm_node_rim_from_dem": "experiment"`, which the totality test
-      `test_field_bucket_is_total` requires for the new analysis_config field.
+      `test_field_bucket_is_total` requires for the two new analysis_config fields.
       DECIDING MEASUREMENT: `_FIELD_BUCKET` is an in-memory classification table; it is not
       serialised and no analysis tree records it, so no persisted structure can move.
-      AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 22 (a), UNCOMMITTED per A-22;
-      the layout_signature is the file's sha256 at this write and must equal it AS COMMITTED.
+      AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 17, UNCOMMITTED per A-22; the
+      layout_signature is the file's sha256 at this write and must equal it AS COMMITTED.
       KNOWN EXPIRY: this row expires on the next change to this path.
   - path: src/hhemt/config/system.py
     layout_signature: 514f26af385b73a5619afb1fedc7c3cd1869bc14200db4725da3dd9a80e20aa9

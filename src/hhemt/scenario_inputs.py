@@ -14,10 +14,8 @@ The ScenarioInputGenerator class coordinates:
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import numpy as np
 import pandas as pd
 import swmmio
-from scipy.stats import rankdata
 
 if TYPE_CHECKING:
     from .scenario import TRITONSWMM_scenario
@@ -82,140 +80,85 @@ class ScenarioInputGenerator:
 
     def update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(self, verbose: bool = False) -> None:
         """
-        Update SWMM hydraulics model structure to match DEM grid for TRITON-SWMM coupling.
+        Choose which ``[INFLOWS]`` nodes of the hydraulics model TRITON-SWMM couples to the surface.
 
-        Ensures only one inflow node per DEM grid cell by identifying the most
-        downstream node in each cell and removing inflow assignments from other nodes.
-        This prevents duplicate inflow assignments in TRITON-SWMM coupling where
-        surface runoff from each DEM cell is routed to the drainage network.
+        TRITON-SWMM couples to the surface exactly the nodes listed in ``[INFLOWS]``, so this
+        step decides the coupled set by deleting inflow lines. Every DEM cell holding an
+        inflow-carrying node is resolved by ``scenario.resolve_cell_inflow_nodes``: junctions
+        stay coupled; outfalls, storage nodes and dividers are dropped, named together in one
+        warning; and a cell whose inflow nodes are all of those types stops preparation with a
+        named error. With ``one_coupled_inflow_node_per_dem_cell`` set, each cell keeps a single
+        junction chosen by pipe size, and every prepared scenario records each cell that had
+        more than one inflow node in ``_status/inflow_node_selection.json``.
 
         Parameters
         ----------
         verbose : bool, optional
             If True, print detailed progress messages (default: False)
         """
-        from .scenario import calc_area, return_df_of_nodes_grouped_by_DEM_gridcell
+        import json
+        import warnings
 
-        dem_processed = self.system.sys_paths.dem_processed
-
-        df_node_locs, lst_outfalls = return_df_of_nodes_grouped_by_DEM_gridcell(
-            self.scenario.scen_paths.swmm_hydraulics_inp, dem_processed, verbose=verbose
+        from .scenario import (
+            inp_link_table,
+            inp_node_table,
+            remove_inflow_lines,
+            resolve_cell_inflow_nodes,
+            return_df_of_nodes_grouped_by_DEM_gridcell,
         )
-        lst_grps_more_than_1_node = []
-        count = -1
-        for _coords, group in df_node_locs.groupby(["dem_x_coord", "dem_y_coord"]):
-            keys = list(group.node_key)
-            if len(group) > 1:
-                count += 1
-                group["grid_id"] = count
-                lst_grps_more_than_1_node.append(group)
+
+        f_inp = self.scenario.scen_paths.swmm_hydraulics_inp
+        one_per_cell = bool(self.cfg_analysis.one_coupled_inflow_node_per_dem_cell)
+        df_node_locs, _lst_outfalls = return_df_of_nodes_grouped_by_DEM_gridcell(
+            f_inp, self.system.sys_paths.dem_processed, verbose=verbose
+        )
+        model = swmmio.Model(str(f_inp))
+        nodes = inp_node_table(model)
+        links = inp_link_table(model)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            inflows = model.inp.inflows
+        inflow_node_ids = [] if inflows is None else list(inflows.index.astype(str))
+
+        drop: list[str] = []
+        ineligible_dropped: list[str] = []
+        selection_cells: list[dict] = []
+        for (dem_x, dem_y), group in df_node_locs.groupby(["dem_x_coord", "dem_y_coord"]):
+            resolution = resolve_cell_inflow_nodes(
+                list(group.node_key), nodes, links, inflow_node_ids, one_per_cell=one_per_cell
+            )
+            drop.extend(resolution.dropped)
+            ineligible_dropped.extend(
+                f"{n} ({resolution.node_types[n].lower()})"
+                for n in resolution.dropped
+                if resolution.drop_reasons[n] == "eligibility"
+            )
+            if one_per_cell and len(resolution.node_types) > 1:
+                selection_cells.append(
+                    {
+                        "dem_x_coord": float(dem_x),
+                        "dem_y_coord": float(dem_y),
+                        "inflow_nodes": [{"node": n, "type": t} for n, t in resolution.node_types.items()],
+                        "kept": resolution.kept[0] if resolution.kept else None,
+                        "dropped": [{"node": n, "reason": resolution.drop_reasons[n]} for n in resolution.dropped],
+                    }
+                )
+        if ineligible_dropped:
+            warnings.warn(
+                f"{f_inp}: [INFLOWS] lines removed for nodes TRITON-SWMM cannot couple, each sharing "
+                f"a DEM cell with a junction that stays coupled: {ineligible_dropped}",
+                stacklevel=2,
+            )
         if verbose:
-            print(f"There are {len(lst_grps_more_than_1_node)} gridcells with more than 1 node.")
-        if not lst_grps_more_than_1_node:
-            # No DEM-cell overlap to resolve; nothing to update.
-            return
-        df_overlapping_nodes = pd.concat(lst_grps_more_than_1_node)
-        model = swmmio.Model(str(self.scenario.scen_paths.swmm_hydraulics_inp))
-        links = model.links.dataframe
-        nodes = model.nodes.dataframe
-        inflows = model.inp.inflows
-        all_upstream_nodes_to_drop = []
-        lst_ambiguous_nodes = []
-        for _grid_id, group in df_overlapping_nodes.groupby(["grid_id"]):
-            keys = list(group.node_key)
-            downstream_links = links[links.InletNode.isin(keys)]
-            upstream_nodes_to_drop = []
-            if len(downstream_links) == 0:
-                # this means that these two nodes do not have downstream conduits
-                node_to_keep = inflows[inflows.index.isin(keys)].index.values
-                if len(node_to_keep) == 1:
-                    # unambiguous
-                    upstream_nodes_to_drop = upstream_nodes_to_drop + list(
-                        np.asarray(keys)[np.asarray(keys) != node_to_keep[0]]
-                    )
-                else:
-                    node_to_keep = find_lowest_inv(node_to_keep, nodes)
-                    if len(node_to_keep) > 1:
-                        if verbose:
-                            print("###########################################")
-                            print(
-                                f"Warning: node selection ambiguous for nodes {list(node_to_keep)} even after "
-                                "trying to select based on the lowest invert elevation. "
-                                "Choose the first node in the list..."
-                            )
-                            print("###########################################")
-                        if node_to_keep not in lst_ambiguous_nodes:
-                            lst_ambiguous_nodes.append(node_to_keep)
-                    node_to_keep = node_to_keep[0]
-            else:
-                keys = list(downstream_links.InletNode)
-                # compute link area
-                lst_areas = []
-                for _id, row in downstream_links.iterrows():
-                    lst_areas.append(calc_area(row))
-                # rank pipe area
-                ranks = rankdata(lst_areas, method="min")
-                # find unique ranks
-                df_rank_counts = pd.DataFrame(np.unique(ranks, return_counts=True)).T
-                df_rank_counts.columns = ["rank", "count"]
-                df_rank_counts = df_rank_counts.set_index("rank")
-                # add smaller nodes to the list of nodes to drop
-                upstream_nodes_to_drop += list(np.asarray(keys)[ranks != max(ranks)])
-                if df_rank_counts.loc[max(ranks), "count"] > 1:
-                    downstream_links_tied = downstream_links[ranks == max(ranks)]
-                    # if a node appears as an outlet node, drop it
-                    downstream_links_w_outlets = downstream_links_tied[downstream_links_tied.OutletNode.isin(keys)]
-                    upstream_nodes_to_drop += list(downstream_links_w_outlets.InletNode.values)
-                    # remove nodes that don't have an outlet node
-                    remaining_dwnstrm_links = downstream_links_tied[
-                        ~downstream_links_tied.InletNode.isin(upstream_nodes_to_drop)
-                    ]
-                    node_to_keep = remaining_dwnstrm_links.InletNode.values
-                    if len(node_to_keep) > 1:
-                        node_to_keep = find_lowest_inv(node_to_keep, nodes)
-                        if len(node_to_keep) > 1:
-                            if verbose:
-                                print("###########################################")
-                                print(
-                                    f"Warning: node selection ambiguous for nodes {list(node_to_keep)} even after "
-                                    "trying to select based on the lowest invert elevation. "
-                                    "Choose the first node in the list..."
-                                )
-                                print("###########################################")
-                        node_to_keep = node_to_keep[0]
-                        upstream_nodes_to_drop = downstream_links[
-                            downstream_links.InletNode != node_to_keep
-                        ].InletNode.values
-                else:
-                    idx_largest_pipe = np.argmax(lst_areas)
-                    node_to_keep = keys[idx_largest_pipe]
-                    upstream_nodes_to_drop = downstream_links[
-                        downstream_links.InletNode != node_to_keep
-                    ].InletNode.values
-            all_upstream_nodes_to_drop = all_upstream_nodes_to_drop + list(upstream_nodes_to_drop)
-        if verbose:
-            print(f"Removing {len(all_upstream_nodes_to_drop)} inflow nodes.")
-        # write new swmm model, removing outflow that won't be used by TRITON-SWMM
-        with open(self.scenario.scen_paths.swmm_hydraulics_inp) as fp:
-            lines = fp.readlines()
-        for idx_line, line in enumerate(lines):
-            if "[INFLOWS]" in line:
-                inflows_section_first_line_num = idx_line
-            if "[CURVES]" in line:
-                inflows_section_last_line_num = idx_line
-        line_nums_to_remove = []
-        lines_to_remove = []
-        for inflow_line in np.arange(inflows_section_first_line_num, inflows_section_last_line_num + 1):
-            line = lines[inflow_line]
-            node_id = line.split("    ")[0]
-            if node_id in all_upstream_nodes_to_drop:
-                line_nums_to_remove.append(inflow_line)
-                lines_to_remove.append(line)
-        # overwrite hydaulics model
-        with open(self.scenario.scen_paths.swmm_hydraulics_inp, "w") as fp:
-            for number, line in enumerate(lines):
-                if number not in line_nums_to_remove:
-                    fp.write(line)
+            print(f"Removing {len(drop)} inflow nodes.")
+        remove_inflow_lines(f_inp, drop)
+        if one_per_cell:
+            # Written for EVERY scenario prepared with the option on, empty when no cell was
+            # reduced, so that an ABSENT file means "not prepared by this build" to the report's
+            # inflow-node reduction disclosure rather than reading as "nothing reduced".
+            record = self.scenario.scen_paths.sim_folder / "_status" / "inflow_node_selection.json"
+            record.parent.mkdir(parents=True, exist_ok=True)
+            record.write_text(json.dumps({"cells": selection_cells}, indent=2) + "\n")
         self.scenario.log.inflow_nodes_in_hydraulic_inp_assigned = True
         return
 
@@ -350,27 +293,3 @@ class ScenarioInputGenerator:
             f.write(str_line2 + "\n")
         self.scenario.log.extbc_loc_created.set(True)
         return
-
-
-def find_lowest_inv(node_to_keep, nodes):
-    """
-    Find nodes with the lowest invert elevation.
-
-    Helper function for identifying the most downstream node when multiple nodes
-    fall within the same DEM grid cell.
-
-    Parameters
-    ----------
-    node_to_keep : array-like
-        Node IDs to evaluate
-    nodes : DataFrame
-        DataFrame containing node information including InvertElev
-
-    Returns
-    -------
-    list
-        Node IDs with the lowest invert elevation
-    """
-    from .scenario import find_lowest_inv as scenario_find_lowest_inv
-
-    return scenario_find_lowest_inv(node_to_keep, nodes)

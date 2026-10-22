@@ -14,6 +14,7 @@ against code that predates them collects every test and fails each one on its ow
 
 from __future__ import annotations
 
+import json
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,6 +44,30 @@ def _dem(path: Path, nx: int = 10, ny: int = 10, cell: float = 10.0) -> Path:
 def _inp(path: Path, text: str) -> Path:
     path.write_text(text.strip() + "\n")
     return path
+
+
+def _row(**fields):
+    """One link row as ``iterrows`` yields it from a one-row frame."""
+    return next(pd.DataFrame([fields]).iterrows())[1]
+
+
+def _tables(nodes: dict, links: dict):
+    """A node table (``NodeType``, ``InvertElev``) and a link table, as the resolver reads them."""
+    node_df = pd.DataFrame(
+        {"NodeType": [v[0] for v in nodes.values()], "InvertElev": [v[1] for v in nodes.values()]},
+        index=list(nodes),
+    )
+    cols = ["InletNode", "OutletNode", "LinkType", "Shape", "Geom1", "Geom2", "Geom3", "Geom4", "Barrels"]
+    link_df = pd.DataFrame(
+        [{c: spec.get(c, np.nan) for c in cols} for spec in links.values()],
+        index=list(links),
+        columns=cols,
+    )
+    return node_df, link_df
+
+
+def _coupled(resolution, inflow) -> set:
+    return set(inflow) - set(resolution.dropped)
 
 
 _NODES_INP = """
@@ -112,9 +137,103 @@ def test_each_named_side_returns_a_coordinate_inside_the_dem(side):
     assert 5.0 <= x <= 25.0 and 5.0 <= y <= 25.0
 
 
+def test_out_of_bounds_nodes_are_named_in_one_warning(tmp_path):
+    """Property: two nodes outside the DEM produce ONE warning naming both.
+
+    Class: any model with nodes outside the DEM. Why: the list was reset inside the loop and
+    never read, so out-of-domain nodes vanished with no trace. What kills it: moving the
+    initialisation back into the loop, or gating the warning on ``verbose``. Second correct
+    implementation: a warning per node; this assertion would then need its count relaxed, so
+    it pins the one-warning form.
+    """
+    from hhemt.scenario import return_df_of_nodes_grouped_by_DEM_gridcell
+
+    dem = _dem(tmp_path / "dem.tif")
+    inp = _inp(
+        tmp_path / "m.inp",
+        """
+[JUNCTIONS]
+J1 1 2 0 0 0
+FAR1 1 2 0 0 0
+FAR2 1 2 0 0 0
+
+[COORDINATES]
+J1 5 5
+FAR1 500 500
+FAR2 -400 5
+""",
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        return_df_of_nodes_grouped_by_DEM_gridcell(inp, dem)
+    hits = [str(w.message) for w in caught if "outside the DEM" in str(w.message)]
+    assert len(hits) == 1
+    assert "FAR1" in hits[0] and "FAR2" in hits[0]
+
+
 # ---------------------------------------------------------------------------
 # calc_area -- SWMM's own full areas (Fixes 3, 5, 6, 7 and the ellipse/arch rows)
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("prop", "fields", "expected"),
+    [
+        ("EGG", dict(Shape="EGG", Geom1=2.0, Geom2=0.0, Geom3=0.0, Barrels=1), 0.5105 * 4),
+        ("CIRCULAR control", dict(Shape="CIRCULAR", Geom1=2.0, Geom2=0.0, Geom3=0.0, Barrels=1), 3.14),
+        ("RECT_OPEN", dict(Shape="RECT_OPEN", Geom1=2.0, Geom2=3.0, Geom3=2.0, Barrels=1), 6.0),
+        ("RECT_TRIANGULAR", dict(Shape="RECT_TRIANGULAR", Geom1=2.0, Geom2=3.0, Geom3=1.0, Barrels=1), 4.5),
+        ("RECT_ROUND", dict(Shape="RECT_ROUND", Geom1=2.0, Geom2=3.0, Geom3=2.0, Barrels=1), 5.376561799224367),
+        (
+            "RECT_ROUND clamped",
+            dict(Shape="RECT_ROUND", Geom1=2.0, Geom2=3.0, Geom3=1.0, Barrels=1),
+            5.034291735288518,
+        ),
+        ("RECT_CLOSED control", dict(Shape="RECT_CLOSED", Geom1=2.0, Geom2=3.0, Geom3=0.0, Barrels=1), 6.0),
+        ("orifice", dict(Shape="RECT_CLOSED", Geom1=1.0, Geom2=1.0, Geom3=0.0, Barrels=np.nan), 1.0),
+        ("lower-case", dict(Shape=" egg ", Geom1=2.0, Geom2=0.0, Geom3=0.0, Barrels=1), 2.042),
+        ("HORIZ_ELLIPSE", dict(Shape="HORIZ_ELLIPSE", Geom1=1.0, Geom2=1.5, Geom3=0.0, Barrels=1), 1.2692),
+        ("ARCH", dict(Shape="ARCH", Geom1=1.0, Geom2=2.0, Geom3=0.0, Barrels=1), 1.5758),
+    ],
+)
+def test_calc_area_returns_swmm_full_area(prop, fields, expected):
+    """Property: each shape returns SWMM 5.2.3's full flow area times barrels.
+
+    Class: every recognised shape keyword in any letter case, with or without a barrel count.
+    Why: the area ranks a cell's manholes under the one-node-per-cell option, so a wrong area
+    couples the wrong manhole; the old arms returned a length for EGG, added Geom3 to the
+    height for rectangles, NaN for an orifice, and a circle for an ellipse. What kills it:
+    reverting any arm to its old formula, or matching the shape without stripping and
+    upper-casing it. Second correct implementation: a table of (keyword -> coefficient
+    function) looked up after the same normalisation; the assertion reads only the value.
+    The CIRCULAR and RECT_CLOSED rows are controls whose value was already right.
+    """
+    from hhemt.scenario import calc_area
+
+    assert calc_area(_row(**fields)) == pytest.approx(expected, rel=1e-9)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        dict(Shape="ARCH", Geom1=5.0, Geom2=0.0, Geom3=0.0, Barrels=1),
+        dict(Shape="HORIZ_ELLIPSE", Geom1=5.0, Geom2=0.0, Geom3=0.0, Barrels=1),
+        dict(Shape="TRAPEZOIDAL", Geom1=1.0, Geom2=1.0, Geom3=1.0, Barrels=1),
+        dict(Shape=np.nan, Geom1=np.nan, Geom2=np.nan, Geom3=np.nan, Barrels=np.nan),
+    ],
+)
+def test_unsizable_shapes_return_none(fields):
+    """Property: a size-coded arch or ellipse, an unhandled keyword and a missing shape return None.
+
+    Class: every input whose area this function cannot compute. Why: a size-coded shape's
+    Geom1 is a standard-size code, so reading it as a length gave 0 for an arch and 19.63 for
+    an ellipse; None routes it to the named unsizable-shape error. What kills it: computing an
+    area from the size code. Second correct implementation: raising a dedicated exception that
+    the caller converts; the caller contract here is None.
+    """
+    from hhemt.scenario import calc_area
+
+    assert calc_area(_row(**fields)) is None
 
 
 # ---------------------------------------------------------------------------
@@ -122,9 +241,413 @@ def test_each_named_side_returns_a_coordinate_inside_the_dem(side):
 # ---------------------------------------------------------------------------
 
 
+def test_by_default_every_eligible_junction_of_a_cell_stays_coupled():
+    """Property: with the option off, two eligible inflow junctions in one cell both stay coupled.
+
+    Class: any cell holding more than one inflow junction. Why: the solver now couples any
+    number of nodes per cell, and the default keeps the number of exchange points
+    independent of the DEM resolution. What kills it: applying the ranking without the
+    option. Second correct implementation: returning only the drop set; the assertion reads
+    the coupled set.
+    """
+    from hhemt.scenario import resolve_cell_inflow_nodes
+
+    nodes, links = _tables(
+        {"J1": ("JUNCTION", 2.0), "J2": ("JUNCTION", 1.0), "O1": ("OUTFALL", 0.0)},
+        {
+            "C1": dict(InletNode="J1", OutletNode="O1", LinkType="CONDUIT", Shape="CIRCULAR", Geom1=2.0, Barrels=1),
+            "C2": dict(InletNode="J2", OutletNode="O1", LinkType="CONDUIT", Shape="CIRCULAR", Geom1=1.0, Barrels=1),
+        },
+    )
+    res = resolve_cell_inflow_nodes(["J1", "J2"], nodes, links, ["J1", "J2"])
+    assert _coupled(res, ["J1", "J2"]) == {"J1", "J2"}
+    assert res.dropped == ()
+
+
+def _chain_tables():
+    return _tables(
+        {"J1": ("JUNCTION", 3.0), "J2": ("JUNCTION", 2.0), "J3": ("JUNCTION", 1.0), "O1": ("OUTFALL", 0.0)},
+        {
+            "C1": dict(InletNode="J1", OutletNode="J2", LinkType="CONDUIT", Shape="RECT_CLOSED", Geom1=1, Geom2=3),
+            "C2": dict(InletNode="J2", OutletNode="J3", LinkType="CONDUIT", Shape="RECT_CLOSED", Geom1=1, Geom2=3),
+            "C3": dict(InletNode="J3", OutletNode="O1", LinkType="CONDUIT", Shape="RECT_CLOSED", Geom1=1, Geom2=1),
+        },
+    )
+
+
+def test_a_tie_at_the_largest_pipe_goes_to_the_cells_exit_node():
+    """Property (option on): chain J1->J2->J3->O1 with C1 = C2 = 3 > C3 = 1 keeps J3.
+
+    Class: a cell whose largest-pipe key is tied. Why: the tie rule chooses
+    among ALL eligible junctions the one whose outgoing link leaves the cell;
+    the old resolver kept none here. What kills it: breaking the tie among the tied nodes
+    only (that keeps J2, the lower-invert of J1 and J2). Second correct implementation:
+    computing exit nodes from the node-to-cell map rather than the cell's node list.
+    """
+    from hhemt.scenario import resolve_cell_inflow_nodes
+
+    nodes, links = _chain_tables()
+    res = resolve_cell_inflow_nodes(["J1", "J2", "J3"], nodes, links, ["J1", "J2", "J3"], one_per_cell=True)
+    assert _coupled(res, ["J1", "J2", "J3"]) == {"J3"}
+
+
+def test_the_largest_outgoing_pipe_wins():
+    """Property, control (option on): areas 3.0 and 1.0 keep the 3.0 node.
+
+    Class: an untied cell. What kills it: ranking by smallest area. Second correct
+    implementation: sorting instead of a max.
+    """
+    from hhemt.scenario import resolve_cell_inflow_nodes
+
+    nodes, links = _tables(
+        {"J1": ("JUNCTION", 2.0), "J2": ("JUNCTION", 1.0), "O1": ("OUTFALL", 0.0)},
+        {
+            "C1": dict(InletNode="J1", OutletNode="O1", LinkType="CONDUIT", Shape="RECT_CLOSED", Geom1=1, Geom2=3),
+            "C2": dict(InletNode="J2", OutletNode="O1", LinkType="CONDUIT", Shape="RECT_CLOSED", Geom1=1, Geom2=1),
+        },
+    )
+    res = resolve_cell_inflow_nodes(["J1", "J2"], nodes, links, ["J1", "J2"], one_per_cell=True)
+    assert _coupled(res, ["J1", "J2"]) == {"J1"}
+
+
+def test_a_junction_without_an_outgoing_pipe_ranks_by_its_largest_incoming_pipe():
+    """Property (option on): a junction with only an incoming pipe is ranked by that pipe.
+
+    Class: eligible junctions with no outgoing cross-section link. Why: under
+    dynamic wave it drains through that pipe by reverse flow; the old resolver never made it
+    a drop candidate, so the cell coupled both. What kills it: ranking such a node lowest
+    regardless of its incoming pipe (keeps J1). Second correct implementation: computing
+    both directions' keys at once and taking the outgoing one when present.
+    """
+    from hhemt.scenario import resolve_cell_inflow_nodes
+
+    nodes, links = _tables(
+        {"J1": ("JUNCTION", 2.0), "J2": ("JUNCTION", 1.0), "X": ("JUNCTION", 5.0), "O1": ("OUTFALL", 0.0)},
+        {
+            "C1": dict(InletNode="J1", OutletNode="O1", LinkType="CONDUIT", Shape="RECT_CLOSED", Geom1=1, Geom2=1),
+            "C2": dict(InletNode="X", OutletNode="J2", LinkType="CONDUIT", Shape="RECT_CLOSED", Geom1=1, Geom2=3),
+        },
+    )
+    res = resolve_cell_inflow_nodes(["J1", "J2"], nodes, links, ["J1", "J2"], one_per_cell=True)
+    assert _coupled(res, ["J1", "J2"]) == {"J2"}
+
+
+def test_only_inflow_carrying_nodes_are_candidates():
+    """Property (option on): J1 (inflow) -> J2 (no inflow) -> O1 with C1 < C2 couples J1.
+
+    Class: a cell whose largest pipe starts at a node with no ``[INFLOWS]`` line. Why: the old
+    resolver kept J2, which has no inflow line, and dropped J1, so the cell coupled none. What
+    kills it: ranking every node of the cell rather than the inflow-carrying ones. Second
+    correct implementation: filtering after ranking, as long as the keeper is an inflow node.
+    """
+    from hhemt.scenario import resolve_cell_inflow_nodes
+
+    nodes, links = _tables(
+        {"J1": ("JUNCTION", 2.0), "J2": ("JUNCTION", 1.0), "O1": ("OUTFALL", 0.0)},
+        {
+            "C1": dict(InletNode="J1", OutletNode="J2", LinkType="CONDUIT", Shape="RECT_CLOSED", Geom1=1, Geom2=1),
+            "C2": dict(InletNode="J2", OutletNode="O1", LinkType="CONDUIT", Shape="RECT_CLOSED", Geom1=1, Geom2=3),
+        },
+    )
+    res = resolve_cell_inflow_nodes(["J1", "J2"], nodes, links, ["J1"], one_per_cell=True)
+    assert _coupled(res, ["J1"]) == {"J1"}
+
+
+def test_an_orifice_opening_keys_its_junction():
+    """Property (option on): a junction draining through an orifice outranks a smaller conduit's.
+
+    Class: junctions whose only outgoing link is an orifice or weir. Why: the orifice row has
+    no barrel count, which used to make its area NaN and empty the cell. What kills it:
+    excluding orifices from the key's link types. Second correct implementation: keying
+    orifices on their opening area through a separate function.
+    """
+    from hhemt.scenario import resolve_cell_inflow_nodes
+
+    nodes, links = _tables(
+        {"J1": ("JUNCTION", 2.0), "J2": ("JUNCTION", 1.0), "O1": ("OUTFALL", 0.0)},
+        {
+            "OR1": dict(InletNode="J1", OutletNode="O1", LinkType="ORIFICE", Shape="RECT_CLOSED", Geom1=2, Geom2=2),
+            "C2": dict(InletNode="J2", OutletNode="O1", LinkType="CONDUIT", Shape="CIRCULAR", Geom1=1.0, Barrels=1),
+        },
+    )
+    res = resolve_cell_inflow_nodes(["J1", "J2"], nodes, links, ["J1", "J2"], one_per_cell=True)
+    assert _coupled(res, ["J1", "J2"]) == {"J1"}
+
+
+@pytest.mark.parametrize("one_per_cell", [False, True])
+def test_a_cell_of_only_ineligible_inflow_nodes_raises_the_eligibility_error(one_per_cell):
+    """Property: a lone outfall carrying an inflow line raises the error naming it and its reason.
+
+    Class: cells whose inflow-carrying nodes are all outfalls, storage nodes or dividers.
+    Why: TRITON-SWMM cannot couple them; before, the outfall was coupled at a depth of zero.
+    What kills it: dropping the line silently. Second correct implementation: raising
+    ConfigurationError instead; the assertion reads the shared message substrings.
+    """
+    from hhemt.exceptions import ProcessingError
+    from hhemt.scenario import resolve_cell_inflow_nodes
+
+    nodes, links = _tables({"O1": ("OUTFALL", 0.0)}, {})
+    with pytest.raises(ProcessingError) as excinfo:
+        resolve_cell_inflow_nodes(["O1"], nodes, links, ["O1"], one_per_cell=one_per_cell)
+    assert "Outfall O1" in str(excinfo.value)
+    assert "boundary condition" in str(excinfo.value)
+
+
+def test_a_cell_with_no_inflow_node_couples_none_and_raises_nothing():
+    """Property: two outfalls with no inflow line couple none, with no error.
+
+    Class: cells holding no inflow-carrying node. Why: the old branch called the lowest-
+    invert helper on an empty set and crashed with an unnamed ValueError. What kills it:
+    ranking or erroring on an empty candidate set. Second correct implementation: skipping
+    such cells before calling the resolver.
+    """
+    from hhemt.scenario import resolve_cell_inflow_nodes
+
+    nodes, links = _tables({"O1": ("OUTFALL", 0.0), "O2": ("OUTFALL", 1.0)}, {})
+    for one_per_cell in (False, True):
+        res = resolve_cell_inflow_nodes(["O1", "O2"], nodes, links, [], one_per_cell=one_per_cell)
+        assert res.kept == () and res.dropped == ()
+
+
+def test_an_unsizable_shape_names_itself_and_where_shapes_are_added():
+    """Property (option on): ranking a TRAPEZOIDAL pipe raises a message naming it and calc_area.
+
+    Class: any cell of two or more eligible junctions whose ranking needs an unsizable shape.
+    Why: the message must name the
+    shape and the link and say that shapes CAN be added in calc_area in src/hhemt/scenario.py.
+    What kills it: dropping any of those parts, or raising on a one-junction cell. Second
+    correct implementation: a dedicated exception subclass carrying the same text.
+    """
+    from hhemt.exceptions import ProcessingError
+    from hhemt.scenario import resolve_cell_inflow_nodes
+
+    nodes, links = _tables(
+        {"J1": ("JUNCTION", 2.0), "J2": ("JUNCTION", 1.0), "O1": ("OUTFALL", 0.0)},
+        {
+            "T1": dict(InletNode="J1", OutletNode="O1", LinkType="CONDUIT", Shape="TRAPEZOIDAL", Geom1=1, Geom2=1),
+            "C2": dict(InletNode="J2", OutletNode="O1", LinkType="CONDUIT", Shape="CIRCULAR", Geom1=1.0, Barrels=1),
+        },
+    )
+    with pytest.raises(ProcessingError) as excinfo:
+        resolve_cell_inflow_nodes(["J1", "J2"], nodes, links, ["J1", "J2"], one_per_cell=True)
+    message = str(excinfo.value)
+    assert "TRAPEZOIDAL" in message and "T1" in message
+    assert "additional pipe shapes can be added" in message.lower()
+    assert "calc_area in src/hhemt/scenario.py" in message
+    # One eligible junction needs no area, so nothing is raised.
+    res = resolve_cell_inflow_nodes(["J1"], nodes, links, ["J1"], one_per_cell=True)
+    assert res.kept == ("J1",)
+
+
+def test_unlinked_junctions_tie_and_the_lower_invert_wins():
+    """Property (option on): two inflow junctions with no links keep the lower-invert one.
+
+    Class: cells whose eligible junctions share the lowest key and none leaves the cell.
+    Why: the old no-outgoing-link branch kept a node but dropped none, coupling both. What
+    kills it: keeping both, or the higher invert. Second correct implementation: sorting by
+    (key, exit, invert) in one pass.
+    """
+    from hhemt.scenario import resolve_cell_inflow_nodes
+
+    nodes, links = _tables({"J1": ("JUNCTION", 2.0), "J2": ("JUNCTION", 1.0)}, {})
+    res = resolve_cell_inflow_nodes(["J1", "J2"], nodes, links, ["J1", "J2"], one_per_cell=True)
+    assert _coupled(res, ["J1", "J2"]) == {"J2"}
+
+
 # ---------------------------------------------------------------------------
 # The node universe (Spec D) and the [INFLOWS] writer (Spec F, shared parser)
 # ---------------------------------------------------------------------------
+
+
+_DIVIDER_INP = """
+[OPTIONS]
+FLOW_UNITS CMS
+
+[JUNCTIONS]
+J1 1 2 0 0 0
+
+[OUTFALLS]
+O1 0 FREE NO
+
+[DIVIDERS]
+D1 1 C1 CUTOFF 0.5 0 0 0 0
+
+[CONDUITS]
+C1 D1 O1 10 0.013 0 0 0 0
+C2 J1 O1 10 0.013 0 0 0 0
+
+[XSECTIONS]
+C1 CIRCULAR 1 0 0 0 1
+C2 CIRCULAR 1 0 0 0 1
+
+[INFLOWS]
+J1 FLOW "" FLOW 1.0 1 0.01
+D1 FLOW "" FLOW 1.0 1 0.01
+
+[COORDINATES]
+J1 5 5
+D1 6 6
+O1 95 95
+"""
+
+
+def test_a_divider_is_grouped_into_its_dem_cell(tmp_path):
+    """Property: a junction and a divider in one cell are both returned in that cell.
+
+    Class: models with a ``[DIVIDERS]`` section. Why: swmmio's node frame omits dividers, so a
+    divider was never grouped, never dropped, and missing from its cell's hydrograph. What
+    kills it: reading nodes from ``model.nodes``. Second correct implementation: parsing the
+    four sections with the toolkit's own reader instead of swmmio's section accessors.
+    """
+    from hhemt.scenario import return_df_of_nodes_grouped_by_DEM_gridcell
+
+    df, outfalls = return_df_of_nodes_grouped_by_DEM_gridcell(
+        _inp(tmp_path / "m.inp", _DIVIDER_INP), _dem(tmp_path / "dem.tif")
+    )
+    cells = df.groupby(["dem_x_coord", "dem_y_coord"])["node_key"].apply(set).tolist()
+    assert {"J1", "D1"} in cells
+    assert outfalls == ["O1"]
+
+
+def test_a_node_without_coordinates_raises_naming_it(tmp_path):
+    """Property: a junction with no ``[COORDINATES]`` row raises ProcessingError naming it.
+
+    Class: any node missing a coordinate. Why: swmmio's geodataframe raised an unnamed
+    TypeError. What kills it: skipping the node silently. Second correct implementation:
+    checking every node's coordinate before grouping, in one pass.
+    """
+    from hhemt.exceptions import ProcessingError
+    from hhemt.scenario import return_df_of_nodes_grouped_by_DEM_gridcell
+
+    inp = _inp(tmp_path / "m.inp", "[JUNCTIONS]\nJ1 1 2 0 0 0\nJ2 1 2 0 0 0\n\n[COORDINATES]\nJ1 5 5\n")
+    with pytest.raises(ProcessingError, match="J2"):
+        return_df_of_nodes_grouped_by_DEM_gridcell(inp, _dem(tmp_path / "dem.tif"))
+
+
+def test_an_ineligible_node_sharing_a_cell_is_dropped_with_a_named_warning(tmp_path):
+    """Property: a divider sharing a cell with a junction loses its inflow line, with a warning naming it.
+
+    Class: ineligible inflow nodes that share a cell with an eligible junction. Why: the
+    divider was not in the node universe, so both were coupled. What kills it: keeping the
+    divider's line, or dropping it silently. Second correct implementation: one warning per
+    dropped node instead of one per scenario; the assertion reads the name in any warning.
+    """
+    import swmmio
+
+    from hhemt.scenario_inputs import ScenarioInputGenerator
+
+    inp = _inp(tmp_path / "hydraulics.inp", _DIVIDER_INP)
+    gen = _generator(tmp_path, inp, one_per_cell=False)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ScenarioInputGenerator.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(gen)
+    assert any("D1 (divider)" in str(w.message) for w in caught)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        remaining = set(swmmio.Model(str(inp)).inp.inflows.index)
+    assert remaining == {"J1"}
+
+
+def _generator(tmp_path, inp, *, one_per_cell):
+    """A ScenarioInputGenerator bound to a fake scenario that carries only what the resolver step reads."""
+    from hhemt.scenario_inputs import ScenarioInputGenerator
+
+    sim_folder = tmp_path / "sim"
+    sim_folder.mkdir(exist_ok=True)
+    scenario = SimpleNamespace(
+        scen_paths=SimpleNamespace(swmm_hydraulics_inp=inp, sim_folder=sim_folder),
+        _analysis=SimpleNamespace(cfg_analysis=SimpleNamespace(one_coupled_inflow_node_per_dem_cell=one_per_cell)),
+        _system=SimpleNamespace(sys_paths=SimpleNamespace(dem_processed=_dem(tmp_path / "dem.tif"))),
+        log=SimpleNamespace(),
+    )
+    gen = ScenarioInputGenerator.__new__(ScenarioInputGenerator)
+    gen.scenario = scenario
+    gen.cfg_analysis = scenario._analysis.cfg_analysis
+    gen.system = scenario._system
+    return gen
+
+
+_WRITER_INP = """
+[OPTIONS]
+FLOW_UNITS CMS
+
+[{header}]
+;;Node Constituent Series Type Mfactor Sfactor Baseline
+J1 FLOW "" FLOW 1.0 1 0.01
+J2 FLOW "" FLOW 1.0 1 0.01
+
+[TIMESERIES]
+J1 0 1
+"""
+
+
+@pytest.mark.parametrize("header", ["INFLOWS", "INFLOW", "inflows"])
+def test_the_writer_finds_the_section_as_swmm_does(tmp_path, header):
+    """Property: the drop set's lines are removed under any header SWMM accepts.
+
+    Class: inflow sections headed ``[INFLOW]``, ``[INFLOWS]`` or lower case, and sections
+    followed by any header (here ``[TIMESERIES]``, with no ``[CURVES]``). Why: the old writer
+    matched the literal ``[INFLOWS]`` and needed a ``[CURVES]`` header after it, raising
+    UnboundLocalError otherwise. What kills it: matching the literal header, or ending the
+    section at ``[CURVES]`` only. Second correct implementation: a regex-based section
+    scanner with the same prefix and fold rule. Every other line is kept byte for byte.
+    """
+    from hhemt.scenario import remove_inflow_lines
+
+    inp = _inp(tmp_path / "h.inp", _WRITER_INP.format(header=header))
+    before = inp.read_text().splitlines()
+    removed = remove_inflow_lines(inp, ["J2"])
+    after = inp.read_text().splitlines()
+    assert [line.split()[0] for line in removed] == ["J2"]
+    assert after == [line for line in before if not line.startswith("J2 FLOW")]
+
+
+def test_a_long_node_name_followed_by_fewer_than_four_spaces_is_removed(tmp_path):
+    """Property: an inflow line whose long name leaves fewer than four spaces before the next column is removed.
+
+    Class: node names long enough that a writer's column padding leaves fewer than four
+    spaces; swmmio 0.8.2, the version the project pins, writes a 28-character name followed by
+    three, which is the line built here. Why: the old writer split names on four spaces, so
+    the line survived and the node stayed coupled. What kills it: splitting on a fixed run of
+    spaces. Second correct implementation: ``line.split()[0]``; the assertion reads only which
+    lines remain. The line is written directly rather than through swmmio, because a later
+    swmmio pads differently and would silently remove the input class this test exists for.
+    """
+    import swmmio
+
+    from hhemt.scenario import remove_inflow_lines
+
+    long_name = "JUNCTION_WITH_A_LONG_NAME_01"
+    inp = _inp(
+        tmp_path / "h.inp",
+        f"""
+[OPTIONS]
+FLOW_UNITS CMS
+
+[JUNCTIONS]
+{long_name} 1 2 0 0 0
+J2 1 2 0 0 0
+
+[OUTFALLS]
+O1 0 FREE NO
+
+[CONDUITS]
+C1 J2 O1 10 0.013 0 0 0 0
+
+[XSECTIONS]
+C1 CIRCULAR 1 0 0 0 1
+
+[INFLOWS]
+;;                             Constituent Time Series Type   Mfactor Sfactor Baseline
+{long_name}   FLOW        ""          FLOW   1.0     1       0.01
+J2                             FLOW        ""          FLOW   1.0     1       0.01
+""",
+    )
+    assert f"{long_name}   FLOW" in inp.read_text() and f"{long_name}    " not in inp.read_text()
+    remove_inflow_lines(inp, [long_name])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        assert set(swmmio.Model(str(inp)).inp.inflows.index) == {"J2"}
 
 
 # ---------------------------------------------------------------------------
@@ -704,6 +1227,41 @@ def test_a_hydrology_report_in_lps_or_mld_is_still_read(tmp_path, unit):
 # ---------------------------------------------------------------------------
 
 
+_TWO_IN_ONE_CELL_INP = """
+[OPTIONS]
+FLOW_UNITS CMS
+
+[JUNCTIONS]
+J1 1 2 0 0 0
+J2 1 2 0 0 0
+J3 1 2 0 0 0
+
+[OUTFALLS]
+O1 0 FREE NO
+
+[CONDUITS]
+C1 J1 O1 10 0.013 0 0 0 0
+C2 J2 O1 10 0.013 0 0 0 0
+C3 J3 O1 10 0.013 0 0 0 0
+
+[XSECTIONS]
+C1 CIRCULAR 2 0 0 0 1
+C2 CIRCULAR 1 0 0 0 1
+C3 CIRCULAR 1 0 0 0 1
+
+[INFLOWS]
+J1 FLOW "" FLOW 1.0 1 0.01
+J2 FLOW "" FLOW 1.0 1 0.01
+J3 FLOW "" FLOW 1.0 1 0.01
+
+[COORDINATES]
+J1 5 5
+J2 6 6
+J3 55 55
+O1 95 95
+"""
+
+
 def _fake_validated_analysis(sim_dir):
     return SimpleNamespace(
         cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=False),
@@ -711,6 +1269,68 @@ def _fake_validated_analysis(sim_dir):
         df_sims=pd.DataFrame(index=[0]),
         _retrieve_weather_indexer_using_integer_index=lambda i: {"event_id": 0},
     )
+
+
+def test_a_reduced_cell_is_recorded_and_listed_as_a_passing_disclosure(tmp_path):
+    """Property (option on): a two-junction cell is recorded, disclosed by the check, and listed.
+
+    Class: cells the option reduces. Why: every reduction must be visible
+    in the report. What kills it: not writing the record, a check that fails or
+    flips ``overall_passed``, or a renderer that lists details only for failures. Second
+    correct implementation: a record keyed by cell rather than a list; the assertions read
+    the node names and the rendered row.
+    """
+    from hhemt.analysis_validation import ValidationReport, check_inflow_node_reduction
+    from hhemt.report_renderers.errors_and_warnings import _render_aggregate_table
+    from hhemt.scenario import compute_event_id_slug
+    from hhemt.scenario_inputs import ScenarioInputGenerator
+
+    sim_dir = tmp_path / "sims"
+    event_dir = sim_dir / compute_event_id_slug({"event_id": 0})
+    event_dir.mkdir(parents=True)
+    inp = _inp(tmp_path / "hydraulics.inp", _TWO_IN_ONE_CELL_INP)
+    gen = _generator(tmp_path, inp, one_per_cell=True)
+    gen.scenario.scen_paths.sim_folder = event_dir
+    ScenarioInputGenerator.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(gen)
+    record = json.loads((event_dir / "_status" / "inflow_node_selection.json").read_text())
+    assert len(record["cells"]) == 1
+    cell = record["cells"][0]
+    assert {n["node"] for n in cell["inflow_nodes"]} == {"J1", "J2"}
+    assert cell["kept"] == "J1"
+    assert cell["dropped"] == [{"node": "J2", "reason": "ranking"}]
+
+    res = check_inflow_node_reduction(_fake_validated_analysis(sim_dir))
+    assert res.passed is True and res.applicable is True
+    assert len(res.details) == 1 and "J2 (ranking)" in res.details[0]["detail"]
+    assert "1 DEM cell(s) reduced" in res.summary
+    assert ValidationReport(checks=[res]).overall_passed is True
+    assert "J2 (ranking)" in _render_aggregate_table([res])
+
+
+def test_one_node_cells_leave_an_empty_record_and_a_zero_count(tmp_path):
+    """Property, control (option on): no reduced cell writes an empty record and reports zero.
+
+    Class: models with one inflow junction per cell. Why: the record is written for every
+    scenario prepared with the option on, so its presence separates "measured, nothing
+    reduced" from "not measured". What kills it: skipping the write when no cell was reduced.
+    Second correct implementation: writing the record before the resolver runs and filling it
+    after.
+    """
+    from hhemt.analysis_validation import check_inflow_node_reduction
+    from hhemt.scenario import compute_event_id_slug
+    from hhemt.scenario_inputs import ScenarioInputGenerator
+
+    sim_dir = tmp_path / "sims"
+    event_dir = sim_dir / compute_event_id_slug({"event_id": 0})
+    event_dir.mkdir(parents=True)
+    inp = _inp(tmp_path / "hydraulics.inp", _NODES_INP.format(inflows='J1 FLOW "" FLOW 1 1 0'))
+    gen = _generator(tmp_path, inp, one_per_cell=True)
+    gen.scenario.scen_paths.sim_folder = event_dir
+    ScenarioInputGenerator.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(gen)
+    assert json.loads((event_dir / "_status" / "inflow_node_selection.json").read_text()) == {"cells": []}
+    res = check_inflow_node_reduction(_fake_validated_analysis(sim_dir))
+    assert res.applicable is True and res.details == []
+    assert "0 DEM cell(s) reduced" in res.summary
 
 
 def test_a_scenario_without_a_record_is_not_measured(tmp_path):

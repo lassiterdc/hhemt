@@ -1023,6 +1023,22 @@ class analysis_config(cfgBaseModel):
             "It changes hydraulic results when True."
         ),
     )
+    one_coupled_inflow_node_per_dem_cell: bool = Field(
+        default=False,
+        description=(
+            "When True, scenario preparation couples at most ONE [INFLOWS] junction per DEM "
+            "cell, the limit TRITON-SWMM required before it coupled any number of nodes per cell. "
+            "The kept junction is the one whose own outgoing link has the largest flow area; on "
+            "a tie, the cell's junction whose outgoing link leaves the cell, then the lowest "
+            "invert. A junction with no outgoing pipe is ranked by its largest incoming pipe. "
+            "Every other inflow line of the cell is removed, and each prepared scenario records "
+            "the cells it reduced in _status/inflow_node_selection.json, which the report's "
+            "inflow-node reduction check lists. When False (the default) every [INFLOWS] "
+            "junction stays coupled, so the number of surface exchange points does not depend "
+            "on the DEM resolution. In both cases outfalls, storage nodes and dividers are not "
+            "coupled."
+        ),
+    )
     hydraulic_timestep_s: float = Field(
         ...,
         description="Timestep for hydraulic computations in seconds.",
