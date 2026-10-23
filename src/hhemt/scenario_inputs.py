@@ -80,16 +80,22 @@ class ScenarioInputGenerator:
 
     def update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(self, verbose: bool = False) -> None:
         """
-        Choose which ``[INFLOWS]`` nodes of the hydraulics model TRITON-SWMM couples to the surface.
+        Write the list of SWMM nodes this scenario's TRITON-SWMM run couples to the surface.
 
-        TRITON-SWMM couples to the surface exactly the nodes listed in ``[INFLOWS]``, so this
-        step decides the coupled set by deleting inflow lines. Every DEM cell holding an
-        inflow-carrying node is resolved by ``scenario.resolve_cell_inflow_nodes``: junctions
-        stay coupled; outfalls, storage nodes and dividers are dropped, named together in one
-        warning; and a cell whose inflow nodes are all of those types stops preparation with a
-        named error. With ``one_coupled_inflow_node_per_dem_cell`` set, each cell keeps a single
-        junction chosen by pipe size, and every prepared scenario records each cell that had
-        more than one inflow node in ``_status/inflow_node_selection.json``.
+        TRITON-SWMM couples exactly the nodes named in the file its cfg's
+        ``swmm_coupling_nodes`` key names, so this step decides the coupled set by writing that
+        file, ``coupling_nodes.txt`` beside ``hydraulics.inp``, one name per line in SWMM node
+        order. ``hydraulics.inp`` itself is left as the template filled it: no ``[INFLOWS]`` line
+        is added, removed or rewritten, so every inflow the model declares reaches SWMM.
+
+        The candidates are the ones ``system_config.swmm_coupling_mode`` declares. Every DEM
+        cell holding a candidate is resolved by ``scenario.resolve_cell_inflow_nodes``:
+        junctions are written; outfalls, storage nodes and dividers are not, and are named
+        together in one warning; and a cell whose candidates are all of those types stops
+        preparation with a named error. With ``one_coupled_inflow_node_per_dem_cell`` set
+        (applied under ``legacy`` only), each cell keeps a single junction chosen by pipe size,
+        and every prepared scenario records each cell that had more than one candidate in
+        ``_status/inflow_node_selection.json``.
 
         Parameters
         ----------
@@ -99,35 +105,23 @@ class ScenarioInputGenerator:
         import json
         import warnings
 
-        from .scenario import (
-            inp_link_table,
-            inp_node_table,
-            remove_inflow_lines,
-            resolve_cell_inflow_nodes,
-            return_df_of_nodes_grouped_by_DEM_gridcell,
-        )
+        from .scenario import coupling_nodes_file_for, inp_link_table, select_coupling_nodes
 
         f_inp = self.scenario.scen_paths.swmm_hydraulics_inp
         one_per_cell = bool(self.cfg_analysis.one_coupled_inflow_node_per_dem_cell)
-        df_node_locs, _lst_outfalls = return_df_of_nodes_grouped_by_DEM_gridcell(
-            f_inp, self.system.sys_paths.dem_processed, verbose=verbose
-        )
         model = swmmio.Model(str(f_inp))
-        nodes = inp_node_table(model)
         links = inp_link_table(model)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            inflows = model.inp.inflows
-        inflow_node_ids = [] if inflows is None else list(inflows.index.astype(str))
+        selection = select_coupling_nodes(
+            self.system.cfg_system,
+            f_inp,
+            self.system.sys_paths.dem_processed,
+            links,
+            one_per_cell=one_per_cell,
+        )
 
-        drop: list[str] = []
         ineligible_dropped: list[str] = []
         selection_cells: list[dict] = []
-        for (dem_x, dem_y), group in df_node_locs.groupby(["dem_x_coord", "dem_y_coord"]):
-            resolution = resolve_cell_inflow_nodes(
-                list(group.node_key), nodes, links, inflow_node_ids, one_per_cell=one_per_cell
-            )
-            drop.extend(resolution.dropped)
+        for (dem_x, dem_y), resolution in selection.cells:
             ineligible_dropped.extend(
                 f"{n} ({resolution.node_types[n].lower()})"
                 for n in resolution.dropped
@@ -145,13 +139,15 @@ class ScenarioInputGenerator:
                 )
         if ineligible_dropped:
             warnings.warn(
-                f"{f_inp}: [INFLOWS] lines removed for nodes TRITON-SWMM cannot couple, each sharing "
-                f"a DEM cell with a junction that stays coupled: {ineligible_dropped}",
+                f"{f_inp}: nodes TRITON-SWMM cannot couple were not written to the coupling-node list, "
+                f"each sharing a DEM cell with a junction that stays coupled: {ineligible_dropped}",
                 stacklevel=2,
             )
+        nodes_file = coupling_nodes_file_for(f_inp)
+        nodes_file.parent.mkdir(parents=True, exist_ok=True)
+        nodes_file.write_text("".join(f"{name}\n" for name in selection.written))
         if verbose:
-            print(f"Removing {len(drop)} inflow nodes.")
-        remove_inflow_lines(f_inp, drop)
+            print(f"Wrote {len(selection.written)} coupling nodes to {nodes_file}.")
         if one_per_cell:
             # Written for EVERY scenario prepared with the option on, empty when no cell was
             # reduced, so that an ABSENT file means "not prepared by this build" to the report's

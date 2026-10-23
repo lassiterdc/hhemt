@@ -514,6 +514,33 @@ def append_swmm_node_rim_from_dem(cfg_content: str, enabled: bool) -> str:
     return f"{cfg_content}{separator}{SWMM_NODE_RIM_FROM_DEM_KEY}=1\n"
 
 
+#: The coupled-cfg key naming the file of nodes TRITON-SWMM exchanges water at.
+SWMM_COUPLING_NODES_KEY = "swmm_coupling_nodes"
+
+
+def coupling_nodes_file_for(hydraulics_inp) -> Path:
+    """Where a scenario's coupling-node list is written: beside its ``hydraulics.inp``."""
+    return Path(hydraulics_inp).parent / "coupling_nodes.txt"
+
+
+def set_swmm_coupling_nodes(cfg_content: str, nodes_file) -> str:
+    """Return ``cfg_content`` with exactly one active ``swmm_coupling_nodes="{nodes_file}"`` line, appended.
+
+    The toolkit always declares the coupled set to TRITON by naming the list it wrote, so an
+    active line already present is removed first: a line whose first non-blank text matches
+    ``swmm_coupling_nodes\\s*=``; a ``#`` line is a comment and is kept. Removing rather than
+    keeping an existing line is what makes a re-prepared scenario's cfg byte-identical to the
+    first one, and keeps a template value from silently replacing the list the toolkit selected.
+    """
+    import re
+
+    pattern = re.compile(rf"{SWMM_COUPLING_NODES_KEY}\s*=")
+    kept = [line for line in cfg_content.splitlines() if not pattern.match(line.lstrip())]
+    text = "\n".join(kept)
+    separator = "\n" if text else ""
+    return f'{text}{separator}{SWMM_COUPLING_NODES_KEY}="{nodes_file}"\n'
+
+
 def require_dem_rim_capable_triton(
     *,
     execution_environment: str,
@@ -1052,6 +1079,10 @@ class TRITONSWMM_scenario:
         if "output_folder" not in cfg_content:
             # Insert after dem_filename line
             cfg_content = cfg_content.replace("\ndem_filename=", '\noutput_folder="out_tritonswmm"\ndem_filename=')
+        # The coupled set, declared to TRITON by naming the list preparation wrote. Always
+        # written, so TRITON never derives the set from [INFLOWS] itself. Placed before the
+        # optional arm-selector lines below, so each of those stays a pure suffix of the cfg.
+        cfg_content = set_swmm_coupling_nodes(cfg_content, coupling_nodes_file_for(self.scen_paths.swmm_hydraulics_inp))
         # Arm selector for the coupled resume path. Appended HERE and only here: the key gates
         # the SWMM coupling surface, so the TRITON-only generator below must never carry it.
         # The write is now gated on "did the text change" rather than on the output_folder
@@ -1523,7 +1554,13 @@ class TRITONSWMM_scenario:
         # this is a restriction to the reachable domain, not a behavior change.
         if self._system.cfg_system.toggle_use_swmm_for_hydrology:
             self._runoff_modeler.write_hydrograph_files()
-        self._input_generator.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(verbose=False)
+        # The coupling list and the selection record (_status/inflow_node_selection.json) are
+        # read only by the COUPLED cfg (_generate_TRITON_SWMM_cfg) and its validation, which run
+        # entry applies only to coupled systems (_coupled_system_configs). An uncoupled system has
+        # no reader for either, so it neither selects nor writes, and is not refused over a list it
+        # never uses.
+        if self._system.cfg_system.toggle_tritonswmm_model:
+            self._input_generator.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(verbose=False)
 
         # Generate model-specific CFG files
         self._generate_TRITON_SWMM_cfg()  # Coupled model CFG
@@ -1952,8 +1989,8 @@ def _swmm_inp_section_lines(lines: list[str]) -> list[tuple[int, str, list[str]]
 
     Returns ``(line_index, section, tokens)`` triples, where ``section`` is ``JUNCTION``,
     ``OUTFALL``, ``STORAGE``, ``DIVIDER`` or ``INFLOW``. Header lines, lines with no tokens and
-    lines of every other section are omitted. This is the ONE reader shared by the undefined-
-    inflow check and the ``[INFLOWS]`` writer, so both find exactly the lines SWMM reads.
+    lines of every other section are omitted. The undefined-inflow check reads the file
+    through this reader, so it finds exactly the lines SWMM reads.
     """
     out: list[tuple[int, str, list[str]]] = []
     current: str | None = None
@@ -2001,41 +2038,14 @@ def undefined_inflow_nodes(inp_path) -> list[str]:
     return undefined
 
 
-def remove_inflow_lines(inp_path, drop_nodes) -> list[str]:
-    """Delete the inflow-section lines of ``inp_path`` whose node is in ``drop_nodes``.
-
-    The section and each line's node are found by the same reader SWMM's own parse is mirrored
-    in (``_swmm_inp_section_lines``), so an ``[INFLOW]``-headed template, a section that ends
-    at any header or at end of file, and a long node name that leaves fewer than four spaces
-    before the next column are all handled; the writer this replaces matched the literal
-    ``[INFLOWS]``, required a following ``[CURVES]`` header, and split names on four spaces.
-    Names are compared with SWMM's case fold, because a line SWMM resolves to a dropped node is
-    that node's inflow line. Delete-only: no line is added, moved or rewritten. Returns the
-    removed lines, and leaves the file untouched when there is nothing to remove.
-    """
-    drop = {_swmm_fold(str(n)) for n in drop_nodes}
-    if not drop:
-        return []
-    path = Path(inp_path)
-    lines = path.read_text().splitlines(keepends=True)
-    remove = {
-        idx
-        for idx, section, tokens in _swmm_inp_section_lines(lines)
-        if section == "INFLOW" and _swmm_fold(tokens[0]) in drop
-    }
-    if not remove:
-        return []
-    path.write_text("".join(line for i, line in enumerate(lines) if i not in remove))
-    return [lines[i] for i in sorted(remove)]
-
-
 # --- The coupling declaration: which SWMM nodes a coupled run may exchange water at ---------
 #
 # system_config.swmm_coupling_mode chooses the candidate set: `list` reads a one-column file
 # (swmm_coupling_nodes_file), `all_junctions` takes every junction with a [COORDINATES] row,
 # and `legacy` takes the nodes carrying a FLOW [INFLOWS] line. The readers below give the
-# run-entry checks in `analysis.py` the same view of the template that SWMM and TRITON take,
-# so a refusal names exactly the nodes the solver would stop on.
+# run-entry checks in `analysis.py` and the per-scenario selection the same view of the model
+# that SWMM and TRITON take, so a refusal names exactly the nodes the solver would stop on and
+# the written list names only nodes the solver can find.
 
 #: The two further sections the declaration reads, keyed by the prefix SWMM matches
 #: (`text.h`: ws_COORDINATE "[COORDINATE", ws_POLLUTANT "[POLLUT"). No other SWMM section
@@ -2054,10 +2064,12 @@ _SWMM_DECLARATION_SECTION_PREFIXES = {
 class _CouplingSections:
     """The parts of a SWMM template the coupling declaration reads, read by SWMM's rules.
 
-    ``node_types`` maps each node name as written to its type, in file order;
-    ``folded_names`` maps the ASCII-folded name back to that spelling; ``coordinates`` maps the
-    folded name to its ``(x, y)`` tokens as written; ``inflow_lines`` are the inflow-section
-    token lists; ``pollutants`` holds the folded ``[POLLUTANTS]`` names.
+    ``node_types`` maps each node name as written to its type, in file order, which is the
+    order SWMM indexes nodes in; ``folded_names`` maps the ASCII-folded name back to that
+    spelling; ``coordinates`` maps the folded name to its ``(x, y)`` tokens as written;
+    ``inflow_lines`` are the inflow-section token lists; ``pollutants`` holds the folded
+    ``[POLLUTANTS]`` names; ``elevations`` maps each node name as written to its second token,
+    the invert (or, for a divider, the elevation) every node section carries there.
     """
 
     node_types: dict
@@ -2065,6 +2077,7 @@ class _CouplingSections:
     coordinates: dict
     inflow_lines: list
     pollutants: frozenset
+    elevations: dict
 
 
 def _read_coupling_sections(inp_path) -> _CouplingSections:
@@ -2079,6 +2092,7 @@ def _read_coupling_sections(inp_path) -> _CouplingSections:
     coordinates: dict = {}
     inflow_lines: list = []
     pollutants: set = set()
+    elevations: dict = {}
     current: str | None = None
     for line in Path(inp_path).read_text().splitlines():
         tokens = _swmm_tokens(line)
@@ -2104,7 +2118,8 @@ def _read_coupling_sections(inp_path) -> _CouplingSections:
         elif folded not in folded_names:
             folded_names[folded] = tokens[0]
             node_types[tokens[0]] = current
-    return _CouplingSections(node_types, folded_names, coordinates, inflow_lines, frozenset(pollutants))
+            elevations[tokens[0]] = tokens[1] if len(tokens) > 1 else None
+    return _CouplingSections(node_types, folded_names, coordinates, inflow_lines, frozenset(pollutants), elevations)
 
 
 def _legacy_flow_inflow_nodes(sections: _CouplingSections) -> list[str]:
@@ -2148,12 +2163,16 @@ def read_coupling_node_file(path) -> list[str]:
     return names
 
 
-def coupling_candidates(cfg_system) -> list[str]:
-    """The coupling candidates ``cfg_system`` declares for its ``SWMM_hydraulics`` model.
+def coupling_candidates(cfg_system, inp_path=None) -> list[str]:
+    """The coupling candidates ``cfg_system`` declares for its hydraulics model.
 
     ``list``: the names in ``swmm_coupling_nodes_file``, in file order. ``all_junctions``:
     every ``[JUNCTIONS]`` node with a ``[COORDINATES]`` row, in file order. ``legacy``: the
     nodes carrying a FLOW ``[INFLOWS]`` line by SWMM's rule.
+
+    The model read is ``inp_path`` when given, else the ``SWMM_hydraulics`` template: run
+    entry judges the template, and scenario preparation passes the scenario's filled
+    ``hydraulics.inp``, whose placeholders have been replaced by real values.
 
     This is the one place the legacy FLOW reader is called, and only on the ``legacy`` value
     of the mode, never on the field's absence. So under ``list`` or ``all_junctions`` no
@@ -2162,7 +2181,7 @@ def coupling_candidates(cfg_system) -> list[str]:
     mode = cfg_system.swmm_coupling_mode
     if mode == "list":
         return read_coupling_node_file(cfg_system.swmm_coupling_nodes_file)
-    sections = _read_coupling_sections(cfg_system.SWMM_hydraulics)
+    sections = _read_coupling_sections(cfg_system.SWMM_hydraulics if inp_path is None else inp_path)
     if mode == "all_junctions":
         return [
             name
@@ -2581,16 +2600,17 @@ def _node_rank_key(node_id: str, links: pd.DataFrame) -> float:
 
 
 def resolve_cell_inflow_nodes(
-    cell_nodes, nodes: pd.DataFrame, links: pd.DataFrame, inflow_node_ids, *, one_per_cell: bool = False
+    cell_nodes, nodes: pd.DataFrame, links: pd.DataFrame, coupling_candidate_ids, *, one_per_cell: bool = False
 ) -> CellInflowResolution:
-    """Decide which of one DEM cell's ``[INFLOWS]``-carrying nodes TRITON-SWMM couples to the surface.
+    """Decide which of one DEM cell's coupling candidates TRITON-SWMM couples to the surface.
 
     ``cell_nodes`` are the cell's node names, ``nodes`` the model's node table (``NodeType``,
-    ``InvertElev``), ``links`` its link table (``inp_link_table``), and ``inflow_node_ids`` the
-    names carrying an ``[INFLOWS]`` line, matched with SWMM's case fold.
+    ``InvertElev``), ``links`` its link table (``inp_link_table``), and
+    ``coupling_candidate_ids`` the candidate set the coupling declaration names
+    (``coupling_candidates``), matched with SWMM's case fold.
 
     Only junctions are eligible; outfalls, storage nodes and dividers are dropped. A cell whose
-    inflow-carrying nodes are ALL ineligible raises ``ProcessingError`` with each node's reason,
+    candidates are ALL ineligible raises ``ProcessingError`` with each node's reason,
     since the toolkit would otherwise couple nothing there while the model asks for an inflow.
     By default every eligible node stays coupled, so the number of exchange points does not
     depend on the DEM resolution.
@@ -2602,8 +2622,8 @@ def resolve_cell_inflow_nodes(
     key is smaller. No area is computed when only one node is eligible.
     """
     cell_nodes = [str(n) for n in cell_nodes]
-    inflow = {_swmm_fold(str(n)) for n in inflow_node_ids}
-    carrying = [n for n in cell_nodes if _swmm_fold(n) in inflow]
+    candidates = {_swmm_fold(str(n)) for n in coupling_candidate_ids}
+    carrying = [n for n in cell_nodes if _swmm_fold(n) in candidates]
     node_types = {n: str(nodes.loc[n, "NodeType"]) for n in carrying}
     eligible = [n for n in carrying if node_types[n] == "JUNCTION"]
     ineligible = [n for n in carrying if node_types[n] != "JUNCTION"]
@@ -2638,6 +2658,88 @@ def resolve_cell_inflow_nodes(
     for n in dropped:
         reasons.setdefault(n, "ranking")
     return CellInflowResolution((keeper,), tuple(dropped), reasons, node_types)
+
+
+@dataclass(frozen=True)
+class CouplingSelection:
+    """The coupling-node list one scenario writes, and how each DEM cell was decided.
+
+    ``written`` holds the selected names in SWMM node order (the order nodes are defined in
+    the model), which is the order the list file is written in. ``cells`` pairs each DEM cell
+    holding a candidate, as ``(dem_x, dem_y)``, with its ``CellInflowResolution``.
+    """
+
+    written: tuple
+    cells: tuple
+
+
+def select_coupling_nodes(cfg_system, hydraulics_inp, dem_processed, links, *, one_per_cell: bool) -> CouplingSelection:
+    """Select the nodes a scenario's TRITON-SWMM run couples, from the candidates its declaration names.
+
+    Every node with a ``[COORDINATES]`` row is placed at the DEM cell whose centre is nearest
+    on each axis, read with the same SWMM-rule reader the run-entry checks use. Deliberately
+    NOT swmmio's node and coordinate tables: swmmio finds a section only by its full plural
+    header, so a SWMM-valid ``[JUNCTION]`` header would leave every junction unplaced. Each
+    cell holding a candidate is then decided by ``resolve_cell_inflow_nodes`` over ALL of the
+    cell's nodes, because the one-node-per-cell tie-break asks whether a pipe leaves the cell.
+
+    The one-node-per-cell option is applied under ``legacy`` only: under a declared mode the
+    declaration is the coupled set. A candidate that no cell holds (no node section defines it,
+    or it has no ``[COORDINATES]`` row) raises ``ProcessingError`` naming it, because writing a
+    list without it would silently uncouple a node the declaration names.
+    """
+    import rioxarray as rxr
+
+    sections = _read_coupling_sections(hydraulics_inp)
+    candidates = coupling_candidates(cfg_system, inp_path=hydraulics_inp)
+    candidate_folds = {_swmm_fold(n) for n in candidates}
+    nodes = pd.DataFrame(
+        {
+            "NodeType": list(sections.node_types.values()),
+            "InvertElev": pd.to_numeric(
+                pd.Series(list(sections.elevations.values()), dtype=object), errors="coerce"
+            ).to_numpy(),
+        },
+        index=list(sections.node_types),
+    )
+    rds_dem = rxr.open_rasterio(dem_processed)
+    dem_xs = np.asarray(rds_dem.x.values)  # type: ignore
+    dem_ys = np.asarray(rds_dem.y.values)  # type: ignore
+    # Nodes are visited junctions first, then outfalls, storage nodes and dividers, each in file
+    # order, and cells in ascending (x, y): the order the previous swmmio-based grouping used,
+    # so each cell's resolution, and the selection record written from it, keep their order.
+    type_rank = {"JUNCTION": 0, "OUTFALL": 1, "STORAGE": 2, "DIVIDER": 3}
+    visit = sorted(sections.node_types, key=lambda n: type_rank[sections.node_types[n]])
+    cells: dict = {}
+    for name in visit:
+        coords = sections.coordinates.get(_swmm_fold(name))
+        if coords is None:
+            continue
+        x, y = float(coords[0]), float(coords[1])
+        cell = (dem_xs[int(np.argmin(np.abs(dem_xs - x)))], dem_ys[int(np.argmin(np.abs(dem_ys - y)))])
+        cells.setdefault(cell, []).append(name)
+    placed = {_swmm_fold(n) for cell_nodes in cells.values() for n in cell_nodes}
+    unplaced = [n for n in candidates if _swmm_fold(n) not in placed]
+    if unplaced:
+        raise ProcessingError(
+            operation="select_coupling_nodes",
+            filepath=Path(hydraulics_inp),
+            reason=(
+                "coupling candidate(s) that no node section defines or that have no [COORDINATES] "
+                f"row, so no DEM cell holds them: {unplaced}"
+            ),
+        )
+    use_one_per_cell = one_per_cell and cfg_system.swmm_coupling_mode == "legacy"
+    resolved = []
+    kept: set = set()
+    for cell, cell_nodes in sorted(cells.items()):
+        if not any(_swmm_fold(n) in candidate_folds for n in cell_nodes):
+            continue
+        resolution = resolve_cell_inflow_nodes(cell_nodes, nodes, links, candidates, one_per_cell=use_one_per_cell)
+        resolved.append((cell, resolution))
+        kept.update(resolution.kept)
+    written = tuple(n for n in sections.node_types if n in kept)
+    return CouplingSelection(written=written, cells=tuple(resolved))
 
 
 # %%

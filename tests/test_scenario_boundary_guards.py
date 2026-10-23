@@ -1,7 +1,7 @@
 """Scenario preparation's SWMM-input guards: the inputs TRITON-SWMM couples, and how they are read.
 
 The problem this file pins. Scenario preparation decides which SWMM nodes exchange water
-with the 2D surface by deleting ``[INFLOWS]`` lines, sizes pipes to rank them, reads the
+with the 2D surface by writing a coupling-node list, sizes pipes to rank them, reads the
 SWMM ``.inp`` to find sections and node names, converts the hydrology model's runoff to the
 units TRITON applies, and refuses inputs SWMM or TRITON-SWMM would mishandle. Each of those
 steps had a defect that produced a wrong coupled set, a wrong value, or an unnamed crash;
@@ -524,13 +524,15 @@ def test_a_node_without_coordinates_raises_naming_it(tmp_path):
         return_df_of_nodes_grouped_by_DEM_gridcell(inp, _dem(tmp_path / "dem.tif"))
 
 
-def test_an_ineligible_node_sharing_a_cell_is_dropped_with_a_named_warning(tmp_path):
-    """Property: a divider sharing a cell with a junction loses its inflow line, with a warning naming it.
+def test_an_ineligible_node_sharing_a_cell_is_not_written_with_a_named_warning(tmp_path):
+    """Property: a divider sharing a cell with a junction is left off the coupling list, with a warning naming it.
 
-    Class: ineligible inflow nodes that share a cell with an eligible junction. Why: the
-    divider was not in the node universe, so both were coupled. What kills it: keeping the
-    divider's line, or dropping it silently. Second correct implementation: one warning per
-    dropped node instead of one per scenario; the assertion reads the name in any warning.
+    Class: ineligible candidates that share a cell with an eligible junction. Why: TRITON-SWMM
+    cannot couple a divider, and the user must learn that a node their model gives an inflow
+    is not exchanging water with the surface. What kills it: writing the divider to the list,
+    dropping it silently, or deleting its inflow line (which would stop its inflow reaching
+    SWMM). Second correct implementation: one warning per dropped node instead of one per
+    scenario; the assertions read the name in any warning, the list, and the inflow lines.
     """
     import swmmio
 
@@ -541,23 +543,35 @@ def test_an_ineligible_node_sharing_a_cell_is_dropped_with_a_named_warning(tmp_p
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         ScenarioInputGenerator.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(gen)
-    assert any("D1 (divider)" in str(w.message) for w in caught)
+    assert any(
+        "D1 (divider)" in str(w.message) and "not written to the coupling-node list" in str(w.message) for w in caught
+    )
+    assert (tmp_path / "coupling_nodes.txt").read_text() == "J1\n"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         remaining = set(swmmio.Model(str(inp)).inp.inflows.index)
-    assert remaining == {"J1"}
+    assert remaining == {"J1", "D1"}
 
 
-def _generator(tmp_path, inp, *, one_per_cell):
-    """A ScenarioInputGenerator bound to a fake scenario that carries only what the resolver step reads."""
+def _generator(tmp_path, inp, *, one_per_cell, mode="legacy", nodes=None):
+    """A ScenarioInputGenerator bound to a fake scenario that carries only what the selection step reads."""
     from hhemt.scenario_inputs import ScenarioInputGenerator
 
     sim_folder = tmp_path / "sim"
     sim_folder.mkdir(exist_ok=True)
+    nodes_file = None
+    if nodes is not None:
+        nodes_file = tmp_path / "declared_nodes.txt"
+        nodes_file.write_text(nodes)
     scenario = SimpleNamespace(
         scen_paths=SimpleNamespace(swmm_hydraulics_inp=inp, sim_folder=sim_folder),
         _analysis=SimpleNamespace(cfg_analysis=SimpleNamespace(one_coupled_inflow_node_per_dem_cell=one_per_cell)),
-        _system=SimpleNamespace(sys_paths=SimpleNamespace(dem_processed=_dem(tmp_path / "dem.tif"))),
+        _system=SimpleNamespace(
+            sys_paths=SimpleNamespace(dem_processed=_dem(tmp_path / "dem.tif")),
+            cfg_system=SimpleNamespace(
+                SWMM_hydraulics=inp, swmm_coupling_mode=mode, swmm_coupling_nodes_file=nodes_file
+            ),
+        ),
         log=SimpleNamespace(),
     )
     gen = ScenarioInputGenerator.__new__(ScenarioInputGenerator)
@@ -565,89 +579,6 @@ def _generator(tmp_path, inp, *, one_per_cell):
     gen.cfg_analysis = scenario._analysis.cfg_analysis
     gen.system = scenario._system
     return gen
-
-
-_WRITER_INP = """
-[OPTIONS]
-FLOW_UNITS CMS
-
-[{header}]
-;;Node Constituent Series Type Mfactor Sfactor Baseline
-J1 FLOW "" FLOW 1.0 1 0.01
-J2 FLOW "" FLOW 1.0 1 0.01
-
-[TIMESERIES]
-J1 0 1
-"""
-
-
-@pytest.mark.parametrize("header", ["INFLOWS", "INFLOW", "inflows"])
-def test_the_writer_finds_the_section_as_swmm_does(tmp_path, header):
-    """Property: the drop set's lines are removed under any header SWMM accepts.
-
-    Class: inflow sections headed ``[INFLOW]``, ``[INFLOWS]`` or lower case, and sections
-    followed by any header (here ``[TIMESERIES]``, with no ``[CURVES]``). Why: the old writer
-    matched the literal ``[INFLOWS]`` and needed a ``[CURVES]`` header after it, raising
-    UnboundLocalError otherwise. What kills it: matching the literal header, or ending the
-    section at ``[CURVES]`` only. Second correct implementation: a regex-based section
-    scanner with the same prefix and fold rule. Every other line is kept byte for byte.
-    """
-    from hhemt.scenario import remove_inflow_lines
-
-    inp = _inp(tmp_path / "h.inp", _WRITER_INP.format(header=header))
-    before = inp.read_text().splitlines()
-    removed = remove_inflow_lines(inp, ["J2"])
-    after = inp.read_text().splitlines()
-    assert [line.split()[0] for line in removed] == ["J2"]
-    assert after == [line for line in before if not line.startswith("J2 FLOW")]
-
-
-def test_a_long_node_name_followed_by_fewer_than_four_spaces_is_removed(tmp_path):
-    """Property: an inflow line whose long name leaves fewer than four spaces before the next column is removed.
-
-    Class: node names long enough that a writer's column padding leaves fewer than four
-    spaces; swmmio 0.8.2, the version the project pins, writes a 28-character name followed by
-    three, which is the line built here. Why: the old writer split names on four spaces, so
-    the line survived and the node stayed coupled. What kills it: splitting on a fixed run of
-    spaces. Second correct implementation: ``line.split()[0]``; the assertion reads only which
-    lines remain. The line is written directly rather than through swmmio, because a later
-    swmmio pads differently and would silently remove the input class this test exists for.
-    """
-    import swmmio
-
-    from hhemt.scenario import remove_inflow_lines
-
-    long_name = "JUNCTION_WITH_A_LONG_NAME_01"
-    inp = _inp(
-        tmp_path / "h.inp",
-        f"""
-[OPTIONS]
-FLOW_UNITS CMS
-
-[JUNCTIONS]
-{long_name} 1 2 0 0 0
-J2 1 2 0 0 0
-
-[OUTFALLS]
-O1 0 FREE NO
-
-[CONDUITS]
-C1 J2 O1 10 0.013 0 0 0 0
-
-[XSECTIONS]
-C1 CIRCULAR 1 0 0 0 1
-
-[INFLOWS]
-;;                             Constituent Time Series Type   Mfactor Sfactor Baseline
-{long_name}   FLOW        ""          FLOW   1.0     1       0.01
-J2                             FLOW        ""          FLOW   1.0     1       0.01
-""",
-    )
-    assert f"{long_name}   FLOW" in inp.read_text() and f"{long_name}    " not in inp.read_text()
-    remove_inflow_lines(inp, [long_name])
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        assert set(swmmio.Model(str(inp)).inp.inflows.index) == {"J2"}
 
 
 # ---------------------------------------------------------------------------
@@ -2290,3 +2221,283 @@ def test_review_the_declaration_check_runs_before_section_15_and_the_grid_check(
         getattr(analysis, entry)()
     message = str(excinfo.value)
     assert expected in message and not_expected not in message, f"{case}: {message}"
+
+
+# ---------------------------------------------------------------------------
+# The coupling-node list: what preparation writes for TRITON-SWMM and what it leaves alone
+# ---------------------------------------------------------------------------
+
+_LIST_INP = """
+[OPTIONS]
+FLOW_UNITS CMS
+
+[{junctions}]
+J2 1 2 0 0 0
+J1 1 2 0 0 0
+J3 1 2 0 0 0
+
+[OUTFALLS]
+O1 0 FREE NO
+
+[CONDUITS]
+C1 J1 O1 10 0.013 0 0 0 0
+C2 J2 O1 10 0.013 0 0 0 0
+C3 J3 O1 10 0.013 0 0 0 0
+
+[XSECTIONS]
+C1 CIRCULAR 1 0 0 0 1
+C2 CIRCULAR 1 0 0 0 1
+C3 CIRCULAR 1 0 0 0 1
+
+[INFLOWS]
+{inflows}
+
+[COORDINATES]
+J1 5 5
+J2 15 5
+J3 25 5
+O1 55 55
+"""
+
+
+def _prepare_list(tmp_path, *, mode, inflows, nodes=None, junctions="JUNCTIONS", one_per_cell=False):
+    """Run the selection step on a fake scenario; return (hydraulics.inp text before, after, written list)."""
+    from hhemt.scenario_inputs import ScenarioInputGenerator
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    inp = _inp(tmp_path / "hydraulics.inp", _LIST_INP.format(junctions=junctions, inflows=inflows))
+    before = inp.read_bytes()
+    gen = _generator(tmp_path, inp, one_per_cell=one_per_cell, mode=mode, nodes=nodes)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ScenarioInputGenerator.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(gen)
+    return before, inp.read_bytes(), (tmp_path / "coupling_nodes.txt").read_text()
+
+
+def test_a_declared_list_is_written_and_the_inflow_section_is_left_byte_identical(tmp_path):
+    """Property: under a node list the written list is the declared node, and no inflow line is touched.
+
+    Class: hydraulics models carrying a non-zero FLOW inflow on a junction the declared list
+    does not name. Why: the declaration is the coupled set, and every inflow the model declares
+    (a sewer's baseflow) must still reach SWMM; deleting the line to uncouple the node would
+    remove that water from the model. What kills it: deriving the list from ``[INFLOWS]``, or
+    deleting the inflow line of an uncoupled node. Second correct implementation: copying the
+    template to the scenario untouched and writing the list from the declaration alone; the
+    assertions read the list and the bytes of the prepared file.
+    """
+    before, after, written = _prepare_list(
+        tmp_path, mode="list", nodes="J2\n", inflows='J1 FLOW "" FLOW 1.0 1 0.01 baseflow'
+    )
+    assert written == "J2\n"
+    assert after == before
+
+
+def test_all_junctions_never_writes_an_outfall_and_keeps_its_inflow_line(tmp_path):
+    """Property: under ``all_junctions`` every coordinated junction is written and an outfall's inflow stays.
+
+    Class: models where an outfall carries a FLOW inflow line. Why: an outfall cannot be
+    coupled, but its inflow is still part of the SWMM model. What kills it: listing every node
+    with a FLOW line, or deleting the outfall's line. Second correct implementation: selecting
+    junctions by the ``NodeType`` of a full node table; the assertions read the list and bytes.
+    """
+    before, after, written = _prepare_list(tmp_path, mode="all_junctions", inflows='O1 FLOW "" FLOW 1.0 1 0.5')
+    assert written == "J2\nJ1\nJ3\n"
+    assert after == before
+
+
+def test_the_list_is_written_in_swmm_node_order(tmp_path):
+    """Property: the list follows the order the model defines its nodes in, not the order of any other source.
+
+    Class: models whose junctions are defined in an order that differs from their inflow lines
+    and from a declared file. Why: SWMM indexes nodes in the order they are defined, and a list
+    in that order is the one every reader of the file can compare against SWMM's report. What
+    kills it: writing in file or inflow order. Second correct implementation: sorting the kept
+    names by their SWMM node index; the assertions read the list only.
+    """
+    inflows = 'J3 FLOW "" FLOW 1 1 0\nJ1 FLOW "" FLOW 1 1 0\nJ2 FLOW "" FLOW 1 1 0'
+    _, _, legacy = _prepare_list(tmp_path / "a", mode="legacy", inflows=inflows)
+    _, _, listed = _prepare_list(tmp_path / "b", mode="list", nodes="J3\nJ1\n", inflows="")
+    assert legacy == "J2\nJ1\nJ3\n"
+    assert listed == "J1\nJ3\n"
+
+
+def test_a_pollutant_only_inflow_line_is_not_a_legacy_candidate_at_preparation(tmp_path):
+    """Property: under ``legacy`` a node whose only inflow line is a pollutant is not written and not refused.
+
+    Class: models with pollutant inflow lines, on junctions and on outfalls. Why: SWMM gives such
+    a node no water inflow, and TRITON-SWMM couples only nodes that receive water; counting the
+    pollutant line made the node a candidate, so an outfall carrying only a pollutant stopped
+    preparation with the eligibility error. What kills it: treating any inflow line as a FLOW
+    line. Second correct implementation: reading constituents through swmmio's inflow frame
+    filtered to FLOW; the assertions read the list and that preparation completes.
+    """
+    inflows = 'J1 FLOW "" FLOW 1 1 0\nJ2 TSS "" CONCEN 1 1 0\nO1 TSS "" CONCEN 1 1 0'
+    _, _, written = _prepare_list(tmp_path, mode="legacy", inflows=inflows)
+    assert written == "J1\n"
+
+
+def test_the_selection_reads_a_singular_junction_header_and_refuses_an_unplaceable_candidate(tmp_path):
+    """Property: the grouping finds junctions under ``[JUNCTION]``, and a candidate no cell holds is refused.
+
+    Class: models headed ``[JUNCTION]`` (SWMM reads it as ``[JUNCTIONS]``) and declared lists
+    naming a node with no ``[COORDINATES]`` row. Why: swmmio returns no junction for the
+    singular header, so a grouping built on it would place none and write an empty list; and a
+    candidate the grouping cannot place would be silently uncoupled. What kills it: grouping
+    through swmmio's tables, or skipping an unplaced candidate. Second correct implementation:
+    grouping candidates only and checking their coordinates first; the assertions read the
+    list and the error's node name.
+    """
+    from hhemt.exceptions import ProcessingError
+
+    _, _, written = _prepare_list(tmp_path / "a", mode="list", nodes="J1\n", inflows="", junctions="JUNCTION")
+    assert written == "J1\n"
+    inflows = 'J1 FLOW "" FLOW 1 1 0\nJ9 FLOW "" FLOW 1 1 0'
+    with pytest.raises(ProcessingError, match="J9"):
+        _prepare_list(tmp_path / "b", mode="legacy", inflows=inflows)
+
+
+def test_the_one_per_cell_option_is_applied_under_legacy_only_at_preparation(tmp_path):
+    """Property: the one-node-per-cell option reduces a legacy cell and leaves a declared list whole.
+
+    Class: two junctions sharing one DEM cell, under ``legacy`` and under a list naming both.
+    Why: under a declared mode the declaration IS the coupled set; run entry refuses the pair
+    of settings, and preparation must not drop a declared node if it is reached anyway. What
+    kills it: applying the option under every mode. Second correct implementation: refusing
+    at preparation as well; the assertions read the written lists.
+    """
+    inp_text = _LIST_INP.format(junctions="JUNCTIONS", inflows='J1 FLOW "" FLOW 1 1 0\nJ2 FLOW "" FLOW 1 1 0')
+    inp_text = inp_text.replace("J2 15 5", "J2 6 6")
+    from hhemt.scenario_inputs import ScenarioInputGenerator
+
+    for sub, mode, nodes, expected in (("a", "legacy", None, 1), ("b", "list", "J1\nJ2\n", 2)):
+        folder = tmp_path / sub
+        folder.mkdir()
+        inp = _inp(folder / "hydraulics.inp", inp_text)
+        gen = _generator(folder, inp, one_per_cell=True, mode=mode, nodes=nodes)
+        ScenarioInputGenerator.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(gen)
+        assert len((folder / "coupling_nodes.txt").read_text().splitlines()) == expected
+
+
+@pytest.mark.parametrize(
+    ("template", "expected_active"),
+    [
+        ("sim_start_time=0\ndem_filename=dem.dem\n", 1),
+        ('sim_start_time=0\ndem_filename=dem.dem\nswmm_coupling_nodes="stale.txt"\n', 1),
+        ("sim_start_time=0\ndem_filename=dem.dem\n# swmm_coupling_nodes=x\n", 1),
+    ],
+)
+def test_the_coupled_cfg_names_the_written_list_exactly_once(tmp_path, monkeypatch, template, expected_active):
+    """Property: the coupled TRITON cfg carries one active ``swmm_coupling_nodes`` line naming the scenario's list.
+
+    Class: cfg templates with no such line, with a stale active one, and with a commented one.
+    Why: without the key TRITON-SWMM derives the coupled set from ``[INFLOWS]`` itself and
+    ignores the list; with a template value it would read a file the toolkit did not write.
+    What kills it: not writing the key, keeping the template's value, or writing it twice.
+    Second correct implementation: substituting a placeholder in the template; the assertions
+    read the cfg's lines only.
+    """
+    scen, cfg = _scenario_for_coupled_cfg(tmp_path, monkeypatch, rim_from_dem=False)
+    scen._system.cfg_system.triton_swmm_configuration_template.write_text(template)
+    scen._generate_TRITON_SWMM_cfg()
+    lines = cfg.read_text().splitlines()
+    active = [line for line in lines if line.lstrip().startswith("swmm_coupling_nodes")]
+    assert len(active) == expected_active
+    assert active[0] == f'swmm_coupling_nodes="{tmp_path / "coupling_nodes.txt"}"'
+    assert ("# swmm_coupling_nodes=x" in lines) == ("# swmm_coupling_nodes=x" in template)
+
+
+def test_review_a_junction_ranked_out_of_its_cell_keeps_its_inflow_line(tmp_path):
+    """Property: when the one-node-per-cell option ranks a junction out, only the coupling list changes.
+
+    Class: legacy models in which two junctions carrying FLOW inflow lines share one DEM cell
+    while ``one_coupled_inflow_node_per_dem_cell`` is on, so one junction is dropped by RANKING
+    rather than by node type. Why: the dropped junction stops exchanging water with the
+    surface, but the inflow its line declares (a baseflow or a hydrograph) is still part of the
+    SWMM model, and deleting that line to uncouple the node removes the water from the run.
+    The list is the one place the coupled set is decided, so the prepared ``hydraulics.inp``
+    must equal the filled template byte for byte. What kills it: deleting or rewriting the
+    inflow line of a node the ranking drops. Second correct implementation: one whose
+    tie-break keeps the other junction of the pair; the assertions read the prepared file's
+    bytes, that exactly one name is written, and that it is one of the pair.
+    """
+    from hhemt.scenario_inputs import ScenarioInputGenerator
+
+    text = _LIST_INP.format(junctions="JUNCTIONS", inflows='J1 FLOW "" FLOW 1 1 0.2\nJ2 FLOW "" FLOW 1 1 0.3').replace(
+        "J2 15 5", "J2 6 6"
+    )
+    inp = _inp(tmp_path / "hydraulics.inp", text)
+    before = inp.read_bytes()
+    gen = _generator(tmp_path, inp, one_per_cell=True, mode="legacy")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ScenarioInputGenerator.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(gen)
+    assert inp.read_bytes() == before
+    written = (tmp_path / "coupling_nodes.txt").read_text().splitlines()
+    assert len(written) == 1 and written[0] in {"J1", "J2"}, written
+
+
+@pytest.mark.parametrize("mode", ["legacy", "list"])
+def test_review_a_defined_candidate_with_no_coordinates_is_refused_by_the_selection(tmp_path, mode):
+    """Property: a candidate that a node section defines but no ``[COORDINATES]`` row places is refused.
+
+    Class: candidates the grouping cannot place although the model DEFINES them, here a
+    junction with a FLOW inflow line (legacy) or named in the coupling-node file (list) and
+    with no coordinate row, as distinct from a name no node section defines. Why: a candidate
+    that no DEM cell holds can never be written to the list, so without a refusal the
+    scenario runs with that node silently uncoupled while the declaration names it. What
+    kills it: refusing only names that no node section defines, which lets a defined but
+    unplaced candidate fall out of the list without a word. Second correct implementation:
+    checking every candidate's coordinate row before any grouping; the assertions read only
+    the exception type and the node's name in its message.
+    """
+    from hhemt.exceptions import ProcessingError
+    from hhemt.scenario_inputs import ScenarioInputGenerator
+
+    text = _LIST_INP.format(junctions="JUNCTIONS", inflows='J1 FLOW "" FLOW 1 1 0\nJ4 FLOW "" FLOW 1 1 0').replace(
+        "J3 1 2 0 0 0", "J3 1 2 0 0 0\nJ4 1 2 0 0 0"
+    )
+    inp = _inp(tmp_path / "hydraulics.inp", text)
+    gen = _generator(tmp_path, inp, one_per_cell=False, mode=mode, nodes="J1\nJ4\n" if mode == "list" else None)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(ProcessingError, match="J4"):
+            ScenarioInputGenerator.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(gen)
+
+
+@pytest.mark.parametrize("coupled", [False, True])
+def test_an_uncoupled_system_neither_selects_nor_writes_a_coupling_list_at_preparation(tmp_path, coupled):
+    """Property: preparation selects and writes the coupling list only when the coupled model is on.
+
+    Class: systems whose coupled model is off but whose configuration still declares a list,
+    here naming a node no section defines, against the same system with the coupled model on.
+    Why: the list and the selection record are read only by the coupled run, so on an
+    uncoupled system the step has no reader and its only effect would be to refuse a
+    TRITON-only or SWMM-only run over a file that run never reads. What kills it: running the
+    selection whatever the toggle. Second correct implementation: returning early inside the
+    selection step when the coupled model is off; the assertions read only whether the step
+    raised and whether a list file exists.
+    """
+    from hhemt.exceptions import ProcessingError
+    from hhemt.scenario_inputs import ScenarioInputGenerator
+
+    scen, _calls = _scenario_for_preparation(tmp_path, "FLOW_UNITS CMS")
+    hydraulics = scen.scen_paths.swmm_hydraulics_inp
+    gen = _generator(tmp_path, hydraulics, one_per_cell=False, mode="list", nodes="NOSUCH\n")
+    scen._system.cfg_system.toggle_tritonswmm_model = coupled
+    scen._system.cfg_system.toggle_use_swmm_for_hydrology = False
+    scen._input_generator.create_external_boundary_condition_files = lambda: None
+    scen._input_generator.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell = lambda verbose=False: (
+        ScenarioInputGenerator.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(gen, verbose=verbose)
+    )
+
+    def stop():
+        raise _StopAfterTheChecks
+
+    scen._generate_TRITON_SWMM_cfg = stop
+    if coupled:
+        with pytest.raises(ProcessingError, match="NOSUCH"):
+            scen.prepare_scenario()
+    else:
+        with pytest.raises(_StopAfterTheChecks):
+            scen.prepare_scenario()
+    assert not (hydraulics.parent / "coupling_nodes.txt").exists()

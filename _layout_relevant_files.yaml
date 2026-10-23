@@ -3934,3 +3934,27 @@ non_breaking_allowlist:
       outputs change. AUTHORSHIP NOTE: `hhemt-specialist`, 2b.1, UNCOMMITTED per A-22; the
       layout_signature is the file's sha256 at this write and must equal it AS COMMITTED.
       KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/scenario.py
+    layout_signature: 45dc27a852c35127124ac2448fdc988375ac41c8a7026aa294aae71a474781c6
+    justification: >-
+      NON-BREAKING. snapshot-refusal 2b.2 — scenario preparation now writes a coupling-node list
+      (coupling_nodes.txt beside hydraulics.inp) and the coupled TRITON cfg names it with one
+      swmm_coupling_nodes line; the [INFLOWS] line writer is retired, so hydraulics.inp is left as
+      the template filled it. DECIDING MEASUREMENT: no existing per-scenario file is renamed,
+      moved or restructured, no log field or status flag is added or renamed, and
+      _status/inflow_node_selection.json keeps its keys; an existing analysis is read exactly as
+      before, and a scenario prepared again gains one new input file. CHANGES HYDRAULIC RESULTS
+      for the model classes named in the 2b.2 commit message. AUTHORSHIP NOTE:
+      `hhemt-specialist`, 2b.2, UNCOMMITTED per A-22; the layout_signature is the file's sha256 at
+      this write and must equal it AS COMMITTED. KNOWN EXPIRY: this row expires on the next change
+      to this path.
+  - path: src/hhemt/scenario_inputs.py
+    layout_signature: 29c7ca516bb6a119872eb2bc1c915a1ca615fd8353cc72c4ca1918bf0beb0ec1
+    justification: >-
+      NON-BREAKING. snapshot-refusal 2b.2 — the selection step writes coupling_nodes.txt instead
+      of deleting [INFLOWS] lines, and its ineligible-node warning says "not written to the
+      coupling-node list". DECIDING MEASUREMENT: the selection record
+      _status/inflow_node_selection.json keeps its path, keys and cell order; no existing on-disk
+      artifact changes shape. AUTHORSHIP NOTE: `hhemt-specialist`, 2b.2, UNCOMMITTED per A-22; the
+      layout_signature is the file's sha256 at this write and must equal it AS COMMITTED. KNOWN
+      EXPIRY: this row expires on the next change to this path.
