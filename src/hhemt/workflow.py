@@ -8240,13 +8240,15 @@ exit $snakemake_status
     # emits NO slurm_partition key — byte-identical to the pre-fix literal, so
     # local-mode Snakefiles are unchanged.
     #
-    # NOTE this deliberately does NOT route through _build_resource_block: that
-    # helper RAISES when partition is None and multi_sim_run_method != "local",
-    # and preflight does not require hpc_setup_and_analysis_processing_partition
-    # (validation.py:932 requires only hpc_ensemble_partition), so routing here
-    # would turn a working analysis.delete() into a hard failure on configs that
-    # legitimately omit it. Converge on _build_resource_block only after that
-    # field becomes preflight-required.
+    # NOTE this does NOT route through _build_resource_block. The reason once given
+    # here -- that a non-local config could omit hpc_setup_and_analysis_processing_partition,
+    # so the helper's raise on a None partition would break analysis.delete() -- no
+    # longer holds: the analysis config now declares that field required for both HPC
+    # methods, so such a config does not load. What the helper would still change is the
+    # emitted rule text: it always writes a slurm_partition key (the literal "None" for
+    # an unset partition in local mode, where this method writes no key) and its own
+    # resource keys, so routing here would change the delete rules every mode emits.
+    # Converging on it is a separate change.
     def _delete_rule_resources(self) -> str:
         partition = (
             str(self.cfg_analysis.hpc_setup_and_analysis_processing_partition or "")

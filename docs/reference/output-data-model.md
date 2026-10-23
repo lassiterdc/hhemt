@@ -14,10 +14,17 @@ hhemt writes results at four tiers, and they differ in both shape and format.
 
 | Tier | Artifact | Format |
 |---|---|---|
-| Per-scenario | `sims/{event_id}/processed/` | Flat Zarr (default) or NetCDF, selected by `target_processed_output_type` |
+| Per-scenario | `sims/{event_id}/processed/` | Flat Zarr (default) or NetCDF, selected by `target_processed_output_type` (NetCDF is not supported when a TRITON model is enabled; see below) |
 | Per-analysis | `analysis_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr |
 | Per-experiment | `experiment_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr |
 | Per-system | `system_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr |
+
+NetCDF is not available for every model. `hhemt run` and `Toolkit.from_configs`
+refuse `target_processed_output_type: nc` at preflight whenever
+`toggle_triton_model` or `toggle_tritonswmm_model` is enabled, because the
+gridded TRITON timeseries does not support NetCDF output. With only
+`toggle_swmm_model` enabled, `nc` is accepted and applies to the per-scenario
+summaries and the SWMM node and link timeseries.
 
 A regular analysis writes the per-scenario and per-analysis tiers in its own
 directory, and writes no experiment tree. A sensitivity analysis writes one
@@ -31,8 +38,18 @@ command, never automatically on the next run:
 `python -m hhemt.version_migration migrate {analysis_dir} --apply`. Without
 `--apply` the command reports what it would do and changes nothing. The
 conversion can leave a superseded copy of the tree beside the promoted one, named
-`experiment_datatree.zarr.superseded-v0022`. That copy is kept on purpose, and
-nothing removes it for you.
+`experiment_datatree.zarr.superseded-v0022`.
+
+A sensitivity experiment with two or more members can also carry a leftover
+`analysis_datatree.zarr` beside its experiment tree, when its root held both that
+store and a tree under the retired name before conversion. The same conversion
+moves that leftover store aside to `analysis_datatree.zarr.superseded-v0025`.
+That step reads the analysis config the experiment is governed by, and the
+command reads a config only when `--system-config` and `--analysis-config` are
+passed together, so pass both. Without them, or when the command cannot tell
+which store is current, it stops and moves nothing.
+
+Each superseded copy is kept on purpose, and nothing removes it for you.
 
 **The per-scenario tier is flat and the consolidated tiers are hierarchical.**
 That distinction matters when you open them: the flat tier is a plain `Dataset`,

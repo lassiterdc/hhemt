@@ -120,6 +120,18 @@ console = Console()
 console_err = Console(stderr=True)
 
 
+def print_verbatim(value: object) -> None:
+    """Print `str(value)` to stdout exactly as returned, for a result the user must read as-is.
+
+    Rich's `console.print` would otherwise change it in two ways: a dataclass is rendered as a
+    nested constructor dump rather than through its `__str__` (a `WorkflowStatus` prints its
+    fields, not its report), and a string is parsed as markup and emoji codes, so a `[word]`
+    such as the rule token `[run_tritonswmm]` or a directory named `[draft]` is deleted with
+    no error. `soft_wrap=True` keeps a long path from being broken across lines.
+    """
+    console.print(str(value), markup=False, emoji=False, soft_wrap=True)
+
+
 @app.command(name="run")
 def run_command(
     # ═══════════════════════════════════════════════════════════════
@@ -192,15 +204,22 @@ def run_command(
             "sentinel's origin host, which yields a measurement instead of a belief."
         ),
     ),
+    # False unless typed: resume is already the mode whenever --from-scratch is absent, so this
+    # flag only records whether the user ASKED for it. Deliberately NOT defaulted to True: the
+    # --from-scratch/--resume guard would then refuse every --from-scratch, with no off form.
     resume: bool = typer.Option(
-        True,
+        False,
         "--resume",
-        help="Continue from completed state (default behavior)",
+        help="Continue from completed state. Already the default; cannot be combined with --from-scratch.",
     ),
     overwrite: bool = typer.Option(
         False,
         "--overwrite",
-        help="Recreate outputs even if completion logs indicate success",
+        help=(
+            "Re-run every simulation even if completion logs indicate success. Shorthand for "
+            "--override-force-rerun all; never deletes the analysis directory (that is "
+            "--from-scratch)."
+        ),
     ),
     dry_run: bool = typer.Option(
         False,
@@ -376,6 +395,8 @@ def run_command(
             redownload=redownload,
             log_level=log_level,
             walltime=walltime,
+            overwrite=overwrite,
+            override_force_rerun=override_force_rerun,
         )
 
         # ═══════════════════════════════════════════════════════════════
@@ -423,8 +444,7 @@ def run_command(
         # Stage 5a: Status Report (if requested)
         # ═══════════════════════════════════════════════════════════════
         if status_flag:
-            status = analysis.get_workflow_status()
-            console.print(status)
+            print_verbatim(analysis.get_workflow_status())
             raise typer.Exit(0)
 
         # ═══════════════════════════════════════════════════════════════
@@ -439,14 +459,15 @@ def run_command(
         # Stage 6: Workflow Orchestration
         # ═══════════════════════════════════════════════════════════════
 
-        # Determine execution mode from CLI flags
-        # Map CLI flags to orchestration layer modes
-        if from_scratch:
-            run_mode = "fresh"
-        elif overwrite:
-            run_mode = "overwrite"
-        else:
-            run_mode = "resume"
+        # Determine execution mode from CLI flags. There are two modes, fresh and resume
+        # (orchestration.RunMode); re-running completed work without a wipe is the
+        # force_rerun axis, so --overwrite is carried THERE rather than as a third mode.
+        # Deliberately NOT a run_mode value: run() has no parameter that could carry one,
+        # so a mode label alone was announced on the console and silently dropped.
+        run_mode = "fresh" if from_scratch else "resume"
+        if overwrite:
+            override_force_rerun = "all"
+            run_mode = f"{run_mode}, force_rerun=all"
 
         # Execution locus is resolved in exactly ONE place, analysis.run()'s
         # `execution_mode == "auto"` branch. This site previously carried its own
@@ -461,7 +482,7 @@ def run_command(
 
         # Execute workflow via high-level orchestration API
         result = analysis.run(
-            from_scratch=run_mode == "fresh",
+            from_scratch=from_scratch,
             events=None,  # Process all events
             execution_mode=execution_mode,
             dry_run=dry_run,
@@ -1242,7 +1263,14 @@ def run_experiment_command(
         readable=True,
         help="Path to a schema-conformant experiment bundle directory.",
     ),
-    cluster: str = typer.Option(..., "--cluster", help="Target cluster key, e.g. 'uva'."),
+    cluster: str | None = typer.Option(
+        None,
+        "--cluster",
+        help=(
+            "Target cluster key, e.g. 'uva'. Optional when the bundle declares exactly one "
+            "cluster under hpc_system_config; required when it declares none or several."
+        ),
+    ),
     hpc_system_config: Path = typer.Option(
         None,
         "--hpc-system-config",
@@ -1310,7 +1338,7 @@ def run_experiment_command(
 
         result = run_experiment(
             bundle,
-            cluster,
+            _resolve_experiment_cluster(bundle, cluster),
             dry_run=dry_run,
             hpc_system_config_yaml=hpc_system_config,
             assume_yes=yes,
@@ -1336,6 +1364,385 @@ def run_experiment_command(
         code = map_exception_to_exit_code(exc)
         console_err.print(f"[bold red]{label_for(exc)}:[/bold red] {escape(str(exc))}")
         raise typer.Exit(code) from exc
+
+
+def _resolve_experiment_cluster(bundle_dir: Path, cluster: str | None) -> str:
+    """Return the cluster an experiment-bundle verb targets, shared by `run-experiment` and `reset`.
+
+    An explicit `--cluster` is returned unchanged and the bundle is not read: a cluster the
+    bundle does not declare can still resolve its hpc_system_config through the deployment
+    fallbacks, so refusing it here would refuse a working invocation. Without `--cluster`,
+    the bundle's `hpc_system_config` keys are the declared clusters; exactly one is the
+    default, and none or several raise `CLIValidationError` (exit 2) naming what was found,
+    because guessing among several would aim a destructive verb at the wrong tree.
+    """
+    if cluster is not None:
+        return cluster
+    from .experiment_bundle import load_bundle
+
+    declared = sorted(load_bundle(bundle_dir).hpc_system_config)
+    if len(declared) == 1:
+        return declared[0]
+    if not declared:
+        raise CLIValidationError(
+            argument="--cluster",
+            message=f"{bundle_dir}/experiment.yaml declares no cluster under hpc_system_config",
+            fix_hint="Pass --cluster {name}",
+        )
+    raise CLIValidationError(
+        argument="--cluster",
+        message=f"{bundle_dir}/experiment.yaml declares {len(declared)} clusters: {', '.join(declared)}",
+        fix_hint=f"Pass --cluster with one of: {', '.join(declared)}",
+    )
+
+
+@app.command(name="reset")
+def reset_command(
+    experiment: Path = typer.Option(
+        ...,
+        "--experiment",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to the experiment bundle directory (the one holding experiment.yaml).",
+    ),
+    cluster: str | None = typer.Option(
+        None,
+        "--cluster",
+        help=(
+            "Target cluster key. Optional when the bundle declares exactly one cluster under "
+            "hpc_system_config; required when it declares none or several."
+        ),
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Override the bundle's declared hpc_system_config for this cluster.",
+    ),
+    override_in_flight: bool = typer.Option(
+        False,
+        "--override-in-flight",
+        help="Bypass the live-SLURM-sentinel refusal. Use only when you know the jobs are dead.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip the interactive confirmation prompt (use for scripted invocation).",
+    ),
+):
+    """Delete an experiment's whole analysis tree, so its next run starts from nothing.
+
+    Reset is a command and never a config field, so no experiment config can request it. It
+    finds the experiment the way `run-experiment` does, from the bundle directory and its
+    cluster, and then runs the same distributed delete as `hhemt delete`, which refuses while
+    simulations are still in flight. Without `--yes` it asks for confirmation first.
+
+    Example:
+
+        $ hhemt reset --experiment experiments/norfolk_design_storm --yes
+    """
+    from rich.markup import escape
+
+    from .cli_utils import label_for, map_exception_to_exit_code
+
+    try:
+        from .experiment_bundle import build_case_from_bundle, load_bundle
+
+        resolved = _resolve_experiment_cluster(experiment, cluster)
+        tk = build_case_from_bundle(
+            load_bundle(experiment), experiment, resolved, hpc_system_config_yaml=hpc_system_config
+        )
+        analysis = tk.analysis
+        analysis_dir = analysis.analysis_paths.analysis_dir
+        console.print(f"Reset targets cluster {resolved!r}: deletes {analysis_dir}")
+
+        if not yes:
+            response = input("Proceed with reset? Type 'y' or 'yes' to confirm: ").strip().lower()
+            if response not in ("y", "yes"):
+                console_err.print("[yellow]Aborted.[/yellow]")
+                raise typer.Exit(1)
+
+        analysis.delete(override_in_flight=override_in_flight)
+
+        if analysis_dir.exists():
+            console_err.print(
+                "[bold yellow]analysis_dir preserved — see [delete] log messages above for "
+                "missing sentinels.[/bold yellow]"
+            )
+            raise typer.Exit(1)
+        console.print("[green]Experiment reset: analysis tree deleted.[/green]")
+        raise typer.Exit(0)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        code = map_exception_to_exit_code(exc)
+        console_err.print(f"[bold red]{label_for(exc)}:[/bold red] {escape(str(exc))}")
+        raise typer.Exit(code) from exc
+
+
+def build_experiment_analysis(experiment: Path, cluster: str | None):
+    """Build the analysis an experiment bundle describes, on its resolved cluster.
+
+    The shared front half of every `--experiment` verb (`publish`, `reprex emit`, `status`,
+    `test analysis`): the cluster comes from `_resolve_experiment_cluster`, so a bundle with
+    several declared clusters is refused with exit 2 rather than guessed, and the analysis is
+    built exactly as `run-experiment` builds it. Returns the analysis, never the Toolkit.
+    """
+    from .experiment_bundle import build_case_from_bundle, load_bundle
+
+    resolved = _resolve_experiment_cluster(experiment, cluster)
+    return build_case_from_bundle(load_bundle(experiment), experiment, resolved).analysis
+
+
+def _experiment_publisher(analysis):
+    """The object whose `publish`/`reprex_bundle` facades own this experiment's outputs.
+
+    A sensitivity experiment's consolidated outputs belong to its sensitivity object, which
+    carries facades of the same names; calling the master analysis's instead would deposit or
+    bundle the wrong tree.
+    """
+    if analysis.cfg_analysis.toggle_sensitivity_analysis:
+        return analysis.sensitivity
+    return analysis
+
+
+def _exit_on_error(exc: Exception) -> None:
+    """Print a verb failure with its class-keyed label and exit with the mapped code."""
+    from rich.markup import escape
+
+    from .cli_utils import label_for, map_exception_to_exit_code
+
+    code = map_exception_to_exit_code(exc)
+    console_err.print(f"[bold red]{label_for(exc)}:[/bold red] {escape(str(exc))}")
+    raise typer.Exit(code) from exc
+
+
+_PUBLISH_TARGETS = ("zenodo", "hydroshare")
+
+
+@app.command(name="publish")
+def publish_command(
+    experiment: Path = typer.Option(
+        ...,
+        "--experiment",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to the experiment bundle directory (the one holding experiment.yaml).",
+    ),
+    cluster: str | None = typer.Option(
+        None,
+        "--cluster",
+        help="Target cluster key. Optional when the bundle declares exactly one cluster.",
+    ),
+    target: str = typer.Option(..., "--target", help="Where to deposit: zenodo or hydroshare."),
+    software_doi: str | None = typer.Option(
+        None, "--software-doi", help="DOI of the toolkit release the data was produced by."
+    ),
+    reprex_bundle: bool = typer.Option(
+        False,
+        "--reprex-bundle",
+        help="Deposit the round-trippable reprex bundle instead of the analysis-directory set.",
+    ),
+    exclude_config: Path | None = typer.Option(
+        None,
+        "--exclude-config",
+        exists=True,
+        dir_okay=False,
+        help="With --reprex-bundle: the config naming inputs to leave out of the bundle.",
+    ),
+    container_def: list[Path] | None = typer.Option(
+        None,
+        "--container-def",
+        exists=True,
+        dir_okay=False,
+        help="With --reprex-bundle: a container definition file to carry. Repeatable.",
+    ),
+) -> None:
+    """Deposit an experiment's outputs to a DOI-minting repository.
+
+    By default the deposit is the analysis-directory set: the consolidated results, their
+    provenance record and the two configs. With `--reprex-bundle` it is the round-trippable
+    reprex bundle instead, which is the only form that accepts `--exclude-config` and
+    `--container-def`. The dataset license is read from the analysis config, so no flag sets
+    it. Credentials are read by the repository adapter, not by this command.
+
+    Example:
+
+        $ hhemt publish --experiment experiments/norfolk_design_storm --target zenodo
+    """
+    try:
+        if target not in _PUBLISH_TARGETS:
+            raise CLIValidationError(
+                argument="--target",
+                message=f"Unknown target {target!r}",
+                fix_hint=f"Use one of: {', '.join(_PUBLISH_TARGETS)}",
+            )
+        if not reprex_bundle and (exclude_config is not None or container_def):
+            given = "--exclude-config" if exclude_config is not None else "--container-def"
+            raise CLIValidationError(
+                argument=f"{given}/--reprex-bundle",
+                message=f"{given} applies only to a reprex-bundle deposit",
+                fix_hint=f"Add --reprex-bundle, or drop {given}",
+            )
+        publisher = _experiment_publisher(build_experiment_analysis(experiment, cluster))
+        if reprex_bundle:
+            record = publisher.publish_reprex_bundle(
+                target,
+                exclude_config=exclude_config,
+                software_doi=software_doi,
+                container_defs=list(container_def) if container_def else None,
+            )
+        else:
+            record = publisher.publish(target, software_doi=software_doi)
+        console.print(record)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _exit_on_error(exc)
+
+
+reprex_app = typer.Typer(
+    help="Emit an experiment's reprex bundle, or check that one can run on your cluster.",
+    no_args_is_help=True,
+)
+app.add_typer(reprex_app, name="reprex")
+
+
+@reprex_app.command(name="emit")
+def reprex_emit_command(
+    experiment: Path = typer.Option(
+        ...,
+        "--experiment",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to the experiment bundle directory (the one holding experiment.yaml).",
+    ),
+    cluster: str | None = typer.Option(
+        None,
+        "--cluster",
+        help="Target cluster key. Optional when the bundle declares exactly one cluster.",
+    ),
+    container_def: list[Path] | None = typer.Option(
+        None,
+        "--container-def",
+        exists=True,
+        dir_okay=False,
+        help="A container definition file to carry in the bundle. Repeatable.",
+    ),
+) -> None:
+    """Write the experiment's reprex bundle and print the directory it was written to.
+
+    A reprex bundle is the experiment's render bundle upgraded so that someone on another
+    cluster can re-run it: it carries the inputs, a runnable config template and the
+    provenance record, and no value specific to the person who produced it.
+    """
+    try:
+        publisher = _experiment_publisher(build_experiment_analysis(experiment, cluster))
+        out = publisher.reprex_bundle(container_defs=list(container_def) if container_def else None)
+        print_verbatim(out)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _exit_on_error(exc)
+
+
+@reprex_app.command(name="check")
+def reprex_check_command(
+    bundle: Path = typer.Option(
+        ...,
+        "--bundle",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to an unpacked reprex bundle directory.",
+    ),
+    reprex_config_path: Path = typer.Option(
+        ...,
+        "--reprex-config",
+        exists=True,
+        dir_okay=False,
+        help="Your reprex_config YAML: account, login node, image directory, scratch, partitions.",
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Your cluster's hpc_system_config YAML. Falls back to $HHEMT_HPC_SYSTEM_CONFIG.",
+    ),
+) -> None:
+    """Check whether a reprex bundle can run on your cluster, and print what to amend.
+
+    Verifies the bundle's container image digest when it names one, runs the preflight
+    checks against your cluster's partitions, and prints the result: whether it is
+    runnable, the sensitivity rows that exceed a partition's limits, and suggested config
+    amendments. The HPC profile is your own; a bundle never carries one.
+
+    Exits 0 when the bundle fits your cluster, 1 when it does not, and 2 or above when the
+    check could not run.
+    """
+    import os
+
+    try:
+        from .bundle import Bundle
+        from .config.loaders import load_hpc_system_config, yaml_to_model
+        from .config.reprex_config import reprex_config
+
+        hpc_path = hpc_system_config or os.environ.get("HHEMT_HPC_SYSTEM_CONFIG")
+        if not hpc_path:
+            raise CLIValidationError(
+                argument="--hpc-system-config",
+                message="No hpc_system_config given and $HHEMT_HPC_SYSTEM_CONFIG is unset",
+                fix_hint="Pass --hpc-system-config {your cluster's hpc_system_config.yaml}",
+            )
+        result = Bundle.from_directory(bundle).reprex(
+            yaml_to_model(reprex_config_path, reprex_config),
+            load_hpc_system_config(Path(hpc_path)),
+        )
+        console.print(result)
+        # Exit 1 is reserved for "the check ran and the bundle does not fit": no exception
+        # class maps to 1 in EXIT_CODE_MAP, so a script can tell a negative answer from a
+        # check that could not run (2 or above) without reading the printed result.
+        if not result.runnable:
+            raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _exit_on_error(exc)
+
+
+@app.command(name="status")
+def status_command(
+    experiment: Path = typer.Option(
+        ...,
+        "--experiment",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to the experiment bundle directory (the one holding experiment.yaml).",
+    ),
+    cluster: str | None = typer.Option(
+        None,
+        "--cluster",
+        help="Target cluster key. Optional when the bundle declares exactly one cluster.",
+    ),
+) -> None:
+    """Print how far an experiment's workflow has got, phase by phase.
+
+    Reads the experiment's logs and outputs; it submits nothing and changes nothing.
+    """
+    try:
+        print_verbatim(build_experiment_analysis(experiment, cluster).get_workflow_status())
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _exit_on_error(exc)
 
 
 @app.command(name="static-plots")
@@ -1972,6 +2379,16 @@ def _validate_cli_arguments(**kwargs) -> None:
             fix_hint="Choose one output mode",
         )
 
+    # --overwrite is shorthand for --override-force-rerun all, so any OTHER explicit
+    # force_rerun value contradicts it. Refused rather than resolved by precedence, because
+    # either silent winner discards half of what the user typed.
+    if kwargs["overwrite"] and kwargs["override_force_rerun"] not in (None, "all"):
+        raise CLIValidationError(
+            argument="--overwrite/--override-force-rerun",
+            message="--overwrite means --override-force-rerun all, which contradicts the value also given",
+            fix_hint="Pass --overwrite alone, or --override-force-rerun alone",
+        )
+
     # Model validation
     valid_models = ["auto", "triton", "swmm", "tritonswmm"]
     if kwargs["model"] not in valid_models:
@@ -2033,8 +2450,9 @@ def _print_dry_run_summary(args: dict) -> None:
     console.print("\n[bold]Execution Mode:[/bold]")
     console.print(f"  Model:  {args['model']}")
     console.print(f"  Which:  {args['which']}")
-    console.print(f"  Resume: {args['resume']}")
-    console.print(f"  From scratch: {args['from_scratch']}")
+    # The mode run() receives is decided by --from-scratch alone; --resume only records whether
+    # it was typed, so echoing that flag would report "False" on a dry run that resumes.
+    console.print(f"  Mode:   {'fresh' if args['from_scratch'] else 'resume'}")
 
     # Event selection
     if args["event_ilocs"] or args["event_range"]:

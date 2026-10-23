@@ -301,25 +301,38 @@ def load_bundle_config(cfg_path: Path, cfg_model: type, bundle_root: Path):
     reads a BUNDLE archive rather than a runnable config. Keeps the MODEL, because the
     render path consumes real submodels (`report`, `eda`, `brand_theme`).
     """
+    import pydantic
     import yaml
 
-    return cfg_model.model_validate(
-        rebase_bundle_relative_paths(
-            yaml.safe_load(Path(cfg_path).read_text()), cfg_model, Path(bundle_root).resolve()
-        ),
-        # A bundle's archived cfg is an ARCHIVE RECORD. This function validates the
-        # record's SHAPE; whether the bundle carries the files the record declares is a
-        # separate question with a separate, per-caller answer, and it is deliberately not
-        # asked here:
-        #   - load_eda_context and _combine.py read scalars only and require nothing on
-        #     disk (_combine's own note at :666 records zero Path fields in its read set);
-        #   - Bundle.from_directory is a construction step, and the one field its
-        #     regenerate_report path OPENS -- brand_theme -- is checked explicitly there,
-        #     by _assert_render_inputs_present, where the requirement actually lives;
-        #   - the DOI/run path's answer is experiments.py::_assert_declared_inputs_exist,
-        #     which fetches via contentUrl, sha256-verifies, and reports citation +
-        #     place-it-at on failure.
-        # Do not add an earlier, weaker refusal here: it preempts that last one and says
-        # less than any of the three.
-        context={"existence": "metadata"},
+    from hhemt.exceptions import ConfigurationError
+
+    raw = rebase_bundle_relative_paths(
+        yaml.safe_load(Path(cfg_path).read_text()), cfg_model, Path(bundle_root).resolve()
     )
+    # Only the validate call is wrapped, as in loaders._load_config: pydantic's error names
+    # the model and the field but never the file, so the bundle's config path is attached here.
+    try:
+        return cfg_model.model_validate(
+            raw,
+            # A bundle's archived cfg is an ARCHIVE RECORD. This function validates the
+            # record's SHAPE; whether the bundle carries the files the record declares is a
+            # separate question with a separate, per-caller answer, and it is deliberately not
+            # asked here:
+            #   - load_eda_context and _combine.py read scalars only and require nothing on
+            #     disk (_combine's own note at :666 records zero Path fields in its read set);
+            #   - Bundle.from_directory is a construction step, and the one field its
+            #     regenerate_report path OPENS -- brand_theme -- is checked explicitly there,
+            #     by _assert_render_inputs_present, where the requirement actually lives;
+            #   - the DOI/run path's answer is experiments.py::_assert_declared_inputs_exist,
+            #     which fetches via contentUrl, sha256-verifies, and reports citation +
+            #     place-it-at on failure.
+            # Do not add an earlier, weaker refusal here: it preempts that last one and says
+            # less than any of the three.
+            context={"existence": "metadata"},
+        )
+    except pydantic.ValidationError as exc:
+        raise ConfigurationError(
+            field=Path(cfg_path).name,
+            message=f"schema violation: {exc}",
+            config_path=Path(cfg_path),
+        ) from exc

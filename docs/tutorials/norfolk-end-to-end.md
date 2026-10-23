@@ -50,8 +50,8 @@ Two orthogonal axes control how a run executes: the per-sim compute config (`run
 
 ???+ example "Ensemble dispatch (`multi_sim_run_method`)"
     - `local`: ThreadPoolExecutor on this machine (no SLURM).
-    - `batch_job`: Snakemake in a login-node tmux session, one sbatch per sim (requires `hpc_total_job_duration_min` + `hpc_time_min_per_sim`). See the [HPC-profile setup guide](../how-to/hpc-profile-setup.md).
-    - `1_job_many_srun_tasks`: one sbatch allocation + an srun pool (requires `hpc_total_nodes` + `hpc_total_job_duration_min`).
+    - `batch_job`: Snakemake in a login-node tmux session, one sbatch per sim. The analysis config does not load without `hpc_total_job_duration_min`, `hpc_time_min_per_sim`, `hpc_ensemble_partition` and `hpc_setup_and_analysis_processing_partition`. See the [HPC-profile setup guide](../how-to/hpc-profile-setup.md).
+    - `1_job_many_srun_tasks`: one sbatch allocation + an srun pool. The analysis config does not load without `hpc_ensemble_partition` and `hpc_setup_and_analysis_processing_partition`, and preflight also requires `hpc_total_nodes` and `hpc_total_job_duration_min`.
 
 !!! warning
     `multi_sim_run_method` changes both the execution strategy and the generated Snakefile structure: it is not just a scheduler flag.

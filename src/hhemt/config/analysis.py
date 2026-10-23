@@ -1,3 +1,16 @@
+"""The per-analysis configuration an hhemt run reads from its analysis YAML.
+
+One analysis config describes how a set of simulations is run: the compute shape of
+each simulation (run mode, ranks, threads, GPUs, nodes), how the ensemble is dispatched
+(in-process, one SLURM job per scenario from a login-node tmux session, or many srun
+tasks inside one allocation), the partition selectors and allocations that dispatch
+needs, the model toggles and their inputs, the cleanup and force-rerun policy, and the
+report settings. Validation here rejects an inconsistent combination when the YAML
+loads, before any job is submitted. A field that is required only under some other
+setting declares that condition on the field itself (`field_meta(required_when=...)`),
+which is both what enforces it and what the report's Reproduction Guide reads.
+"""
+
 import math
 import re
 import warnings
@@ -36,11 +49,9 @@ ClearRawValue = Literal["all", "none"] | list[Literal["tritonswmm", "triton", "s
 # provably intact. An artifact identified by the model that produced it is a
 # clear_raw concern; anything else is a class here.
 #
-# ALIAS RENAMED WITH THE FIELD (round 5, user directive): RemoveValue ->
-# RemoveValue. The alias IS this field's type and appears in public signatures,
-# so leaving it behind would put two names on one concept in the file the rename
-# exists to clean. The four PRIVATE helpers keep `_reclaim_*` names -- see the
-# rename-boundary ruling in the round-5 amendment.
+# The alias is named for its field, `remove_after_processing`. The process-side helpers
+# that apply it (`_reclaim_classes`, `_reclaim_attrs`, `_reclaim_paths` in
+# process_simulation.py) keep `_reclaim_*` names.
 #
 #   T0 (regenerable by template-fill, no solver): prep_inputs
 #   T1 (regenerable by re-running the CHEAP SWMM hydrology solver): hydrographs,
@@ -63,9 +74,9 @@ RemoveValue = (
         ]
     ]
 )
-# Deliberately NOT a widening of ClearRawValue: that alias is ALSO ForceRerunSpec.subject's
-# type (see the comment directly below), so adding an artifact-class member to it would make
-# that member a legal force-rerun subject, where it means nothing. Different axis --
+# Deliberately NOT a widening of ClearRawValue: that alias types `clear_raw` and every
+# `override_clear_raw` parameter, so adding an artifact-class member to it would make that
+# member a legal `clear_raw` value, where it means nothing. Different axis --
 # ClearRawValue enumerates MODEL TYPES over raw sim outputs; RemoveValue enumerates
 # ARTIFACT CLASSES over post-processing redundancy -- so a different alias.
 # Legacy shape, RETAINED as the accepted input form and as `ForceRerunSpec.subject`'s type.
@@ -79,11 +90,14 @@ ForceRerunSubject = Literal["all", "none"] | dict[Literal["sa_id", "event_iloc"]
 class ForceRerunSpec(cfgBaseModel):
     """WHICH simulations to force, and from WHICH stage down.
 
-    Two ORTHOGONAL axes as separate fields rather than keys in one dict. The subject keys
-    are mutually exclusive by construction -- `member_id` requires `toggle_sensitivity_analysis`
-    True and `event_iloc` requires it False -- which is why the shipped validator's
-    `next(iter(...))` is correct. A `stage` key added to that same dict would make the
-    first-key read insertion-order-dependent and silently skip subject validation.
+    Two ORTHOGONAL axes as separate fields rather than keys in one dict. A dict subject
+    must hold exactly one key, and `_validate_subject_shape` rejects any other length
+    (`len(v) != 1`) before it reads the key with `next(iter(...))`, so that read is
+    unambiguous. Which key is allowed also depends on the analysis -- an `sa_id` key
+    requires `toggle_sensitivity_analysis` True and `event_iloc` requires it False --
+    and that is enforced on the outer `analysis_config`, not here. Putting `stage` in the
+    same dict would need the one-key rule relaxed, and the first-key read would then
+    depend on insertion order and could silently skip subject validation.
 
     `stage` is a FLOOR, not a set: forcing from a stage re-runs it and everything
     downstream. That is the shipped semantics twice over -- by Snakemake cascade in
@@ -160,7 +174,7 @@ class ForceRerunSpec(cfgBaseModel):
 
     @model_validator(mode="after")
     def _validate_subject_shape(self):
-        """The dict-shape rules, lifted from `analysis_config._validate_force_rerun`.
+        """The dict-shape rules for `subject`, which once lived on `analysis_config`.
 
         They live HERE rather than on analysis_config because they are properties of the
         SUBJECT VALUE and need no sibling-field context -- so one implementation covers both
@@ -400,8 +414,8 @@ class analysis_config(cfgBaseModel):
             required_when=[when("multi_sim_run_method", "batch_job")],
         ),
     )
-    # Phase-4 (4d, hpc-system-profile-config): hpc_gpus_per_node + hpc_cpus_per_node
-    # RETIRED off analysis_config. Per-node GPU/CPU topology now lives per-partition
+    # hpc_gpus_per_node and hpc_cpus_per_node are RETIRED from analysis_config. Per-node
+    # GPU/CPU topology now lives per-partition
     # on PartitionSpec.gpus_per_node / .cpus_per_node, resolved via the workflow
     # builder's _resolve_gpus_per_node / _resolve_cpus_per_node from the named
     # partition. A pop-and-warn shim (check_consistency, below) lets un-migrated
@@ -625,13 +639,16 @@ class analysis_config(cfgBaseModel):
         None,
         description="This is passed to Snakemake to let it know how many GPUS its allowed to use on your computer",
     )
-    # HPC JOB ARRAY PARAMETERS
+    # HPC RESOURCES, RETRIES AND PARTITION SELECTORS
     mem_gb_per_cpu: int = Field(2, description="Memory per CPU in GB. Defaults to 2GB.")
     hpc_time_min_per_sim: int | None = Field(
         60,
-        description="Time in minutes per simulation for SLURM job array. Required if using "
-        "generate_SLURM_job_array_script() or "
-        "submit_SLURM_job_array().",
+        description="Walltime in minutes requested for each simulation. A simulation rule's Snakemake "
+        "`runtime` is this value, plus hpc_runtime_min_for_sim_output_processing when process_in_sim_rule "
+        "runs output processing inside the simulation rule. "
+        "Must be >= 1 under multi_sim_run_method='batch_job'; when an hpc_system_config is supplied, "
+        "preflight checks it against the ensemble partition's max_runtime.",
+        json_schema_extra=field_meta(required_when=[when("multi_sim_run_method", "batch_job")]),
     )
     hpc_restart_times_simulate: int = Field(
         2,
@@ -654,27 +671,37 @@ class analysis_config(cfgBaseModel):
             "re-derivations, so a low count suffices. Default 2."
         ),
     )
-    # Phase-4 (4d): hpc_max_simultaneous_sims RETIRED off analysis_config — it MOVED
-    # to hpc_system_config.max_concurrent_jobs (D-D: a cluster-throughput cap belongs
-    # on the per-HPC-system config, not the per-analysis config). Readers resolve it
-    # from cfg_hpc_system.max_concurrent_jobs. Popped by the check_consistency shim.
+    # hpc_max_simultaneous_sims is RETIRED from analysis_config: it MOVED to
+    # hpc_system_config.max_concurrent_jobs, because a cluster-throughput cap belongs on
+    # the per-HPC-system config, not the per-analysis config. Readers resolve it from
+    # cfg_hpc_system.max_concurrent_jobs. Popped by the check_consistency shim.
     #
-    # KEPT (D-A): the two partition SELECTORS stay on analysis_config — they are the
+    # KEPT: the two partition SELECTORS stay on analysis_config — they are the
     # partition-NAME axis lookup keys the resolution helpers + preflight read to index
     # cfg_hpc_system.partitions[name], and partition-as-sensitivity-axis requires them
     # as the per-CSV-row overlay column. They are NOT retired despite the hpc_* prefix.
     hpc_ensemble_partition: str | None = Field(
         None,
         description="SLURM partition name (e.g., 'standard', 'gpu', 'high-memory') for "
-        "running simulations. Required if "
-        "using "
-        "generate_SLURM_job_array_script() or submit_SLURM_job_array().",
+        "running simulations: the partition of the simulation rules (a CPU-only simulation rule resolves "
+        "hpc_cpu_sim_partition first), the default slurm_partition of "
+        "the generated Snakemake executor profile, and the #SBATCH --partition of the single allocation "
+        "under multi_sim_run_method='1_job_many_srun_tasks'. Also the key into "
+        "hpc_system_config.partitions that resolves a simulation's GPU hardware; a sensitivity sweep may "
+        "vary it per row through the hpc.partition column.",
+        json_schema_extra=field_meta(
+            required_when=[when("multi_sim_run_method", "batch_job", "1_job_many_srun_tasks")],
+        ),
     )
     hpc_setup_and_analysis_processing_partition: str | None = Field(
         None,
-        description="SLURM partition name for simulation setup and analysis output consolidation (single node, single "
-        "core "
-        "processing). Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
+        description="SLURM partition name for the single-node, single-core rules: system setup and "
+        "compilation, scenario preparation, output processing, consolidation, report rendering and its "
+        "plots, and deletion. Also the first choice for the batch_job orchestration job (falling back to "
+        "hpc_ensemble_partition) and a fallback for CPU-only simulation rules (see hpc_cpu_sim_partition).",
+        json_schema_extra=field_meta(
+            required_when=[when("multi_sim_run_method", "batch_job", "1_job_many_srun_tasks")],
+        ),
     )
     hpc_cpu_sim_partition: str | None = Field(
         None,
@@ -687,7 +714,7 @@ class analysis_config(cfgBaseModel):
             "CPU sim rung needs a different partition from the setup/processing rungs."
         ),
     )
-    # Phase-4 (4d): hpc_account, hpc_login_node, python_path RETIRED off analysis_config.
+    # hpc_account, hpc_login_node and python_path are RETIRED from analysis_config.
     # account -> hpc_system_config.default_account (via _resolve_account); login_node ->
     # hpc_system_config.login_node; python_path -> sys.executable fallback (no
     # hpc_system_config home — re-add if a cluster needs a bespoke interpreter).
@@ -939,15 +966,20 @@ class analysis_config(cfgBaseModel):
             "a per-scenario chapter set that a DIFFERENT hhemt build wrote, processing "
             "refuses loudly rather than publishing one unified store built by two "
             "processing builds. Set True only when you know nothing material changed "
-            "between the builds; the run then proceeds and records BOTH builds in the "
-            "chapter set's provenance history. NOTE: the detector IS LIVE under "
-            "execution_environment='container'. The SIF build strips the toolkit's .git, so "
-            "an in-image git sha is unresolvable -- but processing_build_key then falls back "
-            "to the image's own org.hhemt.hhemt_sha label, read from "
-            "/.singularity.d/labels.json, which Apptainer materialises inside every running "
-            "container. So the identity resolves and the guard compares normally. This note "
-            "previously said the opposite; an operator acting on it would have set this flag "
-            "believing it disarmed nothing. The guard is what prevents a chapter set written "
+            "between the builds; the run then proceeds, prints the mismatch to standard "
+            "output (kept in the processing step's log when the workflow runs it), and, once "
+            "it flags a chapter, adds its build to provenance_history.json in the chapter "
+            "set's directory beside the earlier build(s). The guard identifies a build by "
+            "processing_build_key: the running toolkit's identity (inside a container image, "
+            "the image's staged HHEMT_SHA), or, when that cannot be confirmed -- for example "
+            "a checkout mounted over the image's source -- the image's own "
+            "org.hhemt.hhemt_sha label, read from /.singularity.d/labels.json. The label "
+            "names the image, not a checkout mounted over it, so changes to a checkout "
+            "mounted over one image are not detected. The history "
+            "records that same identity, so a label-identified run is compared on the next "
+            "resume. A build neither resolves is recorded as 'unknown' and is not compared. "
+            "The detector is therefore live under execution_environment='container' as well "
+            "as natively. The guard is what prevents a chapter set written "
             "with one declared chunk grid from being extended by a build that declares "
             "another, so leaving this False is load-bearing. Consumed by "
             "provenance.assert_chapters_match_running_build."
@@ -987,7 +1019,7 @@ class analysis_config(cfgBaseModel):
         "otherwise defined.",
     )
 
-    # extra inputs (currently only used by sensitivity analysis)
+    # OPTIONAL PATHS, EXPERIMENT MEMBERSHIP, REPORTING AND EXECUTION SETTINGS
     analysis_dir: Path | None = Field(
         None,
         description="Optional path to analysis directory. If not specified, the analysis directory will be placed "
@@ -1114,12 +1146,17 @@ class analysis_config(cfgBaseModel):
         ),
     )
 
-    # CLEANUP / FORCE-RERUN POLICY (cleanup-rerun-delete-redesign Phase 1)
+    # CLEANUP / FORCE-RERUN POLICY
     #
     # TWO KNOBS, TWO AXES -- do not conflate them. `clear_raw` is per-MODEL-TYPE over RAW
     # SIMULATION outputs and fires inside write_timeseries_outputs.
     # `remove_after_processing` is per-ARTIFACT-CLASS over POST-PROCESSING REDUNDANCY and
-    # fires in the process runner only after the summaries are provably intact.
+    # fires only after the summaries are provably intact: the per-model classes
+    # (timeseries, raw_swmm_binaries, coupled_rpt) in the process runner, and the four
+    # scenario-scoped classes (hydro_out, prep_inputs, hydrographs, standalone_rpt) in
+    # consolidate_workflow: at per-scenario consolidation, and in the analysis-level
+    # fallback reclaim_unconsolidated_scenarios for events with no per-scenario
+    # consolidation flag, gated there on scenario_summaries_present.
     remove_after_processing: RemoveValue = Field(
         "none",
         description=(
@@ -1177,11 +1214,11 @@ class analysis_config(cfgBaseModel):
     @field_validator("static_plot_configs", mode="after")
     @classmethod
     def _check_static_plot_configs_exist(cls, v: "list[Path]") -> "list[Path]":
-        """Element-wise existence check for the layer-4 static-plot config list.
+        """Element-wise existence check for the `static_plot_configs` list.
 
         The base ``*`` validator ``_check_paths_exist`` only handles scalar
         ``Path`` values and silently passes a ``list[Path]`` through, so list
-        elements need their own existence validation (R-7 / V-8).
+        elements need their own existence validation.
         """
         normed: list[Path] = []
         for elem in v:
@@ -1251,8 +1288,11 @@ class analysis_config(cfgBaseModel):
     def validate_toggle_dependencies(cls, values):
         errors = []
 
-        # Conditional requiredness for these four fields is DECLARED on the fields via
-        # `field_meta(required_when=...)` and enforced by
+        # This validator enforces nothing itself. Conditional requiredness for the four
+        # toggle-dependent fields (storm_tide_boundary_line_gis, storm_tide_units and
+        # weather_time_series_storm_tide_datavar under toggle_storm_tide_boundary, and
+        # sensitivity_analysis under toggle_sensitivity_analysis) is DECLARED on the fields
+        # via `field_meta(required_when=...)` and enforced by
         # `cfgBaseModel._enforce_required_when`. See the sibling note in config/system.py
         # for why the hand-written second enforcement site was removed.
 
@@ -1277,11 +1317,11 @@ class analysis_config(cfgBaseModel):
     @model_validator(mode="before")
     @classmethod
     def check_consistency(cls, values):
-        # REMOVE after <release>: Phase-4 (4d) pop-and-warn shim for the 6 retired
+        # REMOVE after <release>: pop-and-warn shim for the 6 retired
         # analysis_config HPC fields (moved to hpc_system_config.max_concurrent_jobs /
         # default_account / login_node, the partition-axis PartitionSpec topology, and
         # sys.executable). Pop-and-DROP so un-migrated YAMLs still load (extra="forbid"
-        # would else reject). The two partition selectors are KEPT (D-A).
+        # would else reject). The two partition selectors are KEPT.
         if isinstance(values, dict):
             for _k in (
                 "hpc_account",
@@ -1339,7 +1379,6 @@ class analysis_config(cfgBaseModel):
                 raise ValueError("n_omp_threads must be 1 or None for MPI-only mode")
             if gpus not in (None, 0):
                 raise ValueError("n_gpus must be None or 0 for MPI-only mode")
-            # Validate ntasks >= nnodes
             if nodes is not None and mpi is not None and mpi < nodes:
                 raise ValueError(
                     f"n_mpi_procs must be >= n_nodes for MPI mode. "
@@ -1354,7 +1393,6 @@ class analysis_config(cfgBaseModel):
                 raise ValueError("n_omp_threads must be >1 for hybrid mode")
             if gpus not in (None, 0):
                 raise ValueError("n_gpus must be None or 0 for hybrid CPU mode")
-            # Validate ntasks >= nnodes
             if nodes is not None and mpi is not None and mpi < nodes:
                 raise ValueError(
                     f"n_mpi_procs must be >= n_nodes for hybrid mode. "
@@ -1369,7 +1407,6 @@ class analysis_config(cfgBaseModel):
                 raise ValueError("n_mpi_procs must be >=1 if using MPI with GPU")
             if omp is not None and omp < 1:
                 raise ValueError("n_omp_threads must be >=1 if using OpenMP with GPU")
-            # Validate ntasks >= nnodes (if using MPI with GPU)
             if mpi is not None and mpi > 1 and nodes is not None and mpi < nodes:
                 raise ValueError(
                     f"n_mpi_procs must be >= n_nodes for GPU mode with MPI. "
@@ -1377,7 +1414,7 @@ class analysis_config(cfgBaseModel):
                     f"Each node requires at least one MPI rank to run on it."
                 )
 
-            # Phase-4 (4d): the hpc_gpus_per_node requirement (GPU mode) is retired
+            # The hpc_gpus_per_node requirement (GPU mode) is retired
             # here — per-node GPU topology is resolved from the ensemble partition's
             # PartitionSpec and the workflow emitter asserts a positive count at
             # Snakefile-generation time. The hpc_max_simultaneous_sims requirement
@@ -1396,9 +1433,7 @@ class analysis_config(cfgBaseModel):
         ):
             raise ValueError("hpc_total_job_duration_min must be > 0 for multi_sim_run_method=batch_job")
 
-        if multi_sim_method == "batch_job":
-            if hpc_time_min_per_sim is None:
-                raise ValueError("hpc_time_min_per_sim is required and must be >= 1 for multi_sim_run_method=batch_job")
+        if multi_sim_method == "batch_job" and hpc_time_min_per_sim is not None:
             if isinstance(hpc_time_min_per_sim, float) and math.isnan(hpc_time_min_per_sim):
                 raise ValueError(
                     "hpc_time_min_per_sim must be a valid integer >= 1 for multi_sim_run_method=batch_job (NaN "
@@ -1439,7 +1474,7 @@ class analysis_config(cfgBaseModel):
         declared_job_ram = self.hpc_mem_allocation_for_sim_output_processing_mb
         if self.process_append_batch_memory_budget_mb is None:
             self.process_append_batch_memory_budget_mb = round(self._PROCESS_BATCH_BUDGET_FRACTION * declared_job_ram)
-        # R4 guard 1: never exceed half the declared job RAM (the 2*B <= job_RAM inequality).
+        # Guard 1: never exceed half the declared job RAM (the 2*B <= job_RAM inequality).
         ceiling = round(0.5 * declared_job_ram)
         if self.process_append_batch_memory_budget_mb > ceiling:
             raise ValueError(
@@ -1448,9 +1483,9 @@ class analysis_config(cfgBaseModel):
                 f"hpc_mem_allocation_for_sim_output_processing_mb ({ceiling}); the "
                 f"2*B + per_ts <= job_RAM peak-RSS inequality requires B <= ~0.5*job_RAM."
             )
-        # R4 guard 2: best-effort clamp to the ACTUAL cgroup limit when readable, so a
+        # Guard 2: best-effort clamp to the ACTUAL cgroup limit when readable, so a
         # SLURM under-allocation (declared > granted) cannot drive the cap above the real
-        # envelope (the declared-vs-actual OOM hazard, D6). No-op once declared == actual.
+        # envelope, where the job would be OOM-killed. No-op once declared == actual.
         actual = _read_cgroup_memory_limit_mib()
         if actual is not None:
             self.process_append_batch_memory_budget_mb = min(
