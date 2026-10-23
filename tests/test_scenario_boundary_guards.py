@@ -1623,3 +1623,670 @@ def test_the_dem_rim_option_in_container_mode_needs_a_recorded_listed_commit(
     else:
         with pytest.raises(ConfigurationError, match="swmm_node_rim_from_dem"):
             scen._generate_TRITON_SWMM_cfg()
+
+
+# ---------------------------------------------------------------------------
+# The coupling declaration (swmm_coupling_mode / swmm_coupling_nodes_file) and its
+# run-entry refusals: the declaration check, the empty-candidate check, the grid check
+# ---------------------------------------------------------------------------
+
+_COUPLING_INP = """
+[OPTIONS]
+FLOW_UNITS CMS
+
+[JUNCTIONS]
+J1 1 2 0 0 0
+J2 1 2 0 0 0
+
+[OUTFALLS]
+O1 0 FREE NO
+
+[CONDUITS]
+C1 J1 O1 10 0.013 0 0 0 0
+
+[XSECTIONS]
+C1 CIRCULAR 1 0 0 0 1
+
+[INFLOWS]
+{inflows}
+
+[COORDINATES]
+{coordinates}
+"""
+
+_COORDS_INSIDE = "J1 5 5\nJ2 15 5\nO1 25 15"
+
+
+def _coupling_inp(tmp_path, inflows='J1 FLOW "" FLOW 1 1 0', coordinates=_COORDS_INSIDE, name="h"):
+    return _inp(tmp_path / f"{name}.inp", _COUPLING_INP.format(inflows=inflows, coordinates=coordinates))
+
+
+def _coupling_system(tmp_path, inp, *, mode="legacy", nodes=None, cfg_text="dem_filename=x.dem\n", coupled=True):
+    """A stand-in system whose ``cfg_system`` carries the fields the run-entry checks read."""
+    cfg_template = tmp_path / "TRITONSWMM.cfg"
+    cfg_template.write_text(cfg_text)
+    nodes_file = None
+    if nodes is not None:
+        nodes_file = tmp_path / "coupling_nodes.txt"
+        nodes_file.write_text(nodes)
+    return SimpleNamespace(
+        cfg_system=SimpleNamespace(
+            toggle_tritonswmm_model=coupled,
+            toggle_swmm_model=not coupled,
+            SWMM_hydraulics=inp,
+            SWMM_full=None if coupled else inp,
+            triton_swmm_configuration_template=cfg_template,
+            swmm_coupling_mode=mode,
+            swmm_coupling_nodes_file=nodes_file,
+        ),
+        sys_paths=SimpleNamespace(dem_processed=tmp_path / "processed.dem"),
+    )
+
+
+def _coupling_analysis(system, *, one_per_cell=False):
+    return SimpleNamespace(
+        cfg_analysis=SimpleNamespace(
+            toggle_sensitivity_analysis=False, one_coupled_inflow_node_per_dem_cell=one_per_cell
+        ),
+        _system=system,
+        analysis_config_yaml=None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("inflows", "mode", "nodes", "refused"),
+    [
+        ("", "legacy", None, True),
+        ('J1 TSS "" CONCEN 1.0 1 0.01 ts', "legacy", None, True),
+        ('J1 FLOW "" FLOW 1.0 1 0.01 ts', "legacy", None, False),
+        ("", "list", "J1\n", False),
+    ],
+)
+def test_property_71_a_coupled_system_declaring_no_coupling_node_is_refused(tmp_path, inflows, mode, nodes, refused):
+    """Property 71: a coupled system whose candidate set is empty is refused at run entry.
+
+    Class: coupled templates under ``swmm_coupling_mode: legacy`` whose ``[INFLOWS]`` lines
+    give no node a FLOW inflow (none at all, or only a pollutant), against the same template
+    with a FLOW line and the same template under a list naming a junction. Why: such a run
+    exchanges no water with the surface and still ends with a success marker, so the refusal
+    must come before any job is submitted. What kills it: not calling the check, counting a
+    pollutant line as a FLOW inflow, or reading ``[INFLOWS]`` under a declared mode. Second
+    correct implementation: deriving the candidate set from swmmio's inflow frame filtered to
+    FLOW; the assertions read only whether the check raises and what the message names.
+    """
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.exceptions import ConfigurationError
+
+    inp = _coupling_inp(tmp_path, inflows=inflows)
+    fake = _coupling_analysis(_coupling_system(tmp_path, inp, mode=mode, nodes=nodes))
+    if refused:
+        with pytest.raises(ConfigurationError) as excinfo:
+            TRITONSWMM_analysis._refuse_coupled_system_with_no_coupling_candidate(fake)
+        message = str(excinfo.value)
+        assert str(inp) in message and "toggle_triton_model" in message
+        assert "swmm_coupling_mode is 'legacy'" in message and excinfo.value.field == "swmm_coupling_mode"
+    else:
+        TRITONSWMM_analysis._refuse_coupled_system_with_no_coupling_candidate(fake)
+
+
+def test_property_71_all_junctions_with_no_coordinated_junction_is_refused_and_standalone_is_not(tmp_path):
+    """Property 71 (all_junctions arm, and the standalone control).
+
+    Class: ``all_junctions`` templates whose junctions have no ``[COORDINATES]`` row, and a
+    standalone-only system whose template has no inflow at all. Why: the first couples nothing;
+    the second is a valid rainfall-driven SWMM model that couples nothing by design, so
+    refusing it would block a correct run. What kills it: treating every junction as a
+    candidate whatever its coordinates, or checking systems whose coupled model is off. Second
+    correct implementation: a candidate count taken from the TRITON-side node table.
+    """
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.exceptions import ConfigurationError
+
+    inp = _coupling_inp(tmp_path, inflows="", coordinates="O1 25 15")
+    fake = _coupling_analysis(_coupling_system(tmp_path, inp, mode="all_junctions"))
+    with pytest.raises(ConfigurationError, match=r"it has no junction with a \[COORDINATES\] row"):
+        TRITONSWMM_analysis._refuse_coupled_system_with_no_coupling_candidate(fake)
+    standalone = _coupling_analysis(_coupling_system(tmp_path, inp, coupled=False))
+    TRITONSWMM_analysis._refuse_coupled_system_with_no_coupling_candidate(standalone)
+
+
+@pytest.mark.parametrize(
+    ("nodes", "expected"),
+    [
+        ("NOSUCH\n", "it names nodes that no node section of"),
+        ("O1\n", "Outfall O1 is named in the coupling-node list"),
+        ("J1\nj1\n", "it names a node more than once after SWMM's case fold: J1, j1"),
+        ("J2\n", "it names nodes with no [COORDINATES] row in"),
+        ("; a comment\n\n", "it names no node. For a surface-only run"),
+    ],
+)
+def test_property_74_a_coupling_node_file_is_validated_at_run_entry(tmp_path, nodes, expected):
+    """Property 74: a coupling-node file is refused for each case the solver would stop on.
+
+    Class: coupling-node files naming an undefined node, an outfall, one node twice under
+    SWMM's case fold, a node without coordinates, or no node at all (comments and blank lines
+    only). Why: the solver refuses each at startup, after the job has queued; refusing here
+    names the file and the case before submission. What kills it: a case-sensitive duplicate
+    test, counting comment lines as names, or checking only that the file exists. Second
+    correct implementation: validating against swmmio's node and coordinate tables; the
+    assertions read the cause text and the field the refusal names.
+    """
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.exceptions import ConfigurationError
+
+    inp = _coupling_inp(tmp_path, coordinates="J1 5 5\nO1 25 15")
+    fake = _coupling_analysis(_coupling_system(tmp_path, inp, mode="list", nodes=nodes))
+    with pytest.raises(ConfigurationError) as excinfo:
+        TRITONSWMM_analysis._refuse_invalid_coupling_declaration(fake)
+    assert expected in str(excinfo.value)
+    assert excinfo.value.field == "swmm_coupling_nodes_file"
+
+
+def test_property_74_every_failing_case_is_reported_and_a_valid_file_passes(tmp_path):
+    """Property 74 (all cases at once, with its control).
+
+    Class: a file failing two cases at once, against a file naming one coordinated junction.
+    Why: a user fixing one case at a time would resubmit once per case. What kills it:
+    raising on the first failing case. Second correct implementation: collecting the causes in
+    a different order; the assertions read only that both causes appear.
+    """
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.exceptions import ConfigurationError
+
+    inp = _coupling_inp(tmp_path, coordinates="J1 5 5\nO1 25 15")
+    fake = _coupling_analysis(_coupling_system(tmp_path, inp, mode="list", nodes="NOSUCH\nO1\n"))
+    with pytest.raises(ConfigurationError) as excinfo:
+        TRITONSWMM_analysis._refuse_invalid_coupling_declaration(fake)
+    assert "NOSUCH" in str(excinfo.value) and "Outfall O1 is named" in str(excinfo.value)
+    good = _coupling_analysis(_coupling_system(tmp_path, inp, mode="list", nodes="  J1  \n"))
+    TRITONSWMM_analysis._refuse_invalid_coupling_declaration(good)
+
+
+@pytest.mark.parametrize(
+    ("cfg_text", "refused"),
+    [
+        ("dem_filename=x.dem\nswmm_coupling_nodes=list.txt\n", True),
+        ("dem_filename=x.dem\n  swmm_coupling_nodes = list.txt\n", True),
+        ("dem_filename=x.dem\n# swmm_coupling_nodes=list.txt\n", False),
+    ],
+)
+def test_property_74_a_cfg_template_that_sets_the_coupling_key_is_refused(tmp_path, cfg_text, refused):
+    """Property 74 (the TRITON cfg key): a template already setting ``swmm_coupling_nodes`` is refused.
+
+    Class: TRITON cfg templates carrying an active ``swmm_coupling_nodes`` line, indented or
+    not, against one carrying it only as a ``#`` comment. Why: the toolkit writes that key for
+    every coupled scenario, so a second source of the declaration would disagree with it
+    silently. What kills it: a substring test that also refuses the comment, or matching only
+    at column 0. Second correct implementation: a regex over the whole text anchored per line.
+    """
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.exceptions import ConfigurationError
+
+    inp = _coupling_inp(tmp_path)
+    fake = _coupling_analysis(_coupling_system(tmp_path, inp, cfg_text=cfg_text))
+    if refused:
+        with pytest.raises(ConfigurationError, match="sets swmm_coupling_nodes") as excinfo:
+            TRITONSWMM_analysis._refuse_invalid_coupling_declaration(fake)
+        assert excinfo.value.field == "swmm_coupling_mode"
+    else:
+        TRITONSWMM_analysis._refuse_invalid_coupling_declaration(fake)
+
+
+def test_property_75_legacy_candidates_are_flow_lines_by_swmms_rule_and_only_legacy_reads_them(tmp_path):
+    """Property 75: under ``legacy`` the candidates are the FLOW-carrying nodes by SWMM's rule.
+
+    Class: inflow lines whose constituent is ``FLOW``, a declared pollutant named ``FLOWX``,
+    another pollutant, or a two-token line; and the same template under ``list`` and
+    ``all_junctions``. Why: SWMM looks a pollutant name up before it matches ``FLOW`` by prefix
+    and rejects a line of fewer than three tokens, so any other reading couples nodes SWMM gives
+    no water inflow; and under a declared mode no ``[INFLOWS]`` line may add, remove or reorder
+    a candidate. What kills it: a prefix match that ignores ``[POLLUTANTS]``, or reading
+    ``[INFLOWS]`` under ``list``. Second correct implementation: resolving constituents through
+    swmmio's pollutant table; the assertions read the candidate list only.
+    """
+    from hhemt.scenario import coupling_candidates
+
+    inflows = "\n".join(
+        [
+            'J1 FLOW "" FLOW 1 1 0',
+            'J2 FLOWX "" CONCEN 1 1 0',
+            'O1 TSS "" CONCEN 1 1 0',
+            "J2 FLOW",
+        ]
+    )
+    text = _COUPLING_INP.format(inflows=inflows, coordinates=_COORDS_INSIDE) + "\n[POLLUTANTS]\nFLOWX MG/L 0 0 0 0 0\n"
+    inp = _inp(tmp_path / "h.inp", text)
+    legacy = _coupling_system(tmp_path, inp).cfg_system
+    assert coupling_candidates(legacy) == ["J1"]
+    listed = _coupling_system(tmp_path, inp, mode="list", nodes="J2\n").cfg_system
+    assert coupling_candidates(listed) == ["J2"]
+    everything = _coupling_system(tmp_path, inp, mode="all_junctions").cfg_system
+    assert coupling_candidates(everything) == ["J1", "J2"]
+
+
+@pytest.mark.parametrize(
+    ("mode", "nodes", "refused"),
+    [
+        ("list", "J1\nJ2\n", True),
+        ("all_junctions", None, True),
+        ("legacy", None, False),
+    ],
+)
+def test_property_77_the_one_per_cell_option_is_refused_under_a_declared_mode(tmp_path, mode, nodes, refused):
+    """Property 77: the one-node-per-DEM-cell option is refused under ``list`` and ``all_junctions``.
+
+    Class: systems declaring a coupled set while the analysis turns the one-per-cell option
+    on, against ``legacy`` with the option on and ``list`` with it off. Why: under a declared
+    mode the declaration IS the coupled set, so the option would silently drop declared nodes.
+    What kills it: refusing under ``legacy`` too, or never refusing. Second correct
+    implementation: refusing at config load from a combined view of both configs; the
+    assertions read whether the run-entry check raises and that it names both settings.
+    """
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.exceptions import ConfigurationError
+
+    inp = _coupling_inp(tmp_path)
+    system = _coupling_system(tmp_path, inp, mode=mode, nodes=nodes)
+    fake = _coupling_analysis(system, one_per_cell=True)
+    if refused:
+        with pytest.raises(ConfigurationError) as excinfo:
+            TRITONSWMM_analysis._refuse_invalid_coupling_declaration(fake)
+        message = str(excinfo.value)
+        assert f"swmm_coupling_mode is '{mode}'" in message
+        assert "one_coupled_inflow_node_per_dem_cell" in message
+    else:
+        TRITONSWMM_analysis._refuse_invalid_coupling_declaration(fake)
+    TRITONSWMM_analysis._refuse_invalid_coupling_declaration(_coupling_analysis(system, one_per_cell=False))
+
+
+def _processed_dem(path: Path, ncols: int, nrows: int, cellsize: float = 10.0) -> Path:
+    """An ESRI ASCII DEM with the header the toolkit writes and a body that passes its integrity check."""
+    header = [
+        f"ncols         {ncols}",
+        f"nrows         {nrows}",
+        "xllcorner     0.0",
+        "yllcorner     0.0",
+        f"cellsize      {cellsize}",
+        "NODATA_value  -9999",
+    ]
+    body = [" ".join(["0.00000"] * ncols) for _ in range(nrows)]
+    path.write_text("\n".join(header + body) + "\n")
+    return path
+
+
+def _in_memory_dem(ncols: int = 4, nrows: int = 3, cell: float = 10.0):
+    """The raster setup would write, as ``_coarsen_dem`` returns it: cell centres from 5, lower-left 0."""
+    import rioxarray  # noqa: F401 -- registers the .rio accessor
+    import xarray as xr
+
+    xs = np.arange(ncols) * cell + cell / 2
+    ys = (np.arange(nrows) * cell + cell / 2)[::-1]
+    return xr.DataArray(np.zeros((nrows, ncols), dtype="float32"), coords={"y": ys, "x": xs}, dims=("y", "x"))
+
+
+@pytest.mark.parametrize("source", ["processed_dem", "in_memory"])
+@pytest.mark.parametrize(
+    ("mode", "nodes", "coordinates", "named"),
+    [
+        ("list", "J1\n", "J1 45 5\nJ2 15 5\nO1 25 15", "J1 (45, 5)"),
+        ("list", "J1\n", "J1 39.5 5\nJ2 15 5\nO1 25 15", None),
+        ("all_junctions", None, "J1 5 5\nJ2 5 -1\nO1 25 15", "J2 (5, -1)"),
+        ("legacy", None, "J1 5 5\nJ2 15 5\nO1 45 5", None),
+    ],
+)
+def test_property_78_a_candidate_outside_the_triton_grid_is_refused(tmp_path, source, mode, nodes, coordinates, named):
+    """Property 78: a coupling candidate the TRITON grid does not contain is refused at run entry.
+
+    Class: candidate junctions just outside, and in the outer half of the last cell of, a
+    4 x 3 grid of 10 m cells with its lower-left corner at the origin, under each mode; and an
+    outfall carrying a FLOW line outside the grid under ``legacy``, which is never written to
+    the list. The grid comes from the processed DEM's header or, with no processed DEM, from
+    the raster setup would write. Why: TRITON-SWMM stops at startup on an out-of-grid node,
+    after the job has queued. What kills it: judging against cell centres rather than the
+    solver's edge rule (which refuses ``(39.5, 5)``), checking outfalls, or skipping the check
+    when no processed DEM exists. Second correct implementation: computing the extent as a
+    bounding box and testing ``xll <= x < xll + ncols * cell``; the assertions read only
+    whether the check raises and which node it names.
+    """
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.exceptions import ConfigurationError
+
+    inflows = 'J1 FLOW "" FLOW 1 1 0\nO1 FLOW "" FLOW 1 1 0'
+    inp = _coupling_inp(tmp_path, inflows=inflows, coordinates=coordinates)
+    system = _coupling_system(tmp_path, inp, mode=mode, nodes=nodes)
+    if source == "processed_dem":
+        _processed_dem(system.sys_paths.dem_processed, ncols=4, nrows=3)
+        system._coarsen_dem = lambda: pytest.fail("the processed DEM's header should have been read")
+    else:
+        system._coarsen_dem = _in_memory_dem
+    fake = _coupling_analysis(system)
+    if named is None:
+        TRITONSWMM_analysis._refuse_coupling_nodes_outside_triton_grid(fake, overwrite_system_inputs=False)
+        return
+    with pytest.raises(ConfigurationError) as excinfo:
+        TRITONSWMM_analysis._refuse_coupling_nodes_outside_triton_grid(fake, overwrite_system_inputs=False)
+    message = str(excinfo.value)
+    assert named in message and "x 0.0 to 40.0" in message and "y 0.0 to 30.0" in message
+
+
+@pytest.mark.parametrize(("overwrite", "refused"), [(True, True), (False, False)])
+def test_property_78_an_overwrite_judges_against_the_grid_setup_will_write(tmp_path, overwrite, refused):
+    """Property 78 (grid source): with ``overwrite_system_inputs`` the processed DEM's header is not used.
+
+    Class: a processed DEM whose header (10 x 10 cells) contains a node that the raster setup
+    will write instead (4 x 3 cells) does not, with and without the overwrite. Why: a fresh run
+    re-derives the DEM, so judging against the stale header would pass a run the solver then
+    stops. What kills it: reading the processed header whenever it exists. Second correct
+    implementation: deleting the stale header first and always reading the file; the
+    assertions read only whether the check raises.
+    """
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.exceptions import ConfigurationError
+
+    inp = _coupling_inp(tmp_path, coordinates="J1 45 5\nJ2 15 5\nO1 25 15")
+    system = _coupling_system(tmp_path, inp, mode="list", nodes="J1\n")
+    _processed_dem(system.sys_paths.dem_processed, ncols=10, nrows=10)
+    system._coarsen_dem = _in_memory_dem
+    fake = _coupling_analysis(system)
+    if refused:
+        with pytest.raises(ConfigurationError, match=r"J1 \(45, 5\)"):
+            TRITONSWMM_analysis._refuse_coupling_nodes_outside_triton_grid(fake, overwrite_system_inputs=overwrite)
+    else:
+        TRITONSWMM_analysis._refuse_coupling_nodes_outside_triton_grid(fake, overwrite_system_inputs=overwrite)
+
+
+def test_the_dem_writer_and_the_grid_check_share_one_header(tmp_path):
+    """Property: the header the DEM writer writes is the header the grid check reads and computes.
+
+    Class: rasters whose lower-left cell centre is half a cell inside the corner. Why: the grid
+    check refuses exactly the nodes the solver would stop on only if it judges the grid the
+    solver is given. What kills it: the writer and the check computing the corner separately
+    and one of them dropping the half-cell shift. Second correct implementation: the check
+    re-reading every processed DEM it is given; the assertions compare the three headers only.
+    """
+    from hhemt.system import TRITONSWMM_system, read_triton_grid_header, triton_grid_header
+
+    rds = _in_memory_dem()
+    out = tmp_path / "written.dem"
+    writer = SimpleNamespace(_write_raster=lambda *a: TRITONSWMM_system._write_raster(None, *a))
+    TRITONSWMM_system._write_raster_formatted_for_TRITON(writer, rds, out, include_metadata=True)
+    computed = triton_grid_header(rds)
+    assert read_triton_grid_header(out) == {
+        "ncols": 4,
+        "nrows": 3,
+        "xllcorner": 0.0,
+        "yllcorner": 0.0,
+        "cellsize": 10.0,
+    }
+    assert {k: float(v) for k, v in computed.items()} == {k: float(v) for k, v in read_triton_grid_header(out).items()}
+
+
+def _coupling_system_config(tmp_path, **fields):
+    """Load a minimal real ``system_config`` with the coupling fields given."""
+    from hhemt.config.system import system_config
+
+    inputs = tmp_path / "inputs"
+    inputs.mkdir(parents=True, exist_ok=True)
+
+    def stub(name, text="test"):
+        path = inputs / name
+        path.write_text(text)
+        return str(path)
+
+    cfg = {
+        "system_directory": str(tmp_path),
+        "watershed_gis_polygon": stub("watershed.shp"),
+        "DEM_fullres": stub("dem.tif"),
+        "SWMM_hydraulics": stub("hydraulics.inp", "[OPTIONS]\nFLOW_UNITS CMS\n"),
+        "TRITONSWMM_software_directory": str(tmp_path / "triton"),
+        "TRITONSWMM_git_URL": "https://example.com/triton.git",
+        "triton_swmm_configuration_template": stub("TRITONSWMM.cfg"),
+        "toggle_use_swmm_for_hydrology": False,
+        "toggle_use_constant_mannings": True,
+        "toggle_triton_model": False,
+        "toggle_tritonswmm_model": True,
+        "toggle_swmm_model": False,
+        "target_dem_resolution": 5.0,
+        "constant_mannings": 0.05,
+        "crs": {"horizontal_epsg": 4326},
+    }
+    if fields.pop("with_file", False):
+        cfg["swmm_coupling_nodes_file"] = stub("coupling_nodes.txt", "J1\n")
+    cfg.update(fields)
+    return system_config.model_validate(cfg)
+
+
+@pytest.mark.parametrize(
+    ("mode", "with_file", "refusal"),
+    [
+        (None, False, None),
+        ("legacy", False, None),
+        ("list", True, None),
+        ("all_junctions", False, None),
+        ("list", False, "swmm_coupling_nodes_file"),
+        ("legacy", True, "the file is read only when swmm_coupling_mode is 'list'"),
+        ("all_junctions", True, "the file is read only when swmm_coupling_mode is 'list'"),
+    ],
+)
+def test_the_coupling_declaration_is_refused_at_load_in_exactly_the_invalid_states(tmp_path, mode, with_file, refusal):
+    """Property: of the six mode-by-file states, exactly the three invalid ones fail to load.
+
+    Class: each of ``legacy``, ``list`` and ``all_junctions`` with and without a coupling-node
+    file, plus the field omitted, which reads as ``legacy`` in this build. Why: a file under
+    any mode but ``list`` is silently ignored, and ``list`` with no file has no candidates.
+    What kills it: dropping the ``required_when`` declaration, or refusing the file under
+    ``list``. Second correct implementation: a single validator enumerating the invalid
+    states; the assertions read only whether loading raises and what it names.
+    """
+    from pydantic import ValidationError
+
+    fields = {"with_file": with_file}
+    if mode is not None:
+        fields["swmm_coupling_mode"] = mode
+    if refusal is None:
+        cfg = _coupling_system_config(tmp_path, **fields)
+        assert cfg.swmm_coupling_mode == (mode or "legacy")
+    else:
+        with pytest.raises(ValidationError, match=refusal):
+            _coupling_system_config(tmp_path, **fields)
+
+
+# ---------------------------------------------------------------------------
+# Run-entry refusals driven through the public entry points
+# ---------------------------------------------------------------------------
+
+_REVIEW_INP = """
+[OPTIONS]
+FLOW_UNITS CMS
+
+[JUNCTIONS]
+J1 1 2 0 0 0
+J2 1 2 0 0 0
+
+[OUTFALLS]
+O1 0 FREE NO
+
+[CONDUITS]
+C1 J1 O1 10 0.013 0 0 0 0
+
+[XSECTIONS]
+C1 CIRCULAR 1 0 0 0 1
+
+[INFLOWS]
+{inflows}
+
+[COORDINATES]
+{coordinates}
+"""
+
+
+def _review_analysis(
+    tmp_path, *, mode, inflows, coordinates, nodes=None, cfg_text="dem_filename=x.dem\n", one_per_cell=False
+):
+    """An analysis object that reaches the run-entry refusals and nothing past them.
+
+    Built from the real ``TRITONSWMM_analysis`` class with its constructor skipped, so ``run()``
+    and ``submit_workflow()`` execute their own code and find every method they call; only the
+    attributes the refusals read are supplied. The processed DEM is a 4 x 3 grid of 10 m cells
+    with its lower-left corner at the origin.
+    """
+    from hhemt.analysis import TRITONSWMM_analysis
+
+    class _ReviewAnalysis(TRITONSWMM_analysis):
+        def __init__(self, **attrs):
+            self.__dict__.update(attrs)
+
+    inp = _inp(tmp_path / "review_h.inp", _REVIEW_INP.format(inflows=inflows, coordinates=coordinates))
+    cfg_template = tmp_path / "review_TRITONSWMM.cfg"
+    cfg_template.write_text(cfg_text)
+    nodes_file = None
+    if nodes is not None:
+        nodes_file = tmp_path / "review_nodes.txt"
+        nodes_file.write_text(nodes)
+    dem = tmp_path / "review_processed.dem"
+    dem.write_text(
+        "\n".join(
+            ["ncols         4", "nrows         3", "xllcorner     0.0", "yllcorner     0.0", "cellsize      10.0"]
+            + ["NODATA_value  -9999"]
+            + [" ".join(["0.00000"] * 4) for _ in range(3)]
+        )
+        + "\n"
+    )
+    system = SimpleNamespace(
+        cfg_system=SimpleNamespace(
+            toggle_tritonswmm_model=True,
+            toggle_swmm_model=False,
+            SWMM_hydraulics=inp,
+            SWMM_full=None,
+            triton_swmm_configuration_template=cfg_template,
+            swmm_coupling_mode=mode,
+            swmm_coupling_nodes_file=nodes_file,
+        ),
+        sys_paths=SimpleNamespace(dem_processed=dem),
+        _coarsen_dem=lambda: pytest.fail("the processed DEM's header should have been read"),
+    )
+    return _ReviewAnalysis(
+        cfg_analysis=SimpleNamespace(
+            toggle_sensitivity_analysis=False, one_coupled_inflow_node_per_dem_cell=one_per_cell
+        ),
+        _system=system,
+        analysis_config_yaml=None,
+    )
+
+
+_REVIEW_FLOW_J1 = 'J1 FLOW "" FLOW 1 1 0'
+
+
+@pytest.mark.parametrize("entry", ["run", "submit_workflow"])
+@pytest.mark.parametrize(
+    ("case", "mode", "nodes", "coordinates", "one_per_cell", "field"),
+    [
+        ("one-per-cell under a list", "list", "J1\n", "J1 5 5\nJ2 15 5\nO1 25 15", True, "swmm_coupling_mode"),
+        (
+            "one-per-cell under all_junctions",
+            "all_junctions",
+            None,
+            "J1 5 5\nJ2 15 5\nO1 25 15",
+            True,
+            "swmm_coupling_mode",
+        ),
+        (
+            "outside the grid under a list",
+            "list",
+            "J1\n",
+            "J1 45 5\nJ2 15 5\nO1 25 15",
+            False,
+            "swmm_coupling_nodes_file",
+        ),
+        (
+            "outside the grid under all_junctions",
+            "all_junctions",
+            None,
+            "J1 5 5\nJ2 45 5\nO1 25 15",
+            False,
+            "swmm_coupling_mode",
+        ),
+        ("outside the grid under legacy", "legacy", None, "J1 45 5\nJ2 15 5\nO1 25 15", False, "swmm_coupling_mode"),
+    ],
+)
+def test_review_each_refusal_names_the_setting_its_remedy_changes(
+    tmp_path, entry, case, mode, nodes, coordinates, one_per_cell, field
+):
+    """Property: each run-entry refusal's ``field`` is the setting its message tells the user to change.
+
+    Class: the one-per-cell conflict and the out-of-grid refusal, under every mode in which each
+    can fire, reached through both public entry points. A coupling-node FILE's content is what a
+    user edits under ``list`` (``swmm_coupling_nodes_file``); the mode CHOICE is what they edit
+    otherwise (``swmm_coupling_mode``). Why it is required: ``ConfigurationError.field`` is printed
+    as the error's first line ("Configuration error in field '...'"), the line that points the
+    user at the setting to fix, so a refusal naming a setting the user has not set, or the wrong
+    one of the two, sends them to the wrong line of their config. What kills it: computing ``field`` once
+    for every mode, for example always ``swmm_coupling_mode``. A second correct implementation,
+    under which this still passes: a lookup table keyed by (refusal, mode); the assertion reads
+    only the raised error's class and ``field``.
+    """
+    from hhemt.exceptions import ConfigurationError
+
+    analysis = _review_analysis(
+        tmp_path,
+        mode=mode,
+        inflows=_REVIEW_FLOW_J1,
+        coordinates=coordinates,
+        nodes=nodes,
+        one_per_cell=one_per_cell,
+    )
+    with pytest.raises(ConfigurationError) as excinfo:
+        getattr(analysis, entry)()
+    assert excinfo.value.field == field, f"{case}: field {excinfo.value.field!r}, expected {field!r}: {excinfo.value}"
+
+
+@pytest.mark.parametrize("entry", ["run", "submit_workflow"])
+@pytest.mark.parametrize(
+    ("case", "mode", "inflows", "nodes", "coordinates", "cfg_text", "expected", "not_expected"),
+    [
+        (
+            "the cfg-key refusal before the empty-candidate refusal",
+            "legacy",
+            "",
+            None,
+            "J1 5 5\nJ2 15 5\nO1 25 15",
+            "dem_filename=x.dem\nswmm_coupling_nodes=list.txt\n",
+            "sets swmm_coupling_nodes",
+            "declares no coupling node",
+        ),
+        (
+            "the file check before the grid check",
+            "list",
+            _REVIEW_FLOW_J1,
+            "J1\nNOSUCH\n",
+            "J1 45 5\nJ2 15 5\nO1 25 15",
+            "dem_filename=x.dem\n",
+            "it names nodes that no node section of",
+            "outside the TRITON grid",
+        ),
+    ],
+)
+def test_review_the_declaration_check_runs_before_section_15_and_the_grid_check(
+    tmp_path, entry, case, mode, inflows, nodes, coordinates, cfg_text, expected, not_expected
+):
+    """Property: at both run-entry sites the declaration check runs first, then section 15, then the grid check.
+
+    Class: configurations that two of the three run-entry refusals would each refuse, reached
+    through ``run()`` and ``submit_workflow()``: a TRITON cfg template that sets the coupling key
+    on a template with no FLOW inflow, and a coupling-node file that names an undefined node
+    and an out-of-grid junction. Why it is required: the user sees only the first refusal, and
+    the stated order is what fixes which one; the order is also what makes section 15's removed
+    ``list`` cause unreachable for an empty file. What kills it: calling section 15 or the grid
+    check before the declaration check at either site. A second correct implementation, under
+    which this still passes: one combined run-entry method that evaluates the three checks in
+    this order; the assertions read only which refusal's text the raised error carries.
+    """
+    from hhemt.exceptions import ConfigurationError
+
+    analysis = _review_analysis(
+        tmp_path, mode=mode, inflows=inflows, coordinates=coordinates, nodes=nodes, cfg_text=cfg_text
+    )
+    with pytest.raises(ConfigurationError) as excinfo:
+        getattr(analysis, entry)()
+    message = str(excinfo.value)
+    assert expected in message and not_expected not in message, f"{case}: {message}"

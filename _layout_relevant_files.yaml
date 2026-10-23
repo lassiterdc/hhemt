@@ -3915,3 +3915,22 @@ non_breaking_allowlist:
       AUTHORSHIP NOTE: `hhemt-specialist`, work package 2a, item 17, UNCOMMITTED per A-22; the
       layout_signature is the file's sha256 at this write and must equal it AS COMMITTED.
       KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/system.py
+    layout_signature: 3e02a962746e4bd034d945fe9cc0bcd7e31358326216142c0bc407a0e628643b
+    justification: >-
+      snapshot-refusal 2b.1 — adds the swmm_coupling_mode / swmm_coupling_nodes_file coupling-declaration fields (section 18) and their load-time refusal. Pure in-memory config schema; no on-disk layout / figure stem / zarr / log / path change.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: 8035612a77b20e23c2a7953488b7bb7d7b5f69ad3809910cf7f28016ce29e197
+    justification: >-
+      snapshot-refusal 2b.1 — adds the _FIELD_BUCKET row for swmm_coupling_mode. Pure static-table entry; no on-disk layout change.
+  - path: src/hhemt/scenario.py
+    layout_signature: 687026a193dda1521484963fd43e3a0cc8f712f01cacc3771834a3f8ccbef52e
+    justification: >-
+      NON-BREAKING. snapshot-refusal 2b.1 — adds pure readers for the coupling declaration
+      (coupling_candidates, the coupling-node file reader and its checks, the TRITON-grid
+      predicate, the cfg-key detector) and the listed-node reason texts, all called only by the
+      run-entry refusals in analysis.py. DECIDING MEASUREMENT: no function preparation calls is
+      changed and no file is written by the added code, so no scenario's on-disk inputs or
+      outputs change. AUTHORSHIP NOTE: `hhemt-specialist`, 2b.1, UNCOMMITTED per A-22; the
+      layout_signature is the file's sha256 at this write and must equal it AS COMMITTED.
+      KNOWN EXPIRY: this row expires on the next change to this path.

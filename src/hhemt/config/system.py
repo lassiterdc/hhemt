@@ -1,5 +1,6 @@
 import warnings
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, model_validator
 
@@ -118,6 +119,39 @@ class system_config(cfgBaseModel):
         "on this "
         "can be run in addition to TRITON-SWMM to compare SWMM hydraulics results.",
         json_schema_extra=field_meta(required_when=[when("toggle_swmm_model", True)]),
+    )
+    swmm_coupling_mode: Literal["legacy", "list", "all_junctions"] = Field(
+        "legacy",
+        description=(
+            "Which SWMM nodes the coupled TRITON-SWMM model may exchange water at. The toolkit "
+            "always gives TRITON an explicit list it writes for each scenario; this setting "
+            "chooses the candidates that list is selected from."
+        ),
+        json_schema_extra=field_meta(
+            applies_when=[when("toggle_tritonswmm_model", True)],
+            options={
+                "legacy": (
+                    "Every node of SWMM_hydraulics that carries an [INFLOWS] line with "
+                    "constituent FLOW, read by SWMM's own rule."
+                ),
+                "list": (
+                    "The nodes named in swmm_coupling_nodes_file; each must be a junction with a [COORDINATES] row."
+                ),
+                "all_junctions": "Every [JUNCTIONS] node of SWMM_hydraulics that has a [COORDINATES] row.",
+            },
+        ),
+    )
+    swmm_coupling_nodes_file: Path | None = Field(
+        None,
+        description=(
+            "A one-column file of coupling-node names, read when swmm_coupling_mode is "
+            "'list': one name per line, surrounding whitespace stripped, blank lines and "
+            "lines starting ';' skipped, no header."
+        ),
+        json_schema_extra=field_meta(
+            applies_when=[when("swmm_coupling_mode", "list")],
+            required_when=[when("swmm_coupling_mode", "list")],
+        ),
     )
     landuse_raster: Path | None = Field(
         None,
@@ -357,6 +391,27 @@ class system_config(cfgBaseModel):
         if errors:
             raise ValueError("; ".join(errors))
         return values
+
+    @model_validator(mode="after")
+    def validate_coupling_declaration(self):
+        """Refuse a coupling-node file given under a mode that does not read it.
+
+        The file is read only under ``swmm_coupling_mode: list``. A file set under ``legacy``
+        or ``all_junctions`` would be silently ignored, so a user who meant to restrict the
+        coupled set would run with a different one and no error. The opposite case, ``list``
+        with no file, is NOT checked here: it is the ``required_when`` declaration on
+        ``swmm_coupling_nodes_file``, enforced by ``cfgBaseModel._enforce_required_when``, which
+        is the one place a conditional requirement is enforced. A second check here would be a
+        second enforcement site that the rendered "Required" cell cannot see.
+        """
+        if self.swmm_coupling_nodes_file is not None and self.swmm_coupling_mode != "list":
+            raise ValueError(
+                f"system_config.swmm_coupling_nodes_file is set ({self.swmm_coupling_nodes_file}) but "
+                f"swmm_coupling_mode is '{self.swmm_coupling_mode}'; the file is read only when "
+                "swmm_coupling_mode is 'list'. Set swmm_coupling_mode: list to use the file, or remove "
+                "swmm_coupling_nodes_file."
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_swmm_templates_are_si(self):

@@ -2029,6 +2029,250 @@ def remove_inflow_lines(inp_path, drop_nodes) -> list[str]:
     return [lines[i] for i in sorted(remove)]
 
 
+# --- The coupling declaration: which SWMM nodes a coupled run may exchange water at ---------
+#
+# system_config.swmm_coupling_mode chooses the candidate set: `list` reads a one-column file
+# (swmm_coupling_nodes_file), `all_junctions` takes every junction with a [COORDINATES] row,
+# and `legacy` takes the nodes carrying a FLOW [INFLOWS] line. The readers below give the
+# run-entry checks in `analysis.py` the same view of the template that SWMM and TRITON take,
+# so a refusal names exactly the nodes the solver would stop on.
+
+#: The two further sections the declaration reads, keyed by the prefix SWMM matches
+#: (`text.h`: ws_COORDINATE "[COORDINATE", ws_POLLUTANT "[POLLUT"). No other SWMM section
+#: keyword is a prefix of, or prefixed by, either, so first-match order assigns no header
+#: differently. Deliberately NOT added to `_SWMM_SECTION_PREFIXES`: the undefined-inflow check
+#: treats every non-inflow section that reader returns as defining nodes, so a coordinate or
+#: pollutant name would then count as a defined node and an undefined inflow node would pass.
+_SWMM_DECLARATION_SECTION_PREFIXES = {
+    **_SWMM_SECTION_PREFIXES,
+    "[COORDINATE": "COORDINATE",
+    "[POLLUT": "POLLUTANT",
+}
+
+
+@dataclass(frozen=True)
+class _CouplingSections:
+    """The parts of a SWMM template the coupling declaration reads, read by SWMM's rules.
+
+    ``node_types`` maps each node name as written to its type, in file order;
+    ``folded_names`` maps the ASCII-folded name back to that spelling; ``coordinates`` maps the
+    folded name to its ``(x, y)`` tokens as written; ``inflow_lines`` are the inflow-section
+    token lists; ``pollutants`` holds the folded ``[POLLUTANTS]`` names.
+    """
+
+    node_types: dict
+    folded_names: dict
+    coordinates: dict
+    inflow_lines: list
+    pollutants: frozenset
+
+
+def _read_coupling_sections(inp_path) -> _CouplingSections:
+    """Read the node, inflow, coordinate and pollutant sections of ``inp_path`` as SWMM does.
+
+    SWMM's tokenizer, prefix section rule and ASCII-only case fold apply throughout. A node
+    defined twice keeps its first definition and a coordinate given twice keeps its first row;
+    SWMM itself refuses a duplicate node, so this only decides which spelling a message shows.
+    """
+    node_types: dict = {}
+    folded_names: dict = {}
+    coordinates: dict = {}
+    inflow_lines: list = []
+    pollutants: set = set()
+    current: str | None = None
+    for line in Path(inp_path).read_text().splitlines():
+        tokens = _swmm_tokens(line)
+        if not tokens:
+            continue
+        if tokens[0].startswith("["):
+            folded = _swmm_fold(tokens[0].lstrip())
+            current = next(
+                (sect for prefix, sect in _SWMM_DECLARATION_SECTION_PREFIXES.items() if folded.startswith(prefix)),
+                None,
+            )
+            continue
+        if current is None:
+            continue
+        folded = _swmm_fold(tokens[0])
+        if current == "INFLOW":
+            inflow_lines.append(tokens)
+        elif current == "COORDINATE":
+            if len(tokens) >= 3:
+                coordinates.setdefault(folded, (tokens[1], tokens[2]))
+        elif current == "POLLUTANT":
+            pollutants.add(folded)
+        elif folded not in folded_names:
+            folded_names[folded] = tokens[0]
+            node_types[tokens[0]] = current
+    return _CouplingSections(node_types, folded_names, coordinates, inflow_lines, frozenset(pollutants))
+
+
+def _legacy_flow_inflow_nodes(sections: _CouplingSections) -> list[str]:
+    """The nodes carrying a FLOW inflow line, by SWMM's rule. Called ONLY by `coupling_candidates`.
+
+    A line gives its node a FLOW inflow when it has at least three tokens and its constituent
+    names no ``[POLLUTANTS]`` entry and begins, ASCII-folded, with ``FLOW`` (``inflow.c``: too
+    few tokens is an error; a pollutant of that name is looked up first; otherwise ``FLOW`` is
+    matched by prefix). So a pollutant named ``FLOWX`` is a pollutant, not a FLOW inflow. A
+    node name containing ``$`` is an unfilled template placeholder whose node is unknown until
+    preparation; it counts as a FLOW node, so a template is never refused for a node its
+    filled form may name. Names are returned once each, in file order, as written.
+    """
+    seen: set = set()
+    names: list[str] = []
+    for tokens in sections.inflow_lines:
+        if len(tokens) < 3:
+            continue
+        constituent = _swmm_fold(tokens[1])
+        if constituent in sections.pollutants or not constituent.startswith("FLOW"):
+            continue
+        folded = _swmm_fold(tokens[0])
+        if folded not in seen:
+            seen.add(folded)
+            names.append(tokens[0])
+    return names
+
+
+def read_coupling_node_file(path) -> list[str]:
+    """The node names in a coupling-node file, in file order, duplicates kept.
+
+    One name per line with surrounding whitespace stripped; blank lines and lines starting
+    ``;`` are skipped; there is no header. Duplicates are kept so the declaration check can
+    name them.
+    """
+    names = []
+    for line in Path(path).read_text().splitlines():
+        name = line.strip()
+        if name and not name.startswith(";"):
+            names.append(name)
+    return names
+
+
+def coupling_candidates(cfg_system) -> list[str]:
+    """The coupling candidates ``cfg_system`` declares for its ``SWMM_hydraulics`` model.
+
+    ``list``: the names in ``swmm_coupling_nodes_file``, in file order. ``all_junctions``:
+    every ``[JUNCTIONS]`` node with a ``[COORDINATES]`` row, in file order. ``legacy``: the
+    nodes carrying a FLOW ``[INFLOWS]`` line by SWMM's rule.
+
+    This is the one place the legacy FLOW reader is called, and only on the ``legacy`` value
+    of the mode, never on the field's absence. So under ``list`` or ``all_junctions`` no
+    ``[INFLOWS]`` line adds, removes or reorders a candidate.
+    """
+    mode = cfg_system.swmm_coupling_mode
+    if mode == "list":
+        return read_coupling_node_file(cfg_system.swmm_coupling_nodes_file)
+    sections = _read_coupling_sections(cfg_system.SWMM_hydraulics)
+    if mode == "all_junctions":
+        return [
+            name
+            for name, node_type in sections.node_types.items()
+            if node_type == "JUNCTION" and _swmm_fold(name) in sections.coordinates
+        ]
+    return _legacy_flow_inflow_nodes(sections)
+
+
+def coupling_node_file_problems(cfg_system) -> list[str]:
+    """Every reason ``cfg_system``'s coupling-node file is refused, one cause per failing case.
+
+    Returns ``[]`` when the file is valid or the mode is not ``list``. The causes, in order:
+    names no node section defines; a name given twice after SWMM's case fold; defined names
+    with no ``[COORDINATES]`` row; a file naming no node; and, for each listed node that is not
+    a junction, that node type's reason. An empty file returns only its own cause, since no
+    other case can be judged.
+    """
+    if cfg_system.swmm_coupling_mode != "list":
+        return []
+    template = cfg_system.SWMM_hydraulics
+    names = read_coupling_node_file(cfg_system.swmm_coupling_nodes_file)
+    if not names:
+        return [
+            "it names no node. For a surface-only run, turn off toggle_tritonswmm_model and run "
+            "the TRITON-only model (toggle_triton_model)"
+        ]
+    sections = _read_coupling_sections(template)
+    causes: list[str] = []
+    undefined = [n for n in names if _swmm_fold(n) not in sections.folded_names]
+    if undefined:
+        causes.append(f"it names nodes that no node section of {template} defines: {', '.join(undefined)}")
+    by_fold: dict = {}
+    for n in names:
+        by_fold.setdefault(_swmm_fold(n), []).append(n)
+    repeated = [n for group in by_fold.values() if len(group) > 1 for n in group]
+    if repeated:
+        causes.append(f"it names a node more than once after SWMM's case fold: {', '.join(repeated)}")
+    defined = [n for n in dict.fromkeys(names) if _swmm_fold(n) in sections.folded_names]
+    uncoordinated = [n for n in defined if _swmm_fold(n) not in sections.coordinates]
+    if uncoordinated:
+        causes.append(f"it names nodes with no [COORDINATES] row in {template}: {', '.join(uncoordinated)}")
+    seen_folds: set = set()
+    for n in defined:
+        folded = _swmm_fold(n)
+        if folded in seen_folds:
+            continue
+        seen_folds.add(folded)
+        node_type = sections.node_types[sections.folded_names[folded]]
+        if node_type != "JUNCTION":
+            causes.append(_INELIGIBLE_LISTED_NODE_REASONS[node_type].format(id=n))
+    return causes
+
+
+def coupling_candidate_junction_coordinates(cfg_system) -> list[tuple[str, str, str]]:
+    """``(name, x, y)`` for every candidate the toolkit could write to the coupling list.
+
+    The candidates of `coupling_candidates` that are junctions with a ``[COORDINATES]`` row,
+    with the coordinate tokens as written. A candidate of another type is never written to the
+    list, so it is not returned; a ``legacy`` placeholder name defines no junction and is not
+    returned either.
+    """
+    sections = _read_coupling_sections(cfg_system.SWMM_hydraulics)
+    out = []
+    for name in coupling_candidates(cfg_system):
+        folded = _swmm_fold(name)
+        spelled = sections.folded_names.get(folded)
+        if spelled is None or sections.node_types[spelled] != "JUNCTION" or folded not in sections.coordinates:
+            continue
+        x, y = sections.coordinates[folded]
+        out.append((name, x, y))
+    return out
+
+
+def nodes_outside_triton_grid(nodes, header: dict) -> list[tuple[str, str, str]]:
+    """The ``(name, x, y)`` entries of ``nodes`` that TRITON-SWMM would place outside its grid.
+
+    The predicate is the solver's own (``swmm_triton.h``):
+    ``col = ceil((x - xllcorner) / cellsize + 1e-16) - 1`` and
+    ``row = ceil((nrows - (y - yllcorner) / cellsize) + 1e-16) - 1``, outside when either falls
+    outside ``[0, ncols)`` or ``[0, nrows)``. Deliberately NOT the DEM-cell-centre hull the
+    nearest-cell grouping warns on: that hull also flags nodes in the outer half of an edge
+    cell, which the solver places inside the grid, so it would refuse runs the solver accepts.
+    """
+    import math
+
+    xll, yll = float(header["xllcorner"]), float(header["yllcorner"])
+    cell = float(header["cellsize"])
+    ncols, nrows = int(header["ncols"]), int(header["nrows"])
+    outside = []
+    for name, x, y in nodes:
+        col = math.ceil((float(x) - xll) / cell + 1e-16) - 1
+        row = math.ceil((nrows - (float(y) - yll) / cell) + 1e-16) - 1
+        if not (0 <= col < ncols and 0 <= row < nrows):
+            outside.append((name, x, y))
+    return outside
+
+
+def triton_cfg_sets_coupling_nodes(cfg_template) -> bool:
+    """Whether a TRITON cfg template already sets ``swmm_coupling_nodes``.
+
+    A template sets the key when a line's first non-blank text matches
+    ``swmm_coupling_nodes\\s*=``; a line starting ``#`` is a comment and does not count.
+    """
+    import re
+
+    pattern = re.compile(r"swmm_coupling_nodes\s*=")
+    return any(pattern.match(line.lstrip()) for line in Path(cfg_template).read_text().splitlines())
+
+
 #: The node section of every SWMM node type, and the column swmmio names its elevation.
 _NODE_SECTIONS = (
     ("junctions", "JUNCTION", "InvertElev"),
@@ -2254,6 +2498,32 @@ _INELIGIBLE_NODE_REASONS = {
         "Divider node {id} carries an [INFLOWS] line, but TRITON-SWMM does not yet couple "
         "divider nodes correctly (it reads max depth for junctions only). Under dynamic wave a "
         "divider acts as a junction; this is a solver limitation."
+    ),
+}
+
+#: The same reasons for a node a coupling-node file names (swmm_coupling_mode: list). The
+#: physical and solver-limitation clauses are the texts above; the opener and the remedies
+#: name the list, because the [INFLOWS] remedies above are false advice for a listed node.
+_INELIGIBLE_LISTED_NODE_REASONS = {
+    "OUTFALL": (
+        "Outfall {id} is named in the coupling-node list, but TRITON-SWMM cannot couple an outfall: "
+        "SWMM sets an outfall's water level as a boundary condition, so the manhole exchange "
+        "TRITON-SWMM uses does not apply. Remove it from the coupling-node list. If it discharges "
+        "onto ground the surface model covers, coupling it needs a solver change this build does "
+        "not have; listing an upstream junction instead would make water leave the pipes there "
+        "instead of at the outfall."
+    ),
+    "STORAGE": (
+        "Storage node {id} is named in the coupling-node list, but TRITON-SWMM does not yet couple "
+        "storage nodes correctly (it reads max depth for junctions only). This is a solver "
+        "limitation, not a judgement that the node should not receive surface flow. Remove it "
+        "from the coupling-node list."
+    ),
+    "DIVIDER": (
+        "Divider node {id} is named in the coupling-node list, but TRITON-SWMM does not yet couple "
+        "divider nodes correctly (it reads max depth for junctions only). Under dynamic wave a "
+        "divider acts as a junction; this is a solver limitation. Remove it from the "
+        "coupling-node list."
     ),
 }
 

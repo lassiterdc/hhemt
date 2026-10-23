@@ -285,6 +285,29 @@ def _capture_binary_provenance(sub: "TRITONSWMM_analysis") -> dict | None:
     return prov or None
 
 
+def _systems_run_by(analysis) -> list:
+    """Every system a run of ``analysis`` executes: the master's, or each sensitivity target's.
+
+    A sensitivity analysis runs the systems of ``sensitivity.unique_system_targets`` rather
+    than the master's alone, because a ``system.*`` overlay column can switch a model on, or
+    name another template, for one row. The run-entry checks share this one enumeration so
+    they cannot disagree about which systems a run reads. A module function rather than a
+    method so the checks can be exercised on a stand-in analysis object.
+    """
+    if analysis.cfg_analysis.toggle_sensitivity_analysis:
+        return [target.system for target in analysis.sensitivity.unique_system_targets]
+    return [analysis._system]
+
+
+def _coupled_system_configs(analysis) -> list:
+    """The ``cfg_system`` of every system of ``analysis`` that runs the coupled model on a template."""
+    return [
+        system.cfg_system
+        for system in _systems_run_by(analysis)
+        if system.cfg_system.toggle_tritonswmm_model and system.cfg_system.SWMM_hydraulics is not None
+    ]
+
+
 class TRITONSWMM_analysis:
     """Orchestrates one ensemble of coupled TRITON-SWMM simulations.
 
@@ -2567,12 +2590,8 @@ class TRITONSWMM_analysis:
         template, for one row; the master's templates are included exactly when some target
         resolves to the master system.
         """
-        if self.cfg_analysis.toggle_sensitivity_analysis:
-            systems = [target.system for target in self.sensitivity.unique_system_targets]
-        else:
-            systems = [self._system]
         templates: list[Path] = []
-        for system in systems:
+        for system in _systems_run_by(self):
             cfg = system.cfg_system
             if cfg.toggle_tritonswmm_model and cfg.SWMM_hydraulics is not None:
                 templates.append(Path(cfg.SWMM_hydraulics))
@@ -2606,6 +2625,140 @@ class TRITONSWMM_analysis:
                     ),
                     config_path=template,
                 )
+
+    def _refuse_invalid_coupling_declaration(self) -> None:
+        """Refuse, before any job is submitted, a coupled system whose coupling declaration is invalid.
+
+        Three refusals, checked per coupled system in this order: a TRITON cfg template that
+        already sets ``swmm_coupling_nodes``, which the toolkit writes itself, so two sources
+        of one declaration would disagree silently; the one-node-per-DEM-cell option under a
+        declared mode, where the option would silently remove declared nodes; and a
+        coupling-node file whose names are undefined, repeated, uncoordinated, absent or not
+        junctions. The solver repeats the file checks at startup, but only after the job has
+        queued. Runs before the empty-candidate and grid checks, so an empty file is refused
+        here and named as an empty file.
+        """
+        from .scenario import coupling_node_file_problems, triton_cfg_sets_coupling_nodes
+
+        for cfg in _coupled_system_configs(self):
+            cfg_template = Path(cfg.triton_swmm_configuration_template)
+            if triton_cfg_sets_coupling_nodes(cfg_template):
+                raise ConfigurationError(
+                    field="swmm_coupling_mode",
+                    message=(
+                        f"TRITON cfg template {cfg_template} sets swmm_coupling_nodes, which the toolkit "
+                        "writes itself for every coupled scenario. Remove that line from the template and "
+                        "declare coupling nodes with system_config.swmm_coupling_mode (and "
+                        "swmm_coupling_nodes_file for a list)."
+                    ),
+                    config_path=cfg_template,
+                )
+            mode = cfg.swmm_coupling_mode
+            if mode != "legacy" and self.cfg_analysis.one_coupled_inflow_node_per_dem_cell:
+                raise ConfigurationError(
+                    field="swmm_coupling_mode",
+                    message=(
+                        f"system_config.swmm_coupling_mode is '{mode}' and "
+                        "analysis_config.one_coupled_inflow_node_per_dem_cell is on. The one-per-cell "
+                        "option applies only to swmm_coupling_mode: legacy; under a declared mode the "
+                        "declaration is the coupled set. Turn the option off, or set swmm_coupling_mode: "
+                        "legacy."
+                    ),
+                    config_path=getattr(self, "analysis_config_yaml", None),
+                )
+            causes = coupling_node_file_problems(cfg)
+            if causes:
+                path = cfg.swmm_coupling_nodes_file
+                raise ConfigurationError(
+                    field="swmm_coupling_nodes_file",
+                    message=" ".join(
+                        f"Coupling-node file {path} (system_config.swmm_coupling_nodes_file): {cause.rstrip('.')}."
+                        for cause in causes
+                    ),
+                    config_path=Path(path),
+                )
+
+    def _refuse_coupled_system_with_no_coupling_candidate(self) -> None:
+        """Refuse, before any job is submitted, a coupled system that declares no coupling node.
+
+        Such a run would exchange no water between SWMM and the surface and still finish with
+        a success marker. Runs after the declaration check, which already refuses an empty
+        coupling-node file, so only the ``all_junctions`` and ``legacy`` causes reach here.
+        """
+        from .scenario import coupling_candidates
+
+        causes = {
+            "all_junctions": "it has no junction with a [COORDINATES] row",
+            "legacy": (
+                "no [INFLOWS] line with constituent FLOW names a node, and system_config.swmm_coupling_mode is 'legacy'"
+            ),
+        }
+        for cfg in _coupled_system_configs(self):
+            mode = cfg.swmm_coupling_mode
+            if mode not in causes or coupling_candidates(cfg):
+                continue
+            template = Path(cfg.SWMM_hydraulics)
+            raise ConfigurationError(
+                field="swmm_coupling_mode",
+                message=(
+                    f"SWMM template {template} declares no coupling node: {causes[mode]}. For a "
+                    "surface-only run, turn off toggle_tritonswmm_model and run the TRITON-only "
+                    "model (toggle_triton_model)."
+                ),
+                config_path=template,
+            )
+
+    def _refuse_coupling_nodes_outside_triton_grid(self, overwrite_system_inputs: bool) -> None:
+        """Refuse, before any job is submitted, a coupling candidate the TRITON grid does not contain.
+
+        TRITON-SWMM stops at startup on such a node, after the job has queued. The grid is the
+        one setup will use, by setup's own rule: the processed DEM's header when that file
+        exists, passes its integrity check and ``overwrite_system_inputs`` is False; otherwise
+        the header of the DEM setup will write, built in memory. Only candidate junctions with
+        a ``[COORDINATES]`` row are judged, because no other candidate is ever written to the
+        coupling list. Under ``legacy`` with the one-per-cell option on, a junction the ranking
+        would drop is refused too: the exact written set needs the per-cell grouping that runs
+        at preparation, and the node does lie outside the grid.
+        """
+        from .exceptions import ProcessingError
+        from .scenario import coupling_candidate_junction_coordinates, nodes_outside_triton_grid
+        from .system import _assert_dem_integrity, read_triton_grid_header, triton_grid_header
+
+        for system in _systems_run_by(self):
+            cfg = system.cfg_system
+            if not (cfg.toggle_tritonswmm_model and cfg.SWMM_hydraulics is not None):
+                continue
+            nodes = coupling_candidate_junction_coordinates(cfg)
+            if not nodes:
+                continue
+            header = None
+            dem_processed = Path(system.sys_paths.dem_processed)
+            if dem_processed.exists() and not overwrite_system_inputs:
+                try:
+                    _assert_dem_integrity(dem_processed)
+                    header = read_triton_grid_header(dem_processed)
+                except ProcessingError:
+                    header = None
+            if header is None:
+                header = triton_grid_header(system._coarsen_dem())
+            outside = nodes_outside_triton_grid(nodes, header)
+            if not outside:
+                continue
+            xll, yll, cell = header["xllcorner"], header["yllcorner"], header["cellsize"]
+            template = Path(cfg.SWMM_hydraulics)
+            listed = "; ".join(f"{name} ({x}, {y})" for name, x, y in outside)
+            field = "swmm_coupling_nodes_file" if cfg.swmm_coupling_mode == "list" else "swmm_coupling_mode"
+            raise ConfigurationError(
+                field=field,
+                message=(
+                    f"SWMM template {template}: {len(outside)} coupling node(s) lie outside the TRITON grid "
+                    f"(x {xll} to {xll + header['ncols'] * cell}, y {yll} to {yll + header['nrows'] * cell}): "
+                    f"{listed}. TRITON-SWMM would stop on each at startup "
+                    f'("Node_swmm {outside[0][0]} is out of bounds"). List only the nodes inside the domain in a '
+                    "coupling-node file (system_config.swmm_coupling_mode: list, with swmm_coupling_nodes_file)."
+                ),
+                config_path=template,
+            )
 
     def run(
         self,
@@ -2788,6 +2941,11 @@ class TRITONSWMM_analysis:
         from .report_renderers._reporting_sets import renderer_active
 
         self._refuse_undefined_inflow_nodes()
+        self._refuse_invalid_coupling_declaration()
+        self._refuse_coupled_system_with_no_coupling_candidate()
+        self._refuse_coupling_nodes_outside_triton_grid(
+            overwrite_system_inputs=translate_mode("fresh" if from_scratch else "resume")["overwrite_system_inputs"]
+        )
 
         # _test/ deletion offer: if a leftover smoke-test subtree from a
         # prior analysis.test() exists, offer to delete it before the real run.
@@ -4001,6 +4159,9 @@ class TRITONSWMM_analysis:
             - message: str - Status message
         """
         self._refuse_undefined_inflow_nodes()
+        self._refuse_invalid_coupling_declaration()
+        self._refuse_coupled_system_with_no_coupling_candidate()
+        self._refuse_coupling_nodes_outside_triton_grid(overwrite_system_inputs=overwrite_system_inputs)
 
         # Login-node preflight: refuse any analysis path a compute node cannot see.
         # Refuse BEFORE anything is stamped, written or

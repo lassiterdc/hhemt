@@ -152,6 +152,7 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "report": "experiment",
     "storm_tide_units": "experiment",
     "subcatchment_raingage_mapping_gage_id_colname": "experiment",
+    "swmm_coupling_mode": "experiment",
     "target_dem_resolution": "experiment",
     "target_processed_output_type": "experiment",
     "toggle_sensitivity_analysis": "experiment",

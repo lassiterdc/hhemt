@@ -480,18 +480,14 @@ class TRITONSWMM_system:
         return rds_mannings_coarse
 
     def _write_raster_formatted_for_TRITON(self, rds, output: Path, include_metadata: bool, fillna_val=-9999):
-        __, og_avg_gridsize = compute_grid_resolution(rds)
-        ncols = rds.x.shape[0]
-        nrows = rds.y.shape[0]
-        xllcorner = rds.x.values.min() - og_avg_gridsize / 2  # adjusted from center to corner
-        yllcorner = rds.y.values.min() - og_avg_gridsize / 2  # adjusted from center to corner
+        header = triton_grid_header(rds)
         # define DEM
         raster_metadata = {
-            "ncols         ": ncols,
-            "nrows         ": nrows,
-            "xllcorner     ": xllcorner,
-            "yllcorner     ": yllcorner,
-            "cellsize      ": og_avg_gridsize,
+            "ncols         ": header["ncols"],
+            "nrows         ": header["nrows"],
+            "xllcorner     ": header["xllcorner"],
+            "yllcorner     ": header["yllcorner"],
+            "cellsize      ": header["cellsize"],
             "NODATA_value  ": fillna_val,
         }
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -2430,6 +2426,47 @@ def spatial_resampling(xds_to_resample, xds_target, missingfillval=-9999):
     # where one dataset has pieces outside the other)
     xds_to_resampled = xr.where(xds_to_resampled >= 3.403e37, x=missingfillval, y=xds_to_resampled)
     return xds_to_resampled
+
+
+def triton_grid_header(rds) -> dict:
+    """The TRITON grid header for raster ``rds``: ``ncols``, ``nrows``, ``xllcorner``, ``yllcorner``, ``cellsize``.
+
+    The ONE computation of the grid TRITON reads. The DEM writer writes these values into the
+    processed DEM's header, and the run-entry grid check judges coupling nodes against them,
+    so the check refuses exactly the nodes the solver would place outside the grid it is
+    given. The lower-left corner is the lowest cell CENTRE less half a cell, because TRITON's
+    header names the corner, not the centre. Values are returned with the types the writer
+    has always written, so the processed DEM's bytes do not change.
+    """
+    __, og_avg_gridsize = compute_grid_resolution(rds)
+    return {
+        "ncols": rds.x.shape[0],
+        "nrows": rds.y.shape[0],
+        "xllcorner": rds.x.values.min() - og_avg_gridsize / 2,  # adjusted from center to corner
+        "yllcorner": rds.y.values.min() - og_avg_gridsize / 2,  # adjusted from center to corner
+        "cellsize": og_avg_gridsize,
+    }
+
+
+def read_triton_grid_header(fpath_raster) -> dict:
+    """The grid header of a processed TRITON DEM on disk, keyed as `triton_grid_header` keys it.
+
+    Reads the first five header lines the DEM writer writes (``ncols``, ``nrows``,
+    ``xllcorner``, ``yllcorner``, ``cellsize``), case-insensitively, so a processed DEM can be
+    judged without rasterizing it again.
+    """
+    header: dict = {}
+    with open(fpath_raster) as f:
+        for _ in range(6):
+            key, _, value = f.readline().strip().partition(" ")
+            header[key.lower()] = value.strip()
+    return {
+        "ncols": int(header["ncols"]),
+        "nrows": int(header["nrows"]),
+        "xllcorner": float(header["xllcorner"]),
+        "yllcorner": float(header["yllcorner"]),
+        "cellsize": float(header["cellsize"]),
+    }
 
 
 def compute_grid_resolution(rds):
