@@ -11,8 +11,7 @@ pytestmark = [
     pytest.mark.skipif(
         tst_ut.compile_toolchain_unavailable() and not tst_ut.require_compile_tier(),
         reason=(
-            "TRITON-SWMM/SWMM compile toolchain (cmake + mpic++) absent; this "
-            "module compiles at run time via analysis.run(). Runs under the "
+            "TRITON-SWMM/SWMM compile toolchain (cmake + mpic++) absent. Runs under the "
             "hhemt conda env; HHEMT_REQUIRE_COMPILE_TIER=1 turns absence into a "
             "hard failure."
         ),
@@ -280,6 +279,7 @@ def test_snakemake_sensitivity_workflow_dry_run(
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
     """
     Test Snakemake sensitivity analysis workflow execution.
@@ -324,6 +324,7 @@ def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis):
     """Regression (reprocess-rebuild-divergence-fix).
 
@@ -474,6 +475,7 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_experiment_consolidation_tolerates_incomplete_analysis(synth_sensitivity_analysis):
     """Regression (sensitivity-consolidation-tolerate-incomplete).
 
@@ -638,6 +640,7 @@ def test_synth_sensitivity_report_inlined_passes_run_entry_validation():
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_run_and_render_report(synth_sensitivity_analysis_cached):
     """Sensitivity run -> master render. Asserts master report exists; no per-member report (R13)."""
     from pathlib import Path
@@ -689,6 +692,7 @@ def test_run_and_render_report(synth_sensitivity_analysis_cached):
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_render_report_idempotent(synth_sensitivity_analysis_cached):
     """Sensitivity render_report() is idempotent (R11)."""
     import time
@@ -708,6 +712,7 @@ def test_render_report_idempotent(synth_sensitivity_analysis_cached):
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_synth_render_report_interactive_zip(synth_sensitivity_analysis_cached, tmp_path):
     # ZIP-fallback path: render_report(format="zip") writes
     # `analysis_report.zip` containing `report.html` + per-figure
@@ -734,6 +739,7 @@ def test_synth_render_report_interactive_zip(synth_sensitivity_analysis_cached, 
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_plot_sources_attribution(synth_sensitivity_analysis_cached):
     """R15: 'Sources:' bullet block appears in master HTML report."""
     from pathlib import Path
@@ -751,6 +757,7 @@ def test_plot_sources_attribution(synth_sensitivity_analysis_cached):
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_no_html_content_in_svg_file_references(synth_sensitivity_analysis_cached, tmp_path):
     # Rendered report.html must not reference any .svg file whose content is
     # not valid SVG XML. See test_synth_04 mirror for the failure-mode rationale.
@@ -940,6 +947,7 @@ def test_build_unique_system_targets_skips_purge_in_runner_subprocess(
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analysis):
     """Behavioral regression (reprocess-render-report-snakefile-selection, R4).
 
@@ -1045,6 +1053,7 @@ def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analy
     "HHEMT_ENABLE_PROVENANCE_AUDIT=1 to enable the audit AND run this test.",
 )
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_renderer_provenance_audit_passes_for_all_sensitivity_renderers(synth_sensitivity_analysis_cached):
     """Sensitivity-tier audit-passes guard — exercises sensitivity_benchmarking
     (Plotly branch), the rebased per-member per-sim renderers, and errors_and_warnings /

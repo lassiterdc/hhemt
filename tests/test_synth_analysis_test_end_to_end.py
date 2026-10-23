@@ -45,21 +45,26 @@ def _assert_analysis_test_completes(analysis, *, min_groups: int = 1):
         tst_ut.assert_analysis_workflow_completed_successfully(sub_result.analysis)
 
 
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_synth_analysis_test_all_models(synth_all_models_analysis):
     _assert_analysis_test_completes(synth_all_models_analysis)
 
 
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_synth_analysis_test_multi_sim(synth_multi_sim_analysis):
     _assert_analysis_test_completes(synth_multi_sim_analysis)
 
 
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_synth_analysis_test_sensitivity(synth_sensitivity_analysis):
     _assert_analysis_test_completes(synth_sensitivity_analysis, min_groups=2)
 
 
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_synth_analysis_test_sensitivity_triton_only(synth_sensitivity_triton_only):
     _assert_analysis_test_completes(synth_sensitivity_triton_only, min_groups=2)
 
 
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_synth_analysis_test_sensitivity_swmm_only(synth_sensitivity_swmm_only):
     _assert_analysis_test_completes(synth_sensitivity_swmm_only, min_groups=2)

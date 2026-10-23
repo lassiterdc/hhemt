@@ -18,9 +18,7 @@ def test_run_multisim_concurrently(synth_multi_sim_analysis):
         overwrite_scenario_if_already_set_up=True, verbose=True
     )
     analysis.run_python_functions_concurrently(prepare_scenario_launchers)
-    launch_functions = analysis._create_launchable_sims(
-        pickup_where_leftoff=False, verbose=True
-    )
+    launch_functions = analysis._create_launchable_sims(pickup_where_leftoff=False, verbose=True)
     analysis.run_simulations_concurrently(launch_functions, verbose=True)
 
     tst_ut.assert_system_setup(analysis)
@@ -28,8 +26,8 @@ def test_run_multisim_concurrently(synth_multi_sim_analysis):
     tst_ut.assert_scenarios_run(analysis)
 
 
-def test_concurrently_process_scenario_timeseries(synth_multi_sim_analysis_cached):
-    analysis = synth_multi_sim_analysis_cached
+def test_concurrently_process_scenario_timeseries(synthetic_multisim_completed_isolated):
+    analysis = synthetic_multisim_completed_isolated
     enabled_models = tst_ut.get_enabled_model_types(analysis)
 
     for event_iloc in analysis.df_sims.index:
@@ -37,17 +35,11 @@ def test_concurrently_process_scenario_timeseries(synth_multi_sim_analysis_cache
 
         for model_type in enabled_models:
             if model_type == "tritonswmm":
-                proc.write_timeseries_outputs(
-                    which="both", model_type=model_type, override_clear_raw="none"
-                )
+                proc.write_timeseries_outputs(which="both", model_type=model_type, override_clear_raw="none")
             elif model_type == "triton":
-                proc.write_timeseries_outputs(
-                    which="TRITON", model_type=model_type, override_clear_raw="none"
-                )
+                proc.write_timeseries_outputs(which="TRITON", model_type=model_type, override_clear_raw="none")
             elif model_type == "swmm":
-                proc.write_timeseries_outputs(
-                    which="SWMM", model_type=model_type, override_clear_raw="none"
-                )
+                proc.write_timeseries_outputs(which="SWMM", model_type=model_type, override_clear_raw="none")
 
         for model_type in enabled_models:
             if model_type == "tritonswmm":
@@ -77,6 +69,7 @@ def test_concurrently_process_scenario_timeseries(synth_multi_sim_analysis_cache
     # Delete it first so this regenerate-and-check pattern still exercises the writer.
     if analysis.analysis_paths.analysis_datatree_zarr.exists():
         import shutil
+
         shutil.rmtree(analysis.analysis_paths.analysis_datatree_zarr)
     analysis.process.consolidate_to_datatree()
 

@@ -1,23 +1,36 @@
-"""Iter 9 Phase 7: tests for the analysis-validation report system.
+"""Tests for the analysis-validation report system: the post-completion checks in
+``hhemt.analysis_validation`` and the Errors-and-Warnings renderer that displays them.
 
-Two layers of testing:
+Four groups of tests:
 
-1. **Synthetic-ValidationReport tests** (test_renders_*): build a known
+1. **Synthetic-ValidationReport tests** (``test_synthetic_report_*``,
+   ``test_renders_*``, ``test_status_of_*``): build a known
    ValidationReport with hand-crafted CheckResult instances representing
    every failure mode, pass it through the renderer's internal helpers,
-   verify the rendered HTML contains the expected scenario × stage ×
+   and once through the public ``render``, verify the rendered HTML contains the expected scenario × stage ×
    resource rows. This isolates renderer behavior from the complex analysis
    initialization (which re-detects state from disk and overwrites
    directly-mutated log fields).
 
-2. **Real-analysis tests** (test_validation_report_*_failing): build a
+2. **Real-analysis tests** (``test_validation_report_*_failing_disk_mutations``,
+   ``test_errors_and_warnings_renders_html_*_real``): build a
    cloned analysis from one of the cached synth fixtures, inject failures
    the analysis init can't undo (file deletions for analysis-summary
    checks; see ``_failing_fixture_helpers.inject_*_at_paths``), assert
    the validator detects them. Some failure modes (compilation flag,
    per-scenario log fields) are re-overwritten by the analysis __init__'s
    resume-detection and aren't reliably triggerable via this path; those
-   are covered by the synthetic tests above.
+   are covered by the synthetic tests above. These need a compiled and run
+   synth cache, so they sit behind the ``tritonswmm_cpu_compiled`` gate.
+
+3. **EDA-calc check tests** (``test_eda_*``): drive ``check_eda_calc_ran``
+   with a namespace stub carrying the four enumeration-gate terms, and pin
+   which reporting sets enumerate EDA targets.
+
+4. **Resume-validity tests** (``test_resume_validity_*``, ``test_clean_arm_*``,
+   ``test_provenance_helper_*``, ``test_absent_resume_record_*``): resolve
+   model-defect registry verdicts against recorded TRITON shas, and check
+   that an absent resume record renders N/A rather than a pass.
 """
 
 from __future__ import annotations
@@ -208,11 +221,12 @@ def test_renders_aggregate_table_has_three_failed_rows():
     report = _synthetic_report()
     html = _render_aggregate_table(report.by_level["aggregate"])
     assert "Aggregate Per-Scenario Checks" in html
-    # [Q154]/VMS-C: the aggregate table now renders the DISPLAY name from
-    # _CHECK_VOCABULARY, not the raw `CheckResult.name`. BOTH halves are pinned
-    # deliberately: the raw name remains the machine key the cross-experiment matrix
-    # joins children on (cross_experiment_errors_and_warnings.py:256), so a test that
-    # tracked only the rename would stop pinning the split it exists to protect.
+    # The aggregate table renders the DISPLAY name from _CHECK_VOCABULARY, not the
+    # raw `CheckResult.name`. BOTH halves are pinned deliberately: the raw name remains
+    # the machine key the cross-experiment matrix joins children on (the
+    # `str(c.get("name")) == name` match in cross_experiment_errors_and_warnings.py),
+    # so a test that tracked only the rename would stop pinning the split it exists to
+    # protect.
     assert [c.name for c in report.by_level["aggregate"]] == [
         "Scenarios setup",
         "Scenarios ran",
@@ -256,7 +270,7 @@ def test_renders_full_html_doc(tmp_path):
 
     fake_analysis = MagicMock()
     fake_analysis.cfg_analysis.analysis_id = "demo_failing_synth"
-    # Option-D: the renderer reads the persisted validation_report.json via
+    # The renderer reads the persisted validation_report.json via
     # load_validation_report — it does NOT call validate_analysis at render time
     # (that whole-tree read would trip the renderer-IO provenance audit). So
     # persist the synthetic report to disk (the canonical
@@ -284,7 +298,9 @@ def test_renders_full_html_doc(tmp_path):
 
 
 @pytest.fixture
-def failing_synth_multi_sim_analysis(tritonswmm_cpu_compiled, synth_multi_sim_analysis_cached, tmp_path):
+def failing_synth_multi_sim_analysis(
+    tritonswmm_cpu_compiled, synthetic_multisim_completed, synth_multi_sim_analysis_cached, tmp_path
+):
     """Clone synth_multi_sim cached fixture, inject failures BEFORE construction.
 
     Gated on ``tritonswmm_cpu_compiled``: the cached analysis must have been RUN
@@ -297,7 +313,9 @@ def failing_synth_multi_sim_analysis(tritonswmm_cpu_compiled, synth_multi_sim_an
 
 
 @pytest.fixture
-def failing_synth_sensitivity_analysis(tritonswmm_cpu_compiled, synth_sensitivity_analysis_cached, tmp_path):
+def failing_synth_sensitivity_analysis(
+    tritonswmm_cpu_compiled, synthetic_sensitivity_completed, synth_sensitivity_analysis_cached, tmp_path
+):
     """Clone synth_sensitivity cached fixture, inject failures BEFORE construction.
     Compile-tier gated; see ``failing_synth_multi_sim_analysis``."""
     paths = prepare_clone_dir(synth_sensitivity_analysis_cached, tmp_path)
@@ -316,7 +334,7 @@ def test_validation_report_multi_sim_failing_disk_mutations(failing_synth_multi_
 
 @pytest.mark.slow
 def test_validation_report_sensitivity_failing_disk_mutations(failing_synth_sensitivity_analysis):
-    """Sensitivity equivalent: deleted sensitivity_datatree.zarr should fail summaries check."""
+    """Sensitivity equivalent: a deleted master experiment_datatree.zarr should fail the summaries check."""
     report = validate_analysis(failing_synth_sensitivity_analysis)
     assert not report.overall_passed
     failed_check_names = {c.name for c in report.checks if not c.passed}
@@ -330,9 +348,10 @@ def test_errors_and_warnings_renders_html_multi_sim_real(failing_synth_multi_sim
     assert out_path.exists() and out_path.stat().st_size > 0
     html = out_path.read_text()
     assert "Errors and Warnings" in html
-    # I7-4: the rendered label is the DISPLAY name; `CheckResult.name` is unchanged and
-    # is still asserted against `failed_check_names` above. Asserting BOTH halves is the
-    # point -- it pins the key/label split rather than just tracking the rename.
+    # This test asserts the DISPLAY half of the key/label split: the rendered label is
+    # the display name. The raw-name half -- `CheckResult.name` unchanged -- is asserted
+    # in test_validation_report_multi_sim_failing_disk_mutations. Keeping both is what
+    # pins the split rather than just tracking the rename.
     assert "Analysis summaries" in html
     assert "Every consolidated DataTree the analysis owes is present on disk" in html
 
@@ -345,19 +364,27 @@ def test_errors_and_warnings_renders_html_sensitivity_real(failing_synth_sensiti
     assert out_path.exists() and out_path.stat().st_size > 0
     html = out_path.read_text()
     assert "Errors and Warnings" in html
-    # I7-4: the rendered label is the DISPLAY name; `CheckResult.name` is unchanged and
-    # is still asserted against `failed_check_names` above. Asserting BOTH halves is the
-    # point -- it pins the key/label split rather than just tracking the rename.
+    # This test asserts the DISPLAY half of the key/label split: the rendered label is
+    # the display name. The raw-name half -- `CheckResult.name` unchanged -- is asserted
+    # in test_validation_report_sensitivity_failing_disk_mutations. Keeping both is what
+    # pins the split rather than just tracking the rename.
     assert "Analysis summaries" in html
     assert "Every consolidated DataTree the analysis owes is present on disk" in html
+
+
+# ---------------------------------------------------------------------------
+# EDA-calc check tests (namespace stub; no analysis, no workflow)
+# ---------------------------------------------------------------------------
 
 
 def _eda_stub(analysis_dir, enabled_plots, *, sensitivity=True, reporting_set="b4b"):
     """Minimal analysis shape `check_eda_calc_ran` reads: all four ENUMERATION-GATE terms.
 
-    The check mirrors the Snakemake rule-all enumeration gate term for term, so a fixture
-    carrying fewer than four terms short-circuits at the first missing one and every
-    assertion below passes trivially. The terms: (1) toggle_sensitivity_analysis, because
+    The check mirrors the Snakemake rule-all enumeration gate term for term. A stub that
+    leaves term 1 or 3 unset or empty short-circuits the check to N/A
+    (``_enumerated_eda_templates`` reads both through ``getattr`` defaults): the two N/A
+    tests below would then pass vacuously, and the fail and pass tests would fail for
+    the wrong reason, on N/A rather than on verdict counting. The terms: (1) toggle_sensitivity_analysis, because
     only the sensitivity-master generators carry an EDA enumeration site; (2) the active
     reporting set carrying an eda_compute_sensitivity selection; (3) a non-empty
     eda.enabled_plots; (4) the builder key absent from report.disabled_renderers.
@@ -385,7 +412,7 @@ def _eda_stub(analysis_dir, enabled_plots, *, sensitivity=True, reporting_set="b
 
 
 def test_eda_calc_ran_fails_when_targets_are_enumerated_but_no_verdicts_exist(tmp_path):
-    """K1/F4: an analysis that ENUMERATES EDA report targets owes verdicts.
+    """An analysis that ENUMERATES EDA report targets owes verdicts.
 
     The degradation panels that replaced the workflow-killing MissingOutputException are
     correct, but they removed the LOUD failure without replacing the signal. This is the
@@ -435,7 +462,8 @@ def test_eda_calc_ran_is_not_applicable_when_the_set_enumerates_no_targets(tmp_p
 
 
 def test_eda_calc_ran_is_not_applicable_to_a_multisim(tmp_path):
-    """The K1 false positive itself: a multisim enumerates no EDA rules whatever set it names.
+    """The false positive an enabled_plots-keyed check produced: a multisim enumerates no
+    EDA rules whatever set it names.
 
     generate_snakefile_content carries no EDA enumeration site and the multisim plot
     dispatcher passes no predicate_inputs, so term 1 is what excludes this whole class.
@@ -461,8 +489,13 @@ def test_eda_rule_spec_templates_pins_the_sets_check_eda_calc_ran_depends_on():
     assert enumerating == {"b4b", "compute-sensitivity", "dem-resolution"}
 
 
+# ---------------------------------------------------------------------------
+# Resume-validity tests (model-defect registry verdicts; namespace stubs)
+# ---------------------------------------------------------------------------
+
+
 def test_resume_validity_is_applicable_on_a_pure_triton_resumed_arm():
-    """VMS-9: the widened check evaluates the pure-TRITON resume arm instead of
+    """The widened check evaluates the pure-TRITON resume arm instead of
     returning N/A on the coupled toggle.
 
     PRE-FIX this FAILS twice over: the check is named "Coupled resume validity"
@@ -470,8 +503,11 @@ def test_resume_validity_is_applicable_on_a_pure_triton_resumed_arm():
     """
     from hhemt.model_defects import REGISTRY, resolve
 
-    # The sha the delivered resume arms actually ran at (measured from the
-    # consolidated tree root attr `triton_producing_sha`).
+    # The TRITON sha a pure-TRITON resume arm ran at. analysis_validation.py records
+    # the arm synth_cc_resume_triton, measured on generation e389264af7b9, as
+    # stamped 5d2ad1e8. Not established: that this value was read from that arm's
+    # consolidated tree root attr `triton_producing_sha` rather than copied from
+    # that record.
     resume_sha = "5d2ad1e8adf9a85d7df14e885b76e59a10f9a98b"
     by_trigger = {d.trigger for d in REGISTRY}
     assert "resumed_any" in by_trigger, (
@@ -484,11 +520,13 @@ def test_resume_validity_is_applicable_on_a_pure_triton_resumed_arm():
 
 
 def test_clean_arm_carries_an_affected_build_but_stays_not_applicable():
-    """VMS-9 / [Q130]: the clean arms run a build where the both-arms defect is
-    PRESENT, and only the trigger population keeps that from becoming a warning.
+    """The clean arms run a build where the both-arms defect is PRESENT, and only
+    the trigger population keeps that from becoming a warning.
 
-    This is the P7 case the TriggerKind docstring names. It pins that a
-    version-only predicate would be wrong.
+    This is the case the comment on ``TriggerKind`` in ``hhemt/model_defects.py``
+    describes: a clean arm that carries the affected build but never resumed. A
+    version-only registry would warn on it, so this pins that a version-only
+    predicate would be wrong.
     """
     from hhemt.model_defects import REGISTRY, resolve
 
@@ -529,7 +567,7 @@ def test_provenance_helper_is_graceful_absent_on_this_stub():
 
 
 def test_absent_resume_record_renders_not_applicable_not_pass():
-    """VMS-9B / VMS-9C / [Q130]: a not-verified state is NOT a negative finding.
+    """A not-verified state is NOT a negative finding.
 
     PRE-FIX this fails on its assertion with applicable=True, passed=True and the
     summary "Producing-TRITON coupled-resume status unknown ...; cannot determine
