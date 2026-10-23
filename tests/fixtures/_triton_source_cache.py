@@ -60,8 +60,8 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #: `is-ancestor 320b3313 a146fb6` -> rc 1, because the curated commits are NEW trees; each names
 #: its wp1 source in a `Curated-from:` trailer. What decided the move was not ancestry but the
 #: solver landing's re-measurement: every curated tree built and green on Rivanna, and 28/28
-#: legacy models byte-identical to wp1 `58dad318`, which is `320b3313` plus T9a.1 only
-#: (`git log 320b3313..58dad318` -> 1 commit; its key defaults off).
+#: legacy models byte-identical to wp1 `58dad318`, which is `320b3313` plus one commit whose cfg key defaults off
+#: (`git log 320b3313..58dad318` -> 1 commit).
 #: AN EARLIER MOVE'S RECORD, RETAINED AND NO LONGER LIVE (e53c2fa -> 031ea42b). It was a
 #: CROSS-BRANCH move whose `is-ancestor` answered rc 1 in BOTH directions, with 46 commits on the
 #: branch not on `main`; the two commands that decided it were not the counts but
@@ -105,8 +105,8 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #:   * `git merge-base --is-ancestor 3a832f7d a146fb6` -> rc 0
 #:   * `git merge-base --is-ancestor 9db367dd a146fb6` -> rc 0
 #:   * `git merge-base --is-ancestor 5fadf167 a146fb6` -> rc 0 (it carries the snapshot payload)
-#:   * `git merge-base --is-ancestor 681d809 a146fb6` -> rc 0 (C1a: the snapshot traversal fix)
-#:   * `git merge-base --is-ancestor d456518 a146fb6` -> rc 0 (C1b: the clean-start disposal)
+#:   * `git merge-base --is-ancestor 681d809 a146fb6` -> rc 0 (the curated snapshot traversal fix)
+#:   * `git merge-base --is-ancestor d456518 a146fb6` -> rc 0 (the curated clean-start disposal)
 #:   * the wp1 commits are NOT ancestors (c7b2fd1d, 23b75781, cf357e4b, 320b3313 -> rc 1 each);
 #:     their behaviour is carried by the curated commits named in model_defects.
 #: The ghost-ring caveat still applies and is RE-MEASURED here rather than carried: two natural

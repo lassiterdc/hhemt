@@ -451,7 +451,8 @@ def test_every_entry_registers_its_own_fix_sha():
 
     The invariant the registry has held for every entry: `fixed_in` sits in `known_absent_in`, so a tree
     stamped at the fix commit itself resolves on the read path, which has no ancestry. A re-key of
-    `fixed_in` that does not register the new sha breaks it silently, which is how 114.1 broke it.
+    `fixed_in` that does not register the new sha breaks it silently, which is how the re-pin to the
+    curated fork first broke it.
     """
     for d in REGISTRY_BY_ID.values():
         assert d.fixed_in in d.known_absent_in, d.defect_id

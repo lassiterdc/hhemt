@@ -404,11 +404,14 @@ SHA_US_UNIT_LENGTH_FIX = "65e7f68153cfc3d6b2aa57d5fbde2544e9f2d35e"
 #: `Curated-from:` trailer; the map is `git log --format='%h%n%(trailers:key=Curated-from,valueonly)'
 #: 3a29997..a146fb6` in the fork. A curated commit is a NEW tree: no wp1 commit is its ancestor.
 SHA_CURATED_MAIN_PIN = "a146fb6ed7c22790fb9a15ff854c446db4519ad2"
-# C1a, from 23b75781 (guard re-predication)
+# the curated traversal fix, from 23b75781 (guard re-predication)
 SHA_CURATED_TRAVERSAL_GUARD_FIX = "681d809ad1449b11ce5e0c4e1162429b2f13d9c6"
-SHA_CURATED_CLEAN_START_FIX = "d4565182e9a1a3ed27e10bf98ee79ae9bf0a9dbe"  # C1b, from cf357e4b (earlier-run disposal)
-SHA_CURATED_COUPLED_LIST_AND_RIM_FIX = "852f10c508f0a5796472f4beeeec434743470894"  # C3b, from 1b797e6d (item-11 half)
-SHA_CURATED_US_UNIT_LENGTH_FIX = "2ecb1cfff966eb00205506c03ca89086f1b68d36"  # C4, from 65e7f681
+# the curated clean-start disposal, from cf357e4b (earlier-run disposal)
+SHA_CURATED_CLEAN_START_FIX = "d4565182e9a1a3ed27e10bf98ee79ae9bf0a9dbe"
+# the curated coupled-list and rim fix, from 1b797e6d
+SHA_CURATED_COUPLED_LIST_AND_RIM_FIX = "852f10c508f0a5796472f4beeeec434743470894"
+# the curated US-unit length conversion, from 65e7f681
+SHA_CURATED_US_UNIT_LENGTH_FIX = "2ecb1cfff966eb00205506c03ca89086f1b68d36"
 
 #: The registered shas that predate both fixes. Measured on the fork clone:
 #: `git merge-base --is-ancestor {1b797e6 | 65e7f68} {sha}` -> rc 1 at each of these fifteen and
@@ -585,13 +588,13 @@ REGISTRY: tuple[ModelDefect, ...] = (
         known_absent_in=frozenset(
             {
                 SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX,
-                # C1a: the curated traversal fix; is-ancestor 681d809 a146fb6 -> rc 0.
+                # the curated traversal fix; is-ancestor 681d809 a146fb6 -> rc 0.
                 SHA_CURATED_TRAVERSAL_GUARD_FIX,
                 # 23b75781 is an ANCESTOR of c7b2fd1d -- measured rc 0 against this sha.
                 SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
                 # 23b75781 is an ANCESTOR of 320b3313 -- measured rc 0 against this sha.
                 SHA_SNAPSHOT_REFUSAL_PIN,
-                # C1a (681d809, the curated traversal fix) is an ANCESTOR of a146fb6 -- rc 0;
+                # 681d809 (the curated traversal fix) is an ANCESTOR of a146fb6 -- rc 0;
                 # `git ls-tree a146fb6 -- external/swmm/src/solver/snapshot.c` -> 1 entry (control
                 # `src/triton.h` -> 1).
                 SHA_CURATED_MAIN_PIN,
@@ -688,11 +691,11 @@ REGISTRY: tuple[ModelDefect, ...] = (
             {
                 # payload 1, disposal 5 at both (and cf357e4b is an ancestor of 320b3313, rc 0).
                 SHA_SNAPSHOT_CLEAN_START_FIX,
-                # C1b: the curated clean-start disposal; is-ancestor d456518 a146fb6 -> rc 0.
+                # the curated clean-start disposal; is-ancestor d456518 a146fb6 -> rc 0.
                 SHA_CURATED_CLEAN_START_FIX,
                 SHA_SNAPSHOT_REFUSAL_PIN,
                 # payload 1, disposal 5 at a146fb6 (`swmm_snapshot_keep_previous`, the same count
-                # as at 320b3313), and C1b (d456518) is an ANCESTOR of a146fb6 -- rc 0.
+                # as at 320b3313), and d456518 (the curated clean-start disposal) is an ANCESTOR of a146fb6 -- rc 0.
                 SHA_CURATED_MAIN_PIN,
                 # THE SEVEN NO-PAYLOAD SHAS: snapshot.c -> 0 entries at each.
                 SHA_PRE_COUPLED_RESUME,
@@ -727,7 +730,7 @@ REGISTRY: tuple[ModelDefect, ...] = (
         known_absent_in=frozenset(
             {
                 SHA_COUPLED_LIST_AND_RIM_FIX,
-                # C3b: the curated item-11 half; is-ancestor 852f10c a146fb6 -> rc 0.
+                # the curated coupled-list and rim fix; is-ancestor 852f10c a146fb6 -> rc 0.
                 SHA_CURATED_COUPLED_LIST_AND_RIM_FIX,
                 SHA_SNAPSHOT_REFUSAL_PIN,
                 SHA_CURATED_MAIN_PIN,
@@ -747,7 +750,7 @@ REGISTRY: tuple[ModelDefect, ...] = (
         known_absent_in=frozenset(
             {
                 SHA_US_UNIT_LENGTH_FIX,
-                # C4: the curated US-unit conversion; is-ancestor 2ecb1cf a146fb6 -> rc 0.
+                # the curated US-unit conversion; is-ancestor 2ecb1cf a146fb6 -> rc 0.
                 SHA_CURATED_US_UNIT_LENGTH_FIX,
                 SHA_SNAPSHOT_REFUSAL_PIN,
                 SHA_CURATED_MAIN_PIN,
@@ -770,7 +773,7 @@ REGISTRY: tuple[ModelDefect, ...] = (
         known_absent_in=frozenset(
             {
                 SHA_COUPLED_LIST_AND_RIM_FIX,
-                # C3b: the curated item-11 half; is-ancestor 852f10c a146fb6 -> rc 0.
+                # the curated coupled-list and rim fix; is-ancestor 852f10c a146fb6 -> rc 0.
                 SHA_CURATED_COUPLED_LIST_AND_RIM_FIX,
                 SHA_SNAPSHOT_REFUSAL_PIN,
                 SHA_CURATED_MAIN_PIN,
