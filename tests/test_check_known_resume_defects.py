@@ -47,7 +47,7 @@ _RESUME_REGISTRY = tuple(d for d in REGISTRY if d.trigger != "coupled")
 #: `platformdirs` / `hhemt.utils` import weight; `scripts/check_live_pin_registered.py`
 #: is what keeps the restatement honest, and `test_the_restated_pin_is_the_live_pin`
 #: below is the local tripwire.
-_SHA_REGISTERED = "320b3313c99c3e929e77a258ff6e4b041bae2927"
+_SHA_REGISTERED = "a146fb6ed7c22790fb9a15ff854c446db4519ad2"
 #: In NO registry set -- the state any branch tip occupies before someone registers it.
 _SHA_UNREGISTERED = "deadbeefcafef00ddeadbeefcafef00ddeadbeef"
 #: A build that genuinely carries all three RESUME defects. THE POSITIVE CONTROL: without it a
@@ -229,6 +229,7 @@ def test_the_snapshot_defect_is_present_below_the_fix_and_absent_at_and_above_it
     explicit set the only reachable one.
     """
     from hhemt.model_defects import (
+        SHA_CURATED_MAIN_PIN,
         SHA_SNAPSHOT_REFUSAL_PIN,
         SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX,
         SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
@@ -249,7 +250,7 @@ def test_the_snapshot_defect_is_present_below_the_fix_and_absent_at_and_above_it
     # FAILS and the live pin PASSES. Without this half the test would pass over a resolver whose
     # verdict no consumer reads.
     assert _run(monkeypatch, _SHA_PRE_SNAPSHOT_FIX).passed is False
-    assert _run(monkeypatch, _SHA_LIVE := SHA_SNAPSHOT_REFUSAL_PIN).passed is True
+    assert _run(monkeypatch, _SHA_LIVE := SHA_CURATED_MAIN_PIN).passed is True
     assert _SHA_LIVE == _SHA_REGISTERED, "the live pin constant drifted from the registry's"
 
 

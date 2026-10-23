@@ -53,15 +53,15 @@ from hhemt._filelock_compat import resolve_filelock
 #: Never record one without the other — record TRITON_SOURCE_DESCRIPTOR.
 TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 
-#: `wp1/snapshot-guard` ON THE MAINTAINER FORK (github.com/lassiterdc/triton.git), at the commit
-#: "test(swmm): land T8a.4 -- CTest guard for the zero-coupling-node refusal". A plain clone of
-#: the fork does NOT land here -- `main` is its default HEAD, and this pin is not on `main`
-#: (`git merge-base --is-ancestor 320b3313 origin/main` -> rc 1) -- so the pin is what SELECTS
-#: the branch as well as what freezes it. A borrower that resolves `main` gets a build without
-#: the SWMM snapshot traversal fix (`is-ancestor 23b75781 origin/main` -> rc 1).
-#: A FAST-FORWARD MOVE from the previous pin `c7b2fd1d`: `git merge-base --is-ancestor c7b2fd1d
-#: 320b3313` -> rc 0, and `git rev-list --count c7b2fd1d..320b3313` -> 14. Because every commit
-#: of the old pin is in the new one, no re-landing argument is owed for this move.
+#: The fork's `main` (github.com/lassiterdc/triton.git), at the curated landing's tip
+#: "test(swmm): keep the timer and syntax checks; order BIT4BIT runs"
+#: (`git merge-base --is-ancestor a146fb6 origin/main` -> rc 0). A plain clone of the fork lands
+#: on this lineage. A CROSS-BRANCH MOVE from the previous pin `320b3313` (wp1/snapshot-guard):
+#: `is-ancestor 320b3313 a146fb6` -> rc 1, because the curated commits are NEW trees; each names
+#: its wp1 source in a `Curated-from:` trailer. What decided the move was not ancestry but the
+#: solver landing's re-measurement: every curated tree built and green on Rivanna, and 28/28
+#: legacy models byte-identical to wp1 `58dad318`, which is `320b3313` plus T9a.1 only
+#: (`git log 320b3313..58dad318` -> 1 commit; its key defaults off).
 #: AN EARLIER MOVE'S RECORD, RETAINED AND NO LONGER LIVE (e53c2fa -> 031ea42b). It was a
 #: CROSS-BRANCH move whose `is-ancestor` answered rc 1 in BOTH directions, with 46 commits on the
 #: branch not on `main`; the two commands that decided it were not the counts but
@@ -73,8 +73,8 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #: THE SUBMODULE GITLINKS ARE UNCHANGED ACROSS THIS MOVE, so the borrow's
 #: `submodule.alternateLocation=superproject` path needs no submodule-side network work:
 #: `git ls-tree {pin} external/kokkos external/yaml-cpp` returns dc1bf738 and a83cd315 at BOTH
-#: c7b2fd1d and 320b3313 (measured, byte-equal). `external/swmm` is a TREE (mode 040000) rather
-#: than a gitlink and it DOES move (4f987437 -> ef459af3) -- expected, because the move's SWMM
+#: 320b3313 and a146fb6 (measured, byte-equal). `external/swmm` is a TREE (mode 040000) rather
+#: than a gitlink and it DOES move (ef459af3 -> f3dd1b4f) -- expected, because the move's SWMM
 #: changes live inside it -- so a reader comparing all three entries must not read that one as a
 #: submodule bump.
 #: NO MANUAL CACHE WORK IS OWED. The fetch that reaches this pin only ADDED objects, and
@@ -92,7 +92,7 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #: function's summary names its examined and indeterminate counts. The enforcing mechanism is the
 #: GUARD `scripts/check_live_pin_registered.py`, which reads this declaration by AST and refuses
 #: unless the registry resolves it ABSENT via the explicit `known_absent_in` set for EVERY defect.
-#: `model_defects.SHA_SNAPSHOT_REFUSAL_PIN` is this pin's entry.
+#: `model_defects.SHA_CURATED_MAIN_PIN` is this pin's entry.
 #: THE GUARD IS WIRED: `.pre-commit-config.yaml` runs `scripts/check_live_pin_registered.py`
 #: as a hook, and `tests/test_check_live_pin_registered.py` exercises the script's own logic.
 #: WHY A REGISTRATION AND A PIN MOVE ARE ONE CHANGE AND CANNOT BE SPLIT: the guard resolves the
@@ -101,15 +101,16 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #: that adds the sha without moving this constant leaves the guard asserting the OLD pin.
 #: Neither half is independently green.
 #: Measured 2026-10-23 against this pin, not inherited:
-#:   * `git merge-base --is-ancestor a38338b0 320b3313` -> rc 0
-#:   * `git merge-base --is-ancestor 3a832f7d 320b3313` -> rc 0
-#:   * `git merge-base --is-ancestor 9db367dd 320b3313` -> rc 0
-#:   * `git merge-base --is-ancestor c7b2fd1d 320b3313` -> rc 0
-#:   * `git merge-base --is-ancestor 23b75781 320b3313` -> rc 0 (it carries the snapshot fix)
-#:   * `git merge-base --is-ancestor 5fadf167 320b3313` -> rc 0 (it carries the snapshot payload)
-#:   * `git merge-base --is-ancestor cf357e4b 320b3313` -> rc 0 (it carries the clean-start fix)
+#:   * `git merge-base --is-ancestor a38338b0 a146fb6` -> rc 0
+#:   * `git merge-base --is-ancestor 3a832f7d a146fb6` -> rc 0
+#:   * `git merge-base --is-ancestor 9db367dd a146fb6` -> rc 0
+#:   * `git merge-base --is-ancestor 5fadf167 a146fb6` -> rc 0 (it carries the snapshot payload)
+#:   * `git merge-base --is-ancestor 681d809 a146fb6` -> rc 0 (C1a: the snapshot traversal fix)
+#:   * `git merge-base --is-ancestor d456518 a146fb6` -> rc 0 (C1b: the clean-start disposal)
+#:   * the wp1 commits are NOT ancestors (c7b2fd1d, 23b75781, cf357e4b, 320b3313 -> rc 1 each);
+#:     their behaviour is carried by the curated commits named in model_defects.
 #: The ghost-ring caveat still applies and is RE-MEASURED here rather than carried: two natural
-#: probes classify the ghost-ring row WRONG -- `is-ancestor 5d2ad1e8 320b3313` -> rc 1, and
+#: probes classify the ghost-ring row WRONG -- `is-ancestor 5d2ad1e8 a146fb6` -> rc 1, and
 #: `ls-tree src/ghost_ring.h` -> 0 entries -- because both ask the FORK's question of an
 #: ORNL-descended tree. The deciding basis is a38338b0 -> rc 0. See the comment on
 #: `model_defects.SHA_ORNL_GHOST_RING_AND_GPU`, the constant that holds a38338b0.
@@ -129,7 +130,7 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #:   * `tests/test_known_solver_defects.py::_PIN`.
 #: A short-prefix search also matches docstrings that merely mention the pin, which are not
 #: coupled literals a move must update.
-TRITON_PIN = "320b3313c99c3e929e77a258ff6e4b041bae2927"
+TRITON_PIN = "a146fb6ed7c22790fb9a15ff854c446db4519ad2"
 
 #: The ONE form every version RECORD prints, so a URL cannot be omitted beside a pin.
 #: Consumed by `model_version_lines()` and by the estate's per-chunk provenance stamp.

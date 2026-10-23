@@ -337,6 +337,8 @@ def test_the_clean_start_stale_snapshot_entry_resolves_by_content_at_every_regis
     comment; the assertions read only status and rule.
     """
     from hhemt.model_defects import (
+        SHA_CURATED_CLEAN_START_FIX,
+        SHA_CURATED_MAIN_PIN,
         SHA_DEPTH_SCATTER_FIX,
         SHA_SNAPSHOT_CLEAN_START_FIX,
         SHA_SNAPSHOT_REFUSAL_PIN,
@@ -349,11 +351,12 @@ def test_the_clean_start_stale_snapshot_entry_resolves_by_content_at_every_regis
         "failed or refused snapshot save a resume could load the earlier run's SWMM state"
     )
     assert entry.trigger == "resumed_coupled"
-    assert entry.fixed_in == SHA_SNAPSHOT_CLEAN_START_FIX
+    assert entry.fixed_in == SHA_CURATED_CLEAN_START_FIX
     for sha, status in (
         (SHA_WP1_SNAPSHOT_GUARD_AND_TESTS, "present"),
         (SHA_SNAPSHOT_CLEAN_START_FIX, "absent"),
         (SHA_SNAPSHOT_REFUSAL_PIN, "absent"),
+        (SHA_CURATED_MAIN_PIN, "absent"),
         (SHA_DEPTH_SCATTER_FIX, "absent"),
     ):
         v = resolve(entry, sha)
@@ -364,16 +367,16 @@ def test_the_clean_start_stale_snapshot_entry_resolves_by_content_at_every_regis
 def test_every_registered_defect_is_absent_at_the_package_3a_pin():
     """Property: the live solver pin resolves ABSENT on every defect from the explicit sets.
 
-    Class: every REGISTRY entry at `320b3313`, the pin `3a.1` moves to. Why: an entry missing the
+    Class: every REGISTRY entry at `a146fb6`, the curated fork `main` pin. Why: an entry missing the
     pin reads `ancestry_unresolvable` on the read path, which never fails a check and so hides a
     regression. What kills it: dropping the pin from one entry's `known_absent_in`. Second correct
     implementation: deriving the membership from the pin file at import; the assertion reads the
     verdicts only.
     """
-    from hhemt.model_defects import SHA_SNAPSHOT_REFUSAL_PIN
+    from hhemt.model_defects import SHA_CURATED_MAIN_PIN
 
     for did, d in REGISTRY_BY_ID.items():
-        v = resolve(d, SHA_SNAPSHOT_REFUSAL_PIN)
+        v = resolve(d, SHA_CURATED_MAIN_PIN)
         assert (v.status, v.rule) == ("absent", "known_absent_set"), (did, v)
 
 
@@ -398,7 +401,7 @@ _COUPLED_ENTRIES = (
 
 @pytest.mark.parametrize(("did", "title"), _COUPLED_ENTRIES)
 def test_each_every_coupled_run_entry_is_present_before_its_fix_and_absent_at_it_and_at_the_pin(did, title):
-    """Property 81: each `coupled` entry is present at `c7b2fd1d` and absent at its fix and at `320b3313`.
+    """Property 81: each `coupled` entry is present at `c7b2fd1d` and absent at its fix and at both pins.
 
     Class: the three every-coupled-run registry entries, read without a clone. Why: the analysis
     check reports them from these explicit sets alone, and the title is what a report reader sees.
@@ -406,7 +409,7 @@ def test_each_every_coupled_run_entry_is_present_before_its_fix_and_absent_at_it
     `known_absent_in`, a trigger other than `coupled`, or a reworded title. Second correct
     implementation: a per-sha table; the assertions read status, rule, trigger and title.
     """
-    from hhemt.model_defects import SHA_SNAPSHOT_REFUSAL_PIN, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS
+    from hhemt.model_defects import SHA_CURATED_MAIN_PIN, SHA_SNAPSHOT_REFUSAL_PIN, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS
 
     d = REGISTRY_BY_ID[did]
     assert d.defect_id == did
@@ -414,14 +417,14 @@ def test_each_every_coupled_run_entry_is_present_before_its_fix_and_absent_at_it
     assert d.title == title
     v = resolve(d, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS)
     assert (v.status, v.rule) == ("present", "also_present_set"), v
-    for sha in (d.fixed_in, SHA_SNAPSHOT_REFUSAL_PIN):
+    for sha in (d.fixed_in, SHA_SNAPSHOT_REFUSAL_PIN, SHA_CURATED_MAIN_PIN):
         v = resolve(d, sha)
         assert (v.status, v.rule) == ("absent", "known_absent_set"), (sha, v)
 
 
 @pytest.mark.parametrize("did", [did for did, _ in _COUPLED_ENTRIES])
 def test_live_ancestry_agrees_with_each_every_coupled_run_entry_cached_sets(did):
-    """The cached verdicts at `c7b2fd1d` and at `320b3313` are what ancestry gives, for each `coupled` entry.
+    """The cached verdicts at `c7b2fd1d` and at `a146fb6` are what ancestry gives, for each `coupled` entry.
 
     Class: the three entries, re-resolved from their fix sha alone against a real clone. Why: the
     cached sets were resolved once by hand, and the read path trusts them without a clone, so a
@@ -430,14 +433,27 @@ def test_live_ancestry_agrees_with_each_every_coupled_run_entry_cached_sets(did)
     correct implementation: comparing every registered sha's cached verdict with its live one; the
     assertions read status and rule. Skips where the clone lacks the fork's fix commits.
     """
-    from hhemt.model_defects import SHA_SNAPSHOT_REFUSAL_PIN, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS
+    from hhemt.model_defects import SHA_CURATED_MAIN_PIN, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS
 
     d = REGISTRY_BY_ID[did]
-    needed = (d.fixed_in, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS, SHA_SNAPSHOT_REFUSAL_PIN)
+    needed = (d.fixed_in, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS, SHA_CURATED_MAIN_PIN)
     if not all(_clone_has(s) for s in needed):
         pytest.skip(f"no TRITON clone holding {[s[:8] for s in needed]} at {_CLONE} (set HHEMT_TRITON_CLONE)")
     bare = ModelDefect(d.defect_id, d.title, fixed_in=d.fixed_in, trigger=d.trigger)
     v = resolve(bare, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS, is_ancestor=_git_is_ancestor)
     assert (v.status, v.rule) == ("present", "default_present"), v
-    v = resolve(bare, SHA_SNAPSHOT_REFUSAL_PIN, is_ancestor=_git_is_ancestor)
+    v = resolve(bare, SHA_CURATED_MAIN_PIN, is_ancestor=_git_is_ancestor)
     assert (v.status, v.rule) == ("absent", "fixed_in_ancestor"), v
+
+
+def test_every_entry_registers_its_own_fix_sha():
+    """Without a clone, every defect resolves ABSENT at its own `fixed_in`.
+
+    The invariant the registry has held for every entry: `fixed_in` sits in `known_absent_in`, so a tree
+    stamped at the fix commit itself resolves on the read path, which has no ancestry. A re-key of
+    `fixed_in` that does not register the new sha breaks it silently, which is how 114.1 broke it.
+    """
+    for d in REGISTRY_BY_ID.values():
+        assert d.fixed_in in d.known_absent_in, d.defect_id
+        v = resolve(d, d.fixed_in)
+        assert v.status == "absent" and v.rule == "known_absent_set", (d.defect_id, v)
