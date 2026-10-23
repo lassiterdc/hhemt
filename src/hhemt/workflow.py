@@ -945,6 +945,169 @@ def parse_tmux_submissions(text: str) -> dict[str, str]:
     return tokens
 
 
+# ---- Snakemake log outcomes: which errored jobs never finished ----------------------------
+#
+# Snakemake writes an ``Error in rule R:`` block for EVERY failed attempt, including the
+# attempts it then restarts, so a scan that counts those headers reports a rule Snakemake
+# retried to success as permanently failed. The job's identity is the ``jobid:`` integer
+# printed inside the block: a restarted attempt is the same Job object re-queued under the
+# same integer, and a success prints ``Finished jobid: N (Rule: R)``. An error block is a
+# single log record (header, an optional ``message:`` line, then ``jobid:``), so its own jobid
+# is the first ``jobid:`` line after the header. It is read FORWARD and never backward,
+# because the job's START block, which precedes the error header, also carries a ``jobid:``
+# line, and with concurrent jobs the nearest preceding one can belong to a different job.
+_SNAKEMAKE_ERROR_HEADER_RE = re.compile(r"^Error in rule (\w+):")
+_SNAKEMAKE_BLOCK_JOBID_RE = re.compile(r"^\s+jobid:\s*(\d+)\s*$")
+_SNAKEMAKE_FINISHED_RE = re.compile(r"^Finished jobid: (\d+) \(Rule: (\w+)\)")
+
+
+def parse_snakemake_job_outcomes(text: str) -> tuple[list[dict], list[dict]]:
+    """Split a Snakemake log's errored jobs into never-finished failures and retried successes.
+
+    Returns ``(failed, retried_to_success)``. ``failed`` holds one
+    ``{rule_token, jobid, reason}`` record per ``(jobid, rule)`` pair that has an error block
+    and no later ``Finished jobid: N (Rule: R)`` line. A header whose block carries no
+    parseable ``jobid:`` line still yields a record, with ``jobid: None``: an error we cannot
+    attribute is kept rather than dropped. ``retried_to_success`` holds one
+    ``{rule, jobid, attempts}`` record per pair that errored and later finished, where
+    ``attempts`` is the pair's error-block count plus one (the finishing attempt).
+
+    The forward read for a block's jobid stops at the next blank line, the next
+    ``Error in rule`` header or the next ``Finished jobid`` line, so it never borrows the
+    jobid of a later record. Not established: this reads the layout of Snakemake 9.15.0's
+    plain-text log; a different log format yields headers with ``jobid: None``, which fail
+    closed.
+    """
+    lines = text.splitlines()
+    error_counts: dict[tuple[int | None, str], int] = {}
+    last_error_at: dict[tuple[int | None, str], int] = {}
+    # Line index of each pair's LAST finish: only a finish after the pair's last error block
+    # clears it, so an earlier run's success (an appended log) cannot hide a later failure.
+    finished_at: dict[tuple[int, str], int] = {}
+    for i, line in enumerate(lines):
+        fin = _SNAKEMAKE_FINISHED_RE.match(line)
+        if fin:
+            finished_at[(int(fin.group(1)), fin.group(2))] = i
+            continue
+        hdr = _SNAKEMAKE_ERROR_HEADER_RE.match(line)
+        if not hdr:
+            continue
+        jobid: int | None = None
+        for follow in lines[i + 1 :]:
+            if not follow.strip() or _SNAKEMAKE_ERROR_HEADER_RE.match(follow) or _SNAKEMAKE_FINISHED_RE.match(follow):
+                break
+            jid = _SNAKEMAKE_BLOCK_JOBID_RE.match(follow)
+            if jid:
+                jobid = int(jid.group(1))
+                break
+        key = (jobid, hdr.group(1))
+        error_counts[key] = error_counts.get(key, 0) + 1
+        last_error_at[key] = i
+    failed: list[dict] = []
+    retried: list[dict] = []
+    for (jobid, rule), n_errors in error_counts.items():
+        if jobid is not None and finished_at.get((jobid, rule), -1) > last_error_at[(jobid, rule)]:
+            retried.append({"rule": rule, "jobid": jobid, "attempts": n_errors + 1})
+        else:
+            failed.append({"rule_token": rule, "jobid": jobid, "reason": "snakemake-log failure (no _failed marker)"})
+    return failed, retried
+
+
+# ---- the log files a single-job sbatch script names -------------------------------------
+#
+# The waited ``1_job_many_srun_tasks`` path has no Snakemake log of its own: Snakemake runs
+# inside the allocation and writes to the job's standard streams, which go wherever the
+# script's ``#SBATCH`` error and output directives send them. Snakemake logs to STDERR, so
+# error-path directives are read before output-path ones. Every directive is read, not only
+# the one sbatch applies: the generator writes its own pair and a user's
+# ``additional_sbatch_args`` can add more, and reading all of them is correct whichever one
+# sbatch honours. The spellings follow getopt_long, which sbatch parses every ``#SBATCH`` line
+# with: ``-e P`` / ``-eP``, and the long name under any prefix of two or more characters
+# (``error`` is the only sbatch long option beginning ``er`` and ``output`` the only one
+# beginning ``ou``), as ``=P`` or `` P``. Not read, and therefore swept as empty text: a path
+# set by the ``SBATCH_ERROR`` / ``SBATCH_OUTPUT`` environment variables, a quoted path
+# containing whitespace, ``-e`` bundled behind no-argument short flags (``-Qe P``), and a
+# path whose name keeps a ``%`` pattern after ``%j`` is substituted (``%x``, ``%A``).
+def _sbatch_log_directive_paths(script_text: str) -> tuple[list[str], list[str]]:
+    """The error-path and output-path values every ``#SBATCH`` line names, in script order."""
+    error_paths: list[str] = []
+    output_paths: list[str] = []
+    for raw in script_text.splitlines():
+        line = raw.strip()
+        if not line.startswith("#SBATCH"):
+            continue
+        tokens = line[len("#SBATCH") :].split()
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
+            target: list[str] | None = None
+            value: str | None = None
+            if tok.startswith("--"):
+                name, sep, attached = tok[2:].partition("=")
+                if len(name) >= 2 and "error".startswith(name):
+                    target = error_paths
+                elif len(name) >= 2 and "output".startswith(name):
+                    target = output_paths
+                if target is not None:
+                    if sep:
+                        value = attached
+                    elif i + 1 < len(tokens):
+                        value = tokens[i + 1]
+                        i += 1
+            elif tok[:2] in ("-e", "-o"):
+                target = error_paths if tok[:2] == "-e" else output_paths
+                if len(tok) > 2:
+                    value = tok[2:]
+                elif i + 1 < len(tokens):
+                    value = tokens[i + 1]
+                    i += 1
+            if target is not None and value:
+                target.append(value)
+            i += 1
+    return error_paths, output_paths
+
+
+def assemble_single_job_log_text(script_path: Path | None, job_id: str | None) -> tuple[str, Path | None]:
+    """The text of every log file a single-job script names, error paths first.
+
+    Returns ``(text, first_error_path_read)``. Each path has ``%j`` replaced by ``job_id`` and
+    is read once; a relative path resolves against the script's directory. A path that still
+    contains ``%``, does not exist or cannot be read contributes nothing, so a script that
+    names no readable path yields ``("", None)`` and the sweep sees what it saw before this
+    reader existed. A fixed-name path (no ``%`` at all) is read whether or not sbatch applied
+    it, so a stale file from an earlier run, or a file opened with ``--open-mode=append``, can
+    surface that run's failures: a false failure, never a false clean.
+    """
+    if script_path is None or job_id is None:
+        return "", None
+    try:
+        script_text = Path(script_path).read_text()
+    except OSError:
+        return "", None
+    error_paths, output_paths = _sbatch_log_directive_paths(script_text)
+    texts: list[str] = []
+    seen: set[Path] = set()
+    first_error: Path | None = None
+    n_error = len(error_paths)
+    for idx, raw_path in enumerate(error_paths + output_paths):
+        resolved = raw_path.replace("%j", str(job_id))
+        if "%" in resolved:
+            continue
+        path = Path(resolved)
+        if not path.is_absolute():
+            path = Path(script_path).parent / path
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            texts.append(path.read_text())
+        except OSError:
+            continue
+        if idx < n_error and first_error is None:
+            first_error = path
+    return "\n".join(texts), first_error
+
+
 def _squeue_live_jobids(run_uuids: tuple[str, ...], *, timeout_s: float = 20.0) -> set[str] | None:
     """PENDING/RUNNING/COMPLETING SLURM job ids whose sbatch ``--job-name`` is one of ``run_uuids``
     (the executor names every job after its run UUID). ``None`` when squeue is absent, fails or
@@ -1423,16 +1586,33 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                     rec = json.loads(marker.read_text())
                 except (json.JSONDecodeError, OSError):
                     rec = {"rule_token": marker.stem, "reason": "unparseable marker"}
+                # The sim runner's payload carries no rule_token (only the wait runner's
+                # does); the token is the marker's file name, so it is stamped from the stem.
+                # Without it the record reaches partial_failures unnamed and prints as "?".
+                if isinstance(rec, dict) and not rec.get("rule_token"):
+                    rec = {**rec, "rule_token": marker.stem}
                 records.append(rec)
                 seen.add(rec.get("rule_token", marker.stem))
-        for m in re.finditer(r"Error in rule (\w+):", snakemake_stderr):
-            name = m.group(1)
-            if name not in seen:
-                records.append({"rule_token": name, "reason": "snakemake-log failure (no _failed marker)"})
-                seen.add(name)
+        # A marker token names an EVENT of a sim rule (run_{model}_evt-{id}, or
+        # simulation_member_{mid}_evt-{id} for a sensitivity member), while the log names the
+        # RULE (run_{model}, or simulation_member_{mid}_evt_{id}). Equality between the two
+        # never holds, so a sim failure that wrote a marker would otherwise be reported twice.
+        marker_tokens = [tok for tok in seen if isinstance(tok, str)]
+        failed_from_log, _retried = parse_snakemake_job_outcomes(snakemake_stderr)
+        for rec in failed_from_log:
+            name = rec["rule_token"]
+            if name in seen:
+                continue
+            if any(tok.startswith(f"{name}_evt-") for tok in marker_tokens):
+                continue
+            if name.startswith("simulation_member_") and any(
+                tok.startswith("simulation_member_") for tok in marker_tokens
+            ):
+                continue
+            records.append(rec)
         return records
 
-    def _augment_result_with_partial_failures(self, result: dict) -> dict:
+    def _augment_result_with_partial_failures(self, result: dict, log_text: str | None = None) -> dict:
         """Sweep permanently-failed rules into a blocking-mode submit result.
 
         Reads the merged stdout+stderr Snakemake log (``result["snakemake_logfile"]``,
@@ -1447,21 +1627,29 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         (``batch_job`` tmux, or 1-job sbatch-and-return) has no in-process completion
         point — sweeping there reads an in-progress/empty ``_failed/`` dir and reports a
         false-clean, so detached runs are not swept here.
+
+        ``log_text``, when given, is the Snakemake log to sweep in place of reading
+        ``result["snakemake_logfile"]``: the waited single-job path assembles its text from
+        several files, and re-reading one of them would discard the rest. The result also
+        gains ``retried_to_success``, the jobs Snakemake restarted and then finished. It is
+        a disclosure only and never sets or reads ``success``.
         """
         if not isinstance(result, dict):
             return result
-        log_text = ""
-        logfile = result.get("snakemake_logfile")
-        if logfile:
-            try:
-                log_text = Path(logfile).read_text()
-            except OSError:
-                log_text = ""
+        if log_text is None:
+            log_text = ""
+            logfile = result.get("snakemake_logfile")
+            if logfile:
+                try:
+                    log_text = Path(logfile).read_text()
+                except OSError:
+                    log_text = ""
         partial_failures = self._sweep_failed_rules(
             self.analysis_paths.analysis_dir,
             snakemake_stderr=log_text,
         )
         result["partial_failures"] = partial_failures
+        result["retried_to_success"] = parse_snakemake_job_outcomes(log_text)[1]
         if partial_failures:
             result["success"] = False
             tokens = ", ".join(r.get("rule_token", "?") for r in partial_failures)
@@ -6885,7 +7073,17 @@ exit $snakemake_status
             # still-running allocation would read an empty _status/_failed/ and report a
             # false-clean (the detached-mode hazard; detached runs are not swept).
             if wait_for_completion:
-                result = self._augment_result_with_partial_failures(result)
+                # The allocation's Snakemake log is whatever file(s) the script's #SBATCH
+                # error/output directives name, so its text is assembled from them and handed
+                # to the sweep directly; `snakemake_logfile` names the first error file read.
+                log_text = ""
+                if isinstance(result, dict):
+                    log_text, first_error = assemble_single_job_log_text(
+                        result.get("script_path"), result.get("job_id")
+                    )
+                    if first_error is not None:
+                        result["snakemake_logfile"] = first_error
+                result = self._augment_result_with_partial_failures(result, log_text=log_text)
 
             self.analysis._refresh_log()
             return result

@@ -3218,6 +3218,7 @@ class TRITONSWMM_analysis:
             job_id=result_dict.get("job_id"),
             message=result_dict.get("message", ""),
             partial_failures=result_dict.get("partial_failures", []),
+            retried_to_success=result_dict.get("retried_to_success", []),
         )
 
     # ---- analysis.test(): end-to-end smoke test on a strict _test/ subset ----
