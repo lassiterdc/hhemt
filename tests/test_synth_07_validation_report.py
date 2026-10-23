@@ -21,7 +21,12 @@ Four groups of tests:
    per-scenario log fields) are re-overwritten by the analysis __init__'s
    resume-detection and aren't reliably triggerable via this path; those
    are covered by the synthetic tests above. These need a compiled and run
-   synth cache, so they sit behind the ``tritonswmm_cpu_compiled`` gate.
+   synth cache: their fixtures request ``tritonswmm_cpu_compiled`` (the
+   compile-tier gate) and a ``synthetic_*_completed`` fixture that runs the
+   cached tree. The fast tier deselects all four on either of two marks, each
+   sufficient alone: their own ``requires_snakemake_subprocess`` mark, and the
+   ``compile_tier`` mark the suite's conftest adds at collection to every test
+   whose fixtures reach ``tritonswmm_cpu_compiled``.
 
 3. **EDA-calc check tests** (``test_eda_*``): drive ``check_eda_calc_ran``
    with a namespace stub carrying the four enumeration-gate terms, and pin
@@ -29,7 +34,9 @@ Four groups of tests:
 
 4. **Resume-validity tests** (``test_resume_validity_*``, ``test_clean_arm_*``,
    ``test_provenance_helper_*``, ``test_absent_resume_record_*``): resolve
-   model-defect registry verdicts against recorded TRITON shas, and check
+   model-defect registry verdicts against recorded TRITON shas, run
+   ``check_coupled_resume_validity`` on namespace stubs (a resumed pure-TRITON
+   arm, a never-resumed clean arm, and an absent resume record), and check
    that an absent resume record renders N/A rather than a pass.
 """
 
@@ -57,9 +64,6 @@ from tests._failing_fixture_helpers import (
     inject_sensitivity_failures_at_paths,
     prepare_clone_dir,
 )
-
-pytestmark = pytest.mark.requires_snakemake_subprocess
-
 
 # ---------------------------------------------------------------------------
 # Synthetic ValidationReport tests (deterministic; isolated from analysis init)
@@ -303,10 +307,12 @@ def failing_synth_multi_sim_analysis(
 ):
     """Clone synth_multi_sim cached fixture, inject failures BEFORE construction.
 
-    Gated on ``tritonswmm_cpu_compiled``: the cached analysis must have been RUN
-    (compiled binaries + real summaries on disk) for the injected-failure clone to
-    be meaningful. Skips without cmake+mpic++; HARD-FAILS under
-    HHEMT_REQUIRE_COMPILE_TIER=1. The module's pure-unit tests are unaffected."""
+    The cached analysis must have been RUN (compiled binaries + real summaries on
+    disk) for the injected-failure clone to be meaningful. ``synthetic_multisim_completed``
+    supplies that: it runs the multisim workflow on this same cached tree unless its
+    completion marker is current AND that marker's payload is present on disk.
+    ``tritonswmm_cpu_compiled`` is the compile-tier gate:
+    it skips without cmake+mpic++ and HARD-FAILS under HHEMT_REQUIRE_COMPILE_TIER=1."""
     paths = prepare_clone_dir(synth_multi_sim_analysis_cached, tmp_path)
     inject_multi_sim_failures_at_paths(paths)
     return construct_analysis_from_paths(paths)
@@ -317,12 +323,14 @@ def failing_synth_sensitivity_analysis(
     tritonswmm_cpu_compiled, synthetic_sensitivity_completed, synth_sensitivity_analysis_cached, tmp_path
 ):
     """Clone synth_sensitivity cached fixture, inject failures BEFORE construction.
-    Compile-tier gated; see ``failing_synth_multi_sim_analysis``."""
+    Same arrangement as ``failing_synth_multi_sim_analysis``: ``synthetic_sensitivity_completed``
+    runs this same cached sensitivity tree, and ``tritonswmm_cpu_compiled`` is the gate."""
     paths = prepare_clone_dir(synth_sensitivity_analysis_cached, tmp_path)
     inject_sensitivity_failures_at_paths(paths)
     return construct_analysis_from_paths(paths)
 
 
+@pytest.mark.requires_snakemake_subprocess
 def test_validation_report_multi_sim_failing_disk_mutations(failing_synth_multi_sim_analysis):
     """Disk mutations the analysis init can't undo: file deletions for analysis-summary checks."""
     report = validate_analysis(failing_synth_multi_sim_analysis)
@@ -333,6 +341,7 @@ def test_validation_report_multi_sim_failing_disk_mutations(failing_synth_multi_
 
 
 @pytest.mark.slow
+@pytest.mark.requires_snakemake_subprocess
 def test_validation_report_sensitivity_failing_disk_mutations(failing_synth_sensitivity_analysis):
     """Sensitivity equivalent: a deleted master experiment_datatree.zarr should fail the summaries check."""
     report = validate_analysis(failing_synth_sensitivity_analysis)
@@ -341,6 +350,7 @@ def test_validation_report_sensitivity_failing_disk_mutations(failing_synth_sens
     assert "Analysis summaries created" in failed_check_names
 
 
+@pytest.mark.requires_snakemake_subprocess
 def test_errors_and_warnings_renders_html_multi_sim_real(failing_synth_multi_sim_analysis, tmp_path):
     """End-to-end render against a real (cloned + mutated) analysis."""
     out_path = tmp_path / "ew_multi_sim.html"
@@ -357,6 +367,7 @@ def test_errors_and_warnings_renders_html_multi_sim_real(failing_synth_multi_sim
 
 
 @pytest.mark.slow
+@pytest.mark.requires_snakemake_subprocess
 def test_errors_and_warnings_renders_html_sensitivity_real(failing_synth_sensitivity_analysis, tmp_path):
     """End-to-end render against a real (cloned + mutated) sensitivity analysis."""
     out_path = tmp_path / "ew_sensitivity.html"
@@ -494,12 +505,15 @@ def test_eda_rule_spec_templates_pins_the_sets_check_eda_calc_ran_depends_on():
 # ---------------------------------------------------------------------------
 
 
-def test_resume_validity_is_applicable_on_a_pure_triton_resumed_arm():
+def test_resume_validity_is_applicable_on_a_pure_triton_resumed_arm(tmp_path):
     """The widened check evaluates the pure-TRITON resume arm instead of
     returning N/A on the coupled toggle.
 
-    PRE-FIX this FAILS twice over: the check is named "Coupled resume validity"
-    and it returns applicable=False for any analysis whose tritonswmm toggle is off.
+    It first pins that every ``resumed_any`` registry defect resolves ``absent`` at
+    the sha this arm ran at, then runs the check on a resumed pure-TRITON stub.
+    Under the retired gate that returned ``applicable=False`` whenever
+    ``toggle_tritonswmm_model`` is off, this test FAILS once, on its
+    ``result.applicable is True`` assertion; no assertion here reads the check's name.
     """
     from hhemt.model_defects import REGISTRY, resolve
 
@@ -518,8 +532,27 @@ def test_resume_validity_is_applicable_on_a_pure_triton_resumed_arm():
     verdicts = [resolve(d, resume_sha) for d in both_arms]
     assert all(v.status == "absent" for v in verdicts), [(v.defect_id, v.status, v.rule) for v in verdicts]
 
+    from types import SimpleNamespace
 
-def test_clean_arm_carries_an_affected_build_but_stays_not_applicable():
+    import pandas as pd
+    import xarray as xr
+
+    from hhemt.analysis_validation import check_coupled_resume_validity
+
+    zarr_path = tmp_path / "analysis_datatree.zarr"
+    xr.DataTree(dataset=xr.Dataset(attrs={"triton_producing_sha": resume_sha})).to_zarr(zarr_path)
+    stub = SimpleNamespace(
+        _system=SimpleNamespace(cfg_system=SimpleNamespace(toggle_tritonswmm_model=False)),
+        analysis_paths=SimpleNamespace(analysis_datatree_zarr=zarr_path),
+        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=False),
+        df_status=pd.DataFrame({"model_type": ["triton"], "n_resumes": [1]}),
+    )
+    result = check_coupled_resume_validity(stub)
+    assert result.applicable is True, f"applicable={result.applicable!r} summary={result.summary!r}"
+    assert result.passed is True, f"passed={result.passed!r} summary={result.summary!r}"
+
+
+def test_clean_arm_carries_an_affected_build_but_stays_not_applicable(tmp_path):
     """The clean arms run a build where the both-arms defect is PRESENT, and only
     the trigger population keeps that from becoming a warning.
 
@@ -537,6 +570,26 @@ def test_clean_arm_carries_an_affected_build_but_stays_not_applicable():
         "the clean-arm build is expected to CARRY the both-arms defect; if this "
         "flips, the trigger-population argument needs re-deriving"
     )
+
+    from types import SimpleNamespace
+
+    import pandas as pd
+    import xarray as xr
+
+    from hhemt.analysis_validation import check_coupled_resume_validity
+
+    zarr_path = tmp_path / "analysis_datatree.zarr"
+    xr.DataTree(dataset=xr.Dataset(attrs={"triton_producing_sha": clean_sha})).to_zarr(zarr_path)
+    stub = SimpleNamespace(
+        _system=SimpleNamespace(cfg_system=SimpleNamespace(toggle_tritonswmm_model=False)),
+        analysis_paths=SimpleNamespace(analysis_datatree_zarr=zarr_path),
+        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=False),
+        df_status=pd.DataFrame({"model_type": ["triton"], "n_resumes": [0]}),
+    )
+    result = check_coupled_resume_validity(stub)
+    assert result.applicable is False, f"applicable={result.applicable!r} summary={result.summary!r}"
+    assert "INDETERMINATE" not in result.summary, result.summary
+    assert "(0 resumed coupled sim(s) examined)" in result.summary, result.summary
 
 
 def _stub_absent_record():

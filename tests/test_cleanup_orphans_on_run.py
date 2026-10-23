@@ -103,7 +103,7 @@ def test_find_orphan_datatree_groups(sensitivity_analysis_with_orphans):
     member = sensitivity_analysis_with_orphans.sensitivity
     zarr_path = sensitivity_analysis_with_orphans.analysis_paths.sensitivity_datatree_zarr
     if zarr_path is None or not zarr_path.exists():
-        pytest.skip("sensitivity_datatree.zarr not present in fixture")
+        pytest.skip("analysis_paths.sensitivity_datatree_zarr is not present in fixture")
     orphans = member.find_orphan_datatree_groups()
     assert "999" in orphans
 
