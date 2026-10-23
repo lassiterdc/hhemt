@@ -2003,7 +2003,7 @@ def test_the_coupling_declaration_is_refused_at_load_in_exactly_the_invalid_stat
     """Property: of the six mode-by-file states, exactly the three invalid ones fail to load.
 
     Class: each of ``legacy``, ``list`` and ``all_junctions`` with and without a coupling-node
-    file, plus the field omitted, which reads as ``legacy`` in this build. Why: a file under
+    file, plus the field omitted, which reads as ``all_junctions``. Why: a file under
     any mode but ``list`` is silently ignored, and ``list`` with no file has no candidates.
     What kills it: dropping the ``required_when`` declaration, or refusing the file under
     ``list``. Second correct implementation: a single validator enumerating the invalid
@@ -2016,7 +2016,7 @@ def test_the_coupling_declaration_is_refused_at_load_in_exactly_the_invalid_stat
         fields["swmm_coupling_mode"] = mode
     if refusal is None:
         cfg = _coupling_system_config(tmp_path, **fields)
-        assert cfg.swmm_coupling_mode == (mode or "legacy")
+        assert cfg.swmm_coupling_mode == (mode or "all_junctions")
     else:
         with pytest.raises(ValidationError, match=refusal):
             _coupling_system_config(tmp_path, **fields)
@@ -2602,3 +2602,114 @@ def test_review_every_active_output_folder_line_goes_and_one_lands_before_the_fi
     assert ("output_folder is managed by hhemt" in out) == bool(removed_values), out
     for value in removed_values:
         assert repr(value) in out, out
+
+
+# ---------------------------------------------------------------------------
+# The default declaration: a system config that omits swmm_coupling_mode
+# ---------------------------------------------------------------------------
+
+
+def _omitted_mode() -> str:
+    """The mode a system config that omits ``swmm_coupling_mode`` gets: the field's declared default.
+
+    The stand-in systems below carry the mode as an attribute, so "omitted" is modelled by
+    reading the default off the real field rather than by writing a literal, which keeps these
+    tests about the default the config actually declares.
+    """
+    from hhemt.config.system import system_config
+
+    return system_config.model_fields["swmm_coupling_mode"].default
+
+
+def test_with_the_mode_omitted_every_coordinated_junction_is_a_candidate_at_run_entry(tmp_path):
+    """Property: with the mode omitted, a template with no FLOW inflow but a coordinated junction is not refused.
+
+    Class: coupled templates that give no node a FLOW inflow, with and without a junction that
+    has a ``[COORDINATES]`` row, under the default declaration. Why: by default every
+    coordinated junction is a candidate, so the absence of FLOW lines no longer means the run
+    exchanges no water; refusing it would block a valid default run, and a template with no
+    coordinated junction still couples nothing. What kills it: a default that still derives
+    candidates from FLOW lines. Second correct implementation: counting coordinated junctions
+    from a full node table; the assertions read only whether the check raises and its cause.
+    """
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.exceptions import ConfigurationError
+
+    inp = _coupling_inp(tmp_path, inflows="")
+    fake = _coupling_analysis(_coupling_system(tmp_path, inp, mode=_omitted_mode()))
+    TRITONSWMM_analysis._refuse_coupled_system_with_no_coupling_candidate(fake)
+    bare = _coupling_inp(tmp_path, inflows="", coordinates="O1 25 15", name="bare")
+    fake = _coupling_analysis(_coupling_system(tmp_path, bare, mode=_omitted_mode()))
+    with pytest.raises(ConfigurationError, match=r"it has no junction with a \[COORDINATES\] row"):
+        TRITONSWMM_analysis._refuse_coupled_system_with_no_coupling_candidate(fake)
+
+
+def test_with_the_mode_omitted_the_list_names_every_junction_and_an_outfall_keeps_its_inflow(tmp_path):
+    """Property: with the mode omitted, preparation writes every coordinated junction and leaves inflows byte-identical.
+
+    Class: models whose only FLOW inflow is on an outfall, under the default declaration. Why:
+    the default couples junctions by their coordinates, not by their inflow lines, and the
+    outfall's inflow must still reach SWMM. What kills it: a default that reads candidates from
+    ``[INFLOWS]`` (which would make the lone outfall a candidate and stop preparation), or
+    deleting the outfall's line. Second correct implementation: selecting junctions by a full
+    node table; the assertions read the list and the prepared file's bytes.
+    """
+    before, after, written = _prepare_list(tmp_path, mode=_omitted_mode(), inflows='O1 FLOW "" FLOW 1.0 1 0.5')
+    assert written == "J2\nJ1\nJ3\n"
+    assert after == before
+
+
+def test_with_the_mode_omitted_a_flow_line_changes_no_candidate(tmp_path):
+    """Property: with the mode omitted, adding a FLOW inflow line to a model changes no coupling candidate.
+
+    Class: the same coordinated junctions with and without a FLOW line on one of them, under
+    the default declaration. Why: only ``legacy`` reads ``[INFLOWS]`` for candidates, so under
+    the default no inflow line may add, remove or reorder one. What kills it: a default that
+    reads FLOW lines. Second correct implementation: deriving candidates from the coordinate
+    table alone; the assertions compare the two candidate lists.
+    """
+    from hhemt.scenario import coupling_candidates
+
+    with_flow = _coupling_system(tmp_path, _coupling_inp(tmp_path, inflows='J1 FLOW "" FLOW 1 1 0', name="a"))
+    without = _coupling_system(tmp_path, _coupling_inp(tmp_path, inflows="", name="b"))
+    with_flow.cfg_system.swmm_coupling_mode = without.cfg_system.swmm_coupling_mode = _omitted_mode()
+    assert coupling_candidates(with_flow.cfg_system) == coupling_candidates(without.cfg_system) == ["J1", "J2"]
+
+
+def test_with_the_mode_omitted_the_one_per_cell_option_is_refused_naming_all_junctions(tmp_path):
+    """Property: with the mode omitted, turning the one-node-per-cell option on is refused at run entry.
+
+    Class: systems that do not set ``swmm_coupling_mode`` in analyses that turn the option on.
+    Why: the option applies only to ``legacy``, and the default is a declared mode, so a config
+    that relied on the option must now opt in to ``legacy``; the refusal names the mode in force
+    so the remedy it gives is the one that applies. What kills it: refusing only an explicitly
+    set mode. Second correct implementation: refusing at config load from both configs; the
+    assertions read whether the check raises and the mode it names.
+    """
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.exceptions import ConfigurationError
+
+    inp = _coupling_inp(tmp_path)
+    fake = _coupling_analysis(_coupling_system(tmp_path, inp, mode=_omitted_mode()), one_per_cell=True)
+    with pytest.raises(ConfigurationError, match="swmm_coupling_mode is 'all_junctions'"):
+        TRITONSWMM_analysis._refuse_invalid_coupling_declaration(fake)
+
+
+def test_with_the_mode_omitted_a_junction_without_a_flow_line_outside_the_grid_is_refused(tmp_path):
+    """Property: with the mode omitted, a coordinated junction outside the TRITON grid is refused, FLOW line or not.
+
+    Class: junctions with coordinates outside a 4 x 3 grid of 10 m cells that carry no FLOW
+    inflow, under the default declaration. Why: by default every coordinated junction is
+    written to the list, so TRITON-SWMM would stop on it at startup. What kills it: judging only
+    FLOW-carrying nodes. Second correct implementation: checking the written list after
+    preparation; the assertions read whether the check raises and the node it names.
+    """
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.exceptions import ConfigurationError
+
+    inp = _coupling_inp(tmp_path, inflows='J1 FLOW "" FLOW 1 1 0', coordinates="J1 5 5\nJ2 45 5\nO1 25 15")
+    system = _coupling_system(tmp_path, inp, mode=_omitted_mode())
+    _processed_dem(system.sys_paths.dem_processed, ncols=4, nrows=3)
+    fake = _coupling_analysis(system)
+    with pytest.raises(ConfigurationError, match=r"J2 \(45, 5\)"):
+        TRITONSWMM_analysis._refuse_coupling_nodes_outside_triton_grid(fake, overwrite_system_inputs=False)

@@ -24,16 +24,16 @@ selected from:
 
 | `swmm_coupling_mode` | Candidates |
 |---|---|
-| `legacy` (the default) | Every node of `SWMM_hydraulics` that carries an `[INFLOWS]` line with constituent `FLOW`, read by SWMM's own rule. |
+| `all_junctions` (the default) | Every `[JUNCTIONS]` node of `SWMM_hydraulics` that has a `[COORDINATES]` row. |
 | `list` | The nodes named in `swmm_coupling_nodes_file`. Each must be a junction with a `[COORDINATES]` row. |
-| `all_junctions` | Every `[JUNCTIONS]` node of `SWMM_hydraulics` that has a `[COORDINATES]` row. |
+| `legacy` (an explicit opt-in) | Every node of `SWMM_hydraulics` that carries an `[INFLOWS]` line with constituent `FLOW`, read by SWMM's own rule. |
 
 `swmm_coupling_nodes_file` is required with `list` and refused with any other mode,
 because it would be ignored. The file is one node name per line, with surrounding
 whitespace stripped, blank lines and lines starting `;` skipped, and no header.
 
-**The legacy candidates**, the ones a config gets when it does not set
-`swmm_coupling_mode`, follow SWMM's reading of an inflow line: a line names a FLOW
+**The legacy candidates**, an explicit opt-in with `swmm_coupling_mode: legacy`,
+follow SWMM's reading of an inflow line: a line names a FLOW
 inflow when it has at least three items and its constituent is not a name in
 `[POLLUTANTS]` and begins, ignoring the case of ASCII letters, with `FLOW`. So a
 node whose only inflow line is a pollutant is not a candidate, because SWMM gives it

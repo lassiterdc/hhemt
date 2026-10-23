@@ -3970,3 +3970,7 @@ non_breaking_allowlist:
       change keeps its cfg until it is re-prepared. AUTHORSHIP NOTE: `hhemt-specialist`, 2b.4,
       UNCOMMITTED per A-22; the layout_signature is the file's sha256 at this write and must
       equal it AS COMMITTED. KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/system.py
+    layout_signature: 1e5c853fc4417f69d31cc675434fb3371dd50de803c00c78d03e6d1d6891fe25
+    justification: >-
+      snapshot-refusal 2b.5 — swmm_coupling_mode default becomes all_junctions. Pure in-memory config default; no on-disk layout / figure stem / zarr / log / path change.

@@ -120,24 +120,28 @@ class system_config(cfgBaseModel):
         "can be run in addition to TRITON-SWMM to compare SWMM hydraulics results.",
         json_schema_extra=field_meta(required_when=[when("toggle_swmm_model", True)]),
     )
-    swmm_coupling_mode: Literal["legacy", "list", "all_junctions"] = Field(
-        "legacy",
+    swmm_coupling_mode: Literal["all_junctions", "list", "legacy"] = Field(
+        "all_junctions",
         description=(
             "Which SWMM nodes the coupled TRITON-SWMM model may exchange water at. The toolkit "
             "always gives TRITON an explicit list it writes for each scenario; this setting "
-            "chooses the candidates that list is selected from."
+            "chooses the candidates that list is selected from. The default, all_junctions, "
+            "couples every junction that has a [COORDINATES] row; legacy keeps the earlier "
+            "selection from FLOW [INFLOWS] lines."
         ),
         json_schema_extra=field_meta(
             applies_when=[when("toggle_tritonswmm_model", True)],
             options={
-                "legacy": (
-                    "Every node of SWMM_hydraulics that carries an [INFLOWS] line with "
-                    "constituent FLOW, read by SWMM's own rule."
+                "all_junctions": (
+                    "The default. Every [JUNCTIONS] node of SWMM_hydraulics that has a [COORDINATES] row."
                 ),
                 "list": (
                     "The nodes named in swmm_coupling_nodes_file; each must be a junction with a [COORDINATES] row."
                 ),
-                "all_junctions": "Every [JUNCTIONS] node of SWMM_hydraulics that has a [COORDINATES] row.",
+                "legacy": (
+                    "An explicit opt-in: every node of SWMM_hydraulics that carries an "
+                    "[INFLOWS] line with constituent FLOW, read by SWMM's own rule."
+                ),
             },
         ),
     )
