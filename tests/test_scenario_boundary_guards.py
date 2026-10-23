@@ -2501,3 +2501,104 @@ def test_an_uncoupled_system_neither_selects_nor_writes_a_coupling_list_at_prepa
         with pytest.raises(_StopAfterTheChecks):
             scen.prepare_scenario()
     assert not (hydraulics.parent / "coupling_nodes.txt").exists()
+
+
+# ---------------------------------------------------------------------------
+# hhemt owns output_folder in every TRITON and TRITON-SWMM cfg it builds
+# ---------------------------------------------------------------------------
+
+_OUTPUT_FOLDER_CASES = [
+    # (template body, the value a notice must name, or None for no notice)
+    ('sim_start_time=0\noutput_folder="/abs/path"\ndem_filename=dem.dem\n', "/abs/path"),
+    ("sim_start_time=0\noutput_folder=results\ndem_filename=dem.dem\n", "results"),
+    ('sim_start_time=0\noutput_folder="{folder}"\ndem_filename=dem.dem\n', None),
+    ("sim_start_time=0\ndem_filename=dem.dem\n", None),
+    ("sim_start_time=0\n", None),
+    ("sim_start_time=0\n#output_folder=x\ndem_filename=dem.dem\n", None),
+]
+
+
+@pytest.mark.parametrize(("model", "folder"), [("coupled", "out_tritonswmm"), ("triton_only", "out_triton")])
+@pytest.mark.parametrize(("template", "noticed"), _OUTPUT_FOLDER_CASES)
+def test_hhemt_writes_its_own_output_folder_into_every_cfg(
+    tmp_path, monkeypatch, capsys, model, folder, template, noticed
+):
+    """Property: each cfg the toolkit builds carries exactly one active ``output_folder`` naming hhemt's folder.
+
+    Class: TRITON-SWMM and TRITON-only cfg templates whose ``output_folder`` is an absolute
+    path, another relative folder, hhemt's own folder, absent, absent along with any
+    ``dem_filename=`` line, or present only as a ``#`` comment. Why: the container bind and the
+    resume step-back look for outputs only under ``out_tritonswmm`` or ``out_triton``, so a
+    template's own value sends outputs where neither looks, and the earlier insertion added
+    nothing to a template without a ``dem_filename=`` line. What kills it: keeping a template's
+    value, inserting a second line, dropping the comment, or inserting nothing without a
+    ``dem_filename=`` line. Second correct implementation: rebuilding the cfg from a parsed
+    key table and writing the folder line first; the assertions read only the active lines,
+    the line after hhemt's, the comment, and whether a notice names the replaced value.
+    """
+    scen, cfg = _scenario_for_coupled_cfg(tmp_path, monkeypatch, rim_from_dem=False)
+    scen.event_iloc = 3
+    body = template.replace("{folder}", folder)
+    scen._system.cfg_system.triton_swmm_configuration_template.write_text(body)
+    if model == "coupled":
+        scen._generate_TRITON_SWMM_cfg()
+    else:
+        cfg = tmp_path / "sim" / "TRITON.cfg"
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        scen._system.cfg_system.toggle_triton_model = True
+        scen.scen_paths.triton_cfg = cfg
+        scen._generate_TRITON_cfg()
+    lines = cfg.read_text().splitlines()
+    active = [i for i, line in enumerate(lines) if line.lstrip().startswith("output_folder")]
+    assert len(active) == 1
+    assert lines[active[0]] == f'output_folder="{folder}"'
+    if "dem_filename=" in body:
+        assert lines[active[0] + 1].startswith("dem_filename=")
+    else:
+        assert active[0] == len([line for line in lines if not line.startswith("swmm_coupling_nodes")]) - 1
+    assert ("#output_folder=x" in lines) == ("#output_folder=x" in body)
+    out = capsys.readouterr().out
+    if noticed is None:
+        assert "output_folder is managed by hhemt" not in out
+    else:
+        assert out.count("output_folder is managed by hhemt") == 1
+        assert noticed in out and f'replaced it with "{folder}"' in out and "[Scenario 3]" in out
+
+
+@pytest.mark.parametrize(
+    ("template", "removed_values"),
+    [
+        ('sim_start_time=0\noutput_folder="a"\ndem_filename=dem.dem\noutput_folder=b\n', ["a", "b"]),
+        ('sim_start_time=0\n  output_folder = "x"\ndem_filename=dem.dem\n', ["x"]),
+        ('dem_filename=dem.dem\nsim_start_time=0\noutput_folder="y"\n', ["y"]),
+        ("sim_start_time=0\n  dem_filename=dem.dem\n", []),
+    ],
+)
+def test_review_every_active_output_folder_line_goes_and_one_lands_before_the_first_dem_line(
+    tmp_path, monkeypatch, capsys, template, removed_values
+):
+    """Property: a coupled cfg built from a template keeps no template ``output_folder`` line at all.
+
+    Class: templates whose ``output_folder`` lines are positioned unlike a single line just
+    above ``dem_filename=``: two active lines, one indented with spaces around ``=``, and a
+    template whose ``dem_filename=`` line is the FIRST line or is indented. Why: TRITON keeps
+    the first value it parses for a key and trims each line before parsing, so a second
+    template line that survives would still be read as the output folder, and an indented
+    ``dem_filename=`` is an active line to TRITON. What kills it: removing only the first
+    active line, or anchoring the insertion on a newline before ``dem_filename=`` so a
+    first-line or indented one is missed. Second correct implementation: rebuilding the cfg
+    from a parsed key table with hhemt's folder written first; the assertions read only the
+    active lines, the line after hhemt's, and which values the notice names.
+    """
+    scen, cfg = _scenario_for_coupled_cfg(tmp_path, monkeypatch, rim_from_dem=False)
+    scen.event_iloc = 7
+    scen._system.cfg_system.triton_swmm_configuration_template.write_text(template)
+    scen._generate_TRITON_SWMM_cfg()
+    lines = cfg.read_text().splitlines()
+    active = [i for i, line in enumerate(lines) if line.lstrip().startswith("output_folder")]
+    assert [lines[i] for i in active] == ['output_folder="out_tritonswmm"'], lines
+    assert lines[active[0] + 1].lstrip().startswith("dem_filename="), lines
+    out = capsys.readouterr().out
+    assert ("output_folder is managed by hhemt" in out) == bool(removed_values), out
+    for value in removed_values:
+        assert repr(value) in out, out

@@ -541,6 +541,66 @@ def set_swmm_coupling_nodes(cfg_content: str, nodes_file) -> str:
     return f'{text}{separator}{SWMM_COUPLING_NODES_KEY}="{nodes_file}"\n'
 
 
+def set_hhemt_output_folder(cfg_text: str, folder: str) -> tuple[str, list[str]]:
+    """Give a TRITON cfg exactly one active ``output_folder="{folder}"`` line; return it and the values removed.
+
+    The toolkit owns the output folder: the container bind and the resume step-back both key
+    on ``out_tritonswmm`` (coupled) and ``out_triton`` (TRITON-only), so a template's own value
+    would send outputs where neither looks. Every ACTIVE ``output_folder`` line is removed, a
+    line whose first non-blank text matches ``output_folder\\s*=``; a line starting ``#`` is a
+    comment and is kept. One line is inserted directly before the first active
+    ``dem_filename=`` line, or appended as the last line when the cfg has none, because the
+    earlier insertion anchored on a ``dem_filename=`` line and inserted nothing without one.
+
+    Returns the new text and the removed lines' values, each stripped of surrounding
+    whitespace and of one pair of double quotes, so a caller can tell a template that set a
+    different folder from one that already named this one.
+    """
+    import re
+
+    active = re.compile(r"output_folder\s*=")
+    dem_line = re.compile(r"dem_filename\s*=")
+    removed: list[str] = []
+    kept: list[str] = []
+    for line in cfg_text.splitlines(keepends=True):
+        if active.match(line.lstrip()):
+            value = line.split("=", 1)[1].strip()
+            if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+                value = value[1:-1]
+            removed.append(value)
+            continue
+        kept.append(line)
+    new_line = f'output_folder="{folder}"\n'
+    for index, line in enumerate(kept):
+        if dem_line.match(line.lstrip()):
+            kept.insert(index, new_line)
+            break
+    else:
+        if kept and not kept[-1].endswith("\n"):
+            kept[-1] += "\n"
+        kept.append(new_line)
+    return "".join(kept), removed
+
+
+def print_output_folder_notice(event_iloc, template, folder: str, removed: list[str]) -> None:
+    """Print, once per cfg built, that a template's ``output_folder`` was replaced, when it differed.
+
+    Nothing is printed when no line was removed or every removed value already named
+    ``folder``. The first differing value is named; when several lines were removed, all
+    their values are listed.
+    """
+    differing = [value for value in removed if value != folder]
+    if not differing:
+        return
+    value = repr(differing[0]) if len(removed) == 1 else repr(removed)
+    print(
+        f"[Scenario {event_iloc}] TRITON cfg template {template} sets output_folder={value}; "
+        f'hhemt replaced it with "{folder}". output_folder is managed by hhemt (out_tritonswmm for '
+        "TRITON-SWMM, out_triton for TRITON-only) and is not a user setting.",
+        flush=True,
+    )
+
+
 def require_dem_rim_capable_triton(
     *,
     execution_environment: str,
@@ -1073,12 +1133,14 @@ class TRITONSWMM_scenario:
         )
         utils.create_from_template(triton_swmm_configuration_template, mapping, self.scen_paths.triton_swmm_cfg)
 
-        # Post-process to add output_folder for TRITON-SWMM outputs
+        # Post-process: hhemt owns the coupled output folder, whatever the template sets.
         cfg_content = self.scen_paths.triton_swmm_cfg.read_text()
         cfg_as_written = cfg_content
-        if "output_folder" not in cfg_content:
-            # Insert after dem_filename line
-            cfg_content = cfg_content.replace("\ndem_filename=", '\noutput_folder="out_tritonswmm"\ndem_filename=')
+        cfg_content, removed_folders = set_hhemt_output_folder(cfg_content, "out_tritonswmm")
+        if removed_folders:
+            print_output_folder_notice(
+                self.event_iloc, triton_swmm_configuration_template, "out_tritonswmm", removed_folders
+            )
         # The coupled set, declared to TRITON by naming the list preparation wrote. Always
         # written, so TRITON never derives the set from [INFLOWS] itself. Placed before the
         # optional arm-selector lines below, so each of those stays a pure suffix of the cfg.
@@ -1194,10 +1256,12 @@ class TRITONSWMM_scenario:
             '#inp_filename=""  # TRITON-only mode (no SWMM coupling)',
         )
 
-        # Add output_folder for TRITON-only outputs
-        if "output_folder" not in cfg_content:
-            # Insert after dem_filename line
-            cfg_content = cfg_content.replace("\ndem_filename=", '\noutput_folder="out_triton"\ndem_filename=')
+        # hhemt owns the TRITON-only output folder, whatever the template sets.
+        cfg_content, removed_folders = set_hhemt_output_folder(cfg_content, "out_triton")
+        if removed_folders:
+            print_output_folder_notice(
+                self.event_iloc, triton_swmm_configuration_template, "out_triton", removed_folders
+            )
 
         self.scen_paths.triton_cfg.write_text(cfg_content)
 
