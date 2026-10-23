@@ -1,8 +1,14 @@
-"""Regression test: per-row sensitivity-CSV edit triggers per-member_id rerun.
+"""Regression tests: a per-row sensitivity-CSV edit reruns only that member_id's chain,
+and orphan cleanup after a row is removed.
 
-Verifies the per-member_id input-fingerprint mechanism added in
-`SensitivityAnalysisWorkflowBuilder._build_snakefile_content()`. Uses the
-synthetic-test-model tier (cached under `platformdirs.user_cache_dir`).
+The per-member_id input fingerprint, `_status/member-{member_id}_inputs.json`, is
+written when the master Snakefile is generated
+(`SensitivityAnalysisWorkflowBuilder.generate_master_snakefile_content`) and is an
+input of that member's rules. Uses the synthetic-test-model tier. Every build pins its
+runs root under `tmp_path` except the one in `test_empty_independent_vars_degenerate_case`,
+a `start_from_scratch=True` build with no pin, which `retrieve_synth_TRITON_SWMM_test_case`
+sends to a private temporary root. The compiled software stays under
+`platformdirs.user_cache_dir("hhemt")` in every case.
 """
 
 from __future__ import annotations
@@ -24,17 +30,17 @@ def synth_member_two_row(tmp_path, monkeypatch):
 
     PINS THE RUNS ROOT, AND THE PLACEMENT IS THE WHOLE POINT. The consuming test
     rebuilds this same `analysis_name` with `start_from_scratch=False`; without a pin
-    the two builds resolve to DIFFERENT roots, because test_case_builder.py:373-375
+    the two builds resolve to DIFFERENT roots, because `retrieve_synth_TRITON_SWMM_test_case`
     sends a `start_from_scratch=True` build with no override to a private mkdtemp while
     a `False` build keeps the slug root. The rebuild then sees none of this build's
     flags and every rule re-queues.
 
     The setenv MUST live here and not in the consuming test body. A fixture body runs
     BEFORE the test body, so a pin written in the test has not executed when THIS build
-    runs. Measured both ways: pin-in-test-body leaves the two builds disagreeing,
-    pin-here makes them agree, and monkeypatch's function scope carries the value
-    through the test body so the rebuild is pinned too. Same construction as
-    tests/conftest.py:1088.
+    runs, and the two builds would disagree. Pinned here, monkeypatch's function scope
+    carries the value through the test body, so the rebuild is pinned too. Same
+    construction as the function-scoped builders in tests/conftest.py, such as
+    `synth_multi_sim_analysis`.
 
     tmp_path is per-test-item, so the four consumers of this fixture each get their own
     root and no longer wipe one another under one analysis_name.
@@ -78,7 +84,7 @@ def _fingerprint_mtime(case, member_id: str) -> float:
 
 
 def test_fingerprint_files_written_on_first_invocation(synth_member_two_row):
-    """R1 + R3: every member_id gets a fingerprint file at _status/member-{member_id}_inputs.json."""
+    """Every member_id gets a fingerprint file at _status/member-{member_id}_inputs.json."""
     case = synth_member_two_row
     case.analysis.submit_workflow(mode="local", dry_run=True)
 
@@ -89,13 +95,14 @@ def test_fingerprint_files_written_on_first_invocation(synth_member_two_row):
     assert fp1["__schema_version__"] == 1
     assert fp0["fields"]["n_omp_threads"] == 2
     assert fp1["fields"]["n_omp_threads"] == 4
-    # member_id excluded; only independent_vars + sentinel
+    # member_id is not a field: "fields" holds only the analysis independent vars,
+    # beside the top-level "__schema_version__" sentinel
     assert "member_id" not in fp0["fields"]
     assert "member_id" not in fp1["fields"]
 
 
 def test_fingerprint_idempotent_when_csv_unchanged(synth_member_two_row):
-    """R5: re-invoking with no CSV change preserves fingerprint mtimes."""
+    """Re-invoking with no CSV change preserves fingerprint mtimes."""
     case = synth_member_two_row
     case.analysis.submit_workflow(mode="local", dry_run=True)
     mtime0_before = _fingerprint_mtime(case, "0")
@@ -109,7 +116,7 @@ def test_fingerprint_idempotent_when_csv_unchanged(synth_member_two_row):
 
 
 def test_helper_returns_false_on_unchanged_repeat_call(synth_member_two_row):
-    """R2 + R5 (helper-level): _write_member_id_fingerprint returns False when content unchanged."""
+    """At helper level, _write_member_id_fingerprint returns False when content unchanged."""
     case = synth_member_two_row
     case.analysis.submit_workflow(mode="local", dry_run=True)
 
@@ -123,7 +130,7 @@ def test_helper_returns_false_on_unchanged_repeat_call(synth_member_two_row):
 
 
 def test_empty_independent_vars_degenerate_case(tmp_path):
-    """R7: when independent_vars is empty, fingerprints are no-op (empty fields dict)."""
+    """When independent_vars is empty, each fingerprint holds an empty fields dict."""
     csv_path = tmp_path / "sensitivity_degenerate.csv"
     pd.DataFrame({"member_id": ["0", "1"]}).to_csv(csv_path, index=False)
     case = retrieve_synth_TRITON_SWMM_test_case(
@@ -147,11 +154,11 @@ def test_empty_independent_vars_degenerate_case(tmp_path):
 @pytest.mark.slow
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_one_row_edit_triggers_only_that_chain(synth_member_two_row):
-    """R4: editing one row reruns only that member_id's chain (full execution; slow).
+    """Editing one row re-queues only that member_id's chain (full execution; slow).
 
-    The only test in this module that runs a FULL (non-dry-run) workflow, so it
-    is the only one needing the compiled binaries; the dry-run fingerprint tests
-    stay ungated. Skips without cmake+mpic++; HARD-FAILS under
+    It runs a FULL (non-dry-run) workflow, so it requests the compiled binaries,
+    as test_dry_run_orphan_cleanup_does_not_mutate does for its own first run;
+    the dry-run fingerprint tests stay ungated. Skips without cmake+mpic++; HARD-FAILS under
     HHEMT_REQUIRE_COMPILE_TIER=1."""
     case = synth_member_two_row
     # Initial run (full execution, not dry-run) so flag files exist for member_0 and member_1
@@ -162,14 +169,14 @@ def test_one_row_edit_triggers_only_that_chain(synth_member_two_row):
     df.loc[df["member_id"].astype(str) == "1", "n_omp_threads"] = 8
     df.to_csv(case.sensitivity_csv_path, index=False)
 
-    # CRITICAL: case.analysis.sensitivity.members is built ONCE at construction
-    # (sensitivity_analysis.py:284 -> read_csv at :1482) and is NOT re-read by
-    # submit_workflow. The per-member_id fingerprint (workflow.py:6865) is computed from
-    # the in-memory member, so reusing the stale case would reproduce the
-    # ORIGINAL fingerprint -> no mtime bump -> "Nothing to be done". Rebuild the case
-    # from the edited CSV (start_from_scratch=False preserves the materialized run and
-    # skips preprocessing; it only re-reads configs + the edited CSV). This mirrors the
-    # real CLI flow (edit CSV -> re-instantiate analysis -> re-submit).
+    # CRITICAL: case.analysis.sensitivity.members is built ONCE, in the constructor
+    # (`_create_members`, over the df_setup the constructor read from the CSV), and is NOT
+    # re-read by submit_workflow. The per-member_id fingerprint is computed from the
+    # in-memory member when the master Snakefile is generated, so reusing the stale case
+    # would reproduce the ORIGINAL fingerprint -> no mtime bump -> "Nothing to be done".
+    # Rebuild the case from the edited CSV: start_from_scratch=False keeps the
+    # materialized run (no wipe) and re-reads the configs and the edited CSV. This mirrors
+    # the real CLI flow (edit CSV -> re-instantiate analysis -> re-submit).
     case = retrieve_synth_TRITON_SWMM_test_case(
         analysis_name="synth_sensitivity_csv_row_rerun",
         toggle_tritonswmm_model=True,
@@ -181,9 +188,8 @@ def test_one_row_edit_triggers_only_that_chain(synth_member_two_row):
 
     # Rebuild and dry-run to inspect what would re-execute. submit_workflow has no
     # capture_output param; the --dry-run snakemake stdout is redirected to a
-    # logfile (run_snakemake_local, workflow.py:3318) whose path the returned dict
-    # carries under "snakemake_logfile" (workflow.py:3347-3354). Read the dry-run
-    # rule names from that log.
+    # logfile (in `run_snakemake_local`) whose path the returned dict carries under
+    # "snakemake_logfile". Read the dry-run rule names from that log.
     result = case.analysis.submit_workflow(mode="local", dry_run=True)
     dry_run_log = result["snakemake_logfile"]
     stdout = Path(dry_run_log).read_text() if Path(dry_run_log).exists() else ""
@@ -196,18 +202,21 @@ def test_one_row_edit_triggers_only_that_chain(synth_member_two_row):
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_dry_run_orphan_cleanup_does_not_mutate(tmp_path, monkeypatch):
-    """FORBIDS: cleanup_all_orphans(dry_run=True) mutating anything. That, and only that.
+    """FORBIDS: cleanup_all_orphans(dry_run=True) deleting the orphan fingerprint or rewriting a survivor's.
 
     RENAMED because the old name claimed more than the body checked. The call below is a
-    DRY run, and all three assertions are "nothing changed", so they hold whatever the
-    deleting path does -- the test had no power over row-removal invalidation (its title)
-    or over delete-everything (its assertion message). Those two are now
-    test_row_removal_preserves_surviving_fingerprints and
-    test_orphan_cleanup_deletes_only_the_orphan, each with a call that can fail it.
+    DRY run, and its three file assertions are all "nothing changed", so they hold
+    whatever the deleting path does -- the test had no power over row-removal
+    invalidation (its title) or over delete-everything (its assertion message). Those two
+    intents belong to test_row_removal_preserves_surviving_fingerprints and
+    test_orphan_cleanup_deletes_only_the_orphan, whose bodies are not yet written (each is
+    a strict xfail that raises NotImplementedError).
 
-    What survives here is real: a regression that made dry_run=True mutate would redden
-    all three assertions, and that is the guarantee this test now names.
+    What survives here is real: a regression that made dry_run=True delete the orphan
+    fingerprint or rewrite a survivor's would redden at least one of those three
+    assertions, and that is the guarantee this test now names.
 
     THE PIN GOES IN THE TEST BODY HERE, unlike synth_member_two_row's, because BOTH of
     this test's builds are in the body -- so the placement that is wrong for a
@@ -252,9 +261,9 @@ def test_dry_run_orphan_cleanup_does_not_mutate(tmp_path, monkeypatch):
             "n_nodes": [1, 1],
         }
     ).to_csv(csv_path, index=False)
-    # Rebuild from the row-removed CSV: sensitivity.df_setup (sensitivity_analysis.py
-    # :1678) is frozen at construction, so the stale in-memory df would still list member_1
-    # as "expected" and find_orphan_status_flags would find nothing (no-op false pass).
+    # Rebuild from the row-removed CSV: sensitivity.df_setup is set once, in the constructor,
+    # so the stale in-memory df would still list member_1 as "expected" and the orphan
+    # finders, which read df_setup.index, would find nothing (no-op false pass).
     case = retrieve_synth_TRITON_SWMM_test_case(
         analysis_name="synth_sensitivity_csv_row_rerun_3row",
         toggle_tritonswmm_model=True,
@@ -263,12 +272,10 @@ def test_dry_run_orphan_cleanup_does_not_mutate(tmp_path, monkeypatch):
         sensitivity_csv=csv_path,
         start_from_scratch=False,
     )
-    # Exercise the orphan-cleanup directly (R6's assertion target) instead of routing
-    # through run(): run() runs report-config validation first (analysis.py:1881-1885,
-    # raising ConfigurationError because cfg_analysis.report is the empty {} block from
-    # test_case_builder.py:474), and run(dry_run=True, cleanup_orphans=True) actually
-    # DELETES orphans (cleanup_all_orphans(dry_run=False) at analysis.py:1984), which
-    # contradicts this test's "left in place / does not rerun" intent. The run()-path
+    # Exercise the orphan cleanup directly, the call this test asserts on, instead of routing
+    # through run(): run() would first validate the active reporting set and then decide at
+    # its orphan gate whether to call cleanup_all_orphans at all, and neither step is what
+    # this test checks. run() forwards its own dry_run to that call; the run()-path
     # cleanup_orphans integration is covered by test_cleanup_orphans_on_run.py.
     case.analysis.sensitivity.cleanup_all_orphans(dry_run=True, force=True, verbose=False)
 
@@ -305,14 +312,16 @@ def test_row_removal_preserves_surviving_fingerprints(tmp_path, monkeypatch):
     """FORBIDS: a row removal invalidating the fingerprints of the members that remain.
 
     This is the intent the old test's TITLE claimed and its body never exercised: it
-    asserted unchanged mtimes across a dry-run cleanup, which mutates nothing, so the
-    assertion held whatever row removal did. Here the mtimes are read after the REBUILD
-    -- the path that actually rewrites fingerprints -- so a compare-and-write regression
-    that bumped every member's mtime would redden this and nothing else.
+    asserted unchanged mtimes across a dry-run cleanup, so the assertion held whatever
+    row removal did. The planned body reads the mtimes after the REBUILD -- the path
+    that rewrites fingerprints -- so that a compare-and-write regression bumping every
+    member's mtime would redden it.
+
+    Not yet in force: the body raises NotImplementedError under a strict xfail.
     """
     monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
-    # Build the 3-row case, run it, record survivors' fingerprint mtimes, remove one row,
-    # rebuild and re-submit, then assert only the removed member's chain moved.
+    # Planned body: build the 3-row case, run it, record survivors' fingerprint mtimes,
+    # remove one row, rebuild and re-submit, then assert only the removed member's chain moved.
     raise NotImplementedError("body follows the 3-row construction of test_dry_run_orphan_cleanup_does_not_mutate")
 
 
@@ -337,6 +346,8 @@ def test_orphan_cleanup_deletes_only_the_orphan(tmp_path, monkeypatch):
     change would fail on the first half while a test that only asserted deletion would
     pass on a delete-everything regression. This is the call the old test could not make
     -- dry_run=False -- and is why it cannot share a test with the dry-run arm.
+
+    Not yet in force: the body raises NotImplementedError under a strict xfail.
     """
     monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     raise NotImplementedError(
