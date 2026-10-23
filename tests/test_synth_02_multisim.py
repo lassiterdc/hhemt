@@ -1,12 +1,21 @@
-"""Synthetic-model multi-sim tier. Mirror of test_PC_02 using synth fixtures."""
+"""Synthetic-model multi-sim tier: run the synth multi-sim analysis's sims concurrently,
+process and consolidate a completed tree, and check that reprocessing an isolated clone
+leaves the shared session tree untouched."""
+
+import hashlib
 
 import pytest
 
 import tests.utils_for_testing as tst_ut
 
 pytestmark = [
-    # Both tests run real concurrent sims against the compiled binaries; see
-    # test_synth_00 for the gate's skip-vs-hard-fail contract.
+    # Every test here depends on the compiled TRITON-SWMM CPU binaries, in its body or through
+    # its fixtures. test_run_multisim_concurrently
+    # compiles and runs concurrent sims in its own body; the other two consume the completed
+    # multisim tree (synthetic_multisim_completed, directly or through its isolated clone),
+    # whose fixture runs the multisim workflow when its cached tree is not complete.
+    # Requesting the fixture for the whole module applies its skip-vs-hard-fail gate to all
+    # three; see test_synth_00_compile_models for that contract.
     pytest.mark.usefixtures("tritonswmm_cpu_compiled"),
 ]
 
@@ -64,9 +73,9 @@ def test_concurrently_process_scenario_timeseries(synthetic_multisim_completed_i
     for model_type in enabled_models:
         tst_ut.assert_model_outputs_processed(analysis, model_type)
 
-    # Phase 3 of cleanup-rerun-delete-redesign retired the overwrite_if_already_created
-    # parameter; consolidate_to_datatree now early-returns when the output exists.
-    # Delete it first so this regenerate-and-check pattern still exercises the writer.
+    # consolidate_to_datatree takes no overwrite parameter, and it returns early, without
+    # writing, when the store already exists and is complete and current. Delete the store
+    # first so this regenerate-and-check pattern always exercises the writer.
     if analysis.analysis_paths.analysis_datatree_zarr.exists():
         import shutil
 
@@ -76,3 +85,27 @@ def test_concurrently_process_scenario_timeseries(synthetic_multisim_completed_i
     assert analysis.analysis_paths.analysis_datatree_zarr.exists(), (
         "analysis_datatree.zarr was not produced by consolidate_to_datatree()"
     )
+
+
+def test_isolated_fixture_does_not_perturb_session_tree(
+    synthetic_multisim_completed, synthetic_multisim_completed_isolated
+):
+    """States the copy-on-read contract: a destructive op on the isolated clone
+    leaves the shared session tree's _status flags intact.
+
+    Collected under the suite's own invocation (``pytest --collect-only -q tests/``
+    lists it). Its fixtures reach the compile tier, so it runs with the
+    compile-tier tests, not in the fast tier."""
+    session_dir = synthetic_multisim_completed.analysis_paths.analysis_dir
+    flag = session_dir / "_status" / "e_consolidate_complete.flag"
+    before = hashlib.sha1(flag.read_bytes()).hexdigest() if flag.exists() else None
+    a = synthetic_multisim_completed_isolated
+    a.reprocess(
+        start_with="consolidate",
+        execution_mode="local",
+        regenerate_existing=True,
+        verbose=False,
+    )
+    after = hashlib.sha1(flag.read_bytes()).hexdigest() if flag.exists() else None
+    assert before == after, "isolated reprocess leaked into the session tree"
+    assert a.analysis_paths.analysis_dir != session_dir, "clone shares the session dir"

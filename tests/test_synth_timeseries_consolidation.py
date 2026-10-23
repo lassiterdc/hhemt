@@ -19,6 +19,7 @@ import xarray as xr
 
 from hhemt.analysis_validation import _TRITON_REPLAY_MARKER
 from hhemt.processing_analysis import _parse_replay_t
+from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV
 
 
 # ---------------------------------------------------------------------------
@@ -36,11 +37,7 @@ def test_parse_replay_t_returns_none_when_marker_absent():
 def test_parse_replay_t_keeps_last_marker():
     # The model log is "w"-truncated per exec, but within one exec multiple markers can
     # appear; the durable value is the LAST one (the final resume boundary).
-    text = (
-        f"{_TRITON_REPLAY_MARKER}100.0\n"
-        f"... more log ...\n"
-        f"{_TRITON_REPLAY_MARKER}3000.0\n"
-    )
+    text = f"{_TRITON_REPLAY_MARKER}100.0\n... more log ...\n{_TRITON_REPLAY_MARKER}3000.0\n"
     assert _parse_replay_t(text, _TRITON_REPLAY_MARKER) == 3000.0
 
 
@@ -105,7 +102,7 @@ def test_toggle_on_consolidates_node_and_link_timeseries(tmp_path, monkeypatch):
 
     # Isolate the start_from_scratch wipe under tmp_path (mirrors the
     # synth_multi_sim_analysis fixture) so it cannot clobber the shared session cache.
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     case = retrieve_synth_TRITON_SWMM_test_case(
         analysis_name="synth_multi_sim",
         n_events=3,
@@ -167,7 +164,7 @@ def test_toggle_change_invalidates_an_already_consolidated_tree(tmp_path, monkey
     """
     from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
 
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
 
     # --- Pass 1: toggle OFF (the default). Full pipeline, so the per-scenario
     # timeseries zarrs land on disk and are AVAILABLE to consolidate -- the point

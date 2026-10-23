@@ -38,7 +38,7 @@ _SYNTH_SENSITIVITY_REPORT_CONFIG = (
 # construction (monkeypatch is function-scoped and unavailable at session scope).
 @contextlib.contextmanager
 def _runs_root_override_env(path):
-    key = "HHEMT_TEST_RUNS_ROOT_OVERRIDE"
+    key = _TEST_RUNS_ROOT_OVERRIDE_ENV
     old = os.environ.get(key)
     os.environ[key] = str(path)
     try:
@@ -78,10 +78,9 @@ def _runs_root_override_env(path):
 # chains the finalizer's error as its `__context__`, so both are reported.
 #
 # Keyed to the builder's constant, imported rather than restated, so a renamed Python
-# constant is an ImportError here rather than a silently disarmed check. That covers
-# the check, not the setters: the setters in this file write the literal
-# "HHEMT_TEST_RUNS_ROOT_OVERRIDE", so a change to the constant's VALUE would leave them
-# setting the old variable while this check reads the new one. Scoped to that ONE key:
+# constant is an ImportError here rather than a silently disarmed check. The setters in
+# this file write through the same constant, so a change to its VALUE moves them and
+# this check together. Scoped to that ONE key:
 # a session-lifetime env change for any other key (e.g. the non-interactive lock-clear
 # toggle below) must not fire this.
 _RUNS_ROOT_OVERRIDE_SNAPSHOT = pytest.StashKey[object]()
@@ -322,7 +321,7 @@ def ack_node_local_configs(monkeypatch):
 def synth_multi_sim_analysis(tmp_path, monkeypatch):
     # Isolate this start_from_scratch=True wipe under tmp_path so it cannot
     # fast_rmtree the shared synth_multi_sim session cache.
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=True)
     return case.analysis
 
@@ -380,7 +379,7 @@ def synthetic_multisim_builder(tmp_path, monkeypatch):
     """
     # Isolate this start_from_scratch=True wipe under tmp_path so it cannot
     # fast_rmtree the shared synth_multi_sim session cache.
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=True)
     return case.analysis._workflow_builder
 
@@ -425,7 +424,7 @@ def synth_triton_and_tritonswmm_analysis_cached():
 def synth_sensitivity_analysis(tmp_path, monkeypatch):
     # Isolate this start_from_scratch=True wipe under tmp_path so it cannot
     # fast_rmtree the shared synth_sensitivity session cache.
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(start_from_scratch=True)
     return case.analysis
 
@@ -770,7 +769,9 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
     if state != "complete":
         # Stamp the master's layout version before the direct facade call below writes into it.
         # Stamping here keeps this fixture correct whether or not that facade stamps the master itself;
-        # on a master that already carries this version's stamp, the call is a no-op.
+        # on a master that already carries this version's stamp, the call is a no-op. On a master
+        # stamped at a different version, or holding results with no stamp, it raises
+        # ``LayoutVersionError`` rather than relabelling it.
         from hhemt.version_migration import LAYOUT_VERSION
         from hhemt.version_migration.state import stamp_new_target
 
@@ -806,30 +807,6 @@ def synthetic_sensitivity_completed_isolated(synthetic_sensitivity_completed, tm
 
     master_clone = clone_analysis_to_tmp(synthetic_sensitivity_completed.experiment, tmp_path)
     return master_clone.sensitivity
-
-
-def test_isolated_fixture_does_not_perturb_session_tree(
-    synthetic_multisim_completed, synthetic_multisim_completed_isolated
-):
-    """States the copy-on-read contract: a destructive op on the isolated clone
-    leaves the shared session tree's _status flags intact.
-
-    Not in force under the suite's own invocation: pytest collects no tests from a
-    conftest.py (``pytest --collect-only -q tests/`` lists none from this file), so
-    this runs only when tests/conftest.py is passed to pytest explicitly."""
-    session_dir = synthetic_multisim_completed.analysis_paths.analysis_dir
-    flag = session_dir / "_status" / "e_consolidate_complete.flag"
-    before = hashlib.sha1(flag.read_bytes()).hexdigest() if flag.exists() else None
-    a = synthetic_multisim_completed_isolated
-    a.reprocess(
-        start_with="consolidate",
-        execution_mode="local",
-        regenerate_existing=True,
-        verbose=False,
-    )
-    after = hashlib.sha1(flag.read_bytes()).hexdigest() if flag.exists() else None
-    assert before == after, "isolated reprocess leaked into the session tree"
-    assert a.analysis_paths.analysis_dir != session_dir, "clone shares the session dir"
 
 
 @pytest.fixture(scope="session")
@@ -1245,7 +1222,7 @@ def synth_case_hydrology_disabled(tmp_path, monkeypatch):
     """
     from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
 
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     return retrieve_synth_TRITON_SWMM_test_case(
         analysis_name="synth_hydrology_disabled",
         n_events=1,

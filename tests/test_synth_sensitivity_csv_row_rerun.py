@@ -13,7 +13,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
+from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV, retrieve_synth_TRITON_SWMM_test_case
 
 pytestmark = pytest.mark.requires_snakemake_subprocess
 
@@ -39,7 +39,7 @@ def synth_member_two_row(tmp_path, monkeypatch):
     tmp_path is per-test-item, so the four consumers of this fixture each get their own
     root and no longer wipe one another under one analysis_name.
     """
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     csv_path = tmp_path / "sensitivity_2row.csv"
     pd.DataFrame(
         {
@@ -213,7 +213,7 @@ def test_dry_run_orphan_cleanup_does_not_mutate(tmp_path, monkeypatch):
     this test's builds are in the body -- so the placement that is wrong for a
     fixture/test pair is the correct one for this shape.
     """
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     csv_path = tmp_path / "sensitivity_3row.csv"
     pd.DataFrame(
         {
@@ -310,7 +310,7 @@ def test_row_removal_preserves_surviving_fingerprints(tmp_path, monkeypatch):
     -- the path that actually rewrites fingerprints -- so a compare-and-write regression
     that bumped every member's mtime would redden this and nothing else.
     """
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     # Build the 3-row case, run it, record survivors' fingerprint mtimes, remove one row,
     # rebuild and re-submit, then assert only the removed member's chain moved.
     raise NotImplementedError("body follows the 3-row construction of test_dry_run_orphan_cleanup_does_not_mutate")
@@ -338,7 +338,7 @@ def test_orphan_cleanup_deletes_only_the_orphan(tmp_path, monkeypatch):
     pass on a delete-everything regression. This is the call the old test could not make
     -- dry_run=False -- and is why it cannot share a test with the dry-run arm.
     """
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     raise NotImplementedError(
         "body follows the 3-row construction of test_dry_run_orphan_cleanup_does_not_mutate, then "
         "case.analysis.sensitivity.cleanup_all_orphans(dry_run=False, force=True, verbose=False)"

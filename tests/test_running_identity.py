@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 import hhemt
+from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV
 
 REPO = Path(hhemt.__file__).resolve().parents[2]
 UNSUBSTITUTED = "$Format:%H$"
@@ -207,7 +208,7 @@ def test_k_image_identity_label_mismatch_refuses(tmp_path, monkeypatch):
     hpc_path = tmp_path / "hpc_system_config.yaml"
     hpc_path.write_text(yaml.safe_dump(hpc, sort_keys=False))
     # Isolate the start_from_scratch=True wipe under tmp_path (the conftest fixture's own recipe).
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     a = Local_TestCases.retrieve_synth_multi_sim_test_case(
         start_from_scratch=True, hpc_system_config_yaml=hpc_path
     ).analysis
@@ -250,7 +251,7 @@ def test_l_constructor_refuses_a_dirty_tree(tmp_path, monkeypatch):
     from hhemt.validation import RunningIdentity
     from tests.fixtures.test_case_catalog import Local_TestCases
 
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     real = an.running_identity()
     # PATCH BEFORE RETRIEVAL. `retrieve_synth_multi_sim_test_case` CONSTRUCTS an Analysis,
     # so on a dirty tree it raises before either arm reaches its assertion -- which would
@@ -283,7 +284,7 @@ def test_l2_constructor_accepts_the_same_tree_when_not_dirty(tmp_path, monkeypat
     from hhemt.validation import RunningIdentity
     from tests.fixtures.test_case_catalog import Local_TestCases
 
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     real = an.running_identity()
     # PATCH BEFORE RETRIEVAL. `retrieve_synth_multi_sim_test_case` CONSTRUCTS an Analysis,
     # so on a dirty tree it raises before either arm reaches its assertion -- which would

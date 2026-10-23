@@ -17,6 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from hhemt.orchestration import translate_mode
+from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV
 
 _MOCK_RESULT = {"success": True, "mode": "local", "snakefile_path": None, "message": "ok"}
 
@@ -50,7 +51,7 @@ def test_translate_mode_resume_unchanged():
 def isolated_multisim_analysis(tmp_path, monkeypatch):
     """Construct-only (skip_run), tmp_path-isolated multisim analysis so the
     from_scratch wipe under test cannot touch any shared session cache."""
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     import tests.fixtures.test_case_catalog as cases
 
     case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=False, skip_run=True)
@@ -115,7 +116,7 @@ def test_share_scratch_root_returns_to_slug_root_and_rearms_the_wipe(monkeypatch
     from tests.fixtures import worktree_slug
     from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case, slug_runs_root
 
-    monkeypatch.delenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", raising=False)
+    monkeypatch.delenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, raising=False)
     name = "share_scratch_root_wipe_probe"
     doomed = slug_runs_root(worktree_slug()) / name
     doomed.mkdir(parents=True, exist_ok=True)
@@ -139,7 +140,7 @@ def test_share_scratch_root_returns_to_slug_root_and_rearms_the_wipe(monkeypatch
 def test_cached_build_seeds_system_inputs_on_cold_root_and_skips_on_warm(tmp_path, monkeypatch):
     from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
 
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     name = "cold_root_seed_probe"
 
     # Arm 1 -- cold root, cached build, run-side preprocessing NOT skipped: the
@@ -158,7 +159,7 @@ def test_cached_build_seeds_system_inputs_on_cold_root_and_skips_on_warm(tmp_pat
 def test_skip_run_cached_build_leaves_system_inputs_absent(tmp_path, monkeypatch):
     from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
 
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
 
     # Arm 3 -- skip_run=True builders (the session-scoped *_builder fixtures) stay
     # preprocessing-free under the cached branch exactly as under the wiping one.

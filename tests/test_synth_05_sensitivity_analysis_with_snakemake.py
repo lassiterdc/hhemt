@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 import tests.utils_for_testing as tst_ut
+from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV
 
 pytestmark = [
     pytest.mark.requires_snakemake_subprocess,
@@ -896,7 +897,7 @@ def test_bare_name_analysis_config_column_emits_deprecation_warning(monkeypatch,
     # downstream *_cached consumers (e.g. test_synth_07's failing_synth_sensitivity_analysis
     # -> _first_scenario_in_member StopIteration). Redirect the analysis tree to tmp_path so the
     # construction (which is all this test exercises) cannot touch the shared cache.
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     with pytest.warns(DeprecationWarning, match=r"Bare-name analysis-config column"):
         _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(start_from_scratch=True)
 
