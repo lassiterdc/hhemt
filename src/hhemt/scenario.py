@@ -188,11 +188,13 @@ def _assert_forcing_complete(ds, time_dim, event_indexers, weather_path, forcing
 def _weather_step_seconds(ds, time_dim) -> float:
     """The weather axis interval, with a UNIFORMITY ASSERTION rather than a mode.
 
-    swmm_utils.py:55 takes `.mode()` of the coordinate diff, which silently tolerates a
-    non-uniform axis and misdescribes the interval to SWMM while the .dat rows carry
-    true stamps. Spec 8's equality guard consumes this quantity, so taking a mode here
-    would put that tolerance INSIDE the guard that is supposed to be the strong one.
-    hhemt's only uniformity gate today is the estate producer's, in another repo.
+    swmm_utils.create_swmm_inp_from_template takes `.mode()` of the coordinate diff, which
+    silently tolerates a non-uniform axis and misdescribes the interval to SWMM while the
+    .dat rows carry true stamps. The equality guard in
+    `_assert_scenario_forcing_window_agreement` consumes this quantity, so taking a mode
+    here would put that tolerance INSIDE the guard that is supposed to be the strong one.
+    Outside this function, hhemt has no uniformity gate; the only other one is the weather
+    producer's, in the deployment-config repository.
     """
     steps = np.unique(np.diff(ds[time_dim].values))
     if steps.size != 1:
@@ -797,14 +799,14 @@ class TRITONSWMM_scenario:
         """The `.inp` to read `[OPTIONS]` START/END from when computing SIM_DUR_S.
 
         `hydro.inp` is written ONLY inside the `toggle_use_swmm_for_hydrology`
-        block (scenario.py:833-837), but both TRITON cfg generators read it
+        block of `prepare_scenario`, but both TRITON cfg generators read it
         unconditionally -- so a hydrology-off scenario died at `swmmio.Model`
-        with a bare FileNotFoundError, one line after the S12 gate correctly
+        with a bare FileNotFoundError, one line after that same gate correctly
         skipped the hydrograph build.
 
         The fallback is the SAME NUMBER, not a substitute for it. Every
         per-scenario `.inp` is filled by `swmm_utils.create_swmm_inp_from_template`,
-        which sets START_DATE/START_TIME/END_DATE/END_TIME once (swmm_utils.py:105-110)
+        which sets START_DATE/START_TIME/END_DATE/END_TIME once
         from one `first_tstep`/`last_tstep` pair, so `hydraulics.inp` -- written
         unconditionally -- carries an identical simulation window by construction.
 

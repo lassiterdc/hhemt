@@ -3618,6 +3618,24 @@ non_breaking_allowlist:
       2026-09-18 three-commit landing and the Q2 landing both used.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/scenario.py
+    layout_signature: 07d9220b17860b5e623457fe75b9e9b8cd58c77c657aebd3ae3f42bb447a6dbd
+    justification: >-
+      NON-BREAKING. Chunk 2d.8's repair mint rewrote two docstring regions of this
+      file and nothing else: the paragraph of `_weather_step_seconds`'s docstring that
+      cited `swmm_utils.py` by line, and three lines of `_swmm_inp_for_sim_duration`'s
+      docstring that carried stale line citations. Both regions now carry session a1.2's
+      text from `e6017913` byte for byte, so the two branches merge this file cleanly in
+      either order. No executable statement changes: only docstring text moved, so no
+      path, filename, zarr group, Snakemake rule, fingerprint payload, _version.json
+      field or figure stem can have moved.
+      PLACEMENT: this row sits directly after the last scenario.py row both branches
+      share, not at the list's tail, where both branches already append and a keep-both
+      resolution would make Check B's last-row-wins read this signature against a1.2's
+      file. Once a1.2 lands, its later row is the last scenario.py row and matches the
+      merged file.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
   - path: src/hhemt/scenario_inputs.py
     layout_signature: 9c2d66fc0a0ad1da2711c24cd1f71a3794c1c409f66103bd29758fea1824d58b
     justification: >-
