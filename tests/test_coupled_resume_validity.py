@@ -1309,6 +1309,11 @@ def test_campaign_branch_tip_resolves_absent_on_every_registered_defect():
         # Measured: snapshot.c present, the clean-start disposal key absent, and cf357e4b not
         # an ancestor (rc 1), so the T4a stale-snapshot defect is carried here.
         "TRITON-SNAPSHOT-STALE-AT-CLEAN-START": "present",
+        # Measured: neither T7a fix (1b797e6d, 65e7f681) is an ancestor of 658a7a37 (rc 1 each),
+        # so the three every-coupled-run defects are carried here (each `also_present_in`).
+        "TRITON-COUPLED-RIM-BELOW-CROWN": "present",
+        "TRITON-COUPLED-US-UNIT-RIM": "present",
+        "TRITON-COUPLED-LIST-MISALIGNED": "present",
     }
     _assert_expected_is_registry_total(expected, where="campaign branch tip")
 
@@ -1370,6 +1375,11 @@ def test_wp1c_branch_tip_resolves_absent_on_every_registered_defect():
         # Measured: snapshot.c present, the clean-start disposal key absent, and cf357e4b not
         # an ancestor (rc 1), so the T4a stale-snapshot defect is carried here.
         "TRITON-SNAPSHOT-STALE-AT-CLEAN-START": "present",
+        # Measured: neither T7a fix (1b797e6d, 65e7f681) is an ancestor of 01e95a76 (rc 1 each),
+        # so the three every-coupled-run defects are carried here (each `also_present_in`).
+        "TRITON-COUPLED-RIM-BELOW-CROWN": "present",
+        "TRITON-COUPLED-US-UNIT-RIM": "present",
+        "TRITON-COUPLED-LIST-MISALIGNED": "present",
     }
     _assert_expected_is_registry_total(expected, where="WP-1C branch tip")
 
@@ -1429,6 +1439,11 @@ def test_registering_a_tip_extends_the_sets_rather_than_widening_the_predicate()
         "TRITON-SNAPSHOT-TRAVERSAL-GUARD": "absent",
         # No snapshot payload at 15eb18a5 (snapshot.c -> 0 entries), so no snapshot to leave.
         "TRITON-SNAPSHOT-STALE-AT-CLEAN-START": "absent",
+        # Measured: neither T7a fix (1b797e6d, 65e7f681) is an ancestor of 15eb18a5 (rc 1 each),
+        # so the three every-coupled-run defects are carried here (each `also_present_in`).
+        "TRITON-COUPLED-RIM-BELOW-CROWN": "present",
+        "TRITON-COUPLED-US-UNIT-RIM": "present",
+        "TRITON-COUPLED-LIST-MISALIGNED": "present",
     }
     _assert_expected_is_registry_total(expected_pre_replay, where="pre-replay sha")
     for d in REGISTRY:

@@ -1143,7 +1143,11 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
     # pure, so this is behaviour-identical to resolving twice -- but a second pass would be
     # a second chance for the numerator and the denominator to disagree, which is exactly
     # the class of defect being closed here.
-    applicable_defects = [d for d in REGISTRY if not (d.trigger == "resumed_coupled" and not coupled)]
+    # `coupled`-trigger entries are every-coupled-run BUILD defects, not resume defects; they
+    # have their own check (`check_known_solver_defects`), so they are excluded here.
+    applicable_defects = [
+        d for d in REGISTRY if d.trigger != "coupled" and not (d.trigger == "resumed_coupled" and not coupled)
+    ]
     verdicts = [(d, resolve(d, sha)) for d in applicable_defects]
     present = [d for d, v in verdicts if v.status == "present"]
     n_absent = sum(1 for _, v in verdicts if v.status == "absent")
@@ -1185,6 +1189,136 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
         level="aggregate",
         passed=True,
         summary=(f"{n_resumed} resumed sim(s) at a build carrying no known resume defect (pin {sha[:12]}; {_denom})."),
+        details=[],
+    )
+
+
+#: The registry entry whose verdict is scoped per scenario by the model's flow unit.
+_US_UNIT_RIM_DEFECT_ID = "TRITON-COUPLED-US-UNIT-RIM"
+
+
+def check_known_solver_defects(analysis: TRITONSWMM_analysis, *, df_status=None) -> CheckResult:
+    """Report the registry's every-coupled-run defects carried by the build that produced the analysis.
+
+    The resume check answers "does a RESUMED sim's build carry a resume defect"; this one answers
+    "does the build that produced ANY coupled run carry a defect that affects every coupled run",
+    so it has no resume gate. It reads the analysis-level producing TRITON sha
+    (``_read_triton_provenance``, the source the resume check uses) and resolves each
+    ``coupled``-trigger registry entry against it. It is not applicable when no sha is readable,
+    or when the coupled model is not selected (a TRITON-only or SWMM-only analysis).
+
+    The US-unit rim entry is scoped per scenario, and only where the sha resolves it PRESENT: each
+    scenario's prepared ``swmm/hydraulics.inp`` is read by ``inp_flow_units``; a US unit (CFS, GPM,
+    MGD) makes it present for that scenario, CMS/LPS/MLD makes it not applicable, and a missing
+    file makes it not determinable, never present. Where the sha resolves it absent or
+    indeterminate no file is read, so a CMS model is never told it carries a US-unit defect.
+    """
+    from hhemt.model_defects import REGISTRY, resolve
+    from hhemt.scenario import compute_event_id_slug
+    from hhemt.swmm_runoff_modeling import _US_FLOW_UNITS, inp_flow_units
+
+    _name = "Known solver defects"
+    if not bool(getattr(analysis._system.cfg_system, "toggle_tritonswmm_model", False)):
+        return CheckResult(
+            name=_name,
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary="The coupled model is not selected — known-solver-defect status N/A.",
+            details=[],
+        )
+    # Module-global call, as in the resume check: tests monkeypatch `_read_triton_provenance`.
+    sha = _read_triton_provenance(analysis)
+    if not sha:
+        return CheckResult(
+            name=_name,
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary="No producing TRITON sha recorded — known-solver-defect status N/A.",
+            details=[],
+        )
+    entries = [d for d in REGISTRY if d.trigger == "coupled"]
+    verdicts = {d.defect_id: resolve(d, sha) for d in entries}
+    scenarios = []
+    for member_id, sub in _iter_members_or_self(analysis):
+        sim_dir = sub.analysis_paths.simulation_directory
+        for event_iloc in sub.df_sims.index:
+            event_id = compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(event_iloc))
+            scenarios.append((member_id, event_id, sim_dir / event_id / "swmm" / "hydraulics.inp"))
+    present = [
+        d for d in entries if verdicts[d.defect_id].status == "present" and d.defect_id != _US_UNIT_RIM_DEFECT_ID
+    ]
+    details = [{"scenario": "(analysis-level)", "detail": f"{d.defect_id}: {d.remedy}"} for d in present]
+    us_counts = None
+    us = next((d for d in entries if d.defect_id == _US_UNIT_RIM_DEFECT_ID), None)
+    if us is not None and verdicts[us.defect_id].status == "present":
+        us_counts = {"US": 0, "not applicable": 0, "not determinable": 0}
+        for member_id, event_id, inp in scenarios:
+            if not inp.exists():
+                us_counts["not determinable"] += 1
+                continue
+            if inp_flow_units(inp) in _US_FLOW_UNITS:
+                us_counts["US"] += 1
+                row = {"scenario": event_id, "detail": f"{us.defect_id}: {us.remedy}"}
+                if member_id is not None:
+                    row["sa_id"] = f"member_{member_id}"
+                details.append(row)
+            else:
+                us_counts["not applicable"] += 1
+        if us_counts["US"]:
+            present.append(us)
+    # The basis of the verdict, disclosed the way the resume check discloses its own: every entry
+    # lands in exactly one count, so the counts sum to the entry total and a pass at a pin the
+    # registry has never heard of (all INDETERMINATE) cannot read like a pass at a cleared one
+    # (all assessed ABSENT). A build-present US-unit entry that no scenario carries is "not
+    # applicable to any scenario" only when every scenario's file was read; with a file absent it
+    # is "not determinable", because the absent scenario might have been US. These are summary
+    # wording, not verdicts: `passed` still turns only on PRESENT.
+    absent = [d for d in entries if verdicts[d.defect_id].status == "absent"]
+    indeterminate = [d for d in entries if verdicts[d.defect_id].status == "indeterminate"]
+    us_not_carried = us_counts is not None and not us_counts["US"]
+    _parts = [f"{len(entries)} every-coupled-run registry defect(s)", f"{len(scenarios)} scenario(s) examined"]
+    if present:
+        _parts.append(f"{len(present)} PRESENT")
+    if absent:
+        _parts.append(f"{len(absent)} assessed ABSENT")
+    if indeterminate:
+        _parts.append(
+            f"{len(indeterminate)} INDETERMINATE and therefore NOT assessed at this pin "
+            f"({', '.join(d.defect_id for d in indeterminate)}) -- the pin is in no "
+            "known-absent/known-present set and the read path has no clone for ancestry, "
+            "so register it in model_defects.py"
+        )
+    if us_not_carried and us_counts["not determinable"]:
+        _parts.append(
+            f"1 not determinable ({us.defect_id}: {us_counts['not determinable']} scenario(s) "
+            "without a prepared hydraulics.inp, and no scenario read as US)"
+        )
+    elif us_not_carried:
+        _parts.append(f"1 not applicable to any scenario ({us.defect_id})")
+    if us_counts is not None:
+        _parts.append(
+            f"{us.defect_id}: {us_counts['US']} US, {us_counts['not applicable']} not applicable, "
+            f"{us_counts['not determinable']} not determinable"
+        )
+    _denom = "; ".join(_parts)
+    if present:
+        return CheckResult(
+            name=_name,
+            level="aggregate",
+            passed=False,
+            summary=(
+                f"The TRITON build {sha[:12]} carries {len(present)} known every-coupled-run defect(s): "
+                f"{', '.join(d.defect_id for d in present)} ({_denom})."
+            ),
+            details=details,
+        )
+    return CheckResult(
+        name=_name,
+        level="aggregate",
+        passed=True,
+        summary=f"The TRITON build {sha[:12]} carries no known every-coupled-run defect ({_denom}).",
         details=[],
     )
 
@@ -2647,6 +2781,9 @@ def validate_analysis(analysis: TRITONSWMM_analysis, *, df_status=None) -> Valid
             check_known_resume_defects(
                 analysis, df_status=df_status
             ),  # registry-verdict counterpart (build-level, no log evidence)
+            check_known_solver_defects(
+                analysis, df_status=df_status
+            ),  # every-coupled-run registry defects of the producing build (no resume gate)
             check_resume_schedule_honored(
                 analysis, df_status=df_status
             ),  # replay_t / n_resumes vs the configured resume_interruption_schedule

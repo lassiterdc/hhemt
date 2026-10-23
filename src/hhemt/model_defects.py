@@ -64,7 +64,7 @@ DefectStatus = Literal["present", "absent", "indeterminate"]
 #: check, so an empty selection flows into the existing examined-zero gate and renders N/A
 #: rather than a warning. A version-only registry would warn on a clean arm that carries the
 #: affected build but never resumed -- the P7 violation the examined-zero work removed.
-TriggerKind = Literal["always", "resumed_any", "resumed_coupled"]
+TriggerKind = Literal["always", "resumed_any", "resumed_coupled", "coupled"]
 
 
 @dataclass(frozen=True)
@@ -393,6 +393,35 @@ SHA_SNAPSHOT_CLEAN_START_FIX = "cf357e4b4c4cf2cc1bfb2af2ad2210808b75d1a0"
 #: the ghost-ring entry records, so that entry's verdict here rests on a38338b0, as at c7b2fd1d.
 SHA_SNAPSHOT_REFUSAL_PIN = "320b3313c99c3e929e77a258ff6e4b041bae2927"
 
+#: T7a.1's landing commit (item 11): the coupled node list is built from SWMM's own FLOW-inflow
+#: set, and a coupled junction's rim comes from SWMM's crown-raised depth.
+SHA_COUPLED_LIST_AND_RIM_FIX = "1b797e6d0ea45b6d139e597fd6f4c2b29b17a1f7"
+#: T7a.2's landing commit (item 12): US-unit SWMM lengths are converted x 0.3048 for TRITON.
+SHA_US_UNIT_LENGTH_FIX = "65e7f68153cfc3d6b2aa57d5fbde2544e9f2d35e"
+
+#: The registered shas that predate both fixes. Measured on the fork clone:
+#: `git merge-base --is-ancestor {1b797e6 | 65e7f68} {sha}` -> rc 1 at each of these fifteen and
+#: rc 0 at 320b3313, so each `coupled` entry below is PRESENT at these and ABSENT at the pin.
+_PRE_T7A_REGISTERED = frozenset(
+    {
+        SHA_PRE_COUPLED_RESUME,
+        SHA_COUPLED_RESUME_FIX,
+        SHA_PRE_DEPTH_SCATTER,
+        SHA_DEPTH_SCATTER_FIX,
+        SHA_EXTBC_GHOST_RING_FIX,
+        SHA_MAIN_GHOST_RING_AND_GPU,
+        SHA_ORNL_GHOST_RING_AND_GPU,
+        SHA_SOLVER_WORK_REPLAY_PRECISION,
+        SHA_WP1C_SWMM_OUTPUT_APPEND,
+        SHA_WP1C_LINKAGE_REPAIR_AND_TEST,
+        SHA_MAIN_SNAPSHOT_AND_COLUMN_SPLIT,
+        SHA_SNAPSHOT_DW_ROUTING_STATE,
+        SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX,
+        SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
+        SHA_SNAPSHOT_CLEAN_START_FIX,
+    }
+)
+
 REGISTRY: tuple[ModelDefect, ...] = (
     ModelDefect(
         defect_id="TRITON-COUPLED-RESUME-REPLAY",
@@ -661,6 +690,42 @@ REGISTRY: tuple[ModelDefect, ...] = (
         ),
         trigger="resumed_coupled",
         remedy="Re-run resumed coupled sims at cf357e4b or a descendant.",
+    ),
+    ModelDefect(
+        defect_id="TRITON-COUPLED-RIM-BELOW-CROWN",
+        title="coupled junction recorded below SWMM's crown-raised depth (a recorded depth of 0 is one case)",
+        fixed_in=SHA_COUPLED_LIST_AND_RIM_FIX,
+        known_absent_in=frozenset({SHA_COUPLED_LIST_AND_RIM_FIX, SHA_SNAPSHOT_REFUSAL_PIN}),
+        also_present_in=_PRE_T7A_REGISTERED,
+        trigger="coupled",
+        remedy="Re-run coupled sims at 1b797e6d or a descendant.",
+    ),
+    ModelDefect(
+        defect_id="TRITON-COUPLED-US-UNIT-RIM",
+        title=(
+            "A US-unit coupled model's node rims (and, with the DEM-rim option, its inverts) reached "
+            "TRITON in feet and were used as metres"
+        ),
+        fixed_in=SHA_US_UNIT_LENGTH_FIX,
+        known_absent_in=frozenset({SHA_US_UNIT_LENGTH_FIX, SHA_SNAPSHOT_REFUSAL_PIN}),
+        also_present_in=_PRE_T7A_REGISTERED,
+        trigger="coupled",
+        remedy=(
+            "Re-run US-unit coupled sims at 65e7f681 or a descendant. Scoped per scenario by the "
+            "analysis check from each prepared hydraulics.inp's FLOW_UNITS; a CMS model is unaffected."
+        ),
+    ),
+    ModelDefect(
+        defect_id="TRITON-COUPLED-LIST-MISALIGNED",
+        title=(
+            "TRITON's coupled node list could silently disagree with SWMM's FLOW-inflow set: a header "
+            "line skipped a node, or out-of-order lines swapped exchanges between nodes"
+        ),
+        fixed_in=SHA_COUPLED_LIST_AND_RIM_FIX,
+        known_absent_in=frozenset({SHA_COUPLED_LIST_AND_RIM_FIX, SHA_SNAPSHOT_REFUSAL_PIN}),
+        also_present_in=_PRE_T7A_REGISTERED,
+        trigger="coupled",
+        remedy="Re-run coupled sims at 1b797e6d or a descendant.",
     ),
 )
 

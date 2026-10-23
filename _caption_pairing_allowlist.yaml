@@ -282,7 +282,7 @@ unpaired_allowlist:
       the rename, so the exemption expires on the next change to this renderer.
   - renderer: errors_and_warnings
     caption: src/hhemt/report_templates/captions/errors_and_warnings.rst
-    renderer_sha256: 3fe80a2c96127f6447a89a96384e3af91330b72023eca596a695b775baaa72cb
+    renderer_sha256: 24c6da1b164473e6eb5adab1659d1b1620df0f7161e7f763fd730f11aab66995
     justification: >-
       docs-and-experiment-system merge. Caption re-read against a MEASURED diff
       rather than a read-through. The merge-authored delta to this renderer --
@@ -438,6 +438,15 @@ unpaired_allowlist:
       only. No section, column or unit moved. This is a pairing discharge on a re-read,
       not a formatting exemption; the digest expires on the next change to this
       renderer.
+    justification_2026_10_22: >-
+      RE-RECORDED at package 3a's chunk 3a.2 (the every-coupled-run solver-defect check).
+      MEASURED delta to this renderer since the digest above: ONE changed statement, the
+      _CHECK_VOCABULARY literal gains ONE entry keyed "Known solver defects" (display
+      "Known solver defects" plus its description); no rendering path changed. The caption
+      was RE-READ against that delta: it enumerates NO check name and NO vocabulary string,
+      so no caption claim is reachable by the new entry. No section, column or unit moved.
+      This is a pairing discharge on a re-read, not a formatting exemption; the digest
+      expires on the next change to this renderer.
   - renderer: cross_experiment_disk_utilization
     caption: src/hhemt/report_templates/captions/cross_experiment_disk_utilization.rst
     renderer_sha256: b698ad22092661e1f49fa70f4e0df587f056383716bcad95ddd2f9c71e509d2d

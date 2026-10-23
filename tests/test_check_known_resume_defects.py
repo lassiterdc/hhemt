@@ -38,6 +38,10 @@ import pytest
 import hhemt.analysis_validation as av
 from hhemt.model_defects import REGISTRY, resolve
 
+#: The entries the resume check assesses: every registry entry except the `coupled`-trigger
+#: (every-coupled-run) ones, which `check_known_solver_defects` reports instead.
+_RESUME_REGISTRY = tuple(d for d in REGISTRY if d.trigger != "coupled")
+
 #: The sha the synthetic tier actually builds (`tests/fixtures/_triton_source_cache.py`).
 #: Restated rather than imported so this module stays free of that module's
 #: `platformdirs` / `hhemt.utils` import weight; `scripts/check_live_pin_registered.py`
@@ -152,7 +156,7 @@ def test_an_affected_sha_fails_and_its_present_count_matches_its_detail_rows(mon
     """
     res = _run(monkeypatch, sha)
     assert res.passed is False
-    present_ids = [d.defect_id for d in REGISTRY if resolve(d, sha).status == "present"]
+    present_ids = [d.defect_id for d in _RESUME_REGISTRY if resolve(d, sha).status == "present"]
     present = len(present_ids)
     assert present >= 1, "this sha is not a positive control for anything"
     # Each PRESENT defect is NAMED, which is what makes the FAIL actionable. The failing arm
@@ -166,7 +170,7 @@ def test_an_affected_sha_fails_and_its_present_count_matches_its_detail_rows(mon
     assert all(r["scenario"] == "(analysis-level)" for r in res.details)
     # The denominator is on the FAILING arm too: a FAIL naming one defect out of four
     # applicable ones must still say what happened to the other three.
-    assert f"{len(REGISTRY)} applicable registry defect(s)" in res.summary
+    assert f"{len(_RESUME_REGISTRY)} applicable registry defect(s)" in res.summary
     assert f"{present} PRESENT" in res.summary
 
 
@@ -279,19 +283,19 @@ def test_registered_and_unregistered_rows_differ(monkeypatch):
 def test_registered_row_names_its_assessed_count(monkeypatch):
     res = _run(monkeypatch, _SHA_REGISTERED)
     assert res.passed is True
-    assert f"{len(REGISTRY)} applicable registry defect(s)" in res.summary
-    assert f"{len(REGISTRY)} assessed ABSENT" in res.summary
+    assert f"{len(_RESUME_REGISTRY)} applicable registry defect(s)" in res.summary
+    assert f"{len(_RESUME_REGISTRY)} assessed ABSENT" in res.summary
     assert "INDETERMINATE" not in res.summary
 
 
 def test_unregistered_row_names_its_indeterminate_count_and_the_defect_ids(monkeypatch):
     res = _run(monkeypatch, _SHA_UNREGISTERED)
     assert res.passed is True
-    assert f"{len(REGISTRY)} INDETERMINATE" in res.summary
+    assert f"{len(_RESUME_REGISTRY)} INDETERMINATE" in res.summary
     assert "NOT assessed at this pin" in res.summary
     # NAMING the unassessed defects is what makes the row actionable rather than merely
     # honest: the remedy is per-defect-set membership.
-    for defect in REGISTRY:
+    for defect in _RESUME_REGISTRY:
         assert defect.defect_id in res.summary
     assert "assessed ABSENT" not in res.summary
 
@@ -358,7 +362,7 @@ def test_trigger_scoping_sets_the_denominator(monkeypatch, coupled, expected):
     snapshot-traversal entry landed, and the literal moved 3 -> 4 on that red, and again
     4 -> 5 when the clean-start stale-snapshot entry landed.
     """
-    derived = sum(1 for d in REGISTRY if not (d.trigger == "resumed_coupled" and not coupled))
+    derived = sum(1 for d in _RESUME_REGISTRY if not (d.trigger == "resumed_coupled" and not coupled))
     assert derived == expected, f"registry membership changed: derived={derived} literal={expected}"
     res = _run(monkeypatch, _SHA_REGISTERED, coupled=coupled)
     assert f"{expected} applicable registry defect(s)" in res.summary

@@ -111,6 +111,11 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
         "The producing solver build carries no defect from the resume-defect registry that "
         "applies to this run's model selection.",
     ),
+    "Known solver defects": (
+        "Known solver defects",
+        "The solver build that produced each coupled run carries no defect from the solver-defect "
+        "registry that applies to every coupled run.",
+    ),
     "Resume schedule honored": (
         "Resume schedule",
         "Every resumed sim's realized resume count and boundary match the schedule its configuration requested.",
