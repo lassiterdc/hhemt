@@ -2669,17 +2669,25 @@ INFLOW_NODE_REDUCTION_CHECK = "inflow node reduction"
 
 
 def check_inflow_node_reduction(analysis: TRITONSWMM_analysis) -> CheckResult:
-    """Disclose each DEM cell whose inflow nodes the one-node-per-cell option reduced to one.
+    """Disclose each DEM cell whose coupling candidates the one-node-per-cell option reduced to one.
 
     A DISCLOSURE, not a failure: ``passed`` is always True, so it never flips
     ``overall_passed``. One detail row per reduced cell, naming the kept node and each dropped
-    node with its reason. The per-scenario record ``_status/inflow_node_selection.json`` is
-    written for every scenario prepared with the option on, empty when no cell was reduced, so
-    a scenario WITHOUT the file is counted as NOT MEASURED, never as one with no reduced cell:
-    it was prepared without the option, or before this build (a pre-change analysis
-    re-consolidated through ``reprocess(start_with="consolidate")`` carries none). The summary
-    names the scenarios examined, measured and not measured, and with none measured the check
-    is not applicable.
+    node with its reason, where "dropped" means not written to the coupling-node list
+    (``coupling_nodes.txt``) that scenario preparation writes for TRITON-SWMM; the node's
+    ``[INFLOWS]`` lines are left in the model. Every candidate is either written, or dropped
+    with its reason: a node of a type TRITON-SWMM cannot couple is named in the ineligible-node
+    warning, and, when ``one_coupled_inflow_node_per_dem_cell`` is on, every dropped node
+    (ineligible or ranked out of its cell) is also recorded in the selection record.
+
+    The per-scenario record ``_status/inflow_node_selection.json`` is written for every
+    scenario of a coupled system prepared with the option on, empty when no cell was reduced,
+    so a scenario WITHOUT the file is counted as NOT MEASURED, never as one with no reduced
+    cell: it was prepared without the option, for a system whose coupled model is off (whose
+    preparation selects no coupling nodes and writes no record), or before this build (a
+    pre-change analysis re-consolidated through ``reprocess(start_with="consolidate")``
+    carries none). The summary names the scenarios examined, measured and not measured, and
+    with none measured the check is not applicable.
     """
     import json
 
@@ -2720,7 +2728,8 @@ def check_inflow_node_reduction(analysis: TRITONSWMM_analysis) -> CheckResult:
                 details.append(row)
     denominator = (
         f"{examined} scenario(s) examined, {measured} measured, {examined - measured} not measured "
-        "(no selection record: prepared without the one-node-per-cell option, or before it existed)"
+        "(no selection record: prepared without the one-node-per-cell option, with the coupled model "
+        "off, or before it existed)"
     )
     if measured == 0:
         return CheckResult(
@@ -2736,8 +2745,8 @@ def check_inflow_node_reduction(analysis: TRITONSWMM_analysis) -> CheckResult:
         level="aggregate",
         passed=True,
         summary=(
-            f"{n_cells} DEM cell(s) reduced to one coupled inflow node, {n_dropped} inflow node(s) "
-            f"dropped ({denominator})."
+            f"{n_cells} DEM cell(s) reduced to one coupled inflow node, {n_dropped} node(s) not written "
+            f"to the coupling-node list ({denominator})."
         ),
         details=details,
     )
