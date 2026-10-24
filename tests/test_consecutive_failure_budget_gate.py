@@ -1,7 +1,6 @@
-"""Item 1's declared test: the durable consecutive-failure budget gate.
+"""The durable consecutive-failure budget gate.
 
-Work package 1a, chunk 1a.1. The property this file asserts, as the shape's Form A row
-states it: *the consecutive-failure budget refuses the (N+1)-th launch and the counter is
+The property this file asserts: *the consecutive-failure budget refuses the (N+1)-th launch and the counter is
 era-relative rather than cumulative.*
 
 WHY THE PROPERTY IS REQUIRED, as a consequence a reader can check against the code.
@@ -18,12 +17,12 @@ launch.
 THE INVARIANT, stated once: a simulation whose failures are DETERMINISTIC is launched at
 most ``hpc_consecutive_failure_budget_simulate`` times per era, while a simulation that is
 merely INCOMPLETE -- the walltime-killed, hotstart-resuming case the developer armed
-``hpc_restart_times_simulate`` for at ruling [Q441] -- is never refused however many times
+``hpc_restart_times_simulate`` for -- is never refused however many times
 it resumes.
 
 These tests exercise ``_consecutive_failure_budget_refusal`` and
 ``_bump_terminal_failures`` against a REAL ``TRITONSWMM_model_log`` on a tmp path, so the
-int LogField validator and serializer this chunk added are exercised too. Nothing here
+int LogField validator and serializer the budget added are exercised too. Nothing here
 compiles or runs a solver, so the file is not simulation-bearing and runs locally.
 """
 

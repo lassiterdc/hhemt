@@ -582,7 +582,7 @@ def _generator(tmp_path, inp, *, one_per_cell, mode="legacy", nodes=None):
 
 
 # ---------------------------------------------------------------------------
-# R-4 -- the run-entry refusal of an undefined inflow node
+# The run-entry refusal of an undefined inflow node
 # ---------------------------------------------------------------------------
 
 
@@ -1634,7 +1634,7 @@ def _coupling_analysis(system, *, one_per_cell=False):
     ],
 )
 def test_property_71_a_coupled_system_declaring_no_coupling_node_is_refused(tmp_path, inflows, mode, nodes, refused):
-    """Property 71: a coupled system whose candidate set is empty is refused at run entry.
+    """A coupled system whose candidate set is empty is refused at run entry.
 
     Class: coupled templates under ``swmm_coupling_mode: legacy`` whose ``[INFLOWS]`` lines
     give no node a FLOW inflow (none at all, or only a pollutant), against the same template
@@ -1661,7 +1661,7 @@ def test_property_71_a_coupled_system_declaring_no_coupling_node_is_refused(tmp_
 
 
 def test_property_71_all_junctions_with_no_coordinated_junction_is_refused_and_standalone_is_not(tmp_path):
-    """Property 71 (all_junctions arm, and the standalone control).
+    """The all_junctions arm, and the standalone control.
 
     Class: ``all_junctions`` templates whose junctions have no ``[COORDINATES]`` row, and a
     standalone-only system whose template has no inflow at all. Why: the first couples nothing;
@@ -1692,7 +1692,7 @@ def test_property_71_all_junctions_with_no_coordinated_junction_is_refused_and_s
     ],
 )
 def test_property_74_a_coupling_node_file_is_validated_at_run_entry(tmp_path, nodes, expected):
-    """Property 74: a coupling-node file is refused for each case the solver would stop on.
+    """A coupling-node file is refused for each case the solver would stop on.
 
     Class: coupling-node files naming an undefined node, an outfall, one node twice under
     SWMM's case fold, a node without coordinates, or no node at all (comments and blank lines
@@ -1714,7 +1714,7 @@ def test_property_74_a_coupling_node_file_is_validated_at_run_entry(tmp_path, no
 
 
 def test_property_74_every_failing_case_is_reported_and_a_valid_file_passes(tmp_path):
-    """Property 74 (all cases at once, with its control).
+    """All cases at once, with its control.
 
     Class: a file failing two cases at once, against a file naming one coordinated junction.
     Why: a user fixing one case at a time would resubmit once per case. What kills it:
@@ -1742,7 +1742,7 @@ def test_property_74_every_failing_case_is_reported_and_a_valid_file_passes(tmp_
     ],
 )
 def test_property_74_a_cfg_template_that_sets_the_coupling_key_is_refused(tmp_path, cfg_text, refused):
-    """Property 74 (the TRITON cfg key): a template already setting ``swmm_coupling_nodes`` is refused.
+    """The TRITON cfg key: a template already setting ``swmm_coupling_nodes`` is refused.
 
     Class: TRITON cfg templates carrying an active ``swmm_coupling_nodes`` line, indented or
     not, against one carrying it only as a ``#`` comment. Why: the toolkit writes that key for
@@ -1764,7 +1764,7 @@ def test_property_74_a_cfg_template_that_sets_the_coupling_key_is_refused(tmp_pa
 
 
 def test_property_75_legacy_candidates_are_flow_lines_by_swmms_rule_and_only_legacy_reads_them(tmp_path):
-    """Property 75: under ``legacy`` the candidates are the FLOW-carrying nodes by SWMM's rule.
+    """Under ``legacy`` the candidates are the FLOW-carrying nodes by SWMM's rule.
 
     Class: inflow lines whose constituent is ``FLOW``, a declared pollutant named ``FLOWX``,
     another pollutant, or a two-token line; and the same template under ``list`` and
@@ -1804,7 +1804,7 @@ def test_property_75_legacy_candidates_are_flow_lines_by_swmms_rule_and_only_leg
     ],
 )
 def test_property_77_the_one_per_cell_option_is_refused_under_a_declared_mode(tmp_path, mode, nodes, refused):
-    """Property 77: the one-node-per-DEM-cell option is refused under ``list`` and ``all_junctions``.
+    """The one-node-per-DEM-cell option is refused under ``list`` and ``all_junctions``.
 
     Class: systems declaring a coupled set while the analysis turns the one-per-cell option
     on, against ``legacy`` with the option on and ``list`` with it off. Why: under a declared
@@ -1866,7 +1866,7 @@ def _in_memory_dem(ncols: int = 4, nrows: int = 3, cell: float = 10.0):
     ],
 )
 def test_property_78_a_candidate_outside_the_triton_grid_is_refused(tmp_path, source, mode, nodes, coordinates, named):
-    """Property 78: a coupling candidate the TRITON grid does not contain is refused at run entry.
+    """A coupling candidate the TRITON grid does not contain is refused at run entry.
 
     Class: candidate junctions just outside, and in the outer half of the last cell of, a
     4 x 3 grid of 10 m cells with its lower-left corner at the origin, under each mode; and an
@@ -1902,7 +1902,7 @@ def test_property_78_a_candidate_outside_the_triton_grid_is_refused(tmp_path, so
 
 @pytest.mark.parametrize(("overwrite", "refused"), [(True, True), (False, False)])
 def test_property_78_an_overwrite_judges_against_the_grid_setup_will_write(tmp_path, overwrite, refused):
-    """Property 78 (grid source): with ``overwrite_system_inputs`` the processed DEM's header is not used.
+    """Grid source: with ``overwrite_system_inputs`` the processed DEM's header is not used.
 
     Class: a processed DEM whose header (10 x 10 cells) contains a node that the raster setup
     will write instead (4 x 3 cells) does not, with and without the overwrite. Why: a fresh run

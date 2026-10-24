@@ -70,7 +70,7 @@ class SyntheticModelParams:
     seed: int = 0
     # Regression-instrument knob, OFF by default. The synthetic model declares no
     # pollutant, so the coupled solver's snapshot-write guard (`Nobjects[POLLUT] > 0`)
-    # is false on it and the snapshot-refusal defect cannot occur here at all — a
+    # is false on it and the snapshot-write defect cannot occur here at all — a
     # green b4b verdict from this model is therefore silent about that defect class
     # rather than evidence against it. Setting this name emits a one-row
     # `[POLLUTANTS]` section, which makes the guard true; the model's single outfall

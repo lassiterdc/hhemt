@@ -484,8 +484,8 @@ SWMM_SNAPSHOT_KEEP_PREVIOUS_KEY = "swmm_snapshot_keep_previous"
 #: form whenever the solver pin moves.
 SWMM_NODE_RIM_FROM_DEM_KEY = "swmm_node_rim_from_dem"
 
-#: The first TRITON commit whose cfg reader honours ``swmm_node_rim_from_dem`` (solver package
-#: T7a.1's landing commit). A build older than it reads only the keys it asks for and ignores
+#: The first TRITON commit whose cfg reader honours ``swmm_node_rim_from_dem`` (the fork commit that
+#: refuses a coupled list SWMM would not build). A build older than it reads only the keys it asks for and ignores
 #: this one without an error, so the option is refused for such a build rather than written.
 SWMM_NODE_RIM_FROM_DEM_FIRST_SHA = "1b797e6d0ea45b6d139e597fd6f4c2b29b17a1f7"
 

@@ -13,7 +13,7 @@ dispositions: ``reads-as-attempts`` (uses the value as a count of resume launche
 the named semantics -- none may exist), ``asserts-a-predicate`` (states a selection rule in
 terms of the field; its row must say whether the statement is true of the code), and
 ``incidental mention`` (names the field in prose without reading it). Rows owned by another
-work package name that owner.
+change name that owner.
 
 THE CENSUS is a command, not a figure: every tracked or untracked-but-not-ignored file under
 ``src/hhemt/`` and ``tests/`` whose text contains ``n_resumes``. ``git ls-files`` keeps the
@@ -31,7 +31,7 @@ _REPO = Path(__file__).resolve().parents[1]
 
 _VOCABULARY = frozenset({"reads-as-attempts", "reads-as-completions", "asserts-a-predicate", "incidental mention"})
 
-#: path -> (disposition, owning work package when not this one)
+#: path -> (disposition, owning change when not this one)
 _TABLE: dict[str, tuple[str, str | None]] = {
     "src/hhemt/analysis.py": ("incidental mention", None),
     "src/hhemt/analysis_validation.py": ("reads-as-attempts", None),
@@ -149,7 +149,7 @@ def test_no_consumer_reads_n_resumes_as_completions():
 
 
 def test_files_owned_by_another_package_name_their_owner():
-    """Property: the two test files work package 1b rewrites carry that owner in their rows.
+    """Property: the two test files a later change rewrites carry that owner in their rows.
 
     What kills it: dropping the owner from either row.
 

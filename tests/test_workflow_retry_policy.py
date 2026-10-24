@@ -161,7 +161,7 @@ def test_sweep_empty_when_no_failures(slurm_ready_builder, tmp_path):
     assert slurm_ready_builder._sweep_failed_rules(tmp_path, snakemake_stderr="") == []
 
 
-# ---- the log layer keys on the (jobid, rule) pair (package 1d) ----
+# ---- the log layer keys on the (jobid, rule) pair ----
 #
 # These drive the unbound builder methods with a minimal self, so no synthetic case is built.
 # The Snakemake log lines follow Snakemake 9.15.0's own layout: an error block is
@@ -265,7 +265,7 @@ def test_sweep_reads_the_error_blocks_own_jobid_not_a_preceding_start_block(tmp_
     assert record["jobid"] == 9
 
 
-# ---- the waited single-job run is swept from the script's log directives (package 1d) ----
+# ---- the waited single-job run is swept from the script's log directives ----
 
 
 def _r1d_waited_single_job_result(tmp_path, script_lines: list[str], logs: dict[str, str]) -> dict:

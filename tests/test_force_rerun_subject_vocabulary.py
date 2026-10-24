@@ -1,12 +1,11 @@
-"""Item 12's declared test: the force-rerun subject vocabulary names the key that parses.
+"""The force-rerun subject vocabulary names the key that parses.
 
-Work package 1a, chunk 1a.3. The property this file asserts, as the shape's Form A row
-states it: *the documented force-rerun subject parses, and the rejected key appears in no
+The property this file asserts: *the documented force-rerun subject parses, and the rejected key appears in no
 error text.*
 
 WHY THE PROPERTY IS REQUIRED, as a consequence a reader can check against the code. The
 live subject type is ``Literal["all","none"] | dict[Literal["sa_id","event_iloc"], ...]``,
-so ``member_id`` is not an admissible key. Before this chunk, FOUR operator-facing surfaces
+so ``member_id`` is not an admissible key. Before the repair, FOUR operator-facing surfaces
 named ``member_id`` anyway -- two ValueError texts in the validator, the CLI's own
 ``BadParameter`` worked example, and the option help. The consequence is a closed loop an
 operator cannot escape by reading: the CLI offers ``'{"member_id":[0,5]}'`` as the example,
@@ -48,7 +47,7 @@ def test_the_legacy_bare_dict_form_still_parses():
     """A DIFFERENTLY-POSITIONED satisfying input: the bare-dict legacy form.
 
     The config declares the bare dict as the retained accepted input form, coerced to
-    ``stage="simulate"``. Asserted here so this chunk's message repairs are shown not to
+    ``stage="simulate"``. Asserted here so the message repairs are shown not to
     have narrowed the accepted input set -- a repair to prose must change no behaviour.
 
     Kills: any change that makes the message repair also a parsing change.
@@ -60,7 +59,7 @@ def test_the_legacy_bare_dict_form_still_parses():
 def test_the_rejected_key_is_still_rejected():
     """``member_id`` does not parse. The repair is to the MESSAGES, never to the type.
 
-    The shape is explicit that widening the Literal to admit ``member_id`` is a
+    Widening the Literal to admit ``member_id`` is a
     config-schema change with a migration question attached and is NOT this item. This
     test is what keeps the cheap repair from drifting into that change.
 
@@ -76,7 +75,7 @@ def test_no_force_rerun_subject_error_text_names_the_rejected_key():
     Scoped by the ``force_rerun.`` prefix, which is exactly the shape of an
     operator-facing force-rerun subject reference and excludes every legitimate
     ``member_id`` elsewhere in the module. The domain is the whole source file rather
-    than the two lines this chunk edited, so a FIFTH such string added later reds here.
+    than the two lines the repair edited, so a FIFTH such string added later reds here.
 
     Kills: restoring either ValueError text, or adding a new ``force_rerun.member_id``
     message anywhere in the config module.

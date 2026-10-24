@@ -1,16 +1,16 @@
-"""Reviewer tests for work package 1a — the durable consecutive-failure budget's WIRING.
+"""Reviewer tests for the durable consecutive-failure budget's WIRING.
 
-WHAT PROBLEM THIS FILE SOLVES. Item 1 builds a durable consecutive-terminal-failure
+WHAT PROBLEM THIS FILE SOLVES. The budget is a durable consecutive-terminal-failure
 budget: a counter in the per-model log, a helper that increments it, and a gate that
 refuses to launch the solver once it reaches ``hpc_consecutive_failure_budget_simulate``.
-The counter is only as good as the set of failure paths that feed it. Item 1's own test
+The counter is only as good as the set of failure paths that feed it. The budget gate's own test
 file exercises the two helpers in isolation against a stub scenario -- its own docstring
 says so -- and therefore cannot observe whether ``run_simulation_runner.main`` actually
 CALLS the increment on every path that concludes an attempt failed. A failure path that
 writes the failed marker and does not increment is invisible to every helper-level test,
 and a simulation failing that way is re-dispatched by Snakemake's multiplicative
 ``retries:`` ceiling without ever consuming budget -- which is the member-39 pathology the
-item exists to remove, surviving inside the fix for it.
+budget exists to remove, surviving inside the fix for it.
 
 THE INVARIANT, stated once. Every path in ``run_simulation_runner.main`` that writes
 ``_status/_failed/{rule_token}.json`` increments the durable counter, EXCEPT the budget
@@ -26,7 +26,7 @@ requires constructing a ``TRITONSWMM_analysis``, which ``analysis.py``'s ``hhemt
 dirty-tree guard refuses while the tree carries uncommitted work -- the state the Build
 stage's own ruling mandates. A source census is reachable in that state, it quantifies
 over the whole function rather than over the paths a test author happened to think of, and
-it is the medium item 1's sibling chunks already use for their own census nodes.
+it is the medium the sibling budget tests already use for their own census nodes.
 
 Nothing here compiles or runs a solver, so this file is not simulation-bearing and runs
 locally.

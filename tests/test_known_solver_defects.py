@@ -49,10 +49,11 @@ def _run(monkeypatch, analysis, sha):
 
 
 def test_a_pre_fix_build_reports_its_coupled_defects_and_scopes_us_units_per_scenario(tmp_path, monkeypatch):
-    """Property 80, first case: at ``c7b2fd1d`` (a) and (c) are present, (b) only for the US scenario.
+    """First case: at ``c7b2fd1d`` (a) and (c) are present, (b) only for the US scenario.
 
-    Class: non-resumed coupled analyses at a build before T7a, with one US, one CMS and one
-    reclaimed hydraulics model. Why: these defects affect every coupled run, resumed or not, and a
+    Class: non-resumed coupled analyses at a build before the coupled node-list and US-unit
+    length fixes, with one US, one CMS and one reclaimed hydraulics model. Why: these defects
+    affect every coupled run, resumed or not, and a
     US-unit defect must not be reported for a CMS model or invented for a missing file. What kills
     it: a resume gate, reading the unit for every model regardless of the build, or treating a
     missing file as US. Second correct implementation: counting per scenario first and resolving the
@@ -68,7 +69,7 @@ def test_a_pre_fix_build_reports_its_coupled_defects_and_scopes_us_units_per_sce
 
 
 def test_a_pre_fix_cms_only_analysis_does_not_carry_the_us_unit_defect(tmp_path, monkeypatch):
-    """Property 80, control: at ``c7b2fd1d`` a CMS-only analysis carries (a) and (c) but not (b).
+    """Control: at ``c7b2fd1d`` a CMS-only analysis carries (a) and (c) but not (b).
 
     Class: coupled analyses whose every hydraulics model is SI. What kills it: reporting (b) from the
     build verdict alone. Second correct implementation: filtering the scenarios before resolving.
@@ -81,7 +82,7 @@ def test_a_pre_fix_cms_only_analysis_does_not_carry_the_us_unit_defect(tmp_path,
 
 
 def test_the_package_3a_pin_passes_and_reads_no_hydraulics_file(tmp_path, monkeypatch):
-    """Property 80: at ``a146fb6`` the check passes, and (b) is absent even with the file missing.
+    """At ``a146fb6`` the check passes, and (b) is absent even with the file missing.
 
     Class: coupled analyses at the pin. Why: the pin carries all three fixes, and a build without
     (b) must never report it not determinable. What kills it: reading the unit when the sha already
@@ -98,7 +99,7 @@ _COUPLED_IDS = ("TRITON-COUPLED-RIM-BELOW-CROWN", "TRITON-COUPLED-US-UNIT-RIM", 
 
 
 def test_an_unregistered_pin_pass_discloses_that_nothing_was_assessed(tmp_path, monkeypatch):
-    """Property 80: at a sha in no known set the pass names all three INDETERMINATE; at ``a146fb6`` all three ABSENT.
+    """At a sha in no known set the pass names all three INDETERMINATE; at ``a146fb6`` all three ABSENT.
 
     Class: passing coupled analyses whose producing sha the registry either cleared or has never
     heard of. Why: both pass, and a reader acts on the pass, so the summary must say which basis
@@ -120,7 +121,7 @@ def test_an_unregistered_pin_pass_discloses_that_nothing_was_assessed(tmp_path, 
 
 
 def test_a_no_us_analysis_counts_the_us_unit_entry_not_determinable_unless_every_file_was_read(tmp_path, monkeypatch):
-    """Property 80: at ``c7b2fd1d``, no US scenario: (b) not determinable if a file is absent, else not applicable.
+    """At ``c7b2fd1d``, no US scenario: (b) not determinable if a file is absent, else not applicable.
 
     Class: coupled analyses at a pre-fix build whose read scenarios are all SI. Why: (a) and (c)
     are present at that sha, so the check fails either way; for (b), an absent file could have
@@ -145,18 +146,19 @@ def test_a_no_us_analysis_counts_the_us_unit_entry_not_determinable_unless_every
 
 @pytest.mark.parametrize(("coupled", "sha"), [(False, _PRE_FIX), (True, None)])
 def test_not_applicable_without_the_coupled_model_or_without_a_sha(tmp_path, monkeypatch, coupled, sha):
-    """Property 80: a TRITON-only or SWMM-only analysis, or one with no readable sha, is not applicable."""
+    """A TRITON-only or SWMM-only analysis, or one with no readable sha, is not applicable."""
     res = _run(monkeypatch, _analysis(tmp_path, {0: "CFS"}, coupled=coupled), sha)
     assert res.applicable is False
     assert res.passed is True
 
 
 def test_the_resume_check_reports_t4a_and_does_not_count_the_coupled_entries(monkeypatch):
-    """Property 80, last case: a resumed coupled analysis at ``c7b2fd1d`` gets T4a from the resume check, not (a)-(c).
+    """Last case: a resumed coupled analysis at ``c7b2fd1d`` gets the stale-snapshot defect from the
+    resume check, not (a)-(c).
 
     Class: resumed coupled analyses at a build that carries both the clean-start resume defect
-    (T4a) and the three every-coupled-run defects. Why: (a)-(c) are not resume defects and have
-    their own check, so the resume check must neither name them nor count them in its
+    (stale-snapshot at clean start) and the three every-coupled-run defects. Why: (a)-(c) are not
+    resume defects and have their own check, so the resume check must neither name them nor count them in its
     denominator. What kills it: the resume check's registry filter without its ``coupled``
     exclusion, which names all three and raises the denominator by three. Second correct
     implementation: a whitelist of the resume triggers; the assertions read only the summary.

@@ -346,8 +346,8 @@ SHA_MAIN_SNAPSHOT_AND_COLUMN_SPLIT = "031ea42b063ce1083e3d965597cdb44da2e748ef"
 #:   * `git merge-base --is-ancestor 5fadf167 15eb18a5` -> rc 1 (the defect postdates that build)
 SHA_SNAPSHOT_DW_ROUTING_STATE = "5fadf167487a647e9978c2c1aa0bd6ec137e423e"
 
-#: The commit that REMOVES it: `23b75781` "fix(swmm): land work package T1a -- the snapshot
-#: traversal guard's wrong predicate". Re-predicates the per-element guard on `s->routeTo >= 0`,
+#: The commit that REMOVES it: `23b75781`, the fork commit that corrects the snapshot
+#: traversal guard's wrong predicate. Re-predicates the per-element guard on `s->routeTo >= 0`,
 #: repositions it, and selects the write target through a three-way chain so a route-less outfall
 #: reaches a placeholder rather than forming an address from NULL.
 #: THE FIX'S OWN SIGNATURE, measured rather than described, with the file confirmed to RESOLVE at
@@ -359,8 +359,8 @@ SHA_SNAPSHOT_DW_ROUTING_STATE = "5fadf167487a647e9978c2c1aa0bd6ec137e423e"
 #:     loudly instead of silently.
 SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX = "23b757810cde67a83a0aeed003689bb6009f6894"
 
-#: THE LIVE PIN as of this move: `c7b2fd1d` "test(swmm): land work package T2a -- killed-write
-#: consultation regression tests", HEAD of `wp1/snapshot-guard` on the fork, 2 commits past
+#: THE LIVE PIN as of this move: `c7b2fd1d`, the fork commit that adds the killed-write
+#: consultation regression tests, HEAD of `wp1/snapshot-guard` on the fork, 2 commits past
 #: `031ea42b` and pushed (`rev-list --left-right --count HEAD...@{upstream}` -> `0 0`).
 #: It is the `known_absent_in` member for every defect in REGISTRY, which is what
 #: `scripts/check_live_pin_registered.py` asserts at commit time.
@@ -380,26 +380,31 @@ SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX = "23b757810cde67a83a0aeed003689bb6009f6894"
 #: no stronger.
 SHA_WP1_SNAPSHOT_GUARD_AND_TESTS = "c7b2fd1da3c2ed48d0d8cc0bf0e4b703b1f86e5e"
 
-#: T4a's landing commit on the fork: a coupled CLEAN START disposes of the earlier run's SWMM
+#: The fork commit where a coupled CLEAN START disposes of the earlier run's SWMM
 #: snapshot artifacts (the disposal reads the cfg key `swmm_snapshot_keep_previous`), and a
 #: refused snapshot save stops the restart. Registered as the fix of
 #: TRITON-SNAPSHOT-STALE-AT-CLEAN-START below.
 SHA_SNAPSHOT_CLEAN_START_FIX = "cf357e4b4c4cf2cc1bfb2af2ad2210808b75d1a0"
 
-#: The solver pin of package 3a (`3a.1`): the fork head after packages T7a and T8a, which also
-#: carries WP1's T1b-T6a (`c7b2fd1d` is its ancestor). Measured against this sha on the fork
+#: The solver pin before `SHA_CURATED_MAIN_PIN` replaced it: `320b3313`, the head of the public
+#: `wp1/snapshot-guard` branch when the toolkit pinned it. It carries that branch's work through
+#: `1b8742b` (`c7b2fd1d` is its ancestor); then the coupled-run fixes `1b797e6` (the coupled
+#: node list), `65e7f68` (US-unit lengths) and `c96166b` (the exported coupled node depth); a
+#: comment repair, `1d12c1e`; then the coupling-node declaration work, `95c9c45` through
+#: `320b3313` (declared coupling nodes, the refusal of a coupled run that declares none, any
+#: number of coupling nodes per DEM cell, and a CTest guard for that refusal). Measured against this sha on the fork
 #: clone, each `git merge-base --is-ancestor {fix} 320b3313`: 3a832f7d rc 0, 9db367dd rc 0,
 #: 23b75781 rc 0, cf357e4b rc 0, a38338b0 rc 0; and 5d2ad1e8 rc 1 -- the same two-probe trap
 #: the ghost-ring entry records, so that entry's verdict here rests on a38338b0, as at c7b2fd1d.
 SHA_SNAPSHOT_REFUSAL_PIN = "320b3313c99c3e929e77a258ff6e4b041bae2927"
 
-#: T7a.1's landing commit (item 11): the coupled node list is built from SWMM's own FLOW-inflow
-#: set, and a coupled junction's rim comes from SWMM's crown-raised depth.
+#: The fork commit that refuses a coupled list SWMM would not build: the coupled node list is
+#: built from SWMM's own FLOW-inflow set, and a coupled junction's rim comes from SWMM's crown-raised depth.
 SHA_COUPLED_LIST_AND_RIM_FIX = "1b797e6d0ea45b6d139e597fd6f4c2b29b17a1f7"
-#: T7a.2's landing commit (item 12): US-unit SWMM lengths are converted x 0.3048 for TRITON.
+#: The fork commit that converts US-unit lengths: US-unit SWMM lengths are converted x 0.3048 for TRITON.
 SHA_US_UNIT_LENGTH_FIX = "65e7f68153cfc3d6b2aa57d5fbde2544e9f2d35e"
 
-#: The curated landing of the snapshot-refusal solver work on the fork's `main` (11 commits,
+#: The curated landing of the snapshot-guard solver work on the fork's `main` (11 commits,
 #: `3a29997..a146fb6`). Each curated commit names its `wp1/snapshot-guard` source in a
 #: `Curated-from:` trailer; the map is `git log --format='%h%n%(trailers:key=Curated-from,valueonly)'
 #: 3a29997..a146fb6` in the fork. A curated commit is a NEW tree: no wp1 commit is its ancestor.

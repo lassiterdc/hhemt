@@ -252,7 +252,7 @@ def test_resolve_for_tree_attrs_reads_only_the_stamped_sha():
         "TRITON-SNAPSHOT-TRAVERSAL-GUARD": "absent",
         # 9db367dd predates the snapshot payload too, so it has no snapshot to leave behind.
         "TRITON-SNAPSHOT-STALE-AT-CLEAN-START": "absent",
-        # The three every-coupled-run entries predate their T7a fixes here (is-ancestor rc 1).
+        # The three every-coupled-run entries predate their fixes here (is-ancestor rc 1).
         "TRITON-COUPLED-RIM-BELOW-CROWN": "present",
         "TRITON-COUPLED-US-UNIT-RIM": "present",
         "TRITON-COUPLED-LIST-MISALIGNED": "present",
@@ -326,7 +326,8 @@ def test_a_sha_shorter_than_gits_abbreviation_floor_never_matches():
 
 
 def test_the_clean_start_stale_snapshot_entry_resolves_by_content_at_every_registered_sha():
-    """Property: the T4a entry is present exactly where a snapshot payload exists without the disposal.
+    """The clean-start stale-snapshot entry is present exactly where a snapshot payload exists
+    without the disposal.
 
     Class: every registered solver sha, read without a clone (the read path's only rule is the
     explicit sets). Why: a clean start that leaves an earlier run's SWMM snapshots in place lets
@@ -401,7 +402,7 @@ _COUPLED_ENTRIES = (
 
 @pytest.mark.parametrize(("did", "title"), _COUPLED_ENTRIES)
 def test_each_every_coupled_run_entry_is_present_before_its_fix_and_absent_at_it_and_at_the_pin(did, title):
-    """Property 81: each `coupled` entry is present at `c7b2fd1d` and absent at its fix and at both pins.
+    """Each `coupled` entry is present at `c7b2fd1d` and absent at its fix and at both pins.
 
     Class: the three every-coupled-run registry entries, read without a clone. Why: the analysis
     check reports them from these explicit sets alone, and the title is what a report reader sees.

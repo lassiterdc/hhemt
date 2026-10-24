@@ -1,7 +1,6 @@
-"""Item 2's declared test: the realised retry ceiling is disclosed, not implied.
+"""The realised retry ceiling is disclosed, not implied.
 
-Work package 1a, chunk 1a.2. The property this file asserts, as the shape's Form A row
-states it: *the realised ceiling is disclosed and equals the per-process budget rather
+The property this file asserts: *the realised ceiling is disclosed and equals the per-process budget rather
 than its multiplied product.*
 
 WHY THE PROPERTY IS REQUIRED, as a consequence a reader can check against the code.
@@ -141,7 +140,7 @@ def test_the_description_reaches_the_rendered_reproduction_guide():
 
 
 def test_both_knobs_are_bucketed_so_the_guide_can_render_at_all():
-    """Guard on the producer/consumer coupling this chunk's config field created.
+    """Guard on the producer/consumer coupling the new config field created.
 
     ``_build_reprex_guide_html`` buckets EVERY ``analysis_config`` field through
     ``reprex_taxonomy.all_field_bucket``, which raises ``KeyError`` on an unbucketed one.

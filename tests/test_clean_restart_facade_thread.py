@@ -1,7 +1,6 @@
-"""Item 13's declared test: the clean-restart parameter is threaded through every layer.
+"""The clean-restart parameter is threaded through every layer.
 
-Work package 1a, chunk 1a.4. The property this file asserts, as the shape's Form A row
-states it: *``clean_restart`` is reachable at all three facade layers, and absent at none.*
+The property this file asserts: *``clean_restart`` is reachable at all three facade layers, and absent at none.*
 
 WHY THE PROPERTY IS REQUIRED, as a consequence a reader can check against the code. The
 a6000 arm's two dead members must re-run as CLEAN members, and the mechanism selected for
@@ -14,15 +13,15 @@ classifies it as the RESUME arm of a clean/resume pair (that module reads ``n_re
 as the clean member). Two members that ran fresh would be scored as the resume arm of a
 scientific comparison.
 
-Before this chunk the parameter existed ONLY on ``analysis.run``:
+Before the parameter was threaded it existed ONLY on ``analysis.run``:
 ``grep -c clean_restart`` returned 0 in all three of ``cli.py``, ``toolkit.py`` and
 ``experiment_bundle.py``, so the estate's submit path -- which goes through
 ``run-experiment`` -- could not reach it at all.
 
 THE INVARIANT: the parameter is reachable at EVERY layer, not merely at some. The
 architecture's facade rule is explicit that a parameter accessible at one layer and
-silently absent at another is the failure the rule exists to prevent, which is why the
-shape requires all three in ONE chunk rather than part-way. These assertions are
+silently absent at another is the failure the rule exists to prevent, which is why all three
+layers must be threaded together rather than part-way. These assertions are
 therefore a CONJUNCTION over the layers, and a partial thread reds.
 """
 
@@ -30,7 +29,7 @@ import inspect
 
 
 def test_the_parameter_is_present_at_every_facade_layer():
-    """The conjunction, over the three layers the shape names plus the sink they feed.
+    """The conjunction, over the three facade layers plus the sink they feed.
 
     Input class: every layer between an operator's entry point and ``analysis.run``. The
     sink is asserted alongside the three facades because a thread that reaches

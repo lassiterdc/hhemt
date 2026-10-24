@@ -406,7 +406,7 @@ unpaired_allowlist:
       is a pairing discharge on a re-read, not a formatting exemption; the digest expires
       on the next change to this renderer.
     justification_2026_10_20: >-
-      RE-RECORDED at package 2a's commit of the repair-first round and chunk 2a.2.
+      RE-RECORDED at the commit of the repair-first round that added the resume-event check.
       MEASURED delta to this renderer since the digest above: an ast diff of HEAD
       against the working tree with docstrings removed shows ONE changed statement,
       the _CHECK_VOCABULARY literal, gaining ONE entry keyed "resume event
@@ -421,7 +421,7 @@ unpaired_allowlist:
       a formatting exemption; the digest expires on the next change to this
       renderer.
     justification_2026_10_21: >-
-      RE-RECORDED at package 2a's chunk 2a.5 (item 17, the one-node-per-cell option's
+      RE-RECORDED at the chunk that added the one-node-per-cell option's
       inflow-node reduction disclosure). MEASURED delta to this renderer since the
       digest above: an ast diff of HEAD against the working tree with docstrings
       removed shows TWO changed statements. (1) The _CHECK_VOCABULARY literal gains ONE
@@ -439,7 +439,7 @@ unpaired_allowlist:
       not a formatting exemption; the digest expires on the next change to this
       renderer.
     justification_2026_10_22: >-
-      RE-RECORDED at package 3a's chunk 3a.2 (the every-coupled-run solver-defect check).
+      RE-RECORDED when the every-coupled-run solver-defect check was added.
       MEASURED delta to this renderer since the digest above: ONE changed statement, the
       _CHECK_VOCABULARY literal gains ONE entry keyed "Known solver defects" (display
       "Known solver defects" plus its description); no rendering path changed. The caption
