@@ -342,7 +342,7 @@ def test_the_clean_start_stale_snapshot_entry_resolves_by_content_at_every_regis
         SHA_CURATED_MAIN_PIN,
         SHA_DEPTH_SCATTER_FIX,
         SHA_SNAPSHOT_CLEAN_START_FIX,
-        SHA_SNAPSHOT_REFUSAL_PIN,
+        SHA_SNAPSHOT_GUARD_PRIOR_PIN,
         SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
     )
 
@@ -356,7 +356,7 @@ def test_the_clean_start_stale_snapshot_entry_resolves_by_content_at_every_regis
     for sha, status in (
         (SHA_WP1_SNAPSHOT_GUARD_AND_TESTS, "present"),
         (SHA_SNAPSHOT_CLEAN_START_FIX, "absent"),
-        (SHA_SNAPSHOT_REFUSAL_PIN, "absent"),
+        (SHA_SNAPSHOT_GUARD_PRIOR_PIN, "absent"),
         (SHA_CURATED_MAIN_PIN, "absent"),
         (SHA_DEPTH_SCATTER_FIX, "absent"),
     ):
@@ -365,7 +365,7 @@ def test_the_clean_start_stale_snapshot_entry_resolves_by_content_at_every_regis
         assert v.rule == ("known_absent_set" if status == "absent" else "also_present_set"), (sha, v)
 
 
-def test_every_registered_defect_is_absent_at_the_package_3a_pin():
+def test_every_registered_defect_is_absent_at_the_live_pin():
     """Property: the live solver pin resolves ABSENT on every defect from the explicit sets.
 
     Class: every REGISTRY entry at `a146fb6`, the curated fork `main` pin. Why: an entry missing the
@@ -410,7 +410,7 @@ def test_each_every_coupled_run_entry_is_present_before_its_fix_and_absent_at_it
     `known_absent_in`, a trigger other than `coupled`, or a reworded title. Second correct
     implementation: a per-sha table; the assertions read status, rule, trigger and title.
     """
-    from hhemt.model_defects import SHA_CURATED_MAIN_PIN, SHA_SNAPSHOT_REFUSAL_PIN, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS
+    from hhemt.model_defects import SHA_CURATED_MAIN_PIN, SHA_SNAPSHOT_GUARD_PRIOR_PIN, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS
 
     d = REGISTRY_BY_ID[did]
     assert d.defect_id == did
@@ -418,7 +418,7 @@ def test_each_every_coupled_run_entry_is_present_before_its_fix_and_absent_at_it
     assert d.title == title
     v = resolve(d, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS)
     assert (v.status, v.rule) == ("present", "also_present_set"), v
-    for sha in (d.fixed_in, SHA_SNAPSHOT_REFUSAL_PIN, SHA_CURATED_MAIN_PIN):
+    for sha in (d.fixed_in, SHA_SNAPSHOT_GUARD_PRIOR_PIN, SHA_CURATED_MAIN_PIN):
         v = resolve(d, sha)
         assert (v.status, v.rule) == ("absent", "known_absent_set"), (sha, v)
 

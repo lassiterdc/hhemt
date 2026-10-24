@@ -81,7 +81,7 @@ def test_a_pre_fix_cms_only_analysis_does_not_carry_the_us_unit_defect(tmp_path,
     assert "0 US, 1 not applicable, 0 not determinable" in res.summary
 
 
-def test_the_package_3a_pin_passes_and_reads_no_hydraulics_file(tmp_path, monkeypatch):
+def test_the_live_pin_passes_and_reads_no_hydraulics_file(tmp_path, monkeypatch):
     """At ``a146fb6`` the check passes, and (b) is absent even with the file missing.
 
     Class: coupled analyses at the pin. Why: the pin carries all three fixes, and a build without
@@ -152,7 +152,7 @@ def test_not_applicable_without_the_coupled_model_or_without_a_sha(tmp_path, mon
     assert res.passed is True
 
 
-def test_the_resume_check_reports_t4a_and_does_not_count_the_coupled_entries(monkeypatch):
+def test_the_resume_check_reports_the_stale_clean_start_snapshot_and_does_not_count_the_coupled_entries(monkeypatch):
     """Last case: a resumed coupled analysis at ``c7b2fd1d`` gets the stale-snapshot defect from the
     resume check, not (a)-(c).
 

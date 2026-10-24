@@ -230,7 +230,7 @@ def test_the_snapshot_defect_is_present_below_the_fix_and_absent_at_and_above_it
     """
     from hhemt.model_defects import (
         SHA_CURATED_MAIN_PIN,
-        SHA_SNAPSHOT_REFUSAL_PIN,
+        SHA_SNAPSHOT_GUARD_PRIOR_PIN,
         SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX,
         SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
     )
@@ -241,7 +241,7 @@ def test_the_snapshot_defect_is_present_below_the_fix_and_absent_at_and_above_it
     assert below.status == "present", below
     assert below.rule == "also_present_set", below
 
-    for sha in (SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS, SHA_SNAPSHOT_REFUSAL_PIN):
+    for sha in (SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS, SHA_SNAPSHOT_GUARD_PRIOR_PIN):
         at_or_above = resolve(entry, sha)
         assert at_or_above.status == "absent", (sha, at_or_above)
         assert at_or_above.rule == "known_absent_set", (sha, at_or_above)

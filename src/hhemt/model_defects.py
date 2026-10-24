@@ -396,7 +396,7 @@ SHA_SNAPSHOT_CLEAN_START_FIX = "cf357e4b4c4cf2cc1bfb2af2ad2210808b75d1a0"
 #: clone, each `git merge-base --is-ancestor {fix} 320b3313`: 3a832f7d rc 0, 9db367dd rc 0,
 #: 23b75781 rc 0, cf357e4b rc 0, a38338b0 rc 0; and 5d2ad1e8 rc 1 -- the same two-probe trap
 #: the ghost-ring entry records, so that entry's verdict here rests on a38338b0, as at c7b2fd1d.
-SHA_SNAPSHOT_REFUSAL_PIN = "320b3313c99c3e929e77a258ff6e4b041bae2927"
+SHA_SNAPSHOT_GUARD_PRIOR_PIN = "320b3313c99c3e929e77a258ff6e4b041bae2927"
 
 #: The fork commit that refuses a coupled list SWMM would not build: the coupled node list is
 #: built from SWMM's own FLOW-inflow set, and a coupled junction's rim comes from SWMM's crown-raised depth.
@@ -421,7 +421,7 @@ SHA_CURATED_US_UNIT_LENGTH_FIX = "2ecb1cfff966eb00205506c03ca89086f1b68d36"
 #: The registered shas that predate both fixes. Measured on the fork clone:
 #: `git merge-base --is-ancestor {1b797e6 | 65e7f68} {sha}` -> rc 1 at each of these fifteen and
 #: rc 0 at 320b3313, so each `coupled` entry below is PRESENT at these and ABSENT at the pin.
-_PRE_T7A_REGISTERED = frozenset(
+_REGISTERED_BEFORE_COUPLED_FIXES = frozenset(
     {
         SHA_PRE_COUPLED_RESUME,
         SHA_COUPLED_RESUME_FIX,
@@ -466,7 +466,7 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # 3a832f7d is an ANCESTOR of c7b2fd1d -- re-measured rc 0 against this sha.
                 SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
                 # 3a832f7d is an ANCESTOR of 320b3313 -- measured rc 0 against this sha.
-                SHA_SNAPSHOT_REFUSAL_PIN,
+                SHA_SNAPSHOT_GUARD_PRIOR_PIN,
                 # 3a832f7d is an ANCESTOR of a146fb6 -- measured rc 0 against this sha.
                 SHA_CURATED_MAIN_PIN,
             }
@@ -497,7 +497,7 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # 9db367dd is an ANCESTOR of c7b2fd1d -- re-measured rc 0 against this sha.
                 SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
                 # 9db367dd is an ANCESTOR of 320b3313 -- measured rc 0 against this sha.
-                SHA_SNAPSHOT_REFUSAL_PIN,
+                SHA_SNAPSHOT_GUARD_PRIOR_PIN,
                 # 9db367dd is an ANCESTOR of a146fb6 -- measured rc 0 against this sha.
                 SHA_CURATED_MAIN_PIN,
             }
@@ -542,7 +542,7 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # 320b3313 descends from c7b2fd1d and from a38338b0 (both measured rc 0) and
                 # inherits the SAME independent-upstream verdict on the SAME basis;
                 # `is-ancestor 5d2ad1e8 320b3313` -> rc 1, the same trap, so it is listed.
-                SHA_SNAPSHOT_REFUSAL_PIN,
+                SHA_SNAPSHOT_GUARD_PRIOR_PIN,
                 # a146fb6 descends from a38338b0 (measured rc 0) and inherits the SAME
                 # independent-upstream verdict; `is-ancestor 5d2ad1e8 a146fb6` -> rc 1, the same trap.
                 SHA_CURATED_MAIN_PIN,
@@ -598,7 +598,7 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # 23b75781 is an ANCESTOR of c7b2fd1d -- measured rc 0 against this sha.
                 SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
                 # 23b75781 is an ANCESTOR of 320b3313 -- measured rc 0 against this sha.
-                SHA_SNAPSHOT_REFUSAL_PIN,
+                SHA_SNAPSHOT_GUARD_PRIOR_PIN,
                 # 681d809 (the curated traversal fix) is an ANCESTOR of a146fb6 -- rc 0;
                 # `git ls-tree a146fb6 -- external/swmm/src/solver/snapshot.c` -> 1 entry (control
                 # `src/triton.h` -> 1).
@@ -698,7 +698,7 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_SNAPSHOT_CLEAN_START_FIX,
                 # the curated clean-start disposal; is-ancestor d456518 a146fb6 -> rc 0.
                 SHA_CURATED_CLEAN_START_FIX,
-                SHA_SNAPSHOT_REFUSAL_PIN,
+                SHA_SNAPSHOT_GUARD_PRIOR_PIN,
                 # payload 1, disposal 5 at a146fb6 (`swmm_snapshot_keep_previous`, the same count
                 # as at 320b3313), and d456518 (the curated clean-start disposal) is an ANCESTOR of a146fb6 -- rc 0.
                 SHA_CURATED_MAIN_PIN,
@@ -737,11 +737,11 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_COUPLED_LIST_AND_RIM_FIX,
                 # the curated coupled-list and rim fix; is-ancestor 852f10c a146fb6 -> rc 0.
                 SHA_CURATED_COUPLED_LIST_AND_RIM_FIX,
-                SHA_SNAPSHOT_REFUSAL_PIN,
+                SHA_SNAPSHOT_GUARD_PRIOR_PIN,
                 SHA_CURATED_MAIN_PIN,
             }
         ),
-        also_present_in=_PRE_T7A_REGISTERED,
+        also_present_in=_REGISTERED_BEFORE_COUPLED_FIXES,
         trigger="coupled",
         remedy="Re-run coupled sims at 1b797e6d or a descendant.",
     ),
@@ -757,11 +757,11 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_US_UNIT_LENGTH_FIX,
                 # the curated US-unit conversion; is-ancestor 2ecb1cf a146fb6 -> rc 0.
                 SHA_CURATED_US_UNIT_LENGTH_FIX,
-                SHA_SNAPSHOT_REFUSAL_PIN,
+                SHA_SNAPSHOT_GUARD_PRIOR_PIN,
                 SHA_CURATED_MAIN_PIN,
             }
         ),
-        also_present_in=_PRE_T7A_REGISTERED,
+        also_present_in=_REGISTERED_BEFORE_COUPLED_FIXES,
         trigger="coupled",
         remedy=(
             "Re-run US-unit coupled sims at 65e7f681 or a descendant. Scoped per scenario by the "
@@ -780,11 +780,11 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_COUPLED_LIST_AND_RIM_FIX,
                 # the curated coupled-list and rim fix; is-ancestor 852f10c a146fb6 -> rc 0.
                 SHA_CURATED_COUPLED_LIST_AND_RIM_FIX,
-                SHA_SNAPSHOT_REFUSAL_PIN,
+                SHA_SNAPSHOT_GUARD_PRIOR_PIN,
                 SHA_CURATED_MAIN_PIN,
             }
         ),
-        also_present_in=_PRE_T7A_REGISTERED,
+        also_present_in=_REGISTERED_BEFORE_COUPLED_FIXES,
         trigger="coupled",
         remedy="Re-run coupled sims at 1b797e6d or a descendant.",
     ),

@@ -12,8 +12,9 @@ dispositions: ``reads-as-attempts`` (uses the value as a count of resume launche
 ``>= 1`` / ``== 0`` "was this resumed" predicate), ``reads-as-completions`` (would contradict
 the named semantics -- none may exist), ``asserts-a-predicate`` (states a selection rule in
 terms of the field; its row must say whether the statement is true of the code), and
-``incidental mention`` (names the field in prose without reading it). Rows owned by another
-change name that owner.
+``incidental mention`` (names the field in prose without reading it). A row's second
+element names the change that owns its file, when that is not the change that added the
+row, by a public commit identity and never by a branch name; otherwise it is ``None``.
 
 THE CENSUS is a command, not a figure: every tracked or untracked-but-not-ignored file under
 ``src/hhemt/`` and ``tests/`` whose text contains ``n_resumes``. ``git ls-files`` keeps the
@@ -68,13 +69,14 @@ _TABLE: dict[str, tuple[str, str | None]] = {
         "reads-as-attempts",
         None,
     ),
-    "tests/test_check_known_resume_defects.py": ("reads-as-attempts", "1b"),
+    "tests/test_check_known_resume_defects.py": ("reads-as-attempts", None),
     "tests/test_clean_restart_facade_thread.py": ("incidental mention", None),
     "tests/test_clean_restart_wipe.py": ("incidental mention", None),
     "tests/test_consecutive_failure_budget_gate.py": ("incidental mention", None),
     "tests/test_coupled_resume_validity.py": ("reads-as-attempts", None),
     "tests/test_debug_flag_keep_previous_snapshots.py": ("reads-as-attempts", None),
     "tests/test_event_labeling.py": ("incidental mention", None),
+    "tests/test_known_solver_defects.py": ("reads-as-attempts", None),
     "tests/test_kr_b_resume_reporting_tsteps.py": ("reads-as-attempts", None),
     "tests/test_log_concurrency.py": ("reads-as-attempts", None),
     "tests/test_member_identity.py": ("reads-as-attempts", None),
@@ -85,6 +87,7 @@ _TABLE: dict[str, tuple[str, str | None]] = {
     "tests/test_resume_event_ledger.py": ("reads-as-attempts", None),
     "tests/test_resume_stepback_from_cut_off_snapshot.py": ("reads-as-attempts", None),
     "tests/test_resume_verdict_disclosed_denominator.py": ("reads-as-attempts", None),
+    "tests/test_snapshot_failed_replay.py": ("reads-as-attempts", None),
     "tests/test_synth_combine_pip2.py": ("incidental mention", None),
     "tests/test_synth_compute_sensitivity_eda.py": ("reads-as-attempts", None),
     "tests/test_synth_config_diff_grouping_fungibility.py": ("reads-as-attempts", None),
@@ -93,7 +96,7 @@ _TABLE: dict[str, tuple[str, str | None]] = {
     "tests/test_synth_metadata_renderer.py": ("incidental mention", None),
     "tests/test_synth_resume_schedule.py": ("reads-as-attempts", None),
     "tests/test_validate_analysis_single_snapshot.py": ("reads-as-attempts", None),
-    "tests/test_wp2b_resume_mechanism_review.py": ("reads-as-attempts", "1b"),
+    "tests/test_wp2b_resume_mechanism_review.py": ("reads-as-attempts", None),
 }
 
 
@@ -146,18 +149,6 @@ def test_no_consumer_reads_n_resumes_as_completions():
     """
     assert {d for d, _ in _TABLE.values()} <= _VOCABULARY
     assert [p for p, (d, _) in _TABLE.items() if d == "reads-as-completions"] == []
-
-
-def test_files_owned_by_another_package_name_their_owner():
-    """Property: the two test files a later change rewrites carry that owner in their rows.
-
-    What kills it: dropping the owner from either row.
-
-    A second correct implementation under which it still passes: owners kept in a separate
-    mapping keyed by path.
-    """
-    for path in ("tests/test_wp2b_resume_mechanism_review.py", "tests/test_check_known_resume_defects.py"):
-        assert _TABLE[path][1] == "1b"
 
 
 def test_the_caption_states_the_predicate_its_renderer_applies():

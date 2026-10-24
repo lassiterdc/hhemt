@@ -1633,7 +1633,7 @@ def _coupling_analysis(system, *, one_per_cell=False):
         ("", "list", "J1\n", False),
     ],
 )
-def test_property_71_a_coupled_system_declaring_no_coupling_node_is_refused(tmp_path, inflows, mode, nodes, refused):
+def test_a_coupled_system_declaring_no_coupling_node_is_refused(tmp_path, inflows, mode, nodes, refused):
     """A coupled system whose candidate set is empty is refused at run entry.
 
     Class: coupled templates under ``swmm_coupling_mode: legacy`` whose ``[INFLOWS]`` lines
@@ -1660,7 +1660,7 @@ def test_property_71_a_coupled_system_declaring_no_coupling_node_is_refused(tmp_
         TRITONSWMM_analysis._refuse_coupled_system_with_no_coupling_candidate(fake)
 
 
-def test_property_71_all_junctions_with_no_coordinated_junction_is_refused_and_standalone_is_not(tmp_path):
+def test_all_junctions_with_no_coordinated_junction_is_refused_and_standalone_is_not(tmp_path):
     """The all_junctions arm, and the standalone control.
 
     Class: ``all_junctions`` templates whose junctions have no ``[COORDINATES]`` row, and a
@@ -1691,7 +1691,7 @@ def test_property_71_all_junctions_with_no_coordinated_junction_is_refused_and_s
         ("; a comment\n\n", "it names no node. For a surface-only run"),
     ],
 )
-def test_property_74_a_coupling_node_file_is_validated_at_run_entry(tmp_path, nodes, expected):
+def test_a_coupling_node_file_is_validated_at_run_entry(tmp_path, nodes, expected):
     """A coupling-node file is refused for each case the solver would stop on.
 
     Class: coupling-node files naming an undefined node, an outfall, one node twice under
@@ -1713,7 +1713,7 @@ def test_property_74_a_coupling_node_file_is_validated_at_run_entry(tmp_path, no
     assert excinfo.value.field == "swmm_coupling_nodes_file"
 
 
-def test_property_74_every_failing_case_is_reported_and_a_valid_file_passes(tmp_path):
+def test_every_failing_case_is_reported_and_a_valid_file_passes(tmp_path):
     """All cases at once, with its control.
 
     Class: a file failing two cases at once, against a file naming one coordinated junction.
@@ -1741,7 +1741,7 @@ def test_property_74_every_failing_case_is_reported_and_a_valid_file_passes(tmp_
         ("dem_filename=x.dem\n# swmm_coupling_nodes=list.txt\n", False),
     ],
 )
-def test_property_74_a_cfg_template_that_sets_the_coupling_key_is_refused(tmp_path, cfg_text, refused):
+def test_a_cfg_template_that_sets_the_coupling_key_is_refused(tmp_path, cfg_text, refused):
     """The TRITON cfg key: a template already setting ``swmm_coupling_nodes`` is refused.
 
     Class: TRITON cfg templates carrying an active ``swmm_coupling_nodes`` line, indented or
@@ -1763,7 +1763,7 @@ def test_property_74_a_cfg_template_that_sets_the_coupling_key_is_refused(tmp_pa
         TRITONSWMM_analysis._refuse_invalid_coupling_declaration(fake)
 
 
-def test_property_75_legacy_candidates_are_flow_lines_by_swmms_rule_and_only_legacy_reads_them(tmp_path):
+def test_legacy_candidates_are_flow_lines_by_swmms_rule_and_only_legacy_reads_them(tmp_path):
     """Under ``legacy`` the candidates are the FLOW-carrying nodes by SWMM's rule.
 
     Class: inflow lines whose constituent is ``FLOW``, a declared pollutant named ``FLOWX``,
@@ -1803,7 +1803,7 @@ def test_property_75_legacy_candidates_are_flow_lines_by_swmms_rule_and_only_leg
         ("legacy", None, False),
     ],
 )
-def test_property_77_the_one_per_cell_option_is_refused_under_a_declared_mode(tmp_path, mode, nodes, refused):
+def test_the_one_per_cell_option_is_refused_under_a_declared_mode(tmp_path, mode, nodes, refused):
     """The one-node-per-DEM-cell option is refused under ``list`` and ``all_junctions``.
 
     Class: systems declaring a coupled set while the analysis turns the one-per-cell option
@@ -1865,7 +1865,7 @@ def _in_memory_dem(ncols: int = 4, nrows: int = 3, cell: float = 10.0):
         ("legacy", None, "J1 5 5\nJ2 15 5\nO1 45 5", None),
     ],
 )
-def test_property_78_a_candidate_outside_the_triton_grid_is_refused(tmp_path, source, mode, nodes, coordinates, named):
+def test_a_candidate_outside_the_triton_grid_is_refused(tmp_path, source, mode, nodes, coordinates, named):
     """A coupling candidate the TRITON grid does not contain is refused at run entry.
 
     Class: candidate junctions just outside, and in the outer half of the last cell of, a
@@ -1901,7 +1901,7 @@ def test_property_78_a_candidate_outside_the_triton_grid_is_refused(tmp_path, so
 
 
 @pytest.mark.parametrize(("overwrite", "refused"), [(True, True), (False, False)])
-def test_property_78_an_overwrite_judges_against_the_grid_setup_will_write(tmp_path, overwrite, refused):
+def test_an_overwrite_judges_against_the_grid_setup_will_write(tmp_path, overwrite, refused):
     """Grid source: with ``overwrite_system_inputs`` the processed DEM's header is not used.
 
     Class: a processed DEM whose header (10 x 10 cells) contains a node that the raster setup
