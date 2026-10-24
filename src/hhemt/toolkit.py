@@ -116,15 +116,15 @@ class Toolkit:
             Path to the analysis configuration YAML file.
         hpc_system_config : str or Path, optional
             Path to the per-HPC-system configuration YAML file
-            (``hpc_system_config.yaml``). When None, the default, behavior is
-            byte-identical to today and the HPC config consumers wire in later
-            phases.
+            (``hpc_system_config.yaml``). When None, the default, the analysis is
+            built without one and its ``cfg_hpc_system`` is None.
         case_manifest_yaml : str or Path, optional
             Path to the case study's ``case.yaml`` manifest. Forwarded to the
             analysis constructor so ``case_name`` is bundled, which is a blocking
             combine-compatibility field, and the RO-Crate root name resolves from
-            the real manifest. When None, the default, behavior is byte-identical
-            to today.
+            the real manifest. When None, the default, no manifest is loaded: no
+            ``case.yaml`` is copied into a render bundle, and the RO-Crate root name
+            falls back to the analysis_id.
         validate : bool, default True
             Whether to run preflight validation. Raises ConfigurationError if
             validation fails.
@@ -151,8 +151,8 @@ class Toolkit:
         ... )
         >>>
         >>> # Toolkit is ready - configs loaded, validated, and bound
-        >>> print(f"Analysis directory: {tk.analysis.analysis_dir}")
-        >>> print(f"Total simulations: {tk.analysis.n_simulations}")
+        >>> print(f"Analysis directory: {tk.analysis_dir}")
+        >>> print(f"Total simulations: {tk.n_simulations}")
         """
         from .analysis import TRITONSWMM_analysis
         from .system import TRITONSWMM_system
@@ -219,8 +219,7 @@ class Toolkit:
         Notes
         -----
         This implementation does not compose and run a full analysis ensemble. That
-        composition currently lives in ``scripts/experiments/synth_compute_config.py``
-        and is promoted into the framework later.
+        composition lives in ``scripts/experiments/synth_compute_config.py``.
         """
         import yaml
 
@@ -261,6 +260,8 @@ class Toolkit:
         override_force_rerun=None,
         wait_for_completion: bool | None = None,
         override_wipe_nonempty: bool = False,
+        override_clean_restart_member_ids: list[str] | None = None,
+        debug: bool = False,
     ) -> WorkflowResult:
         """Run TRITON-SWMM workflow.
 
@@ -297,6 +298,23 @@ class Toolkit:
             only; ``"all"`` re-runs every completed scenario and everything
             downstream without deleting the analysis directory. None, the default,
             reads the config field.
+        override_clean_restart_member_ids : list of str, or None
+            Sensitivity member ids to CLEAN-RESTART: each named member's runtime
+            children are wiped, including the per-model log that carries
+            ``n_resumes``, so the member re-runs from checkpoint 0 and its resume
+            counter resets to zero. This is a DIFFERENT operation from
+            ``override_force_rerun``, and the difference is the counter rather than
+            the checkpoints: a force-rerun prunes the checkpoint set but leaves
+            ``n_resumes`` where it was, so a member restarted that way runs fresh
+            while still being classified as the RESUME arm of a clean/resume pair
+            by ``eda/compute_sensitivity.py`` (which reads ``n_resumes == 0`` as the
+            clean member). Use this when a member must re-run as a CLEAN member.
+            None, the default, wipes nothing.
+        debug : bool
+            Run in debug mode. Today it does exactly one thing: a coupled simulation that
+            starts from the beginning asks the solver to keep the previous run's snapshot
+            files rather than remove them. Default False. Passed through to
+            ``TRITONSWMM_analysis.run(debug=)``.
 
         Returns
         -------
@@ -362,7 +380,7 @@ class Toolkit:
             ) from exc
 
         # Map the public ``mode`` knob to ``analysis.run()``'s ``from_scratch`` flag.
-        # ``analysis.run()`` accepts neither ``mode`` nor ``phases`` (Gotcha 8).
+        # ``analysis.run()`` accepts neither ``mode`` nor ``phases``.
         from_scratch = run_mode == RunMode.fresh
 
         # Delegate to analysis.run()
@@ -372,6 +390,7 @@ class Toolkit:
         return self.analysis.run(
             from_scratch=from_scratch,
             override_wipe_nonempty=override_wipe_nonempty,
+            override_clean_restart_member_ids=override_clean_restart_member_ids,
             events=events,
             execution_mode=execution_mode,
             dry_run=dry_run,
@@ -379,6 +398,7 @@ class Toolkit:
             report_config=report_config,
             override_force_rerun=override_force_rerun,
             wait_for_job_completion=wait_for_completion,
+            debug=debug,
         )
 
     def get_status(self) -> WorkflowStatus:
@@ -403,25 +423,17 @@ class Toolkit:
 
         >>> status = tk.get_status()
         >>> print(status)
-        Workflow Status Report
-        ════════════════════════════════════════
-        Analysis: norfolk_coastal_flooding
-        Directory: /path/to/analysis
 
-        Phase Status:
-        ✓ Setup (complete)
-        ✓ Scenario Preparation (complete)
-        ⚠ Simulation (in progress: 12/24 complete)
-        ✗ Output Processing (not started)
-        ✗ Consolidation (not started)
+        The printed report opens with ``Workflow Status Report``, the analysis id
+        and directory, then a ``Phase Status:`` block with one line per phase:
+        a symbol (``✓`` complete, ``⚠`` in progress, ``✗`` not started), the phase
+        name, and ``(N% complete)`` only while a phase is partly done. Each phase
+        line is followed by that phase's detail lines and, when items failed, their
+        count with up to three of them listed.
+        The report closes with a ``Recommendation:`` block. It prints no overall
+        progress count and no current-phase line; read those from
+        ``status.simulations_completed`` and ``status.current_phase``.
 
-        Progress: 12/24 simulations complete (0 failed)
-        Current Phase: simulation
-
-        Recommendation:
-        Use mode='resume' to continue simulation execution.
-        12 simulations have completed successfully.
-        >>>
         >>> # Follow the recommendation
         >>> if not status.simulation.complete:
         ...     result = tk.run(mode=status.recommended_mode)

@@ -58,6 +58,8 @@ allocation cannot span partitions, so a sensitivity sweep that varies hardware
 across rows cannot use a single-allocation dispatch method. Preflight rejects
 the combination rather than failing mid-run.
 
+**Only coupling-candidate junctions exchange water with the surface.** `swmm_coupling_mode` chooses the candidates; outfalls, and in this build storage nodes and dividers, are not coupled, and an optional limit (legacy only) keeps one junction per DEM cell; see [Coupled inflow nodes](coupled-inflow-nodes.md).
+
 **Walltime is a real boundary.** A simulation killed at walltime resumes from its
 most recent checkpoint, but resumption is a property of the solver's checkpoint
 cadence, not something the toolkit can add. Size allocations with that in mind.

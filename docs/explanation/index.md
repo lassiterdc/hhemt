@@ -8,6 +8,8 @@ rationale behind the toolkit.
 - [Limitations and constraints](limitations.md): what the toolkit does not
   contain, what it constrains about your environment, and what it does not
   claim about scientific validity.
+- [Coupled inflow nodes](coupled-inflow-nodes.md): which SWMM nodes exchange
+  water with the surface, and what each preparation error about them means.
 - [Software availability](software-availability.md): licensing and how to
   obtain the coupled solvers.
 - [When and why re-runs happen](rerun-faq.md): the Snakemake re-run triggers

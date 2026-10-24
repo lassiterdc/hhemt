@@ -107,32 +107,294 @@ def test_wait_rule_emits_retries_zero(slurm_ready_builder):
 
 def test_sweep_failed_rules_unions_markers_and_stderr(slurm_ready_builder, tmp_path):
     """The sweep unions _status/_failed/ markers (sim class) with the
-    ``Error in rule (...)`` Snakemake-log scan (process/consolidate/plot/render class)."""
+    ``Error in rule (...)`` Snakemake-log scan (process/consolidate/plot/render class).
+
+    Property: one failed sim event yields exactly one record, named by its marker.
+    Class: a sim failure that both wrote a marker and printed a Snakemake error block,
+    where the marker is in the sim runner's real payload shape (no ``rule_token`` key) and
+    the log names the RULE (``run_triton``), not the event token. Why: without the stem
+    stamp the marker record prints as ``?``, and without the prefix dedup the same failure
+    is counted twice. What kills it: dropping the stem stamp, or comparing the log rule to
+    marker tokens by equality. A second correct implementation, under which this still
+    passes: dedup by parsing the event token back to its rule name; the assertions read
+    only the token set and the per-token count.
+    """
     failed_dir = tmp_path / "_status" / "_failed"
     failed_dir.mkdir(parents=True)
+    # The sim runner's marker payload (run_simulation_runner.py): no rule_token key.
     (failed_dir / "run_triton_evt-0.json").write_text(
-        json.dumps({"rule_token": "run_triton_evt-0", "reason": "walltime kill"})
+        json.dumps(
+            {
+                "slurm_jobid": "555",
+                "run_uuid": "u-1",
+                "sa_id": None,
+                "model_type": "triton",
+                "event_id": "0",
+                "status": "failed",
+                "finished_at": "2026-10-23T00:00:00",
+            }
+        )
     )
     (failed_dir / "broken.json").write_text("{ not valid json")  # exercises the parse-fallback
     stderr = (
         "Some snakemake output\n"
         "Error in rule consolidate_zarr:\n"
         "    jobid: 7\n"
-        "Error in rule run_triton_evt-0:\n"  # duplicate of a marker — must NOT double-count
+        "\n"
+        "Error in rule run_triton:\n"  # the same failure as the marker, named by its RULE
+        "    jobid: 3\n"
     )
 
     records = slurm_ready_builder._sweep_failed_rules(tmp_path, snakemake_stderr=stderr)
-    tokens = {r.get("rule_token") for r in records}
+    tokens = [r.get("rule_token") for r in records]
 
-    assert "run_triton_evt-0" in tokens  # from marker
+    assert "run_triton_evt-0" in tokens  # from marker, token stamped from the file stem
     assert "broken" in tokens  # unparseable marker still surfaces by stem
     assert "consolidate_zarr" in tokens  # from stderr scan (no marker)
-    # union de-dupes: the stderr line repeating a marker token adds no second record
-    assert sum(1 for r in records if r.get("rule_token") == "run_triton_evt-0") == 1
+    # union de-dupes: the log block for the marker's rule adds no second record
+    assert "run_triton" not in tokens
+    assert tokens.count("run_triton_evt-0") == 1
+    assert len(records) == 3
 
 
 def test_sweep_empty_when_no_failures(slurm_ready_builder, tmp_path):
     assert slurm_ready_builder._sweep_failed_rules(tmp_path, snakemake_stderr="") == []
+
+
+# ---- the log layer keys on the (jobid, rule) pair ----
+#
+# These drive the unbound builder methods with a minimal self, so no synthetic case is built.
+# The Snakemake log lines follow Snakemake 9.15.0's own layout: an error block is
+# ``Error in rule R:`` then ``    jobid: N``, a restart prints ``Trying to restart job N.``,
+# and a success prints ``Finished jobid: N (Rule: R)``.
+
+
+def _r1d_augment(tmp_path, log_text: str) -> dict:
+    """Run the real sweep-and-augment over ``log_text`` written to a Snakemake log file."""
+    from types import SimpleNamespace
+
+    from hhemt.workflow import SnakemakeWorkflowBuilder
+
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir(exist_ok=True)
+    logfile = tmp_path / "snakemake_master.log"
+    logfile.write_text(log_text)
+    fake_self = SimpleNamespace(
+        analysis_paths=SimpleNamespace(analysis_dir=analysis_dir),
+        _sweep_failed_rules=lambda d, snakemake_stderr="": SnakemakeWorkflowBuilder._sweep_failed_rules(
+            None, d, snakemake_stderr=snakemake_stderr
+        ),
+    )
+    return SnakemakeWorkflowBuilder._augment_result_with_partial_failures(
+        fake_self, {"success": True, "message": "Workflow completed successfully", "snakemake_logfile": logfile}
+    )
+
+
+# The two failed attempts of a scheduled-resume run, as the Rivanna run of 2026-10-22 logged them.
+_R1D_TWO_FAILED_ATTEMPTS = (
+    "localrule run_tritonswmm:\n"
+    "    jobid: 4\n"
+    "\n"
+    "Error in rule run_tritonswmm:\n"
+    "    jobid: 4\n"
+    "    log: logs/sims/tritonswmm_evt-event_index.0.log (check log file(s) for error details)\n"
+    "\n"
+    "Trying to restart job 4.\n"
+    "Error in rule run_tritonswmm:\n"
+    "    jobid: 4\n"
+    "\n"
+    "Trying to restart job 4.\n"
+)
+
+
+def test_sweep_drops_a_rule_that_snakemake_retried_to_success(tmp_path):
+    """Property: a job Snakemake restarted and finished is not a permanent failure, and is disclosed.
+
+    Class: logs in which a ``(jobid, rule)`` pair has one or more error blocks and a later
+    ``Finished jobid: N (Rule: R)`` line. Why: every scheduled resume fails its interrupted
+    attempts on purpose, so counting their error blocks reports a completed run as failed.
+    What kills it: counting error headers without checking for a later finish, or omitting
+    the ``retried_to_success`` disclosure. A second correct implementation, under which this
+    still passes: track per-jobid state transitions line by line instead of collecting sets;
+    the assertions read only ``success``, ``partial_failures`` and the disclosure records.
+    """
+    result = _r1d_augment(
+        tmp_path, _R1D_TWO_FAILED_ATTEMPTS + "Finished jobid: 4 (Rule: run_tritonswmm)\n17 of 17 steps (100%) done\n"
+    )
+    assert result["partial_failures"] == []
+    assert result["success"] is True
+    assert result["retried_to_success"] == [{"rule": "run_tritonswmm", "jobid": 4, "attempts": 3}]
+
+
+def test_sweep_keeps_a_rule_that_errored_and_never_finished(tmp_path):
+    """Property: a job whose every attempt errored is still a permanent failure.
+
+    The both-states control for the test above: green before and after the change, so the
+    test above cannot be satisfied by dropping the log layer. Class: logs whose error blocks
+    for a pair have no later finish. What kills it: discarding log-layer records wholesale.
+    A second correct implementation: rejecting a failure only on a matching finish keyed by
+    jobid alone; the assertions read only the verdict and the rule token.
+    """
+    result = _r1d_augment(tmp_path, _R1D_TWO_FAILED_ATTEMPTS)
+    assert result["success"] is False
+    assert [r.get("rule_token") for r in result["partial_failures"]] == ["run_tritonswmm"]
+
+
+def test_sweep_reads_the_error_blocks_own_jobid_not_a_preceding_start_block(tmp_path):
+    """Property: an error record carries the jobid printed inside its own block.
+
+    Class: logs in which another job's START block (with its own ``jobid:`` line) precedes
+    an error block, and that other job later finishes. Why: a backward or nearest search
+    binds the other job's id, finds it finished and drops a real failure. What kills it:
+    reading the jobid backward from the header, or from the nearest ``jobid:`` line in
+    either direction. A second correct implementation: parse whole records split on blank
+    lines; the assertion reads only the record's ``jobid`` field.
+    """
+    log = (
+        "localrule plot_z:\n"
+        "    output: plots/z.html\n"
+        "    jobid: 7\n"
+        "\n"
+        "Error in rule plot_x:\n"
+        "    jobid: 9\n"
+        "\n"
+        "Finished jobid: 7 (Rule: plot_z)\n"
+    )
+    result = _r1d_augment(tmp_path, log)
+    (record,) = [r for r in result["partial_failures"] if r.get("rule_token") == "plot_x"]
+    assert record["jobid"] == 9
+
+
+# ---- the waited single-job run is swept from the script's log directives ----
+
+
+def _r1d_waited_single_job_result(tmp_path, script_lines: list[str], logs: dict[str, str]) -> dict:
+    """Drive submit_workflow's waited 1_job_many_srun_tasks branch with the submission mocked.
+
+    ``script_lines`` are written to the script the mocked submission reports; ``logs`` maps a
+    file name under ``tmp_path`` to its text. Only the submission, Snakefile generation, the
+    dry run and the queued-sentinel writers are replaced; the sweep runs for real.
+    """
+    from unittest.mock import Mock, patch
+
+    from hhemt.workflow import SnakemakeWorkflowBuilder
+
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir()
+    script = analysis_dir / "run_workflow_1job.sh"
+    script.write_text("#!/bin/bash\n" + "\n".join(line.format(tmp=tmp_path) for line in script_lines) + "\n")
+    for name, text in logs.items():
+        (tmp_path / name).write_text(text)
+
+    analysis = Mock()
+    analysis.cfg_analysis = Mock()
+    analysis.cfg_analysis.multi_sim_run_method = "1_job_many_srun_tasks"
+    analysis.cfg_analysis.hpc_cpus_per_node = 32
+    analysis.cfg_analysis.hpc_total_nodes = 1
+    analysis.cfg_analysis.mem_gb_per_cpu = 2
+    analysis.cfg_analysis.hpc_restart_times_simulate = 2
+    analysis.cfg_analysis.hpc_consecutive_failure_budget_simulate = 3
+    analysis.analysis_paths = Mock()
+    analysis.analysis_paths.analysis_dir = analysis_dir
+    analysis._resource_manager = Mock()
+    analysis._resource_manager._get_simulation_resource_requirements.return_value = {"n_gpus": 0}
+    analysis._system = Mock()
+    analysis._python_executable = "python"
+    analysis._refresh_log = Mock()
+
+    submitted = {
+        "success": True,
+        "mode": "single_job",
+        "job_id": "123",
+        "script_path": script,
+        "message": "Job 123 COMPLETED (exit 0)",
+        "completed": True,
+    }
+    builder = SnakemakeWorkflowBuilder(analysis)
+    with (
+        patch.object(SnakemakeWorkflowBuilder, "_planned_sim_tokens", return_value=[]),
+        patch.object(SnakemakeWorkflowBuilder, "_write_queued_sentinels"),
+        patch.object(SnakemakeWorkflowBuilder, "_submit_single_job_workflow", return_value=submitted),
+        patch.object(builder, "generate_snakefile_content", return_value="# Snakefile"),
+        patch.object(builder, "run_snakemake_local", return_value={"success": True}),
+        patch("pathlib.Path.write_text"),
+    ):
+        return builder.submit_workflow(wait_for_completion=True, verbose=False)
+
+
+_R1D_UNFINISHED_PLOT_Y = "Error in rule plot_y:\n    jobid: 2\n\n"
+
+
+def test_waited_single_job_run_is_swept(tmp_path):
+    """Property: a waited single-job run is swept from the file its script's directives name.
+
+    Class: waited ``1_job_many_srun_tasks`` runs whose log carries a never-finished error
+    block. Why: that path has no Snakemake log file of its own, so a sweep that reads only
+    ``snakemake_logfile`` sees nothing and reports a failed rule as success. What kills it:
+    not assembling the log from the script, or assembling it and not handing it to the
+    sweep. A second correct implementation: have the single-job submitter record the log
+    path itself; the assertions read only ``success`` and the failed rule's name.
+    """
+    result = _r1d_waited_single_job_result(
+        tmp_path,
+        ["#SBATCH --output={tmp}/workflow_x_%j.out", "#SBATCH --error={tmp}/workflow_x_%j.out"],
+        {"workflow_x_123.out": _R1D_UNFINISHED_PLOT_Y},
+    )
+    assert result["success"] is False
+    assert "plot_y" in [r.get("rule_token") for r in result["partial_failures"]]
+
+
+@pytest.mark.parametrize(
+    "script_lines",
+    [
+        pytest.param(
+            ["#SBATCH --output={tmp}/workflow_a_%j.out", "#SBATCH --error={tmp}/workflow_b_%j.out"],
+            id="i-two-timestamps",
+        ),
+        pytest.param(
+            [
+                "#SBATCH --output={tmp}/workflow_a_%j.out",
+                "#SBATCH --error={tmp}/workflow_a_%j.out",
+                "#SBATCH --error={tmp}/user_err_%j.out",
+            ],
+            id="ii-user-error-line",
+        ),
+        pytest.param(
+            [
+                "#SBATCH --output={tmp}/workflow_a_%j.out",
+                "#SBATCH --error={tmp}/workflow_a_%j.out",
+                "#SBATCH -e {tmp}/user_err_%j.out",
+            ],
+            id="iii-short-spelling",
+        ),
+        pytest.param(
+            [
+                "#SBATCH --output={tmp}/workflow_a_%j.out",
+                "#SBATCH --error={tmp}/workflow_a_%j.out",
+                "#SBATCH --err={tmp}/user_err_%j.out",
+            ],
+            id="iv-long-prefix",
+        ),
+    ],
+)
+def test_waited_single_job_run_reads_every_error_path_spelling(tmp_path, script_lines):
+    """Property: the Snakemake block is found whichever error-path directive holds it.
+
+    Class: scripts naming the error log through a second timestamped line, a user
+    ``additional_sbatch_args`` line, the short ``-e`` spelling or a long-option prefix,
+    while ``workflow_a`` holds only stdout banner text. Why: sbatch applies the last
+    directive in any getopt_long spelling, and Snakemake writes to stderr, so a reader of
+    the first or only the ``--error=`` line reads the wrong file. What kills it: reading
+    only ``--output``, only the first ``--error``, or only the ``--error=`` spelling. A
+    second correct implementation: read only the LAST error-path directive, as sbatch
+    applies it; the assertions read only ``success`` and the failed rule's name.
+    """
+    logs = {"workflow_a_123.out": "stdout banner only\n"}
+    target = "user_err_123.out" if any("user_err" in line for line in script_lines) else "workflow_b_123.out"
+    logs[target] = _R1D_UNFINISHED_PLOT_Y
+    result = _r1d_waited_single_job_result(tmp_path, script_lines, logs)
+    assert result["success"] is False
+    assert "plot_y" in [r.get("rule_token") for r in result["partial_failures"]]
 
 
 # ---- result augmentation: partial_failures + success flip ----
@@ -246,3 +508,67 @@ def test_failed_dry_run_raises_workflow_planning_error():
     )
     assert out["success"] is True
     assert out["mode"] == "single_job"
+
+
+# ---- a Snakemake finish clears only an error block that precedes it ----
+
+
+def test_review_a_finished_line_before_the_error_block_does_not_clear_it():
+    """Property: an error block is cleared only by a ``Finished jobid: N (Rule: R)`` line AFTER it.
+
+    Class: logs that hold more than one Snakemake run, in which a pair ``(N, R)`` finished in an
+    earlier run and then errored, with no finish after the error, in a later run. Such a log is
+    reachable on the waited single-job path, which reads a fixed-name ``#SBATCH --error`` file
+    whether or not it is fresh: under ``--open-mode=append`` (a user directive, or a cluster's
+    append default) the file keeps the earlier run's lines ahead of the current ones. Snakemake
+    numbers jobs in DAG order, so the same rule gets the same jobid on a rerun of the same
+    workflow. Why it is required: a finish recorded BEFORE the error cannot be that failed
+    attempt's retry, so letting it clear the error reports a real failure as clean, the false
+    clean the log layer exists to prevent. What kills it: matching error blocks against the SET of
+    every finished pair in the text, without regard to position. A second correct implementation,
+    under which this still passes: walk the lines once and keep a per-pair state that a finish
+    sets to "done" and a later error block resets to "failed"; the assertion reads only which
+    rules are reported as failed.
+    """
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from hhemt.workflow import SnakemakeWorkflowBuilder
+
+    earlier_run = "localrule plot_y:\n    jobid: 4\n\nFinished jobid: 4 (Rule: plot_y)\n5 of 5 steps (100%) done\n"
+    current_run = "localrule plot_y:\n    jobid: 4\n\nError in rule plot_y:\n    jobid: 4\n\n4 of 5 steps (80%) done\n"
+    records = SnakemakeWorkflowBuilder._sweep_failed_rules(
+        SimpleNamespace(), Path("/nonexistent-analysis-dir"), snakemake_stderr=earlier_run + current_run
+    )
+    assert "plot_y" in [r.get("rule_token") for r in records], (
+        f"the current run's plot_y failure has no finish after it, so it must be reported; got {records!r}"
+    )
+
+
+def test_review_an_error_block_after_a_finish_is_failed_again():
+    """Property: a pair that finished and then errored again, with no finish after that error, is failed.
+
+    Class: logs in which a ``(jobid, rule)`` pair's LAST error block comes after its last
+    ``Finished jobid: N (Rule: R)`` line, with an earlier error block before that finish. On the
+    waited single-job path an appended fixed-name log reaches it: an earlier run whose job was
+    retried to success, then a later run whose same-numbered job failed. Why it is required: the
+    clearing finish must follow the LAST error, not merely some error; a finish that follows only
+    an earlier attempt says nothing about the later one, so clearing on it reports a real failure
+    as clean. What kills it: clearing a pair when a finish follows its FIRST error block, or when
+    any finish exists for it. A second correct implementation, under which this still passes: walk
+    the lines once and keep a per-pair state that a finish sets to "done" and every error block
+    resets to "failed"; the assertion reads only which rules are reported as failed.
+    """
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from hhemt.workflow import SnakemakeWorkflowBuilder
+
+    earlier_run = "Error in rule plot_y:\n    jobid: 4\n\nTrying to restart job 4.\nFinished jobid: 4 (Rule: plot_y)\n"
+    current_run = "Error in rule plot_y:\n    jobid: 4\n\n4 of 5 steps (80%) done\n"
+    records = SnakemakeWorkflowBuilder._sweep_failed_rules(
+        SimpleNamespace(), Path("/nonexistent-analysis-dir"), snakemake_stderr=earlier_run + current_run
+    )
+    assert "plot_y" in [r.get("rule_token") for r in records], (
+        f"plot_y errored after its last finish, so it must be reported; got {records!r}"
+    )

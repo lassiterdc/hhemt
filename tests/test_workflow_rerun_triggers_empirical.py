@@ -26,7 +26,8 @@ pytestmark = [
         tst_ut.compile_toolchain_unavailable(),
         reason=(
             "TRITON-SWMM CPU compile toolchain (cmake + mpic++) not on PATH. "
-            "These tests compile inline via submit_workflow(compile_TRITON_SWMM=True); "
+            "The workflow's setup rule asserts a build and never produces one, so these "
+            "tests depend on the compiled-tier fixtures; "
             "run them under the hhemt conda env."
         ),
     ),
@@ -97,13 +98,13 @@ def _exercise_add_remove_rerun(analysis, *, kind: str) -> None:
     )
 
 
-def test_rerun_triggers_multi_sim_add_remove(synth_multi_sim_analysis):
+def test_rerun_triggers_multi_sim_add_remove(triton_only_cpu_compiled, synth_multi_sim_analysis):
     """Multi-sim: add+remove a scenario row in weather_events_to_simulate, re-run,
     assert untouched scenarios were not re-executed."""
     _exercise_add_remove_rerun(synth_multi_sim_analysis, kind="multi_sim")
 
 
-def test_rerun_triggers_sensitivity_add_remove(synth_sensitivity_analysis):
+def test_rerun_triggers_sensitivity_add_remove(tritonswmm_cpu_compiled, synth_sensitivity_analysis):
     """Sensitivity: add+remove a member row in the sensitivity CSV, re-run,
     assert untouched members' scenarios were not re-executed."""
     _exercise_add_remove_rerun(synth_sensitivity_analysis, kind="sensitivity")

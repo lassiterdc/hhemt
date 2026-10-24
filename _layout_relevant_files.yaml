@@ -3737,3 +3737,280 @@ non_breaking_allowlist:
       governs the on-disk analysis tree.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/log.py
+    layout_signature: 1eefec18e1e0de888f60b48cae89cc3a6f559a153927e9cca78d8fd17739253c
+    justification: >-
+      NON-BREAKING. The retry-budget change adds ONE field to
+      `TRITONSWMM_model_log`: `consecutive_terminal_failures: LogField[int]`, the durable
+      operand of the consecutive-failure budget gate in `run_simulation_runner`, plus that
+      field's name in the existing int validator and int serializer groups.
+      DECIDING MEASUREMENT, structural rather than textual: both modules were parsed at
+      5e83c4c6 and in the worktree and the annotated class-level field set was compared by
+      (class, name, annotation) -- 99 fields at HEAD, 100 in the worktree, with ADDED
+      exactly [(TRITONSWMM_model_log, consecutive_terminal_failures, LogField[int])] and
+      REMOVED exactly []. No field was renamed, retyped, reordered, or made required, and
+      no class name or order moved.
+      WHY ADDITIVE IS NON-BREAKING HERE: the field is a default-constructed `LogField`, so
+      `LogField.get()` returns None on every pre-existing `log_{model}.json` and the two
+      consumers coalesce None -> 0. Every historical log deserialises unchanged, exactly as
+      the allowlisted additive fields above it do; a RENAME of an on-disk log key is the
+      change class that would owe a LAYOUT_VERSION bump, and this is not one.
+      The signature above is the worktree content's
+      sha256 at authoring time.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 5f8419e63be421bc4d1eeef67e191b3422a0640e8384ddf72a3b0e98c2d0b701
+    justification: >-
+      NON-BREAKING. Three changes touch this module, all of which leave the on-disk config layout alone. (1) the retry-budget change adds ONE
+      field, `hpc_consecutive_failure_budget_simulate: int = Field(3, ge=0, ...)` -- the
+      durable retry-budget knob. (2) the retry-ceiling disclosure EXTENDS `hpc_restart_times_simulate`'s
+      description string to disclose that the number is per Snakemake PROCESS and that the
+      realised ceiling multiplies across nesting levels; a field DESCRIPTION is not part of
+      the on-disk layout. (3) a message repair fixes three force-rerun-subject strings
+      that named `member_id`, a key the `ForceRerunSubject` Literal does not admit.
+      DECIDING MEASUREMENT, structural rather than textual: parsed at 5e83c4c6 and in the
+      worktree and compared by (class, name, annotation) -- 80 fields at HEAD, 81 in the
+      worktree, ADDED exactly [(analysis_config,
+      hpc_consecutive_failure_budget_simulate, int)] and REMOVED exactly []. The
+      `ForceRerunSubject` type alias is BYTE-UNCHANGED, so the accepted subject-key set is
+      identical and no config value that validated before stops validating.
+      WHY ADDITIVE IS NON-BREAKING HERE: the new field is DEFAULTED (3), so every existing
+      analysis_config.yaml loads unchanged, and 0 is the documented disable that reproduces
+      pre-gate behaviour exactly. No config key, path, filename or persisted structure moved.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: 6796428b2070fb3b2337314227757f68a0ce376b469e35ed6f86855d9f5c0863
+    justification: >-
+      NON-BREAKING. ONE entry added to the `_FIELD_BUCKET` dict:
+      `"hpc_consecutive_failure_budget_simulate": "hpc"`, bucketed beside the two
+      `hpc_restart_times_*` knobs it is a sibling of.
+      WHY THIS EDIT IS OBLIGATORY RATHER THAN OPTIONAL, recorded because this path is not obviously part of the retry-budget change and a reader will ask why it changed: the
+      stipulation `the reprex taxonomy is provably total over every config field` makes
+      `all_field_bucket` total over `system_config` union `analysis_config`, and
+      `report_renderers/metadata.py::_config_field_rows` buckets EVERY field through it. So the retry-budget change's new `analysis_config` field left the function raising `KeyError` on its
+      own name. Measured in the worktree before this entry: `tests/test_reprex_taxonomy.py`
+      reported `1 failed, 36 passed` on `test_field_bucket_is_total`, and the Metadata report
+      renderer could not render at all. After the entry: `37 passed`, and the Reproduction
+      Guide renders both knobs. This was a declaration
+      incompleteness in the change's edit surface, not a silent scope widening.
+      DECIDING MEASUREMENT for non-breaking: `_FIELD_BUCKET` is an IN-MEMORY classification
+      table consumed at render and at reprex-amendment time. It is not serialised, is named
+      by no on-disk artifact, and no analysis tree records it, so no persisted structure can
+      move; the module is layout-relevant only via the blanket `src/hhemt/config/**/*.py`
+      glob rather than by any named path.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/log.py
+    layout_signature: e35dfb27d53b37ad6fc58b8131747e01cb3f29e219e70a967b775741c7bb6896
+    justification: >-
+      NON-BREAKING. Three changes, none altering persisted log shape: (1) comment and docstring
+      wording only (the n_resumes and consecutive_terminal_failures comments, and prose repairs);
+      (2) "prep_inputs_reclaimed", "hydrographs_reclaimed" and "standalone_rpt_reclaimed" are
+      ADDED to TRITONSWMM_model_log's bool validator and bool serializer name lists, where they
+      were declared fields that could be neither loaded as true nor written (546c8dcf).
+      DECIDING MEASUREMENT: no field is added, removed, renamed, retyped or re-defaulted; at the
+      default None all three already serialize to null and still do (the serializer maps None to
+      None), so no persisted log_{model}.json changes shape; no writer of the three exists in
+      src/, so no persisted log holds them as true. KNOWN EXPIRY: the next change to this path.
+      The layout_signature is the file's sha256 at this write and must equal it as committed.
+  - path: src/hhemt/scenario.py
+    layout_signature: 36b31a3bf19543d5411095b9bd2718dc8bf6704875c12f7393a87f98b459726b
+    justification: >-
+      NON-BREAKING. (1) ADDS one module constant,
+      `SWMM_SNAPSHOT_KEEP_PREVIOUS_KEY`, and one pure helper,
+      `set_swmm_snapshot_keep_previous(cfg_path, keep)`, beside the two sibling snapshot-key
+      helpers; the launcher calls it at a coupled clean start to set or remove one cfg line in
+      the scenario's base TRITON-SWMM cfg, so preparation emits byte-identical cfgs. (2) Repairs
+      pre-existing guards: an unknown boundary side raises ProcessingError instead of an
+      UnboundLocalError, the two sys.exit calls raise ProcessingError, and the out-of-bounds
+      node list is accumulated and warned rather than discarded. (3) calc_area returns SWMM's
+      full areas: EGG 0.5105 x Geom1^2 instead of a length, the four rectangle shapes no longer
+      add Geom3 to the height, the horizontal-ellipse and arch rows use SWMM's own areas with
+      their size-coded forms treated as unsizable, a missing barrel count is one barrel, and
+      shape keywords match regardless of letter case. (4) The DEM-cell overlap resolver is
+      replaced by one rule run on every cell holding an [INFLOWS] node: junctions are eligible;
+      outfalls, and in this build storage nodes and dividers, are not, and lose their inflow
+      line with a warning; a cell whose inflow nodes are all ineligible raises a named error.
+      By default every eligible junction stays coupled; with
+      `one_coupled_inflow_node_per_dem_cell` the cell keeps the junction whose own outgoing link
+      has the largest flow area, ties by the cell's exit node and then the lowest invert, and
+      ranking a shape calc_area cannot size raises a named error stating that shapes can be
+      added in calc_area. (5) The shared cell grouping reads nodes from all four node sections
+      and names a node without coordinates; the [INFLOWS] writer removes every dropped node's
+      line by SWMM's own tokenizer and section rule; `undefined_inflow_nodes` reads a template
+      as SWMM does for the run-entry refusal; preparation refuses a hydraulics model, and the
+      standalone model when it is enabled, in any flow unit but CMS, and a US-unit hydrology
+      model, each before the hydrology model runs. (6) ADDS the module constants
+      `SWMM_NODE_RIM_FROM_DEM_KEY`, `SWMM_NODE_RIM_FROM_DEM_FIRST_SHA` and
+      `SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS` and two pure helpers, `append_swmm_node_rim_from_dem`
+      and `require_dem_rim_capable_triton`; the coupled cfg generator, when
+      `swmm_node_rim_from_dem` is True, first refuses a TRITON build not known to read the key
+      and then appends the line `swmm_node_rim_from_dem=1`; when False it writes the same bytes.
+      DECIDING MEASUREMENT for non-breaking: no function signature, `ScenarioPaths` field,
+      scenario-log field, section name or generated file name changes, so no prepared tree is
+      invalidated. Persisted CONTENT can change: because TRITON couples to the surface exactly
+      the nodes listed in [INFLOWS], the coupled manholes of a model whose cells hold more than
+      one inflow node, or an ineligible one, can change, appear or disappear. With the option
+      on, each prepared scenario also writes `_status/inflow_node_selection.json`; an older tree
+      simply lacks it, which the report's disclosure counts as not measured.
+      The layout_signature is the file's sha256 at this write and must equal it as committed.
+      KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 86e502e6e9c5348bded63491352e68a76350c0bbe893c5088ba67663ca76c870
+    justification: >-
+      NON-BREAKING. ADDS a `debug: bool = False` keyword to
+      `TRITONSWMM_sensitivity_analysis.submit_workflow`, its docstring entry, and its
+      pass-through to the workflow builder (six lines). The run argument reaches the
+      run-simulation rule shells as `--debug` only when True.
+      DECIDING MEASUREMENT for non-breaking: no persisted structure, member directory name,
+      fingerprint payload or status-flag name changes; with the default False every emitted
+      Snakefile is byte-identical to before this change.
+      KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 7f4622ab1cab13d21aa1bf541ae2b54a59ea15a813f9506a0a85f2a69ec6934b
+    justification: >-
+      NON-BREAKING. IN-MEMORY RE-STAMP at the two consolidation loaders: each per-scenario
+      summary store opened by `_retrieve_combined_output`, and each per-scenario timeseries
+      store opened by `_retrieve_combined_timeseries`, gets `event_iloc` assigned from its
+      current `df_sims` loop position before the concat, so an untouched scenario's stale
+      stamped position can no longer publish a duplicated coordinate after an add/remove
+      rerun (measured [0, 2, 2] before, [0, 1, 2] after).
+      DECIDING MEASUREMENT for non-breaking: no per-scenario store on disk is rewritten (the
+      re-stamp is on the opened in-memory dataset only); no tree path, group, variable or file
+      name changes; on an analysis whose events were never added or removed every stamp
+      already equals its position, so the summary node is value-identical. The timeseries node
+      gains an `event_iloc` index equal to the positions the concat already produced, because
+      the per-scenario timeseries stores carry none today; no data value changes.
+      KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/scenario_inputs.py
+    layout_signature: 31b5920aaa24d382b3c5feab8979e7ae29ff880a0fb0a396a2cb7a368b0b75fe
+    justification: >-
+      NON-BREAKING. The inline DEM-cell overlap resolver is replaced
+      by a call to scenario.py's coupled-node rule, run on every cell holding an [INFLOWS] node
+      (it ran only on cells of two or more nodes), with the cell grouping's nodes read from all
+      four SWMM node sections (dividers were missing); its [INFLOWS] writer moves to scenario.py,
+      where it reads node names by token and ends the section at the next header. The unused
+      `find_lowest_inv` wrapper and the numpy/scipy imports it alone used are removed.
+      DECIDING MEASUREMENT for non-breaking: no existing file path, filename, section, log field
+      or return value changes; the method keeps its name and signature and still sets
+      `inflow_nodes_in_hydraulic_inp_assigned`. With `one_coupled_inflow_node_per_dem_cell` on,
+      the per-scenario selection record `_status/inflow_node_selection.json` is added.
+      The layout_signature is the file's sha256 at this write and must equal it as committed.
+      KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 1def4b2db35f160ad751e72bbb56742dc15c976e3edd939708c90d133dfb19e8
+    justification: >-
+      NON-BREAKING. ADDS TWO fields beside `manhole_diameter`, each
+      `bool = Field(default=False, ...)`: `one_coupled_inflow_node_per_dem_cell` and `swmm_node_rim_from_dem`. DECIDING MEASUREMENT: both
+      fields are DEFAULTED, so every existing
+      analysis_config.yaml loads unchanged; no field is removed or renamed and no config key,
+      path or persisted structure moves.
+      The layout_signature is the file's sha256 at this write and must equal it as committed.
+      KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: 5ad5b7f575af7185506a64bf93c6c5ea40a391f562ba3ac4d3c43167ebabe826
+    justification: >-
+      NON-BREAKING. TWO entries added to `_FIELD_BUCKET`:
+      `"one_coupled_inflow_node_per_dem_cell": "experiment"` and
+      `"swmm_node_rim_from_dem": "experiment"`, which the totality test
+      `test_field_bucket_is_total` requires for the two new analysis_config fields.
+      DECIDING MEASUREMENT: `_FIELD_BUCKET` is an in-memory classification table; it is not
+      serialised and no analysis tree records it, so no persisted structure can move.
+      The layout_signature is the file's sha256 at this write and must equal it as committed.
+      KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/system.py
+    layout_signature: 514f26af385b73a5619afb1fedc7c3cd1869bc14200db4725da3dd9a80e20aa9
+    justification: >-
+      NON-BREAKING. The config-load
+      validator `validate_swmm_templates_are_si` now judges each SWMM template against its own
+      accepted set (CMS for SWMM_hydraulics and SWMM_full; CMS, LPS or MLD for SWMM_hydrology),
+      reads FLOW_UNITS through the shared `swmm_runoff_modeling.flow_units_from_inp_text` (the
+      last valued line across every [OPTION section, prefix-matched) instead of a local
+      first-line regex, widens its no-OPTIONS skip to SWMM's [OPTION prefix, and restates its
+      message and docstring. DECIDING MEASUREMENT: no field is added, removed, renamed,
+      retyped or re-defaulted, so every persisted system_config.yaml keeps its shape; the change
+      is which template contents a load accepts, which writes nothing to disk.
+      The layout_signature is the file's sha256 at this write and must equal it as committed.
+      KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/system.py
+    layout_signature: 3e02a962746e4bd034d945fe9cc0bcd7e31358326216142c0bc407a0e628643b
+    justification: >-
+      Adds the swmm_coupling_mode / swmm_coupling_nodes_file coupling-declaration fields and their load-time refusal. Pure in-memory config schema; no on-disk layout / figure stem / zarr / log / path change.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: 8035612a77b20e23c2a7953488b7bb7d7b5f69ad3809910cf7f28016ce29e197
+    justification: >-
+      Adds the _FIELD_BUCKET row for swmm_coupling_mode. Pure static-table entry; no on-disk layout change.
+  - path: src/hhemt/scenario.py
+    layout_signature: 687026a193dda1521484963fd43e3a0cc8f712f01cacc3771834a3f8ccbef52e
+    justification: >-
+      NON-BREAKING. Adds pure readers for the coupling declaration
+      (coupling_candidates, the coupling-node file reader and its checks, the TRITON-grid
+      predicate, the cfg-key detector) and the listed-node reason texts, all called only by the
+      run-entry refusals in analysis.py. DECIDING MEASUREMENT: no function preparation calls is
+      changed and no file is written by the added code, so no scenario's on-disk inputs or
+      outputs change. The layout_signature is the file's sha256 at this write and must equal it as committed.
+      KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/scenario.py
+    layout_signature: 45dc27a852c35127124ac2448fdc988375ac41c8a7026aa294aae71a474781c6
+    justification: >-
+      NON-BREAKING. Scenario preparation now writes a coupling-node list
+      (coupling_nodes.txt beside hydraulics.inp) and the coupled TRITON cfg names it with one
+      swmm_coupling_nodes line; the [INFLOWS] line writer is retired, so hydraulics.inp is left as
+      the template filled it. DECIDING MEASUREMENT: no existing per-scenario file is renamed,
+      moved or restructured, no log field or status flag is added or renamed, and
+      _status/inflow_node_selection.json keeps its keys; an existing analysis is read exactly as
+      before, and a scenario prepared again gains one new input file. CHANGES HYDRAULIC RESULTS
+      for the model classes named in the message of the commit that adds the list. The layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next change
+      to this path.
+  - path: src/hhemt/scenario_inputs.py
+    layout_signature: 29c7ca516bb6a119872eb2bc1c915a1ca615fd8353cc72c4ca1918bf0beb0ec1
+    justification: >-
+      NON-BREAKING. The selection step writes coupling_nodes.txt instead
+      of deleting [INFLOWS] lines, and its ineligible-node warning says "not written to the
+      coupling-node list". DECIDING MEASUREMENT: the selection record
+      _status/inflow_node_selection.json keeps its path, keys and cell order; no existing on-disk
+      artifact changes shape. The layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN
+      EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/scenario.py
+    layout_signature: f23c9552f267ddc5ab03273ed275fb5204837bdc570907d85994706c730efed4
+    justification: >-
+      NON-BREAKING. The toolkit owns output_folder: every TRITON and
+      TRITON-SWMM cfg the toolkit builds now carries exactly one active output_folder line
+      (out_tritonswmm or out_triton), replacing any template value, inserted before the first
+      dem_filename line or appended when there is none. DECIDING MEASUREMENT: the folder names,
+      file names and keys are unchanged, and every read path (the container bind, the resume
+      step-back, processing) already keys on those two names; a scenario prepared before this
+      change keeps its cfg until it is re-prepared. The layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/system.py
+    layout_signature: 1e5c853fc4417f69d31cc675434fb3371dd50de803c00c78d03e6d1d6891fe25
+    justification: >-
+      The swmm_coupling_mode default becomes all_junctions. Pure in-memory config default; no on-disk layout / figure stem / zarr / log / path change.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 869179d49dd7f54cb8abb36a9636bd011484cb188eb73c9b37665b21e0537653
+    justification: >-
+      adds swmm_snapshot_failed_replay (default False). Pure in-memory config schema; no on-disk layout / figure stem / zarr / log / path change.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: 4eee649f192d9e4e543e1268de735c7c3ef11561b32d51fddef597aa9df7cc60
+    justification: >-
+      adds the _FIELD_BUCKET row for swmm_snapshot_failed_replay. Pure static-table entry; no on-disk layout change.
+  - path: src/hhemt/scenario.py
+    layout_signature: 89594652800ac0d22d54373c22020081c3abb80fdf499147947daa3e336ccc9d
+    justification: >-
+      adds set_swmm_snapshot_failed_replay, a compare-and-write of one cfg line applied at launch; preparation's cfg bytes are unchanged. No on-disk layout change.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: e32e3090b0a9ecffce074ed6c1b9ffd70f7c0f0482fa868a59eb491dfd7fc802
+    justification: >-
+      corrects one_coupled_inflow_node_per_dem_cell's description to the coupling-node declaration's behaviour. Description text only; no on-disk layout change.
+  - path: src/hhemt/scenario.py
+    layout_signature: 84bbdaa216c2fdba90e35afa6016a61b9b369cf211fa8b808fdeb6cd920c3a18
+    justification: >-
+      removes planning-record references from comments and docstrings; no executable or on-disk layout change.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 102a692ff0390121a611f5f3109afe674b4dee8ce81f05dfdd2c37cd2781ec4f
+    justification: >-
+      NON-BREAKING. Re-signs this module after the merge of the two changes allowlisted in
+      the rows above: the defaulted hpc_consecutive_failure_budget_simulate field, and the
+      required_when declarations with comment and description repairs. The merge resolves
+      two comment conflicts and moves no field, key, path or persisted structure.

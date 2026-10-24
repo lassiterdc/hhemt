@@ -28,9 +28,10 @@ Topology (iteration-2 mid-iteration revision 2026-04-26 — 5 junctions + 1 dumm
     placed in an inconspicuous interior cell. SWMM requires at least one
     outfall for parsing semantics.
 
-    Pipe geometry (Geom1 = 0.2 m circular) is intentionally undersized so
-    runoff from S1/S2/S3 surcharges the network and forces flow into TRITON
-    via the rim/cell coupling — per iteration-2 scenario constraints.
+    Pipes are circular with Geom1 = `_CONDUIT_DIAMETER_M` (1.0 m), and every
+    node's depth equals that crown, so each rim sits on the DEM under SWMM's own
+    crown rule. Runoff from S1/S2/S3 surcharges the network and forces flow into
+    TRITON via the rim/cell coupling — per iteration-2 scenario constraints.
 """
 
 from __future__ import annotations
@@ -279,44 +280,20 @@ def _nodes(params):
 # name-prefix-based filter.
 _OUTFALL_NAMES = {"dummy_outfall"}
 
-# Iter-8 peak_flood_depth (2026-04-28): with the sloped upstream gradient
-# (3.0 m at top → 1.5 m at sea-wall row) and the 0.5 m buffer-lowering on
-# swale cells, swale rims at each junction are:
-#   J1, J2 (matrix_row 7):     2.174  (gradient 2.674 − 0.5)
-#   J3     (matrix_row 16):    1.587  (gradient 2.087 − 0.5)
-#   J4     (matrix_row 25):    1.000  (gradient 1.500 − 0.5)
-#   sewer_outflow (mr 27):     0.000  (dropoff 0.500 − 0.5)
-#   dummy_outfall (matrix_row 3, disconnected): 2.370 (gradient 2.870 − 0.5)
-# Junction depths cascade so all inverts step down across the network;
-# slopes 2.0% on C1/C2/C3, 2.0% on C4. All within the user's 1–3% range.
-#   sewer_outflow rim 0.0,   depth 0.5,   invert −0.5  (iter-7..11)
-#   J4            rim 1.0,   depth 1.1,   invert −0.1
-#   J3            rim 1.587, depth 1.087, invert  0.5
-#   J1, J2        rim 2.174, depth 1.074, invert  1.1
-#   dummy_outfall rim 2.370, depth 0.5,   invert  1.870 (disconnected)
-#
-# Iter-13 (2026-04-28): pipe diameter 0.2 → 1.0 m, inverts cascaded for 2.0 %
-# slopes throughout. (Pre-iter-15 cascade — replaced below.)
-#
-# Iter-17 (2026-04-29): dropoff zone lowered 1.0 → 0.5 m to match the minimum
-# upstream elevation (the buffer-lowered swale at the bottom corridor row).
-# Sewer_outflow now sits in a 0.5 m dropoff zone, so its depth re-cascades.
-# Other junctions' rims unchanged from iter-16; their depths preserved.
-#   J1, J2 rim 0.891, depth 0.500, invert  0.391
-#   J3     rim 0.696, depth 0.800, invert −0.104   C1, C2 (0.391 − −0.104)/30 = 1.65 %
-#   J4     rim 0.500, depth 1.100, invert −0.600   C3     (−0.104 − −0.600)/30 = 1.65 %
-#   sewer  rim 0.500, depth 1.400, invert −0.900   C4     (−0.600 − −0.900)/20 = 1.50 %
-#   dummy_outfall depth 0.500 (disconnected; rim auto-pins to DEM at its cell).
-# 2026-06-14: emptied to the uniform 0.5 m fallback (_JUNCTION_DEPTH_M) for the
-# n_rows-driven 8-node chain — the per-name depths above were tuned for the
-# retired 5-node 16x30 layout and no longer correspond to the new node names.
-# With a uniform depth, inverts follow the DEM corridor slope (rim==DEM,
-# invert = rim - 0.5). Tune per-node here if the review plots show conduit
-# slopes outside the 1-3% target (see the main-agent tuning guide).
+# Node depths. Every node takes the one fallback depth below (`_NODE_DEPTHS_M` is empty),
+# and its invert is placed at rim - depth, so rim = invert + MaxDepth lands on the DEM at the
+# node's cell. The fallback EQUALS the conduit crown: every link the generator writes is a
+# CIRCULAR conduit of Geom1 = `_CONDUIT_DIAMETER_M` at offset 0 under LINK_OFFSETS DEPTH, so
+# its crown is 1.0 m at both ends. SWMM raises a node's full depth to the crown of its highest
+# connecting link (link.c), so a depth below the crown would put SWMM's rim, and a solver that
+# reads SWMM's full depth, above the DEM. A uniform depth shifts every invert by the same
+# amount, so conduit slopes follow the DEM corridor and do not depend on the depth chosen.
+# A per-name depth here would also need `_build.py`'s outfall branch changed: it reads an
+# outfall's depth from `_JUNCTION_DEPTH_M`, not from `_node_depth`, because an outfall row has
+# no MaxDepth column.
 _NODE_DEPTHS_M: dict[str, float] = {}
-# Backwards-compat default for any code path that still imports
-# `_JUNCTION_DEPTH_M` (now a fallback for nodes not in `_NODE_DEPTHS_M`).
-_JUNCTION_DEPTH_M = 0.5
+# The fallback for nodes not in `_NODE_DEPTHS_M`, and the depth `_build.py` uses for outfalls.
+_JUNCTION_DEPTH_M = 1.0
 
 
 def _node_depth(name: str) -> float:
@@ -553,6 +530,53 @@ def _outfalls_df(params) -> pd.DataFrame:
     )
 
 
+def _pollutants_df(params) -> pd.DataFrame | None:
+    """POLLUTANTS frame for the regression-instrument knob, or ``None`` when it is off.
+
+    Returning ``None`` is what keeps the default-parameter ``.inp`` byte-identical:
+    `_write_variant` sets `m.inp.pollutants` only on a non-``None`` return, and
+    swmmio appends a `[POLLUTANTS]` section only for a section it was given a frame
+    for. The starter carries no `[POLLUTANTS]` header, so nothing is emitted at the
+    default and the knob's off-state leaves no trace in the output.
+
+    Every concentration is 0.0 deliberately. The coupled solver's snapshot-write
+    guard keys on `Nobjects[POLLUT] > 0` — the pollutant COUNT — and the refusal it
+    guards keys on an outfall's `routeTo < 0`, so neither depends on any pollutant
+    carrying mass. Zero concentrations therefore complete the defect's structural
+    trigger while routing no mass, which leaves every flow and coupling result the
+    model already produces numerically untouched. A non-zero concentration would
+    perturb the comparand this instrument exists to preserve and buy nothing.
+
+    `CoPollutName` is ``*``, SWMM's "no co-pollutant" sentinel; a real name here
+    would declare a co-dependency on a pollutant the model does not define.
+
+    This is a one-row frame on purpose: the guard is a `> 0` test, so a second
+    pollutant adds no reachable state and doubles the snapshot's pollutant arrays.
+
+    Not established: whether SWMM's own engine reports `Nobjects[POLLUT] == 1` for
+    this frame is not re-measured here — that needs a solver run, which is an
+    HPC-venue act. What is measured is that a real SWMM `.inp` reader parses the
+    emitted section back to exactly one pollutant row (see this package's tests).
+    """
+    if not params.pollutant_name:
+        return None
+    return pd.DataFrame(
+        {
+            "MassUnits": ["MG/L"],
+            "RainConcen": [0.0],
+            "GWConcen": [0.0],
+            "I&IConcen": [0.0],
+            "DecayCoeff": [0.0],
+            "SnowOnly": ["NO"],
+            "CoPollutName": ["*"],
+            "CoPollutFraction": [0.0],
+            "DWFConcen": [0.0],
+            "InitConcen": [0.0],
+        },
+        index=pd.Index([params.pollutant_name], name="Name"),
+    )
+
+
 def _conduits_df(params) -> pd.DataFrame:
     conduits = _conduits(params)
     return pd.DataFrame(
@@ -746,6 +770,15 @@ _SECTIONS_NEEDING_DASHES = {
     "TIMESERIES",
     "CURVES",
     "POLYGONS",
+    # POLLUTANTS is emitted only when the regression-instrument knob is set, so this
+    # member changes no default-parameter output. It is here for the same reason as
+    # every other member: swmmio writes one `;;column-names` line where SWMM's own
+    # writer writes two, and this module's job is to restore SWMM's native format.
+    # Not established: whether the coupled C++ parser scans POLLUTANTS at all was
+    # not re-measured for this change, so the membership rests on format fidelity to
+    # SWMM's writer rather than on a measured parser requirement. It is inert if the
+    # parser does not scan the section and required if it does.
+    "POLLUTANTS",
 }
 
 
@@ -840,6 +873,15 @@ def _write_variant(
     m.inp.junctions = _junctions_df(params)
     m.inp.outfalls = _outfalls_df(params)
     m.inp.coordinates = _coordinates_df(params)
+    # POLLUTANTS — emitted in every variant, but only when the regression-instrument
+    # knob is set. The guard is `is not None` rather than a truthiness test on the
+    # frame: a DataFrame has no boolean value and `if frame:` raises ValueError.
+    # `_pollutants_df` owns the on/off decision, which is also what makes the knob's
+    # off-state monkeypatchable as one named seam for the byte-identity gate's own
+    # discrimination check.
+    pollutants = _pollutants_df(params)
+    if pollutants is not None:
+        m.inp.pollutants = pollutants
     if include_hydraulics:
         m.inp.conduits = _conduits_df(params)
         m.inp.xsections = _xsections_df(params)

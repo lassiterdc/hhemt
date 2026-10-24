@@ -1,5 +1,6 @@
 import warnings
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, model_validator
 
@@ -118,6 +119,43 @@ class system_config(cfgBaseModel):
         "on this "
         "can be run in addition to TRITON-SWMM to compare SWMM hydraulics results.",
         json_schema_extra=field_meta(required_when=[when("toggle_swmm_model", True)]),
+    )
+    swmm_coupling_mode: Literal["all_junctions", "list", "legacy"] = Field(
+        "all_junctions",
+        description=(
+            "Which SWMM nodes the coupled TRITON-SWMM model may exchange water at. The toolkit "
+            "always gives TRITON an explicit list it writes for each scenario; this setting "
+            "chooses the candidates that list is selected from. The default, all_junctions, "
+            "couples every junction that has a [COORDINATES] row; legacy keeps the earlier "
+            "selection from FLOW [INFLOWS] lines."
+        ),
+        json_schema_extra=field_meta(
+            applies_when=[when("toggle_tritonswmm_model", True)],
+            options={
+                "all_junctions": (
+                    "The default. Every [JUNCTIONS] node of SWMM_hydraulics that has a [COORDINATES] row."
+                ),
+                "list": (
+                    "The nodes named in swmm_coupling_nodes_file; each must be a junction with a [COORDINATES] row."
+                ),
+                "legacy": (
+                    "An explicit opt-in: every node of SWMM_hydraulics that carries an "
+                    "[INFLOWS] line with constituent FLOW, read by SWMM's own rule."
+                ),
+            },
+        ),
+    )
+    swmm_coupling_nodes_file: Path | None = Field(
+        None,
+        description=(
+            "A one-column file of coupling-node names, read when swmm_coupling_mode is "
+            "'list': one name per line, surrounding whitespace stripped, blank lines and "
+            "lines starting ';' skipped, no header."
+        ),
+        json_schema_extra=field_meta(
+            applies_when=[when("swmm_coupling_mode", "list")],
+            required_when=[when("swmm_coupling_mode", "list")],
+        ),
     )
     landuse_raster: Path | None = Field(
         None,
@@ -359,8 +397,45 @@ class system_config(cfgBaseModel):
         return values
 
     @model_validator(mode="after")
+    def validate_coupling_declaration(self):
+        """Refuse a coupling-node file given under a mode that does not read it.
+
+        The file is read only under ``swmm_coupling_mode: list``. A file set under ``legacy``
+        or ``all_junctions`` would be silently ignored, so a user who meant to restrict the
+        coupled set would run with a different one and no error. The opposite case, ``list``
+        with no file, is NOT checked here: it is the ``required_when`` declaration on
+        ``swmm_coupling_nodes_file``, enforced by ``cfgBaseModel._enforce_required_when``, which
+        is the one place a conditional requirement is enforced. A second check here would be a
+        second enforcement site that the rendered "Required" cell cannot see.
+        """
+        if self.swmm_coupling_nodes_file is not None and self.swmm_coupling_mode != "list":
+            raise ValueError(
+                f"system_config.swmm_coupling_nodes_file is set ({self.swmm_coupling_nodes_file}) but "
+                f"swmm_coupling_mode is '{self.swmm_coupling_mode}'; the file is read only when "
+                "swmm_coupling_mode is 'list'. Set swmm_coupling_mode: list to use the file, or remove "
+                "swmm_coupling_nodes_file."
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_swmm_templates_are_si(self):
-        """Refuse a SWMM template whose FLOW_UNITS are not SI, at config load.
+        """Refuse, at config load, a SWMM template whose FLOW_UNITS the toolkit cannot read correctly.
+
+        PER-FIELD ACCEPTED UNITS. SWMM_hydraulics and SWMM_full must use CMS, because the
+        toolkit reads the coupled report's and the standalone output's flows as m3/s with no
+        conversion, so an LPS model would be read 1000 times too large and an MLD model 86.4
+        times. SWMM_hydrology may use CMS, LPS or MLD, because its hydrographs are converted to
+        m3/s. Scenario preparation refuses the same units, so this check admits exactly what
+        preparation admits.
+
+        ONE READING RULE, SHARED. The unit is read by
+        `swmm_runoff_modeling.flow_units_from_inp_text`, the same rule preparation applies --
+        the LAST FLOW_UNITS line with a value across every [OPTION... section, key and value
+        matched by prefix as SWMM matches them. Deliberately NOT a local regex over the first
+        matching line, which is what this check did before: a template declaring CFS and then
+        CMS runs as CMS in SWMM and passes preparation, and was refused here. The import is
+        function-local; loading this package already imports that module through
+        `hhemt/__init__.py`, so it adds no module to a config load.
 
         WHY THIS IS REACHABLE AT LOAD, stated because the .inp looks like a runtime
         artifact. The three fields below are Path fields that `_check_paths_exist`
@@ -372,7 +447,7 @@ class system_config(cfgBaseModel):
         ABSENT IS A FAILURE *within a real model*, not a neutral state: SWMM defaults
         FLOW_UNITS to CFS, which is US, so an omitted line produces exactly the run
         this refuses. But absence is only EVIDENCE of that in a file that is a SWMM
-        model at all, so a file carrying no [OPTIONS] SECTION is skipped rather than
+        model at all, so a file carrying no [OPTION... SECTION is skipped rather than
         judged -- the check's premise is "this .inp's OPTIONS declare its units", and
         a file with no OPTIONS section does not meet the premise. That is what keeps
         placeholder templates (an empty `_touch`ed stub, a partial fragment) out of
@@ -387,10 +462,16 @@ class system_config(cfgBaseModel):
         """
         import re as _re
 
+        from hhemt.swmm_runoff_modeling import flow_units_from_inp_text
+
         # LOCAL, not a class attribute. A bare underscore-prefixed class attribute on a
         # pydantic v2 model is private-attribute territory and its instance-time
         # readability is a question this check does not need to answer.
-        _SI_FLOW_UNITS = frozenset({"CMS", "LPS", "MLD"})
+        _accepted_by_field = {
+            "SWMM_hydraulics": ("CMS",),
+            "SWMM_hydrology": ("CMS", "LPS", "MLD"),
+            "SWMM_full": ("CMS",),
+        }
         _bad = []
         for _field in ("SWMM_hydraulics", "SWMM_hydrology", "SWMM_full"):
             _p = getattr(self, _field, None)
@@ -405,25 +486,19 @@ class system_config(cfgBaseModel):
                     continue
             if _text is None:
                 continue
-            if not _re.search(r"^\s*\[OPTIONS\]", _text, _re.IGNORECASE | _re.MULTILINE):
+            if not _re.search(r"^\s*\[OPTION", _text, _re.IGNORECASE | _re.MULTILINE):
                 continue  # not a SWMM model file -- premise unmet, see docstring
-            _found = None
-            for _line in _text.splitlines():
-                _s = _line.strip()
-                if not _s or _s.startswith(";"):
-                    continue
-                _m = _re.match(r"^FLOW_UNITS\s+(\S+)", _s, _re.IGNORECASE)
-                if _m:
-                    _found = _m.group(1).upper()
-                    break
+            _found = flow_units_from_inp_text(_text, default=None)
+            _units = _accepted_by_field[_field]
+            _accepted = "CMS" if _units == ("CMS",) else "CMS, LPS or MLD"
             if _found is None:
                 _bad.append(f"{_field} ({_p}) declares no FLOW_UNITS; SWMM defaults to CFS (US)")
-            elif _found not in _SI_FLOW_UNITS:
-                _bad.append(f"{_field} ({_p}) declares FLOW_UNITS {_found} (US)")
+            elif _found not in _units:
+                _bad.append(f"{_field} ({_p}) declares FLOW_UNITS {_found}; {_field} accepts {_accepted}")
         if _bad:
             raise ValueError(
-                "SWMM templates must use SI flow units (CMS, LPS or MLD) -- the toolkit's "
-                "output parser reads SI only and refuses a US-unit run after the simulation "
-                "has already been spent. Offending: " + "; ".join(_bad)
+                "SWMM templates must declare their flow units: SWMM_hydraulics and SWMM_full must use "
+                "CMS, because the toolkit reads their flows as m3/s without conversion; SWMM_hydrology "
+                "must use an SI unit (CMS, LPS or MLD), because its flows are converted. Offending: " + "; ".join(_bad)
             )
         return self

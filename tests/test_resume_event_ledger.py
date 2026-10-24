@@ -218,6 +218,155 @@ def test_marker_literals_match_analysis_validation_byte_for_byte():
     assert re_mod.REPLAY_MARKER == av._TRITON_REPLAY_MARKER
 
 
+def _marker_family():
+    """The solver log literals whose emitter is readable at ``TRITON_PIN``, as (name, value).
+
+    The family is eleven bound constants: the two resume markers, the four snapshot
+    step-back prefixes the ledger harvest reads, the three TRITON progress/completion
+    markers, and the two EPA SWMM end-of-run clauses. It is a HAND enumeration, not a
+    derivation, so a literal the toolkit reads can be missing from it while every test stays
+    green; a new constant is a one-line addition here.
+
+    The two EPA SWMM constants are checked against the TRITON fork's vendored copy, by proxy
+    for the standalone build: the toolkit reads them only from a ``model_type == "swmm"`` run,
+    whose log comes from the standalone ``runswmm`` cloned from ``SWMM_git_URL`` at
+    ``SWMM_tag_key``, a program the coupled model never runs. The recorded measurement
+    (``_SWMM_DEFAULT_MEASUREMENT`` below) covers the default (``SWMM_git_URL``, the commit the
+    tag names, ``SWMM_tag_key``). Not established: a standalone SWMM built at a non-default
+    ``SWMM_tag_key``, at ``SWMM_tag_key=None`` (the moving branch tip), or from a tag moved
+    upstream after the recorded measurement.
+    """
+    from hhemt import analysis_validation as av
+    from hhemt import run_simulation as rs
+
+    return [
+        ("resume_events.SNAPSHOT_MARKER", re_mod.SNAPSHOT_MARKER),
+        ("resume_events.REPLAY_MARKER", re_mod.REPLAY_MARKER),
+        ("resume_events.STEPBACK_REQUIRED_PREFIX", re_mod.STEPBACK_REQUIRED_PREFIX),
+        ("resume_events.STOP_PREFIX", re_mod.STOP_PREFIX),
+        ("resume_events.STEPBACK_IMPOSSIBLE_PREFIX", re_mod.STEPBACK_IMPOSSIBLE_PREFIX),
+        ("resume_events.STEPBACK_TAKEN_PREFIX", re_mod.STEPBACK_TAKEN_PREFIX),
+        ("analysis_validation._TRITON_COMPLETION_MARKER", av._TRITON_COMPLETION_MARKER),
+        ("analysis_validation._TRITON_CHECKPOINT_READ_MARKER", av._TRITON_CHECKPOINT_READ_MARKER),
+        ("analysis_validation._TRITON_CHECKPOINT_ATTEMPT_MARKER", av._TRITON_CHECKPOINT_ATTEMPT_MARKER),
+        ("run_simulation.SWMM_COMPLETION_MARKER", rs.SWMM_COMPLETION_MARKER),
+        ("run_simulation.SWMM_ERROR_MARKER", rs.SWMM_ERROR_MARKER),
+    ]
+
+
+def _solver_tree_at_pin():
+    """(canonical store, pin) -- or a pytest skip when the store is unavailable BY POLICY.
+
+    The availability predicate is the source-cache module's own: ``HHEMT_DISABLE_TRITON_CANONICAL=1``
+    or ``CI`` set means "do not provision", and it is tested BEFORE ``ensure_canonical`` is
+    called, because that function has no such guard and would otherwise clone the solver
+    fork on a CI runner. Any OTHER failure to provision raises, so the test fails rather than
+    skips: a drift detector that silently skips where it cannot run reports nothing.
+    """
+    import os
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures._triton_source_cache import _DISABLE_ENV, TRITON_PIN, ensure_canonical
+
+    if os.environ.get(_DISABLE_ENV) == "1":
+        pytest.skip(f"{_DISABLE_ENV}=1: the solver canonical store is disabled, so the pin cannot be read here")
+    if os.environ.get("CI"):
+        pytest.skip("CI is set: the solver canonical store is not provisioned on CI; the pin-advance gate runs this")
+    return ensure_canonical(pin=TRITON_PIN), TRITON_PIN
+
+
+def _occurrences_at_pin(canonical, pin, literal):
+    """Lines of solver source at ``pin`` carrying ``literal``, over the TRITON and vendored SWMM sources."""
+    import subprocess
+
+    out = subprocess.run(
+        ["git", "-C", str(canonical), "grep", "-F", "-c", "-e", literal, pin, "--", "src", "external/swmm/src"],
+        capture_output=True,
+        text=True,
+    )
+    return sum(int(line.rsplit(":", 1)[1]) for line in out.stdout.splitlines() if line.strip())
+
+
+def test_every_toolkit_marker_constant_is_emitted_at_the_pin():
+    """Property: every member of ``_marker_family`` exists in the solver source at ``TRITON_PIN``.
+
+    Class: the eleven-member marker family in ``_marker_family``, each read against the solver's
+    own bytes at the pinned commit through the toolkit's canonical object store, over ``src``
+    and ``external/swmm/src``. The family is not every literal the toolkit reads, and its two
+    EPA SWMM members are read here by proxy; ``_marker_family``'s docstring states both limits.
+
+    Why required, checkable against the code: the drift detector above compares a toolkit copy
+    with a toolkit copy, so a solver-side rename leaves every copy byte-equal, this suite green,
+    and every consumer matching nothing -- a completion check that never completes, or a resume
+    audit that sees no resume. Reading the pin is the only comparison a solver rename can fail.
+
+    What kills it: a constant whose value no longer occurs in the solver source at the pin --
+    a toolkit-side typo or a solver-side rename that the pin advance carried in.
+
+    A second correct implementation under which it still passes: one that shells out to
+    ``git show {pin}:{path}`` per known file instead of ``git grep`` over the two source trees;
+    the assertion reads only whether each literal occurs.
+    """
+    canonical, pin = _solver_tree_at_pin()
+    missing = [name for name, value in _marker_family() if _occurrences_at_pin(canonical, pin, value) == 0]
+    assert missing == [], f"marker constants absent from the solver source at TRITON_PIN {pin[:12]}: {missing}"
+
+
+# The one-time recorded measurement of the standalone SWMM program at the configured
+# defaults, taken on 2026-10-18T01:23:47Z (UTC) on UVA Rivanna scratch, because the
+# vendored copy the pin test above reads is a proxy for that program, not the program.
+# How it was taken, so it can be repeated when the tripwire below reds:
+#   git clone --depth 1 --branch {SWMM_tag_key} {SWMM_git_URL} {clone}
+#   git -C {clone} rev-parse HEAD^{commit}          -> the commit recorded below
+#   grep -nF "EPA SWMM completed" {clone}/src/run/main.c
+#     91:        printf("\n\n... EPA SWMM completed in %.2f seconds.", runTime);
+#   grep -nF "There are errors." {clone}/src/run/main.c
+#     92:        if      ( swmm_getError(errMsg, msgLen) > 0 ) printf(" There are errors.\n");
+# The grep is scoped to src/run/main.c, the print site the toolkit's log read depends on:
+# src/solver/text.h also carries " There are errors." (as #define FMT03), so a match
+# anywhere under src/ would pass even if main.c stopped printing the clause. USEPA's
+# v5.2.4 is a lightweight tag, which is why the commit is read with rev-parse on the
+# clone rather than from a peeled ls-remote line (that line does not exist for it).
+_SWMM_DEFAULT_MEASUREMENT = (
+    "https://github.com/USEPA/Stormwater-Management-Model.git",
+    "7952ca837988b1c32f791812eccc9fd64547e093",
+    "v5.2.4",
+)
+
+
+def test_the_swmm_defaults_are_the_ones_the_recorded_measurement_covers():
+    """Property: the configured ``SWMM_git_URL`` and ``SWMM_tag_key`` defaults equal the recorded measurement's.
+
+    Class: the two ``system_config`` field defaults that pick the standalone SWMM program
+    whose log the toolkit reads for ``"EPA SWMM completed"`` and ``"There are errors."``.
+
+    Why required, checkable against the code: the parity test above reads those two
+    literals in the TRITON fork's vendored SWMM, not in the standalone program a
+    ``model_type == "swmm"`` run executes. ``_SWMM_DEFAULT_MEASUREMENT`` records that the
+    standalone program at the defaults prints both. If either default moves, that record
+    no longer describes the program being built, and ``"There are errors."`` is a NEGATIVE
+    conjunct of the completion read, so a reworded clause would let a failed run read
+    complete. This test reds on the move and forces the measurement to be retaken. It also
+    covers the container path, whose SWMM tag default is derived from the same field default.
+
+    What kills it: changing either field default in ``config/system.py`` without retaking
+    the measurement and updating ``_SWMM_DEFAULT_MEASUREMENT``.
+
+    A second correct implementation under which it still passes: one that builds a
+    ``system_config`` and reads the two attributes off the instance instead of reading
+    ``model_fields``; the assertion reads only the two default values.
+
+    Not established: that the recorded commit is still what ``SWMM_tag_key`` names upstream
+    -- a tag moved after the measurement passes this test.
+    """
+    from hhemt.config.system import system_config
+
+    url, _commit, tag = _SWMM_DEFAULT_MEASUREMENT
+    assert system_config.model_fields["SWMM_git_URL"].default == url
+    assert system_config.model_fields["SWMM_tag_key"].default == tag
+
+
 def test_path_vocabulary_matches_the_resume_mechanism_type():
     """`path` uses the same two affirmative tokens `ResumeMechanism` already defines."""
     from hhemt import analysis_validation as av
@@ -265,10 +414,14 @@ def test_read_tolerates_absent_and_corrupt_rows(tmp_path):
 # stays green against a parser that fails on every real line, which is the oracle gap
 # these close.
 #
-# Reconstructed from `triton-custom` at `f9c28da`:
-#   src/swmm_triton.h:1229-1233  -- the snapshot arm
-#   src/swmm_triton.h:853-857    -- the replay arm
-#   src/constants.h:190,185,196  -- GRAY "\033[90m", RESET "\033[0m", IN = GRAY "[..] " RESET
+# Reconstructed from the solver source at the toolkit's `TRITON_PIN`
+# (`tests/fixtures/_triton_source_cache.py`), named rather than given as a sha so this
+# comment follows the pin instead of going stale beside it:
+#   src/swmm_triton.h  -- the snapshot arm (`SWMM state restored from snapshot to t=`)
+#                         and the replay arm (`SWMM exchange history replayed to t=`)
+#   src/constants.h    -- GRAY "\033[90m", RESET "\033[0m", IN = GRAY "[..] " RESET
+# `test_every_toolkit_marker_constant_is_emitted_at_the_pin` below reads the markers at the
+# pin itself; these hand-built lines are not that check.
 # `up_to_time` is a `value_t` (double) rendered by the default ostream formatter, so an
 # integral value prints without a decimal point; `rec_count` is a `long`.
 _IN = "\x1b[90m[..] \x1b[0m"

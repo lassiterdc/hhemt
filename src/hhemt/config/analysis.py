@@ -208,7 +208,10 @@ class ForceRerunSpec(cfgBaseModel):
                 bad = [str(x) for x in values if not MEMBER_ID_RE.match(str(x))]
                 if bad:
                     raise ValueError(
-                        f"force_rerun.member_id values must match ^[A-Za-z0-9_.]+$ "
+                        # `{key}` rather than a literal: this branch is entered only when
+                        # key == "sa_id", and interpolating the key the type actually
+                        # admits makes a wrong-key message structurally unwritable here.
+                        f"force_rerun.{key} values must match ^[A-Za-z0-9_.]+$ "
                         f"(per accepted decision 'All user-provided identifiers that "
                         f"become Snakemake wildcards must match ^[A-Za-z0-9_.]+$'); "
                         f"got invalid: {bad}"
@@ -630,6 +633,22 @@ class analysis_config(cfgBaseModel):
             "the key is present in the solver's argsd table at the pin you are running."
         ),
     )
+    swmm_snapshot_failed_replay: bool = Field(
+        default=False,
+        description=(
+            "COUPLED model only. When True, the toolkit writes the line "
+            "`swmm_snapshot_failed_replay=1` into the TRITON cfg that each coupled launch passes to "
+            "the solver, including a resume; when False it removes that line. It takes effect at "
+            "the NEXT launch, so it can be set after a run has stopped at a failed snapshot write: "
+            "re-run with pickup_where_leftoff and the resume replays the SWMM exchange history at "
+            "that checkpoint and continues, with correct results, instead of stopping with the "
+            "solver's write-failed error. The failure is still recorded, as a replay resume with "
+            "reason write-failed, and raised as a write-failed alarm in the resume-event report. "
+            "The default False writes nothing into a cfg that does not already carry the key. The "
+            "TRITON-only cfg never carries it. A solver that predates the key ignores it and stops "
+            "at the failed write, as it does without the key."
+        ),
+    )
     # local run constraints
     local_cpu_cores_for_workflow: int | None = Field(
         None,
@@ -658,7 +677,21 @@ class analysis_config(cfgBaseModel):
             "(run_triton/run_tritonswmm/run_swmm/simulation_member_*). A walltime "
             "kill is a SLURM TIMEOUT (retriable); raise this high (e.g. 20) for a "
             "hotstart-resume sweep so a killed sim re-dispatches from its latest "
-            "config_NNNN.cfg checkpoint within ONE analysis.run(). Default 2."
+            "config_NNNN.cfg checkpoint within ONE analysis.run(). Default 2. "
+            "THIS NUMBER IS PER SNAKEMAKE PROCESS AND IS NOT THE NUMBER OF TIMES THE "
+            "SOLVER CAN RUN. Snakemake compares the budget against `job.attempt`, which "
+            "lives on an in-memory job object initialised to 1 when that process builds "
+            "its DAG and is persisted nowhere. Under `--executor slurm` at least two such "
+            "processes exist per rule execution -- the driver that submits the SLURM job, "
+            "and the Snakemake instance running inside the allocation -- so the budget "
+            "restarts at each nesting level and the REALISED ceiling is the PRODUCT across "
+            "them, not this value. Measured on member 39 of the a6000 benchmarking arm: a "
+            "declared 3 produced TEN solver launches across four SLURM jobs. "
+            "The realised TOTAL is bounded instead by "
+            "`hpc_consecutive_failure_budget_simulate`, a durable per-(member, event, "
+            "model_type) cap the runner enforces before each launch; that knob is what "
+            "makes a ceiling additive, and this one governs only how many restarts a "
+            "SINGLE process will attempt."
         ),
     )
     hpc_restart_times_other: int = Field(
@@ -669,6 +702,26 @@ class analysis_config(cfgBaseModel):
             "(prepare/process/consolidate/plot/render), emitted as the GLOBAL "
             "restart-times so directive-less rules inherit it. Idempotent "
             "re-derivations, so a low count suffices. Default 2."
+        ),
+    )
+    hpc_consecutive_failure_budget_simulate: int = Field(
+        3,
+        ge=0,
+        description=(
+            "DURABLE cap on CONSECUTIVE TERMINAL simulation failures per "
+            "(member, event, model_type), enforced in the simulation runner BEFORE the "
+            "solver is launched. This is the knob that makes a retry ceiling REAL: "
+            "`hpc_restart_times_simulate` bounds restarts within ONE Snakemake process "
+            "and does not persist across processes, so under `--executor slurm` the "
+            "realised ceiling MULTIPLIES across nesting levels. This budget persists in "
+            "the per-model log and so bounds the TOTAL. "
+            "A TERMINAL failure is one the runner itself concluded (it wrote "
+            "`_status/_failed/{rule_token}.json`); a WALLTIME KILL is NOT terminal and "
+            "does NOT count, so a hotstart-resume sweep is unaffected however many times "
+            "it resumes. The count resets on a completing attempt and on a forced re-run "
+            "(it is era-relative). Reaching the budget writes the failed marker and exits "
+            "non-zero WITHOUT launching, which is a terminal state an operator then "
+            "clears. Set 0 to DISABLE the gate entirely. Default 3."
         ),
     )
     # hpc_max_simultaneous_sims is RETIRED from analysis_config: it MOVED to
@@ -1002,6 +1055,41 @@ class analysis_config(cfgBaseModel):
     manhole_loss_coefficient: float = Field(
         ...,
         description="Loss coefficient of TRITON-SWMM interactions occuring at manholes.",
+    )
+    swmm_node_rim_from_dem: bool = Field(
+        default=False,
+        description=(
+            "When True, the toolkit writes the line `swmm_node_rim_from_dem=1` into each "
+            "coupled scenario's TRITON cfg, and TRITON then takes a coupled node's rim (the "
+            "height of its surface connection) as the DEM cell's elevation minus the node's "
+            "invert, instead of the depth SWMM itself uses for the node. When False (the "
+            "default) the line is not written and the rim is SWMM's own depth. Only TRITON builds "
+            "that read the key honour it, so preparation refuses a True value unless the build "
+            "the run uses is known to read it: in native mode the TRITON clone must descend "
+            "from the commit that added the key; in container mode the image's recorded TRITON "
+            "commit must equal TRITONSWMM_branch_key and be one of the commits known to read it. "
+            "It changes hydraulic results when True."
+        ),
+    )
+    one_coupled_inflow_node_per_dem_cell: bool = Field(
+        default=False,
+        description=(
+            "Applies only to a coupled system (toggle_tritonswmm_model) whose "
+            "system_config.swmm_coupling_mode is legacy: a coupled system under any other mode "
+            "with it on is refused at run entry, and a system whose coupled model is off writes "
+            "no coupling-node list, so the option has no effect there. When True, scenario "
+            "preparation writes at "
+            "most ONE candidate junction per DEM cell to the coupling-node list, the limit "
+            "TRITON-SWMM required before it coupled any number of nodes per cell. The kept "
+            "junction is the one whose own outgoing link has the largest flow area; on a tie, the "
+            "cell's junction whose outgoing link leaves the cell, then the lowest invert. A "
+            "junction with no outgoing pipe is ranked by its largest incoming pipe. No [INFLOWS] "
+            "line is removed; each prepared scenario records the cells it reduced in "
+            "_status/inflow_node_selection.json, which the report's inflow-node reduction check "
+            "lists. When False (the default) every legacy candidate junction is written, so the "
+            "number of surface exchange points does not depend on the DEM resolution. In both "
+            "cases outfalls, storage nodes and dividers are not coupled."
+        ),
     )
     hydraulic_timestep_s: float = Field(
         ...,
@@ -1455,11 +1543,11 @@ class analysis_config(cfgBaseModel):
         if isinstance(subject, dict):
             key = next(iter(subject))
             if key == "sa_id" and not self.toggle_sensitivity_analysis:
-                raise ValueError("force_rerun.member_id requires toggle_sensitivity_analysis=True")
+                raise ValueError("force_rerun.sa_id requires toggle_sensitivity_analysis=True")
             if key == "event_iloc" and self.toggle_sensitivity_analysis:
                 raise ValueError(
                     "force_rerun.event_iloc requires toggle_sensitivity_analysis=False; "
-                    "sensitivity-toggled analyses must use force_rerun.member_id instead"
+                    "sensitivity-toggled analyses must use force_rerun.sa_id instead"
                 )
         return self
 

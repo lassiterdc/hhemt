@@ -50,7 +50,7 @@ class UniqueSystemTarget:
     system_config_yaml: Path
     system: "TRITONSWMM_system"
     analysis_ids: list[str] = field(default_factory=list)
-    # Phase 6 (DQ7a): the ensemble partition this build target compiles for.
+    # The ensemble partition this build target compiles for.
     # All member_ids in a target share (hw, backend) by dedup-key construction, so any
     # member's partition yields the correct GPU build; the first member's is stored.
     # Threaded to the setup rule's --target-partition so that rule's native-mode build
@@ -64,9 +64,10 @@ _SYSTEM_COLUMN_PREFIX = "system."
 _ANALYSIS_COLUMN_PREFIX = "analysis."
 _HPC_COLUMN_PREFIX = "hpc."
 # hpc.{key} columns are a provenance-rooted ALIAS surface for HPC-resource
-# sensitivity axes. The single supported alias today is hpc.partition ->
-# analysis.hpc_ensemble_partition (the partition selector stays an analysis_config
-# field per D-A; only the column SPELLING gains an hpc. root). DQ1 Option 3.
+# sensitivity axes: hpc.partition -> analysis.hpc_ensemble_partition and
+# hpc.setup_partition -> analysis.hpc_setup_and_analysis_processing_partition. The
+# partition selectors stay analysis_config fields; only the column SPELLING gains an
+# hpc. root.
 _HPC_ALIAS_TO_ANALYSIS_FIELD: dict[str, str] = {
     "partition": "hpc_ensemble_partition",
     "setup_partition": "hpc_setup_and_analysis_processing_partition",
@@ -154,7 +155,7 @@ def _to_native_attr(value):
 
 
 def _unlink_dprocess_flags_for_regenerate(targets: list[str], status_dir: Path) -> None:
-    """FIX-2b — regenerate_existing rebuild parity (restores f31a0eb's
+    """Unlink the targets' d_process flags on the regenerate_existing arm (restores f31a0eb's
     unconditional per-member d_process unlink that d5d0084 dropped).
 
     The existence-keyed self-heal (_reconcile_stale_process_flags_against_summaries)
@@ -164,18 +165,20 @@ def _unlink_dprocess_flags_for_regenerate(targets: list[str], status_dir: Path) 
     at self-heal time; the deletion that creates the divergence runs LATER
     (_delete_processed_outputs_for_reprocess / the SLURM reprocess-delete
     workflow). So for regenerate_existing the stale d_process flag would survive,
-    the master generator's emit gate (workflow.py:6810, `not d_process_path.exists()`)
+    the reprocess master generator's emit gate (`not d_process_path.exists()` in
+    ``generate_reprocess_master_snakefile_content``)
     would skip the rebuild rule, and consolidate would fan in against the
     just-deleted summary -> the silent-partial / FileNotFoundError class. Unlink
     the per-member d_process flags unconditionally on this arm so the gate re-emits
-    the rule. The per-model LOG-clear (Gate 2, Gotcha 28) is handled by the later
+    the rule. The per-model LOG-clear (Gate 2: the runner's ``_already_written`` gate
+    reads the per-model processing log, not the file on disk) is handled by the later
     _delete_processed_outputs_for_reprocess (scope="all"); only the flag (Gate 1)
-    is cleared here. Mirrors the non-sensitivity arm's blanket unlink at
-    analysis.py:2989.
+    is cleared here. Mirrors the non-sensitivity arm's blanket ``d_process_*``
+    unlink in ``TRITONSWMM_analysis._invalidate_downstream_flags``.
 
     Extracted to a free function so the fast (no-compile, no-fixture-mutation)
     unit test exercises EXACTLY this loop against a synthetic _status/ dir without
-    entering reprocess()'s destructive body (D1 Option A).
+    entering reprocess()'s destructive body.
     """
     for member_id in targets:
         for f in status_dir.glob(f"d_process_*_member-{member_id}_*"):
@@ -236,8 +239,8 @@ class TRITONSWMM_sensitivity_analysis:
     ----------
     experiment : TRITONSWMM_analysis
         Reference to the master analysis
-    analyses : dict
-        Dictionary mapping member index to TRITONSWMM_analysis instances
+    members : dict
+        Dictionary mapping each ``member_id`` (string) to its TRITONSWMM_analysis instance
     df_setup : pd.DataFrame
         Sensitivity configuration table with parameter combinations
     independent_vars : list
@@ -260,11 +263,27 @@ class TRITONSWMM_sensitivity_analysis:
         ----------
         analysis : TRITONSWMM_analysis
             Master analysis instance containing sensitivity configuration
+        is_main_orchestrator : bool
+            True on the driving process. Runner and renderer subprocesses pass
+            False, which skips the ``_generated/`` purge and the member-YAML
+            rewrites that only the driver performs.
+        skip_log_update : bool
+            Passed through to every member's ``TRITONSWMM_analysis``.
 
         Raises
         ------
+        ConfigurationError
+            If the sensitivity definition uses the retired id column or an unknown
+            column, if a row sets both ``system_config_yaml`` and ``system.*``
+            overlay columns, or if a row's ``system.*`` overlay values fail
+            ``system_config`` validation.
         ValueError
-            If sensitivity configuration mixes GPU and non-GPU run modes
+            If the sensitivity definition is not CSV/XLSX, lacks a ``member_id``
+            column, or has duplicate or non-wildcard-safe ``member_id`` values.
+        pydantic.ValidationError
+            If a row's ``analysis.*``, ``hpc.*`` or bare analysis-field values fail
+            ``analysis_config`` validation; that path is not wrapped in
+            ``ConfigurationError``.
         """
         self.experiment = analysis
         self._system = analysis._system
@@ -285,7 +304,7 @@ class TRITONSWMM_sensitivity_analysis:
         self._df_setup_full = df_setup_full
         self._has_per_member_system_configs = "system_config_yaml" in df_setup_full.columns
         self._has_per_member_system_overlay_columns = any(_is_system_overlay_column(c) for c in df_setup_full.columns)
-        # Phase 6 (DQ7): a per-row ensemble-partition axis (hpc.partition canonical or
+        # A per-row ensemble-partition axis (hpc.partition canonical or
         # analysis.hpc_ensemble_partition legacy) that varies across rows resolves to
         # DISTINCT gpu_hardware per row, so it must route through the per-target build
         # path (one UniqueSystemTarget per distinct hardware) — not the master fast
@@ -322,7 +341,7 @@ class TRITONSWMM_sensitivity_analysis:
             _fast_hw, _fast_backend = resolve_gpu_target(self.experiment.cfg_hpc_system, _master_partition)
             _fast_target_partition = None
             if _fast_backend is not None:
-                # synth_cc friction fix (2026-07-08): same invariant as the build-path
+                # Same invariant as the build-path
                 # site — inject the master-ensemble GPU pair into self._system only on
                 # the DRIVER. On a setup_target runner (is_main_orchestrator=False)
                 # self._system already carries the correct --target-partition pair (the
@@ -350,7 +369,7 @@ class TRITONSWMM_sensitivity_analysis:
             for c in df_setup_full.columns
             if c in _analysis_config_for_df_setup.model_fields
             or _is_analysis_overlay_column(c)
-            or _is_hpc_overlay_column(c)  # Phase 6 (DQ5): retain hpc.* alias columns so
+            or _is_hpc_overlay_column(c)  # Retain hpc.* alias columns so
             # the per-sub overlay application in _create_members can resolve them.
         ]
         self.df_setup = df_setup_full.loc[:, analysis_cols]
@@ -427,6 +446,7 @@ class TRITONSWMM_sensitivity_analysis:
         which: Literal["TRITON", "SWMM", "both"] = "both",
         compression_level: int = 5,
         pickup_where_leftoff: bool = True,
+        debug: bool = False,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
         dry_run: bool = False,
         verbose: bool = True,
@@ -462,8 +482,7 @@ class TRITONSWMM_sensitivity_analysis:
             Forwarded to the generated setup rule's ``hhemt.setup_workflow``
             invocation as ``--recompile-if-already-done``, where it has no reachable
             consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
-            sits behind an ``args.compile_*`` gate that no emitted rule sets
-            (ASSERT-NOT-BUILD, D84). The parameter itself is NOT dead —
+            sits behind an ``args.compile_*`` gate that no emitted rule sets. The parameter itself is NOT dead —
             ``TRITONSWMM_system.compile_TRITON_SWMM`` / ``compile_TRITON_only`` /
             ``compile_SWMM`` each read it — but only when called directly, never
             through this workflow.
@@ -485,6 +504,10 @@ class TRITONSWMM_sensitivity_analysis:
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
             If True, resume simulations from last checkpoint
+        debug : bool
+            The run's ``--debug`` flag, threaded to the workflow builder, which emits
+            ``--debug`` on every run-simulation rule shell. Today it does one thing: a coupled
+            clean start keeps the previous run's snapshot files instead of removing them.
         dry_run : bool
             If True, only perform a dry run and return that result
         verbose : bool
@@ -499,7 +522,7 @@ class TRITONSWMM_sensitivity_analysis:
             - snakefile_path: Path
             - message: str
         """
-        # OE-A login-node preflight, mirroring the Analysis.submit_workflow twin.
+        # Login-node preflight, mirroring the Analysis.submit_workflow twin.
         # This facade is reachable DIRECTLY (see the force-rerun comment below, which
         # names the same caller class), so a guard only at the dispatch site would
         # miss it. Pure predicate: invoking it twice on the dispatch path is free.
@@ -538,11 +561,11 @@ class TRITONSWMM_sensitivity_analysis:
         # f8c47ec3 (2026-08-25) this call did not thread `dry_run`, and a dry run at a
         # render floor destroyed the user's figures. Measured 2026-08-25 against that
         # pre-f8c47ec3 state, not against any current behaviour: 7 figures -> 2 on a
-        # preview. D131 later ruled THAT the broad reading holds -- on a dry run ALL
-        # figures survive, not only `plots/eda/`.
+        # preview. The settled reading is the broad one: on a dry run ALL figures
+        # survive, not only `plots/eda/`.
         self.experiment._apply_force_rerun(overrides.force_rerun, dry_run=dry_run)
 
-        # Driver-start orchestrator-liveness sentinel (Phase 2), keyed on the
+        # Driver-start orchestrator-liveness sentinel, keyed on the
         # MASTER analysis_dir. This is the sensitivity-master submit path and
         # always owns its sentinel (the Analysis.submit_workflow guard leaves
         # _driver_id None there and delegates here). Blocking-local drivers
@@ -584,6 +607,7 @@ class TRITONSWMM_sensitivity_analysis:
                 which=which,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
+                debug=debug,
                 wait_for_completion=wait_for_completion,
                 dry_run=dry_run,
                 verbose=verbose,
@@ -616,10 +640,7 @@ class TRITONSWMM_sensitivity_analysis:
         per-member ``Analysis._invalidate_processing_log_for_force_rerun``
         with a ``scope="all"`` spec — which invalidates every scenario in
         that member. members are full Analysis instances and
-        own their own scenario list (cf. CLAUDE.md Gotcha 11: "Sensitivity
-        analysis members are full TRITONSWMM_analysis instances").
-
-        Per cleanup-rerun-delete-redesign Phase 4 + B-mechanism.
+        own their own scenario list.
         """
         from hhemt.workflow import ResolvedForceRerunSpec
 
@@ -665,7 +686,7 @@ class TRITONSWMM_sensitivity_analysis:
         :meth:`SensitivityAnalysisWorkflowBuilder.submit_reprocess_workflow`.
 
         Unlike :meth:`TRITONSWMM_analysis.reprocess`, this method does NOT
-        invoke the ``override_clear_raw`` orphan/abort gate (R12) — sensitivity
+        invoke the ``override_clear_raw`` orphan/abort gate — sensitivity
         master reprocess is a downstream-only refresh of consolidation +
         plotting + rendering against existing per-member sim outputs and does
         not need the in-flight reconciliation logic that the analysis-level
@@ -680,7 +701,7 @@ class TRITONSWMM_sensitivity_analysis:
             + experiment_consolidation + plot/render rule chain. ``"render"``
             invalidates only the report artifacts. ``"process"`` reconciles
             stale ``d_process`` flags against summary existence and re-emits the
-            per-(member, event) rebuild rules (Gotcha 34/40); it does NOT collapse
+            per-(member, event) rebuild rules; it does NOT collapse
             onto the ``"consolidate"`` Snakefile.
         member_ids
             Optional subset of member IDs (string-cast) to invalidate.
@@ -706,7 +727,7 @@ class TRITONSWMM_sensitivity_analysis:
             Status dictionary from
             :meth:`SensitivityAnalysisWorkflowBuilder.submit_reprocess_workflow`.
         """
-        # OE-A login-node preflight, sensitivity reprocess entry. Reachable DIRECTLY --
+        # Login-node preflight, sensitivity reprocess entry. Reachable DIRECTLY --
         # analysis.py's clear-raw refusal tells operators to call this method by name --
         # so a guard only at the dispatch site would be bypassed by following the
         # toolkit's own printed instruction. FIRST statement, above stamp_new_target and
@@ -722,14 +743,13 @@ class TRITONSWMM_sensitivity_analysis:
             },
             mode=execution_mode,
         )
-        # Lazy-stamp _version.json at LAYOUT_VERSION (PI-1 pattern). Idempotent.
+        # Lazy-stamp _version.json at LAYOUT_VERSION. Idempotent.
         from hhemt.version_migration import LAYOUT_VERSION
         from hhemt.version_migration.state import stamp_new_target
 
         stamp_new_target(self.experiment.analysis_paths.analysis_dir, LAYOUT_VERSION)
 
-        # Force-rerun pre-delete (login-node responsibility). Per
-        # cleanup-rerun-delete-redesign Phase 4 + R10. Resolves + validates +
+        # Force-rerun pre-delete (login-node responsibility). Resolves + validates +
         # deletes matched flags before Snakemake plans the reprocess DAG.
         # Skipped on dry_run — it deletes flags and clears per-scenario
         # processing-log records, both filesystem mutations the dry-run
@@ -742,8 +762,8 @@ class TRITONSWMM_sensitivity_analysis:
         # submit_reprocess_workflow, so a REFUSED reprocess had already
         # destroyed the report it was refusing to rebuild. The claim is keyed
         # on the MASTER analysis_dir and taken on the BASE builder, which is
-        # where _orchestrator_liveness_gate lives (workflow.py:9799 reaches it
-        # the same way). Returns None on dry_run.
+        # where _orchestrator_liveness_gate lives (SensitivityAnalysisWorkflowBuilder
+        # reaches it the same way, through `_base_builder`). Returns None on dry_run.
         _reprocess_claim = self._workflow_builder._base_builder._acquire_reprocess_driver_claim(
             self.experiment.analysis_paths.analysis_dir,
             dry_run=dry_run,
@@ -762,9 +782,10 @@ class TRITONSWMM_sensitivity_analysis:
 
         # Invalidate per-member consolidate flags + master flag. start_with controls
         # which flags get unlinked; per-member flag deletion is the entry point for
-        # both "consolidate" and "process" (the master generator does not emit
-        # process rules, so process invalidation is treated as consolidate
-        # invalidation). "render" leaves consolidate flags intact and only
+        # both "consolidate" and "process", because on the process path the reprocess
+        # generator re-emits a process rule only for each (member, event) whose d_process
+        # flag is gone (reconciled below), and consolidation must then re-run over the rebuilt
+        # summaries. "render" leaves consolidate flags intact and only
         # invalidates the rendered report artifact.
         from hhemt.du_sentinels import (
             delete_and_account,
@@ -780,19 +801,19 @@ class TRITONSWMM_sensitivity_analysis:
                 (status_dir / f"e_consolidate_member-{member_id}_complete.flag").unlink(missing_ok=True)
             # EXEMPT-DU: status-flag
             (status_dir / "f_consolidate_experiment_complete.flag").unlink(missing_ok=True)
-            # R7 (D2 Option a) — consolidate-stage divergence preflight. Login-node
+            # Consolidate-stage divergence preflight. Login-node
             # fail-fast that converts the SILENT-partial-master-tree hazard into a
             # clear ConfigurationError. On start_with="consolidate" the generator's
-            # _sub_included_for_reprocess (Gotcha 37) SILENTLY EXCLUDES any sub whose
+            # _sub_included_for_reprocess SILENTLY EXCLUDES any sub whose
             # summaries are absent, and master consolidation's allow_incomplete=True
-            # default (Gotcha 36) then assembles the master tree over the COMPLETED
+            # default then assembles the master tree over the COMPLETED
             # subset and returns success — so a sub whose sim completed (c_run
             # present) but whose summary was deleted is silently dropped from
             # sensitivity_datatree.zarr with only a buried log warning. This is the
             # symmetric analogue of the process-stage
             # _assert_reprocess_rebuild_sources_present preflight. Fires ONLY on the
-            # divergence signature (c_run present AND summary absent) so Gotcha 36's
-            # tolerance for genuinely-never-ran subs is preserved. Read-only (no
+            # divergence signature (c_run present AND summary absent) so the
+            # allow_incomplete tolerance for genuinely-never-ran subs is preserved. Read-only (no
             # flag/mtime touch — zero rerun-trigger surface).
             if start_with == "consolidate" and not dry_run:
                 from hhemt.constants import sim_run_flag_per_member
@@ -825,17 +846,17 @@ class TRITONSWMM_sensitivity_analysis:
                             "missing summaries first."
                         ),
                     )
-            # FIX 2 — divergence self-heal runs on the process path on EVERY
-            # route REGARDLESS of regenerate_existing (D2). Each member
+            # Divergence self-heal: runs on the process path on EVERY
+            # route REGARDLESS of regenerate_existing. Each member
             # reconciles its own d_process flags + per-model processing_log
-            # against on-disk summary presence (D3): where a flag survives but
+            # against on-disk summary presence: where a flag survives but
             # the enabled-model summary set is absent (the May-31 divergence:
             # 72 d_process flags vs 0 summary zarrs), unlink the flag + clear
-            # the log so the master generator's emit gate (workflow.py:6810)
+            # the log so the reprocess master generator's d_process emit gate
             # re-emits the per-(member,evt) process rule and _already_written
-            # (Gotcha 28) lets it write. No-op for any sub whose summaries are
+            # lets it write. No-op for any sub whose summaries are
             # all present (healthy). members are full Analysis instances
-            # and own their scenarios (Gotcha 11); the helper resolves the
+            # and own their scenarios; the helper resolves the
             # per-member flag-token shape from each sub's is_experiment_member context.
             if start_with == "process" and not dry_run:
                 for member_id in targets:
@@ -846,14 +867,14 @@ class TRITONSWMM_sensitivity_analysis:
                         member_id=member_id, master_dir=experiment_dir
                     )
                     analysis._assert_reprocess_rebuild_sources_present(_reconciled)
-            # FIX 2b — regenerate_existing rebuild parity (D1 Option A: logic in the
-            # extracted free function so the fast unit test exercises it without
-            # entering reprocess()'s destructive body). Gated on the
+            # regenerate_existing rebuild parity (the logic lives in the extracted
+            # free function so the fast unit test exercises it without entering
+            # reprocess()'s destructive body). Gated on the
             # regenerate_existing arm; no-op otherwise.
             if start_with == "process" and regenerate_existing and not dry_run:
                 _unlink_dprocess_flags_for_regenerate(targets, status_dir)
             # Report deletion ALWAYS runs (toggle-independent) — the report
-            # regenerates from the preserved zarr on the default path (FQ1 parity).
+            # regenerates from the preserved zarr on the default path.
             _report_html = experiment_dir / "analysis_report.html"
             _report_zip = experiment_dir / "analysis_report.zip"
             # The DELETION runs on a dry run (it is the sanctioned mtime trigger); the
@@ -863,14 +884,14 @@ class TRITONSWMM_sensitivity_analysis:
             delete_and_account_unless_dry_run(
                 [_report_html, _report_zip], scope_dir=experiment_dir, scope="analysis", dry_run=dry_run
             )
-            # DN-3: the report deletion is accounted by the tool call above; no
-            # per-mutation ancestor restamp (clause 2) -- the FIX-3 gated restamp is gone.
+            # The report deletion is accounted by the tool call above, so no separate
+            # ancestor restamp follows it.
             # Consolidated-zarr deletion + batched DU restamp are the EXPENSIVE
             # GPFS work — gate behind regenerate_existing. Default path preserves
             # the zarrs (consolidate stays inert) and runs NO restamp walk.
-            # R8 routing (D-scope Option C) — computed once from the MASTER
+            # Delete routing — computed once from the MASTER
             # multi_sim_run_method. None auto-resolves to slurm-offload on HPC
-            # modes (D6 refinement 1). When the SLURM path runs, ONE scoped
+            # modes. When the SLURM path runs, ONE scoped
             # reprocess-delete workflow fans out per-sub (each sub's processed/
             # across events + its analysis_datatree.zarr) + a master rule for
             # sensitivity_datatree.zarr — replacing BOTH the in-process zarr
@@ -929,26 +950,26 @@ class TRITONSWMM_sensitivity_analysis:
                     )
             elif regenerate_existing and not dry_run:
                 # In-process path (local / delete_via_slurm=False) — per-sub +
-                # master zarr deletion, plus the Phase-3 per-sub processed-output
-                # delegation (FQ2; members own their scenarios). The
+                # master zarr deletion, plus the per-sub processed-output
+                # delegation (members own their scenarios). The
                 # delegated helper internally guards on
                 # `start_with == "process"` (analysis.py
-                # _delete_processed_outputs_for_reprocess, ~L2979), so a
+                # _delete_processed_outputs_for_reprocess), so a
                 # consolidate/render reprocess PRESERVES each sub's processed/
                 # (the rebuild source consolidate reads from) — only a
                 # process-stage reprocess deletes it. Do NOT inline the
                 # processed/ rmtree here without that guard: dropping it makes a
                 # consolidate-stage regenerate delete the rebuild source and the
-                # consolidate Snakemake step then fails (FIX-1 Phase-1 regression,
+                # consolidate Snakemake step then fails (a regression observed
                 # 2026-05-31). For the process stage the per-model LOG-clear
-                # already ran above (FIX 1, hunk 2a) on both routes; the helper's
+                # already ran above on both routes; the helper's
                 # idempotent re-clear here is harmless.
                 affected_sub_dirs: set = set()
                 for member_id in targets:
                     analysis = self.members.get(member_id)
                     if analysis is None:
                         continue
-                    # FQ2 processed-output deletion (Phase 3) — delegate to the
+                    # Processed-output deletion — delegate to the
                     # member's own helper (members own their scenarios;
                     # the helper's start_with guard protects consolidate/render).
                     analysis._delete_processed_outputs_for_reprocess(
@@ -968,7 +989,7 @@ class TRITONSWMM_sensitivity_analysis:
             # No _status flag for render — re-fire by deleting the report
             # artifacts so Snakemake's mtime trigger sees the output as absent.
             # The report-artifact unlink is the flag-equivalent trigger, so it
-            # runs even on dry_run (see D6); the DU restamp is gated, and the
+            # runs even on dry_run; the DU restamp is gated, and the
             # gate now lives in the helper rather than in an `if` at this site.
             _report_html = experiment_dir / "analysis_report.html"
             _report_zip = experiment_dir / "analysis_report.zip"
@@ -1002,10 +1023,10 @@ class TRITONSWMM_sensitivity_analysis:
         indicate live SLURM jobs. Pass ``override_in_flight=True`` to bypass
         the guard.
 
-        Per cleanup-rerun-delete-redesign Phase 2 (D-DeleteSentinelInteraction
-        + D-DeleteBoundary resolutions) and distributed-delete-and-du-
-        recording Phase 3 (SLURM lift; ``override_multi_sim_run_method``
-        mirrors the run-mode override pattern).
+        ``override_multi_sim_run_method`` replaces the configured
+        ``multi_sim_run_method`` for this delete only, which selects whether the
+        delete rules run locally (``--cores N``) or are submitted through the
+        SLURM executor; ``None`` reads the config.
         """
         from hhemt.utils import fast_rmtree
 
@@ -1062,7 +1083,7 @@ class TRITONSWMM_sensitivity_analysis:
 
         Idempotent: invokes ``snakemake --report`` against the master Snakefile
         without re-executing any rules. Renders only the master-level report;
-        per-member reports are not generated (R13).
+        per-member reports are not generated.
 
         Parameters
         ----------
@@ -1071,9 +1092,9 @@ class TRITONSWMM_sensitivity_analysis:
             ``analysis_report.html`` with all figures inlined as base64, plus
             React-bundle post-process surgery (title, navbar, sidebar order,
             click-to-figure shim). ``"zip"`` produces ``analysis_report.zip``
-            containing the unbundled report tree (separate HTML + assets);
-            no post-process surgery is applied (the zip layout differs from
-            the single-file HTML).
+            containing the unbundled report tree (separate HTML + assets); the
+            same surgery is applied to the ``report.html`` inside the zip
+            (extract, edit, re-zip).
         reprocess : bool, default False
             When ``True``, render against ``Snakefile.reprocess`` (the filtered
             reprocess DAG) instead of the production ``Snakefile``, so the
@@ -1096,10 +1117,10 @@ class TRITONSWMM_sensitivity_analysis:
         _assert_snakefile_package_current(snakefile)
         out = master_dir / f"analysis_report.{format}"
         css_path = master_dir / "report" / "report.css"
-        # Brand-theme resolution (ADR-7 layer 2) — symmetric to
+        # Brand-theme resolution — symmetric to
         # analysis.render_report. The render_report_runner path builds a FRESH
         # instance without _brand_theme; resolve once via getattr-fallback to
-        # serve BOTH the CSS emit and the navbar surgery (D-6; plan-review SE Flag 1).
+        # serve BOTH the CSS emit and the navbar surgery.
         from .config.brand_theme import DEFAULT_BRAND_THEME
         from .config.loaders import load_brand_theme
         from .workflow import _brand_theme_css_map
@@ -1150,19 +1171,20 @@ class TRITONSWMM_sensitivity_analysis:
             apply_post_process_surgery_to_zip,
         )
 
-        # Navbar upper-left brand text: brand_theme.upper_left_text (ADR-7),
-        # defaulting to analysis_id when None (D-6). _theme is resolved above.
+        # Navbar upper-left brand text: brand_theme.upper_left_text,
+        # defaulting to analysis_id when None. _theme is resolved above.
         _navbar = _theme.upper_left_text or self.cfg_analysis.analysis_id
         # Resolve the active set's category_order. The block that used to live here was
-        # byte-identical to the one in analysis.py, and it is extracted so the S19
-        # narrowing is one repair rather than two copies that must be proven to still
-        # agree. The shared helper lives outside both twins because they already form
-        # an import cycle (this module imports hhemt.analysis at module level and
-        # analysis imports TRITONSWMM_sensitivity_analysis back).
+        # byte-identical to the one in analysis.py, and it is extracted so a change to
+        # the category-order narrowing in resolve_render_path_category_order is one
+        # repair rather than two copies that must be proven to still agree. The shared
+        # helper lives outside both twins because they already form an import cycle
+        # (this module imports hhemt.analysis at module level and analysis imports
+        # TRITONSWMM_sensitivity_analysis back).
         from .render_category_order import resolve_render_path_category_order
 
         _category_order = resolve_render_path_category_order(self)
-        # S4: resolve member_id card names to derived compute-config labels. Threaded to
+        # Resolve member_id card names to derived compute-config labels. Threaded to
         # BOTH branches -- the html and the zip carry the same card names, and
         # resolving one alone would ship a divergence between two delivered artifacts.
         from .report_plot_ids import event_labels_from_status, member_labels_from_status
@@ -1211,7 +1233,8 @@ class TRITONSWMM_sensitivity_analysis:
 
     # Conforms to hhemt.bundle._protocol.BundleableAnalysis
     # via duck typing — attributes delegated to self.experiment in
-    # __init__ (lines 91-94).
+    # __init__ (analysis_paths, cfg_analysis, cfg_hpc_system, case_manifest_yaml,
+    # _case_manifest).
     def bundle_report_data(
         self,
         output_path: "Path | None" = None,
@@ -1284,7 +1307,7 @@ class TRITONSWMM_sensitivity_analysis:
         override_dataset_license: "Literal['CC0-1.0', 'CC-BY-NC-4.0'] | None" = None,
         software_doi: "str | None" = None,
     ) -> dict:
-        """Deposit the sensitivity MASTER tree to a DOI-minting repo (C6, ADR-11).
+        """Deposit the sensitivity MASTER tree to a DOI-minting repo.
 
         Opt-in only — NEVER invoked from run()/submit_workflow(), mirroring
         render_report()/bundle_report_data(). Deposits the master
@@ -1571,8 +1594,8 @@ class TRITONSWMM_sensitivity_analysis:
             # datatree_consolidation_complete flag, which a run (often in another
             # process) sets on disk but not in this long-lived sub object.
             # Previously the sensitivity aggregators' _update_log() refreshed these
-            # sub logs as a side effect; that call was dropped in the
-            # log-write-race-fix compute-on-read change, so refresh explicitly here
+            # sub logs as a side effect; that call was dropped when those rollups
+            # became compute-on-read (to remove a log write race), so refresh explicitly here
             # at the cross-analysis read site (read-only observer; safe).
             analysis._refresh_log()
             try:
@@ -1596,7 +1619,7 @@ class TRITONSWMM_sensitivity_analysis:
         tree = xr.DataTree.from_dict(tree_dict)
         apply_global_attributes(tree, analysis_id=str(self.experiment.cfg_analysis.analysis_id))
 
-        # ADR-15 Phase 1: the per-event hhemt_producing_sha/version coordinates ride
+        # The per-event hhemt_producing_sha/version coordinates ride
         # up automatically via the verbatim node.dataset graft above (no new
         # transmission code). Re-derive the MASTER-level scalar fast-path here by
         # scanning the grafted sub-nodes for master-wide uniformity (uniform across
@@ -1634,7 +1657,7 @@ class TRITONSWMM_sensitivity_analysis:
         per-scenario summaries along ``event_iloc`` and is all-or-nothing per
         member. Pass ``allow_incomplete=False`` to restore fail-fast.
 
-        NOTE (Decision D2, 2026-06-02, "for now"): the default is ``True`` so
+        NOTE (an interim default, set 2026-06-02): the default is ``True`` so
         reprocess AND canonical runs tolerate partial-completion sensitivity
         suites by default. To restore strict fail-fast on canonical runs, flip
         this default back to ``False``.
@@ -1643,14 +1666,14 @@ class TRITONSWMM_sensitivity_analysis:
         if fname_out is None:
             raise ValueError("sensitivity_datatree_zarr path is not configured on AnalysisPaths.")
 
-        # Per D5/R8: bare .exists() is an unreliable completion signal — a
+        # Bare .exists() is an unreliable completion signal — a
         # present-but-corrupt sensitivity_datatree.zarr (a write that crashed
         # mid-stream) .exists() as True, and would be returned as a healthy
         # result. Align with the master log's canonical signal: "already
         # consolidated" iff it exists AND sensitivity_datatree_consolidation_complete
         # is True (set only on a successful full write below). Present-but-incomplete
         # falls through to a clean rebuild. This is the master-sensitivity analogue
-        # of consolidate_to_datatree's D5 log-keyed early-return; do NOT touch the
+        # of consolidate_to_datatree's log-keyed early-return; do NOT touch the
         # read-path .exists() guard in open_sensitivity_datatree (a read-path
         # existence check is correct).
         self.experiment._refresh_log()
@@ -1783,12 +1806,12 @@ class TRITONSWMM_sensitivity_analysis:
         )
         apply_provenance_core(tree, core_json_str=_core_json)
 
-        # TRITON provenance (D2/R5): stamp the producing-TRITON sha + coupled-resume-fix
+        # TRITON provenance: stamp the producing-TRITON sha + coupled-resume-fix
         # ancestry onto the sensitivity-MASTER tree root as plain attrs. This is a
         # SEPARATE wiring site from consolidate_to_datatree: check_coupled_resume_validity's
         # reader resolves sensitivity_datatree.zarr for a sensitivity master, so omitting
         # this site would leave the reader permanently INDETERMINATE on the primary
-        # experiment shape (the c2c3 dual-wiring seam).
+        # experiment shape.
         from hhemt.processing_analysis import _stamp_coupled_resume_evidence, _stamp_triton_provenance
 
         _stamp_triton_provenance(tree, self.experiment)
@@ -1796,7 +1819,7 @@ class TRITONSWMM_sensitivity_analysis:
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
         write_rocrate_sidecar(self.experiment.analysis_paths.analysis_dir, graph_json=_graph_json)
 
-        # ARM REFRESH AT THE WRITE BOUNDARY (D132 clause f) -- the master-arm twin of the
+        # ARM REFRESH AT THE WRITE BOUNDARY -- the master-arm twin of the
         # refresh in processing_analysis.consolidate_to_datatree, and required rather than
         # symmetric: a directory ADVANCED from regular to sensitivity that consolidates and
         # STOPS leaves cfg_analysis.yaml asserting the prior regular arm while this master
@@ -1806,7 +1829,9 @@ class TRITONSWMM_sensitivity_analysis:
         # divergence test cannot be trusted here. Perturbs no scheduling: this file is a
         # declared input of NO emitted Snakemake rule, and the mtime-preserving rewrite
         # primitive is migration-only.
-        # DOES NOT close the file-only residual.
+        # DOES NOT cover readers for which this file is the ONLY record of the arm: an
+        # archived tree, a bundle emitted from a root whose file was already stale, and a
+        # migration still cannot detect that a directory's arm was changed back.
         import yaml as _yaml
 
         (self.experiment.analysis_paths.analysis_dir / "cfg_analysis.yaml").write_text(
@@ -1841,9 +1866,10 @@ class TRITONSWMM_sensitivity_analysis:
         never writes an analysis-scope ``_du.json``, leaving the master root
         unsentineled so a ``delete --dry-run`` falls back to a full tree walk.
 
-        Uses ``sum_child_sentinels`` (Gotcha 38 / the DU-rollup decision): the
+        Uses ``sum_child_sentinels``: the
         master total is the Σ of the per-sub ``_du.json`` sentinels (written by
-        the D6 fold) + a bounded own-files walk excluding the child-scope dirs —
+        each member's consolidate step in ``consolidate_workflow.py``) + a bounded
+        own-files walk excluding the child-scope dirs —
         NEVER a full-tree ``compute_and_write_scope_sentinel`` walk on the
         largest tree in the system. Ordering is structurally safe: the
         ``experiment_consolidation`` rule fans in on every per-sub completion flag,
@@ -1935,7 +1961,7 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def analysis_independent_vars(self) -> list[str]:
-        """Phase 2 — analysis-config attributes varied across members.
+        """Analysis-config attributes varied across members.
 
         Returns the canonical (stripped) field name for each varied analysis-config
         column. Recognizes both `analysis.{field}` (canonical) and bare `field`
@@ -1964,10 +1990,10 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def system_independent_vars(self) -> list[str]:
-        """Phase 2 — system-config attributes varied across members.
+        """System-config attributes varied across members.
 
-        Recognizes only `system.{field}` columns (no bare names — Phase 1 R1
-        rejects bare-name system_config columns at the allowlist gate).
+        Recognizes only `system.{field}` columns (no bare names — the column
+        allowlist in `_retrieve_df_setup` rejects bare-name system_config columns).
         """
         seen: list[str] = []
         for col in self._df_setup_full.columns:
@@ -1981,13 +2007,14 @@ class TRITONSWMM_sensitivity_analysis:
     def df_setup_with_system_overlays(self) -> pd.DataFrame:
         """`df_setup` unioned with the `system.*` overlay columns from the full frame.
 
-        `df_setup` is filtered to analysis-config columns only (:173-180); the
+        `df_setup` is filtered to analysis-config columns only (the projection in
+        `__init__`); the
         `system.*` overlay columns are retained on `_df_setup_full`. Report
         renderers that plot a system-axis independent variable
-        (`system.target_dem_resolution`, `system.gpu_hardware`, ...) need both
+        (e.g. `system.target_dem_resolution`) need both
         sets in one frame. This accessor unions them on the shared `member_id`
         index, preserving the PREFIXED column names so a renderer's
-        `independent_var="system.gpu_hardware"` lookup resolves directly.
+        `independent_var="system.target_dem_resolution"` lookup resolves directly.
 
         The frame is analysis-columns + system-overlay-columns only — NOT the
         raw `_df_setup_full` (which also carries `system_config_yaml` and
@@ -2004,7 +2031,7 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def independent_vars(self) -> list[str]:
-        """BC alias — Phase 2 retains this name for downstream callers that haven't migrated.
+        """Backward-compatible alias, retained for downstream callers that haven't migrated.
 
         Returns the union of `analysis_independent_vars` and
         `system_independent_vars` (latter prefixed with `system.` to
@@ -2064,7 +2091,7 @@ class TRITONSWMM_sensitivity_analysis:
                 f"member_id values must match ^[A-Za-z0-9_.]+$ (Snakemake-wildcard safe). Offending values: {bad}"
             )
         df_setup = df_setup.set_index("member_id")
-        # Phase 1 — column allowlist enforcement (post-set_index so member_id excluded).
+        # Column allowlist enforcement (post-set_index so member_id excluded).
         from hhemt.config.analysis import analysis_config
         from hhemt.config.system import system_config
 
@@ -2078,8 +2105,8 @@ class TRITONSWMM_sensitivity_analysis:
         )
         unknown = set(df_setup.columns) - valid_columns
         if unknown:
-            # Phase 6 (DQ4): a direct `hpc.gpu_hardware` axis is rejected — gpu_hardware
-            # is derived-only (R7); cross-hardware variation is expressed via the
+            # A direct `hpc.gpu_hardware` axis is rejected — gpu_hardware
+            # is derived-only; cross-hardware variation is expressed via the
             # `hpc.partition` selector (hardware derives from the partition spec).
             hpc_gpu_hint = (
                 " To vary GPU hardware across rows, use `hpc.partition` "
@@ -2231,8 +2258,8 @@ class TRITONSWMM_sensitivity_analysis:
         - ``d_process_{model_type}_member-{member_id}_evt-{event_id}_complete.flag``
         - ``e_consolidate_member-{member_id}_complete.flag``
 
-        The member_id charset is constrained to ``^[A-Za-z0-9_.]+$`` per the
-        project stipulation. Returns an empty list if the ``_status/``
+        The member_id charset is constrained to ``^[A-Za-z0-9_.]+$`` because
+        member ids are used as Snakemake wildcards. Returns an empty list if the ``_status/``
         directory does not exist.
         """
         import re as _re
@@ -2261,7 +2288,7 @@ class TRITONSWMM_sensitivity_analysis:
         """Return _status/member-{member_id}_inputs.json fingerprint files whose
         member_id is absent from df_setup.index.
 
-        The per-member_id input-fingerprint files (Gotcha 17) are written by
+        The per-member_id input-fingerprint files are written by
         ``SensitivityAnalysisWorkflowBuilder`` at Snakefile-build time and named
         ``member-{member_id}_inputs.json`` under ``_status/``. When a member_id is removed
         from the sensitivity CSV its fingerprint is orphaned just like its
@@ -2317,8 +2344,8 @@ class TRITONSWMM_sensitivity_analysis:
         """Detect and (optionally) delete orphan member dirs, flags, datatree groups, and input fingerprints.
 
         When any orphan is detected and deletion proceeds, the entire
-        ``sensitivity_datatree.zarr`` is removed (rebuild approach — see plan
-        D-SURGICAL) and the master-consolidation status flag is also removed so
+        ``sensitivity_datatree.zarr`` is removed (rebuild approach) and the
+        master-consolidation status flag is also removed so
         Snakemake re-runs the experiment_consolidation rule on the next workflow run.
 
         Parameters
@@ -2429,7 +2456,7 @@ class TRITONSWMM_sensitivity_analysis:
         Handles three per-row mechanisms:
 
         1. ``system_config_yaml`` column (path to a per-member system YAML).
-        2. ``system.{field}`` overlay columns (Phase 1 prefixed-column mechanism).
+        2. ``system.{field}`` overlay columns (the prefixed-column mechanism).
         3. Neither — fall back to master ``self._system``.
 
         Mutual exclusion: a single row may use mechanism 1 OR mechanism 2, never both;
@@ -2511,7 +2538,7 @@ class TRITONSWMM_sensitivity_analysis:
             else:
                 cfg = self._system.cfg_system
 
-            # Phase 6 (DQ7a): resolve the ensemble partition PER ROW from the
+            # Resolve the ensemble partition PER ROW from the
             # overlay (analysis.hpc_ensemble_partition / hpc.partition), falling back
             # to the master. The dedup key STAYS hardware-derived (two same-hardware
             # partitions collapse to one build target) — NOT partition-name-keyed —
@@ -2531,9 +2558,9 @@ class TRITONSWMM_sensitivity_analysis:
                 groups[key] = {"cfg": cfg, "member_ids": [], "partition": _row_partition}
             groups[key]["member_ids"].append(member_id_str)
 
-        # Phase-4 (4c): GPU hardware/backend + modules are injected into each target
+        # GPU hardware/backend + modules are injected into each target
         # system (retired off system_config), resolved from the master ensemble
-        # partition (uniform in 4c). The master self._system represents that same
+        # partition. The master self._system represents that same
         # ensemble target, so populate its injected attrs too (so the reuse branch
         # below is GPU-correct, not a None-injected CPU system).
         _gpu_hardware, _gpu_backend = resolve_gpu_target(
@@ -2541,7 +2568,7 @@ class TRITONSWMM_sensitivity_analysis:
             self.experiment.cfg_analysis.hpc_ensemble_partition,
         )
         _modules = resolve_additional_modules(self.experiment.cfg_hpc_system)
-        # synth_cc friction fix (2026-07-08): inject the master-ensemble GPU pair into
+        # Inject the master-ensemble GPU pair into
         # self._system ONLY on the DRIVER (is_main_orchestrator=True). It is a
         # driver-only template feeding the reuse-branch below + the workflow.py GPU-
         # sensitivity validation (`not self.system.gpu_compilation_backend`). In a
@@ -2550,8 +2577,8 @@ class TRITONSWMM_sensitivity_analysis:
         # --target-partition (backend=None for a CPU/standard partition, with
         # sys_paths.compilation_script_gpu frozen to None). Overwriting it here with the
         # master ensemble backend flips the CPU target into the GPU branch of
-        # compile_TRITON_SWMM (system.py:522) against a None compile-script path ->
-        # AttributeError at system.py:813; it also silently rewrites a non-master GPU
+        # compile_TRITON_SWMM, which then reads the None compile-script path and
+        # raises AttributeError; it also silently rewrites a non-master GPU
         # target's arch (a100 -> master a6000). sys_paths is frozen at construction and
         # is NOT rebuilt by this assignment, so the runner MUST keep its constructed pair.
         if is_main_orchestrator:
@@ -2564,13 +2591,13 @@ class TRITONSWMM_sensitivity_analysis:
             cfg = group["cfg"]
             member_ids = group["member_ids"]
             _target_partition = group["partition"]
-            # Phase 6 (DQ7a): resolve THIS target's (hw, backend, modules) from its
+            # Resolve THIS target's (hw, backend, modules) from its
             # own partition — distinct targets (a6000 vs a100) inject distinct pairs.
             _t_hw, _t_backend = resolve_gpu_target(self.experiment.cfg_hpc_system, _target_partition)
             _t_modules = resolve_additional_modules(self.experiment.cfg_hpc_system)
             generated_yaml = generated_dir / f"target_{target_id}.yaml"
             if is_main_orchestrator:
-                # Temp-file-rename for atomicity (PID-keyed per Gotcha 17 pattern).
+                # Temp-file-rename for atomicity (PID-keyed).
                 tmp_yaml = generated_dir / f"target_{target_id}.{os.getpid()}.tmp.yaml"
                 with tmp_yaml.open("w") as fh:
                     yaml.safe_dump(cfg.model_dump(mode="json"), fh, sort_keys=False)
@@ -2590,7 +2617,7 @@ class TRITONSWMM_sensitivity_analysis:
                     gpu_hardware=_t_hw,
                     gpu_compilation_backend=_t_backend,
                     additional_modules=_t_modules,
-                    # ADR-1/M-7: this per-UniqueSystemTarget system DRIVES the
+                    # This per-UniqueSystemTarget system DRIVES the
                     # sensitivity compile (compile_TRITON_SWMM below). In container
                     # mode the libstdc++ exact-soname patch must be suppressed (the
                     # SIF carries a self-consistent toolchain); the False default in
@@ -2741,7 +2768,7 @@ class TRITONSWMM_sensitivity_analysis:
                 analysis_config_yaml=cfg_anlysys_yaml,
                 system=member_id_to_system[member_id],
                 skip_log_update=self._skip_log_update,
-                # Phase 6 (DQ7): thread the master's hpc_system_config to each sub so
+                # Thread the master's hpc_system_config to each sub so
                 # the per-sub partition -> gpu_hardware / gpus_per_node resolution
                 # (resolve_gpu_target / resolve_gpus_per_node, consumed by the per-member
                 # GRES emission) works for cross-hardware sensitivity. Subs previously
@@ -2764,10 +2791,10 @@ class TRITONSWMM_sensitivity_analysis:
         Stability contract: every ``analysis_config`` field that may appear in
         ``self.analysis_independent_vars`` must be JSON-stable under ``model_dump(mode="json")``
         — that is, two invocations on the same member instance must produce
-        byte-identical ``json.dumps(..., sort_keys=True)`` output. The currently-known
-        sensitivity-CSV columns (``cpus_per_sim``, ``n_omp_threads``, ``hpc_total_nodes``,
-        ``hpc_max_simultaneous_sims``, ``hpc_total_job_duration_min``, ``run_mode``) are
-        all native Python int/str/Literal types and meet the contract. Adding a
+        byte-identical ``json.dumps(..., sort_keys=True)`` output. Sensitivity-CSV
+        columns such as ``n_omp_threads``, ``hpc_total_nodes``,
+        ``hpc_total_job_duration_min`` (``int | None``) and ``run_mode`` (a string
+        ``Literal``) are native Python types and meet the contract. Adding a
         new ``analysis_config`` field that may legitimately become a sensitivity-CSV
         column requires re-checking JSON stability and may require bumping
         ``__schema_version__``.
@@ -2777,7 +2804,7 @@ class TRITONSWMM_sensitivity_analysis:
         cfg_dump = analysis.cfg_analysis.model_dump(mode="json")
         # KeyError on missing key — surfaces config-schema drift loudly rather than
         # producing fingerprints that silently project None for an absent field.
-        # Phase 2 — project against `analysis_independent_vars` (canonical stripped
+        # Project against `analysis_independent_vars` (canonical stripped
         # names) rather than the BC alias `independent_vars` (which includes
         # `system.*` entries that have no key in `cfg_dump`).
         payload: dict[str, object] = {
@@ -2788,13 +2815,13 @@ class TRITONSWMM_sensitivity_analysis:
         # schema and attach a SHA-1 of the member's resolved cfg_system. This
         # invalidates any member_id whose system config changes between runs. The
         # schema bump intentionally invalidates every member_id on the first run that
-        # introduces per-member system configs (Gotcha 17 cascade — see Phase 1 doc).
+        # introduces per-member system configs.
         if self._has_per_member_system_configs:
             payload["__schema_version__"] = 2
             cfg_system_json = analysis._system.cfg_system.model_dump_json(by_alias=False, exclude_none=False)
             payload["system_cfg_hash"] = hashlib.sha1(cfg_system_json.encode("utf-8")).hexdigest()
 
-        # Phase 1 — attach system_overlay key when any system.* overlay columns
+        # Attach system_overlay key when any system.* overlay columns
         # are declared on the master sensitivity df (un-projected).
         from hhemt.config.system import system_config
 
@@ -2978,7 +3005,7 @@ class TRITONSWMM_sensitivity_analysis:
         Returns
         -------
         dict[str, str]
-            Maps scenario identifier (e.g. ``"sa1_0"``) to failure class:
+            Maps scenario identifier (``"member-{member_id}_evt-{event_id}"``) to failure class:
 
             - ``"timeout"`` — log contains ``DUE TO TIME LIMIT``
             - ``"unclassified"`` — log exists but no known failure marker found
@@ -3021,7 +3048,7 @@ class TRITONSWMM_sensitivity_analysis:
             schema from ``TRITONSWMM_analysis.df_status`` (e.g. ``scenario_setup``
             and ``run_completed``), as well as:
 
-            - sub_analysis_iloc: int - member index
+            - member_id: str - the member's id, inserted as the first column
         """
         status_frames = []
 
