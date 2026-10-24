@@ -657,9 +657,9 @@ def synthetic_multisim_completed(tritonswmm_cpu_compiled, triton_only_cpu_compil
     by tests that need a completed multisim tree, the reprocess tests among
     them. Session-scoped: the first invocation in a pytest session runs the
     synth multisim through ``analysis.run(from_scratch=False, ...)`` unless
-    this fixture's own completion marker is present and current (see
-    ``_marker_state``); subsequent invocations reuse the materialized analysis
-    from the test-case cache.
+    this fixture's own completion marker is current AND that marker's payload is
+    present on disk (see ``_marker_state``); subsequent invocations reuse the
+    materialized analysis from the test-case cache.
 
     Before handing the tree out it clears ``locks/`` and ``incomplete/`` under
     the analysis dir's ``.snakemake/``, and under ``.snakemake_reprocess/`` when
@@ -722,9 +722,9 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
     and DU-sentinel test modules. Session-scoped: the first invocation in a
     pytest session runs the synth sensitivity master through
     ``sensitivity.submit_workflow(mode="local")`` unless this fixture's own
-    completion marker is present and current (see ``_marker_state``);
-    subsequent invocations reuse the materialized analysis from the test-case
-    cache.
+    completion marker is current AND that marker's payload is present on disk
+    (see ``_marker_state``); subsequent invocations reuse the materialized
+    analysis from the test-case cache.
 
     Returns the ``TRITONSWMM_sensitivity_analysis`` object (master analysis
     accessible via ``.experiment``). Before handing it out it clears the same
@@ -913,8 +913,13 @@ def triton_only_cpu_compiled(tritonswmm_cpu_compiled):
     fails there: with ``ConfigurationError`` ("No ... CPU build is present") when
     the cache holds no coupled compilation log either, otherwise with
     ``CompilationError``. On a WARM cache -- any box that has run the compile tier
-    once -- the build already exists and the missing request is INVISIBLE. Nothing
-    in this tree gates it.
+    once -- the build already exists and the missing request is INVISIBLE.
+    ``tests/test_build_request_census.py`` fails on such a test whose run its static
+    call walk reaches, unless the test carries a ``compile_tier`` mark applied by
+    hand, which the census counts as a build request. One so marked, one reached by
+    dynamic dispatch or through a call resolving outside ``tests/`` and ``hhemt``,
+    and one that reaches only ``prepare_scenario`` are not caught, and nothing in
+    this tree gates them.
 
     Depends on ``tritonswmm_cpu_compiled`` for its skip/escalate gate (toolchain
     absent, or pyswmm-stack mismatch) rather than duplicating it, so this

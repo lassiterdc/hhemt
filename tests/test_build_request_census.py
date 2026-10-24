@@ -1,0 +1,960 @@
+"""Fail when a test would run a simulation workflow without requesting the model build.
+
+The problem: a workflow run (``analysis.run()``, ``submit_workflow()``, ``test()``) needs the
+solver build to exist, and the workflow's setup rule refuses when it does not. On a machine
+that has built once, the build is already in the cache, so a test that forgot to request it
+stays green there and fails only on a fresh checkout. Nothing else in the suite reds on that
+omission, so this module does.
+
+How it decides, in five rules.
+
+1. Collection, not execution. A child pytest process collects the whole ``tests/`` tree with
+   ``HHEMT_FORBID_COMPILE=1`` and runs nothing, so no fixture is set up and nothing compiles. The
+   child starts without ``PYTEST_ADDOPTS`` and with no ``-m``, ``-k`` or ``--deselect``, and the
+   test fails if it reports any deselected item: a deselection narrows the items the child
+   records. For each collected item the child reads the function OBJECT (a class method
+   included) and ``item.fixturenames``, never ``--setup-plan`` text, which cannot see a class
+   method and misparses a node line whose parametrize id contains ``]``.
+2. Run-reaching. A node reaches a run when its call graph holds an attribute call ``.run(``,
+   ``.submit_workflow(`` or ``.test(`` whose receiver is not the ``subprocess`` module, or a
+   command-line invocation of a command whose callback reaches one: ``invoke(app, [...])`` in
+   process, or a child ``hhemt`` or ``python -m hhemt`` call. The call graph is the node's own
+   function, the function of every fixture in its closure, and every function or method they
+   call that resolves (through the caller's ``__globals__`` or an ``import`` statement inside
+   its body) to a file under ``tests/`` or the ``hhemt`` package, each walked once. The walk
+   crosses into ``hhemt`` because a run is reached there through entry points named by none of
+   the three attributes: ``hhemt run-experiment`` reaches ``tk.run(`` only inside
+   ``hhemt.experiment_bundle.run_experiment``.
+3. Covered. A node is covered when it carries the ``compile_tier`` marker, which
+   ``tests/conftest.py::pytest_collection_modifyitems`` derives from ``tritonswmm_cpu_compiled``
+   in the fixture closure. That derivation is read, not restated here.
+4. Excused. A node is excused when every run-reaching call in its graph passes a literal
+   ``dry_run=True`` or ``--dry-run`` or is a CLI call carrying ``--help``; when it carries an
+   unconditional ``skip`` marker; or when its node id is in the excuse table below. One real call
+   beside dry ones is not excused.
+5. What fails. A run-reaching node that is neither covered nor excused, and a table entry that is
+   STALE (its node no longer collects, no longer reaches a run, or is now covered), so the table
+   shrinks with the suite instead of rotting.
+
+Not established: the walk is static. It does not see a run reached by dynamic dispatch
+(``getattr(obj, name)()``, a callable passed as an argument), a run reached through a call that
+resolves outside ``tests/`` and ``hhemt``, a CLI call whose command name no literal, fixture
+value or parametrize value spells out, an argv sliced or rebuilt from another (``argv = argv[:-1]``,
+which the walk reads as a binding carrying no flag, so the call is never excused), or a
+``compile_tier`` mark applied by hand to a test that does not compile.
+A ``--dry-run`` or ``--help`` flag excuses a command-line call only when every binding of the argv
+name, every ``return`` or ``yield`` of an argv helper, and every return path of an argv fixture
+carries it; a parametrize id supplies one value, so its flags are certain.
+"""
+
+from __future__ import annotations
+
+import ast
+import importlib
+import importlib.util
+import inspect
+import json
+import os
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import pytest
+
+_TESTS_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _TESTS_DIR.parent
+
+# The attribute names that start a workflow, and the literal arguments that make a call a no-op.
+_RUN_ATTRS = frozenset({"run", "submit_workflow", "test"})
+_DRY_FLAG = "--dry-run"
+_HELP_FLAG = "--help"
+_FLAGS = frozenset({_DRY_FLAG, _HELP_FLAG})
+
+_STUBBED = "stubbed"
+_REFUSES = "refuses before running"
+_DRY_NON_LITERAL = "dry run by a non-literal argument"
+_CATEGORIES = frozenset({_STUBBED, _REFUSES, _DRY_NON_LITERAL})
+
+# How many helper returns deep an argv expression is traced before the trace gives up.
+_DEPTH_LIMIT = 6
+
+
+@dataclass(frozen=True)
+class _Excuse:
+    """One adjudicated group of run-reaching nodes that are neither covered nor auto-excused.
+
+    ``category`` is one of ``_CATEGORIES``; ``quote`` is the source line that shows it, copied
+    from the test or fixture file; ``node_ids`` are the full pytest node ids it covers.
+    """
+
+    category: str
+    source: str  # repo-relative path of the file holding the quoted line
+    quote: str
+    node_ids: tuple[str, ...]
+
+
+# EXCUSE TABLE: every uncovered run-reaching node that no literal argument or skip marker
+# excuses. Adding a row is the one way a new test may reach a run without the build, so each
+# row needs a category and the quoted line that shows it.
+_EXCUSES: tuple[_Excuse, ...] = (
+    _Excuse(
+        _REFUSES,
+        "tests/test_cli_01_validation.py",
+        'analysis_config.write_text("version: 1\\n")',
+        (
+            "tests/test_cli_01_validation.py::test_from_scratch_and_resume_mutually_exclusive",
+            "tests/test_cli_01_validation.py::test_event_ilocs_and_range_mutually_exclusive",
+            "tests/test_cli_01_validation.py::test_verbose_and_quiet_mutually_exclusive",
+            "tests/test_cli_01_validation.py::test_system_config_is_required",
+            "tests/test_cli_01_validation.py::test_analysis_config_is_required",
+            "tests/test_cli_01_validation.py::test_invalid_model_value",
+            "tests/test_cli_01_validation.py::test_invalid_which_value",
+            "tests/test_cli_01_validation.py::test_invalid_redownload_value",
+            "tests/test_cli_01_validation.py::test_invalid_log_level_value",
+            "tests/test_cli_01_validation.py::test_invalid_walltime_format_missing_leading_zero",
+            "tests/test_cli_01_validation.py::test_invalid_walltime_format_wrong_separator",
+            "tests/test_cli_01_validation.py::test_valid_walltime_format",
+            "tests/test_cli_01_validation.py::test_valid_model_values",
+            "tests/test_cli_01_validation.py::test_valid_which_values",
+            "tests/test_cli_01_validation.py::test_valid_redownload_values",
+            "tests/test_cli_01_validation.py::test_valid_log_level_values",
+        ),
+    ),
+    _Excuse(
+        _REFUSES,
+        "tests/test_cli_02_exit_codes.py",
+        '"/nonexistent/system.yaml",',
+        ("tests/test_cli_02_exit_codes.py::test_exit_code_2_configuration_error_nonexistent_file",),
+    ),
+    _Excuse(
+        _REFUSES,
+        "tests/test_cli_02_exit_codes.py",
+        'analysis_config.write_text("version: 1\\n")',
+        (
+            "tests/test_cli_02_exit_codes.py::test_exit_code_2_cli_validation_error_mutually_exclusive",
+            "tests/test_cli_02_exit_codes.py::test_exit_code_2_cli_validation_error_invalid_enum",
+        ),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_cli_05_run_experiment.py",
+        "tk = Toolkit(SimpleNamespace(analysis=SimpleNamespace(run=_spy)))",
+        ("tests/test_cli_05_run_experiment.py::test_toolkit_run_refuses_unknown_mode",),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_cli_05_run_experiment.py",
+        'monkeypatch.setattr(eb, "run_experiment", fn)',
+        (
+            "tests/test_cli_05_run_experiment.py::test_mode_invalid_value_is_a_usage_error",
+            "tests/test_cli_05_run_experiment.py::test_mode_overwrite_is_refused",
+            "tests/test_cli_05_run_experiment.py::test_mode_valid_values_reach_run_experiment[fresh]",
+            "tests/test_cli_05_run_experiment.py::test_mode_valid_values_reach_run_experiment[resume]",
+            "tests/test_cli_05_run_experiment.py::test_mode_default_is_resume",
+            "tests/test_cli_05_run_experiment.py::test_failure_result_exits_3_and_prints_no_green",
+            "tests/test_cli_05_run_experiment.py::test_partial_failure_result_names_failed_rules",
+            "tests/test_cli_05_run_experiment.py::test_reporter_prints_producer_text_literally",
+            "tests/test_cli_05_run_experiment.py::test_success_result_prints_detail_lines",
+            "tests/test_cli_05_run_experiment.py::test_run_and_run_experiment_share_the_result_reporter",
+            "tests/test_cli_05_run_experiment.py::test_override_force_rerun_reaches_run_experiment",
+            "tests/test_cli_05_run_experiment.py::test_exception_class_maps_to_documented_code[CLIValidationError]",
+            "tests/test_cli_05_run_experiment.py::test_exception_class_maps_to_documented_code[ConfigurationError]",
+            "tests/test_cli_05_run_experiment.py::test_exception_class_maps_to_documented_code[WorkflowPlanningError]",
+            "tests/test_cli_05_run_experiment.py::test_exception_class_maps_to_documented_code[WorkflowError]",
+            "tests/test_cli_05_run_experiment.py::test_exception_class_maps_to_documented_code[CompilationError]",
+            "tests/test_cli_05_run_experiment.py::test_exception_class_maps_to_documented_code[SimulationError]",
+            "tests/test_cli_05_run_experiment.py::test_exception_class_maps_to_documented_code[ProcessingError]",
+            "tests/test_cli_05_run_experiment.py::test_exception_class_maps_to_documented_code[pydantic.ValidationError]",
+            "tests/test_cli_05_run_experiment.py::test_exception_class_maps_to_documented_code[RuntimeError]",
+            "tests/test_cli_05_run_experiment.py::test_schema_invalid_config_exits_2",
+            "tests/test_cli_05_run_experiment.py::test_exit_1_is_not_a_run_experiment_code",
+        ),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_cli_06_run_mode_flags.py",
+        'monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)',
+        (
+            "tests/test_cli_06_run_mode_flags.py::test_overwrite_forwards_a_different_run_argument_than_resume",
+            "tests/test_cli_06_run_mode_flags.py::test_overwrite_forwards_force_rerun_all",
+            "tests/test_cli_06_run_mode_flags.py::test_overwrite_contradicted_by_another_force_rerun_value_is_refused",
+        ),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_cli_07_run_flag_combinations.py",
+        'monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)',
+        (
+            "tests/test_cli_07_run_flag_combinations.py::test_control_resume_off_route_reaches_the_fresh_branch",
+            "tests/test_cli_07_run_flag_combinations.py::test_overwrite_never_cancels_from_scratch",
+        ),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_cli_08_experiment_cluster_resolution.py",
+        'monkeypatch.setattr(eb, "run_experiment", _fake)',
+        (
+            "tests/test_cli_08_experiment_cluster_resolution.py::test_experiment_verbs_resolve_the_cluster_one_way[run-experiment-one-declared-no-flag]",
+            "tests/test_cli_08_experiment_cluster_resolution.py::test_experiment_verbs_resolve_the_cluster_one_way[run-experiment-two-declared-no-flag]",
+            "tests/test_cli_08_experiment_cluster_resolution.py::test_experiment_verbs_resolve_the_cluster_one_way[run-experiment-zero-declared-no-flag]",
+            "tests/test_cli_08_experiment_cluster_resolution.py::test_experiment_verbs_resolve_the_cluster_one_way[run-experiment-two-declared-flag-names-one]",
+            "tests/test_cli_08_experiment_cluster_resolution.py::test_experiment_verbs_resolve_the_cluster_one_way[run-experiment-control-one-declared-matching-flag]",
+        ),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_cli_10_experiment_verbs.py",
+        'monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)',
+        ("tests/test_cli_10_experiment_verbs.py::test_run_status_prints_the_status_report_verbatim",),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_cli_10_experiment_verbs.py",
+        'monkeypatch.setattr(eb, "build_case_from_bundle", _fake_build)',
+        (
+            "tests/test_cli_10_experiment_verbs.py::test_test_analysis_calls_analysis_test_and_exits_on_its_outcome[all-ok]",
+            "tests/test_cli_10_experiment_verbs.py::test_test_analysis_calls_analysis_test_and_exits_on_its_outcome[one-fails]",
+        ),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_cli_11_experiment_verb_output.py",
+        'monkeypatch.setattr(eb, "build_case_from_bundle", _fake_build)',
+        (
+            "tests/test_cli_11_experiment_verb_output.py::test_printed_directory_is_the_one_returned[test-analysis-test-root]",
+            "tests/test_cli_11_experiment_verb_output.py::test_printed_directory_survives_wrapping_and_emoji_codes[test-analysis-longer-than-80-columns]",
+            "tests/test_cli_11_experiment_verb_output.py::test_printed_directory_survives_wrapping_and_emoji_codes[test-analysis-colon-word-component]",
+        ),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_cli_12_run_from_scratch.py",
+        'monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)',
+        (
+            "tests/test_cli_12_run_from_scratch.py::test_from_scratch_alone_selects_fresh_and_the_guard_still_refuses_both",
+        ),
+    ),
+    _Excuse(
+        _REFUSES,
+        "tests/test_experiment_bundle_runner.py",
+        'pytest.fail("gate should refuse before build")',
+        ("tests/test_experiment_bundle_runner.py::test_run_experiment_non_tty_refuses_override",),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_experiment_bundle_runner.py",
+        'monkeypatch.setattr(eb, "build_case_from_bundle", lambda *a, **k: _FakeTk())',
+        (
+            "tests/test_experiment_bundle_runner.py::test_run_experiment_assume_yes_proceeds",
+            "tests/test_experiment_bundle_runner.py::test_run_experiment_wait_autodetect[None-False-12345-True]",
+            "tests/test_experiment_bundle_runner.py::test_run_experiment_wait_autodetect[None-False-None-False]",
+            "tests/test_experiment_bundle_runner.py::test_run_experiment_wait_autodetect[None-True-12345-False]",
+            "tests/test_experiment_bundle_runner.py::test_run_experiment_wait_autodetect[True-False-None-True]",
+            "tests/test_experiment_bundle_runner.py::test_run_experiment_wait_autodetect[False-False-12345-False]",
+            "tests/test_experiment_bundle_runner.py::test_run_experiment_threads_override_force_rerun_to_tk_run",
+            "tests/test_experiment_bundle_runner.py::test_run_experiment_forwards_mode_to_tk_run",
+        ),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_sensitivity_force_rerun_applied_once.py",
+        "submit_workflow=_stop,",
+        (
+            "tests/test_sensitivity_force_rerun_applied_once.py::test_sensitivity_submit_applies_force_rerun_once[True]",
+            "tests/test_sensitivity_force_rerun_applied_once.py::test_sensitivity_submit_applies_force_rerun_once[False]",
+            "tests/test_sensitivity_force_rerun_applied_once.py::test_plain_submit_still_applies_force_rerun[True]",
+            "tests/test_sensitivity_force_rerun_applied_once.py::test_plain_submit_still_applies_force_rerun[False]",
+        ),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_version_migration_state.py",
+        'return_value={"success": True, "mode": "local", "snakefile_path": None, "message": "ok"},',
+        ("tests/test_version_migration_state.py::test_analysis_run_stamps_version_file",),
+    ),
+    _Excuse(
+        _REFUSES,
+        "tests/test_workflow_1job_sbatch_generation.py",
+        'with pytest.raises(ConfigurationError, match="override_hpc_total_nodes"):',
+        ("tests/test_workflow_1job_sbatch_generation.py::test_override_hpc_total_nodes_wrong_mode",),
+    ),
+    _Excuse(
+        _REFUSES,
+        "tests/test_workflow_1job_sbatch_generation.py",
+        'with pytest.raises(ConfigurationError, match="extra_sbatch_args is only valid"):',
+        ("tests/test_workflow_1job_sbatch_generation.py::test_extra_sbatch_args_wrong_mode",),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_workflow_queued_sentinel_adoption.py",
+        'monkeypatch.setattr(SnakemakeWorkflowBuilder, "_submit_tmux_workflow", _fake_submit)',
+        (
+            "tests/test_workflow_queued_sentinel_adoption.py::test_sensitivity_batch_job_call_site_passes_the_adopted_token_count",
+        ),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_workflow_queued_sentinel_adoption.py",
+        'monkeypatch.setattr(type(builder), "_submit_tmux_workflow", _fake_submit)',
+        (
+            "tests/test_workflow_queued_sentinel_adoption.py::test_multisim_batch_job_call_site_passes_the_adopted_token_count",
+        ),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_workflow_single_job_wait.py",
+        'patch.object(builder, "run_snakemake_local", return_value={"success": True}),',
+        (
+            "tests/test_workflow_single_job_wait.py::TestSubmitWorkflowIntegration::test_submit_workflow_passes_wait_parameter",
+            "tests/test_workflow_single_job_wait.py::TestSubmitWorkflowIntegration::test_submit_workflow_default_no_wait",
+        ),
+    ),
+)
+
+
+@dataclass
+class _Site:
+    """One run-reaching call: where it is, whether it is a no-op by its own literals."""
+
+    kind: str  # "attr" for a .run/.submit_workflow/.test call, "cli" for a command-line call
+    where: str  # repo-relative "path:line"
+    text: str  # the source line, stripped
+    dry: bool
+    help: bool
+
+
+@dataclass
+class _Pending:
+    """A command-line call whose command name is resolved per node, once fixtures are known."""
+
+    app: object  # the click group the call dispatches into
+    tokens: list[str]
+    params: set[str]  # the caller's own parameters the argv expression mentions
+    flags: frozenset[str]  # the flags every path to this argv carries
+    where: str
+    text: str
+
+
+@dataclass
+class _Facts:
+    """What one function contributes to a call graph on its own, before any callee is followed."""
+
+    sites: list[_Site] = field(default_factory=list)
+    pending: list[_Pending] = field(default_factory=list)
+    callees: list[object] = field(default_factory=list)
+
+
+@dataclass
+class _Reach:
+    """The union of ``_Facts`` over every function reachable from one root."""
+
+    sites: list[_Site] = field(default_factory=list)
+    pending: list[_Pending] = field(default_factory=list)
+
+
+class _Context:
+    """The names a function's body can see: its globals, its own imports, its locals and its class."""
+
+    def __init__(self, func, node: ast.AST, owner):
+        """Index ``node``'s imports, assignments and parameters; ``owner`` is the class ``self`` means."""
+        self.func = func
+        self.node = node
+        self.globals = func.__globals__
+        self.owner = owner
+        self.imports: dict[str, tuple[str | None, str | None, int, str | None]] = {}
+        self.assignments: dict[str, list[ast.expr]] = {}
+        args = node.args
+        self.params = {a.arg for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]}
+        for extra in (args.vararg, args.kwarg):
+            if extra is not None:
+                self.params.add(extra.arg)
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Import):
+                for alias in sub.names:
+                    bound = alias.asname or alias.name.split(".")[0]
+                    target = alias.name if alias.asname else alias.name.split(".")[0]
+                    self.imports[bound] = (target, None, 0, None)
+            elif isinstance(sub, ast.ImportFrom):
+                for alias in sub.names:
+                    self.imports[alias.asname or alias.name] = (sub.module, alias.name, sub.level, None)
+            elif isinstance(sub, ast.Assign):
+                for target in sub.targets:
+                    if isinstance(target, ast.Name):
+                        self.assignments.setdefault(target.id, []).append(sub.value)
+            elif isinstance(sub, (ast.AnnAssign, ast.AugAssign)):
+                if isinstance(sub.target, ast.Name) and sub.value is not None:
+                    self.assignments.setdefault(sub.target.id, []).append(sub.value)
+
+
+class _CallGraph:
+    """Builds call graphs from live function objects and answers "what runs does this reach?"."""
+
+    def __init__(self):
+        """Resolve the scope roots; importing ``hhemt`` here is what makes its files followable."""
+        import hhemt
+
+        self._package_dir = Path(hhemt.__file__).resolve().parent
+        self._root_conftest = _REPO_ROOT / "conftest.py"
+        self._trees: dict[str, tuple[dict[int, ast.AST], list[str]]] = {}
+        self._facts: dict[object, _Facts] = {}
+        self._reach: dict[object, _Reach] = {}
+        self._return_tokens_cache: dict[object, tuple[list[str], set[str], frozenset[str]]] = {}
+        self._command_sites: dict[int, list[_Site]] = {}
+        self._app_cache: dict[int, object] = {}
+
+    # -- source access ------------------------------------------------------------------------
+
+    def in_scope(self, path: str) -> bool:
+        """True when ``path`` is a file whose calls the walk follows: ``tests/``, ``hhemt``, root conftest."""
+        try:
+            resolved = Path(path).resolve()
+        except OSError:
+            return False
+        if resolved == self._root_conftest:
+            return True
+        return any(base in resolved.parents for base in (_TESTS_DIR, self._package_dir))
+
+    def _parsed(self, path: str) -> tuple[dict[int, ast.AST], list[str]]:
+        """Parse ``path`` once; return its function defs keyed by first source line, and its lines."""
+        if path not in self._trees:
+            source = Path(path).read_text(encoding="utf-8")
+            defs: dict[int, ast.AST] = {}
+            for node in ast.walk(ast.parse(source)):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    first = min([node.lineno, *(d.lineno for d in node.decorator_list)])
+                    defs[first] = node
+            self._trees[path] = (defs, source.splitlines())
+        return self._trees[path]
+
+    def _line(self, path: str, lineno: int) -> str:
+        """The stripped source line ``lineno`` of ``path``."""
+        lines = self._parsed(path)[1]
+        return lines[lineno - 1].strip() if 0 < lineno <= len(lines) else ""
+
+    def _where(self, path: str, lineno: int) -> str:
+        """``path:lineno`` with ``path`` relative to the repository root when it lies under it."""
+        try:
+            rel = Path(path).resolve().relative_to(_REPO_ROOT)
+        except ValueError:
+            rel = Path(path)
+        return f"{rel}:{lineno}"
+
+    # -- resolving names to objects -----------------------------------------------------------
+
+    def _owner_class(self, func):
+        """The class a method was defined in, found from ``__qualname__`` through its module globals."""
+        parts = func.__qualname__.split(".")
+        if len(parts) < 2 or parts[-2] == "<locals>":
+            return None
+        obj = func.__globals__.get(parts[0])
+        for part in parts[1:-1]:
+            obj = getattr(obj, part, None)
+        return obj if isinstance(obj, type) else None
+
+    def _import_object(self, ctx: _Context, name: str):
+        """The object an ``import`` statement inside ``ctx``'s function binds to ``name``, or None."""
+        module, attr, level, _ = ctx.imports[name]
+        try:
+            if level:
+                package = ctx.globals.get("__package__") or ""
+                module = importlib.util.resolve_name("." * level + (module or ""), package)
+            obj = importlib.import_module(module)
+            if attr is None:
+                return obj
+            if hasattr(obj, attr):
+                return getattr(obj, attr)
+            return importlib.import_module(f"{module}.{attr}")
+        except Exception:  # noqa: BLE001 -- an unimportable name is simply not followed
+            return None
+
+    def resolve(self, expr: ast.AST, ctx: _Context):
+        """The module, class or function ``expr`` names statically, or None.
+
+        Only names (through imports, globals and the owner class for ``self``/``cls``) and
+        attribute chains over modules and classes resolve. A method called on an instance does
+        not: its receiver's type is not knowable without running the code.
+        """
+        if isinstance(expr, ast.Name):
+            if expr.id in ("self", "cls"):
+                return ctx.owner
+            if expr.id in ctx.params:
+                return None
+            if expr.id in ctx.imports:
+                return self._import_object(ctx, expr.id)
+            return ctx.globals.get(expr.id)
+        if isinstance(expr, ast.Attribute):
+            base = self.resolve(expr.value, ctx)
+            if inspect.ismodule(base):
+                if hasattr(base, expr.attr):
+                    return getattr(base, expr.attr)
+                try:
+                    return importlib.import_module(f"{base.__name__}.{expr.attr}")
+                except Exception:  # noqa: BLE001 -- see _import_object
+                    return None
+            if isinstance(base, type):
+                return getattr(base, expr.attr, None)
+        return None
+
+    def _followable(self, obj):
+        """The plain function behind ``obj`` when it is a function or method in scope, else None."""
+        if inspect.ismethod(obj):
+            obj = obj.__func__
+        if not inspect.isfunction(obj):
+            return None
+        obj = inspect.unwrap(obj)
+        code = getattr(obj, "__code__", None)
+        if code is None or not self.in_scope(code.co_filename):
+            return None
+        return obj
+
+    # -- argv tokens --------------------------------------------------------------------------
+
+    def _collect(
+        self, expr: ast.AST, ctx: _Context, tokens: list[str], params: set[str], depth: int, seen: set
+    ) -> frozenset[str]:
+        """Append to ``tokens`` every string ``expr`` spells out; add the caller's parameters it uses to ``params``.
+
+        Returns the flags (``--dry-run``, ``--help``) the argv CERTAINLY carries: those on every
+        path that can produce it. A name bound more than once, or a helper with more than one
+        ``return``, contributes only the flags every binding or return carries, so a sibling
+        binding that is dry never makes a real call beside it a no-op. ``tokens`` stays a union,
+        because the command name is resolved from every spelling.
+
+        Literals, f-string literal parts, list/tuple/``+`` composition, locals assigned in the
+        function, module-level constants and the returned strings of an in-scope helper resolve.
+        Anything else contributes nothing; a parameter it mentions is recorded so the node can
+        supply its fixture or parametrize value later.
+        """
+        if depth > _DEPTH_LIMIT:
+            return frozenset()
+        if isinstance(expr, ast.Constant):
+            if isinstance(expr.value, str):
+                new = expr.value.split() if expr.value.startswith("hhemt ") else [expr.value]
+                tokens.extend(new)
+                return frozenset(t for t in new if t in _FLAGS)
+            return frozenset()
+        if isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
+            return frozenset().union(*(self._collect(e, ctx, tokens, params, depth + 1, seen) for e in expr.elts))
+        if isinstance(expr, ast.Starred):
+            return self._collect(expr.value, ctx, tokens, params, depth + 1, seen)
+        if isinstance(expr, ast.BinOp):
+            left = self._collect(expr.left, ctx, tokens, params, depth + 1, seen)
+            return left | self._collect(expr.right, ctx, tokens, params, depth + 1, seen)
+        if isinstance(expr, ast.JoinedStr):
+            return frozenset().union(*(self._collect(v, ctx, tokens, params, depth + 1, seen) for v in expr.values))
+        if isinstance(expr, ast.FormattedValue):
+            return self._collect(expr.value, ctx, tokens, params, depth + 1, seen)
+        if isinstance(expr, ast.Name):
+            return self._collect_name(expr.id, ctx, tokens, params, depth, seen)
+        if isinstance(expr, ast.Call):
+            return self._collect_call(expr, ctx, tokens, params, depth, seen)
+        for sub in ast.walk(expr):
+            if isinstance(sub, ast.Name) and sub.id in ctx.params:
+                params.add(sub.id)
+        return frozenset()
+
+    def _collect_name(self, name: str, ctx: _Context, tokens, params, depth, seen) -> frozenset[str]:
+        """Resolve a variable: its local assignments, else a parameter, else a module-level string list.
+
+        The certain flags of a name bound more than once are the INTERSECTION over its bindings.
+        """
+        if name in ctx.assignments and (id(ctx.node), name) not in seen:
+            seen.add((id(ctx.node), name))
+            per_binding = [self._collect(v, ctx, tokens, params, depth + 1, seen) for v in ctx.assignments[name]]
+            return frozenset.intersection(*per_binding) if per_binding else frozenset()
+        if name in ctx.params:
+            params.add(name)
+            return frozenset()
+        live = ctx.globals.get(name)
+        found = (
+            [live]
+            if isinstance(live, str)
+            else [i for i in live if isinstance(i, str)]
+            if isinstance(live, (list, tuple))
+            else []
+        )
+        tokens.extend(found)
+        return frozenset(t for t in found if t in _FLAGS)
+
+    def _collect_call(self, call: ast.Call, ctx: _Context, tokens, params, depth, seen) -> frozenset[str]:
+        """Resolve ``list(x)``/``.split()``/``shlex.split(x)``-style wrappers and in-scope helper returns."""
+        func = call.func
+        wrapper = isinstance(func, ast.Name) and func.id in ("list", "tuple", "sorted", "set", "str")
+        wrapper = wrapper or (isinstance(func, ast.Attribute) and func.attr in ("split", "copy"))
+        if wrapper:
+            certain: frozenset[str] = frozenset()
+            if isinstance(func, ast.Attribute):
+                certain |= self._collect(func.value, ctx, tokens, params, depth + 1, seen)
+            for arg in call.args:
+                certain |= self._collect(arg, ctx, tokens, params, depth + 1, seen)
+            return certain
+        helper = self._followable(self.resolve(func, ctx))
+        if helper is not None:
+            found, _, certain = self._return_tokens(helper, depth + 1)
+            tokens.extend(found)
+            return certain
+        for sub in ast.walk(call):
+            if isinstance(sub, ast.Name) and sub.id in ctx.params:
+                params.add(sub.id)
+        return frozenset()
+
+    def _return_tokens(self, func, depth: int = 0) -> tuple[list[str], set[str], frozenset[str]]:
+        """What a function's ``return``/``yield`` expressions spell out: strings, parameters used, certain flags.
+
+        The certain flags are those carried by EVERY return path.
+        """
+        if func in self._return_tokens_cache:
+            return self._return_tokens_cache[func]
+        self._return_tokens_cache[func] = ([], set(), frozenset())
+        ctx = self._context(func)
+        tokens: list[str] = []
+        params: set[str] = set()
+        per_return: list[frozenset[str]] = []
+        if ctx is not None:
+            for sub in ast.walk(ctx.node):
+                if isinstance(sub, (ast.Return, ast.Yield)) and sub.value is not None:
+                    per_return.append(self._collect(sub.value, ctx, tokens, params, depth, set()))
+        certain = frozenset.intersection(*per_return) if per_return else frozenset()
+        self._return_tokens_cache[func] = (tokens, params, certain)
+        return tokens, params, certain
+
+    # -- per-function facts -------------------------------------------------------------------
+
+    def _context(self, func) -> _Context | None:
+        """The ``_Context`` of ``func``, or None when its definition cannot be found in its file."""
+        code = getattr(func, "__code__", None)
+        if code is None or not self.in_scope(code.co_filename):
+            return None
+        node = self._parsed(code.co_filename)[0].get(code.co_firstlineno)
+        if node is None:
+            return None
+        return _Context(func, node, self._owner_class(func))
+
+    def _is_subprocess(self, receiver: ast.AST, ctx: _Context) -> bool:
+        """True when ``receiver`` is the ``subprocess`` module, whose ``run`` starts no workflow."""
+        return self.resolve(receiver, ctx) is importlib.import_module("subprocess")
+
+    def _is_process_launch(self, callee: ast.AST, ctx: _Context) -> bool:
+        """True when ``callee`` is a ``subprocess`` function or ``os.system``/``os.popen``, which start a child."""
+        if not isinstance(callee, ast.Attribute):
+            return False
+        base = self.resolve(callee.value, ctx)
+        return base is importlib.import_module("subprocess") or (
+            base is importlib.import_module("os") and callee.attr in ("system", "popen")
+        )
+
+    def _app_for(self, expr: ast.AST, ctx: _Context):
+        """The click group a ``invoke(app, ...)`` first argument names, or None when it is not an app."""
+        obj = self.resolve(expr, ctx)
+        if obj is None:
+            return None
+        key = id(obj)
+        if key not in self._app_cache:
+            try:
+                import typer.main
+
+                group = typer.main.get_command(obj) if hasattr(obj, "registered_commands") else obj
+                # Duck-typed: typer vendors its own click, so `isinstance(group, click.Command)` is False.
+                self._app_cache[key] = group if hasattr(group, "callback") else None
+            except Exception:  # noqa: BLE001 -- a non-app first argument is simply not a CLI call
+                self._app_cache[key] = None
+        return self._app_cache[key]
+
+    def _hhemt_app(self):
+        """The click group of the package's own CLI, the target of every child ``hhemt`` call."""
+        import typer.main
+
+        from hhemt.cli import app
+
+        return typer.main.get_command(app)
+
+    def facts(self, func) -> _Facts:
+        """The sites, pending CLI calls and followable callees found in ``func``'s own body."""
+        if func in self._facts:
+            return self._facts[func]
+        facts = _Facts()
+        self._facts[func] = facts
+        ctx = self._context(func)
+        if ctx is None:
+            return facts
+        path = func.__code__.co_filename
+        for call in (n for n in ast.walk(ctx.node) if isinstance(n, ast.Call)):
+            where = self._where(path, call.lineno)
+            text = self._line(path, call.lineno)
+            callee = call.func
+            if isinstance(callee, ast.Attribute) and callee.attr in _RUN_ATTRS:
+                if not self._is_subprocess(callee.value, ctx):
+                    dry = any(
+                        kw.arg == "dry_run" and isinstance(kw.value, ast.Constant) and kw.value.value is True
+                        for kw in call.keywords
+                    )
+                    facts.sites.append(_Site("attr", where, text, dry, False))
+                    continue
+            if self._cli_call(call, ctx, facts, where, text):
+                continue
+            target = self._followable(self.resolve(callee, ctx))
+            if target is not None:
+                facts.callees.append(target)
+        return facts
+
+    def _cli_call(self, call: ast.Call, ctx: _Context, facts: _Facts, where: str, text: str) -> bool:
+        """Record ``call`` as a pending CLI call when it is ``invoke(app, argv)`` or a child ``hhemt`` call."""
+        callee = call.func
+        name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
+        if name == "invoke" and len(call.args) >= 2:
+            app = self._app_for(call.args[0], ctx)
+            if app is None:
+                return False
+            tokens: list[str] = []
+            params: set[str] = set()
+            flags = self._collect(call.args[1], ctx, tokens, params, 0, set())
+            facts.pending.append(_Pending(app, tokens, params, flags, where, text))
+            return True
+        if not self._is_process_launch(callee, ctx):
+            return False
+        tokens, params = [], set()
+        flags: frozenset[str] = frozenset()
+        for arg in [*call.args, *(kw.value for kw in call.keywords)]:
+            flags |= self._collect(arg, ctx, tokens, params, 0, set())
+        if any(tok == "hhemt" or tok.endswith("/hhemt") for tok in tokens):
+            facts.pending.append(_Pending(self._hhemt_app(), tokens, params, flags, where, text))
+            return True
+        return False
+
+    def reach(self, root) -> _Reach:
+        """Everything reachable from ``root``: each function in scope walked once, breadth first."""
+        if root in self._reach:
+            return self._reach[root]
+        out = _Reach()
+        seen = {root}
+        queue = [root]
+        while queue:
+            facts = self.facts(queue.pop())
+            out.sites.extend(facts.sites)
+            out.pending.extend(facts.pending)
+            for callee in facts.callees:
+                if callee not in seen:
+                    seen.add(callee)
+                    queue.append(callee)
+        self._reach[root] = out
+        return out
+
+    # -- command-line calls -------------------------------------------------------------------
+
+    def _commands_named(self, group, tokens: list[str]) -> list:
+        """The click commands ``tokens`` name inside ``group``, descending through nested groups.
+
+        A named group contributes its own callback, because click runs a group's callback
+        before its subcommand's (``hhemt test analysis`` is itself a group whose callback calls
+        ``.test()``). A group named with no callback and no subcommand after it contributes
+        nothing: click prints its command list and no workflow is reached.
+        """
+        found = []
+        for tok in tokens:
+            cmd = group.commands.get(tok) if hasattr(group, "commands") else None
+            if cmd is None:
+                continue
+            found.append(cmd)
+            if hasattr(cmd, "commands"):
+                found.extend(self._commands_named(cmd, [t for t in tokens if t != tok]))
+        return found
+
+    def _callback_sites(self, cmd, depth: int) -> list[_Site]:
+        """The run sites reachable from a click command's callback, memoized per command."""
+        key = id(cmd)
+        if key not in self._command_sites:
+            self._command_sites[key] = []
+            callback = self._followable(cmd.callback) if cmd.callback else None
+            if callback is not None:
+                self._command_sites[key] = self.finalize(self.reach(callback), {}, {}, depth + 1)
+        return self._command_sites[key]
+
+    def finalize(
+        self,
+        reach: _Reach,
+        extra: dict[str, list[str]],
+        extra_flags: dict[str, frozenset[str]],
+        depth: int = 0,
+    ) -> list[_Site]:
+        """All run sites in ``reach``, with each pending CLI call resolved to a site or dropped.
+
+        ``extra`` maps a parameter name to the strings its fixture or parametrize value spells
+        out for this node; ``extra_flags`` maps it to the flags that value CERTAINLY carries
+        (those on every return path of a fixture; those of the one value of a parametrize id).
+        A pending call becomes a site only when a command it names has a
+        callback that reaches a run; one that names no registered command is dropped.
+        """
+        sites = list(reach.sites)
+        if depth > 3:
+            return sites
+        for pend in reach.pending:
+            tokens = list(pend.tokens)
+            for param in pend.params:
+                tokens.extend(extra.get(param, []))
+            if not any(self._callback_sites(cmd, depth) for cmd in self._commands_named(pend.app, tokens)):
+                continue
+            flags = pend.flags.union(*(extra_flags.get(p, frozenset()) for p in pend.params))
+            sites.append(_Site("cli", pend.where, pend.text, _DRY_FLAG in flags, _HELP_FLAG in flags))
+        return sites
+
+    # -- one collected item -------------------------------------------------------------------
+
+    def describe(self, item) -> dict:
+        """One collected item as plain data: its node id, whether it is covered or skipped, its run sites."""
+        func = getattr(item, "function", None)
+        roots = []
+        extra: dict[str, list[str]] = {}
+        extra_flags: dict[str, frozenset[str]] = {}
+        if func is not None:
+            top = self._followable(func)
+            if top is not None:
+                roots.append(top)
+            info = getattr(item, "_fixtureinfo", None)
+            defs = getattr(info, "name2fixturedefs", {}) if info is not None else {}
+            for name in item.fixturenames:
+                for fixturedef in defs.get(name, ()):
+                    fn = self._followable(fixturedef.func)
+                    if fn is not None:
+                        roots.append(fn)
+                        found, _, certain = self._return_tokens(fn)
+                        if found:
+                            extra.setdefault(name, []).extend(found)
+                        # An override chain defines the name more than once: only a flag every
+                        # definition carries on every return path is certain.
+                        extra_flags[name] = extra_flags[name] & certain if name in extra_flags else certain
+            callspec = getattr(item, "callspec", None)
+            for name, value in (getattr(callspec, "params", None) or {}).items():
+                values = value if isinstance(value, (list, tuple)) else [value]
+                strings = [v for v in values if isinstance(v, str)]
+                extra.setdefault(name, []).extend(strings)
+                extra_flags[name] = frozenset(v for v in strings if v in _FLAGS)
+        sites: list[_Site] = []
+        for root in roots:
+            sites.extend(self.finalize(self.reach(root), extra, extra_flags))
+        unique = {(s.kind, s.where): s for s in sites}
+        return {
+            "id": item.nodeid,
+            "covered": item.get_closest_marker("compile_tier") is not None,
+            "skip": any(mark.name == "skip" for mark in item.iter_markers()),
+            "sites": [vars(s) for s in unique.values()],
+        }
+
+
+class _Recorder:
+    """A pytest plugin for the child process: records every collected item and any deselection."""
+
+    def __init__(self, out_path: str):
+        """Remember where to write the report."""
+        self.out_path = out_path
+        self.deselected = 0
+
+    def pytest_deselected(self, items):
+        """Count items the child's own options or ini dropped, so the parent can refuse a narrowed run."""
+        self.deselected += len(items)
+
+    def pytest_collection_finish(self, session):
+        """Describe every item after all `pytest_collection_modifyitems` hooks (the `compile_tier` mark) ran."""
+        graph = _CallGraph()
+        nodes = [graph.describe(item) for item in session.items]
+        Path(self.out_path).write_text(json.dumps({"nodes": nodes, "deselected": self.deselected}), encoding="utf-8")
+
+
+def run_child(out_path: str) -> int:
+    """Collect ``tests/`` in this process with `_Recorder` attached; return pytest's exit code."""
+    return int(
+        pytest.main(["--collect-only", "-q", "-p", "no:cacheprovider", str(_TESTS_DIR)], plugins=[_Recorder(out_path)])
+    )
+
+
+_CHILD_SNIPPET = "import sys; from tests.test_build_request_census import run_child; sys.exit(run_child(sys.argv[1]))"
+
+
+def _collect_in_child(out_path: Path) -> dict:
+    """Run the collecting child and return its report, failing with its output when it did not collect."""
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("PYTEST_ADDOPTS", "PYTEST_CURRENT_TEST") and not key.startswith("PYTEST_XDIST")
+    }
+    env["HHEMT_FORBID_COMPILE"] = "1"
+    proc = subprocess.run(
+        [sys.executable, "-c", _CHILD_SNIPPET, str(out_path)],
+        cwd=_REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    assert proc.returncode == 0 and out_path.exists(), (
+        f"the collecting child exited {proc.returncode} and wrote {'a' if out_path.exists() else 'no'} report; "
+        f"the census cannot run on a tree that does not collect.\n{(proc.stdout + proc.stderr)[-3000:]}"
+    )
+    return json.loads(out_path.read_text(encoding="utf-8"))
+
+
+def _all_sites_are_noops(node: dict) -> bool:
+    """True when every run-reaching call of ``node`` is a literal dry run or a `--help` call."""
+    return all(site["dry"] or site["help"] for site in node["sites"])
+
+
+def test_every_run_reaching_test_requests_the_build(tmp_path, capsys):
+    """Property: a test whose call graph reaches a workflow run requests the build, or is excused.
+
+    Class: every collected test node in `tests/`, of any model, in any module, class method or
+    parametrize id. Why it is required: on a warm cache a test that reaches a run without the
+    build passes, so only a fresh checkout reveals the omission, and no other check in the suite
+    reds on it. What kills it: a test that calls `.run()` and requests no build fixture, a
+    stale excuse-table row, or a child collection narrowed by `-m`/`-k`/`PYTEST_ADDOPTS`. A
+    second correct implementation under which it still passes: one that decides run-reaching
+    from `--setup-plan` output or from a runtime guard on `.run()`, since only the failing and
+    passing node sets are asserted, not how reachability is computed.
+    """
+    report = _collect_in_child(tmp_path / "census.json")
+    nodes = {node["id"]: node for node in report["nodes"]}
+    bad_categories = [e.category for e in _EXCUSES if e.category not in _CATEGORIES]
+    assert not bad_categories, f"excuse-table categories outside {sorted(_CATEGORIES)}: {bad_categories}"
+    lost_quotes = [
+        f"{e.source}: {e.quote}" for e in _EXCUSES if e.quote not in (_REPO_ROOT / e.source).read_text(encoding="utf-8")
+    ]
+    assert not lost_quotes, "excuse-table quotes no longer found in their source file:\n  " + "\n  ".join(lost_quotes)
+    table = {node_id: entry for entry in _EXCUSES for node_id in entry.node_ids}
+
+    reaching = [n for n in nodes.values() if n["sites"]]
+    uncovered = [n for n in reaching if not n["covered"]]
+    auto_excused = [n for n in uncovered if n["skip"] or _all_sites_are_noops(n)]
+    unexcused = [n for n in uncovered if n not in auto_excused and n["id"] not in table]
+
+    stale = []
+    for node_id in table:
+        node = nodes.get(node_id)
+        if node is None:
+            stale.append(f"{node_id}: no longer collects")
+        elif not node["sites"]:
+            stale.append(f"{node_id}: no longer reaches a run")
+        elif node["covered"]:
+            stale.append(f"{node_id}: is now covered by the compile_tier marker")
+
+    with capsys.disabled():
+        print(
+            f"\nbuild-request census: collected={len(nodes)} run_reaching={len(reaching)} "
+            f"covered={len(reaching) - len(uncovered)} auto_excused={len(auto_excused)} "
+            f"table_excused={len([n for n in uncovered if n['id'] in table and n not in auto_excused])} "
+            f"table_size={len(table)} unexcused={len(unexcused)} stale={len(stale)}"
+        )
+
+    def describe(node: dict) -> str:
+        """One failing node with the run sites that make it run-reaching."""
+        return node["id"] + "".join(f"\n      {s['where']}  {s['text']}" for s in node["sites"][:3])
+
+    assert report["deselected"] == 0, (
+        f"the collecting child deselected {report['deselected']} item(s); a deselection narrows the items it "
+        f"records, so the census would be blind to them. Look for -m/-k/--deselect in pytest addopts or in "
+        f"conftest hooks."
+    )
+    assert not unexcused, (
+        f"{len(unexcused)} test(s) reach a simulation workflow without requesting the build "
+        f"(no compile_tier marker; add `usefixtures('tritonswmm_cpu_compiled')` or an excuse-table row):\n  "
+        + "\n  ".join(describe(n) for n in unexcused)
+    )
+    assert not stale, "stale excuse-table rows (remove them):\n  " + "\n  ".join(stale)
