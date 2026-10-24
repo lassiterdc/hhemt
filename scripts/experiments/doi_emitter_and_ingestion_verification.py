@@ -4,8 +4,9 @@ The problem: an experiment whose rows run on different hardware (CPU, A6000 GPU 
 partitions in one sensitivity matrix) must still travel as ONE bundle, be deposited to a DOI
 host, be fetched back by DOI with ``from_doi``, and then run each row against the container
 image built for that row's own architecture rather than one image for all. This driver runs
-that round trip end to end and reports whether it held. It is the container-mode,
-multi-partition counterpart of ``container_validation.py`` (native, single partition) and of
+that round trip end to end and reports whether it held. It is the multi-partition, DOI
+round-trip counterpart of ``container_validation.py`` (one GPU partition, checking that a
+container run reproduces the native run, with no deposit) and of
 ``tests/test_doi_roundtrip_e2e.py`` (a native round trip with no container image).
 
 The work is split into three command-line stages so the Zenodo token stays on the LOCAL
@@ -30,12 +31,15 @@ machine and the cluster only computes, never holding a credential:
                  per-architecture reproduction against the carried reference, and the image
                  builds. Of the Zenodo settings it needs only the non-secret
                  HHEMT_ZENODO_BASE_URL, pointed at the same host the deposit published to; it
-                 also reads HHEMT_Q8_SIF_BUILD_CONFIG and, for the REQ-2 count,
-                 HHEMT_Q8_REPRODUCER_SIF_ROOT (the runbook in ``__main__`` exports all three).
+                 also reads HHEMT_Q8_SIF_BUILD_CONFIG, and HHEMT_Q8_INGEST_DIR when set. The
+                 images are built under, and the REQ-2 count reads, the reproducer config's
+                 ``container.sif_root``, which must name an empty directory (the runbook in
+                 ``__main__`` shows the exports and the config this stage needs).
 
-``build_case`` holds the git-tracked analysis definition both cluster stages share (it mirrors
-``container_validation.build_case``), and ``provision_producer_sifs`` is the producer's image
-build that ``emit-bundle`` runs first.
+``build_case`` holds the git-tracked analysis definition the producer builds, runs and emits
+(it mirrors ``container_validation.build_case``); ``verify`` never calls it and runs the
+definition it reconstitutes from the fetched bundle instead. ``provision_producer_sifs`` is
+the producer's image build that ``emit-bundle`` runs first.
 
 The real per-cluster ``hpc_system_config`` (partition to hardware, account, apptainer module)
 comes ONLY from each cluster stage's ``--hpc-system-config`` option and never from an
@@ -71,8 +75,10 @@ _MATRIX = _REPO_ROOT / "tests/fixtures/doi_emitter_and_ingestion_verification/ma
 
 # The sif_build_config the producer AND the reproducer build with (sif_root, build partition,
 # resources, toolkit_root). Both cluster stages resolve it from the environment so the run
-# edits ZERO git-tracked files; the runbook (__main__ below) exports it. One config -> one
-# build host.
+# edits ZERO git-tracked files; the runbook (__main__ below) exports it. Only the producer
+# writes under its sif_root: the reproducer builds under its own config's container.sif_root.
+# It names no build host either; each stage builds on the cluster its --hpc-system-config
+# describes.
 _SIF_BUILD_CONFIG = Path(
     os.environ.get("HHEMT_Q8_SIF_BUILD_CONFIG", f"/scratch/{os.environ.get('USER', 'user')}/q8_sif_build.yaml")
 )
@@ -81,6 +87,9 @@ _SIF_BUILD_CONFIG = Path(
 _N_IDENTITIES = 3
 # Set by verify() at stage start; _assert_sif_builds counts manifests written after it.
 _VERIFY_STARTED: float = 0.0
+# Set by verify() beside _VERIFY_STARTED: the reproducer root it guards and ingests into, which
+# _assert_sif_builds counts under. None until verify() has run.
+_REPRO_ROOT: Path | None = None
 
 # In-tree anonymized COPY-ME template — the operator reconstructs the real config in the
 # estate from this (never the live config; the run edits ZERO git-tracked files).
@@ -93,18 +102,6 @@ _TEMPLATE = _REPO_ROOT / "test_data/norfolk_coastal_flooding/hpc_system_config_u
 # the CPU partition.
 _MASTER_GPU_PARTITION = "gpu-a6000"
 _CPU_PARTITION = "standard"
-
-# Intended PRODUCER image home, but NO stage reads this constant: the producer's images are
-# built under the sif_build_config's sif_root (see provision_producer_sifs), so setting
-# HHEMT_Q8_PRODUCER_SIF_DIR changes nothing. The isolation it was meant to give — producer
-# images kept out of the reproducer's root, so from_doi cannot pass by finding them already
-# built — is enforced instead by verify()'s pre-ingest empty-root guard.
-_PRODUCER_SIF_DIR = Path(
-    os.environ.get(
-        "HHEMT_Q8_PRODUCER_SIF_DIR",
-        f"/scratch/{os.environ.get('USER', 'user')}/q8_producer_sifs",
-    )
-)
 
 
 def _resolve_hpc_system_config(override: str | None = None) -> Path:
@@ -170,9 +167,12 @@ def build_case(
     ``execution_environment="container"``, so ``emit_bundle`` takes its container branch and
     carries the producer manifests of the images the simulations ran in. The ``system_config``
     carries ``toggle_use_swmm_for_hydrology=True`` so coupled SWMM hydrology is exercised
-    inside the image. ``hpc_account`` comes from the resolved config's ``default_account`` and
-    never from a code default; an unset or placeholder account raises ``ValueError`` before any
-    case is built.
+    inside the image. The SLURM account is the resolved config's ``default_account``, which the
+    workflow reads from the hpc_system_config itself, never from a code default; this function
+    checks it first, so an unset or placeholder account raises ``ValueError`` before any case is
+    built. The ``hpc_account``, ``hpc_gpus_per_node`` and ``hpc_max_simultaneous_sims`` keys it
+    also passes are retired analysis_config fields that the config's consistency shim drops
+    with a ``DeprecationWarning``.
     """
     from hhemt.config.loaders import load_hpc_system_config
     from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
@@ -242,8 +242,11 @@ def provision_producer_sifs(
     Nothing here names an image: the simulation and processing rules resolve each row's image
     by IDENTITY (hhemt.sif.identity.resolve_sif) from the partition's PartitionSpec + the
     running checkout, so a row cannot fall through to another architecture's image (preflight
-    refuses an absent or mislabelled image). The build host is _SIF_BUILD_CONFIG.sif_root.
-    Nothing here keeps that root separate from the reproducer's; the separation is checked
+    refuses an absent or mislabelled image). The images land under _SIF_BUILD_CONFIG's
+    sif_root; the build host is the cluster ``cfg_path`` describes, passed to build-sifs as
+    --build-hpc-config, which refuses a config that does not declare
+    container.builds_containers. Nothing here keeps that sif_root separate from the
+    reproducer's; the separation is checked
     by verify()'s pre-ingest guard, which refuses a reproducer root that already holds
     identity manifests, so from_doi cannot pass by finding the producer's images already built.
     """
@@ -335,8 +338,9 @@ def emit_bundle_only(
 
     # Build every identity the matrix needs (hhemt build-sifs, foreground) and get a DERIVED
     # producer config carrying container.sif_root. This precedes run() because preflight refuses
-    # a row whose image is absent, and emit_bundle harvests only a fully-green run's render
-    # sidecars. The estate config is never edited; the derived config is what the run consumes.
+    # a row whose image is absent; run() and render_report() in turn precede emit_bundle, which
+    # raises FileNotFoundError on a tree with no render sidecars under plots/. The estate config
+    # is never edited; the derived config is what the run consumes.
     producer_cfg = provision_producer_sifs(hpc_system_config_yaml=hpc_system_config_yaml)
 
     tc = build_case(
@@ -419,29 +423,36 @@ def verify(
     same group (REQ-1), and the REQ-2 image-build count passes (see ``_assert_sif_builds``).
     Whether each sim ran against its OWN arch's SIF (a6000 rows -> the AMPERE86 SIF, a100 rows
     -> the AMPERE80 SIF, CPU rows -> the CPU SIF) is NOT part of the return value: it is
-    printed as an instruction for the operator to check in the sim logs. Raises
-    ``RuntimeError`` before ingest if the reproducer root already holds identity manifests,
-    and after ingest if it holds fewer than ``_N_IDENTITIES``.
+    printed as an instruction for the operator to check in the sim logs. The reproducer root
+    is the hpc_system_config's ``container.sif_root``: ``ValueError`` before ingest if that key
+    is unset, ``RuntimeError`` before ingest if the root already holds identity manifests, and
+    ``RuntimeError`` after ingest if it holds fewer than ``_N_IDENTITIES``.
     ``target_dir``/``software_dir`` MUST live OUTSIDE any bundle_root (from_doi rmtree's
     bundle_root on ingest).
     """
     from hhemt.utils import read_yaml
 
     cfg_path = _resolve_hpc_system_config(hpc_system_config_yaml)
-    global _VERIFY_STARTED
+    global _VERIFY_STARTED, _REPRO_ROOT
     _VERIFY_STARTED = time.time()
 
     # False-green guard: from_doi must GENUINELY place-or-rebuild every carried identity
-    # under the REPRODUCER's sif_root, never resolve the producer's. The reproducer root is
-    # `container.sif_root` of the reproducer config; when that is unset it is {software_dir}/sifs
-    # (as experiments.from_doi defaults it), and when software_dir is also unset -- the CLI
-    # path, which passes none -- it is the current directory, which does NOT match from_doi's
-    # own default of {bundle_root}/software/sifs. It MUST start empty of identity manifests so
-    # a hit is a FAIL.
-    _repro_root = Path(
-        ((read_yaml(cfg_path) or {}).get("container") or {}).get("sif_root")
-        or (Path(software_dir).expanduser() / "sifs" if software_dir else Path("."))
-    ).resolve()
+    # under the REPRODUCER's sif_root, never resolve the producer's. That root is the
+    # reproducer config's `container.sif_root`, which this stage requires, and it is the
+    # directory from_doi builds into when the key is set. Deliberately NOT a fallback when it
+    # is unset: from_doi's own default, {bundle_root}/software/sifs, does not exist until
+    # from_doi extracts the bundle, so no pre-ingest check can inspect it, and an earlier
+    # fallback to the current directory guarded and counted a tree ingest never wrote. The
+    # root MUST start empty of identity manifests so a hit is a FAIL; _REPRO_ROOT records it
+    # so _assert_sif_builds counts the same tree.
+    _sif_root = ((read_yaml(cfg_path) or {}).get("container") or {}).get("sif_root")
+    if not _sif_root:
+        raise ValueError(
+            f"{cfg_path}: container.sif_root is missing. Set it to an EMPTY directory the reproducer "
+            f"ingest builds its images under."
+        )
+    _repro_root = Path(_sif_root).resolve()
+    _REPRO_ROOT = _repro_root
     _pre = sorted(_repro_root.glob("*/*.manifest.json")) if _repro_root.is_dir() else []
     if _pre:
         raise RuntimeError(
@@ -450,12 +461,16 @@ def verify(
             f"dir so from_doi places/rebuilds on ingest instead of resolving pre-existing images."
         )
 
-    # from_doi extracts bundle_root UNDER target_dir, and a container-mode ingest
-    # on a SLURM cluster submits a `sbatch --wait` SIF build that `cd`s into bundle_root from a
-    # COMPUTE node. Rivanna /tmp is node-local, so a login-node mkdtemp default is invisible to
-    # the builder. Resolve a SHARED-scratch target_dir here (env override > /scratch default) so
-    # the `verify <DOI>` CLI path is safe without an explicit --target-dir. software_dir rides
-    # for free: from_doi defaults it to {bundle_root}/software, under this shared target_dir.
+    # from_doi extracts bundle_root UNDER target_dir and resolves what the run reads there: the
+    # reconstituted configs and their inputs and, with software_dir unset (the CLI path),
+    # {bundle_root}/software, where it writes the derived hpc_system_config.resolved.yaml.
+    # test(execution_mode="slurm") runs every rule as its own SLURM job, and the simulation
+    # runner on the compute node loads those configs by path and exits 2 when one is absent.
+    # Rivanna /tmp is node-local, so from_doi's own default for an unset target_dir, a
+    # login-node mkdtemp, would be invisible to those jobs. Resolve a SHARED-scratch target_dir
+    # here (env override > /scratch default) so the `verify <DOI>` CLI path is safe without an
+    # explicit --target-dir. The image builds do not depend on it: they run with sif_root as
+    # their working directory.
     if target_dir is None:
         target_dir = os.environ.get("HHEMT_Q8_INGEST_DIR") or (
             f"/scratch/{os.environ.get('USER', 'user')}/q8_doi/q8_ingest"
@@ -496,10 +511,12 @@ def _read_combined_by_mode(analysis_obj, sim_dir: Path) -> dict:
 
     Works by temporarily pointing the analysis's simulation_directory at ``sim_dir``:
     AnalysisPaths is a plain @dataclass (paths.py) and the per-scenario processed/ path derives
-    from simulation_directory (scenario.py). The original value is restored and _eda_mode_cache
-    cleared on entry and exit, so neither the reference read nor the reproducer read serves the
-    other's cached Datasets. A mode whose summary raises FileNotFoundError or ValueError is
-    omitted from the result rather than raised."""
+    from simulation_directory (scenario.py), and ``_retrieve_combined_output`` constructs each
+    scenario from it on every call, so that swap is what keeps the reference read and the
+    reproducer read apart. The original value is restored on exit. ``_eda_mode_cache``, the
+    per-mode memo ``hhemt.eda.cross_sim_identity`` keeps on the analysis, is also dropped on
+    entry and exit; this read neither consults nor fills it. A mode whose summary raises
+    FileNotFoundError or ValueError is omitted from the result rather than raised."""
     orig = analysis_obj.analysis_paths.simulation_directory
     analysis_obj.analysis_paths.simulation_directory = Path(sim_dir)
     analysis_obj.__dict__.pop("_eda_mode_cache", None)
@@ -587,13 +604,15 @@ def _compare_group_against_reference(analysis, ref_sim_dir: Path) -> tuple[list,
 def _assert_sif_builds(expected: int = 3) -> bool:
     """REQ-2: True iff at least `expected` identities were PLACED-OR-REBUILT since verify() began.
 
-    Counts the `*/*.manifest.json` files written AFTER _VERIFY_STARTED under the root named by
-    $HHEMT_Q8_REPRODUCER_SIF_ROOT, else the current directory. That root is NOT the reproducer
-    config's container.sif_root that verify() guards: unless the variable names the same
-    directory, this counts a different tree. The build DAG's SLURM jobs carry the executor's
-    run-UUID JobName, so sacct cannot be keyed by name; the manifest sidecar (written only by a
-    successful hhemt.sif.transaction) is the artifact."""
-    root = Path(os.environ.get("HHEMT_Q8_REPRODUCER_SIF_ROOT") or ".").resolve()
+    Counts the `*/*.manifest.json` files written AFTER _VERIFY_STARTED under _REPRO_ROOT, the
+    reproducer config's container.sif_root that verify() guarded empty before ingest, so this
+    count and that guard read the same tree; raises RuntimeError when called before verify()
+    has set that root. The build DAG's SLURM jobs carry the executor's run-UUID JobName, so
+    sacct cannot be keyed by name; the manifest sidecar (written only by a successful
+    hhemt.sif.transaction) is the artifact."""
+    if _REPRO_ROOT is None:
+        raise RuntimeError("_assert_sif_builds ran before verify() set the reproducer root (_REPRO_ROOT).")
+    root = _REPRO_ROOT
     manifests = sorted(root.glob("*/*.manifest.json")) if root.is_dir() else []
     fresh = [m for m in manifests if m.stat().st_mtime >= _VERIFY_STARTED]
     print(
@@ -627,12 +646,15 @@ def _adjudicate_per_arch_pass(exp, result) -> bool:
             print(f"  sub {sub.analysis_id}: workflow INCOMPLETE — {e}")
             all_ok = False
     # Layer-2 per-arch routing is NOT adjudicated in code: the operator scans each per-rule
-    # sim log's `apptainer exec {sif}` Command line against its row's architecture image
-    # (namespace-agnostic: the SIF file name, hhemt-a6000-*.sif vs hhemt-a100-*.sif vs the CPU
-    # SIF). The print below is that instruction, and all_ok does not reflect its outcome.
+    # sim log's `apptainer exec {sif}` Command line against its row's architecture image, read
+    # from the SIF path {sif_root}/{family}/hhemt_{family}[_{gpu_hardware}]_{triton8}_{hhemt8}.sif
+    # (hhemt.sif.identity). On the UVA config an a6000 row names hhemt_openmpi-cuda_a6000_*, an
+    # a100 row hhemt_openmpi-cuda_a100_*, and a CPU row hhemt_openmpi-cpu_*. The print below is
+    # that instruction, and all_ok does not reflect its outcome.
     print(
-        "  (per-arch SIF routing: adjudicate each sim log's `apptainer exec {sif}` Command "
-        "line against its row's arch SIF per the [Q8] runbook two-layer PASS)"
+        "  (per-arch SIF routing: in each sim log, the `apptainer exec {sif}` Command line must "
+        "name that row's own arch SIF -- a6000 rows the a6000 image, a100 rows the a100 image, "
+        "CPU rows the CPU image; adjudicate this by reading the logs)"
     )
 
     # REQ-1: per-arch within-family producer-vs-reproducer EXACT equality of the flat summaries.
@@ -664,8 +686,8 @@ def _adjudicate_per_arch_pass(exp, result) -> bool:
                     f"({n_cmp} comparisons, {n_signal} with signal)"
                 )
 
-    # REQ-2: the 3 identities were placed-or-rebuilt on ingest, counted under the root
-    # _assert_sif_builds reads ($HHEMT_Q8_REPRODUCER_SIF_ROOT, not the config's sif_root).
+    # REQ-2: the 3 identities were placed-or-rebuilt on ingest, counted under the same
+    # reproducer root verify() guarded (_REPRO_ROOT, the config's container.sif_root).
     if not _assert_sif_builds(expected=_N_IDENTITIES):
         all_ok = False
     return all_ok
@@ -688,12 +710,11 @@ if __name__ == "__main__":
     #       python -m scripts.experiments.doi_emitter_and_ingestion_verification deposit <zip>
     #             -> prints data_doi=<doi>
     #   RIVANNA (reproducer, token-free) — from_doi GENUINELY builds the SIFs on ingest. The
-    #     reproducer config's container.sif_root must name an EMPTY directory, or verify refuses
-    #     before ingest; point HHEMT_Q8_REPRODUCER_SIF_ROOT at that same directory, because the
-    #     REQ-2 count reads the variable (default: the current directory), not the config:
+    #     reproducer config's container.sif_root must name an EMPTY directory: verify refuses
+    #     before ingest when it is unset or already holds identity manifests, and it builds and
+    #     counts the REQ-2 images under it:
     #       export HHEMT_Q8_SIF_BUILD_CONFIG=/scratch/$USER/q8_sif_build.yaml
     #       export OPENBLAS_NUM_THREADS=1
-    #       export HHEMT_Q8_REPRODUCER_SIF_ROOT=<the reproducer config's container.sif_root>
     #       export HHEMT_ZENODO_BASE_URL=<same host the deposit published to>   # non-secret
     #       # (optional) export HHEMT_Q8_INGEST_DIR=<shared-scratch dir>  # default /scratch/$USER/q8_doi/q8_ingest
     #       python -m scripts.experiments.doi_emitter_and_ingestion_verification verify <DOI> \

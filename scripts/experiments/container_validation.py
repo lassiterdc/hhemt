@@ -198,8 +198,8 @@ def build_case(
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": str(_SUITE),
             "report": {
+                "reporting_set": "benchmarking",
                 "sensitivity": {
-                    "mode": "benchmarking",
                     # n_devices is the scaling x-axis (1 vs 2 GPU); execution_environment
                     # (native vs container) is the group overlay — together a real
                     # strong-scaling + container-overhead figure. n_devices is a derived
@@ -208,7 +208,7 @@ def build_case(
                     "dependent_var": "performance.Total",
                     "aggregation": "mean",
                     "group_by_var": "analysis.execution_environment",
-                }
+                },
             },
         },
     )

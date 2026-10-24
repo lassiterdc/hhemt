@@ -11,12 +11,16 @@ calls the resolver or the argument parser directly.
 
 from __future__ import annotations
 
+import time
+import warnings
 from pathlib import Path
 
 import pytest
+import yaml
 
 from hhemt.exceptions import ConfigurationError
 from hhemt.experiments import TRITON_SWMM_experiment
+from scripts.experiments import container_validation as cv
 from scripts.experiments import doi_emitter_and_ingestion_verification as doi
 
 _REMOVED_VARIABLES = ("HHEMT_HPC_SYSTEM_CONFIG", "HHEMT_DEPLOYMENT_CONFIG")
@@ -181,7 +185,7 @@ def test_doi_driver_command_line_delivers_the_option_path_into_the_stage(
         chosen.write_text("default_account: '{your-account}'\n", encoding="utf-8")
         argv = ["doi_emitter_and_ingestion_verification", "emit-bundle", "--hpc-system-config", str(chosen)]
     else:
-        chosen.write_text("x: 1\n", encoding="utf-8")
+        chosen.write_text(yaml.safe_dump({"container": {"sif_root": str(tmp_path / "sifs")}}), encoding="utf-8")
         argv = ["doi_emitter_and_ingestion_verification", "verify", "10.5281/zenodo.0000000"]
         argv += ["--hpc-system-config", str(chosen)]
         monkeypatch.setenv("HHEMT_Q8_INGEST_DIR", str(tmp_path / "ingest"))
@@ -201,3 +205,164 @@ def test_doi_driver_command_line_delivers_the_option_path_into_the_stage(
     else:
         assert ei.type is _StageReachedIngest, ei.value
         assert Path(ei.value.args[0]) == chosen.resolve()
+
+
+def _write_manifests(root: Path) -> None:
+    """Write three identity manifests under ``root``, one per image directory, as a SIF build does."""
+    for name in ("openmpi-cpu", "openmpi-cuda-a100", "openmpi-cuda-a6000"):
+        (root / name).mkdir(parents=True, exist_ok=True)
+        (root / name / f"{name}.manifest.json").write_text("{}", encoding="utf-8")
+
+
+def test_sif_build_count_reads_the_reproducer_root_verify_set(tmp_path, monkeypatch):
+    """Property: REQ-2 counts the manifests under the root `verify()` set, not the working directory.
+
+    Class: `_assert_sif_builds(expected=3)` with three fresh manifests under `_REPRO_ROOT`, an empty
+    working directory and the old variable unset. Why required: `verify()` guards and ingests into
+    one root, and counting any other tree can report a build that did not happen there. Killed by:
+    counting the working directory (returns False) or any environment variable. Second correct
+    implementation: `verify()` handing the root over as an argument instead of a module attribute;
+    only the returned value is asserted.
+    """
+    repro = tmp_path / "repro"
+    _write_manifests(repro)
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.delenv("HHEMT_Q8_REPRODUCER_SIF_ROOT", raising=False)
+    monkeypatch.setattr(doi, "_VERIFY_STARTED", time.time() - 60)
+    monkeypatch.setattr(doi, "_REPRO_ROOT", repro, raising=False)
+    assert doi._assert_sif_builds(expected=3) is True
+
+
+def test_sif_build_count_ignores_the_old_variable(tmp_path, monkeypatch):
+    """Property: the old `$HHEMT_Q8_REPRODUCER_SIF_ROOT` names no tree REQ-2 counts.
+
+    Class: three fresh manifests under the directory the variable names, `_REPRO_ROOT` an empty
+    directory. Why required: a stale variable pointing at a populated tree must not turn a
+    failed build green. Killed by: reading the variable (returns True). Second correct
+    implementation: raising when the variable is set; the test would then error, so the
+    assertion is on the returned value for an implementation that ignores it.
+    """
+    from_var = tmp_path / "from_var"
+    _write_manifests(from_var)
+    repro = tmp_path / "repro"
+    repro.mkdir()
+    monkeypatch.setenv("HHEMT_Q8_REPRODUCER_SIF_ROOT", str(from_var))
+    monkeypatch.setattr(doi, "_VERIFY_STARTED", time.time() - 60)
+    monkeypatch.setattr(doi, "_REPRO_ROOT", repro, raising=False)
+    assert doi._assert_sif_builds(expected=3) is False
+
+
+class _SentinelStop(Exception):
+    """Raised by the stubbed ingest's `analysis.test`, so `verify()` ends once it has been reached."""
+
+
+@pytest.fixture
+def stubbed_ingest(monkeypatch):
+    """Replace `from_doi` with a stub that records its call and writes three manifests under `container.sif_root`."""
+    calls: list[dict] = []
+
+    def _from_doi(**kwargs):
+        calls.append(kwargs)
+        sif_root = (yaml.safe_load(Path(kwargs["hpc_system_config_yaml"]).read_text()) or {}).get("container", {})
+        if sif_root.get("sif_root"):
+            _write_manifests(Path(sif_root["sif_root"]))
+
+        class _Analysis:
+            def test(self, **_kwargs):
+                raise _SentinelStop
+
+        return type("_Exp", (), {"analysis": _Analysis()})()
+
+    monkeypatch.setattr(TRITON_SWMM_experiment, "from_doi", staticmethod(_from_doi))
+    return calls
+
+
+def test_verify_without_container_sif_root_refuses_before_ingest(tmp_path, monkeypatch, stubbed_ingest):
+    """Property: a reproducer config with no `container.sif_root` is refused before `from_doi` runs.
+
+    Class: a config with no `container` block, run from a working directory holding three stale
+    manifests. Why required: the working directory is never the reproducer root; falling back to it
+    blames a directory the operator did not name and fetches the bundle first. Killed by:
+    restoring a cwd fallback (a RuntimeError naming the directory surfaces instead). Second correct
+    implementation: raising `ConfigurationError`; the test would need that type, so only the
+    named field and the stub not being called are asserted via `ValueError`.
+    """
+    cwd = tmp_path / "cwd"
+    _write_manifests(cwd)
+    monkeypatch.chdir(cwd)
+    cfg = tmp_path / "hpc.yaml"
+    cfg.write_text(yaml.safe_dump({"default_account": "acct"}), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"container\.sif_root"):
+        doi.verify("10.5281/zenodo.1", hpc_system_config_yaml=str(cfg))
+    assert stubbed_ingest == []
+
+
+def test_verify_with_container_sif_root_reaches_ingest(tmp_path, monkeypatch, stubbed_ingest):
+    """Property: a config naming an empty `container.sif_root` reaches `from_doi` once (the control).
+
+    Class: the same working directory of stale manifests, a config whose `container.sif_root` is an
+    empty directory. Why required: it shows the refusal above is about the missing field, not about
+    every config. Killed by: refusing a config that names the field. Second correct implementation:
+    passing the root to `from_doi` as an argument; only the sentinel and the call count are asserted.
+    """
+    cwd = tmp_path / "cwd"
+    _write_manifests(cwd)
+    monkeypatch.chdir(cwd)
+    sif_root = tmp_path / "sifs"
+    sif_root.mkdir()
+    cfg = tmp_path / "hpc.yaml"
+    cfg.write_text(
+        yaml.safe_dump({"default_account": "acct", "container": {"sif_root": str(sif_root)}}), encoding="utf-8"
+    )
+    with pytest.raises(_SentinelStop):
+        doi.verify("10.5281/zenodo.1", hpc_system_config_yaml=str(cfg))
+    assert len(stubbed_ingest) == 1
+
+
+@pytest.fixture
+def captured_report(tmp_path, monkeypatch) -> dict:
+    """The `report` block `container_validation.build_case` hands the case builder, with the builder stubbed."""
+    template = Path(__file__).resolve().parent.parent / "test_data/norfolk_coastal_flooding/hpc_system_config_uva.yaml"
+    cfg = yaml.safe_load(template.read_text(encoding="utf-8"))
+    cfg["default_account"] = "acct"
+    cfg["container"]["sif_root"] = str(tmp_path / "sifs")
+    cfg_path = tmp_path / "hpc.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    captured: dict = {}
+
+    def _stub(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(cv, "retrieve_synth_TRITON_SWMM_test_case", _stub)
+    cv.build_case("uva", hpc_system_config_yaml=str(cfg_path))
+    return captured["additional_analysis_configs"]["report"]
+
+
+def test_container_validation_selects_the_benchmarking_set_by_the_live_key(captured_report):
+    """Property: the driver names the benchmarking set on `reporting_set` and keeps no `mode` key.
+
+    Class: the `report` block `build_case` builds. Why required: the retired `mode` key is stripped,
+    so the run renders under the default sensitivity set, not the benchmarking set the driver names.
+    Killed by: restoring `mode`. Second correct implementation: any block with `reporting_set ==
+    "benchmarking"` and no `mode` under `sensitivity`.
+    """
+    assert captured_report["reporting_set"] == "benchmarking"
+    assert "mode" not in captured_report["sensitivity"]
+
+
+def test_container_validation_report_block_raises_no_retired_key_warning(captured_report):
+    """Property: validating the driver's `report` block records no retired-`mode` DeprecationWarning.
+
+    Class: the block from `build_case` validated through the report config model. Why required: the
+    warning is the only signal that a stale key was silently dropped. Killed by: a `mode` key in the
+    block. Second correct implementation: stripping the key in the driver after validation; the
+    warning records stay empty either way.
+    """
+    from hhemt.config.report import report_config
+
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        report_config.model_validate(captured_report)
+    assert not [w for w in record if issubclass(w.category, DeprecationWarning) and "mode is retired" in str(w.message)]
