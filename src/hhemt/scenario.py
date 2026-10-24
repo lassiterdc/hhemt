@@ -698,6 +698,39 @@ def set_swmm_snapshot_keep_previous(cfg_path: Path, keep: bool) -> bool:
     return True
 
 
+#: The TRITON cfg key that lets a coupled resume replay past a FAILED snapshot write instead of
+#: stopping there. The solver reads it through `argsd("swmm_snapshot_failed_replay", argmap, "0")`
+#: (fork `main`, commit `beb65a4`, "fix(swmm): a failed or refused snapshot save stops the restart;
+#: opt-in replay"). The spelling is load-bearing in the solver.
+SWMM_SNAPSHOT_FAILED_REPLAY_KEY = "swmm_snapshot_failed_replay"
+
+
+def set_swmm_snapshot_failed_replay(cfg_path: Path, enabled: bool) -> bool:
+    """Make ``cfg_path`` carry exactly one ``swmm_snapshot_failed_replay=1`` line iff ``enabled``.
+
+    ``enabled=True`` leaves one ``=1`` line (adding it if absent, collapsing duplicates or a
+    different value); ``enabled=False`` removes every line whose key is this one. COMPARE-AND-
+    WRITE: the file is rewritten only when its text changes, so a launch whose flag matches the
+    file leaves its bytes and modification time untouched. Returns whether it wrote.
+
+    Applied to the cfg each coupled launch passes to the solver -- the base cfg at a clean start,
+    the chosen hotstart ``config_K.cfg`` at a resume -- because TRITON writes each hotstart cfg as
+    a copy of the cfg it was launched with, so a key added only at preparation would never reach
+    a resume of a run prepared without it.
+    """
+    text = cfg_path.read_text()
+    prefix = f"{SWMM_SNAPSHOT_FAILED_REPLAY_KEY}="
+    kept = [line for line in text.splitlines(keepends=True) if not line.strip().startswith(prefix)]
+    new = "".join(kept)
+    if enabled:
+        separator = "" if (new == "" or new.endswith("\n")) else "\n"
+        new = f"{new}{separator}{SWMM_SNAPSHOT_FAILED_REPLAY_KEY}=1\n"
+    if new == text:
+        return False
+    cfg_path.write_text(new)
+    return True
+
+
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
 

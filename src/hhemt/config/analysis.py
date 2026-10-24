@@ -619,6 +619,22 @@ class analysis_config(cfgBaseModel):
             "the key is present in the solver's argsd table at the pin you are running."
         ),
     )
+    swmm_snapshot_failed_replay: bool = Field(
+        default=False,
+        description=(
+            "COUPLED model only. When True, the toolkit writes the line "
+            "`swmm_snapshot_failed_replay=1` into the TRITON cfg that each coupled launch passes to "
+            "the solver, including a resume; when False it removes that line. It takes effect at "
+            "the NEXT launch, so it can be set after a run has stopped at a failed snapshot write: "
+            "re-run with pickup_where_leftoff and the resume replays the SWMM exchange history at "
+            "that checkpoint and continues, with correct results, instead of stopping with the "
+            "solver's write-failed error. The failure is still recorded, as a replay resume with "
+            "reason write-failed, and raised as a write-failed alarm in the resume-event report. "
+            "The default False writes nothing into a cfg that does not already carry the key. The "
+            "TRITON-only cfg never carries it. A solver that predates the key ignores it and stops "
+            "at the failed write, as it does without the key."
+        ),
+    )
     # local run constraints
     local_cpu_cores_for_workflow: int | None = Field(
         None,

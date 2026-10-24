@@ -191,6 +191,10 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     # test_every_config_field_appears_exactly_once both go RED on any new config
     # field carrying no bucket.
     "swmm_snapshot_keep_all": "experiment",
+    # "experiment" by the RULE above (non-Path, not an HPC-execution field), and independently by
+    # SIBLING CONSISTENCY with the two snapshot fields directly above: it selects how a coupled
+    # resume treats a snapshot, so a reproducer must keep it as the experiment set it.
+    "swmm_snapshot_failed_replay": "experiment",
     # per-sim-event-labeling: names the presentation column on the user's own
     # weather_events_to_simulate CSV. "experiment" by the RULE above (non-Path,
     # not an HPC-execution field), and independently by SIBLING CONSISTENCY --

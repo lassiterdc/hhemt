@@ -302,6 +302,23 @@ def read_attempt_index_by_jobstep(model_logfile: Path) -> dict[str, int]:
     return out
 
 
+def failed_write_resume_message(f_step: int, n_step: int, failed_replay: bool) -> str:
+    """The picker's message when it resumes at a checkpoint F whose snapshot write FAILED.
+
+    ``failed_replay`` is the value the launch writes into F's cfg (`set_swmm_snapshot_failed_replay`),
+    so the message states what the solver will do with the cfg it is actually given.
+    """
+    then = (
+        "the solver replays the SWMM exchange history there (swmm_snapshot_failed_replay) and continues."
+        if failed_replay
+        else "the solver stops there with its write-failed error."
+    )
+    return (
+        f"Snapshot at checkpoint {f_step} failed to write (below unusable checkpoint {n_step}); "
+        f"resuming at checkpoint {f_step}, where {then}"
+    )
+
+
 class TRITONSWMM_run:
     def __init__(self, scenario: "TRITONSWMM_scenario") -> None:
         self._scenario = scenario
@@ -730,12 +747,17 @@ class TRITONSWMM_run:
         """Every COMPLETE ``config_NNNN.cfg`` checkpoint, as ``(reporting_step, path)`` oldest first.
 
         "Complete" is the modal-line-count rule the resume picker has always used: a cfg the
-        solver was killed while writing is shorter than its siblings. Split out of
+        solver was killed while writing is shorter than its siblings. The
+        ``swmm_snapshot_failed_replay`` line, which the launch writes or removes
+        (``set_swmm_snapshot_failed_replay``), is not counted, so an opt-in or opt-out resume
+        does not split the set. Split out of
         ``_retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation`` (which
         returns the last entry) because the snapshot step-back needs the earlier complete
         checkpoints too, and a second copy of the rule would be a second place for it to
         drift. Returns [] where that method returns None.
         """
+        from hhemt.scenario import SWMM_SNAPSHOT_FAILED_REPLAY_KEY
+
         if model_type == "triton":
             output_dir = self._scenario.scen_paths.out_triton
         else:
@@ -763,7 +785,13 @@ class TRITONSWMM_run:
         df_cfgs["file_line_length"] = -1
         for step, cfg in df_cfgs.iloc[::-1].iterrows():
             file_as_list = read_text_file_as_list_of_strings(cfg["f_cfg"])
-            df_cfgs.loc[step, "file_line_length"] = len(file_as_list)
+            # The failed-write replay line is written by the toolkit into a RESUMED cfg and the
+            # solver copies it into every later one, so it is not counted: counting it would make
+            # cfgs from before and after an opt-in resume differ in length and the modal rule
+            # below would drop one group as "incomplete".
+            df_cfgs.loc[step, "file_line_length"] = len(
+                [line for line in file_as_list if not line.strip().startswith(f"{SWMM_SNAPSHOT_FAILED_REPLAY_KEY}=")]
+            )
 
         typical_length = df_cfgs["file_line_length"][df_cfgs["file_line_length"] > 0].mode().iloc[0]
         latest_complete = df_cfgs[df_cfgs["file_line_length"] == typical_length]
@@ -809,10 +837,12 @@ class TRITONSWMM_run:
           no M). If F exists, return F: a failed snapshot write is a stop condition, never a
           fall-back -- stepping past it would carry on beyond a writer that failed, often for a
           cause such as a full disk that recurs at the next write -- and the solver launched at
-          F refuses with a clear error. Else if M exists, return M and record the step-back.
-          Else return N.
+          F refuses with a clear error. When ``swmm_snapshot_failed_replay`` is True (the launch
+          writes it into F's cfg), F is still returned: the solver replays the SWMM exchange
+          history at F and continues (reason ``write-failed``), so the message says so. Else if M
+          exists, return M and record the step-back. Else return N.
         - STEP 3. Otherwise (``.failed`` at N) return N, for the same reason: the solver
-          refuses at N.
+          refuses at N, or, under ``swmm_snapshot_failed_replay=1``, replays there.
 
         The step-back record ``{unusable_step, marker, reason, used_step}`` is left on
         ``self.stepback_record`` and printed; the runner writes it into the ledger row of the
@@ -863,8 +893,9 @@ class TRITONSWMM_run:
             f_step, f_cfg = max(failed_candidates)
             if verbose:
                 print(
-                    f"Snapshot at checkpoint {f_step} failed to write (below unusable checkpoint {n_step}); "
-                    f"resuming at checkpoint {f_step} so the solver stops there with its write-failed error.",
+                    failed_write_resume_message(
+                        f_step, n_step, bool(self._analysis.cfg_analysis.swmm_snapshot_failed_replay)
+                    ),
                     flush=True,
                 )
             return f_cfg
@@ -1311,6 +1342,16 @@ class TRITONSWMM_run:
             from hhemt.scenario import set_swmm_snapshot_keep_previous
 
             set_swmm_snapshot_keep_previous(Path(cfg), bool(debug))
+
+        # FAILED-WRITE REPLAY OPT-IN. Written into the cfg THIS coupled launch passes to the
+        # solver -- the base cfg at a clean start, the chosen hotstart cfg at a resume -- on EVERY
+        # such launch, set or removed, so the line always matches this invocation's flag. A resume
+        # launches TRITON's own config_K.cfg, which copies the cfg of the launch that wrote it, so a
+        # key written only at preparation would never reach a resume of a run prepared without it.
+        if model_type == "tritonswmm" and isinstance(cfg, (str, Path)) and Path(cfg).exists():
+            from hhemt.scenario import set_swmm_snapshot_failed_replay
+
+            set_swmm_snapshot_failed_replay(Path(cfg), bool(self._analysis.cfg_analysis.swmm_snapshot_failed_replay))
 
         og_env = os.environ.copy()
         env = dict()

@@ -122,7 +122,7 @@ class _System:
         raise _Stop
 
 
-def _run(tmp_path: Path, *, with_hotstart_cfgs: bool):
+def _run(tmp_path: Path, *, with_hotstart_cfgs: bool, failed_replay: bool = False):
     sim = tmp_path / "sim"
     out = sim / "out_tritonswmm"
     (out / "cfg").mkdir(parents=True)
@@ -148,6 +148,7 @@ def _run(tmp_path: Path, *, with_hotstart_cfgs: bool):
             n_nodes=1,
             execution_environment="native",
             is_experiment_member=False,
+            swmm_snapshot_failed_replay=failed_replay,
         ),
         cfg_hpc_system=None,
         analysis_paths=SimpleNamespace(simlog_directory=tmp_path / "logs" / "sims"),
@@ -333,3 +334,47 @@ def test_both_builders_emit_debug_on_every_run_shell_exactly_when_debug(which):
     assert on and len(on) == len(off)
     assert all("--debug" in block for block in on)
     assert not any("--debug" in block for block in off)
+
+
+_FAILED_REPLAY_LINE = "swmm_snapshot_failed_replay=1"
+
+
+def _failed_replay_lines(text: str) -> int:
+    return sum(1 for line in text.splitlines() if line.strip().startswith("swmm_snapshot_failed_replay="))
+
+
+@pytest.mark.parametrize(
+    ("field", "seeded", "expected_lines"),
+    [
+        (True, False, 1),
+        (False, True, 0),
+    ],
+)
+def test_a_coupled_clean_start_base_cfg_carries_the_failed_replay_line_iff_the_field(
+    tmp_path, field, seeded, expected_lines
+):
+    """Property: a coupled clean start leaves the base cfg with exactly one replay line iff the field is True.
+
+    Class: a coupled launch that hands the solver the base cfg (pickup off, no hotstart cfg),
+    in the two states where the launch write must CHANGE the file -- the field on with no key
+    in the base cfg, and the field off with a key already in it.
+
+    Why required, checkable against the code: the solver copies the cfg it is launched with
+    into every checkpoint cfg it writes, so a run started fresh with the field on must carry
+    the key from its first launch, and a base cfg that kept a key from an earlier opted-in run
+    must lose it. The other tests of this file leave the field off on a keyless base cfg, where
+    the write changes nothing, so they cannot see a write that is skipped on a clean start.
+
+    What kills it: a guard that confines the launch write to resumes, for example requiring the
+    launched cfg to differ from the scenario's base cfg path.
+
+    A second correct implementation under which it still passes: one that writes the key into
+    the base cfg at preparation AND again at launch, since the cfg read back is the same.
+    """
+    run, base, _ = _run(tmp_path, with_hotstart_cfgs=False, failed_replay=field)
+    if seeded:
+        base.write_text(_BASE + _FAILED_REPLAY_LINE + "\n")
+    _prepare(run, model_type="tritonswmm", pickup=False, debug=False)
+    text = base.read_text()
+    assert _failed_replay_lines(text) == expected_lines
+    assert text.startswith(_BASE)

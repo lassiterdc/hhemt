@@ -58,6 +58,7 @@ def test_no_evidence_and_partial_evidence_get_different_tokens():
         ({"path": "stop", "reason": "write-failed", "checkpoint_id": "5"}, "write-failed"),
         ({"path": "clean-start", "reason": "write-failed", "checkpoint_id": "1"}, "write-failed"),
         ({"path": "snapshot", "stepback_from": 5, "stepback_reason": "write-failed"}, "write-failed"),
+        ({"path": "replay", "replay_reason": "write-failed", "checkpoint_id": "5"}, "write-failed"),
         (
             {"path": "snapshot", "stepback_from": 5, "stepback_corroboration": "mismatch"},
             "corroboration-mismatch",
@@ -65,9 +66,9 @@ def test_no_evidence_and_partial_evidence_get_different_tokens():
     ],
 )
 def test_each_alarm_row_condition_is_reported_and_never_a_shortfall(row, kind):
-    """Property: each of the five alarm row conditions is reported, and none creates a shortfall.
+    """Property: each of the six alarm row conditions is reported, and none creates a shortfall.
 
-    Class: the five row conditions ``resume_events._row_alarms`` treats as alarms.
+    Class: the six row conditions ``resume_events._row_alarms`` treats as alarms.
 
     Why required, checkable against the code: each alarm row is still one launch's event and
     is counted in ``recorded``, so the evidence verdict alone reads ``complete``. Without the

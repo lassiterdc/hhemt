@@ -3974,3 +3974,15 @@ non_breaking_allowlist:
     layout_signature: 1e5c853fc4417f69d31cc675434fb3371dd50de803c00c78d03e6d1d6891fe25
     justification: >-
       snapshot-refusal 2b.5 — swmm_coupling_mode default becomes all_junctions. Pure in-memory config default; no on-disk layout / figure stem / zarr / log / path change.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 869179d49dd7f54cb8abb36a9636bd011484cb188eb73c9b37665b21e0537653
+    justification: >-
+      adds swmm_snapshot_failed_replay (default False). Pure in-memory config schema; no on-disk layout / figure stem / zarr / log / path change.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: 4eee649f192d9e4e543e1268de735c7c3ef11561b32d51fddef597aa9df7cc60
+    justification: >-
+      adds the _FIELD_BUCKET row for swmm_snapshot_failed_replay. Pure static-table entry; no on-disk layout change.
+  - path: src/hhemt/scenario.py
+    layout_signature: 89594652800ac0d22d54373c22020081c3abb80fdf499147947daa3e336ccc9d
+    justification: >-
+      adds set_swmm_snapshot_failed_replay, a compare-and-write of one cfg line applied at launch; preparation's cfg bytes are unchanged. No on-disk layout change.

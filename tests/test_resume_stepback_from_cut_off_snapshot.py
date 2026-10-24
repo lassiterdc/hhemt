@@ -117,8 +117,11 @@ def _generated_cfg_text(tmp_path: Path, monkeypatch) -> str:
     return out_cfg.read_text()
 
 
-def _sim(tmp_path: Path, cfg_text: str, steps=(4, 5)):
-    """A coupled sim directory with one cfg per step, all carrying ``cfg_text``, and a run."""
+def _sim(tmp_path: Path, cfg_text: str, steps=(4, 5), *, failed_replay: bool = False):
+    """A coupled sim directory with one cfg per step, all carrying ``cfg_text``, and a run.
+
+    ``failed_replay`` is the value of the analysis's ``swmm_snapshot_failed_replay`` field.
+    """
     sim = tmp_path / "sim"
     out = sim / "out_tritonswmm"
     (out / "cfg").mkdir(parents=True)
@@ -136,6 +139,7 @@ def _sim(tmp_path: Path, cfg_text: str, steps=(4, 5)):
             n_nodes=1,
             execution_environment="native",
             is_experiment_member=False,
+            swmm_snapshot_failed_replay=failed_replay,
         ),
         cfg_hpc_system=None,
         analysis_paths=SimpleNamespace(simlog_directory=tmp_path / "logs" / "sims"),
@@ -589,3 +593,133 @@ def test_the_runner_annotates_the_harvest_with_the_pickers_record():
     }
     assert "annotate_stepback" in called
     assert "stepback_confirmations_from_logfile" in called
+
+
+# --------------------------------------------------------------------------------------
+# The failed-write replay opt-in reaches the cfg a resume launches
+# --------------------------------------------------------------------------------------
+
+_KEY_LINE = "swmm_snapshot_failed_replay=1"
+
+
+def _key_lines(path: Path) -> int:
+    return sum(1 for line in path.read_text().splitlines() if line.strip().startswith("swmm_snapshot_failed_replay="))
+
+
+def _launch(run, capsys=None) -> str:
+    """Run ``prepare_simulation_command`` up to the sentinel and return what it printed."""
+    with pytest.raises(_Stop):
+        run.prepare_simulation_command(pickup_where_leftoff=True, verbose=True, model_type="tritonswmm")
+    return capsys.readouterr().out if capsys is not None else ""
+
+
+@pytest.mark.parametrize(
+    ("field", "cfg_has_key", "expected_lines"),
+    [
+        (True, False, 1),
+        (True, True, 1),
+        (False, True, 0),
+        (False, False, 0),
+    ],
+)
+def test_a_resume_launches_a_cfg_whose_key_line_matches_the_field(tmp_path, field, cfg_has_key, expected_lines):
+    """Property: the hotstart cfg a coupled resume launches carries exactly one key line iff the field is True.
+
+    Class: a coupled resume whose chosen hotstart cfg lacks the key with the field on (the
+    run was prepared without it), already carries it with the field on, carries it with the
+    field off (a hand-added or earlier-opted line), and lacks it with the field off.
+
+    Why required, checkable against the code: TRITON writes each ``config_K.cfg`` as a copy of
+    the cfg it was launched with, so a line written only when the base cfg is prepared never
+    reaches a resume, and a line left from an earlier launch would keep replaying after the
+    field is switched off. The launched cfg is read back off disk after the launch method
+    reaches its sentinel.
+
+    What kills it: writing the key only into the base cfg at a clean start, or writing it
+    when the field is True and never removing it.
+
+    A second correct implementation under which it still passes: one that launches a fresh
+    copy of the hotstart cfg carrying the right line, if that copy is the cfg the launch uses.
+    """
+    text = _QUOTED + (_KEY_LINE + "\n" if cfg_has_key else "")
+    run, out, _ = _sim(tmp_path, text, failed_replay=field)
+    _snap(out, 4)
+    _snap(out, 5)
+    _launch(run)
+    launched = out / "cfg" / "config_5.cfg"
+    assert _key_lines(launched) == expected_lines
+    assert launched.read_text().startswith(_QUOTED)
+
+
+@pytest.mark.parametrize(
+    ("field", "wording", "key_lines"),
+    [
+        (False, "stops there with its write-failed error", 0),
+        (True, "replays the SWMM exchange history there", 1),
+    ],
+)
+def test_the_message_and_the_launched_cfg_follow_the_field_not_the_newest_cfg(
+    tmp_path, capsys, field, wording, key_lines
+):
+    """Property: with a failed write at F below an unusable N, the message and the launched cfg both follow the field.
+
+    Class: ``config_N`` carries the key, ``config_F`` does not, a ``.failed`` marker sits at F
+    and N's snapshot is cut off -- driven with the field off and with it on.
+
+    Why required, checkable against the code: the picker returns F whatever the field says,
+    so the cfg the solver is handed is F's, and the launch writes the field's value into it.
+    A message decided by reading N's cfg would say "replays" for a launch whose F cfg carries
+    no key, and "stops" for one that does.
+
+    What kills it: deciding the wording from ``config_N.cfg``'s text, or from anything other
+    than the value the launch writes into F's cfg.
+
+    A second correct implementation under which it still passes: one that reads the key back
+    from F's cfg after the launch write and words the message from it.
+    """
+    run, out, _ = _sim(tmp_path, _QUOTED, steps=(3, 4, 5), failed_replay=field)
+    (out / "cfg" / "config_5.cfg").write_text(_QUOTED + _KEY_LINE + "\n")
+    _snap(out, 4, ".failed")
+    _snap(out, 5, ".killed")
+    printed = _launch(run, capsys)
+    assert wording in printed
+    assert "resuming at checkpoint 4" in printed
+    assert _key_lines(out / "cfg" / "config_4.cfg") == key_lines
+
+
+def test_the_completeness_rule_ignores_the_failed_replay_line(tmp_path):
+    """Property: cfgs from before and after an opt-in or opt-out resume form one complete set.
+
+    Class: ten cfgs at one length and three one line longer by the key line, the same with
+    the three one line SHORTER (the key removed from a run whose earlier cfgs carried it),
+    and a final cfg cut short by more than the one key line.
+
+    Why required, checkable against the code: the completeness rule keeps the cfgs whose line
+    count is the modal count, and the launch writes or removes one key line in the cfg it
+    hands the solver, which TRITON then copies into every later cfg. Counting that line would
+    split the set and the modal rule would drop one group as incomplete, so the next resume
+    would restart from an earlier checkpoint than the newest.
+
+    What kills it: counting the key line, or ignoring any short cfg (the last case).
+
+    A second correct implementation under which it still passes: one that compares cfgs by
+    their line counts after dropping every line the toolkit itself writes at launch.
+    """
+    base = _QUOTED + "extra_option=1\n"
+    run, out, _ = _sim(tmp_path, base, steps=tuple(range(1, 11)))
+    for k in (11, 12, 13):
+        (out / "cfg" / f"config_{k}.cfg").write_text(base + _KEY_LINE + "\n")
+    complete = run._complete_hotstart_cfgs("tritonswmm")
+    assert [step for step, _ in complete] == list(range(1, 14))
+    assert (
+        run._retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation("tritonswmm").name == "config_13.cfg"
+    )
+
+    for k in range(1, 11):
+        (out / "cfg" / f"config_{k}.cfg").write_text(base + _KEY_LINE + "\n")
+    for k in (11, 12, 13):
+        (out / "cfg" / f"config_{k}.cfg").write_text(base)
+    assert [step for step, _ in run._complete_hotstart_cfgs("tritonswmm")] == list(range(1, 14))
+
+    (out / "cfg" / "config_14.cfg").write_text(_QUOTED.splitlines()[0] + "\n")
+    assert [step for step, _ in run._complete_hotstart_cfgs("tritonswmm")] == list(range(1, 14))

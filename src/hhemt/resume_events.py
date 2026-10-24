@@ -108,7 +108,7 @@ REPLAY_MARKER = "SWMM exchange history replayed to t="
 #: outside it is recorded verbatim under ``replay_reason_raw`` and leaves ``replay_reason``
 #: None, so an emitter that grows a fourth reason produces a visible unclassified row rather
 #: than a silently-dropped one.
-REPLAY_REASONS: frozenset[str] = frozenset({"absent", "retention-collision", "pre-snapshot-checkpoint"})
+REPLAY_REASONS: frozenset[str] = frozenset({"absent", "retention-collision", "pre-snapshot-checkpoint", "write-failed"})
 
 #: Sibling of ``_walltime`` under the analysis-level ``logs/sims/`` directory.
 LEDGER_DIRNAME = "_resume_events"
@@ -576,11 +576,12 @@ def audit_resume_evidence(rows: list[dict], *, n_resumes: int) -> dict:
     A machine consumer keys on the token, so one token for both would make "one of ten
     resumes left no row" and "no resume has ever worked" indistinguishable to it.
 
-    ALARMS ARE REPORTED BESIDE THE VERDICT, never folded into it. Five row conditions are
+    ALARMS ARE REPORTED BESIDE THE VERDICT, never folded into it. Six row conditions are
     alarms: a ``step-back-required`` row (the solver had to refuse a checkpoint the toolkit
     picker should already have stepped back from -- a picker miss); a ``stop`` row and a
     ``clean-start`` row whose reason is ``write-failed`` (a snapshot write failed -- the
-    fail-loudly class); a ``stepback_reason`` of ``write-failed``; and a
+    fail-loudly class); a ``stepback_reason`` of ``write-failed``; a ``replay`` row whose
+    reason is ``write-failed`` (the opt-in replay past a failed write); and a
     ``stepback_corroboration`` of ``mismatch`` (the solver's own account of the step-back
     disagrees with the picker's). Each of those rows is still one launch's event and is
     counted in ``recorded``, so it never manufactures a shortfall -- but counting it and
@@ -684,6 +685,13 @@ def _row_alarms(row: dict) -> list[dict]:
         _alarm("write-failed", "the solver refused a checkpoint whose snapshot write failed, nothing intact below it")
     if row.get("stepback_reason") == "write-failed":
         _alarm("write-failed", "the picker stepped back past a checkpoint whose snapshot write failed")
+    if path == "replay" and row.get("replay_reason") == "write-failed":
+        _alarm(
+            "write-failed",
+            "the resume replayed past a checkpoint whose snapshot write failed "
+            "(swmm_snapshot_failed_replay); its numbers are correct, but the write failure is "
+            "undiagnosed and may recur",
+        )
     if row.get("stepback_corroboration") == "mismatch":
         _alarm(
             "corroboration-mismatch",
