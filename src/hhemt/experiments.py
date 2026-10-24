@@ -141,8 +141,9 @@ class TRITON_SWMM_experiment:
         Args:
             cfg_system_yaml: Path to system configuration YAML
             cfg_analysis_yaml: Path to analysis configuration YAML
-            case_name: In-repo case-study name, used to resolve the packaged
-                ``test_data/{case_name}/`` tree. ``None`` for a DOI-ingested bundle
+            case_name: In-repo case-study name, used to resolve the repository's
+                ``test_data/{case_name}/`` tree, which is not package data, so it is
+                present only in a source checkout. ``None`` for a DOI-ingested bundle
                 (``from_doi``), which carries no in-repo test-data tree — the
                 ``retrieve_test_data_directory`` lookup is skipped and
                 ``test_case_directory`` is ``None``; ``from_doi`` sets
@@ -186,9 +187,11 @@ class TRITON_SWMM_experiment:
         Returns
         -------
         Path
-            The ``test_data/{case_name}/`` directory beside the installed
-            package. The path is returned whether or not it exists; callers that
-            need the data present are responsible for downloading it.
+            The ``test_data/{case_name}/`` directory two levels above the ``hhemt``
+            package directory: the repository root in a src-layout checkout.
+            ``test_data/`` is not package data, so from an installed wheel the path does
+            not exist. The path is returned whether or not it exists; nothing here
+            creates or downloads it.
         """
         test_data_dir = files(cnst.APP_NAME).parents[1].joinpath(f"test_data/{case_name}/")  # type: ignore
         return test_data_dir
@@ -237,8 +240,9 @@ class TRITON_SWMM_experiment:
         hhemt_sha : str
             REQUIRED, keyword-only: the FULL 40-hex hhemt commit this experiment runs,
             written into the generated analysis config's ``hhemt_sha`` field over the template's
-            non-40-hex FILL-ME placeholder — nothing defaults it, because the analysis refuses
-            to construct when the running toolkit is at a different commit.
+            non-40-hex placeholder (Norfolk's reads ``REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT``)
+            — nothing defaults it, because the analysis refuses to construct when the running
+            toolkit is at a different commit.
 
         Returns
         -------
@@ -348,14 +352,11 @@ class TRITON_SWMM_experiment:
         hpc_system_config_yaml : Path or None
             Path to your cluster's ``hpc_system_config.yaml``. It is read only from
             this argument; no environment variable is consulted, and None means no HPC
-            config (the native path). The bundle
-            never carries it, because a DOI-downloaded bundle is contracted to run
-            with no external dependency beyond the reproducer's user-specific and
-            HPC-specific configs. It is required for a container-mode bundle, because
-            the ContainerSpec that renders ``apptainer exec {sif}`` lives on it. Start
-            from a worked in-tree example under
-            ``test_data/norfolk_coastal_flooding/`` or from the shape sketched in the
-            bundle's ``hpc_system_config.template.yaml``.
+            config (the native path). The bundle never carries it, because it describes
+            the reproducer's own cluster: its partitions, account and container-image
+            directory. It is required for a container-mode bundle, because the
+            ContainerSpec that renders ``apptainer exec {sif}`` lives on it.
+            Start from the shape sketched in the bundle's ``hpc_system_config.template.yaml``.
 
             On the container path ``from_doi`` writes a derived copy at
             ``{software_dir}/hpc_system_config.resolved.yaml`` whose
@@ -449,10 +450,11 @@ class TRITON_SWMM_experiment:
         # The HPC config is the reproducer's own and is never carried by the bundle.
         hpc_cfg_path = cls._resolve_hpc_system_config(hpc_system_config_yaml)
 
-        # Resolve every carried image under the reproducer's container.sif_root,
-        # rebuilding any that is absent, then point a DERIVED config copy at that root.
-        # Container-mode only — a native bundle skips this block entirely, so a native
-        # ingest never needs an HPC config or an image.
+        # Resolve every carried image under the reproducer's container.sif_root (or
+        # {software_dir}/sifs when the config names none), rebuilding any that is absent,
+        # then point a DERIVED config copy at that root. Container-mode only — a native
+        # bundle skips this block entirely, so a native ingest never needs an HPC config or
+        # an image; a container-mode ingest given no HPC config is refused just below.
         cfg_analysis_dict = read_yaml(analysis_config_path)
         if cfg_analysis_dict.get("execution_environment") == "container":
             if hpc_cfg_path is None:
@@ -461,19 +463,17 @@ class TRITON_SWMM_experiment:
                     message=(
                         "This bundle is container-mode (execution_environment='container') "
                         "but no hpc_system_config was supplied. The bundle deliberately does "
-                        "not carry one (ADR-9: the reproducer's HPC-specific config is an "
-                        "external input). Pass hpc_system_config_yaml=... (or `hhemt ingest "
-                        "--hpc-system-config ...`). Start "
-                        "from a worked example: "
-                        "test_data/norfolk_coastal_flooding/hpc_system_config_uva.yaml, or "
-                        f"the shape sketched at {bundle_root}/hpc_system_config.template.yaml."
+                        "not carry one, because it describes your own cluster: its partitions, "
+                        "account and container-image directory. Pass hpc_system_config_yaml=... "
+                        "(or `hhemt ingest --hpc-system-config ...`). "
+                        f"Start from the shape sketched at {bundle_root}/hpc_system_config.template.yaml."
                     ),
                     config_path=None,
                 )
             resolved_software_dir = software_dir or (bundle_root / "software")
             # The bundle carries the PRODUCER MANIFEST of every image its matrix
             # resolved to (bundle_manifest.json["sif_manifests"]). Place each at its identity path
-            # under the reproducer's container.sif_root, rebuilding any that is absent through the
+            # under _sif_root (resolved just below), rebuilding any that is absent through the
             # same transaction on THIS checkout (which must be at the carried hhemt_sha), then write
             # a DERIVED config that carries sif_root. No .def and no source tree are carried.
             from hhemt.config.hpc_system import hpc_system_config as _hpc_model
@@ -489,9 +489,10 @@ class TRITON_SWMM_experiment:
                 raise ConfigurationError(
                     field="bundle_manifest.json",
                     message=(
-                        "container-mode bundle carries no sif_manifests: it was emitted by a pre-ADR-21 "
-                        "toolkit (BUNDLE_SCHEMA_VERSION < 6) or before the producer ran hhemt build-sifs. "
-                        "Re-emit from a producer whose images are built."
+                        "this container-mode bundle's bundle_manifest.json carries no sif_manifests "
+                        "list, so the container images its simulations ran in cannot be identified. "
+                        "Fetch an unmodified copy of the bundle, or ask its producer to re-emit it "
+                        "with this toolkit version."
                     ),
                     config_path=None,
                 )
@@ -755,9 +756,9 @@ class TRITON_SWMM_experiment:
                 operation="doi_ingest_crate",
                 filepath=str(crate_path),
                 reason=(
-                    "the fetched bundle carries no ro-crate-metadata.json; it is not a "
-                    "runnable reprex bundle (likely a mis-pointed ADR-11 data deposit). "
-                    "Ingest the reprex-bundle DOI, not the data-deposit DOI."
+                    "the fetched bundle carries no ro-crate-metadata.json, so it is not a "
+                    "runnable reprex bundle. Ingest the DOI of a bundle deposited with "
+                    "`hhemt publish --reprex-bundle`."
                 ),
             )
         graph = json.loads(crate_path.read_text()).get("@graph", [])
@@ -769,9 +770,9 @@ class TRITON_SWMM_experiment:
                 operation="doi_ingest_crate",
                 filepath=str(crate_path),
                 reason=(
-                    "the fetched crate has no root `mainEntity` (not a Workflow-Run-"
-                    "Crate); it is a plain RO-Crate or a mis-pointed ADR-11 data "
-                    "deposit, not a runnable reprex bundle."
+                    "the fetched crate's root entity has no `mainEntity` (it is not a "
+                    "Workflow-Run-Crate), so the bundle names no runnable workflow. Ingest the "
+                    "DOI of a bundle deposited with `hhemt publish --reprex-bundle`."
                 ),
             )
         workflow_path = bundle_root / workflow_id
@@ -992,7 +993,7 @@ class TRITON_SWMM_experiment:
         weatherpath = placeholder_weather_path.parent / weather_events_to_simulate
         filled_yaml_data["weather_events_to_simulate"] = str(weatherpath)
         filled_yaml_data["analysis_description"] = analysis_description
-        filled_yaml_data["hhemt_sha"] = hhemt_sha  # over the template's FILL-ME placeholder; never defaulted
+        filled_yaml_data["hhemt_sha"] = hhemt_sha  # over the template's non-40-hex placeholder; never defaulted
         cfg_system = load_system_config(cfg_system_yaml)
         analysis_id = filled_yaml_data["analysis_id"]
         cfg_yaml = Path(cfg_system.system_directory) / f"config_analysis_{analysis_id}.yaml"
@@ -1074,9 +1075,9 @@ class TRITON_SWMM_experiment:
         if Path(mapping["DATA_DIR"]).exists() and not download_if_exists:
             pass
         else:
-            if verbose:
-                print(f"Download example data to {mapping['DATA_DIR']} using Hydroshare")
             if case_manifest.host == "zenodo":
+                if verbose:
+                    print(f"Download example data to {mapping['DATA_DIR']} using Zenodo")
                 cls._download_data_from_zenodo(
                     case_manifest,
                     Path(mapping["HYDROSHARE_ROOT"]),
@@ -1084,6 +1085,8 @@ class TRITON_SWMM_experiment:
                     expected_manifest=case_manifest.manifest,
                 )
             else:
+                if verbose:
+                    print(f"Download example data to {mapping['DATA_DIR']} using HydroShare")
                 hs = cls._connect_to_hydroshare(res_identifier)
                 cls._download_data_from_hydroshare(
                     res_identifier,
@@ -1565,8 +1568,8 @@ class NorfolkObservedExperiment:
             Instance with the Norfolk system loaded.
         """
 
-        # this method just changes the weather_events_to_simulate
-        # for analysis config
+        # Differs from NorfolkIreneExperiment.load only in the two analysis-config values
+        # below: the weather-event index CSV and the analysis description.
 
         weather_events_to_simulate = "obs_event_summaries_from_yrs_with_complete_coverage.csv"
         analysis_description = "Observed event ensemble"

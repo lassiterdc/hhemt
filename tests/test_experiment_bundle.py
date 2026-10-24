@@ -11,14 +11,17 @@ calls the resolver or the argument parser directly.
 
 from __future__ import annotations
 
+import json
 import time
 import warnings
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
-from hhemt.exceptions import ConfigurationError
+import hhemt.experiments as experiments_mod
+from hhemt.exceptions import ConfigurationError, ProcessingError
 from hhemt.experiments import TRITON_SWMM_experiment
 from scripts.experiments import container_validation as cv
 from scripts.experiments import doi_emitter_and_ingestion_verification as doi
@@ -366,3 +369,131 @@ def test_container_validation_report_block_raises_no_retired_key_warning(capture
         warnings.simplefilter("always")
         report_config.model_validate(captured_report)
     assert not [w for w in record if issubclass(w.category, DeprecationWarning) and "mode is retired" in str(w.message)]
+
+
+def _write_crate(bundle_root: Path, root_entity: dict) -> None:
+    """Write an `ro-crate-metadata.json` whose graph holds one root entity (`@id` "./") with the given fields."""
+    graph = [{"@id": "./", **root_entity}]
+    (bundle_root / "ro-crate-metadata.json").write_text(json.dumps({"@graph": graph}), encoding="utf-8")
+
+
+def _assert_no_internal_label(reason: str) -> None:
+    """Fail when ``reason`` names a design label or the data-deposit diagnosis a user cannot look up."""
+    lowered = reason.lower()
+    assert "adr-" not in lowered, reason
+    assert "data deposit" not in lowered, reason
+    assert "data-deposit" not in lowered, reason
+
+
+def test_bundle_without_crate_refusal_names_no_label_and_the_publish_option(tmp_path):
+    """Property: the refusal of a bundle with no crate names no design label and names `--reprex-bundle`.
+
+    Class: a bundle directory holding no `ro-crate-metadata.json`. Why required: the message is what
+    a user reads, and a label or a data-deposit diagnosis they cannot look up (a data deposit never
+    reaches this check) leaves them without a remedy. Killed by: restoring the label or the old
+    advice. Second correct implementation: any wording that names the publish option and no label;
+    only the exception type and those tokens are asserted.
+    """
+    with pytest.raises(ProcessingError) as excinfo:
+        TRITON_SWMM_experiment._assert_bundle_has_workflow(tmp_path)
+    _assert_no_internal_label(excinfo.value.reason)
+    assert "--reprex-bundle" in excinfo.value.reason
+
+
+def test_crate_without_main_entity_refusal_names_no_label_and_the_publish_option(tmp_path):
+    """Property: the refusal of a crate with no root `mainEntity` names that field and `--reprex-bundle`, no label.
+
+    Class: a crate whose root entity has no `mainEntity`. Why required: same as the no-crate arm; the
+    user needs the missing field and the remedy. Killed by: restoring the label or the old advice.
+    Second correct implementation: any wording naming `mainEntity` and the option.
+    """
+    _write_crate(tmp_path, {})
+    with pytest.raises(ProcessingError) as excinfo:
+        TRITON_SWMM_experiment._assert_bundle_has_workflow(tmp_path)
+    _assert_no_internal_label(excinfo.value.reason)
+    assert "mainEntity" in excinfo.value.reason
+    assert "--reprex-bundle" in excinfo.value.reason
+
+
+def test_crate_naming_a_present_workflow_is_accepted(tmp_path):
+    """Property: a crate whose root `mainEntity` names a file in the bundle passes (the control).
+
+    Class: a crate with `mainEntity` pointing at a file that exists. Why required: it shows the two
+    refusals above are about the missing pieces and not about every bundle. Killed by: refusing a
+    well-formed bundle. Second correct implementation: returning the workflow path; only "no raise"
+    is asserted.
+    """
+    (tmp_path / "workflow.smk").write_text("", encoding="utf-8")
+    _write_crate(tmp_path, {"mainEntity": {"@id": "workflow.smk"}})
+    assert TRITON_SWMM_experiment._assert_bundle_has_workflow(tmp_path) is None
+
+
+class _DispatchReached(Exception):
+    """Raised by the stubbed first call of a download branch, so `_load_case_system_config` stops there."""
+
+
+@pytest.fixture
+def case_download_stubs(tmp_path, monkeypatch):
+    """Stub every step of `_load_case_system_config` before its host dispatch; return a setter for the host."""
+
+    def _set_host(host: str) -> Path:
+        data_dir = tmp_path / "data_dir_never_created"
+        manifest = SimpleNamespace(host=host, res_identifier="resid", manifest={})
+        mapping = {"DATA_DIR": str(data_dir), "HYDROSHARE_ROOT": str(tmp_path / "root")}
+        monkeypatch.setattr(TRITON_SWMM_experiment, "_load_case_manifest", staticmethod(lambda *a, **k: manifest))
+        monkeypatch.setattr(
+            TRITON_SWMM_experiment,
+            "_get_case_data_and_package_directory_mapping_dict",
+            staticmethod(lambda **k: mapping),
+        )
+        monkeypatch.setattr(TRITON_SWMM_experiment, "_load_config_filepath", staticmethod(lambda *a, **k: tmp_path))
+        monkeypatch.setattr(
+            TRITON_SWMM_experiment, "_return_filled_template_yaml_dictionary", staticmethod(lambda *a, **k: {})
+        )
+        monkeypatch.setattr(experiments_mod, "system_config", SimpleNamespace(model_validate=lambda *a, **k: None))
+        return data_dir
+
+    return _set_host
+
+
+def _announcement(capsys, data_dir: Path) -> str:
+    """The one stdout line that names ``data_dir`` as the download destination."""
+    lines = [line for line in capsys.readouterr().out.splitlines() if str(data_dir) in line]
+    assert len(lines) == 1, lines
+    return lines[0]
+
+
+def _stop(*_args, **_kwargs):
+    """Stand-in for a download branch's first call."""
+    raise _DispatchReached
+
+
+def test_zenodo_case_announces_zenodo(case_download_stubs, monkeypatch, capsys):
+    """Property: a Zenodo-hosted case's download announcement names Zenodo and never HydroShare.
+
+    Class: `host == "zenodo"` with `_download_data_from_zenodo` stubbed to raise. Why required: the
+    announcement was printed before the host dispatch and always said HydroShare. Killed by: one
+    print before the dispatch naming a fixed host. Second correct implementation: one print before the
+    dispatch that names `case_manifest.host`; the line is asserted, not where it is printed.
+    """
+    data_dir = case_download_stubs("zenodo")
+    monkeypatch.setattr(TRITON_SWMM_experiment, "_download_data_from_zenodo", staticmethod(_stop))
+    with pytest.raises(_DispatchReached):
+        TRITON_SWMM_experiment._load_case_system_config("case", "tmpl", "case.json", False, verbose=True)
+    line = _announcement(capsys, data_dir).lower()
+    assert "zenodo" in line
+    assert "hydroshare" not in line
+
+
+def test_hydroshare_case_announces_hydroshare(case_download_stubs, monkeypatch, capsys):
+    """Property: a HydroShare-hosted case's download announcement names HydroShare (the control).
+
+    Class: `host == "hydroshare"` with `_connect_to_hydroshare` stubbed to raise. Why required: it
+    shows the Zenodo arm is not satisfied by a message that names no host at all. Killed by: dropping
+    the host name. Second correct implementation: any wording naming HydroShare in any case.
+    """
+    data_dir = case_download_stubs("hydroshare")
+    monkeypatch.setattr(TRITON_SWMM_experiment, "_connect_to_hydroshare", staticmethod(_stop))
+    with pytest.raises(_DispatchReached):
+        TRITON_SWMM_experiment._load_case_system_config("case", "tmpl", "case.json", False, verbose=True)
+    assert "hydroshare" in _announcement(capsys, data_dir).lower()
