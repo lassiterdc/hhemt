@@ -170,9 +170,7 @@ def build_case(
     inside the image. The SLURM account is the resolved config's ``default_account``, which the
     workflow reads from the hpc_system_config itself, never from a code default; this function
     checks it first, so an unset or placeholder account raises ``ValueError`` before any case is
-    built. The ``hpc_account``, ``hpc_gpus_per_node`` and ``hpc_max_simultaneous_sims`` keys it
-    also passes are retired analysis_config fields that the config's consistency shim drops
-    with a ``DeprecationWarning``.
+    built.
     """
     from hhemt.config.loaders import load_hpc_system_config
     from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
@@ -198,10 +196,7 @@ def build_case(
         additional_analysis_configs={
             "multi_sim_run_method": "local",  # dispatch family only; execution_mode decides where
             "execution_environment": "container",  # base container-mode (CSV reaffirms per row)
-            "hpc_account": account,
-            "hpc_max_simultaneous_sims": 1000,
             "hpc_total_job_duration_min": 60,
-            "hpc_gpus_per_node": 8,
             "hpc_time_min_per_sim": 30,
             "hpc_restart_times_simulate": 2,
             "hpc_restart_times_other": 2,
@@ -502,7 +497,8 @@ def verify(
         )
     result = exp.analysis.test(execution_mode="slurm", wait_for_job_completion=True, verbose=True)
     ok = _adjudicate_per_arch_pass(exp, result)
-    print("OVERALL:", "cross-hardware per-arch routing PASS" if ok else "FAIL")
+    verdict = "PASS (completion, REQ-1 and REQ-2; per-arch SIF routing is not adjudicated: read the sim logs)"
+    print("OVERALL:", verdict if ok else "FAIL")
     return ok
 
 

@@ -111,9 +111,9 @@ def build_case(
     + account) is the file named by ``hpc_system_config_yaml`` (argv[2] when run as a script),
     passed to ``hhemt.experiment_bundle.resolve_hpc_system_config`` as its override; with no
     override the resolver raises, because it reads no environment variable. NO git-tracked
-    file is edited per run. ``hpc_account``
-    is sourced from the resolved config's ``default_account``; a fail-fast rejects an
-    unfilled template. ``execution_environment`` is supplied PER ROW by the CSV.
+    file is edited per run. The SLURM account is the resolved config's ``default_account``,
+    which the workflow reads from that file; a fail-fast rejects an unset or placeholder
+    value. ``execution_environment`` is supplied PER ROW by the CSV.
     """
     if cluster not in _CLUSTER:
         raise ValueError(f"cluster must be one of {sorted(_CLUSTER)}; got {cluster!r}")
@@ -186,10 +186,7 @@ def build_case(
             # SLURM-executor plugin; under UVA's execution_mode="slurm" the explicit mode wins
             # and every rule is still its own sbatch (see the staging note above).
             "multi_sim_run_method": multi_sim_run_method or c["multi_sim_run_method"],
-            "hpc_account": account,
-            "hpc_max_simultaneous_sims": 1000,
             "hpc_total_job_duration_min": 60,
-            "hpc_gpus_per_node": 8,
             "hpc_time_min_per_sim": 30,
             "hpc_restart_times_simulate": 2,
             "hpc_restart_times_other": 2,
