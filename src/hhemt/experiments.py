@@ -1351,7 +1351,7 @@ class TRITON_SWMM_experiment:
                     filepath=str(fpath),
                     reason=(
                         f"sha256 mismatch for {rel_name}: expected {expected_sha}, got {actual_sha}. "
-                        "The Hydroshare resource may have been reorganized; "
+                        "The deposit may have been reorganized; "
                         "regenerate case.yaml via generate_case_manifest if intended."
                     ),
                 )
@@ -1382,8 +1382,8 @@ class TRITON_SWMM_experiment:
                 operation="hydroshare_connect",
                 filepath=None,
                 reason=(
-                    "hsclient is not installed. Install optional dependencies with "
-                    "`pip install .[tests]`. Alternatively, download the data manually: "
+                    "hsclient, which hhemt requires, could not be imported, so this install is "
+                    "incomplete; reinstall hhemt to restore it. Alternatively, download the data manually: "
                     f"https://www.hydroshare.org/resource/{res_identifier}/"
                 ),
             )
