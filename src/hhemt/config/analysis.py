@@ -1213,7 +1213,7 @@ class analysis_config(cfgBaseModel):
             "hydrology model declares has been written. "
             '"raw_swmm_binaries" '
             'no-ops (with a logged reason) when clear_raw == "none", because its only '
-            "consumer, eda.raw_resume_identity.compare_swmm_raw, also needs the raw "
+            "consumer, eda.raw_byte_identity.compare_swmm_raw, also needs the raw "
             "H/QX/QY/MH set that clear_raw governs. Every reclaim is recorded per "
             "scenario in the per-model log and surfaced by "
             'analysis_validation.check_data_availability. Defaults to "none" -- '

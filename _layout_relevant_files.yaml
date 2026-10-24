@@ -3834,3 +3834,16 @@ non_breaking_allowlist:
       path, filename or persisted structure moves and no migration has anything to act on.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: "e417549971f864353c3118dd18d9bba63ce731c52584d4e8b864670fc96ee1d3"
+    justification: >-
+      NON-BREAKING. Package 3d, chunk 3d.5 (landing-research finding B3): the description
+      string of analysis_config.remove_after_processing names the module
+      eda.raw_byte_identity.compare_swmm_raw where it named eda.raw_resume_identity.compare_swmm_raw,
+      the module's name before 1e.7 renamed it. One module name inside one field description
+      changes; no field is added, removed, renamed, retyped or reordered. A description is
+      schema metadata read by the documentation renderer and absent from every serialized
+      artifact, so no config key, path, filename or persisted structure moves and no migration
+      has anything to act on.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
