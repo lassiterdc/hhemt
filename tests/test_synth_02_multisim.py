@@ -2,8 +2,6 @@
 process and consolidate a completed tree, and check that reprocessing an isolated clone
 leaves the shared session tree untouched."""
 
-import hashlib
-
 import pytest
 
 import tests.utils_for_testing as tst_ut
@@ -91,14 +89,21 @@ def test_isolated_fixture_does_not_perturb_session_tree(
     synthetic_multisim_completed, synthetic_multisim_completed_isolated
 ):
     """States the copy-on-read contract: a destructive op on the isolated clone
-    leaves the shared session tree's _status flags intact.
+    writes no file under the shared session tree's analysis directory.
 
     Collected under the suite's own invocation (``pytest --collect-only -q tests/``
     lists it). Its fixtures reach the compile tier, so it runs with the
     compile-tier tests, not in the fast tier."""
     session_dir = synthetic_multisim_completed.analysis_paths.analysis_dir
-    flag = session_dir / "_status" / "e_consolidate_complete.flag"
-    before = hashlib.sha1(flag.read_bytes()).hexdigest() if flag.exists() else None
+
+    def _files(root):
+        return sorted(
+            (str(p.relative_to(root)), p.stat().st_size, p.stat().st_mtime_ns, p.stat().st_ino)
+            for p in root.rglob("*")
+            if p.is_file() and not p.is_symlink()
+        )
+
+    before = _files(session_dir)
     a = synthetic_multisim_completed_isolated
     a.reprocess(
         start_with="consolidate",
@@ -106,6 +111,6 @@ def test_isolated_fixture_does_not_perturb_session_tree(
         regenerate_existing=True,
         verbose=False,
     )
-    after = hashlib.sha1(flag.read_bytes()).hexdigest() if flag.exists() else None
+    after = _files(session_dir)
     assert before == after, "isolated reprocess leaked into the session tree"
     assert a.analysis_paths.analysis_dir != session_dir, "clone shares the session dir"
