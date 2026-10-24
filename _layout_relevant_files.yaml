@@ -4014,3 +4014,31 @@ non_breaking_allowlist:
       the rows above: the defaulted hpc_consecutive_failure_budget_simulate field, and the
       required_when declarations with comment and description repairs. The merge resolves
       two comment conflicts and moves no field, key, path or persisted structure.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: "df4a9dfa53e3d191c69adf456a01db3bb743969ba388ba27343b5d04bcaa4ecf"
+    justification: >-
+      NON-BREAKING for the on-disk layout. Package 2b (rulings D-102, D-106, D-107):
+      dataset_license becomes OPTIONAL with no default and accepts the seven current Creative
+      Commons SPDX ids (CC0-1.0, CC-BY-4.0, CC-BY-SA-4.0, CC-BY-NC-4.0, CC-BY-NC-SA-4.0,
+      CC-BY-ND-4.0, CC-BY-NC-ND-4.0) instead of two with a CC0-1.0 default; its description and
+      option glossary are rewritten. No field is added, removed or renamed, so no config key,
+      path, filename or persisted structure moves.
+      WHAT DOES CHANGE, stated rather than elided: an analysis consolidated from a config that
+      omits the field now carries NO license in its RO-Crate, where it previously carried
+      CC0-1.0. That is a change to what a NEW consolidation writes, not to any artifact an
+      existing analysis wrote; existing trees keep the license they were consolidated with,
+      and both previous values remain valid. This row is signed on the develop tree, and
+      supersedes the previous last row for this path.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/base.py
+    layout_signature: "c1d1c699ab3c4766d74f9c6d39f234376ae22a5b8692670f59a70544a73e8a1e"
+    justification: >-
+      NON-BREAKING. Package 2b (ruling D-107): the class-definition glossary check in
+      cfgBaseModel.__pydantic_init_subclass__ now reads an optional closed set
+      (Literal[...] | None) through a new private helper _unwrap_single_optional, so an
+      optional closed-set field can carry its glossary. It changes which config CLASSES may be
+      defined, never what a config file contains or what any analysis writes to disk; a union
+      with two or more non-None members is still refused as before.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.

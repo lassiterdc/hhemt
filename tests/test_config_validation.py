@@ -65,14 +65,35 @@ def _minimal_analysis_config_dict(tmp_path: Path) -> dict:
     }
 
 
-def test_analysis_config_dataset_license_default_and_frozen_vocab(tmp_path: Path):
-    # R5: dataset_license defaults to CC0-1.0 when omitted; both frozen values load; a third is rejected.
+_SEVEN_CC_LICENSES = (
+    "CC0-1.0",
+    "CC-BY-4.0",
+    "CC-BY-SA-4.0",
+    "CC-BY-NC-4.0",
+    "CC-BY-NC-SA-4.0",
+    "CC-BY-ND-4.0",
+    "CC-BY-NC-ND-4.0",
+)
+
+
+def test_analysis_config_dataset_license_is_optional_and_one_of_seven(tmp_path: Path):
+    """Property: the dataset license has NO default and accepts exactly the seven CC licenses.
+
+    Class: a config that omits the field, every one of the seven values, and every value
+    outside them. Why required: a license is needed only to publish, so an omitted one must
+    load as None rather than as a license nobody chose, and an unknown id must fail at load
+    rather than at deposit. Killed by: a default of any license (the omitted case reads that
+    license, not None), or a vocabulary missing or adding a member. Second correct
+    implementation under which this still passes: the same seven declared as a separate
+    Literal alias referenced by the field.
+    """
     cfg = _minimal_analysis_config_dict(tmp_path)
-    assert "dataset_license" not in cfg  # optional field
-    assert analysis_config.model_validate(cfg).dataset_license == "CC0-1.0"
-    cfg["dataset_license"] = "CC-BY-NC-4.0"
-    assert analysis_config.model_validate(cfg).dataset_license == "CC-BY-NC-4.0"
-    cfg["dataset_license"] = "MIT"  # not in the frozen 2-entry SPDX vocab
+    assert "dataset_license" not in cfg
+    assert analysis_config.model_validate(cfg).dataset_license is None
+    for spdx in _SEVEN_CC_LICENSES:
+        cfg["dataset_license"] = spdx
+        assert analysis_config.model_validate(cfg).dataset_license == spdx
+    cfg["dataset_license"] = "MIT"
     with pytest.raises(ValidationError):
         analysis_config.model_validate(cfg)
 

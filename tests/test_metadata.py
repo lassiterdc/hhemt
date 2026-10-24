@@ -75,11 +75,52 @@ def test_dataset_license_creativework_entity_survives_into_core():
     assert core_root["license"] == {"@id": "https://spdx.org/licenses/CC-BY-NC-4.0"}
 
 
-def test_default_dataset_license_is_cc0():
-    # R5/R6: the default build (no override) carries CC0-1.0 as the root license.
-    doc = json.loads(metadata.canonical_jsonld(_build()))
-    root = next(e for e in doc["@graph"] if e.get("@id") == "./")
-    assert root["license"] == {"@id": "https://spdx.org/licenses/CC0-1.0"}
+def test_unlicensed_build_writes_no_license():
+    """Property: a crate built with no dataset license asserts none, in the graph or the core.
+
+    Class: every build that omits `dataset_license` or passes None. Why required: a license
+    is required only to publish, so an unpublished dataset must not claim terms nobody
+    chose, and publish detects "no license" by the root `license` being absent. Killed by:
+    restoring a CC0 (or any) keyword default, or writing a placeholder entity when blank.
+    Second correct implementation: writing the root without the key by building the root
+    dict conditionally instead of skipping the entity block.
+    """
+    for crate in (_build(), _build(dataset_license=None)):
+        doc = json.loads(metadata.canonical_jsonld(crate))
+        root = next(e for e in doc["@graph"] if e.get("@id") == "./")
+        assert "license" not in root
+        license_entities = [
+            e for e in doc["@graph"] if e.get("@type") == "CreativeWork" and "spdx.org/licenses" in e.get("@id", "")
+        ]
+        assert license_entities == []
+        core = metadata.partition_core_vs_sidecar(crate.metadata.generate())
+        core_root = next(e for e in core["@graph"] if e.get("@id") == "./")
+        assert "license" not in core_root
+
+
+def test_license_table_is_the_seven_cc_licenses_with_spdx_uris():
+    """Property: the single license table carries exactly the seven CC ids, each with its SPDX URI.
+
+    Class: every table entry. Why required: the crate entity, the DataCite rightsList and the
+    HydroShare rights all read this one table, so an id the config accepts but the table lacks
+    raises KeyError at consolidation. Killed by: dropping or adding an entry, or a URI that
+    does not end in its own id. Second correct implementation: the URIs derived from the ids
+    at import time instead of written out.
+    """
+    from typing import get_args
+
+    from hhemt.config.analysis import analysis_config
+
+    # The field's accepted strings, read without any helper this change adds, so the same
+    # lines run on the tree before the change: a flat Literal yields its strings directly,
+    # and `Literal[...] | None` yields them one level down, with NoneType filtered out.
+    annotation = analysis_config.model_fields["dataset_license"].annotation
+    accepted = {s for member in get_args(annotation) for s in (get_args(member) or (member,)) if isinstance(s, str)}
+    assert set(metadata._SPDX_LICENSE_TABLE) == accepted
+    assert len(accepted) == 7
+    for spdx, entry in metadata._SPDX_LICENSE_TABLE.items():
+        assert entry["uri"] == f"https://spdx.org/licenses/{spdx}"
+        assert entry["name"].startswith("Creative Commons")
 
 
 def test_upgrade_doc_to_workflow_run_crate():

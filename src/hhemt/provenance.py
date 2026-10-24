@@ -886,7 +886,9 @@ def emit_provenance(
         toolkit_git_sha=_toolkit_git_sha(),
         code_repository=code_repository,
         cfg_case=cfg_case,
-        dataset_license=str(analysis.cfg_analysis.dataset_license),
+        # Passed as-is, never through str(): an unlicensed analysis carries None, and str(None)
+        # is the text "None", which the license table does not contain (KeyError at consolidation).
+        dataset_license=analysis.cfg_analysis.dataset_license,
         sif_spec=sif_spec,
         consolidated_zarr_relpath=consolidated_zarr_relpath,
         input_parts=input_parts,

@@ -6,9 +6,13 @@ each simulation (run mode, ranks, threads, GPUs, nodes), how the ensemble is dis
 tasks inside one allocation), the partition selectors and allocations that dispatch
 needs, the model toggles and their inputs, the cleanup and force-rerun policy, and the
 report settings. Validation here rejects an inconsistent combination when the YAML
-loads, before any job is submitted. A field that is required only under some other
-setting declares that condition on the field itself (`field_meta(required_when=...)`),
-which is both what enforces it and what the report's Reproduction Guide reads.
+loads, before any job is submitted. Most fields that are required only under some
+other setting declare that condition on the field itself
+(`field_meta(required_when=...)`), which is both what enforces it and what the report's
+Reproduction Guide reads. Two groups do not, and the Guide does not see them: the
+compute-shape counts each `run_mode` requires (e.g. `n_omp_threads` under `openmp`),
+enforced in `check_consistency`, and `experiment_cfg_yaml` / `analysis_dir` under
+`is_experiment_member=True`, enforced in `validate_analysis_requirements`.
 """
 
 import math
@@ -142,8 +146,9 @@ class ForceRerunSpec(cfgBaseModel):
 
         Whether the named models are ENABLED for this analysis is deliberately NOT
         checked here -- that needs sibling-field context this model does not hold (it is
-        `system_config`'s toggles), and it is validated in `analysis.py` at the same
-        place the subject's toggle cross-check already lives.
+        `system_config`'s toggles), and it is validated in the orchestrator module
+        `src/hhemt/analysis.py` (not this config module), beside the override subject's
+        toggle cross-check.
         """
         if self.models is None:
             return self
@@ -223,7 +228,7 @@ class ForceRerunSpec(cfgBaseModel):
         """A subject-scoped ``render`` floor is not a capability of this design.
 
         `plots/` is not partitioned by subject: alongside the per-sim figures that carry
-        `__member.{member_id}__` it holds CROSS-SUB aggregates (`b4b_clean_identity`,
+        a `__member.{member_id}` segment it holds CROSS-SUB aggregates (`raw_byte_identity`,
         `config_diff_maps`, `eda_cross_hardware_magnitude`) whose inputs span every
         member and which carry no subject token at all. Honouring a subject-scoped
         render would refresh some figures and leave the aggregates stale -- an artifact
@@ -322,26 +327,47 @@ class analysis_config(cfgBaseModel):
         ),
     )
     # DATASET PUBLISHING
-    dataset_license: Literal["CC0-1.0", "CC-BY-NC-4.0"] = Field(
-        default="CC0-1.0",
+    dataset_license: (
+        Literal[
+            "CC0-1.0",
+            "CC-BY-4.0",
+            "CC-BY-SA-4.0",
+            "CC-BY-NC-4.0",
+            "CC-BY-NC-SA-4.0",
+            "CC-BY-ND-4.0",
+            "CC-BY-NC-ND-4.0",
+        ]
+        | None
+    ) = Field(
+        default=None,
         description=(
-            "SPDX identifier for the published DATASET license (a deliberately frozen "
-            "two-entry vocabulary). Baked into the RO-Crate root Dataset.license at consolidation and "
-            "read back for the DataCite rightsList at publish time (rightsIdentifierScheme "
-            "'SPDX'). CC0-1.0 default is the open, regret-safe choice across immutable DOIs. "
-            "CC-BY-NC-4.0 is the research/education-leaning slot; note CC 'NonCommercial' is "
-            "broader than 'education only' and does not turn on user type."
+            "SPDX identifier of the license for the dataset this analysis PUBLISHES (its "
+            "consolidated outputs). There is no default and nothing but publishing needs it: "
+            "a config without it loads, runs, consolidates and bundles normally, and "
+            "publish() refuses to deposit until one is chosen. The value is written into the "
+            "RO-Crate root Dataset.license when the outputs are consolidated and read back at "
+            "publish time, so choosing it after consolidating means re-running "
+            "reprocess(start_with='consolidate', regenerate_existing=True) before publishing. "
+            "'NonCommercial' is broader than 'education only' and does not turn on who the user is."
         ),
         json_schema_extra=field_meta(
             options={
                 "CC0-1.0": (
-                    "Public-domain dedication. No attribution required; the regret-safe choice across immutable DOIs."
+                    "Public-domain dedication: no conditions at all; commercial use and derivatives allowed, "
+                    "no attribution required."
                 ),
-                "CC-BY-NC-4.0": (
-                    "Attribution required, commercial use prohibited. "
-                    "'NonCommercial' is broader than 'education only' and does "
-                    "not turn on who the user is."
+                "CC-BY-4.0": "Attribution required; commercial use and derivatives allowed.",
+                "CC-BY-SA-4.0": (
+                    "Attribution required; commercial use and derivatives allowed, and derivatives must be "
+                    "shared under this same license."
                 ),
+                "CC-BY-NC-4.0": "Attribution required; derivatives allowed; commercial use prohibited.",
+                "CC-BY-NC-SA-4.0": (
+                    "Attribution required; commercial use prohibited; derivatives allowed and must be shared "
+                    "under this same license."
+                ),
+                "CC-BY-ND-4.0": "Attribution required; commercial use allowed; no derivatives may be shared.",
+                "CC-BY-NC-ND-4.0": ("Attribution required; commercial use prohibited; no derivatives may be shared."),
             }
         ),
     )
@@ -422,7 +448,8 @@ class analysis_config(cfgBaseModel):
     # on PartitionSpec.gpus_per_node / .cpus_per_node, resolved via the workflow
     # builder's _resolve_gpus_per_node / _resolve_cpus_per_node from the named
     # partition. A pop-and-warn shim (check_consistency, below) lets un-migrated
-    # YAMLs still load. REMOVE the shim after <release>.
+    # YAMLs still load. REMOVE the shim once un-migrated YAMLs no longer need to load; no
+    # removal release has been set.
     hpc_mem_allocation_for_sim_output_processing_mb: int = Field(
         12000,
         description="Memory allocation for creating simulation time series.",
@@ -1405,7 +1432,8 @@ class analysis_config(cfgBaseModel):
     @model_validator(mode="before")
     @classmethod
     def check_consistency(cls, values):
-        # REMOVE after <release>: pop-and-warn shim for the 6 retired
+        # REMOVE once un-migrated YAMLs no longer need to load (no removal release has
+        # been set): pop-and-warn shim for the 6 retired
         # analysis_config HPC fields (moved to hpc_system_config.max_concurrent_jobs /
         # default_account / login_node, the partition-axis PartitionSpec topology, and
         # sys.executable). Pop-and-DROP so un-migrated YAMLs still load (extra="forbid"
