@@ -1042,17 +1042,21 @@ class analysis_config(cfgBaseModel):
     one_coupled_inflow_node_per_dem_cell: bool = Field(
         default=False,
         description=(
-            "When True, scenario preparation couples at most ONE [INFLOWS] junction per DEM "
-            "cell, the limit TRITON-SWMM required before it coupled any number of nodes per cell. "
-            "The kept junction is the one whose own outgoing link has the largest flow area; on "
-            "a tie, the cell's junction whose outgoing link leaves the cell, then the lowest "
-            "invert. A junction with no outgoing pipe is ranked by its largest incoming pipe. "
-            "Every other inflow line of the cell is removed, and each prepared scenario records "
-            "the cells it reduced in _status/inflow_node_selection.json, which the report's "
-            "inflow-node reduction check lists. When False (the default) every [INFLOWS] "
-            "junction stays coupled, so the number of surface exchange points does not depend "
-            "on the DEM resolution. In both cases outfalls, storage nodes and dividers are not "
-            "coupled."
+            "Applies only to a coupled system (toggle_tritonswmm_model) whose "
+            "system_config.swmm_coupling_mode is legacy: a coupled system under any other mode "
+            "with it on is refused at run entry, and a system whose coupled model is off writes "
+            "no coupling-node list, so the option has no effect there. When True, scenario "
+            "preparation writes at "
+            "most ONE candidate junction per DEM cell to the coupling-node list, the limit "
+            "TRITON-SWMM required before it coupled any number of nodes per cell. The kept "
+            "junction is the one whose own outgoing link has the largest flow area; on a tie, the "
+            "cell's junction whose outgoing link leaves the cell, then the lowest invert. A "
+            "junction with no outgoing pipe is ranked by its largest incoming pipe. No [INFLOWS] "
+            "line is removed; each prepared scenario records the cells it reduced in "
+            "_status/inflow_node_selection.json, which the report's inflow-node reduction check "
+            "lists. When False (the default) every legacy candidate junction is written, so the "
+            "number of surface exchange points does not depend on the DEM resolution. In both "
+            "cases outfalls, storage nodes and dividers are not coupled."
         ),
     )
     hydraulic_timestep_s: float = Field(

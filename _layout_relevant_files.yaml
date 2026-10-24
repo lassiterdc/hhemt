@@ -3986,3 +3986,7 @@ non_breaking_allowlist:
     layout_signature: 89594652800ac0d22d54373c22020081c3abb80fdf499147947daa3e336ccc9d
     justification: >-
       adds set_swmm_snapshot_failed_replay, a compare-and-write of one cfg line applied at launch; preparation's cfg bytes are unchanged. No on-disk layout change.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: e32e3090b0a9ecffce074ed6c1b9ffd70f7c0f0482fa868a59eb491dfd7fc802
+    justification: >-
+      corrects one_coupled_inflow_node_per_dem_cell's description to the coupling-node declaration's behaviour. Description text only; no on-disk layout change.
