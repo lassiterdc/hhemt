@@ -57,16 +57,18 @@ to a finished report.
 
 ## What it is for
 
-Three classes of study, from one codebase:
+Every analysis is one of two kinds, set by one switch in its configuration:
 
-- **Model comparison.** Run the same event through TRITON, SWMM, and the coupled
-  TRITON-SWMM, and measure what the two-way coupling changes.
-- **Ensemble flood studies.** Many events in parallel, consolidated into
+- **Event ensembles.** Many weather events in parallel, consolidated into
   hierarchical zarr stores with CF-1.13 metadata, ready for analysis across the
   whole population.
-- **Sensitivity analysis and benchmarking.** A parameter table turns each row into
-  a scenario, so you can vary the hydraulic model, roughness, grid resolution, or
-  the compute configuration itself.
+- **Sensitivity analyses.** A parameter table turns each row into a scenario, so
+  you can vary the hydraulic model, roughness, grid resolution, or the compute
+  configuration itself. Benchmarking is the sensitivity analysis whose axis is the
+  compute configuration.
+
+Either kind can run the same event through TRITON, SWMM, and the coupled
+TRITON-SWMM, so you can measure what the two-way coupling changes.
 
 [Capabilities](explanation/capabilities.md) covers each in depth, and
 [Limitations](explanation/limitations.md) is candid about where the toolkit stops.

@@ -5,9 +5,9 @@ What hhemt is for, and what it is not for. For the one-paragraph summary see the
 and where each one is a good fit. For where the toolkit stops, see
 [Limitations and constraints](limitations.md).
 
-## Three classes of study
+## Two kinds of analysis
 
-From a single codebase, the toolkit makes three classes of study tractable: **model comparison** across TRITON, SWMM, and the coupled TRITON-SWMM; **ensemble flood studies** over many events; and **sensitivity analysis**, including the fully built-out benchmarking study type. A fourth, cross-cutting capability, **hardware portability**, lets any of these run unchanged on CPU or on NVIDIA or AMD GPUs, on a workstation or on HPC.
+Every analysis the toolkit runs is one of two kinds, set by the `toggle_sensitivity_analysis` field of its analysis configuration: an **event ensemble**, whose members are weather events, or a **sensitivity analysis**, whose members are the rows of a parameter table, including the fully built-out benchmarking study type. Two capabilities cut across both kinds: **model comparison** across TRITON, SWMM, and the coupled TRITON-SWMM, and **hardware portability**, which lets either kind run unchanged on CPU or on NVIDIA or AMD GPUs, on a workstation or on HPC.
 
 ## Model comparison across TRITON, SWMM, and coupled TRITON-SWMM
 
