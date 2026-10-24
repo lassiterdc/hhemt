@@ -303,9 +303,8 @@ def test_dry_run_orphan_cleanup_does_not_mutate(tmp_path, monkeypatch):
     raises=NotImplementedError,
     reason=(
         "BODY NOT YET WRITTEN. Completing it needs a full non-dry-run 3-row workflow, "
-        "which compiles a solver and is simulation-bearing, so it needs the permission "
-        "that governs solver-executing runs. strict=True is deliberate: when the body "
-        "lands and passes, XPASS fails this test until the marker is removed."
+        "which compiles a solver and runs simulations. strict=True is deliberate: when "
+        "the body lands and passes, XPASS fails this test until the marker is removed."
     ),
 )
 def test_row_removal_preserves_surviving_fingerprints(tmp_path, monkeypatch):
@@ -332,9 +331,8 @@ def test_row_removal_preserves_surviving_fingerprints(tmp_path, monkeypatch):
     raises=NotImplementedError,
     reason=(
         "BODY NOT YET WRITTEN. Completing it needs cleanup_all_orphans(dry_run=False) "
-        "over a real 3-row run, which compiles a solver and is simulation-bearing, so it "
-        "needs the permission that governs solver-executing runs. strict=True is "
-        "deliberate: when the body lands and passes, XPASS fails this test until the "
+        "over a real 3-row run, which compiles a solver and runs simulations. strict=True "
+        "is deliberate: when the body lands and passes, XPASS fails this test until the "
         "marker is removed."
     ),
 )

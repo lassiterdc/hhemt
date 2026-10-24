@@ -12,7 +12,8 @@ def worktree_slug() -> str:
     """Return the worktree slug derived from ``Path.cwd()``.
 
     Matches the current working directory against ``.claude/worktrees/{slug}/``
-    and returns ``{slug}``. Falls back to ``"main"`` when not inside a worktree.
+    and returns ``{slug}``. Outside a worktree it returns ``"path"`` followed by a
+    reversible escape of the whole working directory, so each checkout gets its own slug.
     Canonical shared utility consumed by ``test_case_builder.py`` and
     ``test_case_catalog.py`` to root per-worktree test artifacts under a
     contention-free path so concurrent pytest runs in sibling worktrees do not
