@@ -115,7 +115,7 @@ def test_population_is_keyed_the_way_the_page_is():
     intruders = NOT_THE_PAGE_S_NAMES & reached
     assert not intruders, (
         f"{sorted(intruders)} are not names the page emits. The population is keyed by "
-        f"origin module rather than by the module `api.md` declares the symbol through."
+        f"origin module rather than by the module the API pages declare the symbol through."
     )
     private = sorted(q for q in reached if any(seg.startswith("_") for seg in q.split(".")))
     assert not private, (
@@ -193,7 +193,7 @@ def test_an_option_written_at_its_own_default_is_a_no_op(tmp_path):
 
 
 def test_filters_are_read_from_mkdocs_yml_rather_than_written_here():
-    """The population is a property of `mkdocs.yml` plus `api.md`, read not copied."""
+    """The population is a property of `mkdocs.yml` plus the API pages, read not copied."""
     assert cdc._handler_options()["filters"] == ["!^_"], (
         "mkdocs.yml's python-handler `filters` is no longer what this gate reads; "
         "the population and the page have diverged at the configuration surface"

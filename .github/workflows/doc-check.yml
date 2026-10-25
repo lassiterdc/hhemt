@@ -57,7 +57,7 @@ jobs:
               'This PR touches core modules. Please check whether the public documentation needs updating alongside it:',
               '',
               '- [ ] `docs/reference/config-schema.md` — if a config field was added, renamed, or had its requiredness change',
-              '- [ ] `docs/reference/api.md` — if a MODULE was added or removed. Symbols within a listed module render automatically; the docs-build job fails on any that carries no docstring.',
+              '- [ ] `docs/reference/api.md` or its `api-*.md` pages — if a MODULE was added or removed. Symbols within a listed module render automatically; the docs-build job fails on any that carries no docstring.',
               '- [ ] `docs/how-to/` — if the steps for an existing task changed',
               '- [ ] `docs/explanation/capabilities.md` — if what the toolkit can or cannot do changed',
               '- [ ] Docstrings on any new or changed public symbol — these ARE the API reference',

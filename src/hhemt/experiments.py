@@ -101,9 +101,9 @@ from hhemt.config.loaders import (
 from hhemt.config.system import system_config
 from hhemt.exceptions import ConfigurationError, ProcessingError
 
-#: The published surface of this module. `docs/reference/api.md` renders
-#: `::: hhemt.experiments`, and `scripts/check_autodoc_coverage.py` reads this list two
-#: ways. Its anchor check takes the expected set from `__all__` when one is declared,
+#: The published surface of this module. The API reference (`docs/reference/api.md`
+#: and its `api-*.md` pages) renders `::: hhemt.experiments`, and `scripts/check_autodoc_coverage.py` reads this list
+#: two ways. Its anchor check takes the expected set from `__all__` when one is declared,
 #: falling back to the module's public top-level defs, so this list pins that set to
 #: exactly these names rather than to whatever is defined at module level. Its docstring
 #: check reads `__all__` ONLY, so without this list no symbol here would be checked for an

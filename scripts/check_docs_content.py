@@ -827,7 +827,8 @@ import yaml  # noqa: E402
 
 # ---- The RENDERED-DOCSTRING population ------------------------------------
 #
-# Every member `mkdocstrings` renders on `docs/reference/api.md`, DERIVED FROM
+# Every member `mkdocstrings` renders on `docs/reference/api.md` and its `api-*.md`
+# pages, DERIVED FROM
 # `griffe` -- the library `mkdocstrings` itself uses -- under the options this
 # repository's own `mkdocs.yml` declares. Nothing here models the renderer.
 #
@@ -843,7 +844,7 @@ import yaml  # noqa: E402
 #     `analysis.py` classes rendered unscanned while `experiment_bundle.py`'s
 #     imported `ExperimentConfig` was scanned and rendered nowhere.
 #   * It keyed members by their ORIGIN module. The page keys them by the module
-#     `api.md` declares them through, so 52 of 173 names -- every re-exported
+#     the API pages declare them through, so 52 of 173 names -- every re-exported
 #     symbol, which is to say every name a public API page exists to present --
 #     were names no reader or link ever sees.
 #
@@ -882,7 +883,7 @@ import yaml  # noqa: E402
 # an earlier measurement of it read as smaller than it is.
 #
 # `filters` is READ from `mkdocs.yml` rather than written here, because the
-# population is a property of that file plus `api.md`, and a second copy of a
+# population is a property of that file plus the API pages, and a second copy of a
 # setting is a second thing to drift. An option this cannot model raises rather
 # than being ignored: a silent no-op on a setting somebody wrote deliberately is
 # the same failure that produced the three defects above, wearing a config file.
@@ -1162,7 +1163,7 @@ def rendered_docstrings(src: Path = None, api_page: Path = None) -> list[tuple[s
     if not resolved:
         roots_text = ", ".join(str(root) for root in roots)
         raise PopulationDerivationError(
-            f"no module named on {api_page} resolved under {roots_text} -- nothing to check."
+            f"no module named on {api_page} or its pages resolved under {roots_text} -- nothing to check."
         )
     loader.resolve_aliases(external=False)
 
@@ -1271,7 +1272,7 @@ def published_source_lines(src: Path = SRC_ROOT, api_page: Path = API_PAGE) -> d
     if not resolved:
         roots_text = ", ".join(str(root) for root in roots)
         raise PopulationDerivationError(
-            f"no module named on {api_page} resolved under {roots_text} -- nothing to check."
+            f"no module named on {api_page} or its pages resolved under {roots_text} -- nothing to check."
         )
     loader.resolve_aliases(external=False)
 
@@ -1730,7 +1731,7 @@ def _run(args: argparse.Namespace) -> int:
         f"scanned {len(shipped)} shipped-metadata file(s) for placeholders and line "
         f"citations only: {', '.join(shipped) if shipped else '(none found)'}",
         f"scanned {sum(len(v) for v in spans.values())} published source line(s) across "
-        f"{len(spans)} file(s) from {API_PAGE.name} -- every line the page renders for a "
+        f"{len(spans)} file(s) from {API_PAGE.name} and its api-*.md pages -- every line the pages render for a "
         f"member, which is its SOURCE BODY as well as its docstring because show_source is "
         f"on -- for placeholders and line citations only; their vocabulary and punctuation "
         f"are D22b out-of-scope and are reported under --advisory, never gated",

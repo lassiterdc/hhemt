@@ -28,6 +28,7 @@ docstrings is routed around, which is worse than no checker.
 
 GROUND TRUTH IS DERIVED, NOT DECLARED. The module set comes from
 ``check_autodoc_coverage.public_modules()``, which parses ``docs/reference/api.md``
+and its ``api-*.md`` pages
 -- so this script and that one cannot diverge. That script's own history is the
 reason: a hand-maintained tuple there mirrored the rendering page and silently
 diverged at 6 entries against 8.
@@ -207,7 +208,9 @@ def flagged(src: Path, api_page: Path, style: str) -> list[tuple[str, str]]:
                 if hit and not native.search(doc):
                     out.append((qualname, hit.group(1)))
     if not examined:
-        raise ValueError(f"no module named on {api_page} resolved to a file under {src} -- nothing to check.")
+        raise ValueError(
+            f"no module named on {api_page} or its pages resolved to a file under {src} -- nothing to check."
+        )
     return sorted(out)
 
 

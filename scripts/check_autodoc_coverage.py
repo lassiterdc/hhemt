@@ -2,7 +2,8 @@
 """CI check: every public class/function in a public module's __all__ renders as a
 mkdocstrings doc-object anchor in the built site (ADR-7 docs-accuracy proxy).
 
-Pairs with docs/reference/api.md (the per-submodule ``:::`` directives) and the
+Pairs with docs/reference/api.md and its ``api-*.md`` pages (the per-submodule ``:::``
+directives) and the
 `docs-build` GitHub Actions job, which builds the site this script inspects.
 
 Ground truth = the union of every public module's ``__all__`` (leading-underscore
@@ -21,13 +22,14 @@ Two independent assertions, because an anchor and a docstring are different fact
      heading). Without (2) a symbol renders as a bare name and this gate is green.
 
 Exit 0 = both hold. 1 = >=1 failure of either (enumerated separately).
-2 = usage/environment error (site dir absent, import failure, api.md absent or
-declaring no directives). Pure stdlib.
+2 = usage/environment error (site dir absent, import failure, api.md absent, an
+``api-*.md`` page declaring no directive, a module declared twice, or no directive
+at all). Pure stdlib.
 
 The population is bound to THIS checkout's ``src`` through ``scripts/local_src.py``
 (prepend, purge, then a provenance assert on every imported module), and one
 ``population root:`` line printed immediately before the verdict names the tree the
-symbols came from, the API page, and the site. A bare ``python`` run of this script
+symbols came from, the API pages, and the site. A bare ``python`` run of this script
 from a worktree therefore grades the worktree, not whichever checkout the shared
 editable install last pointed at.
 """
@@ -46,7 +48,8 @@ from types import ModuleType
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from local_src import assert_resolved_under, bind_local_src  # noqa: E402
 
-# The documented surface is DERIVED from docs/reference/api.md's ``:::`` directives
+# The documented surface is DERIVED from the ``:::`` directives on docs/reference/api.md
+# and its ``api-*.md`` pages
 # rather than declared here. That is deliberate and it removes a defect class rather
 # than an instance of one: a hand-maintained tuple here mirrored a hand-maintained
 # rendering surface there, and the two silently diverged — measured 2026-08-26 at 6
@@ -61,21 +64,37 @@ SRC_ROOT = Path(__file__).resolve().parent.parent / "src"
 
 
 def public_modules(api_page: Path = API_REFERENCE_PAGE) -> tuple[str, ...]:
-    """Module names from the ``::: {module}`` directives on the API reference page.
+    """Module names from the ``::: {module}`` directives on the API reference pages.
 
-    Raises FileNotFoundError if the page is absent, and ValueError if it declares
-    no directives — both are environment errors rather than coverage misses, and
-    an empty derived set would otherwise make this gate pass vacuously.
+    The pages are ``api_page`` and every ``{stem}-*.md`` page beside it, read in that
+    order: ``api_page`` first, then the others by name. ``api_page`` may declare no
+    directive, which is the hub form; every other page must declare at least one.
+
+    Raises FileNotFoundError if ``api_page`` is absent, and ValueError if a
+    ``{stem}-*.md`` page declares no directive, if one module is declared twice, or
+    if the pages declare no directive at all. Each is an environment error rather
+    than a coverage miss: an empty or partly empty page would otherwise shrink the
+    derived set without a sound, and a module declared twice renders its anchors
+    twice.
     """
-    text = api_page.read_text(encoding="utf-8")
-    mods = tuple(
-        line.split(":::", 1)[1].strip()
-        for line in text.splitlines()
-        if line.startswith(":::") and line.split(":::", 1)[1].strip()
-    )
-    if not mods:
-        raise ValueError(f"{api_page} declares no ``:::`` directives — nothing to check.")
-    return mods
+    pages = [api_page, *sorted(api_page.parent.glob(f"{api_page.stem}-*.md"))]
+    declared_on: dict[str, Path] = {}
+    for page in pages:
+        text = page.read_text(encoding="utf-8")
+        found = [
+            line.split(":::", 1)[1].strip()
+            for line in text.splitlines()
+            if line.startswith(":::") and line.split(":::", 1)[1].strip()
+        ]
+        if page != api_page and not found:
+            raise ValueError(f"{page} declares no ``:::`` directives — an emptied API page.")
+        for module in found:
+            if module in declared_on:
+                raise ValueError(f"{module} is declared on both {declared_on[module]} and {page}.")
+            declared_on[module] = page
+    if not declared_on:
+        raise ValueError(f"{api_page} and its sibling pages declare no ``:::`` directives — nothing to check.")
+    return tuple(declared_on)
 
 
 def _declared_public(mod) -> list[str]:
@@ -224,7 +243,10 @@ def _provenance_line(site_dir: Path, *, import_failed: bool = False) -> str:
     package = sys.modules.get("hhemt")
     origin = None if import_failed or package is None else getattr(package, "__file__", None)
     resolved = f"hhemt resolved at {Path(origin).resolve().parent}" if origin else "hhemt import FAILED"
-    return f"population root: {SRC_ROOT} ({resolved}); api page: {API_REFERENCE_PAGE}; site: {site_dir.resolve()}"
+    return (
+        f"population root: {SRC_ROOT} ({resolved}); "
+        f"api pages: {API_REFERENCE_PAGE} and its api-*.md pages; site: {site_dir.resolve()}"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -254,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {qual}", file=sys.stderr)
         print(
             f"\n{len(missing)}/{len(expected)} public symbols unrendered. Add a "
-            f"`::: {{module}}` directive to docs/reference/api.md or check mkdocstrings "
+            f"`::: {{module}}` directive to a docs/reference/api-*.md page or check mkdocstrings "
             f"filters.",
             file=sys.stderr,
         )
@@ -281,7 +303,8 @@ def main(argv: list[str] | None = None) -> int:
         f"`__all__`, or defined at module level where a module declares none, render "
         f"a doc anchor; each of those {len(expected)} carries a docstring. Neither "
         f"clause reaches a symbol outside that rule, and neither detects a module "
-        f"dropped from docs/reference/api.md — see `public_modules`."
+        f"dropped from the API reference pages — see `public_modules`, and "
+        f"`check_published_surface.py`, whose baseline does detect one."
     )
     return 0
 
