@@ -2,7 +2,7 @@
 
 FAIR is applied as a continuum over the whole recreation set (inputs, configs, captured
 environment, provenance, and outputs), not outputs alone. The **dataset** license (below) is
-chosen separately from the software license (the toolkit is PolyForm-NC source-available;
+chosen separately from the software license (the toolkit's source is AGPL-3.0-or-later;
 the dataset defaults to CC0-1.0, an open public good, which is a recognized and coherent pattern).
 
 | Artifact class | Findable | Accessible | Interoperable | Reusable |

@@ -3,14 +3,14 @@
 
 ## Licensing of contributions
 
-This project is currently released under the
-[PolyForm Noncommercial License 1.0.0](https://github.com/lassiterdc/hhemt/blob/main/LICENSE).
+This project's source is licensed under the
+[GNU Affero General Public License, version 3 or any later version (AGPL-3.0-or-later)](https://www.gnu.org/licenses/agpl-3.0.html) (see `LICENSE`).
 
 By submitting a contribution (a pull request, patch, or any other work)
 to this project, you agree that:
 
 1. **Inbound = outbound.** Your contribution is provided under the same
-   license as the project (PolyForm Noncommercial License 1.0.0), and
+   license as the project (AGPL-3.0-or-later), and
    you have the right to submit it under that license.
 
 2. **Forward relicensing.** You grant the maintainer permission to
