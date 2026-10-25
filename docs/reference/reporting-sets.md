@@ -63,16 +63,17 @@ report:
     - benchmarking
 ```
 
-That list composes to the same bundle as `benchmarking` alone. All but one of
-the pairs the rules below admit behave the same way. In each of them one set
-already carries everything the other does, so naming the larger set is enough.
-The one pair that adds figures is `compute-sensitivity` with `dem-resolution`,
-and it passes every rule below and still cannot render the figures it adds:
-`config_diff_maps` subtracts members cell-wise and refuses members on different
-grids, while the `dem-resolution` figures need a ladder of grids, so no single
-sweep serves both. Run them as two sweeps, as
-[Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md)
-does.
+??? note "Which compositions add figures, and the one pair to run as two sweeps"
+    That list composes to the same bundle as `benchmarking` alone. All but one of
+    the pairs the rules below admit behave the same way. In each of them one set
+    already carries everything the other does, so naming the larger set is enough.
+    The one pair that adds figures is `compute-sensitivity` with `dem-resolution`,
+    and it passes every rule below and still cannot render the figures it adds:
+    `config_diff_maps` subtracts members cell-wise and refuses members on different
+    grids, while the `dem-resolution` figures need a ladder of grids, so no single
+    sweep serves both. Run them as two sweeps, as
+    [Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md)
+    does.
 
 Four rules apply, and all four are checked at `analysis.run()` entry, before any
 compute is committed:

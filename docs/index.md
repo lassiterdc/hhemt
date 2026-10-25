@@ -77,7 +77,7 @@ TRITON-SWMM, so you can measure what the two-way coupling changes.
 
 If you use hhemt in published work, cite it:
 
-```text
+``` { .text .copy }
 Lassiter, D. (2026). H&H Ensemble Modeling Toolkit (hhemt) (Version 0.1.0)
 [Computer software]. https://doi.org/10.5281/zenodo.21359152
 ```
