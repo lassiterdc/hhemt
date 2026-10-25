@@ -14,7 +14,7 @@ maintainers = [
   {name = "Daniel Lassiter", email = "daniel.lassiter@outlook.com"}
 ]
 # NOTE: do NOT add a `License :: ...` trove classifier. With PEP 639
-# `license = "PolyForm-Noncommercial-1.0.0"` + setuptools>=77, a legacy License
+# `license = "AGPL-3.0-or-later"` + setuptools>=77, a legacy License
 # classifier raises setuptools InvalidConfigError at build time (verified). Every
 # string below is a valid live PyPI classifier — PyPI rejects unknown ones at
 # upload, which would fail the publish AFTER the irreversible tag push.
@@ -29,7 +29,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: GIS",
 ]
 
-license = "PolyForm-Noncommercial-1.0.0"
+license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 
 dependencies = [
