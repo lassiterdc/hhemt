@@ -79,6 +79,12 @@ plugins:
   - search
   - htmlproofer:
       validate_external_urls: false
+      # A link from one API page to a symbol on another is an autorefs link, and
+      # htmlproofer looks for its anchor among the target page's Markdown headings,
+      # where a symbol anchor never is. mkdocs-autorefs already fails the strict
+      # build on a cross-reference it cannot resolve, so these are not unchecked.
+      ignore_urls:
+        - "../api-*/#hhemt*"
   - mkdocstrings:
       handlers:
         python:
@@ -131,7 +137,14 @@ nav:
       - DOI round-trip (operator): how-to/doi-roundtrip-e2e.md
   - Reference:
       - reference/index.md
-      - API Reference: reference/api.md
+      - API Reference:
+          - reference/api.md
+          - reference/api-toolkit.md
+          - reference/api-analysis.md
+          - reference/api-bundles.md
+          - reference/api-experiments.md
+          - reference/api-eda.md
+          - reference/api-version-migration.md
       - Configuration schema: reference/config-schema.md
       - CLI reference: reference/cli.md
       - Output data model: reference/output-data-model.md
