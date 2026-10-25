@@ -60,6 +60,17 @@ the combination rather than failing mid-run.
 
 **Only coupling-candidate junctions exchange water with the surface.** `swmm_coupling_mode` chooses the candidates; outfalls, and in this build storage nodes and dividers, are not coupled, and an optional limit (legacy only) keeps one junction per DEM cell; see [Coupled inflow nodes](coupled-inflow-nodes.md).
 
+**Coupled water quality is limited.** In a coupled analysis no subcatchment washoff reaches the
+network, so only the sources the hydraulics model declares (dry-weather and external inflow
+concentrations, RDII, initial concentrations) produce pollutant mass. Pollutant mass that leaves
+for the 2D surface is counted in `Quality Routing Continuity` External Outflow and is not
+transported. A resume from a checkpoint snapshot does not carry SWMM's node and link
+water-quality state, so a quality-routed coupled run resumes by exact replay unless
+`swmm_snapshot_disable` is set to `false`; for an event that did resume from a snapshot, the
+water-quality statistics are withheld (NaN, with `pollutant_stats_status` giving the reason) while
+the concentration time series are kept. This follows from the solver's snapshot inventory, which
+excludes the node and link quality fields. See the [output data model](../reference/output-data-model.md).
+
 **Walltime is a real boundary.** A simulation killed at walltime resumes from its
 most recent checkpoint, but resumption is a property of the solver's checkpoint
 cadence, not something the toolkit can add. Size allocations with that in mind.

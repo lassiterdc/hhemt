@@ -125,6 +125,41 @@ table does not cover it, and inventing one would be worse than leaving it unset.
 The two ratio variables are dimensionless, which CF expresses as units `1`. A
 value above 1 means the conduit exceeded its design capacity.
 
+### Water-quality results (SWMM, quality-routed models only)
+
+These variables are written only when the SWMM report prints `Water Quality .......... YES`,
+which SWMM does when the model declares at least one pollutant and `IGNORE_QUALITY` is not `YES`.
+For any other model none of the names, coordinates or dimensions below exist, and the outputs
+are identical to those of a model with no pollutants. They are carried along a `pollutant`
+dimension, whose coordinate lists the pollutant identifiers in the model's `[POLLUTANTS]` order;
+the coordinate `pollutant_conc_units` gives each pollutant's declared concentration unit
+(`mg/L`, `ug/L` or `#/L`).
+
+| Variable | Dimensions | Units | Meaning |
+|---|---|---|---|
+| `pollutant_conc` | node, time, pollutant | per `pollutant_conc_units` | Node concentration at each report step (time-series file) |
+| `link_pollutant_conc` | link, time, pollutant | per `pollutant_conc_units` | Link concentration at each report step (time-series file) |
+| `pollutant_max_conc` | node, pollutant | per `pollutant_conc_units` | Maximum node concentration over the event |
+| `pollutant_time_of_max_conc_min` | node, pollutant | `minutes` | Minutes from the simulation start to the first step at the maximum |
+| `outfall_total_load` | node, pollutant | `kg` (a count for `#/L`) | Total mass discharged at each outfall; NaN at other nodes |
+| `outfall_total_vol_10e6_ltr` | node | `1e6 L` | Total volume discharged at each outfall |
+| `outfall_emc` | node, pollutant | per `pollutant_conc_units` | Event mean concentration: total load over total volume; NaN where the volume is zero |
+| `link_total_load` | link, pollutant | `kg` (a count for `#/L`) | Total mass carried by each link over the run |
+| `washoff_total_load` | subcatchment, pollutant | `kg` (a count for `#/L`) | Total washoff per subcatchment (in the hydrology summary; on the node dataset for a standalone model) |
+| `qual_routing_{term}` | pollutant | `kg` (a count for `#/L`) | One variable per row of SWMM's `Quality Routing Continuity` table: `dry_weather_inflow`, `wet_weather_inflow`, `groundwater_inflow`, `rdii_inflow`, `external_inflow`, `external_outflow`, `flooding_loss`, `exfiltration_loss`, `mass_reacted`, `initial_stored_mass`, `final_stored_mass` |
+| `qual_routing_continuity_error_perc` | pollutant | `percent` | That table's continuity error |
+| `runoff_qual_{term}` | pollutant | `kg` (a count for `#/L`) | One variable per row of `Runoff Quality Continuity`: `initial_buildup`, `surface_buildup`, `wet_deposition`, `sweeping_removal`, `infiltration_loss`, `bmp_removal`, `surface_runoff`, `remaining_buildup` |
+| `runoff_qual_continuity_error_perc` | pollutant | `percent` | That table's continuity error |
+| `pollutant_stats_status` (coordinate, coupled summaries) | event | n/a | `computed`, `computed: resumed by exact replay`, or the reason the statistics are withheld |
+
+SWMM prints the mass of a count pollutant (`#/L`) as a base-10 logarithm; the toolkit linearizes
+every mass value, mapping a printed `0.000` to 0. Concentrations in the coupled model come from the
+SWMM report, which prints them to 0.001 of the pollutant's unit, so a trace pollutant is best
+declared in `UG/L`. The two continuity percentage errors are read as printed. A variable's `units`
+is omitted, with a `comment`, when the pollutants do not all share one unit. The concentration series
+carry no peak statistic under the generic `_max`/`_last` names, so the set of columns compared across
+simulations is the same with and without water quality.
+
 ## Global attributes
 
 Tree roots carry `Conventions: "CF-1.13"`, `analysis_id`, and `system_id`.

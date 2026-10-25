@@ -161,22 +161,29 @@ def test_the_field_defaults_to_false_on_analysis_config():
 
 
 def test_the_field_declaration_matches_its_siblings_shape():
-    """Declaration PARITY with the sibling, so the two cannot drift apart.
+    """Declaration PARITY with the sibling on every property the two still share, and the one
+    designed asymmetry pinned exactly, so the two cannot drift apart unnoticed.
 
-    Asserted as parity rather than as a restated form: `field_meta()` is absent on BOTH
-    fields, which is correct for an unconditional `bool` with no closed-set glossary
-    (`field_meta()` would return `{}`), and parity is what keeps a future change to one
-    field's declaration from leaving the other behind.
+    `swmm_snapshot_disable` became `bool | None = None` so that an unset value can resolve per
+    scenario (exact replay for a quality-routed coupled model); `swmm_snapshot_keep_all` stays
+    `bool = False`. That asymmetry is asserted as two exact contracts rather than dropped, so
+    a change to EITHER field's type or default still turns this test red. Every other property
+    stays a parity assertion: both optional, `field_meta()` absent on both (correct for a
+    field with no closed-set glossary, where `field_meta()` would return `{}`), and a
+    description on both, because it is the rendered-config-reference text.
     """
     from hhemt.config.analysis import analysis_config
 
     new = analysis_config.model_fields["swmm_snapshot_keep_all"]
     sibling = analysis_config.model_fields["swmm_snapshot_disable"]
-    assert new.annotation is sibling.annotation is bool
-    assert new.default == sibling.default
-    assert new.is_required() == sibling.is_required()
+    assert new.annotation is bool
+    assert new.default is False
+    assert sibling.annotation == (bool | None)
+    assert sibling.default is None
+    assert new.is_required() == sibling.is_required() is False
     assert (new.json_schema_extra is None) == (sibling.json_schema_extra is None)
     assert new.description, "the field must carry a description — it is the rendered-config-reference text"
+    assert sibling.description, "the sibling must carry a description — it is the rendered-config-reference text"
 
 
 def test_the_field_is_bucketed_experiment_for_the_reprex_guide():

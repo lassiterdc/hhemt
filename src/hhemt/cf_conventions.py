@@ -902,31 +902,7 @@ _QUANTITY_PROVENANCE_BY_MODE: dict[str, dict[str, dict[str, str]]] = {
 }
 
 
-#: Every variable `metadata.build_analysis_crate` may advertise in `variableMeasured`.
-#:
-#: DECLARED HERE AND IMPORTED BY `metadata.py` RATHER THAN REBUILT THERE, because the
-#: descriptor drift guard (`tests/test_quantity_provenance.py`) asserts coverage OF THE
-#: ADVERTISED UNION. A union recomputed independently in the guard would be a second
-#: expression of the same set: widening the advertisement would then leave the guard green
-#: against an uncovered variable, which is the precise failure the guard exists to catch.
-#: With one constant, widening the advertisement THROUGH THAT CONSTANT moves the guard by
-#: construction. The qualifier is the whole content of the sentence and it was absent until
-#: 2026-10-01: the guard is total over the CONSTANT, never over what the producer ADVERTISES, so a
-#: producer-local re-widening at the advertisement site -- iterating `{**_ADVERTISABLE_VARIABLES,
-#: **anything_else}` instead of this object -- advertises names the guard cannot see and leaves it
-#: GREEN. Measured: adding one name to this dict turns the bijection guard red, and adding the same
-#: name at the advertisement site instead leaves it green with the name advertised. So this is the
-#: sentence a future reader would trust to conclude no further check is needed, and the unqualified
-#: form licenses exactly the drift it claims to foreclose. The property that holds is narrower and
-#: is what the import buys: there is ONE object, so a widening EXPRESSED HERE cannot bypass the
-#: guard; a widening expressed anywhere else can, and nothing mechanical prevents it.
-_ADVERTISABLE_VARIABLES: dict[str, dict[str, str | None]] = {**_CF_VARIABLE_MAP, **_CF_PERFORMANCE_VARIABLES}
-
-
-#: Every variable for which a descriptor exists on the mode-blind read path. The two
-#: source tables are DISJOINT in their keys -- asserted by the drift guard, not assumed --
-#: so no name resolves two ways here.
-_DESCRIBED_VARIABLES: dict[str, dict[str, str]] = {**_QUANTITY_PROVENANCE, **_PERF_QUANTITY_PROVENANCE}
+# `_ADVERTISABLE_VARIABLES` and `_DESCRIBED_VARIABLES` are defined below the water-quality tables, which they include.
 
 
 def quantity_provenance(var_name: str, mode: str | None = None) -> dict[str, str] | None:
@@ -962,7 +938,365 @@ def quantity_provenance(var_name: str, mode: str | None = None) -> dict[str, str
     return dict(entry) if entry is not None else None
 
 
+# --- SWMM water-quality variables (written only for a model whose report prints Water Quality YES) ---
+#
+# Their units depend on the pollutants (one concentration unit per pollutant, along the `pollutant`
+# dimension), so `units` is filled by `_apply_pollutant_units` from the dataset's own
+# `pollutant_conc_units` coordinate rather than fixed here. CF allows one unit per variable, so when
+# the pollutants do not all share a unit the variable carries no `units` and a `comment` pointing at
+# that coordinate: a stated departure forced by a per-pollutant unit along one dimension.
+_POLLUTANT_CONC_VARIABLES = frozenset({"pollutant_conc", "link_pollutant_conc", "pollutant_max_conc", "outfall_emc"})
+_QUAL_ROUTING_STEMS = (
+    "dry_weather_inflow",
+    "wet_weather_inflow",
+    "groundwater_inflow",
+    "rdii_inflow",
+    "external_inflow",
+    "external_outflow",
+    "flooding_loss",
+    "exfiltration_loss",
+    "mass_reacted",
+    "initial_stored_mass",
+    "final_stored_mass",
+)
+_RUNOFF_QUAL_STEMS = (
+    "initial_buildup",
+    "surface_buildup",
+    "wet_deposition",
+    "sweeping_removal",
+    "infiltration_loss",
+    "bmp_removal",
+    "surface_runoff",
+    "remaining_buildup",
+)
+_POLLUTANT_MASS_VARIABLES = frozenset(
+    {"outfall_total_load", "link_total_load", "washoff_total_load"}
+    | {f"qual_routing_{stem}" for stem in _QUAL_ROUTING_STEMS}
+    | {f"runoff_qual_{stem}" for stem in _RUNOFF_QUAL_STEMS}
+)
+
+
+def _water_quality_cf_entries() -> dict[str, dict[str, str | None]]:
+    """CF entries for every SWMM water-quality variable; `units` left None where it depends on the data."""
+    entries: dict[str, dict[str, str | None]] = {
+        "pollutant_conc": {
+            "standard_name": None,
+            "long_name": "Pollutant concentration at the node at each report step",
+            "units": None,
+            "cell_methods": None,
+        },
+        "link_pollutant_conc": {
+            "standard_name": None,
+            "long_name": "Pollutant concentration in the link at each report step",
+            "units": None,
+            "cell_methods": None,
+        },
+        "pollutant_max_conc": {
+            "standard_name": None,
+            "long_name": "Maximum pollutant concentration at the node over the event",
+            "units": None,
+            "cell_methods": "time: maximum",
+        },
+        "pollutant_time_of_max_conc_min": {
+            "standard_name": None,
+            "long_name": "Time of maximum pollutant concentration (minutes from simulation start)",
+            "units": "minutes",
+            "cell_methods": None,
+        },
+        "outfall_total_load": {
+            "standard_name": None,
+            "long_name": "Total pollutant mass discharged at the outfall over the event",
+            "units": None,
+            "cell_methods": "time: sum",
+        },
+        "outfall_total_vol_10e6_ltr": {
+            "standard_name": None,
+            "long_name": "Total volume discharged at the outfall over the event",
+            "units": "1e6 L",
+            "cell_methods": "time: sum",
+        },
+        "outfall_emc": {
+            "standard_name": None,
+            "long_name": "Event mean concentration at the outfall (total load over total volume)",
+            "units": None,
+            "cell_methods": "time: mean",
+        },
+        "link_total_load": {
+            "standard_name": None,
+            "long_name": "Total pollutant mass carried by the link over the run",
+            "units": None,
+            "cell_methods": "time: sum",
+        },
+        "washoff_total_load": {
+            "standard_name": None,
+            "long_name": (
+                "Total pollutant mass washed off the subcatchment over the run "
+                "(in a coupled analysis generated in the hydrology model and not routed)"
+            ),
+            "units": None,
+            "cell_methods": "time: sum",
+        },
+        "qual_routing_continuity_error_perc": {
+            "standard_name": None,
+            "long_name": "Quality Routing Continuity error",
+            "units": "percent",
+            "cell_methods": None,
+        },
+        "runoff_qual_continuity_error_perc": {
+            "standard_name": None,
+            "long_name": "Runoff Quality Continuity error",
+            "units": "percent",
+            "cell_methods": None,
+        },
+    }
+    for stem in _QUAL_ROUTING_STEMS:
+        entries[f"qual_routing_{stem}"] = {
+            "standard_name": None,
+            "long_name": f"Quality Routing Continuity: {stem.replace('_', ' ')} (pollutant mass)",
+            "units": None,
+            "cell_methods": None,
+        }
+    for stem in _RUNOFF_QUAL_STEMS:
+        entries[f"runoff_qual_{stem}"] = {
+            "standard_name": None,
+            "long_name": f"Runoff Quality Continuity: {stem.replace('_', ' ')} (pollutant mass)",
+            "units": None,
+            "cell_methods": None,
+        }
+    return entries
+
+
+#: Kept OUT of `_CF_VARIABLE_MAP` on purpose, in the form the module already uses for the thirteen
+#: performance columns. `metadata.build_analysis_crate` advertises `_CF_VARIABLE_MAP` WHOLE on its
+#: `emitted_vars=None` branch, so a name there is claimed for every store on that branch; these
+#: variables exist only in the stores of quality-routed models. They instead join the GATED union
+#: `_ADVERTISABLE_VARIABLES` below, which the crate builder filters to the variables a store holds, so a
+#: quality-routed deposit lists the water-quality variables it contains and any other lists none.
+#: `apply_cf_attributes` consults this table after the main one, so their attributes are applied.
+_WATER_QUALITY_CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = _water_quality_cf_entries()
+
+
+# Computed-quantity provenance for the 30 water-quality variables (SWMM models that route quality).
+#
+# A separate table, joined into `_DESCRIBED_VARIABLES` below, for the reason `_PERF_QUANTITY_PROVENANCE`
+# is: these names are advertised only through the gated union, and the drift guard holds the descriptor
+# set equal to the advertised set. Every row names the code that computes it:
+#   - the time series are read per report step from the report/output columns (`swmm_output_parser`);
+#   - `pollutant_max_conc` and `pollutant_time_of_max_conc_min` are computed by
+#     `process_simulation.summarize_swmm_simulation_results` (max over date_time; minutes from the
+#     report's Starting Date to the first step at that maximum);
+#   - the load, volume, washoff and continuity variables are READ AS PRINTED from SWMM's own tables
+#     (`parse_rpt_quality_summaries`), with a count pollutant's LOG10 value linearized by 10**x;
+#   - `outfall_emc` is total load over total volume, scaled to the pollutant's concentration unit.
+_WQ_REDUCED_NONE = "none (read as printed for the whole run)"
+
+
+def _wq_printed(spatial, table, label, operation, expr, *, kind="row"):
+    """One descriptor for a value read as printed from a SWMM report table.
+
+    `kind` says whether `label` names a ROW or a COLUMN of that table; the Outfall Loading Summary
+    prints one row per outfall, so its `Total {pollutant}` and `Total Volume` labels are columns.
+    """
+    return {
+        "spatial_representation": spatial,
+        "source_variables": f"SWMM report, {table}, {kind} {label}",
+        "operation": operation,
+        "operation_expr": expr,
+        "reduced_coordinate": _WQ_REDUCED_NONE,
+    }
+
+
+_WQ_QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
+    "pollutant_conc": {
+        "spatial_representation": "point (node)",
+        "source_variables": "SWMM node pollutant concentration, one report column per pollutant",
+        "operation": "value at each report step (time series, not reduced)",
+        "operation_expr": "C(t)",
+        "reduced_coordinate": "none (time series); pollutant is retained",
+    },
+    "link_pollutant_conc": {
+        "spatial_representation": "line (conduit)",
+        "source_variables": "SWMM link pollutant concentration, one report column per pollutant",
+        "operation": "value at each report step (time series, not reduced)",
+        "operation_expr": "C(t)",
+        "reduced_coordinate": "none (time series); pollutant is retained",
+    },
+    "pollutant_max_conc": {
+        "spatial_representation": "point (node)",
+        "source_variables": "pollutant_conc node concentration time series",
+        "operation": "maximum over the simulation period, per pollutant",
+        "operation_expr": "max_t C",
+        "reduced_coordinate": "reporting time (not retained in the summary)",
+    },
+    "pollutant_time_of_max_conc_min": {
+        "spatial_representation": "point (node)",
+        "source_variables": "pollutant_conc node concentration time series, simulation Starting Date",
+        "operation": "minutes from the simulation start to the first report step at which the maximum occurs",
+        "operation_expr": "t_start-to-argmax_t C (first occurrence)",
+        "reduced_coordinate": "reporting time (not retained in the summary)",
+    },
+    "outfall_total_load": _wq_printed(
+        "point (node)",
+        "Outfall Loading Summary",
+        "Total {pollutant}",
+        "total pollutant mass discharged over the run, as printed by SWMM; a count pollutant is linearized",
+        "M_out (10**x for a count pollutant)",
+        kind="column",
+    ),
+    "outfall_total_vol_10e6_ltr": _wq_printed(
+        "point (node)",
+        "Outfall Loading Summary",
+        "Total Volume",
+        "total volume discharged over the run, as printed by SWMM",
+        "V_out",
+        kind="column",
+    ),
+    "outfall_emc": {
+        "spatial_representation": "point (node)",
+        "source_variables": "outfall_total_load, outfall_total_vol_10e6_ltr",
+        "operation": (
+            "event mean concentration: total load over total volume, scaled to the pollutant's concentration "
+            "unit; NaN where the volume is zero"
+        ),
+        "operation_expr": "M_out / V_out",
+        "reduced_coordinate": _WQ_REDUCED_NONE,
+    },
+    "link_total_load": _wq_printed(
+        "line (conduit)",
+        "Link Pollutant Load Summary",
+        "per link",
+        "total pollutant mass carried by the link over the run, as printed by SWMM; a count pollutant is linearized",
+        "M_link (10**x for a count pollutant)",
+    ),
+    "washoff_total_load": _wq_printed(
+        "polygon (subcatchment)",
+        "Subcatchment Washoff Summary",
+        "per subcatchment",
+        "total pollutant mass washed off each subcatchment over the run, as printed; a count pollutant is linearized",
+        "M_washoff (10**x for a count pollutant)",
+    ),
+    "qual_routing_continuity_error_perc": _wq_printed(
+        "whole domain (scalar)",
+        "Quality Routing Continuity",
+        "Continuity Error (%)",
+        "percentage continuity error of the quality routing balance, as printed (SWMM computes it before any LOG10)",
+        "100 (in - out) / in, SWMM's own",
+    ),
+    "runoff_qual_continuity_error_perc": _wq_printed(
+        "whole domain (scalar)",
+        "Runoff Quality Continuity",
+        "Continuity Error (%)",
+        "percentage continuity error of the runoff quality balance, as printed (SWMM computes it before any LOG10)",
+        "100 (in - out) / in, SWMM's own",
+    ),
+}
+_QUAL_ROUTING_ROW_LABELS = {
+    "dry_weather_inflow": "Dry Weather Inflow",
+    "wet_weather_inflow": "Wet Weather Inflow",
+    "groundwater_inflow": "Groundwater Inflow",
+    "rdii_inflow": "RDII Inflow",
+    "external_inflow": "External Inflow",
+    "external_outflow": "External Outflow",
+    "flooding_loss": "Flooding Loss",
+    "exfiltration_loss": "Exfiltration Loss",
+    "mass_reacted": "Mass Reacted",
+    "initial_stored_mass": "Initial Stored Mass",
+    "final_stored_mass": "Final Stored Mass",
+}
+_RUNOFF_QUAL_ROW_LABELS = {
+    "initial_buildup": "Initial Buildup",
+    "surface_buildup": "Surface Buildup",
+    "wet_deposition": "Wet Deposition",
+    "sweeping_removal": "Sweeping Removal",
+    "infiltration_loss": "Infiltration Loss",
+    "bmp_removal": "BMP Removal",
+    "surface_runoff": "Surface Runoff",
+    "remaining_buildup": "Remaining Buildup",
+}
+for _stem, _label in _QUAL_ROUTING_ROW_LABELS.items():
+    _WQ_QUANTITY_PROVENANCE[f"qual_routing_{_stem}"] = _wq_printed(
+        "whole domain (scalar)",
+        "Quality Routing Continuity",
+        _label,
+        "pollutant mass term of the quality routing balance over the run, as printed; a count pollutant is linearized",
+        "M_term (10**x for a count pollutant)",
+    )
+for _stem, _label in _RUNOFF_QUAL_ROW_LABELS.items():
+    _WQ_QUANTITY_PROVENANCE[f"runoff_qual_{_stem}"] = _wq_printed(
+        "whole domain (scalar)",
+        "Runoff Quality Continuity",
+        _label,
+        "pollutant mass term of the runoff quality balance over the run, as printed; a count pollutant is linearized",
+        "M_term (10**x for a count pollutant)",
+    )
+
+
+#: Every variable `metadata.build_analysis_crate` may advertise in `variableMeasured`.
+#:
+#: DECLARED HERE AND IMPORTED BY `metadata.py` RATHER THAN REBUILT THERE, because the
+#: descriptor drift guard (`tests/test_quantity_provenance.py`) asserts coverage OF THE
+#: ADVERTISED UNION. A union recomputed independently in the guard would be a second
+#: expression of the same set: widening the advertisement would then leave the guard green
+#: against an uncovered variable, which is the precise failure the guard exists to catch.
+#: With one constant, widening the advertisement THROUGH THAT CONSTANT moves the guard by
+#: construction. The qualifier is the whole content of the sentence and it was absent until
+#: 2026-10-01: the guard is total over the CONSTANT, never over what the producer ADVERTISES, so a
+#: producer-local re-widening at the advertisement site -- iterating `{**_ADVERTISABLE_VARIABLES,
+#: **anything_else}` instead of this object -- advertises names the guard cannot see and leaves it
+#: GREEN. Measured: adding one name to this dict turns the bijection guard red, and adding the same
+#: name at the advertisement site instead leaves it green with the name advertised. So this is the
+#: sentence a future reader would trust to conclude no further check is needed, and the unqualified
+#: form licenses exactly the drift it claims to foreclose. The property that holds is narrower and
+#: is what the import buys: there is ONE object, so a widening EXPRESSED HERE cannot bypass the
+#: guard; a widening expressed anywhere else can, and nothing mechanical prevents it.
+_ADVERTISABLE_VARIABLES: dict[str, dict[str, str | None]] = {
+    **_CF_VARIABLE_MAP,
+    **_CF_PERFORMANCE_VARIABLES,
+    **_WATER_QUALITY_CF_VARIABLE_MAP,
+}
+
+
+#: Every variable for which a descriptor exists on the mode-blind read path. The three source tables
+#: are disjoint in their keys, so no name resolves two ways here. The drift guard in
+#: `tests/test_quantity_provenance.py` asserts that disjointness for only TWO of the three tables
+#: (`_QUANTITY_PROVENANCE` against `_PERF_QUANTITY_PROVENANCE`); the water-quality table's
+#: disjointness from either is true today and is not asserted by that guard.
+_DESCRIBED_VARIABLES: dict[str, dict[str, str]] = {
+    **_QUANTITY_PROVENANCE,
+    **_PERF_QUANTITY_PROVENANCE,
+    **_WQ_QUANTITY_PROVENANCE,
+}
+
+
+def _apply_pollutant_units(ds: xr.Dataset) -> None:
+    """Fill `units` (or a `comment`) on the water-quality variables from the dataset's own unit coordinate.
+
+    A concentration variable takes the pollutants' shared concentration unit; a mass variable takes
+    `kg` when every pollutant is a mass pollutant and `1` (a count) when every one is a count
+    pollutant. When the pollutants differ the variable carries NO `units` and a `comment` that points
+    at `pollutant_conc_units`.
+    """
+    if "pollutant_conc_units" not in ds.coords:
+        return
+    conc_units = {str(u) for u in ds["pollutant_conc_units"].values}
+    for name in list(ds.data_vars):
+        if name in _POLLUTANT_CONC_VARIABLES:
+            unit = next(iter(conc_units)) if len(conc_units) == 1 else None
+        elif name in _POLLUTANT_MASS_VARIABLES:
+            kinds = {"1" if u == "#/L" else "kg" for u in conc_units}
+            unit = next(iter(kinds)) if len(kinds) == 1 else None
+        else:
+            continue
+        if unit is not None:
+            ds[name].attrs["units"] = unit
+        else:
+            ds[name].attrs["comment"] = "The pollutants carry different units; see the pollutant_conc_units coordinate."
+
+
 _COORD_ATTRS: dict[str, dict[str, str]] = {
+    "pollutant": {"long_name": "Pollutant identifier, in the model's [POLLUTANTS] order"},
+    "pollutant_conc_units": {"long_name": "Declared concentration unit of each pollutant"},
+    "pollutant_stats_status": {"long_name": "Whether this event's water-quality statistics are computed or withheld"},
     "x": {"standard_name": "projection_x_coordinate", "units": "m", "axis": "X"},
     "y": {"standard_name": "projection_y_coordinate", "units": "m", "axis": "Y"},
     "timestep_min": {
@@ -1009,11 +1343,15 @@ def apply_cf_attributes(ds: xr.Dataset, mode: str) -> xr.Dataset:
     """
     overrides = _CF_VARIABLE_OVERRIDES_BY_MODE.get(mode, {})
     for var_name, da in ds.data_vars.items():
-        entry = overrides.get(var_name) or _CF_VARIABLE_MAP.get(var_name)
+        entry = (
+            overrides.get(var_name) or _CF_VARIABLE_MAP.get(var_name) or _WATER_QUALITY_CF_VARIABLE_MAP.get(var_name)
+        )
         if entry is None:
             da.attrs.setdefault("long_name", _auto_long_name(var_name))
             continue
         _set_attrs(da, entry)
+
+    _apply_pollutant_units(ds)
 
     for coord_name, attrs in _COORD_ATTRS.items():
         if coord_name in ds.coords:

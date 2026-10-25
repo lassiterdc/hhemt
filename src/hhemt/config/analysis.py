@@ -592,19 +592,28 @@ class analysis_config(cfgBaseModel):
             "repeated per-attempt step teardown structurally safe under batch_job."
         ),
     )
-    swmm_snapshot_disable: bool = Field(
-        default=False,
+    swmm_snapshot_disable: bool | None = Field(
+        default=None,
         description=(
-            "Resume-EXPERIMENT arm selector for the COUPLED model only. When True the "
+            "Resume arm selector for the COUPLED model only. Left unset (None, the default) the "
+            "toolkit decides from the model: when the coupled hydraulics model declares at least "
+            "one pollutant and its [OPTIONS] IGNORE_QUALITY is not YES, the toolkit behaves as "
+            "if this were True, because a snapshot resume does not carry SWMM's node and link "
+            "water-quality state and exact replay does; for every other model it behaves as if "
+            "this were False and writes the cfg byte for byte as it did before this field "
+            "became optional. An explicit True or False overrides that decision. An explicit "
+            "False keeps the snapshot route for a quality-routed model, and the processed "
+            "water-quality statistics of an event that resumed that way are withheld. "
+            "When True the "
             "toolkit appends the line `swmm_snapshot_disable=1` to each coupled "
             "scenario's TRITON cfg, which makes the solver leave snapshot_path_stem "
             "EMPTY and so forces a coupled hotstart resume onto the OLD exchange-replay "
             "fallback instead of the full-precision state snapshot. It exists to make "
             "the replay path measurable at a pin that also carries the snapshot path, "
             "which is what lets a replay arm and a snapshot arm be compared without a "
-            "solver-version confound. The default False appends NOTHING, so every cfg "
-            "emitted for a run that leaves this unset is BYTE-IDENTICAL to one emitted "
-            "before this field existed. The TRITON-only cfg never carries the key: the "
+            "solver-version confound. An explicit False appends NOTHING, and a run whose "
+            "model is not quality-routed and which leaves this unset emits a cfg "
+            "BYTE-IDENTICAL to one emitted before this field existed. The TRITON-only cfg never carries the key: the "
             "key gates the SWMM coupling surface, so it is meaningless there. "
             "THE SPELLING IS LOAD-BEARING IN TWO OTHER REPOSITORIES. The solver reads "
             'this key through `argsd("swmm_snapshot_disable", argmap, "0")`, and arm '

@@ -118,7 +118,7 @@ def _build_case(
     model_arm: str = "tritonswmm",
     resume_interruption_schedule: tuple[int, ...] = _RESUME_INTERRUPTION_SCHEDULE,
     ensemble_partition: str = "gpu-a6000",
-    swmm_snapshot_disable: bool = False,
+    swmm_snapshot_disable: bool | None = None,
     swmm_snapshot_keep_all: bool = False,
 ) -> _Case:
     """Materialize the synthetic UVA case and return an object exposing ``.analysis``.
@@ -167,16 +167,18 @@ def _build_case(
         else Path(__file__).parent / "hpc_system_config_synth_uva.yaml"
     )
 
-    # A3's arm selector, and it is injected ONLY when True rather than always.
-    # TWO reasons, and the second is the one that is easy to miss.
-    # (1) An always-present key would write `swmm_snapshot_disable: false` into the PERSISTED
-    #     analysis_config.yaml of every existing arm, so those input configs would stop being
-    #     byte-identical to what they are today for no behavioural gain.
+    # A3's arm selector, and it is injected whenever the caller NAMES a value, True or False,
+    # and not when the caller passes nothing (None).
+    # TWO reasons for injecting at all, and the second is the one that is easy to miss.
+    # (1) Passing nothing writes no key, so the persisted analysis_config.yaml of an arm that
+    #     never names the selector stays as it was. An explicit False IS written, because the
+    #     analysis field's own default is now None (the toolkit decides from the model), so
+    #     only a persisted `false` keeps a quality-routed model on the snapshot route.
     # (2) The persisted config is the ONLY route that reaches the emission. The cfg is written by
     #     prepare_scenario_runner.py, a SUBPROCESS that re-loads `--analysis-config` FROM DISK, so
     #     setting the attribute on an already-constructed analysis object is a silent no-op. It has
     #     to travel as config text, which is what `additional_analysis_configs` is for.
-    snapshot_disable_cfg = {"swmm_snapshot_disable": True} if swmm_snapshot_disable else {}
+    snapshot_disable_cfg = {"swmm_snapshot_disable": swmm_snapshot_disable} if swmm_snapshot_disable is not None else {}
 
     # THE SNAPSHOT-RETENTION selector, and it is injected ONLY when True for BOTH of the reasons
     # the sibling above gives, which apply here unchanged -- plus a third that is specific to this
@@ -418,7 +420,7 @@ def resume_case(
     tritonswmm_software_directory: str | None = None,
     model_arm: str = "tritonswmm",
     variant: str = "",
-    swmm_snapshot_disable: bool = False,
+    swmm_snapshot_disable: bool | None = None,
     swmm_snapshot_keep_all: bool = False,
 ) -> _Case:
     """Resume demo (Option-D deterministic single kill): the runner SIGKILLs the
@@ -537,7 +539,7 @@ def build_resume_from_clean_runtimes(
     model_arm: str = "tritonswmm",
     variant: str = "",
     clean_variant: str | None = None,
-    swmm_snapshot_disable: bool = False,
+    swmm_snapshot_disable: bool | None = None,
     swmm_snapshot_keep_all: bool = False,
 ) -> _Case:
     """Two-pass (FQ3): read each completed clean-sweep member_id's full-completion

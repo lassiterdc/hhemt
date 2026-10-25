@@ -1184,7 +1184,12 @@ class TRITONSWMM_scenario:
         # probe alone, which is the SAME condition whenever swmm_snapshot_disable is False —
         # so a run that leaves the field unset writes the same bytes, or skips the write, exactly
         # as it did before this block existed.
-        cfg_content = append_swmm_snapshot_disable(cfg_content, self._analysis.cfg_analysis.swmm_snapshot_disable)
+        cfg_content = append_swmm_snapshot_disable(
+            cfg_content,
+            resolve_swmm_snapshot_disable(
+                self._analysis.cfg_analysis.swmm_snapshot_disable, self.scen_paths.swmm_hydraulics_inp
+            ),
+        )
         # Second, independent arm selector on the SAME coupled surface: retention DEPTH of the
         # snapshot path, where the line above governs whether that path exists at all. Appended
         # HERE and only here for the same reason — the key gates the SWMM coupling surface, so
@@ -2133,6 +2138,78 @@ def undefined_inflow_nodes(inp_path) -> list[str]:
             stacklevel=2,
         )
     return undefined
+
+
+#: SWMM's concentration-unit keywords, case-folded, mapped to the spelling the processed outputs
+#: carry. `[POLLUTANTS]` writes the unit as the line's second token.
+_POLLUTANT_CONC_UNITS = {"MG/L": "mg/L", "UG/L": "ug/L", "#/L": "#/L"}
+
+
+def ordered_inp_pollutants(inp_path) -> list[tuple[str, str]]:
+    """The ``[POLLUTANTS]`` entries of ``inp_path`` as ``(name, concentration unit)``, in file order.
+
+    SWMM indexes pollutants in the order their lines appear, and every pollutant column of its
+    report and output file follows that order, so a reader that needs the names must keep it. The
+    section is found by SWMM's prefix rule and the tokens are split as SWMM splits them (the
+    first-seen definition of a repeated name wins, as in SWMM). The unit is the line's second
+    token mapped to ``mg/L``, ``ug/L`` or ``#/L``; an unrecognised unit token is returned as
+    written, so a caller that cares can refuse it.
+    """
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    current_is_pollutants = False
+    for line in Path(inp_path).read_text(errors="replace").splitlines():
+        tokens = _swmm_tokens(line)
+        if not tokens:
+            continue
+        if tokens[0].startswith("["):
+            current_is_pollutants = _swmm_fold(tokens[0].lstrip()).startswith("[POLLUT")
+            continue
+        if not current_is_pollutants or len(tokens) < 2:
+            continue
+        folded = _swmm_fold(tokens[0])
+        if folded in seen:
+            continue
+        seen.add(folded)
+        out.append((tokens[0], _POLLUTANT_CONC_UNITS.get(_swmm_fold(tokens[1]), tokens[1])))
+    return out
+
+
+def inp_routes_quality(inp_path) -> bool:
+    """Whether the model in ``inp_path`` makes SWMM route water quality.
+
+    True when ``[POLLUTANTS]`` has at least one entry and ``[OPTIONS]`` does not set
+    ``IGNORE_QUALITY`` to ``YES``, which is the condition under which SWMM prints
+    ``Water Quality .......... YES`` and writes pollutant results. Read from the model file by
+    SWMM's section and tokenising rules, so it can be asked before any report exists.
+    """
+    ignore_quality = False
+    current_is_options = False
+    for line in Path(inp_path).read_text(errors="replace").splitlines():
+        tokens = _swmm_tokens(line)
+        if not tokens:
+            continue
+        if tokens[0].startswith("["):
+            current_is_options = _swmm_fold(tokens[0].lstrip()).startswith("[OPTION")
+            continue
+        if current_is_options and len(tokens) >= 2 and _swmm_fold(tokens[0]) == "IGNORE_QUALITY":
+            ignore_quality = _swmm_fold(tokens[1]) == "YES"
+    return (not ignore_quality) and bool(ordered_inp_pollutants(inp_path))
+
+
+def resolve_swmm_snapshot_disable(configured: bool | None, hydraulics_inp) -> bool:
+    """The value ``swmm_snapshot_disable`` takes for one coupled scenario.
+
+    An explicit ``configured`` value is returned as given. Left unset (``None``), the answer is
+    ``True`` when the scenario's hydraulics model routes water quality and ``False`` otherwise:
+    a coupled resume from a snapshot does not carry SWMM's node and link quality state, while the
+    exact replay route re-derives it, so a quality-routed run resumes by replay unless the user
+    asks otherwise. A model without quality routing resolves to ``False``, which writes no cfg
+    line, so its cfg is byte-identical to what it was before the field could be unset.
+    """
+    if configured is not None:
+        return configured
+    return inp_routes_quality(hydraulics_inp)
 
 
 # --- The coupling declaration: which SWMM nodes a coupled run may exchange water at ---------

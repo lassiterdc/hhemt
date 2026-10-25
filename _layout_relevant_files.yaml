@@ -4042,3 +4042,27 @@ non_breaking_allowlist:
       with two or more non-None members is still refused as before.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: "fe01191cda736045ebe27b9d4db0db8a1a1667bcce2d8317d45b473e21123b58"
+    justification: >-
+      NON-BREAKING. snapshot-refusal P-1.2 — SWMM water-quality outputs, written only when the SWMM report prints Water Quality YES, and quality-routed coupled runs resumed by exact replay unless swmm_snapshot_disable is false; no existing analysis tree's variable set, dims or attrs change (a model with no pollutants or IGNORE_QUALITY YES produces byte-identical outputs and a byte-identical TRITON cfg); a persisted analysis config that omitted swmm_snapshot_disable now dumps it as null rather than false. For a quality-routed coupled run only, the per-scenario node and link stores also carry the scalar coordinate pollutant_stats_status (and NaN for a snapshot-resumed event's withheld statistics), the same rule the summaries already apply.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: "1fc2d30cddea111a3a351ca77ac6ab77898ebaa6289d9ea1c8d1fbf4bf3c426c"
+    justification: >-
+      NON-BREAKING. snapshot-refusal P-1.2 — SWMM water-quality outputs, written only when the SWMM report prints Water Quality YES, and quality-routed coupled runs resumed by exact replay unless swmm_snapshot_disable is false; no existing analysis tree's variable set, dims or attrs change (a model with no pollutants or IGNORE_QUALITY YES produces byte-identical outputs and a byte-identical TRITON cfg); a persisted analysis config that omitted swmm_snapshot_disable now dumps it as null rather than false. For a quality-routed coupled run only, the per-scenario node and link stores also carry the scalar coordinate pollutant_stats_status (and NaN for a snapshot-resumed event's withheld statistics), the same rule the summaries already apply.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/scenario.py
+    layout_signature: "75499382b507c643ca09aaa3d798184aed15da87e1ba50595150f8f6187aee58"
+    justification: >-
+      NON-BREAKING. snapshot-refusal P-1.2 — SWMM water-quality outputs, written only when the SWMM report prints Water Quality YES, and quality-routed coupled runs resumed by exact replay unless swmm_snapshot_disable is false; no existing analysis tree's variable set, dims or attrs change (a model with no pollutants or IGNORE_QUALITY YES produces byte-identical outputs and a byte-identical TRITON cfg); a persisted analysis config that omitted swmm_snapshot_disable now dumps it as null rather than false.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: "465ddf6eeda9c9a1e9e150559558bb526c123e69c5bd067e495b0d2c3491d954"
+    justification: >-
+      NON-BREAKING. snapshot-refusal P-1.2 — SWMM water-quality outputs, written only when the SWMM report prints Water Quality YES, and quality-routed coupled runs resumed by exact replay unless swmm_snapshot_disable is false; no existing analysis tree's variable set, dims or attrs change (a model with no pollutants or IGNORE_QUALITY YES produces byte-identical outputs and a byte-identical TRITON cfg); a persisted analysis config that omitted swmm_snapshot_disable now dumps it as null rather than false.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.

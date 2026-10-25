@@ -34,6 +34,7 @@ _SPATIAL_VOCAB = frozenset(
         "point (node)",
         "line (conduit)",
         "whole domain (scalar)",
+        "polygon (subcatchment)",
     }
 )
 
