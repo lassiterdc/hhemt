@@ -297,6 +297,27 @@ def return_swmm_outputs(
     return ds_nodes, ds_links
 
 
+# The continuity tables SWMM prints in a `.rpt`, by the header line that opens each. A `Continuity Error (%)`
+# line and a `Flooding Loss` line mean different things in different tables, so the scans below take a figure
+# only from the table that owns it. Taking the LAST such line, as the scans did before, returns the water-quality
+# or groundwater table's value whenever a report prints one (SWMM prints them after the quantity tables).
+_CONTINUITY_TABLE_HEADERS = (
+    "Runoff Quantity Continuity",
+    "Runoff Quality Continuity",
+    "Groundwater Continuity",
+    "Flow Routing Continuity",
+    "Quality Routing Continuity",
+)
+
+
+def _continuity_table_opened_by(line):
+    """Return the continuity table a header `line` opens, or None when it opens none."""
+    for header in _CONTINUITY_TABLE_HEADERS:
+        if header in line:
+            return header
+    return None
+
+
 def return_swmm_system_outputs(rpt_lines):
     """Scan a full `.rpt` line list for the system-level metadata lines and
     delegate construction to the guarded `_build_system_results`.
@@ -326,7 +347,7 @@ def return_swmm_system_outputs(rpt_lines):
     dereferences unguarded (three raising `UnboundLocalError`, one
     `AttributeError`) until 2026-07-15.
     """
-    encountered_flow_routing_continuity = False
+    current_continuity_table = None
     line_flw_units = None
     runoff_continuity_error_line = None
     flow_continuity_error_line = None
@@ -335,15 +356,16 @@ def return_swmm_system_outputs(rpt_lines):
     for line in rpt_lines:
         if "Flow Units" in line:
             line_flw_units = line
-        if "Flow Routing Continuity" in line:
-            encountered_flow_routing_continuity = True
+        opened = _continuity_table_opened_by(line)
+        if opened is not None:
+            current_continuity_table = opened
         if "Continuity Error (%)" in line:
-            # runoff routing is reported BEFORE flow routing
-            if encountered_flow_routing_continuity is False:
+            # Each error belongs to its own table: runoff to the quantity table, flow to the flow table.
+            if current_continuity_table == "Runoff Quantity Continuity":
                 runoff_continuity_error_line = line
-            else:
+            elif current_continuity_table == "Flow Routing Continuity":
                 flow_continuity_error_line = line
-        if "Flooding Loss" in line:
+        if "Flooding Loss" in line and current_continuity_table == "Flow Routing Continuity":
             system_flood_loss_line = line
         if "Analysis ended on" in line:
             analysis_end_line = line
@@ -419,7 +441,7 @@ def _scan_metadata_and_summaries(lines, summary_section_headers):
     """
     dict_section_lines = {header: [] for header in summary_section_headers}
     valid = False
-    encountered_flow_routing_continuity = False
+    current_continuity_table = None
     line_flw_units = None
     runoff_continuity_error_line = None
     flow_continuity_error_line = None
@@ -435,14 +457,15 @@ def _scan_metadata_and_summaries(lines, summary_section_headers):
             valid = True
         if "Flow Units" in line:
             line_flw_units = line
-        if "Flow Routing Continuity" in line:
-            encountered_flow_routing_continuity = True
+        opened = _continuity_table_opened_by(line)
+        if opened is not None:
+            current_continuity_table = opened
         if "Continuity Error (%)" in line:
-            if encountered_flow_routing_continuity is False:
+            if current_continuity_table == "Runoff Quantity Continuity":
                 runoff_continuity_error_line = line
-            else:
+            elif current_continuity_table == "Flow Routing Continuity":
                 flow_continuity_error_line = line
-        if "Flooding Loss" in line:
+        if "Flooding Loss" in line and current_continuity_table == "Flow Routing Continuity":
             system_flood_loss_line = line
         if "Analysis ended on" in line:
             analysis_end_line = line
@@ -526,6 +549,11 @@ def _bulk_parse_section(section_text, kind_filter, idx_colname, value_cols):
 
     Returns an xarray Dataset with dims (idx_colname, date_time) — the same shape
     the legacy `create_tseries_ds` produced for time-series blocks.
+
+    Only the date, the time and the declared `value_cols` are read. When a model
+    declares pollutants and routes quality, SWMM appends one concentration column
+    per pollutant to every row; those extra columns are not read, because with the
+    fixed `names=` below they would shift the fields and break the date parse.
     """
     ids = []
     row_counts = []
@@ -556,6 +584,7 @@ def _bulk_parse_section(section_text, kind_filter, idx_colname, value_cols):
         sep=r"\s+",
         header=None,
         names=["date", "time", *value_cols],
+        usecols=list(range(2 + len(value_cols))),
         engine="c",
         dtype={"date": str, "time": str},
     )
