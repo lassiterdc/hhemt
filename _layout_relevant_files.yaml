@@ -4078,3 +4078,13 @@ non_breaking_allowlist:
       a write publishes for a field the writer did not change (the peer's, never a stale one).
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 787ea99c14786df7cbf18526016d4d183811659c90eb0127b5105e141f718629
+    justification: >-
+      NON-BREAKING. log-write-lost-update T-LW.2 — _stamp_triton_provenance prints one
+      "[Provenance] WARNING" line to stdout when the system log records a TRITON build (a native
+      compile flag) or a SIF digest (container) and carries no triton_head_sha; it still never
+      raises. No persisted key, file name, zarr group or _version.json field changes, and the
+      consolidated tree's attrs are byte-identical to before for every input.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.

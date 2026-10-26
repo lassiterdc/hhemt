@@ -1007,6 +1007,35 @@ def _stamp_triton_provenance(tree: "xr.DataTree", analysis) -> None:
     # rather than as a false warn.
     if _sha is not None:
         tree.attrs["triton_producing_sha"] = str(_sha)
+    else:
+        # LOUD-ABSENT when THIS log says a TRITON target was built (native: a compile flag)
+        # or an image was set up (container: no compile flag is ever set, but setup records
+        # sif_sha256 before the label sha). A recorded build or image with no recorded sha is
+        # the lost-stamp signature, and this line is the only record of what consolidation
+        # read. Both unset (a reprex bundle, a legacy log) stay silent. Everything, the print
+        # included, sits inside the try: this function never raises.
+        try:
+            _built = [
+                _f
+                for _f in (
+                    "compilation_tritonswmm_cpu_successful",
+                    "compilation_tritonswmm_gpu_successful",
+                    "compilation_triton_cpu_successful",
+                    "compilation_triton_gpu_successful",
+                )
+                if getattr(_sys_log, _f).get() is True
+            ]
+            if _sys_log.sif_sha256.get():
+                _built.append("sif_sha256")
+            if _built:
+                print(
+                    f"[Provenance] WARNING: {_sys_log.logfile} records a TRITON build or image "
+                    f"({', '.join(_built)}) but no triton_head_sha; this consolidated tree is NOT "
+                    f"stamped with triton_producing_sha. last_writer={_sys_log.last_writer}",
+                    flush=True,
+                )
+        except Exception:
+            pass
 
     # The per-target TRITON builds (coupled and TRITON-only) and the standalone SWMM build,
     # same carrier and same graceful-absent rule as the clone-level sha above: captured at
