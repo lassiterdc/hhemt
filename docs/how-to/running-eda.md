@@ -92,7 +92,7 @@ a broken figure.
 
 The DEM-resolution family is the other shipped selection, and it is mutually
 exclusive with `config_diff_maps`: pair it with
-`report.reporting_set: dem-resolution` and a `system.target_dem_resolution`
+`report.reporting_set: dem_resolution` and a `system.target_dem_resolution`
 sweep.
 
 ```yaml
@@ -133,7 +133,7 @@ import json
 from pathlib import Path
 
 verdict = json.loads(
-    Path("{analysis_dir}/eda/b4b_clean_identity.verdict.json").read_text()
+    Path("{analysis_dir}/eda/raw_byte_identity.verdict.json").read_text()
 )
 verdict["passed"]           # bool
 verdict["applicable"]       # False when the calculation did not apply
@@ -149,11 +149,11 @@ the one way to misread these files.
 
 `details` is populated by the cross-simulation and compute-sensitivity checks.
 The raw byte-for-byte check leaves it empty on both outcomes, so a gate written
-against `b4b_clean_identity`'s `details` reads empty on a failing run. Gate on
+against `raw_byte_identity`'s `details` reads empty on a failing run. Gate on
 `passed` and report `summary`.
 
 That check compares each compute configuration against its own within-family
-reference inside a single analysis. It is produced under the `b4b` reporting
+reference inside a single analysis. It is produced under the `compute_config_byte_identity` reporting
 set; see [Reporting sets](../reference/reporting-sets.md) for when to select
 it, and for where the clean-versus-resume comparison lives instead.
 

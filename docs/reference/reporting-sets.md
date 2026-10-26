@@ -9,7 +9,7 @@ single config field, without editing code.
 !!! tip "Most reports come from one set, and one set is usually enough"
     A report showing benchmarking results alongside compute-configuration
     comparisons has usually selected one set that bundles both kinds of
-    renderer, rather than naming two. `b4b` is the clearest case: it carries
+    renderer, rather than naming two. `compute_config_byte_identity` is the clearest case: it carries
     ten renderers, including `sensitivity_benchmarking` and
     `eda_compute_sensitivity` together, so its report shows both. Reach for a
     list only when no single set carries everything you want. If you are
@@ -67,10 +67,10 @@ report:
     That list composes to the same bundle as `benchmarking` alone. All but one of
     the pairs the rules below admit behave the same way. In each of them one set
     already carries everything the other does, so naming the larger set is enough.
-    The one pair that adds figures is `compute-sensitivity` with `dem-resolution`,
+    The one pair that adds figures is `compute_sensitivity` with `dem_resolution`,
     and it passes every rule below and still cannot render the figures it adds:
     `config_diff_maps` subtracts members cell-wise and refuses members on different
-    grids, while the `dem-resolution` figures need a ladder of grids, so no single
+    grids, while the `dem_resolution` figures need a ladder of grids, so no single
     sweep serves both. Run them as two sweeps, as
     [Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md)
     does.
@@ -83,17 +83,17 @@ compute is committed:
   on an analysis at all.
 - **Your sweep must vary an axis for each named set that requires one.** The
   requirements add up rather than replacing one another, so a list of
-  `compute-sensitivity` and `dem-resolution` needs a sweep that varies both a
+  `compute_sensitivity` and `dem_resolution` needs a sweep that varies both a
   compute-configuration field and `target_dem_resolution`.
 - **`default` cannot be listed alongside another set.** It is a sentinel that
   resolves to whichever set suits the analysis, so it has no meaning as one
   member of a composition. Name the set you want instead.
 - **Two sets that gate the same renderer on different conditions cannot be
   combined.** A composed report emits each renderer once, under one condition,
-  so two sets that disagree about that condition have no single answer. `b4b`
+  so two sets that disagree about that condition have no single answer. `compute_config_byte_identity`
   gates `eda_compute_sensitivity` on preserved raw outputs, while
-  `compute-sensitivity` and `dem-resolution` gate it on an EDA artifact, so
-  `b4b` composes with `benchmarking` and `sensitivity` but not with those two.
+  `compute_sensitivity` and `dem_resolution` gate it on an EDA artifact, so
+  `compute_config_byte_identity` composes with `benchmarking` and `sensitivity` but not with those two.
 
 All four rules fail with a message naming both the set and the reason, so a
 combination that cannot work is refused on the login node rather than after the
@@ -127,11 +127,11 @@ For a sweep, where members vary along a declared axis. All five replace
 |---|---|
 | `benchmarking` | A sweep whose axis is compute configuration. Adds run-time, compute-cost and scaling figures. This is what `default` resolves to on a sensitivity analysis. |
 | `sensitivity` | A sweep that wants per-member results without any specialized figure family: no run-time and scaling figures, no EDA comparison. It is the sweep-shaped bundle minus `sensitivity_benchmarking`, so it imposes no axis requirement and suits a sweep varying any axis. |
-| `compute-sensitivity` | A compute-configuration sweep where the question is whether results are invariant to the compute config, rather than only how fast each one runs. Expects the compute-sensitivity EDA artifacts. |
-| `dem-resolution` | A sweep whose axis is DEM cell size. Its figures compare peak flood depth across resolution rungs, so it expects a varying grid and rejects a mixed-resolution experiment. |
-| `b4b` | A raw-output byte-for-byte identity study across compute configurations. The benchmarking bundle plus a per-timestep check on whether the raw TRITON rasters are bit-identical across compute configs within one device class (CPU or GPU). It is not a resume study: the clean-versus-resume comparison lives on the combined report. Requires preserved raw outputs. |
+| `compute_sensitivity` | A compute-configuration sweep where the question is whether results are invariant to the compute config, rather than only how fast each one runs. Expects the compute-sensitivity EDA artifacts. |
+| `dem_resolution` | A sweep whose axis is DEM cell size. Its figures compare peak flood depth across resolution rungs, so it expects a varying grid and rejects a mixed-resolution experiment. |
+| `compute_config_byte_identity` | A raw-output byte-for-byte identity study across compute configurations. The benchmarking bundle plus a per-timestep check on whether the raw TRITON rasters are bit-identical across compute configs within one device class (CPU or GPU). It is not a resume study: the clean-versus-resume comparison lives on the combined report. Requires preserved raw outputs. |
 
-`compute-sensitivity`, `dem-resolution` and `b4b` expect artifacts an ordinary
+`compute_sensitivity`, `dem_resolution` and `compute_config_byte_identity` expect artifacts an ordinary
 sweep does not produce. Each assumes the analysis was shaped for its question,
 and selecting one on an analysis that was not shaped that way produces a report
 with missing figures rather than a useful one. The exploratory analysis step
@@ -159,9 +159,9 @@ bundles, not examples.
 | `default` | `disk_utilization`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim`, `scenario_status_appendix`, `system_overview`, `workflow_performance` | 8 |
 | `benchmarking` | `disk_utilization`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` | 9 |
 | `sensitivity` | `disk_utilization`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `system_overview`, `workflow_performance` | 8 |
-| `compute-sensitivity` | `disk_utilization`, `eda_compute_sensitivity`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` | 10 |
-| `dem-resolution` | `disk_utilization`, `eda_compute_sensitivity`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` | 10 |
-| `b4b` | `disk_utilization`, `eda_compute_sensitivity`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` | 10 |
+| `compute_sensitivity` | `disk_utilization`, `eda_compute_sensitivity`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` | 10 |
+| `dem_resolution` | `disk_utilization`, `eda_compute_sensitivity`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` | 10 |
+| `compute_config_byte_identity` | `disk_utilization`, `eda_compute_sensitivity`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` | 10 |
 | `combined` | `cross_experiment_compatibility`, `cross_experiment_disk_utilization`, `cross_experiment_errors_and_warnings`, `cross_experiment_intercomparison`, `cross_experiment_intercomparison_maps` | 5 |
 
 The three sensitivity EDA sets bundle the same ten renderers. They differ in the
@@ -189,7 +189,7 @@ silently doing nothing, and the same filter applies both where figures are
 emitted and where they are enumerated, so the two can never disagree.
 
 ??? note "Why four sets carry an extra validation step"
-    `benchmarking`, `compute-sensitivity`, `dem-resolution` and `b4b` all
+    `benchmarking`, `compute_sensitivity`, `dem_resolution` and `compute_config_byte_identity` all
     carry figures that plot against a sweep axis, so each additionally
     validates that the sensitivity configuration declares the independent
     variables its figures plot against. That check runs at `analysis.run()`
@@ -200,5 +200,5 @@ emitted and where they are enumerated, so the two can never disagree.
 
 - [The interactive analysis report](example-report.md): what a rendered report contains and how to open one.
 - [Configuration schema](config-schema.md): the rest of the `report` block.
-- [Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md): two worked sweeps, one selecting `compute-sensitivity` and one selecting `dem-resolution`.
+- [Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md): two worked sweeps, one selecting `compute_sensitivity` and one selecting `dem_resolution`.
 - [Exploratory analysis](../explanation/exploratory-analysis.md): what the exploratory figures are, and why the step that produces them sits outside the workflow graph.

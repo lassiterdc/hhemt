@@ -36,8 +36,8 @@ set renders, in sidebar order:
 | Metadata | RO-Crate provenance, the reproduction guide, and SLURM efficiency |
 | Appendix | The `scenario_status.csv` table (emitted by the default set, but not yet declared in its sidebar order) |
 
-The `b4b`, `benchmarking`, `combined`, `compute-sensitivity` and
-`dem-resolution` sets render different selections; each declares its own
+The `compute_config_byte_identity`, `benchmarking`, `combined`, `compute_sensitivity` and
+`dem_resolution` sets render different selections; each declares its own
 sidebar order.
 
 ## Viewing a report you did not generate
