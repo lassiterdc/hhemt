@@ -848,12 +848,12 @@ rule export_scenario_status:
 ILOC_BY_EVENT_ID_BY_MEMBER = {'0': {'event_index.0': 0}, '1': {'event_index.0': 0}, '2': {'event_index.0': 0}, '3': {'event_index.0': 0}}
 
 from hhemt.report_plot_ids import (
-    event_labels_from_status as _event_labels_from_status,
+    event_sidebar_labels_from_status as _event_sidebar_labels_from_status,
     report_label_value as _report_label_value,
     member_labels_from_status as _member_labels_from_status,
 )
 
-_EVENT_LABELS = _event_labels_from_status(workflow.basedir)
+_EVENT_SIDEBAR_LABELS = _event_sidebar_labels_from_status(workflow.basedir)
 _MEMBER_LABELS = _member_labels_from_status(workflow.basedir)
 
 
@@ -889,7 +889,7 @@ rule plot_per_sim_per_member_peak_flood_depth:
             "plots/sensitivity/per_sim/member-{member_id}/{event_id}/peak_flood_depth__member.{member_id}__evt.{event_id}.html",
             caption="report/captions/per_sim_peak_flood_depth.rst",
             category="Per Simulation Results",
-            labels=(lambda w: {"figure": "Peak flood depth", "member": _report_label_value(_MEMBER_LABELS, w.member_id, "member"), "event": _report_label_value(_EVENT_LABELS, w.event_id, "event")}),
+            labels=(lambda w: {"figure": "Peak flood depth", "member": _report_label_value(_MEMBER_LABELS, w.member_id, "member"), "event": _report_label_value(_EVENT_SIDEBAR_LABELS, w.event_id, "event")}),
         )
     wildcard_constraints:
         member_id="[A-Za-z0-9_.]+",
@@ -921,7 +921,7 @@ rule plot_per_sim_per_member_conduit_flow:
             "plots/sensitivity/per_sim/member-{member_id}/{event_id}/conduit_flow__member.{member_id}__evt.{event_id}.html",
             caption="report/captions/per_sim_conduit_flow.rst",
             category="Per Simulation Results",
-            labels=(lambda w: {"figure": "Conduit flow", "member": _report_label_value(_MEMBER_LABELS, w.member_id, "member"), "event": _report_label_value(_EVENT_LABELS, w.event_id, "event")}),
+            labels=(lambda w: {"figure": "Conduit flow", "member": _report_label_value(_MEMBER_LABELS, w.member_id, "member"), "event": _report_label_value(_EVENT_SIDEBAR_LABELS, w.event_id, "event")}),
         )
     wildcard_constraints:
         member_id="[A-Za-z0-9_.]+",
