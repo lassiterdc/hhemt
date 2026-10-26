@@ -284,23 +284,28 @@ def test_renders_full_html_doc(tmp_path):
 
 
 @pytest.fixture
-def failing_synth_multi_sim_analysis(tritonswmm_cpu_compiled, synth_multi_sim_analysis_cached, tmp_path):
-    """Clone synth_multi_sim cached fixture, inject failures BEFORE construction.
+def failing_synth_multi_sim_analysis(synthetic_multisim_completed, tmp_path):
+    """Clone the RUN synth_multi_sim session tree, inject failures BEFORE construction.
 
-    Gated on ``tritonswmm_cpu_compiled``: the cached analysis must have been RUN
-    (compiled binaries + real summaries on disk) for the injected-failure clone to
-    be meaningful. Skips without cmake+mpic++; HARD-FAILS under
+    The clone must come from a tree that was actually RUN (compiled binaries + real
+    summaries on disk) for the injected failures to be meaningful, so it is taken from
+    ``synthetic_multisim_completed`` -- the session producer that guarantees that state --
+    and never from ``synth_multi_sim_analysis_cached``, which only constructs the
+    analysis and is populated solely when some earlier test in the same session happens
+    to run it. Compile-tier gated transitively (``synthetic_multisim_completed`` reaches
+    ``tritonswmm_cpu_compiled``): skips without cmake+mpic++, HARD-FAILS under
     HHEMT_REQUIRE_COMPILE_TIER=1. The module's pure-unit tests are unaffected."""
-    paths = prepare_clone_dir(synth_multi_sim_analysis_cached, tmp_path)
+    paths = prepare_clone_dir(synthetic_multisim_completed, tmp_path)
     inject_multi_sim_failures_at_paths(paths)
     return construct_analysis_from_paths(paths)
 
 
 @pytest.fixture
-def failing_synth_sensitivity_analysis(tritonswmm_cpu_compiled, synth_sensitivity_analysis_cached, tmp_path):
-    """Clone synth_sensitivity cached fixture, inject failures BEFORE construction.
-    Compile-tier gated; see ``failing_synth_multi_sim_analysis``."""
-    paths = prepare_clone_dir(synth_sensitivity_analysis_cached, tmp_path)
+def failing_synth_sensitivity_analysis(synthetic_sensitivity_completed, tmp_path):
+    """Clone the RUN synth_sensitivity master tree, inject failures BEFORE construction.
+    Producer and gating as ``failing_synth_multi_sim_analysis``; the fixture yields the
+    sensitivity wrapper, so the master analysis is ``.experiment``."""
+    paths = prepare_clone_dir(synthetic_sensitivity_completed.experiment, tmp_path)
     inject_sensitivity_failures_at_paths(paths)
     return construct_analysis_from_paths(paths)
 
