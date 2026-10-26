@@ -120,10 +120,18 @@ def _build_case(
     ensemble_partition: str = "gpu-a6000",
     swmm_snapshot_disable: bool | None = None,
     swmm_snapshot_keep_all: bool = False,
+    hpc_consecutive_failure_budget_simulate: int | None = None,
 ) -> _Case:
     """Materialize the synthetic UVA case and return an object exposing ``.analysis``.
 
     UVA HPC overrides (A2): system -> CUDA/a6000/3.5m; analysis -> batch_job/{your-allocation}/login/gres.
+
+    ``hpc_consecutive_failure_budget_simulate`` is a per-arm pass-through of the analysis field of
+    the same name (budget-reopen-5). A resume arm whose ``resume_interruption_schedule`` holds K
+    deliberate kills needs a budget of at least K+1, and the field's default (3) is spent by a
+    3-entry schedule, so the finishing launch is refused with ``budget SPENT``. ``None`` writes no
+    key, so every arm that does not name a value keeps the field default and its persisted config
+    is byte-identical to before.
 
     ``system_directory``: when given, redirect the case root there (Decision 4 — on Rivanna pass
     ``/project/{your-allocation}/...`` so outputs avoid the small-quota $HOME/.cache and the analysis tool
@@ -236,6 +244,16 @@ def _build_case(
     # the fallback), so a future change to one must not have to read the other.
     snapshot_keep_all_cfg = {"swmm_snapshot_keep_all": True} if swmm_snapshot_keep_all else {}
 
+    # The per-arm failure budget, injected only when the caller NAMES a value, for the same reason
+    # as `snapshot_disable_cfg` above: the persisted analysis_config is the only route that
+    # reaches the runner (a subprocess that re-loads it from disk), and an unconditional key would
+    # rewrite the persisted config of every arm that never asked for one.
+    failure_budget_cfg = (
+        {"hpc_consecutive_failure_budget_simulate": hpc_consecutive_failure_budget_simulate}
+        if hpc_consecutive_failure_budget_simulate is not None
+        else {}
+    )
+
     case = retrieve_synth_TRITON_SWMM_test_case(
         analysis_name=analysis_name,
         params=_params_for_resolution(cell_size_m),
@@ -328,6 +346,7 @@ def _build_case(
             },
             **snapshot_disable_cfg,
             **snapshot_keep_all_cfg,
+            **failure_budget_cfg,
         },
     )
     return _Case(analysis=case.analysis, system_directory=str(case.system.cfg_system.system_directory))
@@ -422,6 +441,7 @@ def resume_case(
     variant: str = "",
     swmm_snapshot_disable: bool | None = None,
     swmm_snapshot_keep_all: bool = False,
+    hpc_consecutive_failure_budget_simulate: int | None = None,
 ) -> _Case:
     """Resume demo (Option-D deterministic single kill): the runner SIGKILLs the
     fresh first attempt mid-sim after N hotstart checkpoints; the Snakemake retry
@@ -486,6 +506,7 @@ def resume_case(
         model_arm=model_arm,
         swmm_snapshot_disable=swmm_snapshot_disable,
         swmm_snapshot_keep_all=swmm_snapshot_keep_all,
+        hpc_consecutive_failure_budget_simulate=hpc_consecutive_failure_budget_simulate,
     )
 
 
@@ -541,6 +562,7 @@ def build_resume_from_clean_runtimes(
     clean_variant: str | None = None,
     swmm_snapshot_disable: bool | None = None,
     swmm_snapshot_keep_all: bool = False,
+    hpc_consecutive_failure_budget_simulate: int | None = None,
 ) -> _Case:
     """Two-pass (FQ3): read each completed clean-sweep member_id's full-completion
     wallclock and size the resume walltimes to force a mid-sim kill (~T/3), then
@@ -627,6 +649,10 @@ def build_resume_from_clean_runtimes(
         # would still land in the clean arm's reconstructed config and destroy its own
         # membership-by-literal reading.
         swmm_snapshot_keep_all=swmm_snapshot_keep_all,
+        # Forwarded to the RESUME arm only. The clean arm never schedules a kill and so never
+        # spends the budget; the key would also land in its reconstructed config, and the clean
+        # arm is the comparand shared by every resume arm (the rule the two flags above follow).
+        hpc_consecutive_failure_budget_simulate=hpc_consecutive_failure_budget_simulate,
     )
 
 
