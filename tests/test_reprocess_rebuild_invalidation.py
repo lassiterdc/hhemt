@@ -426,6 +426,10 @@ def _build_synthetic_post_processing(*, fname_out, raw_dir, batch_timesteps, ny,
             # the synthetic cfg must carry it or the flush raises AttributeError
             # before this module's batching assertion ever runs.
             allow_mixed_version_chapters=False,
+            # 4fb4c5a9 added the output-type branch after the chapter loop (zarr merges the
+            # chapters into one store, nc publishes one NetCDF file); the field defaults to
+            # "zarr", the merge this test's write-target assertions describe.
+            target_processed_output_type="zarr",
         ),
         # c34dd6e1 added `_ad = self._analysis.analysis_paths.analysis_dir` to the
         # chapter-publish entry and did not extend this stand-in, leaving this test
