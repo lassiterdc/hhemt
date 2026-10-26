@@ -4098,3 +4098,21 @@ non_breaking_allowlist:
       for such a sub as it is for every other.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/scenario.py
+    layout_signature: "dffe69bffc7fe1efc6b3c173df50a2fcf214f76bc5cd38fbd7020a9978b53173"
+    justification: >-
+      NON-BREAKING. toolkit-repin-c11-4 (T1.2) — a quality-routed coupled run whose recorded TRITON build is a member of the new SWMM_QUALITY_SNAPSHOT_SHAS set (bd18215) now resumes from its snapshot instead of by forced replay, and its snapshot-resume statistics are kept with the new pollutant_stats_status value; at every other build nothing changes. No existing analysis tree's variable set, dims, dtypes or attrs change, no file is renamed, and the status coordinate's dimension is unchanged; the new value is an additional string of the same coordinate.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: "9b1b0426718bca09318f3b335186c9c08f7700295a23e4200900ee504f221542"
+    justification: >-
+      NON-BREAKING. toolkit-repin-c11-4 (T1.2) — a quality-routed coupled run whose recorded TRITON build is a member of the new SWMM_QUALITY_SNAPSHOT_SHAS set (bd18215) now resumes from its snapshot instead of by forced replay, and its snapshot-resume statistics are kept with the new pollutant_stats_status value; at every other build nothing changes. No existing analysis tree's variable set, dims, dtypes or attrs change, no file is renamed, and the status coordinate's dimension is unchanged; the new value is an additional string of the same coordinate.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: "509495d493f10a4d7a20b11cf0ae8a6fd15368482329c06275b4a531f5bae00a"
+    justification: >-
+      NON-BREAKING. toolkit-repin-c11-4 (T1.2) — a quality-routed coupled run whose recorded TRITON build is a member of the new SWMM_QUALITY_SNAPSHOT_SHAS set (bd18215) now resumes from its snapshot instead of by forced replay, and its snapshot-resume statistics are kept with the new pollutant_stats_status value; at every other build nothing changes. No existing analysis tree's variable set, dims, dtypes or attrs change, no file is renamed, and the status coordinate's dimension is unchanged; the new value is an additional string of the same coordinate. For config/analysis.py only the swmm_snapshot_disable field description changes.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.

@@ -495,6 +495,16 @@ SWMM_NODE_RIM_FROM_DEM_FIRST_SHA = "1b797e6d0ea45b6d139e597fd6f4c2b29b17a1f7"
 #: carries the key's read. Extend it when an image is built at a later commit that reads it.
 SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS = frozenset({SWMM_NODE_RIM_FROM_DEM_FIRST_SHA})
 
+#: The TRITON commits whose SWMM snapshot carries node and link water-quality state across a
+#: coupled resume (fork commit bd18215 "carry water-quality state across a snapshot resume":
+#: `git show {sha}:external/swmm/src/solver/snapshot.c | grep -c oldQual` -> 7, and 0 at every
+#: snapshot-bearing commit before it). Exact full-sha membership, no ancestry, so a preparation
+#: (A3) and a processing (A2) read of the same run cannot disagree, with or without a clone.
+#: NOT covered by scripts/check_live_pin_registered.py: a later TRITON pin that carries the fix
+#: must be added here by hand, and until it is, an unlisted build forces replay and withholds
+#: statistics (the safe direction).
+SWMM_QUALITY_SNAPSHOT_SHAS = frozenset({"bd18215972c348020d53b3a8a1a64ee6266cae28"})
+
 
 def append_swmm_node_rim_from_dem(cfg_content: str, enabled: bool) -> str:
     """Append the line ``swmm_node_rim_from_dem=1`` when ``enabled``, else return the text UNCHANGED.
@@ -1187,7 +1197,12 @@ class TRITONSWMM_scenario:
         cfg_content = append_swmm_snapshot_disable(
             cfg_content,
             resolve_swmm_snapshot_disable(
-                self._analysis.cfg_analysis.swmm_snapshot_disable, self.scen_paths.swmm_hydraulics_inp
+                self._analysis.cfg_analysis.swmm_snapshot_disable,
+                self.scen_paths.swmm_hydraulics_inp,
+                build_sha=coupled_build_sha(
+                    getattr(self._system, "log", None),
+                    execution_environment=self._analysis.cfg_analysis.execution_environment,
+                ),
             ),
         )
         # Second, independent arm selector on the SAME coupled surface: retention DEPTH of the
@@ -2197,18 +2212,64 @@ def inp_routes_quality(inp_path) -> bool:
     return (not ignore_quality) and bool(ordered_inp_pollutants(inp_path))
 
 
-def resolve_swmm_snapshot_disable(configured: bool | None, hydraulics_inp) -> bool:
+def coupled_build_sha(system_log, *, execution_environment: str) -> str | None:
+    """The sha of the TRITON build that runs the coupled model, read from a system log.
+
+    Native: `tritonswmm_producing_sha` first, because only a compile that built the coupled
+    target writes it, so it names the binary even when that binary was cached from an older
+    clone state; `triton_head_sha` otherwise. Container: `triton_head_sha` ONLY, because
+    container setup records the image's label there and never writes the producing sha, so a
+    producing sha in the log is a stale native compile's and does not name the image's binary
+    (the same mode split `require_dem_rim_capable_triton` makes). Read by attribute; never
+    raises; None when nothing is recorded. Does NOT refresh the log.
+
+    `execution_environment` is keyword-REQUIRED, with no default: a call site that omits it
+    raises `TypeError` at its first call instead of silently taking the native precedence.
+    """
+    names = (
+        ("triton_head_sha",)
+        if execution_environment == "container"
+        else ("tritonswmm_producing_sha", "triton_head_sha")
+    )
+    for name in names:
+        field_ = getattr(system_log, name, None)
+        try:
+            value = field_.get() if field_ is not None else None
+        except Exception:
+            value = None
+        if value:
+            return str(value)
+    return None
+
+
+def snapshot_carries_quality_state(build_sha: str | None) -> bool:
+    """True only when `build_sha` is a member of SWMM_QUALITY_SNAPSHOT_SHAS (full sha, case-folded).
+
+    Exact membership, not a prefix: an abbreviated or unrecorded sha reads as not-carried, which
+    is the safe direction (replay stays forced, statistics stay withheld).
+    """
+    return bool(build_sha) and str(build_sha).strip().lower() in SWMM_QUALITY_SNAPSHOT_SHAS
+
+
+def resolve_swmm_snapshot_disable(configured: bool | None, hydraulics_inp, build_sha: str | None = None) -> bool:
     """The value ``swmm_snapshot_disable`` takes for one coupled scenario.
 
     An explicit ``configured`` value is returned as given. Left unset (``None``), the answer is
-    ``True`` when the scenario's hydraulics model routes water quality and ``False`` otherwise:
-    a coupled resume from a snapshot does not carry SWMM's node and link quality state, while the
-    exact replay route re-derives it, so a quality-routed run resumes by replay unless the user
-    asks otherwise. A model without quality routing resolves to ``False``, which writes no cfg
-    line, so its cfg is byte-identical to what it was before the field could be unset.
+    ``True`` when the scenario's hydraulics model routes water quality and ``False`` otherwise,
+    EXCEPT on a build that carries water-quality state in its snapshot: a coupled resume from a
+    snapshot at an older build does not carry SWMM's node and link quality state, while the exact
+    replay route re-derives it, so a quality-routed run resumes by replay unless the user asks
+    otherwise or the build is a member of ``SWMM_QUALITY_SNAPSHOT_SHAS``, where it resumes by
+    snapshot (``False``). A model without quality routing resolves to ``False``, which writes no
+    cfg line, so its cfg is byte-identical to what it was before the field could be unset.
+
+    ``build_sha`` defaults to ``None`` meaning "unknown build", which is the pre-existing
+    behaviour exactly; a call site that has the coupled build's sha passes it.
     """
     if configured is not None:
         return configured
+    if snapshot_carries_quality_state(build_sha):
+        return False
     return inp_routes_quality(hydraulics_inp)
 
 

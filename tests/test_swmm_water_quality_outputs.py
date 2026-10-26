@@ -985,3 +985,136 @@ def test_washoff_descriptor_states_its_subcatchment_geometry_and_outfall_sources
     assert table["washoff_total_load"]["source_variables"] == (
         "SWMM report, Subcatchment Washoff Summary, row per subcatchment"
     )
+
+
+# --------------------------------------------------------------------------- A3 + A2 at a build carrying quality state
+def _post_at_build(tmp_path, monkeypatch, rows, build_sha, n_resumes=None, cfg_text=""):
+    """`_post`'s fake, plus a system log recording `build_sha` as the native compile's producing sha."""
+    from hhemt import resume_events
+    from hhemt.process_simulation import TRITONSWMM_sim_post_processing
+
+    log = tmp_path / "run.log"
+    ledger = resume_events.ledger_path_for(log)
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    if rows is not None:
+        ledger.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    cfg = tmp_path / "triton.cfg"
+    cfg.write_text(cfg_text)
+    monkeypatch.setattr("hhemt.run_simulation.model_logfile_for", lambda analysis, event_iloc, model_type: log)
+    fake = SimpleNamespace(
+        _analysis=SimpleNamespace(cfg_analysis=SimpleNamespace(execution_environment="native")),
+        _system=SimpleNamespace(log=SimpleNamespace(tritonswmm_producing_sha=SimpleNamespace(get=lambda: build_sha))),
+        _scenario=SimpleNamespace(event_iloc=0),
+        log=SimpleNamespace(n_resumes=None if n_resumes is None else SimpleNamespace(get=lambda: n_resumes)),
+        scen_paths=SimpleNamespace(triton_swmm_cfg=cfg),
+    )
+    fake._quality_stats_status = lambda model_type: TRITONSWMM_sim_post_processing._quality_stats_status(
+        fake, model_type
+    )
+    return lambda ds: TRITONSWMM_sim_post_processing._apply_quality_stats_rule(fake, ds, "tritonswmm")
+
+
+def test_a3_unset_resolves_false_at_a_build_that_carries_quality_state(tmp_path):
+    """A3: unset resolves to the snapshot route at a listed build and to replay at every other build.
+
+    Property: for a quality-routed hydraulics model with the field unset, `resolve_swmm_snapshot_disable`
+    returns False when `build_sha` is the C11 pin and True at `a146fb6`, at an unlisted sha and at None.
+    Class: NEW CAPABILITY. Plausible wrong implementation: ignoring `build_sha` (the three-argument call
+    still returns True), or matching by prefix/ancestry; red because the C11 call returns True. Reachability:
+    the resolver is the one function the preparation call site reads; artifact: the routed `.inp` fixture
+    below. Both-states anchor: the assertion turns on the returned bool at two builds for one `.inp`, not
+    on any wording. Invocation isolation: an explicit True or False wins at the C11 build, a differently
+    positioned input. Why required: the unset default must stop forcing replay once the build carries the
+    state, or no quality-routed run ever resumes from its snapshot. What kills it: dropping the
+    `snapshot_carries_quality_state` branch. Second correct implementation: resolving the build's verdict
+    inside the call site and passing only a bool (the assertions read this function's returns only).
+    """
+    from hhemt.model_defects import SHA_CURATED_MAIN_PIN, SHA_MAIN_QUALITY_SNAPSHOT_PIN
+    from hhemt.scenario import resolve_swmm_snapshot_disable
+
+    routed = tmp_path / "routed.inp"
+    routed.write_text(_inp(TWO))
+    plain = tmp_path / "plain.inp"
+    plain.write_text(_inp([]))
+    assert resolve_swmm_snapshot_disable(None, routed, build_sha=SHA_MAIN_QUALITY_SNAPSHOT_PIN) is False
+    assert resolve_swmm_snapshot_disable(None, routed, build_sha=SHA_CURATED_MAIN_PIN) is True
+    assert resolve_swmm_snapshot_disable(None, routed, build_sha="deadbeef" * 5) is True
+    assert resolve_swmm_snapshot_disable(None, routed, build_sha=None) is True
+    assert resolve_swmm_snapshot_disable(None, routed) is True
+    # exact membership: the 12-character prefix is not the member, so it keeps the forced replay
+    assert resolve_swmm_snapshot_disable(None, routed, build_sha=SHA_MAIN_QUALITY_SNAPSHOT_PIN[:12]) is True
+    # a model without quality routing is False at every build, and an explicit value wins
+    assert resolve_swmm_snapshot_disable(None, plain, build_sha=SHA_CURATED_MAIN_PIN) is False
+    assert resolve_swmm_snapshot_disable(True, routed, build_sha=SHA_MAIN_QUALITY_SNAPSHOT_PIN) is True
+    assert resolve_swmm_snapshot_disable(False, routed, build_sha=SHA_CURATED_MAIN_PIN) is False
+
+
+def _prepared_cfg_at_build(tmp_path, monkeypatch, recorded_sha):
+    """The coupled TRITON cfg for a quality-routed, unset-field scenario whose system log records `recorded_sha`."""
+    from tests.test_scenario_boundary_guards import _scenario_for_coupled_cfg
+
+    scen, cfg = _scenario_for_coupled_cfg(tmp_path, monkeypatch, rim_from_dem=False, recorded_sha=recorded_sha)
+    scen._analysis.cfg_analysis.swmm_snapshot_disable = None
+    (tmp_path / "hydraulics.inp").write_text(_inp(TWO))
+    scen._generate_TRITON_SWMM_cfg()
+    return cfg.read_text()
+
+
+def test_a3_prepared_cfg_at_a_c11_build_carries_no_disable_line(tmp_path, monkeypatch):
+    """A3 end to end: a quality-routed, unset scenario at the C11 build prepares a cfg with no disable line.
+
+    Property: the cfg `_generate_TRITON_SWMM_cfg` writes has no `swmm_snapshot_disable` line when the
+    system log records the C11 pin, and has `swmm_snapshot_disable=1` when it records `a146fb6`.
+    Class: NEW CAPABILITY. Plausible wrong implementation: resolving correctly but not passing
+    `build_sha` at the call site (the resolver test alone passes); red because the C11 cfg keeps the line.
+    Reachability: the call site at `scenario.py` is the only production caller; artifact: the two prepared
+    cfgs below. Both-states anchor: the presence of a line beginning with the key, not its wording.
+    Invocation isolation: the same scenario at `a146fb6` still forces replay. Why required: the resolver
+    is inert unless the call site hands it the build. What kills it: dropping the `build_sha=` argument
+    at the call site. Second correct implementation: reading the build inside the resolver from the log
+    (the assertions read the written cfg only).
+    """
+    from hhemt.model_defects import SHA_CURATED_MAIN_PIN, SHA_MAIN_QUALITY_SNAPSHOT_PIN
+
+    at_c11 = _prepared_cfg_at_build(_mk(tmp_path / "c11"), monkeypatch, SHA_MAIN_QUALITY_SNAPSHOT_PIN)
+    assert not any(line.startswith("swmm_snapshot_disable") for line in at_c11.splitlines())
+    at_old = _prepared_cfg_at_build(_mk(tmp_path / "old"), monkeypatch, SHA_CURATED_MAIN_PIN)
+    assert "swmm_snapshot_disable=1" in at_old.splitlines()
+
+
+def test_a2_keeps_statistics_after_a_snapshot_resume_at_a_c11_build(tmp_path, monkeypatch):
+    """A2: a snapshot resume at the C11 build keeps its statistics with the snapshot status; at `a146fb6` it withholds.
+
+    Property: with a `snapshot` ledger row, `pollutant_max_conc` is not NaN and the status is
+    `QUALITY_STATS_SNAPSHOT` when the system log records the C11 pin, and the values are NaN at `a146fb6`.
+    Class: NEW CAPABILITY. Plausible wrong implementation: withholding on any snapshot row regardless of
+    build (today's behaviour), or returning `QUALITY_STATS_COMPUTED` for the carried snapshot row; red
+    because the C11 values are NaN or the status is `computed`. Reachability: the ledger-row path is the
+    solver's own marker; artifact: the ledger fixtures below. Both-states anchor: the assertion turns on
+    whether the values are NaN, and on the status constant imported from the module, not on its wording.
+    Invocation isolation: the ledger-less fallback (resumed, no disable line) at C11 keeps the values with
+    `QUALITY_STATS_COMPUTED`, and the same fallback at `a146fb6` withholds. Why required: otherwise a run
+    resumed by a carrying snapshot publishes NaN for valid statistics. What kills it: dropping the
+    `carried` read in `_quality_stats_status`. Second correct implementation: deciding `carried` once in
+    the caller and passing it in (the assertions read the dataset only).
+    """
+    from hhemt.model_defects import SHA_CURATED_MAIN_PIN, SHA_MAIN_QUALITY_SNAPSHOT_PIN
+    from hhemt.process_simulation import QUALITY_STATS_COMPUTED, QUALITY_STATS_SNAPSHOT, QUALITY_STATS_WITHHELD
+
+    kept = _post_at_build(_mk(tmp_path / "k"), monkeypatch, [{"path": "snapshot"}], SHA_MAIN_QUALITY_SNAPSHOT_PIN)(
+        _summary()
+    )
+    assert (kept["pollutant_max_conc"] == 1.0).all() and (kept["outfall_total_load"] == 3.0).all()
+    assert kept["pollutant_stats_status"].values.tolist() == [QUALITY_STATS_SNAPSHOT]
+    held = _post_at_build(_mk(tmp_path / "h"), monkeypatch, [{"path": "snapshot"}], SHA_CURATED_MAIN_PIN)(_summary())
+    assert np.isnan(held["pollutant_max_conc"]).all()
+    assert held["pollutant_stats_status"].values.tolist() == [QUALITY_STATS_WITHHELD]
+    fallback_kept = _post_at_build(
+        _mk(tmp_path / "fk"), monkeypatch, None, SHA_MAIN_QUALITY_SNAPSHOT_PIN, n_resumes=2, cfg_text="a=1\n"
+    )(_summary())
+    assert (fallback_kept["pollutant_max_conc"] == 1.0).all()
+    assert fallback_kept["pollutant_stats_status"].values.tolist() == [QUALITY_STATS_COMPUTED]
+    fallback_held = _post_at_build(
+        _mk(tmp_path / "fh"), monkeypatch, None, SHA_CURATED_MAIN_PIN, n_resumes=2, cfg_text="a=1\n"
+    )(_summary())
+    assert np.isnan(fallback_held["pollutant_max_conc"]).all()

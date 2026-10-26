@@ -88,6 +88,7 @@ _TABLE: dict[str, tuple[str, str | None]] = {
     "tests/test_resume_event_ledger.py": ("reads-as-attempts", None),
     "tests/test_resume_stepback_from_cut_off_snapshot.py": ("reads-as-attempts", None),
     "tests/test_resume_verdict_disclosed_denominator.py": ("reads-as-attempts", None),
+    "tests/test_review_quality_snapshot_pin_awareness.py": ("reads-as-attempts", None),
     "tests/test_snapshot_failed_replay.py": ("reads-as-attempts", None),
     "tests/test_swmm_water_quality_outputs.py": ("reads-as-attempts", None),
     "tests/test_synth_combine_pip2.py": ("incidental mention", None),

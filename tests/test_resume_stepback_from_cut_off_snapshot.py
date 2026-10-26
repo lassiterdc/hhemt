@@ -99,6 +99,7 @@ def _generated_cfg_text(tmp_path: Path, monkeypatch) -> str:
                 swmm_snapshot_disable=False,
                 swmm_snapshot_keep_all=False,
                 swmm_node_rim_from_dem=False,
+                execution_environment="native",
             )
         ),
         _swmm_inp_for_sim_duration=lambda: work / "hydraulics.inp",

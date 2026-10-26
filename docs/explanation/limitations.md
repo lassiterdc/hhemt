@@ -64,12 +64,21 @@ the combination rather than failing mid-run.
 network, so only the sources the hydraulics model declares (dry-weather and external inflow
 concentrations, RDII, initial concentrations) produce pollutant mass. Pollutant mass that leaves
 for the 2D surface is counted in `Quality Routing Continuity` External Outflow and is not
-transported. A resume from a checkpoint snapshot does not carry SWMM's node and link
-water-quality state, so a quality-routed coupled run resumes by exact replay unless
-`swmm_snapshot_disable` is set to `false`; for an event that did resume from a snapshot, the
-water-quality statistics are withheld (NaN, with `pollutant_stats_status` giving the reason) while
-the concentration time series are kept. This follows from the solver's snapshot inventory, which
-excludes the node and link quality fields. See the [output data model](../reference/output-data-model.md).
+transported. A resume from a checkpoint snapshot written by a TRITON build before `bd18215` does
+not carry SWMM's node and link water-quality state, so at such a build a quality-routed coupled run
+resumes by exact replay unless `swmm_snapshot_disable` is set to `false`; for an event that did
+resume from such a snapshot, the water-quality statistics are withheld (NaN, with
+`pollutant_stats_status` giving the reason) while the concentration time series are kept. This
+follows from the snapshot inventory of those builds, which excludes the node and link quality
+fields. At a build listed in `SWMM_QUALITY_SNAPSHOT_SHAS` (`bd18215`; a later TRITON pin that
+carries the fix is added there by hand), the snapshot carries that state, so a quality-routed run
+resumes from its snapshot and its statistics are kept, with `pollutant_stats_status` recording the
+route. A build not in that set, an abbreviated sha, or no recorded build keeps the exact replay and
+the withholding. A snapshot written by a TRITON build before `bd18215` is refused when a later build
+resumes it; relaunch with `swmm_snapshot_disable: true` for the exact replay, or start clean.
+Processing reads the build recorded in the system directory's log, so recompiling that directory at
+another TRITON commit before a run is processed attributes the run to the new build. See the
+[output data model](../reference/output-data-model.md).
 
 **Walltime is a real boundary.** A simulation killed at walltime resumes from its
 most recent checkpoint, but resumption is a property of the solver's checkpoint

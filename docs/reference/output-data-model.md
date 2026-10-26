@@ -150,7 +150,7 @@ the coordinate `pollutant_conc_units` gives each pollutant's declared concentrat
 | `qual_routing_continuity_error_perc` | pollutant | `percent` | That table's continuity error |
 | `runoff_qual_{term}` | pollutant | `kg` (a count for `#/L`) | One variable per row of `Runoff Quality Continuity`: `initial_buildup`, `surface_buildup`, `wet_deposition`, `sweeping_removal`, `infiltration_loss`, `bmp_removal`, `surface_runoff`, `remaining_buildup` |
 | `runoff_qual_continuity_error_perc` | pollutant | `percent` | That table's continuity error |
-| `pollutant_stats_status` (coordinate, coupled summaries) | event | n/a | `computed`, `computed: resumed by exact replay`, or the reason the statistics are withheld |
+| `pollutant_stats_status` (coordinate, coupled summaries) | event | n/a | `computed`, `computed: resumed by exact replay`, `computed: resumed from a snapshot that carries SWMM water-quality state`, or the reason the statistics are withheld |
 
 SWMM prints the mass of a count pollutant (`#/L`) as a base-10 logarithm; the toolkit linearizes
 every mass value, mapping a printed `0.000` to 0. Concentrations in the coupled model come from the

@@ -1970,24 +1970,38 @@ class TRITONSWMM_sim_post_processing:
     def _quality_stats_status(self, model_type: Literal["swmm", "tritonswmm"]) -> str:
         """Why this event's water-quality statistics are or are not trustworthy, as the status text.
 
-        A coupled run that resumed from a SNAPSHOT restarts SWMM's node and link water-quality
-        state (the solver's snapshot excludes it), so its pollutant statistics are withheld; a
-        resume by exact replay re-derives that state and the statistics stay valid. The route is
-        read from the per-event resume-event ledger, whose rows record the solver's own marker
-        for each resume (``path``: ``snapshot`` or ``replay``). For a tree whose ledger is absent
-        the fallback is: the sim resumed at least once and its TRITON cfg carries no
-        ``swmm_snapshot_disable=1`` line, which means the snapshot route was available.
+        A coupled run that resumed from a SNAPSHOT at a build whose snapshot excludes SWMM's node and
+        link water-quality state restarts that state, so its pollutant statistics are withheld; a
+        resume by exact replay re-derives it and the statistics stay valid, and so does a snapshot
+        resume at a build listed in ``SWMM_QUALITY_SNAPSHOT_SHAS``, whose snapshot carries it (the
+        status then records the route: ``QUALITY_STATS_SNAPSHOT``). The route is read from the
+        per-event resume-event ledger, whose rows record the solver's own marker for each resume
+        (``path``: ``snapshot`` or ``replay``). For a tree whose ledger is absent the fallback is:
+        the sim resumed at least once and its TRITON cfg carries no ``swmm_snapshot_disable=1``
+        line, which means the snapshot route was available; at a carrying build that inferred
+        route yields ``QUALITY_STATS_COMPUTED``, because the statistics are valid by either route.
+        The build is read from the system log by `scenario.coupled_build_sha`, the same function
+        and mode rule the preparation-time default uses, so the two cannot disagree on one run.
         """
         from hhemt import resume_events
         from hhemt.run_simulation import model_logfile_for
+        from hhemt.scenario import coupled_build_sha, snapshot_carries_quality_state
 
         if model_type != "tritonswmm":
             return QUALITY_STATS_COMPUTED
+        carried = snapshot_carries_quality_state(
+            coupled_build_sha(
+                getattr(getattr(self, "_system", None), "log", None),
+                execution_environment=getattr(
+                    getattr(getattr(self, "_analysis", None), "cfg_analysis", None), "execution_environment", "native"
+                ),
+            )
+        )
         ledger = resume_events.ledger_path_for(model_logfile_for(self._analysis, self._scenario.event_iloc, model_type))
         rows = resume_events.read_resume_events(ledger)
         paths = [row.get("path") for row in rows]
         if "snapshot" in paths:
-            return QUALITY_STATS_WITHHELD
+            return QUALITY_STATS_SNAPSHOT if carried else QUALITY_STATS_WITHHELD
         if "replay" in paths:
             return QUALITY_STATS_REPLAY
         if not rows:
@@ -1996,7 +2010,7 @@ class TRITONSWMM_sim_post_processing:
                 cfg = Path(self.scen_paths.triton_swmm_cfg)
                 carries_disable = cfg.exists() and "\nswmm_snapshot_disable=1" in f"\n{cfg.read_text()}"
                 if not carries_disable:
-                    return QUALITY_STATS_WITHHELD
+                    return QUALITY_STATS_COMPUTED if carried else QUALITY_STATS_WITHHELD
         return QUALITY_STATS_COMPUTED
 
     def _apply_quality_stats_rule(self, ds, model_type):
@@ -3575,6 +3589,9 @@ QUALITY_STATS_REPLAY = "computed: resumed by exact replay"
 QUALITY_STATS_WITHHELD = (
     "withheld: resumed from a snapshot; SWMM water-quality state is not carried across a snapshot resume"
 )
+#: Statistics kept for an event that resumed from a snapshot written by a build that carries SWMM
+#: water-quality state (`scenario.SWMM_QUALITY_SNAPSHOT_SHAS`); the route stays a recorded fact.
+QUALITY_STATS_SNAPSHOT = "computed: resumed from a snapshot that carries SWMM water-quality state"
 #: Water-quality statistics set to NaN for an event that resumed from a snapshot (the continuity tables are
 #: matched by prefix in `_apply_quality_stats_rule`). Outfall volume and the concentration series are kept.
 _QUALITY_STATS_VARIABLES = frozenset(
