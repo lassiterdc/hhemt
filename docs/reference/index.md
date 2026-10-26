@@ -13,6 +13,8 @@ schema, and what the toolkit produces.
   the whole reproducibility dataset.
 - [Reporting sets](reporting-sets.md): the named renderer selections that decide
   what a report contains, and how to choose one.
+- [Glossary](glossary.md): the terms these pages use, each with a short
+  definition.
 - [The interactive analysis report](example-report.md): what a rendered report
   contains and how to open one.
 

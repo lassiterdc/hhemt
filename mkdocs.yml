@@ -69,6 +69,8 @@ markdown_extensions:
       base_path:
         - docs/_snippets
       check_paths: true
+      auto_append:
+        - abbreviations.md
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -150,6 +152,7 @@ nav:
       - Output data model: reference/output-data-model.md
       - FAIR scope table: reference/fair-scope-table.md
       - Reporting sets: reference/reporting-sets.md
+      - Glossary: reference/glossary.md
       - The interactive analysis report: reference/example-report.md
   - FAQ: explanation/rerun-faq.md
   - Contributing:

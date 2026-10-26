@@ -62,7 +62,8 @@ Every analysis is one of two kinds, set by one switch in its configuration:
 - **Event ensembles.** Many weather events in parallel, consolidated into
   hierarchical zarr stores with CF-1.13 metadata, ready for analysis across the
   whole population.
-- **Sensitivity analyses.** A parameter table turns each row into a scenario, so
+- **Sensitivity analyses.** A parameter table turns each row into a
+  [member](reference/glossary.md#member), a separate analysis, so
   you can vary the hydraulic model, roughness, grid resolution, or the compute
   configuration itself. Benchmarking is the sensitivity analysis whose axis is the
   compute configuration.
