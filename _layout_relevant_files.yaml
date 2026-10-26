@@ -4088,3 +4088,13 @@ non_breaking_allowlist:
       consolidated tree's attrs are byte-identical to before for every input.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 03d2cc9460ad27dc926338b6c66843a57e044c1bcfec0df7230d242ead75437e
+    justification: >-
+      NON-BREAKING. toolkit-nonutf8-3 File 4 — the consolidation-time resume-mechanism stamp
+      reads the coupled model log with errors="replace", so a log carrying bytes that are not
+      UTF-8 no longer makes that sub's stamp silently absent. No persisted key, file name, zarr
+      group or _version.json field changes; a stamp key the code already writes is now written
+      for such a sub as it is for every other.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.

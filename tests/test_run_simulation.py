@@ -136,3 +136,64 @@ def test_true_record_is_authoritative_and_still_gated_on_coupled_rpt(tmp_path):
     assert _gate(tmp_path, recorded=True, marker_text="") is True
     # True + unfinalized coupled rpt -> False
     assert _gate(tmp_path, recorded=True, marker_text="", rpt_ok=False) is False
+
+
+# --- non-UTF-8 solver-log regression (no cluster, no compile) ------------------
+#
+# A coupled solver can write bytes that are not UTF-8 into the model log (measured on
+# Rivanna: 6 heap-pointer bytes after `swmm_flooding_debug.txt` from a stack overflow in
+# massbal_checkFloodingConsistency). Every marker these readers test is ASCII, so the read
+# must tolerate the bytes rather than raise UnicodeDecodeError and fail a finished sim.
+
+_NON_UTF8_LINE = b"  Detailed report written to: /x/swmm/swmm_flooding_debug.txt\xf0\xec\x9e\xe0\xf5U\n"
+
+
+def _bytes_gate(tmp_path, body, *, model_type, recorded, real_rpt_gate):
+    log_file = tmp_path / f"model_{model_type}.log"
+    log_file.write_bytes(body)
+    perf = tmp_path / "performance.txt"
+    perf.write_text("x")
+    fake_self = types.SimpleNamespace(
+        _scenario=types.SimpleNamespace(get_log=lambda mt: _FakeModelLog(recorded)),
+        _analysis_level_model_logfile=lambda mt: log_file,
+        performance_file=lambda model_type: perf,
+    )
+    if real_rpt_gate:
+        fake_self._coupled_swmm_report_finalized = lambda mt: TRITONSWMM_run._coupled_swmm_report_finalized(
+            fake_self, mt
+        )
+    else:
+        fake_self._coupled_swmm_report_finalized = lambda mt: True
+    return fake_self
+
+
+def test_raw_marker_scan_tolerates_non_utf8_bytes(tmp_path):
+    """run_simulation.py fallback scan: a finished coupled sim stays complete, and an
+    unfinished one stays incomplete, when the log carries non-UTF-8 bytes."""
+    done = _bytes_gate(
+        tmp_path, _NON_UTF8_LINE + b"Simulation ends\n", model_type="tritonswmm", recorded=None, real_rpt_gate=False
+    )
+    assert TRITONSWMM_run.model_run_completed(done, "tritonswmm") is True
+    (tmp_path / "model_tritonswmm.log").write_bytes(_NON_UTF8_LINE)
+    assert TRITONSWMM_run.model_run_completed(done, "tritonswmm") is False
+
+
+def test_triton_arm_of_rpt_gate_tolerates_non_utf8_bytes(tmp_path):
+    """The triton arm of _coupled_swmm_report_finalized reads the run log for its marker.
+    _gate stubs that method, so only a REAL call reaches this read."""
+    s = _bytes_gate(
+        tmp_path, _NON_UTF8_LINE + b"Simulation ends\n", model_type="triton", recorded=True, real_rpt_gate=True
+    )
+    assert TRITONSWMM_run.model_run_completed(s, "triton") is True
+
+
+def test_failure_classifier_tolerates_non_utf8_bytes(tmp_path):
+    """_classify_model_log_failure still finds the ASCII timeout marker past a bad byte."""
+    s = _bytes_gate(
+        tmp_path,
+        _NON_UTF8_LINE + b"slurmstepd: error: *** STEP 1.0 CANCELLED DUE TO TIME LIMIT ***\n",
+        model_type="tritonswmm",
+        recorded=None,
+        real_rpt_gate=False,
+    )
+    assert TRITONSWMM_run._classify_model_log_failure(s, "tritonswmm") == "timeout"

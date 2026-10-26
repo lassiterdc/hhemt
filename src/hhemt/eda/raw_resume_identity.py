@@ -196,7 +196,7 @@ def parse_resume_timestep(model_log: Path) -> float | None:
     (-> no vline; never a false verdict).
     """
     try:
-        text = model_log.read_text()
+        text = model_log.read_text(errors="replace")
     except OSError:
         return None
     for marker in (_TRITON_SNAPSHOT_RESTORE_MARKER, _TRITON_REPLAY_MARKER):

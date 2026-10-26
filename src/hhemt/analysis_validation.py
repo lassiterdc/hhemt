@@ -1658,7 +1658,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
                 # became EXAMINED only when a model_tritonswmm_*.log was present, proving the
                 # read ignored the row. Key the path on the row's own model_type.
                 _row_model = str(row.get("model_type") or "tritonswmm")
-                text = model_logfile_for(sub, int(row["event_iloc"]), _row_model).read_text()
+                text = model_logfile_for(sub, int(row["event_iloc"]), _row_model).read_text(errors="replace")
             except Exception:
                 # Log gone (purged / cache-cleared): fall back to the durable consolidation-time
                 # stamp before conceding INDETERMINATE. A stamped resumed+completed sub is EXAMINED

@@ -442,7 +442,7 @@ class TRITONSWMM_run:
             _log = self._analysis_level_model_logfile(model_type)
             if not _log.exists():
                 return False
-            if "Simulation ends" not in _log.read_text():
+            if "Simulation ends" not in _log.read_text(errors="replace"):
                 return False
             # SECOND conjunct, and it is about IDENTITY, not about completion.
             #
@@ -556,7 +556,7 @@ class TRITONSWMM_run:
         log_file = self._analysis_level_model_logfile(model_type)
         if not log_file.exists():
             return False
-        log_content = log_file.read_text()
+        log_content = log_file.read_text(errors="replace")
         if model_type in ("triton", "tritonswmm"):
             success = "Simulation ends" in log_content
         else:  # swmm
@@ -664,7 +664,7 @@ class TRITONSWMM_run:
         if not log_file.exists():
             return "no_log"
 
-        log_content = log_file.read_text()
+        log_content = log_file.read_text(errors="replace")
 
         if "DUE TO TIME LIMIT" in log_content:
             return "timeout"

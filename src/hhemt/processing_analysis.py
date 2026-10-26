@@ -1122,7 +1122,7 @@ def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis, *, df_status=N
             if sub is None:
                 continue
             try:
-                text = model_logfile_for(sub, int(row["event_iloc"]), "tritonswmm").read_text()
+                text = model_logfile_for(sub, int(row["event_iloc"]), "tritonswmm").read_text(errors="replace")
             except Exception:  # noqa: BLE001 — log unreadable at consolidation: skip this sub, best-effort
                 continue
             key = str(_sa) if _sa is not None else str(row.get("scenario_directory", ""))
