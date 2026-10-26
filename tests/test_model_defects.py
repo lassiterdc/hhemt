@@ -366,19 +366,22 @@ def test_the_clean_start_stale_snapshot_entry_resolves_by_content_at_every_regis
 
 
 def test_every_registered_defect_is_absent_at_the_live_pin():
-    """Property: the live solver pin resolves ABSENT on every defect from the explicit sets.
+    """Property: BOTH production solver pins resolve ABSENT on every defect from the explicit sets.
 
-    Class: every REGISTRY entry at `a146fb6`, the curated fork `main` pin. Why: an entry missing the
-    pin reads `ancestry_unresolvable` on the read path, which never fails a check and so hides a
-    regression. What kills it: dropping the pin from one entry's `known_absent_in`. Second correct
-    implementation: deriving the membership from the pin file at import; the assertion reads the
-    verdicts only.
+    Class: every REGISTRY entry at `bd18215` (`SHA_MAIN_QUALITY_SNAPSHOT_PIN`, the synthetic tier's
+    live pin) and at `a146fb6` (`SHA_CURATED_MAIN_PIN`, which stays the estate's family-C pin, so
+    dropping its assertion would lose the only all-entries check at a pin a production run uses).
+    Why: an entry missing a pin reads `ancestry_unresolvable` on the read path, which never fails a
+    check and so hides a regression. What kills it: dropping either pin from one entry's
+    `known_absent_in`. Second correct implementation: deriving the membership from the pin file at
+    import; the assertion reads the verdicts only.
     """
-    from hhemt.model_defects import SHA_CURATED_MAIN_PIN
+    from hhemt.model_defects import SHA_CURATED_MAIN_PIN, SHA_MAIN_QUALITY_SNAPSHOT_PIN
 
-    for did, d in REGISTRY_BY_ID.items():
-        v = resolve(d, SHA_CURATED_MAIN_PIN)
-        assert (v.status, v.rule) == ("absent", "known_absent_set"), (did, v)
+    for pin in (SHA_MAIN_QUALITY_SNAPSHOT_PIN, SHA_CURATED_MAIN_PIN):
+        for did, d in REGISTRY_BY_ID.items():
+            v = resolve(d, pin)
+            assert (v.status, v.rule) == ("absent", "known_absent_set"), (pin[:12], did, v)
 
 
 #: The three every-coupled-run entries and the title each must carry, word for word.
@@ -402,7 +405,7 @@ _COUPLED_ENTRIES = (
 
 @pytest.mark.parametrize(("did", "title"), _COUPLED_ENTRIES)
 def test_each_every_coupled_run_entry_is_present_before_its_fix_and_absent_at_it_and_at_the_pin(did, title):
-    """Each `coupled` entry is present at `c7b2fd1d` and absent at its fix and at both pins.
+    """Each `coupled` entry is present at `c7b2fd1d` and absent at its fix and at every pin.
 
     Class: the three every-coupled-run registry entries, read without a clone. Why: the analysis
     check reports them from these explicit sets alone, and the title is what a report reader sees.
@@ -410,7 +413,12 @@ def test_each_every_coupled_run_entry_is_present_before_its_fix_and_absent_at_it
     `known_absent_in`, a trigger other than `coupled`, or a reworded title. Second correct
     implementation: a per-sha table; the assertions read status, rule, trigger and title.
     """
-    from hhemt.model_defects import SHA_CURATED_MAIN_PIN, SHA_SNAPSHOT_GUARD_PRIOR_PIN, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS
+    from hhemt.model_defects import (
+        SHA_CURATED_MAIN_PIN,
+        SHA_MAIN_QUALITY_SNAPSHOT_PIN,
+        SHA_SNAPSHOT_GUARD_PRIOR_PIN,
+        SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
+    )
 
     d = REGISTRY_BY_ID[did]
     assert d.defect_id == did
@@ -418,7 +426,7 @@ def test_each_every_coupled_run_entry_is_present_before_its_fix_and_absent_at_it
     assert d.title == title
     v = resolve(d, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS)
     assert (v.status, v.rule) == ("present", "also_present_set"), v
-    for sha in (d.fixed_in, SHA_SNAPSHOT_GUARD_PRIOR_PIN, SHA_CURATED_MAIN_PIN):
+    for sha in (d.fixed_in, SHA_SNAPSHOT_GUARD_PRIOR_PIN, SHA_CURATED_MAIN_PIN, SHA_MAIN_QUALITY_SNAPSHOT_PIN):
         v = resolve(d, sha)
         assert (v.status, v.rule) == ("absent", "known_absent_set"), (sha, v)
 
