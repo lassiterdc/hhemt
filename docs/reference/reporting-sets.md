@@ -28,7 +28,7 @@ report:
 
 Its default value is the one-element list `["default"]`, whose single member is
 a sentinel rather than an ordinary set name. At `analysis.run()` entry that
-sentinel resolves to `benchmarking` when `toggle_sensitivity_analysis` is true,
+sentinel resolves to `sensitivity` when `toggle_sensitivity_analysis` is true,
 and to the standard `default` set otherwise. Setting any other registered name
 selects that set directly.
 
@@ -38,8 +38,8 @@ string, and an empty list are all read as absent values rather than as requests
 for a report with no figures, so each of them falls back to the sentinel above.
 
 The sentinel then resolves from the analysis rather than from the blank. On a
-sensitivity analysis an empty field therefore produces the `benchmarking`
-report, carrying its run-time, compute-cost and scaling figures.
+sensitivity analysis an empty field therefore produces the `sensitivity`
+report, carrying per-member results without the run-time, compute-cost and scaling figures.
 
 The value must be a name or a list of names. An unordered container such as a
 YAML set (`!!set`) is refused rather than quietly accepted, because the order
@@ -125,8 +125,8 @@ For a sweep, where members vary along a declared axis. All five replace
 
 | Set | Use it for |
 |---|---|
-| `benchmarking` | A sweep whose axis is compute configuration. Adds run-time, compute-cost and scaling figures. This is what `default` resolves to on a sensitivity analysis. |
-| `sensitivity` | A sweep that wants per-member results without any specialized figure family: no run-time and scaling figures, no EDA comparison. It is the sweep-shaped bundle minus `sensitivity_benchmarking`, so it imposes no axis requirement and suits a sweep varying any axis. |
+| `benchmarking` | A sweep whose axis is compute configuration. Adds run-time, compute-cost and scaling figures. |
+| `sensitivity` | A sweep that wants per-member results without any specialized figure family: no run-time and scaling figures, no EDA comparison. It is the sweep-shaped bundle minus `sensitivity_benchmarking`, so it imposes no axis requirement and suits a sweep varying any axis. This is what `default` resolves to on a sensitivity analysis. |
 | `compute_sensitivity` | A compute-configuration sweep where the question is whether results are invariant to the compute config, rather than only how fast each one runs. Expects the compute-sensitivity EDA artifacts. |
 | `dem_resolution` | A sweep whose axis is DEM cell size. Its figures compare peak flood depth across resolution rungs, so it expects a varying grid and rejects a mixed-resolution experiment. |
 | `compute_config_byte_identity` | A raw-output byte-for-byte identity study across compute configurations. The benchmarking bundle plus a per-timestep check on whether the raw TRITON rasters are bit-identical across compute configs within one device class (CPU or GPU). It is not a resume study: the clean-versus-resume comparison lives on the combined report. Requires preserved raw outputs. |
