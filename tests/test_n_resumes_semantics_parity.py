@@ -79,6 +79,7 @@ _TABLE: dict[str, tuple[str, str | None]] = {
     "tests/test_known_solver_defects.py": ("reads-as-attempts", None),
     "tests/test_kr_b_resume_reporting_tsteps.py": ("reads-as-attempts", None),
     "tests/test_log_concurrency.py": ("reads-as-attempts", None),
+    "tests/test_log_write_stale_instance.py": ("incidental mention", None),
     "tests/test_member_identity.py": ("reads-as-attempts", None),
     "tests/test_n_resumes_reporting.py": ("reads-as-attempts", None),
     "tests/test_n_resumes_semantics_parity.py": ("reads-as-attempts", None),
