@@ -20,6 +20,7 @@ from pathlib import Path
 
 import yaml
 
+from hhemt.config.report import _apply_reporting_set_renames
 from hhemt.config.static_plots import StaticPlotBaseConfig
 from hhemt.report_renderers._reporting_sets import REPORTING_SETS
 
@@ -115,12 +116,15 @@ def register_eda_plot_in_reporting_set(plot_id: str, set_name: str) -> EdaReport
     """
     if not _PLOT_ID_CHARSET.match(plot_id):
         raise ValueError(f"plot_id {plot_id!r} is not charset-safe; must match ^[A-Za-z0-9_.]+$ (ADR-2).")
+    # Rename before the membership check: applied at the registry lookup below it, an old key would
+    # already have been refused here as unregistered.
+    (set_name,) = _apply_reporting_set_renames([set_name])
     if set_name not in REPORTING_SETS:
         raise ValueError(
             f"set_name {set_name!r} is not a registered ReportingSet; valid sets: {sorted(REPORTING_SETS)}."
         )
     # lean (d): diagnose whether the target set already renders this plot. R11
-    # wired the compute-sensitivity set's eda_compute_sensitivity adapter, so a
+    # wired the compute_sensitivity set's eda_compute_sensitivity adapter, so a
     # registration against a set whose selection already carries that renderer IS
     # routed (config-selectable via report.reporting_set); other sets are
     # register-only (report()-routing deferred to reporting-system_eda-skill).

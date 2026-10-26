@@ -45,7 +45,9 @@ _QUIET_BUILDERS = (
 
 def _b4b_master_snakefile(tmp_path: Path, clear_raw: str) -> str:
     """Generate the b4b sensitivity-master Snakefile for a one-member, one-event stand-in."""
-    report = report_config.model_validate({**DEFAULT_REPORT_CONFIG.model_dump(), "reporting_set": "b4b"})
+    report = report_config.model_validate(
+        {**DEFAULT_REPORT_CONFIG.model_dump(), "reporting_set": "compute_config_byte_identity"}
+    )
     cfg_analysis = analysis_config.model_construct(
         report=report,
         eda=eda_config(),
@@ -57,7 +59,7 @@ def _b4b_master_snakefile(tmp_path: Path, clear_raw: str) -> str:
     )
     experiment = MagicMock()
     experiment.cfg_analysis = cfg_analysis
-    experiment._active_reporting_set = get_reporting_set("b4b")
+    experiment._active_reporting_set = get_reporting_set("compute_config_byte_identity")
     experiment._cfg_report = report
     experiment.analysis_paths.analysis_dir = tmp_path
     experiment.analysis_paths.analysis_log_directory = tmp_path / "logs"

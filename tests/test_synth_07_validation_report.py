@@ -388,7 +388,7 @@ def test_errors_and_warnings_renders_html_sensitivity_real(failing_synth_sensiti
 # ---------------------------------------------------------------------------
 
 
-def _eda_stub(analysis_dir, enabled_plots, *, sensitivity=True, reporting_set="b4b"):
+def _eda_stub(analysis_dir, enabled_plots, *, sensitivity=True, reporting_set="compute_config_byte_identity"):
     """Minimal analysis shape `check_eda_calc_ran` reads: all four ENUMERATION-GATE terms.
 
     The check mirrors the Snakemake rule-all enumeration gate term for term. A stub that
@@ -433,7 +433,7 @@ def test_eda_calc_ran_fails_when_targets_are_enumerated_but_no_verdicts_exist(tm
     """
     from hhemt.analysis_validation import check_eda_calc_ran
 
-    result = check_eda_calc_ran(_eda_stub(tmp_path, ["config_diff_maps"], reporting_set="b4b"))
+    result = check_eda_calc_ran(_eda_stub(tmp_path, ["config_diff_maps"], reporting_set="compute_config_byte_identity"))
 
     assert result.passed is False
     assert "2 EDA plot(s)" in result.summary, "the summary must name the ENUMERATED-target count"
@@ -449,7 +449,7 @@ def test_eda_calc_ran_passes_once_a_verdict_artifact_is_present(tmp_path):
     eda_dir.mkdir()
     (eda_dir / "raw_byte_identity.verdict.json").write_text("{}", encoding="utf-8")
 
-    result = check_eda_calc_ran(_eda_stub(tmp_path, ["config_diff_maps"], reporting_set="b4b"))
+    result = check_eda_calc_ran(_eda_stub(tmp_path, ["config_diff_maps"], reporting_set="compute_config_byte_identity"))
 
     assert result.passed is True
     assert "1 verdict artifact(s) present" in result.summary
@@ -481,7 +481,9 @@ def test_eda_calc_ran_is_not_applicable_to_a_multisim(tmp_path):
     """
     from hhemt.analysis_validation import check_eda_calc_ran
 
-    result = check_eda_calc_ran(_eda_stub(tmp_path, ["config_diff_maps"], sensitivity=False, reporting_set="b4b"))
+    result = check_eda_calc_ran(
+        _eda_stub(tmp_path, ["config_diff_maps"], sensitivity=False, reporting_set="compute_config_byte_identity")
+    )
 
     assert result.passed is True
     assert "N/A" in result.summary
@@ -497,7 +499,7 @@ def test_eda_rule_spec_templates_pins_the_sets_check_eda_calc_ran_depends_on():
 
     enumerating = {n for n, s in REPORTING_SETS.items() if eda_rule_spec_templates(s)}
 
-    assert enumerating == {"b4b", "compute-sensitivity", "dem-resolution"}
+    assert enumerating == {"compute_config_byte_identity", "compute_sensitivity", "dem_resolution"}
 
 
 # ---------------------------------------------------------------------------

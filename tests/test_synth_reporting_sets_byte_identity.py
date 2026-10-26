@@ -285,7 +285,7 @@ def test_composed_master_byte_identical(synth_sensitivity_analysis):
     """
     from hhemt.report_renderers._reporting_sets import compose_reporting_sets
 
-    members = ("dem-resolution", "compute-sensitivity")
+    members = ("dem_resolution", "compute_sensitivity")
     composed = compose_reporting_sets(members)
     analysis = synth_sensitivity_analysis
     analysis._active_reporting_set = composed

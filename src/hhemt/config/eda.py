@@ -93,7 +93,7 @@ class eda_config(cfgBaseModel):
             "sensitivity_datatree.zarr). The dem-resolution family is the other "
             "shipped selection: dem_resolution_cost_error, dem_resolution_diff_maps, "
             "dem_resolution_error_ecdf, dem_resolution_coupling_table -- pair it with "
-            "report.reporting_set='dem-resolution' and a system.target_dem_resolution "
+            "report.reporting_set='dem_resolution' and a system.target_dem_resolution "
             "sweep. The two families are mutually exclusive per experiment: "
             "config_diff_maps requires a UNIFORM grid across members and raises "
             "a named ProcessingError on a mixed-resolution master. Membership is "

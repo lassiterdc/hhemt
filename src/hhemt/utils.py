@@ -2044,7 +2044,7 @@ def report_rule_figure_stems(analysis) -> frozenset[str]:
     from a run-time ``override_clear_raw`` when one is passed, which neither the build
     check nor the deleting callers hold. A forced render run with a clear-raw override
     that differs from the config can therefore disagree with that Snakefile about the
-    ``b4b`` set's two ``plots/eda/`` figures.
+    ``compute_config_byte_identity`` set's two ``plots/eda/`` figures.
     """
     from hhemt.config.eda import eda_config
     from hhemt.config.report import resolve_active_reporting_set

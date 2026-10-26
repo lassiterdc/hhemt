@@ -25,12 +25,12 @@ SIM_IDS = ['event_index.0', 'event_index.1', 'event_index.2']
 ILOC_BY_EVENT_ID = {'event_index.0': 0, 'event_index.1': 1, 'event_index.2': 2}
 
 from hhemt.report_plot_ids import (
-    event_labels_from_status as _event_labels_from_status,
+    event_sidebar_labels_from_status as _event_sidebar_labels_from_status,
     report_label_value as _report_label_value,
     member_labels_from_status as _member_labels_from_status,
 )
 
-_EVENT_LABELS = _event_labels_from_status(workflow.basedir)
+_EVENT_SIDEBAR_LABELS = _event_sidebar_labels_from_status(workflow.basedir)
 _MEMBER_LABELS = _member_labels_from_status(workflow.basedir)
 
 
@@ -495,7 +495,7 @@ rule plot_per_sim_event_page:
             "plots/per_sim/{event_id}/event_page__evt.{event_id}.html",
             caption="report/captions/per_sim_event_page.rst",
             category="Per Simulation Results",
-            labels=(lambda w: {"figure": "Simulation results", "event": _report_label_value(_EVENT_LABELS, w.event_id, "event")}),
+            labels=(lambda w: {"figure": "Simulation results", "event": _report_label_value(_EVENT_SIDEBAR_LABELS, w.event_id, "event")}),
         )
     wildcard_constraints:
         event_id="[A-Za-z0-9_.]+",

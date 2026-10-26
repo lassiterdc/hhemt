@@ -3431,7 +3431,7 @@ class TRITONSWMM_analysis:
             # -> config.report.validate_sensitivity_independent_vars raises
             # ConfigurationError ("report_config.sensitivity is set but the analysis is
             # not a sensitivity analysis") whenever the master's reporting_set names a
-            # benchmarking-validator set ("benchmarking" / "compute-sensitivity"),
+            # benchmarking-validator set ("benchmarking" / "compute_sensitivity"),
             # because the reference's member_csv resolves to None (run()'s member_csv). Scope
             # the report block to the non-sensitivity default: null the benchmarking
             # sensitivity: sub-block (report_config.sensitivity is Optional and is

@@ -33,7 +33,7 @@ NORFOLK_CASE_CONFIG = "case.yaml"
 #: utils.select_regenerable_figures decides what the figure-deleting callers spare. Most
 #: figures here come from analysis.eda(), a non-Snakemake in-process facade, and nothing
 #: rebuilds those after deletion. The exception is a figure the active reporting set's own
-#: rules write under plots/eda/ (compute-sensitivity's ``plots/eda/config_diff_maps``, for
+#: rules write under plots/eda/ (compute_sensitivity's ``plots/eda/config_diff_maps``, for
 #: example): its report rule rebuilds it, so a caller that passes ``report_rule_stems``
 #: still deletes it.
 EDA_PLOTS_SUBDIR = "eda"

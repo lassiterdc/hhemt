@@ -1113,8 +1113,8 @@ from hhemt.report_renderers._reporting_sets import (  # noqa: E402
 @pytest.mark.parametrize(
     "active_set, expected_template_count",
     [
-        pytest.param(get_reporting_set("dem-resolution"), 4, id="registry"),
-        pytest.param(compose_reporting_sets(("dem-resolution", "compute-sensitivity")), 5, id="composed"),
+        pytest.param(get_reporting_set("dem_resolution"), 4, id="registry"),
+        pytest.param(compose_reporting_sets(("dem_resolution", "compute_sensitivity")), 5, id="composed"),
     ],
 )
 def test_dem_resolution_set_emits_one_eda_rule_per_registry_template(
@@ -1196,13 +1196,13 @@ def test_compute_sensitivity_set_still_emits_its_single_eda_rule(
     from hhemt.report_renderers._reporting_sets import get_reporting_set
 
     analysis = synth_sensitivity_analysis
-    analysis._active_reporting_set = get_reporting_set("compute-sensitivity")
+    analysis._active_reporting_set = get_reporting_set("compute_sensitivity")
 
     content = analysis.sensitivity._workflow_builder.generate_master_snakefile_content(
         which="both", compression_level=5
     )
 
-    templates = _eda_templates_for("compute-sensitivity")
+    templates = _eda_templates_for("compute_sensitivity")
     assert len(templates) == 1, "compute-sensitivity must carry exactly one EDA template (15c, folded)"
     (tmpl,) = templates
     assert f"rule {tmpl.rule_name}:" in content

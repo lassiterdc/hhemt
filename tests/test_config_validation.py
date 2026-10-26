@@ -328,9 +328,9 @@ def test_reporting_sets_registry_imports_cleanly():
         "benchmarking",
         "sensitivity",
         "combined",
-        "compute-sensitivity",
-        "dem-resolution",
-        "b4b",
+        "compute_sensitivity",
+        "dem_resolution",
+        "compute_config_byte_identity",
     }
     assert get_reporting_set("benchmarking").validator_key == "benchmarking"
     assert get_reporting_set("default").validator_key == "none"
@@ -362,8 +362,8 @@ def test_reporting_set_field_preserves_member_order():
     correct one on every other arm in this file."""
     from hhemt.config.report import report_config
 
-    IN_A = ["dem-resolution", "compute-sensitivity"]
-    IN_B = ["compute-sensitivity", "dem-resolution"]
+    IN_A = ["dem_resolution", "compute_sensitivity"]
+    IN_B = ["compute_sensitivity", "dem_resolution"]
     a = report_config(reporting_set=IN_A).reporting_set
     b = report_config(reporting_set=IN_B).reporting_set
     assert a == IN_A
@@ -567,7 +567,7 @@ def test_resolve_reporting_set_names_takes_non_default_verbatim():
     from hhemt.config.report import resolve_reporting_set_names
 
     for is_sensitivity in (False, True):
-        assert resolve_reporting_set_names("dem-resolution", is_sensitivity=is_sensitivity) == ("dem-resolution",)
+        assert resolve_reporting_set_names("dem_resolution", is_sensitivity=is_sensitivity) == ("dem_resolution",)
 
 
 def test_resolve_reporting_set_names_unknown_raises_naming_the_requested_value():
@@ -584,7 +584,7 @@ def test_resolve_reporting_set_names_unknown_raises_naming_the_requested_value()
     msg = str(exc.value)
     assert "reporting_set" in msg
     assert "dem-resolutoin" in msg
-    assert "dem-resolution" in msg  # registered sets named
+    assert "dem_resolution" in msg  # registered sets named
 
 
 def test_resolve_reporting_set_names_fences_the_sentinel_in_a_list():
@@ -595,10 +595,10 @@ def test_resolve_reporting_set_names_fences_the_sentinel_in_a_list():
     from hhemt.exceptions import ConfigurationError
 
     with pytest.raises(ConfigurationError) as exc:
-        resolve_reporting_set_names(["default", "dem-resolution"], is_sensitivity=False)
+        resolve_reporting_set_names(["default", "dem_resolution"], is_sensitivity=False)
     msg = str(exc.value)
     assert "default" in msg
-    assert "dem-resolution" in msg
+    assert "dem_resolution" in msg
 
 
 def test_compose_single_name_returns_registry_object():
@@ -622,7 +622,7 @@ def test_validate_composed_disabled_renderers_accepts_a_key_only_one_member_carr
     )
 
     cfg = report_config(
-        reporting_set=["sensitivity", "compute-sensitivity"],
+        reporting_set=["sensitivity", "compute_sensitivity"],
         disabled_renderers=["eda_compute_sensitivity"],
     )
     active = validate_active_reporting_set(
@@ -631,7 +631,7 @@ def test_validate_composed_disabled_renderers_accepts_a_key_only_one_member_carr
         sensitivity_csv_path=None,
         varied_axes=frozenset({"n_omp_threads"}),
     )
-    assert active.name == "sensitivity+compute-sensitivity"
+    assert active.name == "sensitivity+compute_sensitivity"
 
 
 def test_validate_active_reporting_set_unknown_raises():
@@ -729,9 +729,9 @@ def test_composition_preserves_first_appearance_order():
     def _t(s):
         return [t.rule_name for sel in s.renderer_selection for t in sel.rule_spec_template]
 
-    A, B = REPORTING_SETS["dem-resolution"], REPORTING_SETS["compute-sensitivity"]
-    ab = _t(compose_reporting_sets(("dem-resolution", "compute-sensitivity")))
-    ba = _t(compose_reporting_sets(("compute-sensitivity", "dem-resolution")))
+    A, B = REPORTING_SETS["dem_resolution"], REPORTING_SETS["compute_sensitivity"]
+    ab = _t(compose_reporting_sets(("dem_resolution", "compute_sensitivity")))
+    ba = _t(compose_reporting_sets(("compute_sensitivity", "dem_resolution")))
 
     # Together these two kill a sorted- or set-based merge.
     assert ab != ba, "composition is order-insensitive"
@@ -1260,8 +1260,250 @@ def test_reporting_set_field_refuses_an_unordered_container():
     from hhemt.config.report import report_config, resolve_reporting_set_names
     from hhemt.exceptions import ConfigurationError
 
-    unordered = {"dem-resolution", "compute-sensitivity"}
+    unordered = {"dem_resolution", "compute_sensitivity"}
     with pytest.raises(ValidationError):
         report_config(reporting_set=unordered)
     with pytest.raises(ConfigurationError):
         resolve_reporting_set_names(unordered, is_sensitivity=False)
+
+
+def test_reporting_set_rename_model_rewrites_an_old_key_with_one_warning():
+    """An old reporting-set key loads at the model as its new key, announced by exactly one warning.
+
+    Property: for each old key, ``report_config(reporting_set=X).reporting_set`` equals
+    the one-element list of the new key, for X the bare string AND the one-element list,
+    and the load emits exactly one warning that begins ``report.reporting_set: renamed``
+    and names ``{old} -> {new}``.
+    Class: NEW CAPABILITY. The plausible wrong implementation is a table applied only on
+    the list branch, so a bare ``b4b`` (the common spelling) is stored unchanged and
+    dumped into every bundle's ``cfg_analysis.yaml``; this test reds under it.
+    Reachability: a bare string reaches the validator's scalar arm, which returned early
+    before the table could run; artifact: ``config/report.py::_normalize_reporting_set_value``.
+    Both-states anchor: the assertion turns on the stored value and the warning count, both
+    present in the old code (stored value unchanged, zero warnings), not on new wording.
+    Counting is done under ``simplefilter("always")`` because ``pytest.warns`` tolerates
+    extra warnings and so cannot tell one rename announcement from three.
+    Second correct implementation: a table applied inside a ``model_validator(mode="before")``
+    rather than the field validator still passes, since the test reads only the stored value.
+    """
+    import warnings
+
+    from hhemt.config.report import report_config
+
+    renames = (
+        ("b4b", "compute_config_byte_identity"),
+        ("compute-sensitivity", "compute_sensitivity"),
+        ("dem-resolution", "dem_resolution"),
+    )
+    for old, new in renames:
+        for spelling in (old, [old]):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                cfg = report_config(reporting_set=spelling)
+            assert cfg.reporting_set == [new]
+            renamed = [w for w in caught if str(w.message).startswith("report.reporting_set: renamed")]
+            assert len(renamed) == 1, [str(w.message) for w in caught]
+            assert f"{old} -> {new}" in str(renamed[0].message)
+
+
+def test_reporting_set_rename_resolver_rewrites_an_old_key_with_one_warning():
+    """The raw-dict resolver returns the new key for an old one, with exactly one warning.
+
+    Property: ``resolve_reporting_set_names(X, is_sensitivity=True)`` returns the
+    one-tuple of the new key for X the bare string and the one-element list, with exactly
+    one ``report.reporting_set: renamed`` warning.
+    Class: NEW CAPABILITY. The plausible wrong implementation is the table applied in the
+    model only: a bundle's ``cfg_analysis.yaml`` is read as a raw dict and never passes
+    through the model, so ``generate_regeneration_snakefile`` would refuse an old bundle.
+    Reachability: the bundle callers pass the raw value to this function; artifact:
+    ``bundle/snakefile_generator.py`` calls ``resolve_reporting_set_names``.
+    Both-states anchor: the assertion turns on the returned tuple and the warning count,
+    properties of the old code as well (a refusal is not a tuple), not on message wording
+    beyond the stable prefix.
+    Second correct implementation: renaming inside rule 2's normalization rather than
+    between rules 2 and 3 still passes, since only the returned tuple is read.
+    """
+    import warnings
+
+    from hhemt.config.report import resolve_reporting_set_names
+
+    renames = (
+        ("b4b", "compute_config_byte_identity"),
+        ("compute-sensitivity", "compute_sensitivity"),
+        ("dem-resolution", "dem_resolution"),
+    )
+    for old, new in renames:
+        for spelling in (old, [old]):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                resolved = resolve_reporting_set_names(spelling, is_sensitivity=True)
+            assert resolved == (new,)
+            renamed = [w for w in caught if str(w.message).startswith("report.reporting_set: renamed")]
+            assert len(renamed) == 1, [str(w.message) for w in caught]
+            assert f"{old} -> {new}" in str(renamed[0].message)
+
+
+def test_reporting_set_rename_register_eda_plot_returns_the_new_key():
+    """Registering an EDA plot against an old set key is renamed rather than refused.
+
+    Property: ``register_eda_plot_in_reporting_set("config_diff_maps", "compute-sensitivity")``
+    returns a record whose ``set_name`` is ``compute_sensitivity``.
+    Class: NEW CAPABILITY. The plausible wrong implementation applies the table at the
+    registry lookup (``REPORTING_SETS[set_name]``), which the membership check above it
+    never lets an old name reach, so the old name is refused with ``ValueError``.
+    Reachability: the membership check runs first on every call; artifact:
+    ``eda/_promote.py::register_eda_plot_in_reporting_set``.
+    Both-states anchor: the assertion turns on the returned record's ``set_name``, which
+    the old code produced for a registered name, not on a new message.
+    Second correct implementation: renaming through a private helper shared with the model
+    validator, or inline in this function, both pass since only the record is read.
+    """
+    import warnings
+
+    from hhemt.eda._promote import register_eda_plot_in_reporting_set
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        record = register_eda_plot_in_reporting_set("config_diff_maps", "compute-sensitivity")
+    assert record.set_name == "compute_sensitivity"
+
+
+def test_reporting_set_rename_refuses_an_old_and_a_new_key_for_one_set_as_a_duplicate():
+    """An old key listed beside its own new key is a duplicate at the model and at the resolver.
+
+    Property: ``["b4b", "compute_config_byte_identity"]`` is refused at the model
+    (``ValidationError``) AND at the resolver (``ConfigurationError``), each matched on
+    the message text ``names the same set more than once``.
+    Class: NEW CAPABILITY. The plausible wrong implementation renames AFTER the duplicate
+    check, so both spellings pass it and the merge doubles the set's templates.
+    Reachability: the two spellings are distinct strings until the table runs; artifact:
+    the duplicate arm in ``_normalize_reporting_set_value`` and rule 3 of the resolver.
+    Both-states anchor: the assertion turns on the duplicate message text, which exists in
+    the old code. At the resolver the exception type alone does not discriminate, because
+    before this chunk the new key is unregistered and rule 5 raises ``ConfigurationError``
+    for it; the message match is what keeps the pre-chunk red from being vacuous.
+    Second correct implementation: renaming before rule 2's tuple conversion passes too.
+    """
+    import warnings
+
+    from hhemt.config.report import report_config, resolve_reporting_set_names
+    from hhemt.exceptions import ConfigurationError
+
+    pair = ["b4b", "compute_config_byte_identity"]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(ValidationError, match="names the same set more than once"):
+            report_config(reporting_set=pair)
+        with pytest.raises(ConfigurationError, match="names the same set more than once"):
+            resolve_reporting_set_names(pair, is_sensitivity=True)
+
+
+def test_reporting_set_rename_new_keys_load_and_resolve_without_a_warning():
+    """A new key loads at the model and resolves at the resolver, and announces nothing.
+
+    Property: each new key, bare and listed, loads at the model and resolves at the
+    resolver with ZERO ``report.reporting_set: renamed`` warnings.
+    Class: NEW CAPABILITY. The plausible wrong implementation warns on every load
+    (for example by warning whenever the table is consulted rather than when a member is
+    rewritten); it passes the one-warning test for an old key and reds here.
+    Reachability: every config naming a new key reaches the table lookup; artifact:
+    ``config/report.py::_apply_reporting_set_renames``.
+    Both-states anchor: the assertion turns on the warning count and the stored value,
+    which are properties of the old code too (before this chunk the resolver half raises
+    because the new keys are not registered, the model half passes because it checks
+    shape only).
+    Second correct implementation: warning once per call after the loop rather than per
+    member passes, since only the count of rename announcements is read.
+    """
+    import warnings
+
+    from hhemt.config.report import report_config, resolve_reporting_set_names
+
+    new_keys = ("compute_config_byte_identity", "compute_sensitivity", "dem_resolution")
+    for new in new_keys:
+        for spelling in (new, [new]):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                cfg = report_config(reporting_set=spelling)
+                resolved = resolve_reporting_set_names(spelling, is_sensitivity=True)
+            assert cfg.reporting_set == [new]
+            assert resolved == (new,)
+            renamed = [w for w in caught if str(w.message).startswith("report.reporting_set: renamed")]
+            assert renamed == [], [str(w.message) for w in renamed]
+
+
+def test_reporting_set_rename_table_pins_old_keys_to_registered_new_keys():
+    """The rename table maps exactly the three old keys onto registered keys, and no registered key.
+
+    Property: every value of ``_REPORTING_SET_RENAMES`` is a key of ``REPORTING_SETS``,
+    none of its keys is, and its keys equal the three old keys by literal.
+    Class: NEW CAPABILITY. Plausible wrong implementations: a value that misspells a
+    registry key (the rename then resolves to an unregistered set and rule 5 refuses it
+    for a reason that looks like a user typo), and an old key left registered beside its
+    replacement (two sets for one family).
+    Reachability: the table and the registry are plain module attributes; artifact:
+    ``config/report.py::_REPORTING_SET_RENAMES`` and ``_reporting_sets.REPORTING_SETS``.
+    Both-states anchor: the assertion turns on set membership, a property that holds or
+    fails whatever the wording of any message.
+    The import is inside the body because a module-level import of the table makes this
+    whole module fail collection before the table exists, which satisfies the pre-chunk
+    red vacuously and stops the module's other tests.
+    Second correct implementation: a table built from a function rather than a dict
+    literal still passes, since only the mapping is read.
+    """
+    from hhemt.config.report import _REPORTING_SET_RENAMES
+    from hhemt.report_renderers._reporting_sets import REPORTING_SETS
+
+    assert set(_REPORTING_SET_RENAMES) == {"b4b", "compute-sensitivity", "dem-resolution"}
+    assert all(new in REPORTING_SETS for new in _REPORTING_SET_RENAMES.values())
+    assert not any(old in REPORTING_SETS for old in _REPORTING_SET_RENAMES)
+
+
+def test_reporting_set_rename_warning_lists_each_rename_once_in_table_order():
+    """The rename warning lists each applied rename once, in the rename table's order.
+
+    Property: for every ordering of a list naming two old keys, and for a list naming one
+    old key twice, the one ``report.reporting_set: renamed`` warning emitted by the model
+    and by the resolver carries the same bracketed list: each applied rename once, ordered
+    as ``_REPORTING_SET_RENAMES`` orders its keys.
+    Class: the input class is a selection naming two or more old-key members, in any member
+    order, including a repeated old key.
+    Why it is required: the warning text is fixed with its order, so a configuration that
+    lists ``dem-resolution`` before ``b4b`` must announce the same text as one listing them
+    the other way; a member-ordered list makes the announcement depend on spelling order and
+    repeats a rename that was applied once.
+    What kills it: building the applied list while iterating the selection's members rather
+    than the table's items.
+    Second correct implementation: collecting the applied old keys into a set and then
+    filtering the table's items by membership in it passes too, since only the emitted text
+    is read.
+    """
+    import warnings
+
+    from hhemt.config.report import report_config, resolve_reporting_set_names
+    from hhemt.exceptions import ConfigurationError
+
+    expected = "report.reporting_set: renamed [b4b -> compute_config_byte_identity, dem-resolution -> dem_resolution]"
+    for spelling in (["dem-resolution", "b4b"], ["b4b", "dem-resolution"]):
+        for load in (
+            lambda s: report_config(reporting_set=s),
+            lambda s: resolve_reporting_set_names(s, is_sensitivity=True),
+        ):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                load(spelling)
+            renamed = [str(w.message) for w in caught if str(w.message).startswith("report.reporting_set: renamed")]
+            assert len(renamed) == 1, renamed
+            assert renamed[0].startswith(expected), renamed[0]
+    once = "report.reporting_set: renamed [compute-sensitivity -> compute_sensitivity];"
+    for load, refusal in (
+        (lambda s: report_config(reporting_set=s), ValidationError),
+        (lambda s: resolve_reporting_set_names(s, is_sensitivity=True), ConfigurationError),
+    ):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(refusal, match="names the same set more than once"):
+                load(["compute-sensitivity", "compute-sensitivity"])
+        renamed = [str(w.message) for w in caught if str(w.message).startswith("report.reporting_set: renamed")]
+        assert len(renamed) == 1, renamed
+        assert renamed[0].startswith(once), renamed[0]

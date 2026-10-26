@@ -203,7 +203,7 @@ def test_stale_eda_figure_an_active_rule_writes_refuses(tmp_path, monkeypatch, c
     passes.
     """
     with pytest.raises(StalePlotsError):
-        _render(tmp_path, monkeypatch, caller, _STALE_RULE_WRITTEN_EDA, reporting_set="compute-sensitivity")
+        _render(tmp_path, monkeypatch, caller, _STALE_RULE_WRITTEN_EDA, reporting_set="compute_sensitivity")
 
 
 @pytest.mark.parametrize("caller", sorted(_CALLERS))

@@ -1065,7 +1065,7 @@ class _ReportingSetDispatchMixin:
         # carries an EDA artifact (the eda calc ran, producing plots/eda/*.zarr).
         # Threaded via predicate_inputs["has_eda_artifact"] at the generator sites.
         "has_eda_artifact": lambda inp: bool(inp.get("has_eda_artifact")),
-        # b4b requires raw outputs to have survived. Config-read (not an on-disk
+        # compute_config_byte_identity requires raw outputs to have survived. Config-read (not an on-disk
         # stat) because the predicate must answer at Snakefile-GENERATION time, and
         # an on-disk sweep here is O(configs x events) login-node work. The
         # renderer carries the on-disk check and degrades honestly.
@@ -10201,7 +10201,7 @@ rule render_report:
 
         Emits ONE report()-annotated rule PER ``RuleSpecTemplate`` carried by the active
         set's ``eda_compute_sensitivity`` selection — one figure for
-        ``compute-sensitivity``, four for ``dem-resolution``. Each rule shells out to
+        ``compute_sensitivity``, four for ``dem_resolution``. Each rule shells out to
         ``_cli eda_compute_sensitivity``, whose ``render()`` scopes itself to the single
         figure whose canonical plot ID equals the rule's output stem and delegates to
         ``eda/_plotting.render_eda_plots`` — the renderer self-declares its data sources
@@ -10212,7 +10212,7 @@ rule render_report:
         Registry-read: rule name, output path, caption/category/labels, wildcards,
         resources and log path all come from the registry template rather than being
         hardcoded here — the ReportingSet registry is the single source of renderer
-        selection. For ``compute-sensitivity`` the
+        selection. For ``compute_sensitivity`` the
         registry values reproduce the previously-hardcoded literals byte-for-byte EXCEPT
         the log path, which is deliberately reconciled ``logs/`` -> ``_logs/`` (this
         builder was the lone outlier; the registry template and every other rule already

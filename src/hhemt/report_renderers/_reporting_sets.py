@@ -372,8 +372,8 @@ _TMPL_CROSS_EXPERIMENT_DISK_UTILIZATION = RuleSpecTemplate(
 # than adding a sidebar category. The source-side builder
 # (workflow.py _build_plot_rule_block_eda_compute_sensitivity) DERIVES its
 # report_kwargs from this template, so category parity is structural rather than
-# test-enforced. tests/test_reporting_set_cosourcing.py checks only that the b4b
-# set carries this template and that its category is one the b4b set ranks; its
+# test-enforced. tests/test_reporting_set_cosourcing.py checks only that the compute_config_byte_identity
+# set carries this template and that its category is one the compute_config_byte_identity set ranks; its
 # builder-versus-template comparison covers the `default` and `benchmarking` sets,
 # neither of which carries this template.
 _TMPL_EDA_COMPUTE_SENSITIVITY = RuleSpecTemplate(
@@ -597,11 +597,11 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = _SWEEP_SELECTION + (
     ),
 )
 
-# The compute-sensitivity set: the benchmarking (sensitivity-master) selection plus
+# The compute_sensitivity set: the benchmarking (sensitivity-master) selection plus
 # the in-report EDA adapter, gated on has_eda_artifact. Same category_order as
 # benchmarking, because the EDA figures land under the existing "Key Results"
 # category rather than a new sidebar category. Selected via
-# report_config.reporting_set="compute-sensitivity".
+# report_config.reporting_set="compute_sensitivity".
 _COMPUTE_SENSITIVITY_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTION + (
     RendererSelection(
         "eda_compute_sensitivity",
@@ -610,12 +610,12 @@ _COMPUTE_SENSITIVITY_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SE
     ),
 )
 
-# The dem-resolution set: the benchmarking (sensitivity-master) selection
+# The dem_resolution set: the benchmarking (sensitivity-master) selection
 # plus the DEM-resolution EDA family, gated on has_eda_artifact. Structurally
 # identical to _COMPUTE_SENSITIVITY_SELECTION -- same builder key, same predicate,
 # same category_order -- differing only in carrying FOUR rule_spec_templates where
-# compute-sensitivity carries one. Selected via
-# report_config.reporting_set="dem-resolution", paired with a
+# compute_sensitivity carries one. Selected via
+# report_config.reporting_set="dem_resolution", paired with a
 # system.target_dem_resolution sweep.
 _DEM_RESOLUTION_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTION + (
     RendererSelection(
@@ -630,12 +630,12 @@ _DEM_RESOLUTION_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTI
     ),
 )
 
-# b4b (raw-output byte-for-byte comparison). Its one figure template below, plus the
+# compute_config_byte_identity (raw-output byte-for-byte comparison). Its one figure template below, plus the
 # config_diff_maps template, sit under ONE RendererSelection reusing builder key
 # eda_compute_sensitivity (the _cli entrypoint and _OUTPUT_EXT_BY_RENDERER key are
 # per-MODULE, not per-figure), so the figure needs no generator edit of its own: the
 # existing EDA builder emits one rule per template. predicate_key is
-# has_preserved_raw_outputs (NOT has_eda_artifact) because the b4b figures compare raw
+# has_preserved_raw_outputs (NOT has_eda_artifact) because the compute_config_byte_identity figures compare raw
 # solver outputs, which must have survived the post-processing clear for the figures
 # to have anything to read. That predicate gates EMISSION only: the rule-all
 # enumeration of EDA figures is a separate gate in workflow.py, on has_eda_artifact,
@@ -660,16 +660,16 @@ _B4B_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTION + (
         "eda_compute_sensitivity",
         predicate_key="has_preserved_raw_outputs",
         # config_diff_maps (the cross-sim byte-identity grouping vs the serial-CPU
-        # baseline) joins the b4b set's single eda_compute_sensitivity selection so it
-        # renders into analysis_report.html for the b4b masters. It MUST share this ONE
+        # baseline) joins the compute_config_byte_identity set's single eda_compute_sensitivity selection so it
+        # renders into analysis_report.html for the compute_config_byte_identity masters. It MUST share this ONE
         # selection: eda_rule_spec_templates() below, which the workflow builder calls
         # for both emission and rule-all enumeration, returns only the FIRST
         # eda_compute_sensitivity selection's templates, so a second same-key selection
         # would be silently dropped from both emission and the rule-all enumeration. It
         # therefore inherits the has_preserved_raw_outputs predicate; that is inert here
-        # because the b4b masters preserve raw outputs by contract (the b4b figures
-        # require it), and the rule-all enumeration gate is has_eda_artifact, so both
-        # gates hold together on a b4b run.
+        # because the compute_config_byte_identity masters preserve raw outputs by contract (the
+        # compute_config_byte_identity figures require it), and the rule-all enumeration gate is has_eda_artifact, so
+        # both gates hold together on a compute_config_byte_identity run.
         rule_spec_template=(_TMPL_EDA_COMPUTE_SENSITIVITY, _TMPL_B4B_CLEAN_IDENTITY),
     ),
 )
@@ -767,24 +767,24 @@ REPORTING_SETS: dict[str, ReportingSet] = {
         shape="cross_experiment",
         required_axes=(),
     ),
-    "compute-sensitivity": ReportingSet(
-        name="compute-sensitivity",
+    "compute_sensitivity": ReportingSet(
+        name="compute_sensitivity",
         category_order=_STANDARD_CATEGORY_ORDER,
         renderer_selection=_COMPUTE_SENSITIVITY_SELECTION,
         validator_key="benchmarking",
         shape="sensitivity",
         required_axes=(_COMPUTE_CONFIG_AXES,),
     ),
-    "dem-resolution": ReportingSet(
-        name="dem-resolution",
+    "dem_resolution": ReportingSet(
+        name="dem_resolution",
         category_order=_STANDARD_CATEGORY_ORDER,
         renderer_selection=_DEM_RESOLUTION_SELECTION,
         validator_key="benchmarking",
         shape="sensitivity",
         required_axes=(("target_dem_resolution",),),
     ),
-    "b4b": ReportingSet(
-        name="b4b",
+    "compute_config_byte_identity": ReportingSet(
+        name="compute_config_byte_identity",
         category_order=_STANDARD_CATEGORY_ORDER,
         renderer_selection=_B4B_SELECTION,
         validator_key="benchmarking",

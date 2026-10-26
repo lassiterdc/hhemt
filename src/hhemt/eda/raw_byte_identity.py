@@ -680,7 +680,7 @@ def _collapse_replicates(per_config: dict, meta: dict) -> tuple[dict, dict, dict
 
 
 def check_raw_byte_identity(master, *, cfg_analysis, eda_cfg):
-    """WITHIN-MASTER raw per-timestep byte-for-byte producer for the b4b ReportingSet.
+    """WITHIN-MASTER raw per-timestep byte-for-byte producer for the compute_config_byte_identity ReportingSet.
 
     Reads ONLY the passed master's own subs' raw outputs (single-arm; master R12(b)).
     Writes eda/raw_byte_identity.zarr ALWAYS (a real per-family cross-config grid

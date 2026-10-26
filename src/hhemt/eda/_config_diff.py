@@ -463,7 +463,7 @@ def _group_by_identity(subs: dict[str, dict], root: Path) -> list[dict]:
                 f"cell-wise and clusters them by byte-identity, both of which assume "
                 f"one grid. A mixed-resolution master needs the dem-resolution "
                 f"reporting set (which regrids), not config_diff_maps -- set "
-                f"report.reporting_set='dem-resolution' and "
+                f"report.reporting_set='dem_resolution' and "
                 f"eda.enabled_plots accordingly."
             ),
         )
@@ -787,7 +787,7 @@ def _panel_order_key(g: dict) -> tuple:
 def _config_diff_absent_panel(*, headline: str, observed: str, remedy: str) -> go.Figure:
     """Gate-6 honest-absence panel for config_diff_maps.
 
-    The b4b/compute-sensitivity ReportingSets enumerate this figure UNCONDITIONALLY as a
+    The compute_config_byte_identity/compute_sensitivity ReportingSets enumerate this figure UNCONDITIONALLY as a
     report() target, so it must produce a file on every run of those sets -- including runs
     where the cross-config comparison it draws is undefined. A bare empty figure fails Gate 6
     ("degraded panels read as intentional"): the reader cannot tell a not-applicable state

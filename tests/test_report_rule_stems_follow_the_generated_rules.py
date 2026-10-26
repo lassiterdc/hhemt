@@ -52,7 +52,7 @@ def _analysis(analysis_dir: Path, *, disabled_renderers: list[str], enabled_plot
     report = report_config.model_validate(
         {
             **DEFAULT_REPORT_CONFIG.model_dump(),
-            "reporting_set": "compute-sensitivity",
+            "reporting_set": "compute_sensitivity",
             "disabled_renderers": disabled_renderers,
         }
     )
@@ -66,7 +66,7 @@ def _analysis(analysis_dir: Path, *, disabled_renderers: list[str], enabled_plot
         analysis_paths=SimpleNamespace(analysis_dir=analysis_dir),
         cfg_analysis=cfg_analysis,
         _cfg_report=report,
-        _active_reporting_set=get_reporting_set("compute-sensitivity"),
+        _active_reporting_set=get_reporting_set("compute_sensitivity"),
     )
 
 

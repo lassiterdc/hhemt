@@ -925,3 +925,68 @@ unpaired_allowlist:
       previously carry.
       Digest recorded at the post-change renderer content, so this exemption expires on
       the NEXT change to the renderer and the re-read is owed again then.
+  - renderer: eda_compute_sensitivity
+    caption: src/hhemt/report_templates/captions/eda_dem_resolution_cost_error.rst
+    renderer_sha256: bdc88d215eee86385ef762794f9ca9686fbc8edda049ee7f583316da5747c023
+    justification_2026_10_26: >-
+      Re-read 2026-10-26 (package 1e, chunk 1e.18). The renderer change is two comment
+      blocks (lines 39 and 41) that name the reporting-set key, b4b becoming
+      compute_config_byte_identity; with docstrings and comments stripped the renderer is
+      AST-identical to HEAD, so no emitted column, unit or panel moved. This caption was
+      read in full and names no reporting-set key (matcher: grep -c -E
+      "b4b|compute.sensitivity|dem.resolution|compute_config_byte_identity|dem_resolution",
+      unit lines, result 0), so no clause is falsified, weakened or left ambiguous and
+      there is no caption edit to make. Digest recorded at the post-change renderer
+      content, so this exemption expires on the next change to the renderer.
+  - renderer: eda_compute_sensitivity
+    caption: src/hhemt/report_templates/captions/eda_dem_resolution_coupling_table.rst
+    renderer_sha256: bdc88d215eee86385ef762794f9ca9686fbc8edda049ee7f583316da5747c023
+    justification_2026_10_26: >-
+      Re-read 2026-10-26 (package 1e, chunk 1e.18). The renderer change is two comment
+      blocks (lines 39 and 41) that name the reporting-set key, b4b becoming
+      compute_config_byte_identity; with docstrings and comments stripped the renderer is
+      AST-identical to HEAD, so no emitted column, unit or panel moved. This caption was
+      read in full and names no reporting-set key (matcher: grep -c -E
+      "b4b|compute.sensitivity|dem.resolution|compute_config_byte_identity|dem_resolution",
+      unit lines, result 0), so no clause is falsified, weakened or left ambiguous and
+      there is no caption edit to make. Digest recorded at the post-change renderer
+      content, so this exemption expires on the next change to the renderer.
+  - renderer: eda_compute_sensitivity
+    caption: src/hhemt/report_templates/captions/eda_dem_resolution_diff_maps.rst
+    renderer_sha256: bdc88d215eee86385ef762794f9ca9686fbc8edda049ee7f583316da5747c023
+    justification_2026_10_26: >-
+      Re-read 2026-10-26 (package 1e, chunk 1e.18). The renderer change is two comment
+      blocks (lines 39 and 41) that name the reporting-set key, b4b becoming
+      compute_config_byte_identity; with docstrings and comments stripped the renderer is
+      AST-identical to HEAD, so no emitted column, unit or panel moved. This caption was
+      read in full and names no reporting-set key (matcher: grep -c -E
+      "b4b|compute.sensitivity|dem.resolution|compute_config_byte_identity|dem_resolution",
+      unit lines, result 0), so no clause is falsified, weakened or left ambiguous and
+      there is no caption edit to make. Digest recorded at the post-change renderer
+      content, so this exemption expires on the next change to the renderer.
+  - renderer: eda_compute_sensitivity
+    caption: src/hhemt/report_templates/captions/eda_dem_resolution_error_ecdf.rst
+    renderer_sha256: bdc88d215eee86385ef762794f9ca9686fbc8edda049ee7f583316da5747c023
+    justification_2026_10_26: >-
+      Re-read 2026-10-26 (package 1e, chunk 1e.18). The renderer change is two comment
+      blocks (lines 39 and 41) that name the reporting-set key, b4b becoming
+      compute_config_byte_identity; with docstrings and comments stripped the renderer is
+      AST-identical to HEAD, so no emitted column, unit or panel moved. This caption was
+      read in full and names no reporting-set key (matcher: grep -c -E
+      "b4b|compute.sensitivity|dem.resolution|compute_config_byte_identity|dem_resolution",
+      unit lines, result 0), so no clause is falsified, weakened or left ambiguous and
+      there is no caption edit to make. Digest recorded at the post-change renderer
+      content, so this exemption expires on the next change to the renderer.
+  - renderer: eda_compute_sensitivity
+    caption: src/hhemt/report_templates/captions/raw_byte_identity.rst
+    renderer_sha256: bdc88d215eee86385ef762794f9ca9686fbc8edda049ee7f583316da5747c023
+    justification_2026_10_26: >-
+      Re-read 2026-10-26 (package 1e, chunk 1e.18). The renderer change is two comment
+      blocks (lines 39 and 41) that name the reporting-set key, b4b becoming
+      compute_config_byte_identity; with docstrings and comments stripped the renderer is
+      AST-identical to HEAD, so no emitted column, unit or panel moved. This caption was
+      read in full and names no reporting-set key (matcher: grep -c -E
+      "b4b|compute.sensitivity|dem.resolution|compute_config_byte_identity|dem_resolution",
+      unit lines, result 0), so no clause is falsified, weakened or left ambiguous and
+      there is no caption edit to make. Digest recorded at the post-change renderer
+      content, so this exemption expires on the next change to the renderer.

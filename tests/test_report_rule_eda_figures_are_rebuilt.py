@@ -94,7 +94,7 @@ def test_default_set_writes_no_eda_figure_and_compute_sensitivity_does() -> None
     """
     for name in ("default", "sensitivity"):
         assert not {s for s in utils.report_rule_figure_stems(_active(name)) if s.startswith("plots/eda/")}
-    assert _RULE_WRITTEN in utils.report_rule_figure_stems(_active("compute-sensitivity"))
+    assert _RULE_WRITTEN in utils.report_rule_figure_stems(_active("compute_sensitivity"))
 
 
 def test_selector_returns_the_rule_written_eda_figure_and_no_other(tmp_path) -> None:
@@ -117,7 +117,7 @@ def test_selector_returns_the_rule_written_eda_figure_and_no_other(tmp_path) -> 
     _write_figure(tmp_path, _OTHER_SETS_RULE, _OTHER_SHA)
 
     targets = utils.select_regenerable_figures(
-        tmp_path, tmp_path / "plots", report_rule_stems=utils.report_rule_figure_stems(_active("compute-sensitivity"))
+        tmp_path, tmp_path / "plots", report_rule_stems=utils.report_rule_figure_stems(_active("compute_sensitivity"))
     )
 
     eda_targets = {p.relative_to(tmp_path).as_posix() for p in targets if "plots/eda/" in p.as_posix()}
@@ -161,7 +161,7 @@ def test_deleting_caller_removes_the_rule_written_eda_figure_only(tmp_path, call
     """
     tree = _stale_tree(tmp_path)
 
-    _DELETING_CALLERS[caller](tmp_path, "compute-sensitivity")
+    _DELETING_CALLERS[caller](tmp_path, "compute_sensitivity")
 
     assert not tree[_RULE_WRITTEN][0].exists() and not tree[_RULE_WRITTEN][1].exists()
     assert tree[_EDA_ONLY][0].exists() and tree[_EDA_ONLY][1].exists()
@@ -212,7 +212,7 @@ def test_after_the_floor_and_the_rebuild_the_check_passes_and_the_rule_exists(tm
     stamp, whichever set is active.
     """
     tree = _stale_tree(tmp_path)
-    _run_render_floor(tmp_path, "compute-sensitivity")
+    _run_render_floor(tmp_path, "compute_sensitivity")
     for rel in (_RULE_WRITTEN, _REGULAR):
         assert not tree[rel][0].exists()
         _write_figure(tmp_path, rel, _RUNNING_SHA)
@@ -224,12 +224,12 @@ def test_after_the_floor_and_the_rebuild_the_check_passes_and_the_rule_exists(tm
 
     assert (
         provenance.assert_plots_match_running_build(
-            tmp_path, report_rule_stems=utils.report_rule_figure_stems(_active("compute-sensitivity"))
+            tmp_path, report_rule_stems=utils.report_rule_figure_stems(_active("compute_sensitivity"))
         )
         is None
     )
 
-    experiment = _active("compute-sensitivity")
+    experiment = _active("compute_sensitivity")
     builder = SimpleNamespace(experiment=experiment)
 
     def _resolve(analysis):
@@ -294,7 +294,7 @@ def test_reconciler_escalates_when_the_only_stale_figure_is_an_active_rule_eda_f
 
     _tree_whose_only_stale_figure_is_config_diff_maps(tmp_path)
 
-    _no_force, decided = _reconcile(tmp_path, "compute-sensitivity", monkeypatch)
+    _no_force, decided = _reconcile(tmp_path, "compute_sensitivity", monkeypatch)
 
     assert decided == ForceRerunSpec(subject="all", stage="render")
 
@@ -394,7 +394,7 @@ def test_rule_written_set_agrees_with_the_dispatched_rules(tmp_path, gate) -> No
     report = report_config.model_validate(
         {
             **DEFAULT_REPORT_CONFIG.model_dump(),
-            "reporting_set": "compute-sensitivity",
+            "reporting_set": "compute_sensitivity",
             "disabled_renderers": config["disabled"],
         }
     )
@@ -404,7 +404,7 @@ def test_rule_written_set_agrees_with_the_dispatched_rules(tmp_path, gate) -> No
             report=report, eda=eda_config(enabled_plots=config["enabled_plots"]), clear_raw="none"
         ),
         _cfg_report=report,
-        _active_reporting_set=get_reporting_set("compute-sensitivity"),
+        _active_reporting_set=get_reporting_set("compute_sensitivity"),
     )
 
     emitted = f'"{_RULE_WRITTEN}.html"' in _dispatched_rules(
@@ -443,11 +443,13 @@ def test_b4b_eda_figures_need_both_the_emission_and_the_request_gate(tmp_path, c
     from hhemt.config.report import DEFAULT_REPORT_CONFIG, report_config
 
     clear_raw, enabled_plots, expected = _B4B_GATES[case]
-    report = report_config.model_validate({**DEFAULT_REPORT_CONFIG.model_dump(), "reporting_set": "b4b"})
+    report = report_config.model_validate(
+        {**DEFAULT_REPORT_CONFIG.model_dump(), "reporting_set": "compute_config_byte_identity"}
+    )
     analysis = SimpleNamespace(
         cfg_analysis=SimpleNamespace(report=report, eda=eda_config(enabled_plots=enabled_plots), clear_raw=clear_raw),
         _cfg_report=report,
-        _active_reporting_set=get_reporting_set("b4b"),
+        _active_reporting_set=get_reporting_set("compute_config_byte_identity"),
     )
 
     stems = utils.report_rule_figure_stems(analysis)

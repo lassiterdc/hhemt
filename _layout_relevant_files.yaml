@@ -3847,3 +3847,40 @@ non_breaking_allowlist:
       has anything to act on.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/report.py
+    layout_signature: "d7dae6c7e26956ce125cc8bd47492921a35a9926acff13292543e802230baafd"
+    justification: >-
+      NON-BREAKING. Package 1e, chunk 1e.18 (item I50a, rulings D-157 and D-158): adds the rename table _REPORTING_SET_RENAMES and the helper that applies it, and applies the helper in the reporting_set field validator and in resolve_reporting_set_names. A config-schema behaviour change with no on-disk consequence.
+      No analysis-tree path, filename, zarr layout, log key or persisted structure moves, so no
+      LAYOUT_VERSION bump and no V{NNNN} migration has anything to act on. The reporting-set key
+      reaches cfg_analysis.yaml inside published bundles, and a bundle or configuration naming an
+      old key still loads through the rename table, which is why a config-format rename is carried
+      by the table and its warning and not by a layout migration.
+      THE SIGNATURE IS THIS FILE'S FINAL 1e.18 CONTENT. None of the 38 enumerated prose
+      substitutions falls in this file, so the repair round did not edit it.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/eda.py
+    layout_signature: "920d6d027acbcc9ae741396691580494a603c3461b332a6a3a6897da7cb38648"
+    justification: >-
+      NON-BREAKING. Package 1e, chunk 1e.18 (item I50a, rulings D-157 and D-158): this file is named because the repair round rewrites the reporting-set key quoted in the enabled_plots field description, the file's only 1e.18 edit.
+      No analysis-tree path, filename, zarr layout, log key or persisted structure moves, so no
+      LAYOUT_VERSION bump and no V{NNNN} migration has anything to act on. The reporting-set key
+      reaches cfg_analysis.yaml inside published bundles, and a bundle or configuration naming an
+      old key still loads through the rename table, which is why a config-format rename is carried
+      by the table and its warning and not by a layout migration.
+      THE SIGNATURE IS THE CONTENT AFTER THAT SUBSTITUTION, this file's final 1e.18 state.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/constants.py
+    layout_signature: "2ecf4492ecbd351919e2db55544e7230d57043443f3f78cb4b9961758ee5a22c"
+    justification: >-
+      NON-BREAKING. Package 1e, chunk 1e.18 (item I50a, rulings D-157 and D-158): this file is named because the repair round rewrites the reporting-set key quoted in one comment, the file's only 1e.18 edit.
+      No analysis-tree path, filename, zarr layout, log key or persisted structure moves, so no
+      LAYOUT_VERSION bump and no V{NNNN} migration has anything to act on. The reporting-set key
+      reaches cfg_analysis.yaml inside published bundles, and a bundle or configuration naming an
+      old key still loads through the rename table, which is why a config-format rename is carried
+      by the table and its warning and not by a layout migration.
+      THE SIGNATURE IS THE CONTENT AFTER THAT SUBSTITUTION, this file's final 1e.18 state.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.

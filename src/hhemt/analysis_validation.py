@@ -1934,7 +1934,7 @@ def _enumerated_eda_templates(analysis: TRITONSWMM_analysis) -> tuple:
        contain none, and the multisim plot dispatcher passes no ``predicate_inputs``,
        so a multisim neither emits nor enumerates EDA rules whatever set it names.
     2. The active set must carry an ``eda_compute_sensitivity`` selection. ``default``
-       and ``benchmarking`` do not; ``compute-sensitivity``/``dem-resolution``/``b4b``
+       and ``benchmarking`` do not; ``compute_sensitivity``/``dem_resolution``/``compute_config_byte_identity``
        do. This is the discriminating term.
     3. ``eda.enabled_plots`` must be non-empty — TRUE by default (non-empty
        default_factory), which is why it cannot carry the predicate alone.

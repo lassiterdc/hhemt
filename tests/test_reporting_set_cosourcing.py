@@ -165,10 +165,10 @@ def test_b4b_set_config_diff_maps_wired_and_ordered():
     default/benchmarking sets use is not mirrored here because the b4b set's
     ``eda_compute_sensitivity`` selection emits only when
     ``has_preserved_raw_outputs`` fires — a runtime gate covered by the
-    ``reporting_set="b4b"`` dry-run parity check, not a construction-only unit test.
+    ``reporting_set="compute_config_byte_identity"`` dry-run parity check, not a construction-only unit test.
     """
-    rset = get_reporting_set("b4b")
-    templates = _template_categories("b4b")
+    rset = get_reporting_set("compute_config_byte_identity")
+    templates = _template_categories("compute_config_byte_identity")
     assert templates, "b4b set has no rule_spec_template figures"
     assert "plot_eda_compute_sensitivity" in templates, (
         "b4b set is missing the eda_compute_sensitivity (config_diff_maps) template; "

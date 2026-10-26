@@ -297,11 +297,12 @@ def _build_case(
             "hpc_setup_and_analysis_processing_partition": "standard",
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": str(sensitivity_csv),
-            # eda.enabled_plots must include the b4b figures so analysis.eda() computes AND
+            # eda.enabled_plots must include the compute_config_byte_identity figures so analysis.eda() computes AND
             # renders them (config/eda.py default omits raw_byte_identity/b4b_clean_vs_resume).
-            # Without this the reporting_set='b4b' report ships honest-degradation placeholders
+            # Without this the reporting_set='compute_config_byte_identity' report ships honest-degradation placeholders
             # instead of the real raw_byte_identity grid; the render is robust to a mis-set
-            # enabled_plots (the b4b always-emit kinds), but only this config makes the grids real.
+            # enabled_plots (the compute_config_byte_identity always-emit kinds), but only this config makes the grids
+            # real.
             "eda": {
                 "enabled_plots": [
                     "config_diff_maps",
@@ -316,7 +317,7 @@ def _build_case(
             # (ADR-5 ReportingSet: config/report.py::report_config.reporting_set; the
             # sensitivity submodel forbids it as extra and strips a legacy `mode` key).
             "report": {
-                "reporting_set": "b4b",
+                "reporting_set": "compute_config_byte_identity",
                 "sensitivity": {
                     "independent_vars": ["n_devices"],
                     "dependent_var": "performance.Total",

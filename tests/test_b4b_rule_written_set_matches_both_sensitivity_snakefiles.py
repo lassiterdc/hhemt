@@ -60,7 +60,9 @@ _POLICIES = {
 
 def _b4b_builder(tmp_path: Path, clear_raw):
     """A b4b sensitivity-master workflow builder for a one-member, one-event stand-in."""
-    report = report_config.model_validate({**DEFAULT_REPORT_CONFIG.model_dump(), "reporting_set": "b4b"})
+    report = report_config.model_validate(
+        {**DEFAULT_REPORT_CONFIG.model_dump(), "reporting_set": "compute_config_byte_identity"}
+    )
     cfg_analysis = analysis_config.model_construct(
         report=report,
         eda=eda_config(),
@@ -72,7 +74,7 @@ def _b4b_builder(tmp_path: Path, clear_raw):
     )
     experiment = MagicMock()
     experiment.cfg_analysis = cfg_analysis
-    experiment._active_reporting_set = get_reporting_set("b4b")
+    experiment._active_reporting_set = get_reporting_set("compute_config_byte_identity")
     experiment._cfg_report = report
     experiment.analysis_paths.analysis_dir = tmp_path
     experiment.analysis_paths.analysis_log_directory = tmp_path / "logs"
@@ -201,7 +203,7 @@ def test_rule_written_set_matches_what_the_snakefile_builds(tmp_path, generator,
     analysis = SimpleNamespace(
         cfg_analysis=cfg_analysis,
         _cfg_report=report,
-        _active_reporting_set=get_reporting_set("b4b"),
+        _active_reporting_set=get_reporting_set("compute_config_byte_identity"),
         _get_enabled_model_types=lambda: [_MODEL],
     )
 

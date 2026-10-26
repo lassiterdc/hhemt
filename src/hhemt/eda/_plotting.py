@@ -70,8 +70,8 @@ def render_eda_plots(
         # _harvest_sources skip-with-warning precedent, Gotcha 50).
         backing_stem = _RENDERER_BACKING_ARTIFACT.get(kind, kind)
         artifact = root / "eda" / f"{backing_stem}.zarr"
-        # The b4b kinds are ALWAYS enumerated by the b4b ReportingSet (workflow.py /
-        # bundle snakefile_generator emit one report() target per template), and their
+        # The compute_config_byte_identity kinds are ALWAYS enumerated by the compute_config_byte_identity ReportingSet
+        # (workflow.py / bundle snakefile_generator emit one report() target per template), and their
         # renderer emits an honest-degradation panel on absent/degraded data, so they must
         # NOT be absence-skipped here — a skip yields "marked for report but does not exist".
         # Non-b4b conditional members keep the skip (a skipped calc member wrote no zarr).
@@ -675,7 +675,7 @@ def _fig_to_html(fig: go.Figure, *, plotly_js_mode: str) -> str:
 #: renderer-kind -> renderer function. Keys are the eda_-PREFIXED plot-IDs the calc
 #: members mint (compute_sensitivity.py:463,553,637); canonical_plot_id is a
 #: pass-through, so those keys ARE the on-disk eda/{key}.zarr stems. Do not unprefix.
-#: EDA kinds that are ALWAYS enumerated by their ReportingSet (the b4b family) and whose
+#: EDA kinds that are ALWAYS enumerated by their ReportingSet (the compute_config_byte_identity family) and whose
 #: renderer emits an honest-degradation panel on absent/degraded backing data. render_eda_plots
 #: MUST NOT absence-skip these, or an enumerated report() target goes unproduced (WorkflowError).
 _ALWAYS_EMIT_KINDS = frozenset({"raw_byte_identity"})

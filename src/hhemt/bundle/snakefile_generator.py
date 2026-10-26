@@ -180,7 +180,7 @@ def _harvest_rule_specs(
     resolver wraps. The value may be one name or a LIST of names, and a bundle's
     cfg_analysis.yaml is dumped from the VALIDATED model, so this site receives a
     list even when the source config was written with a bare string. A
-    non-"default" name is taken verbatim (so a "dem-resolution" bundle regenerates
+    non-"default" name is taken verbatim (so a "dem_resolution" bundle regenerates
     the DEM set); the "default" sentinel and an absent or empty field resolve to
     "benchmarking" when is_sensitivity else the standard set; an unknown name
     raises a field-named ConfigurationError.
@@ -193,7 +193,7 @@ def _harvest_rule_specs(
 
     # Read the active reporting-set selection from config rather than hardcoding
     # the default→benchmarking/default resolution: a bundle whose source run
-    # selected a non-default set (e.g. "compute-sensitivity") must regenerate the
+    # selected a non-default set (e.g. "compute_sensitivity") must regenerate the
     # SAME renderer set the source side emitted, or the bundle Snakefile diverges
     # from the source Snakefile. Resolution DELEGATES to
     # config.report.resolve_reporting_set_names -- the single implementation the
