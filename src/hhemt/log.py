@@ -488,7 +488,13 @@ class TRITONSWMM_log(BaseModel):
                 # exclusive-create branch is gone with the read that fed it -- the name's
                 # existence was settled by the single open above, under the lock.
                 write_json(merged, self.logfile)
-                self._baseline = merged
+                # Take the peers' values this write just published into THIS instance, so
+                # its memory is what it published, and re-baseline on its own memory.
+                # Re-baselining on `merged` while memory kept its pre-write values made a
+                # field this instance never touched read as "changed by me" at the NEXT
+                # write, which then published the stale value over the peer's.
+                self._absorb(merged, set(overlay))
+                self._baseline = self.as_dict()
         except Timeout as exc:
             raise ProcessingError(
                 "log write (file lock acquisition)",
@@ -514,13 +520,50 @@ class TRITONSWMM_log(BaseModel):
     def print(self, indent: int = 4):
         print(self._as_json(indent))
 
+    def _absorb(self, document: dict, keys: set[str]) -> None:
+        """Copy the values `document` holds for `keys` into THIS instance's own fields.
+
+        Values go INTO the existing LogField / LogFieldDict / Processing objects, which
+        stay bound to this instance, so a reference a caller holds keeps writing through
+        this instance. `logfile` is never taken from a document (it names where THIS
+        instance writes); write() passes only its overlay keys, which already exclude
+        `last_writer`, while refresh() takes the disk stamp as its new sync point. If the
+        document does not validate, nothing is taken: memory keeps its values, and the
+        caller's re-baseline on memory still keeps those fields out of the next write's
+        changed set, so the failure costs freshness, never a peer's value.
+        """
+        try:
+            published = type(self).model_validate(document)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Log %s: could not load the published document back into this instance "
+                "(%s: %s); fields this instance did not change keep their loaded values.",
+                self.logfile,
+                type(exc).__name__,
+                exc,
+            )
+            return
+        for k in keys:
+            if k == "logfile" or k not in type(self).model_fields:
+                continue
+            src = published.__dict__.get(k)
+            dst = self.__dict__.get(k)
+            if isinstance(dst, LogField | LogFieldDict) and type(src) is type(dst):
+                dst.value = src.value
+                if dst._expected_type is None:
+                    dst._expected_type = src._expected_type
+            elif isinstance(dst, Processing) and isinstance(src, Processing):
+                dst.outputs = src.outputs
+            else:
+                setattr(self, k, src)
+                if hasattr(src, "set_log"):
+                    src.set_log(self)
+
     def refresh(self):
-        """Reload the log from disk, updating all instance attributes."""
+        """Reload the log from disk into THIS instance's own field objects."""
         if self.logfile.exists():
             reloaded = self.from_json(self.logfile)
-            # Copy all attributes from reloaded instance to self
-            for key, value in reloaded.__dict__.items():
-                setattr(self, key, value)
+            self._absorb(reloaded.model_dump(mode="json"), set(type(self).model_fields))
             # Re-sync the merge baseline to the freshly reloaded disk state.
             self._baseline = self.as_dict()
         else:

@@ -4066,3 +4066,15 @@ non_breaking_allowlist:
       NON-BREAKING. snapshot-refusal P-1.2 — SWMM water-quality outputs, written only when the SWMM report prints Water Quality YES, and quality-routed coupled runs resumed by exact replay unless swmm_snapshot_disable is false; no existing analysis tree's variable set, dims or attrs change (a model with no pollutants or IGNORE_QUALITY YES produces byte-identical outputs and a byte-identical TRITON cfg); a persisted analysis config that omitted swmm_snapshot_disable now dumps it as null rather than false.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/log.py
+    layout_signature: a6aa9543b4915a644ad865af08ad921f118edf971ae23d76792806367c81ce4a
+    justification: >-
+      NON-BREAKING. log-write-lost-update T-LW.1 — TRITONSWMM_log.write() no longer publishes a
+      stale in-memory value over a peer's newer one for a field its writer never set (it absorbs
+      the published values into its own fields and re-baselines on its own memory), and refresh()
+      copies the reloaded values into the instance's existing field objects instead of rebinding
+      them to a throwaway instance. No field is added, removed, renamed, retyped or re-defaulted;
+      the persisted document's key set and value types are unchanged; what changes is which VALUE
+      a write publishes for a field the writer did not change (the peer's, never a stale one).
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
