@@ -27,7 +27,8 @@ Compile from the same Python session you run from. For the Norfolk example:
 
 ```python
 from hhemt.experiments import NorfolkIreneExperiment
-norfolk = NorfolkIreneExperiment.load()
+# hhemt_sha is the commit you run: `git rev-parse HEAD`
+norfolk = NorfolkIreneExperiment.load(hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT")
 norfolk.system.compile_TRITON_SWMM()
 ```
 

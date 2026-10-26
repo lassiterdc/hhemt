@@ -147,12 +147,16 @@ experiment = TRITON_SWMM_experiment.from_case_study(
     weather_events_to_simulate="hurricane_irene_event_index.csv",
     analysis_description="Single Simulation of Hurricane Irene 8-27-2011",
     download_if_exists=False,   # set True to re-download even if the data is already local
+    # hhemt_sha is the commit you run: `git rev-parse HEAD`
+    hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT",
 )
 ```
 
-The first six arguments are required and `download_if_exists` is optional. The two template
-names and `case.yaml` live under `test_data/{case_name}/`. For the shipped Norfolk case,
-`NorfolkIreneExperiment.load()` wraps this call.
+Seven arguments are required: the first six, and the keyword-only `hhemt_sha`. `download_if_exists`
+is optional. `hhemt_sha` is the full 40-hex commit of hhemt that you run. Nothing defaults it,
+because the analysis refuses to construct when the running toolkit is at a different commit. The
+two template names and `case.yaml` live under `test_data/{case_name}/`. For the shipped Norfolk
+case, `NorfolkIreneExperiment.load(hhemt_sha=...)` wraps this call.
 
 The fetch is host-agnostic on verification: the streaming 1 MiB-chunk sha256 check is
 byte-identical regardless of `host`, and Globus (when used) stays transport-only.
