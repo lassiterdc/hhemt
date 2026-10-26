@@ -42,7 +42,7 @@ from filelock import Timeout
 
 from hhemt._filelock_compat import resolve_filelock
 from hhemt.utils import fast_rmtree
-from tests.fixtures._triton_source_cache import canonical_root, synthetic_runs_root
+from tests.fixtures._triton_source_cache import canonical_root, checkout_slug, synthetic_runs_root
 
 # Forward-compat seam (per_worker_isolation_for_test_artifact_dir_to_enable_pytest_xdist):
 # if run dirs later nest as {slug}/{worker}, change ONLY these two symbols.
@@ -193,9 +193,19 @@ def collect_live_signals(repo_root: Path, *, runs_root: Path, candidate_slugs: f
     # that as "not live" reaps a LIVE tier once the TTL elapses. The `path` prefix is the
     # bound that makes fail-safe safe to state: only the new address mints it, so a
     # legacy `main` or a worktree-basename tier is unaffected and stays reclaimable.
-    # The prefix literal is duplicated here and in tests/fixtures/__init__.py rather than
-    # shared, to avoid a new import edge from this module into the fixtures package,
-    # whose __init__ imports the builder; the duplication is named, not hidden.
+    # The prefix literal is stated here and in
+    # tests/fixtures/_triton_source_cache.py::checkout_slug, which mints it.
+    #
+    # SUPERSEDED TIERS ARE NOT LIVE. A breadcrumb names a checkout, and a checkout outlives
+    # a change of address scheme, so the existence test alone keeps every old-scheme tier
+    # forever. Measured on Rivanna before the move to the digest address: 79 tiers carried
+    # a breadcrumb and all 79 named a checkout that still existed. A tier is superseded
+    # only when ITS OWN checkout now mints a different address, which this reaper cannot
+    # read off its own code: checkouts at different commits share one cache root, and one
+    # still at a commit from before the digest address keeps minting, and using, its
+    # escaped tier. So the tier stays live if it is what its checkout derives today, OR if
+    # that checkout does not run the digest derivation (_checkout_mints_digest_address);
+    # only a tier superseded by its own checkout falls through to the TTL.
     live_path = set()
     for slug in candidate_slugs:
         try:
@@ -204,7 +214,10 @@ def collect_live_signals(repo_root: Path, *, runs_root: Path, candidate_slugs: f
             if slug.startswith("path"):
                 live_path.add(slug)
             continue
-        if recorded and Path(recorded).is_dir():
+        if not (recorded and Path(recorded).is_dir()):
+            continue
+        origin = Path(recorded)
+        if checkout_slug(origin) == slug or not _checkout_mints_digest_address(origin):
             live_path.add(slug)
 
     return LiveSignals(
@@ -213,6 +226,31 @@ def collect_live_signals(repo_root: Path, *, runs_root: Path, candidate_slugs: f
         locked_slugs=frozenset(locked),
         live_path_slugs=frozenset(live_path),
     )
+
+
+def _checkout_mints_digest_address(origin: Path) -> bool:
+    """True if the checkout at `origin` runs code that mints the digest address.
+
+    A tier is superseded only when ITS OWN checkout now derives a different address,
+    and the reaper cannot assume that from its own code: on a machine where several
+    checkouts share one cache root, a checkout still at a commit from before the digest
+    address keeps minting the escaped address and keeps using that tier, so judging it
+    by this reaper's derivation would reap a tier in use.
+
+    Reads `tests/fixtures/_triton_source_cache.py` AT `origin` only, never above it.
+    `origin` is the cwd the builder recorded, which is the checkout root in every tier
+    measured (Rivanna 79 of 79, laptop 5 of 5 that hold a toolkit). Walking upward
+    would let a non-toolkit cwd nested inside a NEWER checkout borrow that checkout's
+    answer and release a tier that older code elsewhere still uses.
+
+    FAILS SAFE: no such file, or one that cannot be stat'd or read, returns False,
+    which keeps the tier live exactly as the existence test did before.
+    """
+    source = origin / "tests" / "fixtures" / "_triton_source_cache.py"
+    try:
+        return source.is_file() and "def checkout_slug(" in source.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
 
 
 def is_reapable(

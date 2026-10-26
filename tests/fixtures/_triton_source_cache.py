@@ -33,6 +33,7 @@ WHY A CANONICAL STORE, AND WHY THIS SHAPE (every element is load-bearing):
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import warnings
@@ -175,6 +176,50 @@ def synthetic_runs_root() -> Path:
 
 def slug_runs_root(slug: str) -> Path:
     return synthetic_runs_root() / slug
+
+
+def checkout_slug(cwd: Path) -> str:
+    """The cache-tier address of the checkout at `cwd`. SINGLE SOURCE.
+
+    `tests/fixtures/__init__.py::worktree_slug` derives the address a builder writes
+    to, and the run-dir reaper's path arm (`tests/fixtures/_run_dir_reaper.py`)
+    re-derives it to decide whether a tier is still the one its checkout uses. Both
+    call this function, so the two cannot drift apart.
+
+    `cwd` must already be canonical: `Path.cwd().resolve()`, which is also what the
+    `.origin` breadcrumb records. This function does not resolve it again.
+
+    TWO ARMS.
+      * Under `.claude/worktrees/{name}/` the address is `{name}`, so the reaper's
+        worktree arm, which matches a tier name against a git worktree basename,
+        keeps working.
+      * Anywhere else the address is `path-` followed by the first 16 hex digits of
+        the SHA-256 of `str(cwd)`: 21 characters for every checkout.
+
+    WHY A FIXED-LENGTH DIGEST. The address is one segment of every synthetic
+    simulation's run path, and SWMM keeps a file name only up to MAXFNAME (259)
+    characters. The previous address escaped the whole checkout path into this
+    segment, so it grew with the checkout's own path. Measured on Rivanna: a
+    77-character address under a 78-character cache root made a sensitivity member's
+    `swmm_flooding_debug.txt` path 272 characters long. This address is 21 characters
+    wherever the checkout lives.
+
+    WHAT THE DIGEST GIVES UP, stated rather than hidden. The escaped form was
+    injective; a 64-bit digest is only collision-resistant, so two checkouts would
+    share a tier if their paths collided in 64 bits. The address is also not
+    decodable: read a tier's checkout from its `.origin` breadcrumb.
+
+    The `path` prefix is kept on purpose: the reaper's fail-safe for an unreadable
+    `.origin` keys on it. The hyphen keeps every digest address distinct from the
+    previous escaped form, which always continued `path_s`.
+    """
+    parts = cwd.parts
+    if ".claude" in parts:
+        i = parts.index(".claude")
+        if i + 1 < len(parts) and parts[i + 1] == "worktrees" and i + 2 < len(parts):
+            return parts[i + 2]
+    digest = hashlib.sha256(str(cwd).encode("utf-8", "surrogateescape")).hexdigest()
+    return "path-" + digest[:16]
 
 
 def canonical_root() -> Path:
