@@ -54,14 +54,17 @@ from hhemt._filelock_compat import resolve_filelock
 #: Never record one without the other — record TRITON_SOURCE_DESCRIPTOR.
 TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 
-#: The fork's `main` (github.com/lassiterdc/triton.git), at "fix(swmm): carry water-quality state
-#: across a snapshot resume" (`bd18215`; `git merge-base --is-ancestor a146fb6 bd18215` -> rc 0,
-#: so this is a plain FORWARD move on one lineage, not a cross-branch move). It is the solver
-#: commit after which a coupled resume from a SWMM snapshot restores node and link water-quality
-#: state, which is why `scenario.SWMM_QUALITY_SNAPSHOT_SHAS` lists it. `git diff --stat a146fb6
-#: bd18215` -> 10 files; the only solver source is `external/swmm/src/solver/snapshot.c`
-#: (`src/` is untouched) and the vendored SWMM is still `VERSION 5.2.3`. The snapshot format
-#: version rises to 7, and a build at this pin REFUSES a version-6 snapshot at resume.
+#: The fork's `main` (github.com/lassiterdc/triton.git), at "fix(swmm): refuse SWMM file paths
+#: longer than MAXFNAME before swmm_open" (`bb13ea28`; `git merge-base --is-ancestor bd18215
+#: bb13ea28` -> rc 0, a plain FORWARD move of two commits on one lineage). `git diff --stat
+#: bd18215 bb13ea28` -> 2 files: `external/swmm/src/solver/massbal.c` (7a59d18, the flooding-debug
+#: path buffer bounded at MAXFNAME) and `src/swmm_triton.h` (bb13ea28, the coupled startup refuses
+#: an input, report or binary-output path over 259 characters before swmm_open). The snapshot is
+#: unchanged (`git diff bd18215 bb13ea28 -- external/swmm/src/solver/snapshot.c` -> empty;
+#: SNAPSHOT_VERSION 7 at both), so a resume across the two pins is not refused, and
+#: `scenario.SWMM_QUALITY_SNAPSHOT_SHAS` lists this pin beside bd18215. The vendored SWMM is still
+#: `VERSION 5.2.3`. THE PREVIOUS PIN, bd18215 ("carry water-quality state across a snapshot
+#: resume"), remains registered and remains a member of that set.
 #: THE PRECEDING MOVE'S RECORD, RETAINED AND NO LONGER LIVE (320b3313 -> a146fb6, the pin
 #: `SHA_CURATED_MAIN_PIN` still names for the estate's family C). It was a CROSS-BRANCH MOVE from
 #: the previous pin `320b3313` (wp1/snapshot-guard): `is-ancestor 320b3313 a146fb6` -> rc 1,
@@ -81,8 +84,8 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #: THE SUBMODULE GITLINKS ARE UNCHANGED ACROSS THIS MOVE, so the borrow's
 #: `submodule.alternateLocation=superproject` path needs no submodule-side network work:
 #: `git ls-tree {pin} external/kokkos external/yaml-cpp` returns dc1bf738 and a83cd315 at BOTH
-#: a146fb6 and bd18215 (measured 2026-10-25, byte-equal). `external/swmm` is a TREE (mode
-#: 040000) rather than a gitlink and it DOES move (f3dd1b4f -> 71accf8c) -- expected, because the
+#: bd18215 and bb13ea28 (measured 2026-10-26, byte-equal). `external/swmm` is a TREE (mode
+#: 040000) rather than a gitlink and it DOES move (71accf8c -> 6c5a47f9) -- expected, because the
 #: move's SWMM changes live inside it -- so a reader comparing the entries must not read that one
 #: as a submodule bump.
 #: NO MANUAL CACHE WORK IS OWED. The fetch that reaches this pin only ADDED objects, and
@@ -100,7 +103,7 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #: function's summary names its examined and indeterminate counts. The enforcing mechanism is the
 #: GUARD `scripts/check_live_pin_registered.py`, which reads this declaration by AST and refuses
 #: unless the registry resolves it ABSENT via the explicit `known_absent_in` set for EVERY defect.
-#: `model_defects.SHA_MAIN_QUALITY_SNAPSHOT_PIN` is this pin's entry.
+#: `model_defects.SHA_MAIN_SWMM_PATH_REFUSAL_PIN` is this pin's entry.
 #: THE GUARD IS WIRED: `.pre-commit-config.yaml` runs `scripts/check_live_pin_registered.py`
 #: as a hook, and `tests/test_check_live_pin_registered.py` exercises the script's own logic.
 #: WHY A REGISTRATION AND A PIN MOVE ARE ONE CHANGE AND CANNOT BE SPLIT: the guard resolves the
@@ -108,20 +111,20 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #: every `REGISTRY` entry's `known_absent_in` set reds with `pin-indeterminate`, and a commit
 #: that adds the sha without moving this constant leaves the guard asserting the OLD pin.
 #: Neither half is independently green.
-#: Measured 2026-10-25 against this pin, not inherited:
-#:   * `git merge-base --is-ancestor a38338b0 bd18215` -> rc 0
-#:   * `git merge-base --is-ancestor 3a832f7d bd18215` -> rc 0
-#:   * `git merge-base --is-ancestor 9db367dd bd18215` -> rc 0
-#:   * `git merge-base --is-ancestor 5fadf167 bd18215` -> rc 0 (it carries the snapshot payload)
-#:   * `git merge-base --is-ancestor 681d809 bd18215` -> rc 0 (the curated snapshot traversal fix)
-#:   * `git merge-base --is-ancestor d456518 bd18215` -> rc 0 (the curated clean-start disposal)
-#:   * `git merge-base --is-ancestor 852f10c bd18215` and `2ecb1cf bd18215` -> rc 0 each (the
-#:     curated coupled-list/rim and US-unit fixes); `a146fb6 bd18215` -> rc 0
+#: Measured 2026-10-26 against this pin, not inherited:
+#:   * `git merge-base --is-ancestor a38338b0 bb13ea28` -> rc 0
+#:   * `git merge-base --is-ancestor 3a832f7d bb13ea28` -> rc 0
+#:   * `git merge-base --is-ancestor 9db367dd bb13ea28` -> rc 0
+#:   * `git merge-base --is-ancestor 5fadf167 bb13ea28` -> rc 0 (it carries the snapshot payload)
+#:   * `git merge-base --is-ancestor 681d809 bb13ea28` -> rc 0 (the curated snapshot traversal fix)
+#:   * `git merge-base --is-ancestor d456518 bb13ea28` -> rc 0 (the curated clean-start disposal)
+#:   * `git merge-base --is-ancestor 852f10c bb13ea28` and `2ecb1cf bb13ea28` -> rc 0 each (the
+#:     curated coupled-list/rim and US-unit fixes); `a146fb6 bb13ea28` and `bd18215 bb13ea28` -> rc 0
 #:   * the wp1 commits are NOT ancestors (c7b2fd1d, 23b75781, cf357e4b, 320b3313 -> rc 1 each);
 #:     their behaviour is carried by the curated commits named in model_defects.
 #: The ghost-ring caveat still applies and is RE-MEASURED here rather than carried: two natural
-#: probes classify the ghost-ring row WRONG -- `is-ancestor 5d2ad1e8 bd18215` -> rc 1, and
-#: `ls-tree bd18215 -- src/ghost_ring.h` -> 0 entries -- because both ask the FORK's question of an
+#: probes classify the ghost-ring row WRONG -- `is-ancestor 5d2ad1e8 bb13ea28` -> rc 1, and
+#: `ls-tree bb13ea28 -- src/ghost_ring.h` -> 0 entries -- because both ask the FORK's question of an
 #: ORNL-descended tree. The deciding basis is a38338b0 -> rc 0. See the comment on
 #: `model_defects.SHA_ORNL_GHOST_RING_AND_GPU`, the constant that holds a38338b0.
 #: THIS CONSTANT AND `test_case_builder.py`'s config write MUST MOVE TOGETHER: a
@@ -135,6 +138,7 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #:   * `src/hhemt/model_defects.py` (ADD beside, do not move);
 #:   * `src/hhemt/scenario.py::SWMM_QUALITY_SNAPSHOT_SHAS`, the set A3 and A2 key on, which is
 #:     NOT covered by the live-pin guard, so a later pin that carries the fix is added there by hand;
+#:     it now lists both bd18215 and this pin;
 #:   * `tests/test_check_known_resume_defects.py::_SHA_REGISTERED`, asserted equal to the live
 #:     pin, so a miss is a LOUD red;
 #:   * `tests/test_wp2b_resume_mechanism_review.py::_SHA_CURRENT_PIN`, asserted
@@ -142,7 +146,7 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #:   * `tests/test_known_solver_defects.py::_PIN`.
 #: A short-prefix search also matches docstrings that merely mention the pin, which are not
 #: coupled literals a move must update.
-TRITON_PIN = "bd18215972c348020d53b3a8a1a64ee6266cae28"
+TRITON_PIN = "bb13ea28603d50879f8d85cd041c17f440fbdb2b"
 
 #: The ONE form every version RECORD prints, so a URL cannot be omitted beside a pin.
 #: Consumed by `model_version_lines()` and by the estate's per-chunk provenance stamp.

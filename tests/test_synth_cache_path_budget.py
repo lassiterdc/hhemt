@@ -2,10 +2,11 @@
 
 SWMM keeps a file name only up to MAXFNAME = 259 characters. The TRITON fork refuses an
 input, report or binary-output path longer than that before `swmm_open`, and it writes
-the flooding-debug report only when that path is at most 258 characters. These tests
+the flooding-debug report only when that path is at most 259 characters. These tests
 compute the paths a synthetic simulation uses, from the same cache root and tier
-address the fixtures use, and check them against those limits. None of them compiles
-or runs a solver.
+address the fixtures use, and check them against those limits, holding the debug
+report to 258, one character inside the solver's limit, as a margin. None of them
+compiles or runs a solver.
 """
 
 from __future__ import annotations

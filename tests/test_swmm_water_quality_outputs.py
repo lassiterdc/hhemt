@@ -1118,3 +1118,67 @@ def test_a2_keeps_statistics_after_a_snapshot_resume_at_a_c11_build(tmp_path, mo
         _mk(tmp_path / "fh"), monkeypatch, None, SHA_CURATED_MAIN_PIN, n_resumes=2, cfg_text="a=1\n"
     )(_summary())
     assert np.isnan(fallback_held["pollutant_max_conc"]).all()
+
+
+def test_a3_and_a2_treat_the_new_pin_as_carrying_quality_state(tmp_path, monkeypatch):
+    """A3 and A2 give the path-refusal pin the same snapshot route and statistics as the quality-snapshot pin.
+
+    Property: at `SHA_MAIN_SWMM_PATH_REFUSAL_PIN`, a quality-routed scenario with the field unset resolves to
+    the snapshot route (`resolve_swmm_snapshot_disable` is False), and a `snapshot` ledger row keeps its
+    pollutant statistics with status `QUALITY_STATS_SNAPSHOT`; at `SHA_CURATED_MAIN_PIN` the same two calls
+    force replay and withhold.
+    Class: NEW CAPABILITY. Plausible wrong implementation: adding the pin to the defect registry but not to
+    `SWMM_QUALITY_SNAPSHOT_SHAS`, which leaves both reads at "not carried"; red because the resolver
+    returns True and the values are NaN with the withheld status.
+    Reachability: both reads key on exact membership in that set, so any sha outside it reaches the
+    withholding arm; artifact: the control calls below at `SHA_CURATED_MAIN_PIN`, which take that arm.
+    Both-states anchor: the assertions turn on the resolver's returned bool and on whether the values are
+    NaN, which both the old and the corrected set produce, not on wording the change introduces.
+    Invocation isolation: the control build runs through the same helpers in the same test, so a red here
+    cannot come from the tree the run resolves from. Why required: a quality-routed run recorded at the
+    live pin would otherwise be forced to replay and lose valid statistics with nothing failing. What kills
+    it: removing the pin from `SWMM_QUALITY_SNAPSHOT_SHAS`. Second correct implementation: deciding
+    membership by a content probe of the build's `snapshot.c` instead of a literal set (the assertions
+    read the returned bool and the dataset only).
+    """
+    from hhemt.model_defects import SHA_CURATED_MAIN_PIN, SHA_MAIN_SWMM_PATH_REFUSAL_PIN
+    from hhemt.process_simulation import QUALITY_STATS_SNAPSHOT, QUALITY_STATS_WITHHELD
+    from hhemt.scenario import resolve_swmm_snapshot_disable
+
+    routed = tmp_path / "routed.inp"
+    routed.write_text(_inp(TWO))
+    assert resolve_swmm_snapshot_disable(None, routed, build_sha=SHA_MAIN_SWMM_PATH_REFUSAL_PIN) is False
+    assert resolve_swmm_snapshot_disable(None, routed, build_sha=SHA_CURATED_MAIN_PIN) is True
+
+    kept = _post_at_build(_mk(tmp_path / "k"), monkeypatch, [{"path": "snapshot"}], SHA_MAIN_SWMM_PATH_REFUSAL_PIN)(
+        _summary()
+    )
+    assert (kept["pollutant_max_conc"] == 1.0).all() and (kept["outfall_total_load"] == 3.0).all()
+    assert kept["pollutant_stats_status"].values.tolist() == [QUALITY_STATS_SNAPSHOT]
+    held = _post_at_build(_mk(tmp_path / "h"), monkeypatch, [{"path": "snapshot"}], SHA_CURATED_MAIN_PIN)(_summary())
+    assert np.isnan(held["pollutant_max_conc"]).all()
+    assert held["pollutant_stats_status"].values.tolist() == [QUALITY_STATS_WITHHELD]
+
+
+def test_the_live_pin_is_listed_as_carrying_quality_state():
+    """Moving the synthetic tier's `TRITON_PIN` without listing the new pin in `SWMM_QUALITY_SNAPSHOT_SHAS` reds here.
+
+    Property: the live `TRITON_PIN` is a member of `SWMM_QUALITY_SNAPSHOT_SHAS`.
+    Class: NEW CAPABILITY. Plausible wrong implementation: a pin move that registers the new sha in
+    `model_defects` (which `scripts/check_live_pin_registered.py` enforces) and forgets the quality set,
+    which that guard does not cover; red because the live pin is absent from the set.
+    Reachability: the pin and the set are two independent module-level constants edited by hand; artifact:
+    the set's own comment, which records that no guard covers it. Both-states anchor: the assertion turns
+    on membership of one constant in another, which holds or fails whatever either is worded as.
+    Invocation isolation: both constants are read from the tree under test (the root conftest refuses a
+    session whose `hhemt` does not resolve under it). Why required: an unlisted live pin sends every
+    quality-routed run through forced replay and withheld statistics, silently. What kills it: dropping
+    the live pin from `SWMM_QUALITY_SNAPSHOT_SHAS` or moving `TRITON_PIN` to an unlisted sha. Second
+    correct implementation: deriving the set from a content probe of each pin's `snapshot.c` at import
+    (the assertion reads membership only). A deliberate move to a pin that genuinely lacks the fix also
+    reds this, which is the intended prompt to decide what happens to quality-routed resumes.
+    """
+    from hhemt.scenario import SWMM_QUALITY_SNAPSHOT_SHAS
+    from tests.fixtures._triton_source_cache import TRITON_PIN
+
+    assert TRITON_PIN in SWMM_QUALITY_SNAPSHOT_SHAS

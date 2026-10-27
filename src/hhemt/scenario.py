@@ -496,14 +496,23 @@ SWMM_NODE_RIM_FROM_DEM_FIRST_SHA = "1b797e6d0ea45b6d139e597fd6f4c2b29b17a1f7"
 SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS = frozenset({SWMM_NODE_RIM_FROM_DEM_FIRST_SHA})
 
 #: The TRITON commits whose SWMM snapshot carries node and link water-quality state across a
-#: coupled resume (fork commit bd18215 "carry water-quality state across a snapshot resume":
-#: `git show {sha}:external/swmm/src/solver/snapshot.c | grep -c oldQual` -> 7, and 0 at every
-#: snapshot-bearing commit before it). Exact full-sha membership, no ancestry, so a preparation
-#: (A3) and a processing (A2) read of the same run cannot disagree, with or without a clone.
+#: coupled resume (fork commit bd18215 "carry water-quality state across a snapshot resume", and
+#: bb13ea28, two commits later, whose snapshot.c is byte-identical to bd18215's:
+#: `git show {sha}:external/swmm/src/solver/snapshot.c | grep -c oldQual` -> 7 at both, and 0 at
+#: every snapshot-bearing commit before bd18215). Each member is a TRITON pin a build was recorded
+#: at; bd18215 stays listed because runs recorded it. Exact full-sha membership, no ancestry, so a
+#: preparation (A3) and a processing (A2) read of the same run cannot disagree, with or without a
+#: clone.
 #: NOT covered by scripts/check_live_pin_registered.py: a later TRITON pin that carries the fix
-#: must be added here by hand, and until it is, an unlisted build forces replay and withholds
+#: must be added here by hand (tests/test_swmm_water_quality_outputs.py reds while the live
+#: TRITON_PIN is missing), and until it is, an unlisted build forces replay and withholds
 #: statistics (the safe direction).
-SWMM_QUALITY_SNAPSHOT_SHAS = frozenset({"bd18215972c348020d53b3a8a1a64ee6266cae28"})
+SWMM_QUALITY_SNAPSHOT_SHAS = frozenset(
+    {
+        "bd18215972c348020d53b3a8a1a64ee6266cae28",
+        "bb13ea28603d50879f8d85cd041c17f440fbdb2b",
+    }
+)
 
 
 def append_swmm_node_rim_from_dem(cfg_content: str, enabled: bool) -> str:

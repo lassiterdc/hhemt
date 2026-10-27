@@ -366,19 +366,20 @@ def test_the_clean_start_stale_snapshot_entry_resolves_by_content_at_every_regis
 
 
 def test_every_registered_defect_is_absent_at_the_live_pin():
-    """Property: BOTH production solver pins resolve ABSENT on every defect from the explicit sets.
+    """Property: ALL THREE solver pins resolve ABSENT on every defect from the explicit sets.
 
-    Class: every REGISTRY entry at `bd18215` (`SHA_MAIN_QUALITY_SNAPSHOT_PIN`, the synthetic tier's
-    live pin) and at `a146fb6` (`SHA_CURATED_MAIN_PIN`, which stays the estate's family-C pin, so
+    Class: every REGISTRY entry at `bb13ea28` (`SHA_MAIN_SWMM_PATH_REFUSAL_PIN`, the synthetic tier's live
+    pin), at `bd18215` (`SHA_MAIN_QUALITY_SNAPSHOT_PIN`, the previous pin, which recorded runs still name)
+    and at `a146fb6` (`SHA_CURATED_MAIN_PIN`, which stays the estate's family-C pin, so
     dropping its assertion would lose the only all-entries check at a pin a production run uses).
     Why: an entry missing a pin reads `ancestry_unresolvable` on the read path, which never fails a
     check and so hides a regression. What kills it: dropping either pin from one entry's
     `known_absent_in`. Second correct implementation: deriving the membership from the pin file at
     import; the assertion reads the verdicts only.
     """
-    from hhemt.model_defects import SHA_CURATED_MAIN_PIN, SHA_MAIN_QUALITY_SNAPSHOT_PIN
+    from hhemt.model_defects import SHA_CURATED_MAIN_PIN, SHA_MAIN_QUALITY_SNAPSHOT_PIN, SHA_MAIN_SWMM_PATH_REFUSAL_PIN
 
-    for pin in (SHA_MAIN_QUALITY_SNAPSHOT_PIN, SHA_CURATED_MAIN_PIN):
+    for pin in (SHA_MAIN_SWMM_PATH_REFUSAL_PIN, SHA_MAIN_QUALITY_SNAPSHOT_PIN, SHA_CURATED_MAIN_PIN):
         for did, d in REGISTRY_BY_ID.items():
             v = resolve(d, pin)
             assert (v.status, v.rule) == ("absent", "known_absent_set"), (pin[:12], did, v)
@@ -416,6 +417,7 @@ def test_each_every_coupled_run_entry_is_present_before_its_fix_and_absent_at_it
     from hhemt.model_defects import (
         SHA_CURATED_MAIN_PIN,
         SHA_MAIN_QUALITY_SNAPSHOT_PIN,
+        SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
         SHA_SNAPSHOT_GUARD_PRIOR_PIN,
         SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
     )
@@ -426,7 +428,13 @@ def test_each_every_coupled_run_entry_is_present_before_its_fix_and_absent_at_it
     assert d.title == title
     v = resolve(d, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS)
     assert (v.status, v.rule) == ("present", "also_present_set"), v
-    for sha in (d.fixed_in, SHA_SNAPSHOT_GUARD_PRIOR_PIN, SHA_CURATED_MAIN_PIN, SHA_MAIN_QUALITY_SNAPSHOT_PIN):
+    for sha in (
+        d.fixed_in,
+        SHA_SNAPSHOT_GUARD_PRIOR_PIN,
+        SHA_CURATED_MAIN_PIN,
+        SHA_MAIN_QUALITY_SNAPSHOT_PIN,
+        SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
+    ):
         v = resolve(d, sha)
         assert (v.status, v.rule) == ("absent", "known_absent_set"), (sha, v)
 

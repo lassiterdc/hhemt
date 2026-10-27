@@ -17,7 +17,7 @@ import pandas as pd
 import pytest
 
 _PRE_FIX = "c7b2fd1da3c2ed48d0d8cc0bf0e4b703b1f86e5e"
-_PIN = "bd18215972c348020d53b3a8a1a64ee6266cae28"
+_PIN = "bb13ea28603d50879f8d85cd041c17f440fbdb2b"
 
 
 def _analysis(tmp_path, units: dict, *, coupled=True):
@@ -82,7 +82,7 @@ def test_a_pre_fix_cms_only_analysis_does_not_carry_the_us_unit_defect(tmp_path,
 
 
 def test_the_live_pin_passes_and_reads_no_hydraulics_file(tmp_path, monkeypatch):
-    """At ``bd18215`` the check passes, and (b) is absent even with the file missing.
+    """At ``bb13ea28`` the check passes, and (b) is absent even with the file missing.
 
     Class: coupled analyses at the pin. Why: the pin carries all three fixes, and a build without
     (b) must never report it not determinable. What kills it: reading the unit when the sha already
@@ -99,7 +99,7 @@ _COUPLED_IDS = ("TRITON-COUPLED-RIM-BELOW-CROWN", "TRITON-COUPLED-US-UNIT-RIM", 
 
 
 def test_an_unregistered_pin_pass_discloses_that_nothing_was_assessed(tmp_path, monkeypatch):
-    """At a sha in no known set the pass names all three INDETERMINATE; at ``bd18215`` all three ABSENT.
+    """At a sha in no known set the pass names all three INDETERMINATE; at ``bb13ea28`` all three ABSENT.
 
     Class: passing coupled analyses whose producing sha the registry either cleared or has never
     heard of. Why: both pass, and a reader acts on the pass, so the summary must say which basis

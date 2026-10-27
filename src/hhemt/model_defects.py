@@ -420,6 +420,17 @@ SHA_CURATED_MAIN_PIN = "a146fb6ed7c22790fb9a15ff854c446db4519ad2"
 #: 10 files, `src/` untouched). This is NOT an entry of any defect: the quality-state fact is
 #: keyed in `scenario.SWMM_QUALITY_SNAPSHOT_SHAS`, not in this registry.
 SHA_MAIN_QUALITY_SNAPSHOT_PIN = "bd18215972c348020d53b3a8a1a64ee6266cae28"
+
+#: The fork's `main` as the synthetic tier's pin from the move that bounds SWMM's file-path
+#: handling: "fix(swmm): refuse SWMM file paths longer than MAXFNAME before swmm_open" (`bb13ea28`),
+#: two commits past `SHA_MAIN_QUALITY_SNAPSHOT_PIN` (`git merge-base --is-ancestor bd18215 bb13ea28`
+#: -> rc 0; `git diff --stat bd18215 bb13ea28`: `external/swmm/src/solver/massbal.c` and
+#: `src/swmm_triton.h` only). It is the `known_absent_in` member of every REGISTRY entry, which
+#: `scripts/check_live_pin_registered.py` asserts at commit time. NOT an entry of any defect: the
+#: two commits it adds (7a59d18, the flooding-debug path buffer; bb13ea28, the path-length refusal)
+#: are deliberately unregistered under the developer's ruling that no fix before the next public
+#: release needs a registry entry.
+SHA_MAIN_SWMM_PATH_REFUSAL_PIN = "bb13ea28603d50879f8d85cd041c17f440fbdb2b"
 # the curated traversal fix, from 23b75781 (guard re-predication)
 SHA_CURATED_TRAVERSAL_GUARD_FIX = "681d809ad1449b11ce5e0c4e1162429b2f13d9c6"
 # the curated clean-start disposal, from cf357e4b (earlier-run disposal)
@@ -482,6 +493,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_CURATED_MAIN_PIN,
                 # 3a832f7d is an ANCESTOR of bd18215 -- measured rc 0 against this sha (2026-10-25).
                 SHA_MAIN_QUALITY_SNAPSHOT_PIN,
+                # 3a832f7d is an ANCESTOR of bb13ea28 -- measured rc 0 against this sha (2026-10-26).
+                SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME}),
@@ -515,6 +528,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_CURATED_MAIN_PIN,
                 # 9db367dd is an ANCESTOR of bd18215 -- measured rc 0 against this sha (2026-10-25).
                 SHA_MAIN_QUALITY_SNAPSHOT_PIN,
+                # 9db367dd is an ANCESTOR of bb13ea28 -- measured rc 0 against this sha (2026-10-26).
+                SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER}),
@@ -565,6 +580,9 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # verdict; `is-ancestor 5d2ad1e8 bd18215` -> rc 1 and `ls-tree bd18215 -- src/ghost_ring.h`
                 # -> 0 entries, the same trap.
                 SHA_MAIN_QUALITY_SNAPSHOT_PIN,
+                # bb13ea28 descends from a38338b0 (rc 0) and inherits the SAME independent-upstream verdict;
+                # is-ancestor 5d2ad1e8 bb13ea28 -> rc 1 and ls-tree src/ghost_ring.h -> 0 entries, the same trap.
+                SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
             }
         ),
         also_present_in=frozenset(
@@ -625,6 +643,9 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # 681d809 (the curated traversal fix) is an ANCESTOR of bd18215 -- rc 0; `git ls-tree bd18215
                 # -- external/swmm/src/solver/snapshot.c` -> 1 entry (control `src/triton.h` -> 1).
                 SHA_MAIN_QUALITY_SNAPSHOT_PIN,
+                # 681d809 is an ANCESTOR of bb13ea28 -- rc 0; snapshot.c is byte-identical to bd18215's
+                # (git diff -> empty).
+                SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
                 # THE SEVEN NO-PAYLOAD SHAS. `external/swmm/src/solver/snapshot.c` does not exist
                 # at any of them (`git ls-tree` -> 0 entries each, against a control needle
                 # `src/triton.h` -> 1 entry each, so the zero is an absence and not a bad path).
@@ -727,6 +748,9 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # d456518 (the curated clean-start disposal) is an ANCESTOR of bd18215 -- rc 0; the disposal
                 # key `swmm_snapshot_keep_previous` counts 5 in `src/swmm_triton.h` at bd18215, as at a146fb6.
                 SHA_MAIN_QUALITY_SNAPSHOT_PIN,
+                # d456518 is an ANCESTOR of bb13ea28 -- rc 0; swmm_snapshot_keep_previous counts 5 in
+                # src/swmm_triton.h at bb13ea28.
+                SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
                 # THE SEVEN NO-PAYLOAD SHAS: snapshot.c -> 0 entries at each.
                 SHA_PRE_COUPLED_RESUME,
                 SHA_COUPLED_RESUME_FIX,
@@ -766,6 +790,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_CURATED_MAIN_PIN,
                 # 852f10c (the curated coupled-list and rim fix) is an ANCESTOR of bd18215 -- rc 0.
                 SHA_MAIN_QUALITY_SNAPSHOT_PIN,
+                # 852f10c is an ANCESTOR of bb13ea28 -- rc 0.
+                SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
             }
         ),
         also_present_in=_REGISTERED_BEFORE_COUPLED_FIXES,
@@ -788,6 +814,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_CURATED_MAIN_PIN,
                 # 2ecb1cf (the curated US-unit conversion) is an ANCESTOR of bd18215 -- rc 0.
                 SHA_MAIN_QUALITY_SNAPSHOT_PIN,
+                # 2ecb1cf is an ANCESTOR of bb13ea28 -- rc 0.
+                SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
             }
         ),
         also_present_in=_REGISTERED_BEFORE_COUPLED_FIXES,
@@ -813,6 +841,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_CURATED_MAIN_PIN,
                 # 852f10c (the curated coupled-list and rim fix) is an ANCESTOR of bd18215 -- rc 0.
                 SHA_MAIN_QUALITY_SNAPSHOT_PIN,
+                # 852f10c is an ANCESTOR of bb13ea28 -- rc 0.
+                SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
             }
         ),
         also_present_in=_REGISTERED_BEFORE_COUPLED_FIXES,

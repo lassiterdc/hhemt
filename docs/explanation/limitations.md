@@ -70,7 +70,7 @@ resumes by exact replay unless `swmm_snapshot_disable` is set to `false`; for an
 resume from such a snapshot, the water-quality statistics are withheld (NaN, with
 `pollutant_stats_status` giving the reason) while the concentration time series are kept. This
 follows from the snapshot inventory of those builds, which excludes the node and link quality
-fields. At a build listed in `SWMM_QUALITY_SNAPSHOT_SHAS` (`bd18215`; a later TRITON pin that
+fields. At a build listed in `SWMM_QUALITY_SNAPSHOT_SHAS` (`bd18215` and `bb13ea28`; a later TRITON pin that
 carries the fix is added there by hand), the snapshot carries that state, so a quality-routed run
 resumes from its snapshot and its statistics are kept, with `pollutant_stats_status` recording the
 route. A build not in that set, an abbreviated sha, or no recorded build keeps the exact replay and
@@ -79,6 +79,14 @@ resumes it; relaunch with `swmm_snapshot_disable: true` for the exact replay, or
 Processing reads the build recorded in the system directory's log, so recompiling that directory at
 another TRITON commit before a run is processed attributes the run to the new build. See the
 [output data model](../reference/output-data-model.md).
+
+**SWMM file paths are limited to 259 characters.** SWMM keeps an input, report or binary-output
+file name only up to 259 characters. From TRITON `bb13ea28` a coupled run whose SWMM input,
+report or binary-output path is longer stops at startup with an error naming the path and its
+length, and the flooding-debug report is written only when its path is at most 259 characters.
+Keep the analysis directory shallow enough that a simulation's `swmm/hydraulics.inp` and
+`out_tritonswmm/swmm/hydraulics.rpt` stay within the limit. A standalone SWMM model is not
+covered by that refusal: SWMM itself shortens a longer name without an error.
 
 **Walltime is a real boundary.** A simulation killed at walltime resumes from its
 most recent checkpoint, but resumption is a property of the solver's checkpoint
