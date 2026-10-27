@@ -493,7 +493,21 @@ SWMM_NODE_RIM_FROM_DEM_FIRST_SHA = "1b797e6d0ea45b6d139e597fd6f4c2b29b17a1f7"
 #: run has no host clone, so ancestry cannot be tested there; membership in this set is the
 #: test instead. Each member is admitted by content: ``git show {sha}:src/config_utils.h``
 #: carries the key's read. Extend it when an image is built at a later commit that reads it.
-SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS = frozenset({SWMM_NODE_RIM_FROM_DEM_FIRST_SHA})
+SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS = frozenset(
+    {
+        SWMM_NODE_RIM_FROM_DEM_FIRST_SHA,
+        "a146fb6ed7c22790fb9a15ff854c446db4519ad2",
+        "bd18215972c348020d53b3a8a1a64ee6266cae28",
+        "bb13ea28603d50879f8d85cd041c17f440fbdb2b",
+    }
+)
+
+#: How a TRITON build reads ``swmm_node_rim_from_dem``, as the text appears in its
+#: ``src/config_utils.h``. A native clone whose file carries it reads the key whatever its
+#: ancestry: the fork's curated commit ``a146fb6e`` and its descendants ``bd18215`` and
+#: ``bb13ea28`` read it and do NOT descend from
+#: ``SWMM_NODE_RIM_FROM_DEM_FIRST_SHA``, because a curated commit is a new tree.
+SWMM_NODE_RIM_FROM_DEM_READ = 'argsd("swmm_node_rim_from_dem"'
 
 #: The TRITON commits whose SWMM snapshot carries node and link water-quality state across a
 #: coupled resume (fork commit bd18215 "carry water-quality state across a snapshot resume", and
@@ -636,8 +650,9 @@ def require_dem_rim_capable_triton(
     error. This raises ``ConfigurationError`` instead, naming the field, the build's commit
     and what was required.
 
-    Native mode: the clone in ``software_directory`` must have ``required_sha`` as an ancestor
-    of its HEAD (``git merge-base --is-ancestor``). A missing clone, or a ``required_sha`` the
+    Native mode: the clone in ``software_directory`` passes when its ``src/config_utils.h``
+    carries ``SWMM_NODE_RIM_FROM_DEM_READ``, or when it has ``required_sha`` as an ancestor of
+    its HEAD (``git merge-base --is-ancestor``). A missing clone, or a ``required_sha`` the
     clone's objects do not contain, is "cannot be resolved" and refuses too. Container mode:
     there is no host clone, so the commit recorded from the image (``recorded_sha``, the
     system log's ``triton_head_sha``) must be present, must equal ``branch_key``, and must be
@@ -662,6 +677,12 @@ def require_dem_rim_capable_triton(
             ),
         )
     d = Path(software_directory) if software_directory is not None else None
+    # A clone that READS the key is accepted by content first: ancestry alone refuses a
+    # curated commit, which is a new tree that reads the key without descending from it.
+    cfg_utils = d / "src" / "config_utils.h" if d is not None else None
+    if cfg_utils is not None and cfg_utils.is_file():
+        if SWMM_NODE_RIM_FROM_DEM_READ in cfg_utils.read_text(errors="replace"):
+            return
     head = None
     verdict = None
     if d is not None and (d / ".git").exists():

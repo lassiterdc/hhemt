@@ -2713,3 +2713,42 @@ def test_with_the_mode_omitted_a_junction_without_a_flow_line_outside_the_grid_i
     fake = _coupling_analysis(system)
     with pytest.raises(ConfigurationError, match=r"J2 \(45, 5\)"):
         TRITONSWMM_analysis._refuse_coupling_nodes_outside_triton_grid(fake, overwrite_system_inputs=False)
+
+
+def test_the_dem_rim_option_passes_a_native_build_that_reads_the_key_without_descending(tmp_path):
+    """Property: a native clone whose config_utils.h reads the key passes, whatever its ancestry.
+
+    Class: a clone that does not contain the required commit, with and without the key's read in
+    ``src/config_utils.h``; and a curated commit in the container set. Why: a curated commit is a
+    new tree, so ``a146fb6e`` and its descendants ``bd18215`` and ``bb13ea28`` read the key
+    without descending from the first commit that added it, and an ancestry test alone refuses
+    it. What kills it:
+    ancestry as the only test, or accepting a clone without the read. Second correct
+    implementation: the content test after the ancestry test; the assertions read only whether
+    the guard raises.
+    """
+    from hhemt.exceptions import ConfigurationError
+    from hhemt.scenario import SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS, require_dem_rim_capable_triton
+
+    clone = tmp_path / "triton"
+    _two_commit_clone(clone)
+    (clone / "src").mkdir()
+    cfg_utils = clone / "src" / "config_utils.h"
+
+    def guard():
+        require_dem_rim_capable_triton(
+            execution_environment="native",
+            software_directory=clone,
+            branch_key=None,
+            recorded_sha=None,
+            required_sha="0" * 40,
+        )
+
+    cfg_utils.write_text(
+        '\t\targlist.swmm_node_rim_from_dem = atoi((argsd("swmm_node_rim_from_dem", argmap, "0")).c_str());\r\n'
+    )
+    guard()
+    cfg_utils.write_text('\t\targlist.other = argsd("other", argmap, "");\r\n')
+    with pytest.raises(ConfigurationError, match="swmm_node_rim_from_dem"):
+        guard()
+    assert "a146fb6ed7c22790fb9a15ff854c446db4519ad2" in SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS

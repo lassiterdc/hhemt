@@ -4311,3 +4311,17 @@ non_breaking_allowlist:
       field beyond what each side already carries. The layout_signature is the file's sha256 at
       this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next
       change to this path.
+  - path: src/hhemt/scenario.py
+    layout_signature: 58e67053f1e394a5bb2275d476ea894598d9879280d604838cc5a7aba3294cc8
+    justification: >-
+      NON-BREAKING. The DEM-rim guard (require_dem_rim_capable_triton) also accepts a native
+      TRITON clone whose src/config_utils.h reads swmm_node_rim_from_dem, and the curated commit
+      a146fb6e and its descendants bd18215 and bb13ea28 join its
+      container set. DECIDING MEASUREMENT: no file preparation writes
+      is renamed, moved, added or restructured; a run the guard refused may now prepare, and the
+      cfg it then writes carries the line the option always wrote. The layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: a309ebbe4b1e685eec23613ef5ce33705c515ec57bb6107298360063c28542bd
+    justification: >-
+      NON-BREAKING. Re-states swmm_node_rim_from_dem's description to name the content test the
+      guard now makes. Description text only; no field, default or validator changes. The layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next change to this path.

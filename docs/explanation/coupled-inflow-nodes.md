@@ -145,9 +145,10 @@ Setting `swmm_node_rim_from_dem: true` in the analysis configuration takes each
 coupled node's rim from the DEM instead: the elevation of the node's grid cell minus
 the node's invert. It is off by default. Only solver builds that read the option
 honour it, so scenario preparation stops with a named error when the build the run
-uses is not known to read it. In native mode the TRITON clone must include the
-commit that added the option; in container mode the image's recorded TRITON commit
-must match `TRITONSWMM_branch_key` and be one of the commits known to read it.
+uses is not known to read it. In native mode the TRITON clone's
+`src/config_utils.h` must read the option, or the clone must include the commit that
+added it; in container mode the image's recorded TRITON commit must match
+`TRITONSWMM_branch_key` and be one of the commits known to read it.
 
 The surface hydrographs are converted to cubic metres per second from the
 hydrology model's own flow unit before TRITON reads them, so an `LPS` or `MLD`

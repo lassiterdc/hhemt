@@ -1108,8 +1108,9 @@ class analysis_config(cfgBaseModel):
             "invert, instead of the depth SWMM itself uses for the node. When False (the "
             "default) the line is not written and the rim is SWMM's own depth. Only TRITON builds "
             "that read the key honour it, so preparation refuses a True value unless the build "
-            "the run uses is known to read it: in native mode the TRITON clone must descend "
-            "from the commit that added the key; in container mode the image's recorded TRITON "
+            "the run uses is known to read it: in native mode the TRITON clone's "
+            "src/config_utils.h must carry the key's read, or the clone must descend from the "
+            "commit that added the key; in container mode the image's recorded TRITON "
             "commit must equal TRITONSWMM_branch_key and be one of the commits known to read it. "
             "It changes hydraulic results when True."
         ),
