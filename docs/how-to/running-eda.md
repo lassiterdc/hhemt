@@ -9,8 +9,9 @@ sits outside the workflow graph, see
 ## Before you start
 
 - **A completed, consolidated analysis directory.** The step reads the
-  consolidated outputs and the per-scenario summaries; it does not run
-  simulations and it does not consolidate.
+  consolidated outputs and the per-scenario summaries;
+  [What it does not do](../explanation/exploratory-analysis.md#what-it-does-not-do)
+  says why they must already exist.
 - **`cfg_analysis.yaml` and `cfg_system.yaml` inside that directory**, if you
   intend to drive it by directory rather than by config paths. Both are written
   by a prior `analysis.run()`, and this step rewrites them itself on every run.
@@ -70,8 +71,8 @@ Everything lands under the analysis directory.
 | `eda_local/` | Your own EDA package, outside the toolkit source tree. |
 | `cfg_analysis.yaml`, `cfg_system.yaml` | The configs, persisted so the notebook can re-derive its variables. |
 
-The verdicts are also merged into `validation_report.json`, so they appear in
-the report's Errors and Warnings section without a separate step.
+How the verdicts reach the report's Errors and Warnings section is set out under
+[Calculation and figure are separate](../explanation/exploratory-analysis.md#calculation-and-figure-are-separate).
 
 ## Choose which figures render
 

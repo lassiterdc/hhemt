@@ -36,7 +36,7 @@ norfolk.system.compile_TRITON_SWMM()          # once per machine: clones and bui
 result = norfolk.analysis.run(from_scratch=False, execution_mode="auto")
 ```
 
-`NorfolkIreneExperiment.load()` downloads the case data (once), builds the system and analysis objects, and hands you back an experiment whose `.analysis` is the orchestrator. `compile_TRITON_SWMM()` builds the solver the first time and skips the build once it exists. A run checks for that build and never performs it, so this line comes before the first `run()` on every machine. [Compile the solver](../how-to/compiling-the-solver.md) has the cluster form and when to rebuild. `run(from_scratch=False)` resumes any completed work rather than rebuilding from scratch, and `execution_mode="auto"` detects whether you are in a SLURM allocation or on a local machine.
+What each of these calls does, and why the compile line comes before the first `run()` on every machine, is set out step by step in [the Norfolk tutorial's worked path](norfolk-end-to-end.md#the-worked-path-a-local-serial-run).
 
 For user-authored configs instead of the canned example. Your `analysis.yaml` must
 carry `hhemt_sha:`, the full 40-hex commit you are running. It is the same value the

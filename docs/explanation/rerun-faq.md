@@ -54,6 +54,7 @@ re-run of `analysis.run()` resumes rather than rebuilds.
 ??? question "I re-ran and nothing happened, but I expected a rebuild."
     Completion is tracked by `_status/*.flag` markers plus per-model log
     success records, not by file presence alone. If a flag survives, the step
-    is considered done and is skipped. To force a specific step to rebuild
+    is considered done and is skipped, and a surviving log record skips it even
+    when its flag is gone. To force a specific step to rebuild
     regardless of its flag, use the override knobs described in
     [Forcing and suppressing re-runs](../how-to/forcing-reruns.md).

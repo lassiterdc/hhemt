@@ -134,10 +134,8 @@ exposed by this CLI; both are flags on the underlying module, reached the same w
 component would otherwise share a single analysis tree and race it, which presents as an
 intermittent red in an unrelated test rather than as a partition error.
 
-**Two costs to price before asking for the split.** Isolation turns one shared fixture build
-into one build per part, paid in the same wall clock the split is buying. And a first run at
-any new provenance is not comparable to an earlier one, which is a standing property of the
-fixture cache rather than a property of these flags: see
+**Price the split before asking for it.** What isolation costs, and what a first run at a
+new provenance cannot tell you, are set out under
 [the fixture cache, and why a rebuild is silent](../explanation/testing-the-toolkit.md#the-fixture-cache-and-why-a-rebuild-is-silent).
 
 ## Exit codes
@@ -167,3 +165,11 @@ on disk.
 A `10` means the underlying exception had no mapped code. If you are scripting
 against a specific failure and getting `10`, that is worth reporting rather than
 working around.
+
+For `run-experiment`, the codes cover these cases:
+
+| Code | What it covers for `run-experiment` |
+|---|---|
+| `0` | success, or a `--dry-run` whose plan built cleanly |
+| `2` | a bad `experiment.yaml`, a schema-invalid `system.yaml` or `analysis.yaml`, an unset `${VAR}`, a missing or placeholder `default_account` or `container.sif_root`, a declined override gate, an unknown `--mode` value, or `--mode fresh` refused by the wipe guard |
+| `3` | Snakemake exited non-zero, `sbatch` refused the submission, a rule failed permanently, or a `--dry-run` whose plan failed; the console output printed just before the exit names the cause |

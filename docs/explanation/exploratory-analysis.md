@@ -83,11 +83,10 @@ Exploratory analysis writes its figures to disk unconditionally. Whether they
 appear in `analysis_report.html` is a separate decision, made by the
 [reporting set](../reference/reporting-sets.md) the analysis selects. Three
 sets carry the exploratory adapter: `compute_sensitivity`, `dem_resolution` and
-`compute_config_byte_identity`, and each expects an analysis shaped for its own question.
-
-Selecting one of them on an analysis that was not shaped that way produces a
-report with degraded panels rather than a useful one, which is why the set name
-and the enabled figures are chosen together.
+`compute_config_byte_identity`. What selecting one of them on an analysis not shaped
+for its question produces is stated under
+[Sensitivity-analysis sets](../reference/reporting-sets.md#sensitivity-analysis-sets),
+and it is why the set name and the enabled figures are chosen together.
 
 ## What it does not do
 

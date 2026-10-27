@@ -18,7 +18,8 @@ The container is chosen by the `format` argument, which defaults to `"zip"`.
 `render_report()` with no argument writes `{analysis_dir}/analysis_report.zip`,
 containing `report.html` plus per-figure `data/*.html` entries. Pass
 `format="html"` for a single self-contained `analysis_report.html` with every
-figure inlined. There is no size-based selection between them.
+figure inlined, larger than the zip but opened with no unzip step. There is no
+size-based selection between them.
 
 ## Sidebar sections
 

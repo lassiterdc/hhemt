@@ -180,6 +180,8 @@ The `performance.*` columns are timing records, not physical results:
 - On a **hotstart-resumed** simulation these are cumulative across every
   allocation, so they will exceed what a scheduler reports as elapsed time for
   the final allocation. That is correct, not double-counting.
+- The `perf_*` columns of `df_status` and `scenario_status.csv` read these same
+  values, so both points hold for them too.
 
 ## See also
 
