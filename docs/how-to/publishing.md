@@ -28,8 +28,9 @@ the two configs (`cfg_analysis.yaml` + `cfg_system.yaml`). So the analysis must 
 publish has nothing to deposit and no crate to read the license from.
 
 The dataset license is read back from the crate sidecar: it is baked in at consolidation
-(default `CC0-1.0`; set `analysis_config.dataset_license: CC-BY-NC-4.0` before consolidating
-to choose the other vocab entry). Publishing does **not** re-stamp the archived license.
+from `analysis_config.dataset_license`, which has no default. Set it before consolidating;
+an analysis consolidated without one is refused at publish, with the steps that fix it.
+Publishing does **not** re-stamp the archived license.
 
 ## Provide credentials (environment variables)
 

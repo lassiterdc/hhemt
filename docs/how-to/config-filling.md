@@ -17,8 +17,9 @@ cp test_data/norfolk_coastal_flooding/template_system_config.yaml   my_system.ya
 cp test_data/norfolk_coastal_flooding/template_analysis_config.yaml my_analysis.yaml
 ```
 
-The templates ship a **serial, local** configuration. Everything below is either
-replacing a placeholder path or opting into something the default does not do.
+The templates ship a **serial, local** configuration. Everything below is replacing a
+placeholder path, setting a value only you can know for your study, or opting into
+something the default does not do.
 
 ## 2. Point the system config at your data
 
@@ -56,6 +57,11 @@ Set `weather_timeseries`, `weather_events_to_simulate`, and the four
 `weather_*` schema fields to the dimension and variable names **as they appear in
 your NetCDF**. These are not conventions the toolkit imposes; they are how it finds
 your data.
+
+Set `hhemt_sha` to the full 40-hex commit of hhemt you run; `git rev-parse HEAD` in
+your clone prints it. The template carries a placeholder for it, the field has no
+default, and every process that constructs the analysis refuses to start when the
+running toolkit is at a different commit.
 
 ## 5. Choose how it runs
 
