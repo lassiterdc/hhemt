@@ -175,13 +175,52 @@ def test_only_the_coupled_generator_appends_the_key():
     )
 
 
-def test_the_field_defaults_to_false_on_analysis_config():
-    """Default preservation at the CONFIG layer, so an omitted field cannot arm an arm."""
+def test_the_field_defaults_to_unset_and_unset_arms_nothing_without_quality_routing(tmp_path):
+    """Default preservation at the CONFIG layer, so an omitted field cannot arm an arm on a
+    model that does not route water quality.
+
+    The field is `bool | None = None`: unset means "resolve per scenario". An explicit value
+    is kept as given; unset resolves to False on a model with no `[POLLUTANTS]` entry or with
+    `IGNORE_QUALITY YES`, so its cfg is byte-identical to the pre-change default. The one
+    designed exception is a model that routes quality, which resolves to True (exact replay),
+    asserted here as the contrast case so this test cannot pass on a resolver that returns a
+    constant.
+    """
     from hhemt.config.analysis import analysis_config
+    from hhemt.scenario import resolve_swmm_snapshot_disable
 
     field = analysis_config.model_fields["swmm_snapshot_disable"]
-    assert field.default is False
+    assert field.annotation == (bool | None)
+    assert field.default is None
     assert not field.is_required()
+
+    no_quality = tmp_path / "no_quality.inp"
+    no_quality.write_text("[OPTIONS]\nFLOW_UNITS CMS\n\n[JUNCTIONS]\nJ1 0 1 0 0 0\n")
+    ignored = tmp_path / "ignored.inp"
+    ignored.write_text("[OPTIONS]\nFLOW_UNITS CMS\nIGNORE_QUALITY YES\n\n[POLLUTANTS]\nTSS MG/L 0 0 0 0 NO * 0 0 0\n")
+    routed = tmp_path / "routed.inp"
+    routed.write_text("[OPTIONS]\nFLOW_UNITS CMS\n\n[POLLUTANTS]\nTSS MG/L 0 0 0 0 NO * 0 0 0\n")
+
+    assert resolve_swmm_snapshot_disable(None, no_quality) is False
+    assert resolve_swmm_snapshot_disable(None, ignored) is False
+    assert resolve_swmm_snapshot_disable(None, routed) is True
+    assert resolve_swmm_snapshot_disable(False, routed) is False
+    assert resolve_swmm_snapshot_disable(True, no_quality) is True
+
+    # SWMM's own reading rules, which the resolver must share: a [POLLUTANTS] header with no
+    # entry declares no pollutant, and section headers and option keywords are matched without
+    # regard to case.
+    empty_section = tmp_path / "empty_section.inp"
+    empty_section.write_text("[OPTIONS]\nFLOW_UNITS CMS\n\n[POLLUTANTS]\n;;Name Units\n\n[JUNCTIONS]\nJ1 0 1 0 0 0\n")
+    lower_routed = tmp_path / "lower_routed.inp"
+    lower_routed.write_text("[options]\nflow_units CMS\n\n[pollutants]\nTSS MG/L 0 0 0 0 NO * 0 0 0\n")
+    lower_ignored = tmp_path / "lower_ignored.inp"
+    lower_ignored.write_text(
+        "[options]\nflow_units CMS\nignore_quality yes\n\n[pollutants]\nTSS MG/L 0 0 0 0 NO * 0 0 0\n"
+    )
+    assert resolve_swmm_snapshot_disable(None, empty_section) is False
+    assert resolve_swmm_snapshot_disable(None, lower_routed) is True
+    assert resolve_swmm_snapshot_disable(None, lower_ignored) is False
 
 
 def test_the_field_is_bucketed_experiment_for_the_reprex_guide():

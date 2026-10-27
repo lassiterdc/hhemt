@@ -8,18 +8,26 @@ import tests.utils_for_testing as tst_ut
 
 pytestmark = [
     # Every test here depends on the compiled TRITON-SWMM CPU binaries, in its body or through
-    # its fixtures. test_run_multisim_concurrently
-    # compiles and runs concurrent sims in its own body; the other two consume the completed
-    # multisim tree (synthetic_multisim_completed, directly or through its isolated clone),
-    # whose fixture runs the multisim workflow when its cached tree is not complete.
-    # Requesting the fixture for the whole module applies its skip-vs-hard-fail gate to all
-    # three; see test_synth_00_compile_models for that contract.
-    pytest.mark.usefixtures("tritonswmm_cpu_compiled"),
+    # its fixtures. test_run_multisim_concurrently compiles, prepares scenarios and runs
+    # concurrent sims in its own body; the other two consume the completed multisim tree
+    # (synthetic_multisim_completed, directly or through its isolated clone), whose fixture
+    # runs the multisim workflow when its cached tree is not complete. synth_multi_sim carries
+    # toggle_triton_model=True, so preparing its scenarios also needs the SHARED TRITON-only
+    # build, which only triton_only_cpu_compiled (or the test_synth_00 TEST) produces.
+    # Requesting both for the whole module applies their skip-vs-hard-fail gate to all three;
+    # see test_synth_00_compile_models for that contract.
+    pytest.mark.usefixtures("tritonswmm_cpu_compiled", "triton_only_cpu_compiled"),
 ]
 
 
-def test_run_multisim_concurrently(synth_multi_sim_analysis):
-    analysis = synth_multi_sim_analysis
+def _prepare_and_run_sims_concurrently(analysis):
+    """Prepare every scenario and run every sim concurrently, unprocessed.
+
+    Called by ``test_run_multisim_concurrently``, which owns its producer this way: it
+    runs a per-test ``tmp_path`` tree (a0571450) rather than reading a cache that an
+    earlier test may or may not have run. The processing test owns its producer through
+    ``synthetic_multisim_completed_isolated`` instead, whose session fixture runs the tree.
+    """
     analysis._system.compile_TRITON_SWMM(recompile_if_already_done_successfully=False)
     prepare_scenario_launchers = analysis.retrieve_prepare_scenario_launchers(
         overwrite_scenario_if_already_set_up=True, verbose=True
@@ -27,6 +35,11 @@ def test_run_multisim_concurrently(synth_multi_sim_analysis):
     analysis.run_python_functions_concurrently(prepare_scenario_launchers)
     launch_functions = analysis._create_launchable_sims(pickup_where_leftoff=False, verbose=True)
     analysis.run_simulations_concurrently(launch_functions, verbose=True)
+
+
+def test_run_multisim_concurrently(synth_multi_sim_analysis):
+    analysis = synth_multi_sim_analysis
+    _prepare_and_run_sims_concurrently(analysis)
 
     tst_ut.assert_system_setup(analysis)
     tst_ut.assert_scenarios_setup(analysis)

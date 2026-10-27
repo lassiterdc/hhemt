@@ -303,6 +303,18 @@ _EXCUSES: tuple[_Excuse, ...] = (
     ),
     _Excuse(
         _STUBBED,
+        "tests/test_workflow_retry_policy.py",
+        'patch.object(SnakemakeWorkflowBuilder, "_submit_single_job_workflow", return_value=submitted),',
+        (
+            "tests/test_workflow_retry_policy.py::test_waited_single_job_run_is_swept",
+            "tests/test_workflow_retry_policy.py::test_waited_single_job_run_reads_every_error_path_spelling[i-two-timestamps]",
+            "tests/test_workflow_retry_policy.py::test_waited_single_job_run_reads_every_error_path_spelling[ii-user-error-line]",
+            "tests/test_workflow_retry_policy.py::test_waited_single_job_run_reads_every_error_path_spelling[iii-short-spelling]",
+            "tests/test_workflow_retry_policy.py::test_waited_single_job_run_reads_every_error_path_spelling[iv-long-prefix]",
+        ),
+    ),
+    _Excuse(
+        _STUBBED,
         "tests/test_workflow_single_job_wait.py",
         'patch.object(builder, "run_snakemake_local", return_value={"success": True}),',
         (

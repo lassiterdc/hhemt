@@ -653,6 +653,11 @@ def _warn_unsatisfied(analysis_dir: Path, payload: tuple[str, ...], fixture_name
 def synthetic_multisim_completed(tritonswmm_cpu_compiled, triton_only_cpu_compiled):
     """Yield a synth multisim TRITONSWMM_analysis with sim outputs produced.
 
+    Requests ``triton_only_cpu_compiled`` beside ``tritonswmm_cpu_compiled``:
+    synth_multi_sim carries ``toggle_triton_model=True`` and the workflow's ``setup``
+    rule ASSERTS a TRITON-only build rather than producing one, so without it the
+    ``run()`` below fails on a cold build cache unless some earlier test compiled it.
+
     Consumed directly, and through ``synthetic_multisim_completed_isolated``,
     by tests that need a completed multisim tree, the reprocess tests among
     them. Session-scoped: the first invocation in a pytest session runs the

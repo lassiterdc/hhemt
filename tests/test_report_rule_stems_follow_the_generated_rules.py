@@ -122,7 +122,7 @@ def test_stale_eda_figure_with_its_renderer_disabled_does_not_refuse(tmp_path, m
     tree whose only stale figure is ``plots/eda/config_diff_maps`` passes the check.
     Class: stale ``plots/eda/`` figures whose active-set rule the Snakefile drops.
     Why it is required: the report transcribes no such figure, and the re-render the
-    refusal recommends has no rule to rebuild it, so the refusal is the D-43 class.
+    refusal recommends has no rule to rebuild it, so refusing would demand a rebuild nothing can perform.
     What kills it: counting every active-set template's figure, disabled or not.
     A second correct implementation under which it still passes: skipping the figure at
     the check's caller from the Snakefile's rule outputs.

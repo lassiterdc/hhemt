@@ -86,6 +86,12 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "hpc_time_min_per_sim": "hpc",
     "hpc_restart_times_simulate": "hpc",
     "hpc_restart_times_other": "hpc",
+    # "hpc" and not "experiment": the budget is a resilience knob a reproducer AMENDS for
+    # its own scheduler and nesting depth, exactly like the two retries knobs above it.
+    # It bounds how many times a deterministically-failing sim is relaunched; it does not
+    # participate in the experiment's identity, and two runs differing only in this value
+    # are the same experiment.
+    "hpc_consecutive_failure_budget_simulate": "hpc",
     "hpc_ensemble_partition": "hpc",
     "hpc_setup_and_analysis_processing_partition": "hpc",
     # CPU-only sim partition selector (QOSMinGRES fix, 9db7343); sibling of the two above
@@ -121,6 +127,12 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "landuse_plot_color_colname": "experiment",
     "manhole_diameter": "experiment",
     "manhole_loss_coefficient": "experiment",
+    # "experiment": it decides which manholes exchange water with the surface, so it is part
+    # of what was modelled and a reproducer keeps it.
+    "one_coupled_inflow_node_per_dem_cell": "experiment",
+    # "experiment": it decides where each coupled manhole's rim sits, so it is part of what was
+    # modelled and a reproducer keeps it.
+    "swmm_node_rim_from_dem": "experiment",
     "ncols": "experiment",
     "nrows": "experiment",
     "open_boundaries": "experiment",
@@ -140,6 +152,7 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "report": "experiment",
     "storm_tide_units": "experiment",
     "subcatchment_raingage_mapping_gage_id_colname": "experiment",
+    "swmm_coupling_mode": "experiment",
     "target_dem_resolution": "experiment",
     "target_processed_output_type": "experiment",
     "toggle_sensitivity_analysis": "experiment",
@@ -178,6 +191,10 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     # test_every_config_field_appears_exactly_once both go RED on any new config
     # field carrying no bucket.
     "swmm_snapshot_keep_all": "experiment",
+    # "experiment" by the RULE above (non-Path, not an HPC-execution field), and independently by
+    # SIBLING CONSISTENCY with the two snapshot fields directly above: it selects how a coupled
+    # resume treats a snapshot, so a reproducer must keep it as the experiment set it.
+    "swmm_snapshot_failed_replay": "experiment",
     # per-sim-event-labeling: names the presentation column on the user's own
     # weather_events_to_simulate CSV. "experiment" by the RULE above (non-Path,
     # not an HPC-execution field), and independently by SIBLING CONSISTENCY --

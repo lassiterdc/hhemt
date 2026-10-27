@@ -114,6 +114,7 @@ nav:
       - index.md
       - Capabilities: explanation/capabilities.md
       - Limitations and constraints: explanation/limitations.md
+      - Coupled inflow nodes: explanation/coupled-inflow-nodes.md
       - Software availability: explanation/software-availability.md
   - Installation: how-to/installation.md
   - Tutorials:

@@ -58,6 +58,36 @@ allocation cannot span partitions, so a sensitivity sweep that varies hardware
 across rows cannot use a single-allocation dispatch method. Preflight rejects
 the combination rather than failing mid-run.
 
+**Only coupling-candidate junctions exchange water with the surface.** `swmm_coupling_mode` chooses the candidates; outfalls, and in this build storage nodes and dividers, are not coupled, and an optional limit (legacy only) keeps one junction per DEM cell; see [Coupled inflow nodes](coupled-inflow-nodes.md).
+
+**Coupled water quality is limited.** In a coupled analysis no subcatchment washoff reaches the
+network, so only the sources the hydraulics model declares (dry-weather and external inflow
+concentrations, RDII, initial concentrations) produce pollutant mass. Pollutant mass that leaves
+for the 2D surface is counted in `Quality Routing Continuity` External Outflow and is not
+transported. A resume from a checkpoint snapshot written by a TRITON build before `bd18215` does
+not carry SWMM's node and link water-quality state, so at such a build a quality-routed coupled run
+resumes by exact replay unless `swmm_snapshot_disable` is set to `false`; for an event that did
+resume from such a snapshot, the water-quality statistics are withheld (NaN, with
+`pollutant_stats_status` giving the reason) while the concentration time series are kept. This
+follows from the snapshot inventory of those builds, which excludes the node and link quality
+fields. At a build listed in `SWMM_QUALITY_SNAPSHOT_SHAS` (`bd18215` and `bb13ea28`; a later TRITON pin that
+carries the fix is added there by hand), the snapshot carries that state, so a quality-routed run
+resumes from its snapshot and its statistics are kept, with `pollutant_stats_status` recording the
+route. A build not in that set, an abbreviated sha, or no recorded build keeps the exact replay and
+the withholding. A snapshot written by a TRITON build before `bd18215` is refused when a later build
+resumes it; relaunch with `swmm_snapshot_disable: true` for the exact replay, or start clean.
+Processing reads the build recorded in the system directory's log, so recompiling that directory at
+another TRITON commit before a run is processed attributes the run to the new build. See the
+[output data model](../reference/output-data-model.md).
+
+**SWMM file paths are limited to 259 characters.** SWMM keeps an input, report or binary-output
+file name only up to 259 characters. From TRITON `bb13ea28` a coupled run whose SWMM input,
+report or binary-output path is longer stops at startup with an error naming the path and its
+length, and the flooding-debug report is written only when its path is at most 259 characters.
+Keep the analysis directory shallow enough that a simulation's `swmm/hydraulics.inp` and
+`out_tritonswmm/swmm/hydraulics.rpt` stay within the limit. A standalone SWMM model is not
+covered by that refusal: SWMM itself shortens a longer name without an error.
+
 **Walltime is a real boundary.** A simulation killed at walltime resumes from its
 most recent checkpoint, but resumption is a property of the solver's checkpoint
 cadence, not something the toolkit can add. Size allocations with that in mind.

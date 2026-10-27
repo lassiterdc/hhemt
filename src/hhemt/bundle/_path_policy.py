@@ -64,9 +64,9 @@ class PathPolicy(StrEnum):
 
 
 # Per-field policy table. Keys must mirror the Pydantic field names on
-# system_config (12 entries) and analysis_config (10 entries) verbatim.
+# system_config (13 entries) and analysis_config (10 entries) verbatim.
 _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
-    # ---- system_config (12 Path fields) -------------------------------
+    # ---- system_config (13 Path fields) -------------------------------
     "system_directory": PathPolicy.FORCED_DOT,
     "watershed_gis_polygon": PathPolicy.BUNDLE_RELATIVE,
     "DEM_fullres": PathPolicy.BUNDLE_RELATIVE,
@@ -74,6 +74,7 @@ _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
     "SWMM_hydraulics": PathPolicy.BUNDLE_RELATIVE,
     "SWMM_hydrology": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "SWMM_full": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+    "swmm_coupling_nodes_file": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "landuse_raster": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "SWMM_software_directory": PathPolicy.IS_NONE_ACCEPTABLE,
     "TRITONSWMM_software_directory": PathPolicy.IS_NONE_ACCEPTABLE,
@@ -168,6 +169,15 @@ _EXCLUDABLE_CATALOG: dict[str, ExcludableInput] = {
     "SWMM_full": ExcludableInput(
         description="Combined SWMM .inp model (hydrology + hydraulics in one file).",
         reproducibility_cost="Modest; excluding it blocks the coupled run.",
+    ),
+    "swmm_coupling_nodes_file": ExcludableInput(
+        description=(
+            "Coupling-node list (swmm_coupling_mode: list): the SWMM junctions the coupled model exchanges water at."
+        ),
+        reproducibility_cost=(
+            "Tiny, and it DEFINES the coupled set; excluding it blocks the coupled run. Exclude "
+            "it only together with the SWMM_hydraulics network it names (for example a licensed network)."
+        ),
     ),
     "subcatchment_raingage_mapping": ExcludableInput(
         description="Subcatchment -> raingage mapping table.",

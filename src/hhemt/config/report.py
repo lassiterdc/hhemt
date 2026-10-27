@@ -1085,7 +1085,7 @@ def _is_absent_reporting_set(value: object) -> bool:
     return value in ABSENT_REPORTING_SET_FORMS
 
 
-#: Every renamed reporting-set key (ruling D-157). A configuration or a published bundle that
+#: Every renamed reporting-set key. A configuration or a published bundle that
 #: still names an old key is rewritten to the new one, with one warning listing each rename
 #: applied, as config/eda.py's _EDA_RENAMES does for renamed plot kinds.
 _REPORTING_SET_RENAMES: dict[str, str] = {

@@ -265,6 +265,8 @@ class Toolkit:
         override_force_rerun=None,
         wait_for_completion: bool | None = None,
         override_wipe_nonempty: bool = False,
+        override_clean_restart_member_ids: list[str] | None = None,
+        debug: bool = False,
     ) -> WorkflowResult:
         """Run TRITON-SWMM workflow.
 
@@ -312,6 +314,19 @@ class Toolkit:
         override_wipe_nonempty : bool, default False
             With ``mode="fresh"``, permit deleting an analysis directory that holds
             completed work; without it that wipe is refused.
+        override_clean_restart_member_ids : list of str, or None
+            Sensitivity member ids to CLEAN-RESTART: each named member's runtime
+            children are wiped, including the per-model log that carries
+            ``n_resumes``, so the member re-runs from checkpoint 0 and its resume
+            counter resets to zero. ``eda/compute_sensitivity.py`` reads
+            ``n_resumes == 0`` as the clean member of a clean/resume pair, so use this
+            when a member must re-run as a CLEAN member. Not applied on a dry run.
+            None, the default, wipes nothing.
+        debug : bool, default False
+            Run in debug mode. Today it does exactly one thing: a coupled simulation that
+            starts from the beginning asks the solver to keep the previous run's snapshot
+            files rather than remove them. Passed through to
+            ``TRITONSWMM_analysis.run(debug=)``.
 
         Returns
         -------
@@ -385,6 +400,7 @@ class Toolkit:
         return self.analysis.run(
             from_scratch=from_scratch,
             override_wipe_nonempty=override_wipe_nonempty,
+            override_clean_restart_member_ids=override_clean_restart_member_ids,
             events=events,
             execution_mode=execution_mode,
             dry_run=dry_run,
@@ -392,6 +408,7 @@ class Toolkit:
             report_config=report_config,
             override_force_rerun=override_force_rerun,
             wait_for_job_completion=wait_for_completion,
+            debug=debug,
         )
 
     def get_status(self) -> WorkflowStatus:
@@ -437,6 +454,10 @@ class Toolkit:
         Recommendation:
           ...
         >>>
+
+        The report prints no overall progress count and no current-phase line; read
+        those from ``status.simulations_completed`` and ``status.current_phase``.
+
         >>> # Follow the recommendation
         >>> if not status.simulation.complete:
         ...     result = tk.run(mode=status.recommended_mode)

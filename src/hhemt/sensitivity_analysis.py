@@ -86,9 +86,11 @@ _SYSTEM_COLUMN_PREFIX = "system."
 _ANALYSIS_COLUMN_PREFIX = "analysis."
 _HPC_COLUMN_PREFIX = "hpc."
 # hpc.{key} columns are a provenance-rooted ALIAS surface for HPC-resource
-# sensitivity axes. The single supported alias today is hpc.partition ->
-# analysis.hpc_ensemble_partition. The partition selector stays an analysis_config
-# field, because it is an experiment-scoped per-row choice rather than a cluster spec;
+# sensitivity axes. The supported aliases are hpc.partition ->
+# analysis.hpc_ensemble_partition and hpc.setup_partition ->
+# analysis.hpc_setup_and_analysis_processing_partition. The partition selectors stay
+# analysis_config fields, because each is an experiment-scoped per-row choice rather than a
+# cluster spec;
 # only the column SPELLING gains an hpc. root, so an HPC-resource axis is identifiable
 # from its column name.
 _HPC_ALIAS_TO_ANALYSIS_FIELD: dict[str, str] = {
@@ -304,6 +306,11 @@ class TRITONSWMM_sensitivity_analysis:
 
         Raises
         ------
+        ConfigurationError
+            If the sensitivity definition uses the retired id column or an unknown
+            column, if a row sets both ``system_config_yaml`` and ``system.*``
+            overlay columns, or if a row's ``system.*`` overlay values fail
+            ``system_config`` validation.
         ValueError
             From ``_retrieve_df_setup``: an unrecognized sensitivity-file extension,
             or ``member_id`` values that are missing, invalid or duplicated.
@@ -311,6 +318,10 @@ class TRITONSWMM_sensitivity_analysis:
             From ``_retrieve_df_setup`` (an unknown sensitivity column) or
             ``_build_unique_system_targets`` (an invalid per-row system config,
             e.g. a row using both ``system_config_yaml`` and ``system.*`` columns).
+        pydantic.ValidationError
+            From ``_create_members``: a row's ``analysis.*``, ``hpc.*`` or bare
+            analysis-field values fail ``analysis_config`` validation; that path is
+            not wrapped in ``ConfigurationError``.
         """
         self.experiment = analysis
         self._system = analysis._system
@@ -475,6 +486,7 @@ class TRITONSWMM_sensitivity_analysis:
         which: Literal["TRITON", "SWMM", "both"] = "both",
         compression_level: int = 5,
         pickup_where_leftoff: bool = True,
+        debug: bool = False,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
         dry_run: bool = False,
         verbose: bool = True,
@@ -540,6 +552,10 @@ class TRITONSWMM_sensitivity_analysis:
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
             If True, resume simulations from last checkpoint
+        debug : bool
+            The run's ``--debug`` flag, threaded to the workflow builder, which emits
+            ``--debug`` on every run-simulation rule shell. Today it does one thing: a coupled
+            clean start keeps the previous run's snapshot files instead of removing them.
         dry_run : bool
             If True, only perform a dry run and return that result
         verbose : bool
@@ -645,6 +661,7 @@ class TRITONSWMM_sensitivity_analysis:
                 which=which,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
+                debug=debug,
                 wait_for_completion=wait_for_completion,
                 dry_run=dry_run,
                 verbose=verbose,
@@ -800,7 +817,7 @@ class TRITONSWMM_sensitivity_analysis:
         # on the MASTER analysis_dir and taken on the BASE builder, which is
         # where _orchestrator_liveness_gate lives
         # (SensitivityAnalysisWorkflowBuilder.submit_reprocess_workflow reaches it
-        # the same way). Returns None on dry_run.
+        # the same way, through `_base_builder`). Returns None on dry_run.
         _reprocess_claim = self._workflow_builder._base_builder._acquire_reprocess_driver_claim(
             self.experiment.analysis_paths.analysis_dir,
             dry_run=dry_run,
@@ -1066,8 +1083,9 @@ class TRITONSWMM_sensitivity_analysis:
         the guard.
 
         ``override_multi_sim_run_method`` overrides the configured run method for
-        this delete only, following the ``override_`` prefix convention: None
-        reads the config.
+        this delete only, which selects whether the delete rules run locally
+        (``--cores N``) or are submitted through the SLURM executor. It follows the
+        ``override_`` prefix convention: None reads the config.
         """
         from hhemt.utils import fast_rmtree
 
@@ -1240,8 +1258,9 @@ class TRITONSWMM_sensitivity_analysis:
         # defaulting to analysis_id when None. _theme is resolved above.
         _navbar = _theme.upper_left_text or self.cfg_analysis.analysis_id
         # Resolve the active set's category_order. The block that used to live here was
-        # byte-identical to the one in analysis.py, and it is extracted so a change
-        # to the resolution is one repair rather than two copies that must be proven to still
+        # byte-identical to the one in analysis.py, and it is extracted so a change to the
+        # category-order resolution in resolve_render_path_category_order is one repair rather
+        # than two copies that must be proven to still
         # agree. The shared helper lives outside both twins because they already form
         # an import cycle (this module imports hhemt.analysis at module level and
         # analysis imports TRITONSWMM_sensitivity_analysis back).
@@ -1652,8 +1671,8 @@ class TRITONSWMM_sensitivity_analysis:
             # datatree_consolidation_complete flag, which a run (often in another
             # process) sets on disk but not in this long-lived sub object.
             # Previously the sensitivity aggregators' _update_log() refreshed these
-            # sub logs as a side effect; that call was dropped in the
-            # log-write-race-fix compute-on-read change, so refresh explicitly here
+            # sub logs as a side effect; that call was dropped when those rollups
+            # became compute-on-read (to remove a log write race), so refresh explicitly here
             # at the cross-analysis read site (read-only observer; safe).
             analysis._refresh_log()
             try:
@@ -1878,7 +1897,9 @@ class TRITONSWMM_sensitivity_analysis:
         # divergence test cannot be trusted here. Perturbs no scheduling: this file is a
         # declared input of NO emitted Snakemake rule, and the mtime-preserving rewrite
         # primitive is migration-only.
-        # DOES NOT close the file-only residual.
+        # DOES NOT cover readers for which this file is the ONLY record of the arm: an
+        # archived tree, a bundle emitted from a root whose file was already stale, and a
+        # migration still cannot detect that a directory's arm was changed back.
         import yaml as _yaml
 
         (self.experiment.analysis_paths.analysis_dir / "cfg_analysis.yaml").write_text(
@@ -1914,7 +1935,8 @@ class TRITONSWMM_sensitivity_analysis:
         unsentineled so a ``delete --dry-run`` falls back to a full tree walk.
 
         Uses ``sum_child_sentinels``: the master total is the Σ of the per-sub
-        ``_du.json`` sentinels (written by each per-member consolidate) + a bounded
+        ``_du.json`` sentinels (written by each member's consolidate step in
+        ``consolidate_workflow.py``) + a bounded
         own-files walk excluding the child-scope dirs —
         NEVER a full-tree ``compute_and_write_scope_sentinel`` walk on the
         largest tree in the system. Ordering is structurally safe: the

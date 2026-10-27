@@ -315,12 +315,14 @@ class SWMMRunoffModeler:
                 "dem_y_coord": (("node_id",), np.asarray([d_node_gridcell[n][1] for n in node_ids])),
             },
             attrs={
+                # The unit the values were converted FROM; inflow_cms is always m3/s.
                 "flow_units": str(flow_units),
                 "system_total_inflow_volume_m3": float(volume_m3.sum()),
                 "n_gridcells": int(len({tuple(v) for v in d_node_gridcell.values()})),
                 "notes": (
-                    "Per-NODE TOTAL_INFLOW captured pre-gridcell-sum from swmm/hydro.out. "
-                    "float32 is exactly lossless w.r.t. SWMM's REAL4 binary. Supports "
+                    "Per-NODE TOTAL_INFLOW captured pre-gridcell-sum from swmm/hydro.out, "
+                    "as SWMM REAL4 times the unit factor to m3/s (1 for a CMS model, for "
+                    "which float32 is exactly lossless w.r.t. SWMM's REAL4 binary). Supports "
                     "CONTENT-identical regeneration of strmflow/tseries.hyg (values "
                     "byte-recoverable; gridcell grouping re-derivable from the DEM and "
                     "hydro.inp) -- NOT byte-identical TEXT regeneration, which has not "
@@ -374,8 +376,12 @@ class SWMMRunoffModeler:
         lst_nodes_with_inflow = []
         with Output(hydro_outfile) as out:
             flow_units = out.units["flow"]
+            # TRITON applies every hydrograph as m3/s, so each series is converted ONCE, where
+            # it is read below, before either consumer: tseries.hyg and the per-node capture
+            # then both carry m3/s. A CMS model's factor is 1 and its values are not touched.
+            to_cms = flow_unit_factor_to_cms(flow_units, hydro_outfile)
             inflow_first_line = f"%Runoff for sim {sim_id_str}\n"
-            inflow_second_line = f"%Time(hr) Discharge ({flow_units})\n"
+            inflow_second_line = "%Time(hr) Discharge (m3/s)\n"
             need_to_create_time_series = True
             for coords, group in df_node_locs.groupby(["dem_x_coord", "dem_y_coord"]):
                 keys = list(group.node_key)  # list of node ids that fall within a single gridcell
@@ -383,6 +389,8 @@ class SWMMRunoffModeler:
                 for key in keys:
                     if key not in lst_outfalls:
                         d_inflow = pd.Series(out.node_series(key, NodeAttribute.TOTAL_INFLOW))
+                        if to_cms != 1.0:
+                            d_inflow = d_inflow * to_cms
                         if need_to_create_time_series:  # create first column with time in hours
                             # .dt.seconds wraps on a >= 24 h gap; use total_seconds().
                             tseries = pd.Series(d_inflow.index).diff().dt.total_seconds() / 60 / 60
@@ -398,10 +406,10 @@ class SWMMRunoffModeler:
                             # a gridcell are SUMMED (df_flows.sum(axis=1)) and the per-node
                             # identity is gone -- tseries.hyg is per-GRIDCELL, so its 821
                             # columns are centroids, not nodes, and it cannot answer "total
-                            # runoff volume per node location". These values are unmodified
-                            # SWMM REAL4 (`#define REAL4 float`, solver/output.c:50), so
-                            # storing them float32 is EXACTLY lossless; the post-sum column
-                            # is a float64 sum of float32s and is not.
+                            # runoff volume per node location". These values are SWMM REAL4
+                            # (`#define REAL4 float`, solver/output.c:50) times the unit
+                            # factor, so for a CMS model storing them float32 is EXACTLY
+                            # lossless; the post-sum column is a float64 sum and is not.
                             d_node_capture[key] = d_inflow.values
                             d_node_gridcell[key] = coords
                 # combine time series into a dataframe
@@ -476,6 +484,10 @@ class SWMMRunoffModeler:
 #: bits per value, costing ~1 MB/scenario (~3.8 GB over a 3,798-scenario ensemble)
 #: for no information.
 #:
+#: That holds for a CMS hydrology model only. Any other flow unit is converted to m3/s
+#: before capture (``flow_unit_factor_to_cms``), and float32 then rounds the converted
+#: values.
+#:
 #: SCOPE OF THE REVERSIBILITY CLAIM, precisely. The capture supports
 #: CONTENT-identical regeneration of strmflow/tseries.hyg (values byte-recoverable,
 #: gridcell grouping re-derivable from the DEM + hydro.inp, both persistent). It does
@@ -488,6 +500,140 @@ class SWMMRunoffModeler:
 #: storage of THAT quantity rounds it (<= 1 ulp). Capturing pre-sum is what makes
 #: the lossless claim true.
 _HYDROGRAPH_CAPTURE_DTYPE = "float32"
+
+#: m3/s per one unit of each SWMM flow unit: 0.3048**3; 0.003785411784/60;
+#: 0.003785411784*1e6/86400; 1e3/86400.
+_FLOW_UNIT_TO_CMS = {
+    "CMS": 1.0,
+    "LPS": 0.001,
+    "MLD": 0.011574,
+    "CFS": 0.028317,
+    "GPM": 6.3090e-5,
+    "MGD": 0.043813,
+}
+
+
+def flow_unit_factor_to_cms(flow_units: str, source) -> float:
+    """The factor converting one SWMM flow unit to m3/s; an unknown unit raises ProcessingError naming it.
+
+    The hydrology model's own unit reaches TRITON unconverted otherwise: an LPS model's
+    hydrographs arrive 1000 times too large and an MLD model's 86.4 times, although both pass
+    every SI check.
+    """
+    factor = _FLOW_UNIT_TO_CMS.get(str(flow_units).strip().upper())
+    if factor is None:
+        raise ProcessingError(
+            operation="flow_unit_factor_to_cms",
+            filepath=Path(source),
+            reason=f"unknown SWMM flow unit {flow_units!r}; expected one of {sorted(_FLOW_UNIT_TO_CMS)}",
+        )
+    return factor
+
+
+#: SWMM's US flow units. SWMM treats a model as US when its flow unit is one of these, and an
+#: absent FLOW_UNITS line means CFS.
+_US_FLOW_UNITS = frozenset({"CFS", "GPM", "MGD"})
+
+#: SWMM's six flow-unit words, in the order SWMM searches them when it resolves a
+#: FLOW_UNITS value. No word is a prefix of another, so the order assigns nothing
+#: differently; it is kept so the resolution reads as SWMM's own.
+_SWMM_FLOW_UNIT_WORDS = ("CFS", "GPM", "MGD", "CMS", "LPS", "MLD")
+
+
+def inp_flow_units(inp_path) -> str:
+    """The flow unit SWMM will run the ``.inp`` at ``inp_path`` in; ``CFS`` when none is declared.
+
+    Reads the file and applies ``flow_units_from_inp_text``, which states the rule.
+    """
+    return flow_units_from_inp_text(Path(inp_path).read_text())
+
+
+def flow_units_from_inp_text(text: str, *, default: str | None = "CFS") -> str | None:
+    """The flow unit SWMM will run a ``.inp`` in, read from the file's text; ``default`` when none is declared.
+
+    A text-level function so the config-load template check and the preparation check share one
+    reading: where two readers of one rule diverge, the toolkit either refuses a valid model at
+    config load or passes one that preparation then refuses. ``default`` is SWMM's own default,
+    CFS; a caller that must tell an absent line from a declared one passes ``default=None``.
+
+    Read the way SWMM reads it, because a reading that differs lets a template pass this
+    check and then run in another unit. SWMM applies every ``FLOW_UNITS`` line of every
+    ``[OPTION…`` section in file order, so the LAST one wins; it ignores a line that carries no
+    value; and it matches the key and the value by prefix, case-insensitively, so
+    ``flow_units cfsx`` is a CFS model. Returns the resolved unit word, upper-cased. A value
+    matching none of SWMM's six words is returned as written: SWMM rejects that file itself.
+
+    Deliberately NOT the first matching line, which is what this returned before: a template
+    declaring ``CMS`` and later ``CFS`` read as CMS here and ran as US.
+    """
+    from .scenario import _swmm_fold, _swmm_tokens
+
+    in_options = False
+    value = None
+    for line in text.splitlines():
+        tokens = _swmm_tokens(line)
+        if not tokens:
+            continue
+        if tokens[0].startswith("["):
+            in_options = _swmm_fold(tokens[0]).startswith("[OPTION")
+            continue
+        if in_options and _swmm_fold(tokens[0]).startswith("FLOW_UNITS") and len(tokens) > 1:
+            value = _swmm_fold(tokens[1])
+    if value is None:
+        return default
+    for word in _SWMM_FLOW_UNIT_WORDS:
+        if value.startswith(word):
+            return word
+    return value
+
+
+def refuse_us_flow_units(inp_paths) -> None:
+    """Refuse, at scenario preparation, a HYDROLOGY model whose flow unit is a US unit.
+
+    The hydrology model is the one SWMM model whose flows the toolkit converts: its hydrographs
+    are scaled to m3/s by ``flow_unit_factor_to_cms``, so CMS, LPS and MLD are all accepted for
+    it. US units are refused because the toolkit treats a SWMM run as SI throughout. The
+    hydraulics model and the standalone (full) model are checked by
+    ``refuse_non_cms_flow_units`` instead, which is stricter because their flows are read
+    unconverted.
+    """
+    for inp_path in inp_paths:
+        units = inp_flow_units(inp_path)
+        if units in _US_FLOW_UNITS:
+            raise ProcessingError(
+                operation="refuse_us_flow_units",
+                filepath=Path(inp_path),
+                reason=(
+                    f"SWMM model uses US flow units ({units}); the toolkit supports SI flow "
+                    "units only (CMS, LPS, MLD) for the hydrology model. Convert the model to SI units."
+                ),
+            )
+
+
+def refuse_non_cms_flow_units(inp_paths) -> None:
+    """Refuse, at scenario preparation, a hydraulics or standalone SWMM model not in CMS.
+
+    The toolkit reads every flow of these two models -- the coupled model's report and the
+    standalone model's output -- as m3/s and converts none of them. SWMM writes those flows in
+    the model's own unit, so an LPS model would be read 1000 times too large and an MLD model
+    86.4 times, with no error; a US-unit model would be processed in the wrong units after its
+    run had spent its compute. Refusing here, before any SWMM run, is what keeps that from
+    happening for a new run; the readers refuse a non-CMS output too, for outputs this check
+    never saw.
+    """
+    for inp_path in inp_paths:
+        units = inp_flow_units(inp_path)
+        if units != "CMS":
+            raise ProcessingError(
+                operation="refuse_non_cms_flow_units",
+                filepath=Path(inp_path),
+                reason=(
+                    f"SWMM model uses flow units {units}; the hydraulics and standalone SWMM models "
+                    "must use CMS, because the toolkit reads their flows as m3/s without "
+                    "conversion. An absent FLOW_UNITS line is SWMM's CFS default. Set "
+                    "FLOW_UNITS CMS in the SWMM template named by system_config."
+                ),
+            )
 
 
 def hydrograph_outputs_gate(scenario) -> str:

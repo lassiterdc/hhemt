@@ -321,8 +321,7 @@ def _registry_report_kwargs(rule_name: str) -> dict[str, str]:
     being true rather than silently picking whichever set was iterated first.
 
     Raises rather than falling back. A fallback to a local default would restore exactly
-    the divergence this function exists to remove, and would do it silently -- the failure
-    mode that cost two rounds to find.
+    the divergence this function exists to remove, and would do it silently.
     """
     from hhemt.report_renderers._reporting_sets import REPORTING_SETS, get_reporting_set
 
@@ -877,10 +876,14 @@ def _raise_if_dry_run_failed(dry_run_result: dict, *, phase: str) -> None:
 
 def _max_plausible_job_lifetime_min(cfg_analysis, *, slack_min: int = 30) -> int:
     """Upper bound on how long a sim job could plausibly run: its own SLURM
-    walltime + slack (queue/startup/accounting lag). Single source of truth for
-    BOTH the wait-rule poll cap and the R-STALE UNKNOWN-bucket
-    mtime-age fail-safe. Falls back to hpc_max_wait_for_inflight_min only when
-    hpc_total_job_duration_min is unset (e.g. local mode)."""
+    walltime + slack (queue/startup/accounting lag). The bound for the two
+    mtime-age fail-safes on unanswerable liveness: the UNKNOWN bucket of
+    ``_classify_stale_via_sacct`` and ``_orchestrator_liveness_gate``. It is NOT the
+    wait-rule poll cap or the ``_queued/`` age-out, which read
+    hpc_max_wait_for_inflight_min directly, because a queued job's age is queue
+    time, which routinely exceeds run time. Falls back to
+    hpc_max_wait_for_inflight_min only when hpc_total_job_duration_min is unset
+    (e.g. local mode)."""
     base = cfg_analysis.hpc_total_job_duration_min
     if base is None:
         return cfg_analysis.hpc_max_wait_for_inflight_min
@@ -944,6 +947,169 @@ def parse_tmux_submissions(text: str) -> dict[str, str]:
         if m:
             by_snakemake_id[m.group(1)] = block
     return tokens
+
+
+# ---- Snakemake log outcomes: which errored jobs never finished ----------------------------
+#
+# Snakemake writes an ``Error in rule R:`` block for EVERY failed attempt, including the
+# attempts it then restarts, so a scan that counts those headers reports a rule Snakemake
+# retried to success as permanently failed. The job's identity is the ``jobid:`` integer
+# printed inside the block: a restarted attempt is the same Job object re-queued under the
+# same integer, and a success prints ``Finished jobid: N (Rule: R)``. An error block is a
+# single log record (header, an optional ``message:`` line, then ``jobid:``), so its own jobid
+# is the first ``jobid:`` line after the header. It is read FORWARD and never backward,
+# because the job's START block, which precedes the error header, also carries a ``jobid:``
+# line, and with concurrent jobs the nearest preceding one can belong to a different job.
+_SNAKEMAKE_ERROR_HEADER_RE = re.compile(r"^Error in rule (\w+):")
+_SNAKEMAKE_BLOCK_JOBID_RE = re.compile(r"^\s+jobid:\s*(\d+)\s*$")
+_SNAKEMAKE_FINISHED_RE = re.compile(r"^Finished jobid: (\d+) \(Rule: (\w+)\)")
+
+
+def parse_snakemake_job_outcomes(text: str) -> tuple[list[dict], list[dict]]:
+    """Split a Snakemake log's errored jobs into never-finished failures and retried successes.
+
+    Returns ``(failed, retried_to_success)``. ``failed`` holds one
+    ``{rule_token, jobid, reason}`` record per ``(jobid, rule)`` pair that has an error block
+    and no later ``Finished jobid: N (Rule: R)`` line. A header whose block carries no
+    parseable ``jobid:`` line still yields a record, with ``jobid: None``: an error we cannot
+    attribute is kept rather than dropped. ``retried_to_success`` holds one
+    ``{rule, jobid, attempts}`` record per pair that errored and later finished, where
+    ``attempts`` is the pair's error-block count plus one (the finishing attempt).
+
+    The forward read for a block's jobid stops at the next blank line, the next
+    ``Error in rule`` header or the next ``Finished jobid`` line, so it never borrows the
+    jobid of a later record. Not established: this reads the layout of Snakemake 9.15.0's
+    plain-text log; a different log format yields headers with ``jobid: None``, which fail
+    closed.
+    """
+    lines = text.splitlines()
+    error_counts: dict[tuple[int | None, str], int] = {}
+    last_error_at: dict[tuple[int | None, str], int] = {}
+    # Line index of each pair's LAST finish: only a finish after the pair's last error block
+    # clears it, so an earlier run's success (an appended log) cannot hide a later failure.
+    finished_at: dict[tuple[int, str], int] = {}
+    for i, line in enumerate(lines):
+        fin = _SNAKEMAKE_FINISHED_RE.match(line)
+        if fin:
+            finished_at[(int(fin.group(1)), fin.group(2))] = i
+            continue
+        hdr = _SNAKEMAKE_ERROR_HEADER_RE.match(line)
+        if not hdr:
+            continue
+        jobid: int | None = None
+        for follow in lines[i + 1 :]:
+            if not follow.strip() or _SNAKEMAKE_ERROR_HEADER_RE.match(follow) or _SNAKEMAKE_FINISHED_RE.match(follow):
+                break
+            jid = _SNAKEMAKE_BLOCK_JOBID_RE.match(follow)
+            if jid:
+                jobid = int(jid.group(1))
+                break
+        key = (jobid, hdr.group(1))
+        error_counts[key] = error_counts.get(key, 0) + 1
+        last_error_at[key] = i
+    failed: list[dict] = []
+    retried: list[dict] = []
+    for (jobid, rule), n_errors in error_counts.items():
+        if jobid is not None and finished_at.get((jobid, rule), -1) > last_error_at[(jobid, rule)]:
+            retried.append({"rule": rule, "jobid": jobid, "attempts": n_errors + 1})
+        else:
+            failed.append({"rule_token": rule, "jobid": jobid, "reason": "snakemake-log failure (no _failed marker)"})
+    return failed, retried
+
+
+# ---- the log files a single-job sbatch script names -------------------------------------
+#
+# The waited ``1_job_many_srun_tasks`` path has no Snakemake log of its own: Snakemake runs
+# inside the allocation and writes to the job's standard streams, which go wherever the
+# script's ``#SBATCH`` error and output directives send them. Snakemake logs to STDERR, so
+# error-path directives are read before output-path ones. Every directive is read, not only
+# the one sbatch applies: the generator writes its own pair and a user's
+# ``additional_sbatch_args`` can add more, and reading all of them is correct whichever one
+# sbatch honours. The spellings follow getopt_long, which sbatch parses every ``#SBATCH`` line
+# with: ``-e P`` / ``-eP``, and the long name under any prefix of two or more characters
+# (``error`` is the only sbatch long option beginning ``er`` and ``output`` the only one
+# beginning ``ou``), as ``=P`` or `` P``. Not read, and therefore swept as empty text: a path
+# set by the ``SBATCH_ERROR`` / ``SBATCH_OUTPUT`` environment variables, a quoted path
+# containing whitespace, ``-e`` bundled behind no-argument short flags (``-Qe P``), and a
+# path whose name keeps a ``%`` pattern after ``%j`` is substituted (``%x``, ``%A``).
+def _sbatch_log_directive_paths(script_text: str) -> tuple[list[str], list[str]]:
+    """The error-path and output-path values every ``#SBATCH`` line names, in script order."""
+    error_paths: list[str] = []
+    output_paths: list[str] = []
+    for raw in script_text.splitlines():
+        line = raw.strip()
+        if not line.startswith("#SBATCH"):
+            continue
+        tokens = line[len("#SBATCH") :].split()
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
+            target: list[str] | None = None
+            value: str | None = None
+            if tok.startswith("--"):
+                name, sep, attached = tok[2:].partition("=")
+                if len(name) >= 2 and "error".startswith(name):
+                    target = error_paths
+                elif len(name) >= 2 and "output".startswith(name):
+                    target = output_paths
+                if target is not None:
+                    if sep:
+                        value = attached
+                    elif i + 1 < len(tokens):
+                        value = tokens[i + 1]
+                        i += 1
+            elif tok[:2] in ("-e", "-o"):
+                target = error_paths if tok[:2] == "-e" else output_paths
+                if len(tok) > 2:
+                    value = tok[2:]
+                elif i + 1 < len(tokens):
+                    value = tokens[i + 1]
+                    i += 1
+            if target is not None and value:
+                target.append(value)
+            i += 1
+    return error_paths, output_paths
+
+
+def assemble_single_job_log_text(script_path: Path | None, job_id: str | None) -> tuple[str, Path | None]:
+    """The text of every log file a single-job script names, error paths first.
+
+    Returns ``(text, first_error_path_read)``. Each path has ``%j`` replaced by ``job_id`` and
+    is read once; a relative path resolves against the script's directory. A path that still
+    contains ``%``, does not exist or cannot be read contributes nothing, so a script that
+    names no readable path yields ``("", None)`` and the sweep sees what it saw before this
+    reader existed. A fixed-name path (no ``%`` at all) is read whether or not sbatch applied
+    it, so a stale file from an earlier run, or a file opened with ``--open-mode=append``, can
+    surface that run's failures: a false failure, never a false clean.
+    """
+    if script_path is None or job_id is None:
+        return "", None
+    try:
+        script_text = Path(script_path).read_text()
+    except OSError:
+        return "", None
+    error_paths, output_paths = _sbatch_log_directive_paths(script_text)
+    texts: list[str] = []
+    seen: set[Path] = set()
+    first_error: Path | None = None
+    n_error = len(error_paths)
+    for idx, raw_path in enumerate(error_paths + output_paths):
+        resolved = raw_path.replace("%j", str(job_id))
+        if "%" in resolved:
+            continue
+        path = Path(resolved)
+        if not path.is_absolute():
+            path = Path(script_path).parent / path
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            texts.append(path.read_text())
+        except OSError:
+            continue
+        if idx < n_error and first_error is None:
+            first_error = path
+    return "\n".join(texts), first_error
 
 
 def _squeue_live_jobids(run_uuids: tuple[str, ...], *, timeout_s: float = 20.0) -> set[str] | None:
@@ -1028,8 +1194,9 @@ def _rekey_queued_from_tmux_logs(queued_dir: Path, pending_tokens: list[str], lo
 
 
 class _ClearedToken(NamedTuple):
-    """Self-describing record for an R-STALE-reclaimed stale token (replaces the
-    positional 4-tuple so the reconcile surface and tests read field names)."""
+    """Self-describing record for a token ``_classify_stale_via_sacct`` reclaimed as
+    stale (replaces the positional 4-tuple so the reconcile surface and tests read
+    field names)."""
 
     rule_token: str
     job_id: str
@@ -1301,7 +1468,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # module dies `apptainer: command not found` (exit 127) BEFORE the
             # shell's `> {log} 2>&1` produces anything — the 0-byte-rule-log
             # signature seen on Rivanna runs 17095105 and 17096574. The sim rung
-            # already prepends this (run_simulation.prepare_simulation_command's apptainer
+            # already prepends this (run_simulation.TRITONSWMM_run.prepare_simulation_command's apptainer
             # module prepend); the process rung
             # did not, so the two container entry points disagreed and only the
             # sim one was self-sufficient. Empirically confirmed: `srun … bash -c
@@ -1323,7 +1490,9 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # host configuration — instead of enumerating variables to delete.
             # Deletion is not available: measured at apptainer 1.5.0, every
             # APPTAINERENV/--env/--env-file/--no-eval form yields SET-but-empty,
-            # --unsetenv does not exist, and --cleanenv is ruled out for this rung.
+            # --unsetenv does not exist, and --cleanenv is ruled out for this rung: it strips the
+            # host environment the cluster's MPI wireup reads inside the container, so MPI launch
+            # breaks (the reason extra_exec_args in config/hpc_system.py forbids it as well).
             #
             # CONTAINER-ONLY IS LOAD-BEARING, NOT TIDINESS. -E would break a
             # documented dependency on the NATIVE path: conftest.py's Layer-2 PYTHONPATH
@@ -1358,6 +1527,51 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             else self.cfg_analysis.hpc_restart_times_simulate
         )
 
+    def _realised_retry_ceiling_disclosure(self) -> str:
+        """The operator-facing statement of what the retry knobs actually bound.
+
+        Returns the text rather than printing it so the claim is assertable by a test
+        without capturing stdout -- the disclosure's CONTENT is the deliverable and its
+        emission is a separate fact.
+
+        Why a disclosure is owed at all: `retries:` is compared against `job.attempt`, an
+        in-memory per-process counter, so under `--executor slurm` the declared number
+        restarts at each nesting level and the realised ceiling is the PRODUCT across them.
+        An operator reading only the declared number reads a bound that does not hold.
+        The durable consecutive-failure budget is what makes the TOTAL additive, so the two
+        numbers are reported together or the disclosure is misleading by omission.
+        """
+        per_process = self._resolved_simulate_retries()
+        budget = self.cfg_analysis.hpc_consecutive_failure_budget_simulate
+        launches_per_process = per_process + 1
+        head = (
+            f"[Retries] hpc_restart_times_simulate={per_process} is PER SNAKEMAKE PROCESS "
+            f"({launches_per_process} solver launches per process, not {launches_per_process} in total); "
+            "under --executor slurm the driver and the in-allocation instance each read it, so the "
+            "realised ceiling MULTIPLIES across nesting levels."
+        )
+        if budget <= 0:
+            return (
+                f"{head} hpc_consecutive_failure_budget_simulate=0 DISABLES the durable gate, so the "
+                "total number of solver launches on a deterministically-failing simulation is "
+                "UNBOUNDED by this toolkit."
+            )
+        return (
+            f"{head} The durable gate bounds the TOTAL: at most {budget} consecutive terminal "
+            "failures per (member, event, model_type) before the runner refuses to launch "
+            "(hpc_consecutive_failure_budget_simulate). A walltime kill is not a terminal failure "
+            "and does not count against it."
+        )
+
+    def _disclose_realised_retry_ceiling(self) -> None:
+        """Print the realised-ceiling disclosure once per submit-path invocation.
+
+        Sited in ``_pre_snakemake_invocation_guards`` because every Snakemake-submitting path
+        routes through that helper (it is threaded into every submit-path call site), which
+        makes it the one chokepoint where a per-submission disclosure cannot be reached around.
+        """
+        print(self._realised_retry_ceiling_disclosure(), flush=True)
+
     def _sweep_failed_rules(self, analysis_dir: Path, snakemake_stderr: str = "") -> list[dict]:
         """Enumerate permanently-failed rules after a --keep-going run.
 
@@ -1377,16 +1591,33 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                     rec = json.loads(marker.read_text())
                 except (json.JSONDecodeError, OSError):
                     rec = {"rule_token": marker.stem, "reason": "unparseable marker"}
+                # The sim runner's payload carries no rule_token (only the wait runner's
+                # does); the token is the marker's file name, so it is stamped from the stem.
+                # Without it the record reaches partial_failures unnamed and prints as "?".
+                if isinstance(rec, dict) and not rec.get("rule_token"):
+                    rec = {**rec, "rule_token": marker.stem}
                 records.append(rec)
                 seen.add(rec.get("rule_token", marker.stem))
-        for m in re.finditer(r"Error in rule (\w+):", snakemake_stderr):
-            name = m.group(1)
-            if name not in seen:
-                records.append({"rule_token": name, "reason": "snakemake-log failure (no _failed marker)"})
-                seen.add(name)
+        # A marker token names an EVENT of a sim rule (run_{model}_evt-{id}, or
+        # simulation_member_{mid}_evt-{id} for a sensitivity member), while the log names the
+        # RULE (run_{model}, or simulation_member_{mid}_evt_{id}). Equality between the two
+        # never holds, so a sim failure that wrote a marker would otherwise be reported twice.
+        marker_tokens = [tok for tok in seen if isinstance(tok, str)]
+        failed_from_log, _retried = parse_snakemake_job_outcomes(snakemake_stderr)
+        for rec in failed_from_log:
+            name = rec["rule_token"]
+            if name in seen:
+                continue
+            if any(tok.startswith(f"{name}_evt-") for tok in marker_tokens):
+                continue
+            if name.startswith("simulation_member_") and any(
+                tok.startswith("simulation_member_") for tok in marker_tokens
+            ):
+                continue
+            records.append(rec)
         return records
 
-    def _augment_result_with_partial_failures(self, result: dict) -> dict:
+    def _augment_result_with_partial_failures(self, result: dict, log_text: str | None = None) -> dict:
         """Sweep permanently-failed rules into a blocking-mode submit result.
 
         Reads the merged stdout+stderr Snakemake log (``result["snakemake_logfile"]``,
@@ -1400,22 +1631,30 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         ``1_job_many_srun_tasks`` with ``wait_for_completion=True``). A detached run
         (``batch_job`` tmux, or 1-job sbatch-and-return) has no in-process completion
         point — sweeping there reads an in-progress/empty ``_failed/`` dir and reports a
-        false-clean (captured follow-up: post-hoc get_status sweep).
+        false-clean, so detached runs are not swept here.
+
+        ``log_text``, when given, is the Snakemake log to sweep in place of reading
+        ``result["snakemake_logfile"]``: the waited single-job path assembles its text from
+        several files, and re-reading one of them would discard the rest. The result also
+        gains ``retried_to_success``, the jobs Snakemake restarted and then finished. It is
+        a disclosure only and never sets or reads ``success``.
         """
         if not isinstance(result, dict):
             return result
-        log_text = ""
-        logfile = result.get("snakemake_logfile")
-        if logfile:
-            try:
-                log_text = Path(logfile).read_text()
-            except OSError:
-                log_text = ""
+        if log_text is None:
+            log_text = ""
+            logfile = result.get("snakemake_logfile")
+            if logfile:
+                try:
+                    log_text = Path(logfile).read_text()
+                except OSError:
+                    log_text = ""
         partial_failures = self._sweep_failed_rules(
             self.analysis_paths.analysis_dir,
             snakemake_stderr=log_text,
         )
         result["partial_failures"] = partial_failures
+        result["retried_to_success"] = parse_snakemake_job_outcomes(log_text)[1]
         if partial_failures:
             result["success"] = False
             tokens = ", ".join(r.get("rule_token", "?") for r in partial_failures)
@@ -1670,9 +1909,10 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # The wait-rule emission layer consumes the alive set to substitute
         # wait-on-sentinel rules for the in-flight set.
         marker_less = self._classify_via_state_markers(sentinels, reclaim_completed=True, analysis_dir=base_dir)
-        # R-STALE: authoritatively classify the marker-less set via ONE batched
+        # Authoritatively classify the marker-less set via ONE batched
         # sacct call so a dead-without-marker token is never held alive (and
-        # never blocks the 8h wait-rule cap). DEAD tokens are reclaimed here.
+        # never holds a wait-rule open until the hpc_max_wait_for_inflight_min
+        # backstop fires). DEAD tokens are reclaimed here.
         alive, cleared = self._classify_stale_via_sacct(marker_less, analysis_dir=base_dir)
         if cleared:
             print(
@@ -1726,7 +1966,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         - Executor-owns-sbatch (payload jobid null, e.g. UVA & all --executor slurm
           batch_job — the executor assigns per-rule ids the toolkit never sees):
           hold-on-PRESENCE, returning (token, ""), bounded by the mtime-age fail-safe
-          — a _queued/ older than _max_plausible_job_lifetime_min is a stale
+          — a _queued/ older than the hpc_max_wait_for_inflight_min ceiling is a stale
           orphan, dropped (re-runs).
 
         NO sacct --name= run-UUID cross-check is made: the executor's run-UUID JobName
@@ -1847,7 +2087,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
 
         Compare-and-write (mtime-preserving): the payload carries NO timestamp, so a
         re-submit of the same (token, jobid) is byte-identical and PRESERVES mtime —
-        the mtime-age fail-safe therefore measures age-since-first-submit and ages
+        the mtime-age fail-safe (in ``_recover_pending_from_queued``) therefore measures
+        age-since-first-submit and ages
         out genuinely-stale orphans even across driver re-invocations (a written_at
         field would bump mtime on every submit and defeat the age-out). Toolkit-owns-
         sbatch (1_job_many_srun_tasks) records the allocation jobid (→ wait-runner
@@ -1999,6 +2240,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             liveness gate is the reprocess concurrency authority. The run/submit
             path passes False (the default), so its behavior is byte-identical.
         """
+        self._disclose_realised_retry_ceiling()
         self._check_and_clear_snakemake_lock(
             snakefile_path,
             dry_run=dry_run,
@@ -2191,8 +2433,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             sidecar.unlink(missing_ok=True)
 
         # The `render` floor has no completion flag to delete, so the CALLER must invalidate
-        # what the plot/export/render rules read -- reprocess_snakefile_generator.py:39-42
-        # says exactly that ("Snakemake's mtime trigger re-fires only what the caller
+        # what the plot/export/render rules read -- the reprocess_snakefile_generator
+        # module docstring says exactly that ("Snakemake's mtime trigger re-fires only what the caller
         # invalidated"), and today no caller does. That is why a Snakefile regeneration at
         # 2026-08-05 17:19 left 28 figures from 2026-08-04 13:59 untouched.
         #
@@ -2289,7 +2531,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         Parameters
         ----------
         partition : str | None
-            SLURM partition name (defaults to "standard" if None)
+            SLURM partition name. Required outside local mode (None raises ValueError);
+            in local mode a None is interpolated as the literal "None".
         runtime_min : int
             Runtime limit in minutes
         mem_mb : int
@@ -2567,7 +2810,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         AND the partition is declared AND it carries a gpu_hardware value; else
         None (the legacy cfg_system.gpu_hardware is retired). system.py reads the
         constructor-injected attribute instead; this builder helper
-        resolves the per-partition value to inject + to emit in SLURM directives.
+        resolves the per-partition value to inject + to emit in SLURM directives,
+        for ``generate_snakefile_content`` and ``_generate_single_job_submission_script``.
         """
         if self.cfg_hpc_system is not None and partition_name is not None:
             spec = self.cfg_hpc_system.partitions.get(partition_name)
@@ -3005,7 +3249,7 @@ rule consolidate:
         DISPROVEN (do not reinstate this explanation): an earlier version of this docstring, and
         the message of commit 351818f, attributed the failure to ``GroupJob.is_local`` returning
         ``any(...)`` (``jobs.py:1708-1710``) routing the group to the local executor. That
-        mechanism CANNOT fire for a grouped rule. ``workflow.py:737-741`` gates the localrules
+        mechanism CANNOT fire for a grouped rule. Snakemake's own ``workflow.py:737-741`` gates the localrules
         path behind ``rule.group is None``, so ``workflow.is_local`` is False for every grouped
         rule regardless of ``localrules:`` / ``norun`` / ``is_template_engine``; the only other
         disjunct (``jobs.py:1039-1044``) requires ``SharedFSUsage.INPUT_OUTPUT not in
@@ -3080,6 +3324,7 @@ rule consolidate_scenario:
         override_clear_raw: ClearRawValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
+        debug: bool = False,
         report_formats: list[str] | None = None,
         alive_by_token: dict[str, str] | None = None,
     ) -> str:
@@ -3134,6 +3379,10 @@ rule consolidate_scenario:
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
             If True, resume simulations from last checkpoint
+        debug : bool
+            The run's ``--debug`` flag, emitted as ``--debug`` on every run-simulation rule
+            shell when True and on none when False, so the runner can make a coupled clean
+            start keep the previous run's snapshot files.
 
         Returns
         -------
@@ -3533,7 +3782,7 @@ rule run_{model_type}:
             --event-iloc {{params.event_iloc}} \\
             {gpu_compile_config_args} \\
             --model-type {model_type} \\
-            {"--pickup-where-leftoff " if pickup_where_leftoff else ""}{_run_defer_arg}\\
+            {"--pickup-where-leftoff " if pickup_where_leftoff else ""}{"--debug " if debug else ""}{_run_defer_arg}\\
             --flag-output {_run_flag_ref} \\
             --rule-name run_{model_type} {"--execution-locus " + _loc + " " if _loc else ""}\\
             --event-id {{wildcards.event_id}} \\
@@ -3607,8 +3856,9 @@ rule run_{model_type}:
 
             # Per-scenario consolidate rule: fans-in on all enabled model_types' process flags
             # for a given event_id and writes the per-scenario _du.json sentinel exactly once.
-            # Resource block is intentionally lightweight; SLURM grouping absorbs the wall-clock
-            # cost into the per-event process-rule allocation (see _build_process_rule_block).
+            # Resource block is intentionally lightweight: the rule only fans in the process flags
+            # and writes one small DU sentinel. It is NOT grouped with the per-event process rules
+            # (_build_consolidate_scenario_rule_block says why), so it is submitted as its own job.
             consolidate_scenario_resources = self._build_resource_block(
                 partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
                 runtime_min=10,
@@ -3712,8 +3962,9 @@ rule render_report:
         """Return analysis-dir-relative .rpt + TRITON-log descriptors the renderer reads.
 
         Dispatch on enabled model types (each model type has its own log) — `swmm_hydraulics_rpt`
-        for TRITON-SWMM coupled mode, `swmm_full_rpt_file` for SWMM-only;
-        `log_run_tritonswmm` / `log_run_triton` for TRITON-side logs.
+        for TRITON-SWMM coupled mode, `swmm_full_rpt_file` for SWMM-only; and, per enabled
+        model type, the model-state JSON log `sim_folder/log_{mt}.json`, which is what the
+        renderer reads for status counts (NOT the `log_run_*` execution logs).
 
         Each returned dict has the schema ``{"path": str, "variables": list[str]}``
         — the variable list names which fields the renderer parses from each
@@ -3853,7 +4104,7 @@ rule render_report:
     ) -> str:
         """Generate the Snakemake rule for the scenario_status.csv Appendix table.
 
-        Iter 8 agenda item 3: produces `plots/appendix/scenario_status.html` —
+        Produces `plots/appendix/scenario_status.html` —
         an inline-styled HTML table rendered from `analysis_dir / scenario_status.csv`
         (written by the `export_scenario_status` Snakemake rule on the success
         path; the `onerror:` hook is retained as a partial-run debugging
@@ -3906,12 +4157,12 @@ rule render_report:
     ) -> str:
         """Generate the Snakemake rule for the Errors and Warnings validation report.
 
-        Iter 9 agenda: produces `plots/errors_and_warnings/validation_report.html`
-        — calls `analysis_validation.validate_analysis(analysis)` and renders
-        a structured pass/fail report organized into 4 sections (system-level
-        checks; aggregate per-scenario; granular per-scenario failures;
-        resource-utilization mismatches). Replaces an earlier placeholder injection
-        for "Errors and Warnings".
+        Produces `plots/errors_and_warnings/validation_report.html` — renders the
+        persisted `validation_report.json` read-model (via `load_validation_report`,
+        never `validate_analysis` at render time) as a structured pass/fail report:
+        overall banner; system-level checks; aggregate per-scenario checks;
+        resource-utilization mismatches; granular per-scenario failures. Replaces an
+        earlier placeholder injection for "Errors and Warnings".
 
         ``input_flag`` defaults to the regular multisim consolidation flag;
         the sensitivity master Snakefile passes the master flag instead.
@@ -3971,7 +4222,7 @@ rule render_report:
             # (errors_and_warnings.render -> load_validation_report; never
             # validate_analysis at render time). Without it as a
             # declared input, Snakemake has no dependency on the read-model and a
-            # re-persist never re-renders. Measured on delivered generation
+            # re-persist never re-renders. Observed on a report built at toolkit commit
             # 01655abb60c2: the persisted JSON carried 14 checks all passing while the
             # shipped HTML rendered an 11-check model with `EDA calc ran` FAILING at
             # `eda_dir_exists=False` -- the HTML predated analysis.eda(), and in that
@@ -4239,7 +4490,8 @@ def _per_sim_event_page_sources(wildcards):
                     # plot/render carry no per-rule retries:, so they inherit this).
                     # Simulate rules carry an explicit retries: {simulate} directive
                     # that OVERRIDES this (snakemake 9.15.0 Rule.restart_times,
-                    # rules.py:158-165). Override-resolved: a runtime override wins over the config.
+                    # rules.py:158-165). Override-resolved from _override_hpc_restart_times_other:
+                    # a runtime override wins over the config.
                     "restart-times": (
                         self._override_hpc_restart_times_other
                         if self._override_hpc_restart_times_other is not None
@@ -4443,7 +4695,7 @@ echo ""
         if n_gpus_per_sim > 0:
             # Per-node GPU topology for the sbatch --gres header.
             # Prefer cfg_hpc_system.partitions[hpc_ensemble_partition].gpus_per_node;
-            # else the legacy cfg_analysis.hpc_gpus_per_node. The `> 0` guard
+            # else 0 (no legacy fallback). The `> 0` guard
             # preserves the original assert's intent (GPUs requested ⇒ a positive
             # per-node count is required) — _resolve_gpus_per_node resolves an
             # absent value to 0, which is a misconfiguration in the GPU branch.
@@ -6291,7 +6543,8 @@ exit $snakemake_status
         # payload records null there by construction -- but the uuid SET can, because
         # the plugin sets --job-name to the run_uuid precisely to make --name
         # filtering work. Union-querying attributes no row to any token, so the
-        # srun-step aliasing hazard (one allocation row shared by N tokens) does not arise here.
+        # srun-step aliasing hazard (one allocation row shared by N tokens; see the aliasing
+        # guard in _classify_stale_via_sacct) does not arise here.
         #
         # The uuid set is read from ALL tmux logs, NOT captured by the caller before
         # the new log is created. A caller-side capture is correct only by read
@@ -6573,7 +6826,7 @@ exit $snakemake_status
                     # protect. The durable fix is to make the fail-open {"PENDING"}
                     # distinguishable from a real PENDING, so this arm can decline to
                     # suppress on an outage while the stall watchdog keeps its assume-live
-                    # reading; that is a return-contract change and is tracked separately.
+                    # reading; that is a return-contract change and is not made here.
                     if adopted_token_count:
                         all_pending_since = None
                     elif live_states == {"PENDING"}:
@@ -6649,6 +6902,7 @@ exit $snakemake_status
         which: Literal["TRITON", "SWMM", "both"] = "both",
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
+        debug: bool = False,
         wait_for_completion: bool = False,
         dry_run: bool = False,
         verbose: bool = True,
@@ -6715,6 +6969,10 @@ exit $snakemake_status
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
             If True, resume simulations from last checkpoint
+        debug : bool
+            The run's ``--debug`` flag, emitted as ``--debug`` on every run-simulation rule
+            shell when True and on none when False, so the runner can make a coupled clean
+            start keep the previous run's snapshot files.
         wait_for_completion : bool
             If True, wait for workflow completion (relevant for slurm jobs only)
         dry_run : bool
@@ -6725,7 +6983,8 @@ exit $snakemake_status
         Returns
         -------
         dict
-            Status dictionary with keys defined by run_snakemake_local or run_snakemake_slurm
+            Status dictionary with keys defined by run_snakemake_local or
+            _run_snakemake_slurm_detached
         """
         # Stash the diagnostics dataclass so the snakemake cmd-arg construction
         # sites (run_snakemake_local, _run_snakemake_slurm_detached,
@@ -6800,6 +7059,7 @@ exit $snakemake_status
                 override_clear_raw=override_clear_raw,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
+                debug=debug,
                 report_formats=report_formats,
                 alive_by_token=alive_by_token,
             )
@@ -6844,9 +7104,19 @@ exit $snakemake_status
             # allocation. _submit_single_job_workflow sbatch-submits and returns the
             # job_id without blocking unless wait_for_completion=True; sweeping a
             # still-running allocation would read an empty _status/_failed/ and report a
-            # false-clean (the detached-mode hazard — captured follow-up otherwise).
+            # false-clean (the detached-mode hazard; detached runs are not swept).
             if wait_for_completion:
-                result = self._augment_result_with_partial_failures(result)
+                # The allocation's Snakemake log is whatever file(s) the script's #SBATCH
+                # error/output directives name, so its text is assembled from them and handed
+                # to the sweep directly; `snakemake_logfile` names the first error file read.
+                log_text = ""
+                if isinstance(result, dict):
+                    log_text, first_error = assemble_single_job_log_text(
+                        result.get("script_path"), result.get("job_id")
+                    )
+                    if first_error is not None:
+                        result["snakemake_logfile"] = first_error
+                result = self._augment_result_with_partial_failures(result, log_text=log_text)
 
             self.analysis._refresh_log()
             return result
@@ -6874,6 +7144,7 @@ exit $snakemake_status
                 override_clear_raw=override_clear_raw,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
+                debug=debug,
                 report_formats=report_formats,
                 alive_by_token=alive_by_token,
             )
@@ -6955,6 +7226,7 @@ exit $snakemake_status
             override_clear_raw=override_clear_raw,
             compression_level=compression_level,
             pickup_where_leftoff=pickup_where_leftoff,
+            debug=debug,
             report_formats=report_formats,
             alive_by_token=alive_by_token,
         )
@@ -6998,7 +7270,7 @@ exit $snakemake_status
             result = self._augment_result_with_partial_failures(result)
         else:  # slurm
             # Detached (_run_snakemake_slurm_detached returns before the run finishes):
-            # no in-process completion point to sweep — captured follow-up.
+            # no in-process completion point to sweep, so detached runs are not swept.
             result = self._run_snakemake_slurm_detached(
                 snakefile_path=snakefile_path,
                 wait_for_completion=wait_for_completion,
@@ -7034,8 +7306,9 @@ exit $snakemake_status
             :func:`hhemt.reprocess_snakefile_generator.generate_reprocess_snakefile`
             for the stage → re-emitted rule mapping.
         execution_mode
-            ``"auto"`` detects SLURM context; ``"local"`` forces local
-            subprocess execution; ``"slurm"`` forces SLURM submission.
+            ``"auto"`` resolves from config via ``resolve_execution_locus`` (never
+            from the SLURM environment); ``"local"`` forces local subprocess
+            execution; ``"slurm"`` forces SLURM submission.
         multi_sim_run_method_override
             When set, takes precedence over the analysis's configured
             ``multi_sim_run_method`` for execution dispatch. Used by
@@ -7304,7 +7577,8 @@ exit $snakemake_status
             ``plot_id`` is in this set; None emits a rule for every resolved
             config.
         execution_mode
-            ``"auto"`` detects SLURM context; ``"local"`` / ``"slurm"`` force it.
+            ``"auto"`` resolves from config via ``resolve_execution_locus`` (never
+            from the SLURM environment); ``"local"`` / ``"slurm"`` force it.
         dry_run
             If True, runs ``snakemake --dry-run`` only and returns.
         verbose
@@ -7586,7 +7860,7 @@ exit $snakemake_status
                 jid = str(json.loads(s.read_text()).get("slurm_jobid") or "")
             except (json.JSONDecodeError, OSError):
                 # Corrupt sentinel; classify as alive conservatively (a
-                # subsequent wait-rule will time out via walltime cap).
+                # subsequent wait-rule will time out at the hpc_max_wait_for_inflight_min cap).
                 jid = ""
             alive.append((rule_token, jid))
         return alive
@@ -7598,7 +7872,7 @@ exit $snakemake_status
         analysis_dir: Path | None = None,
         walltime_slack_min: int = 30,
     ) -> tuple[list[tuple[str, str]], list[_ClearedToken]]:
-        """R-STALE second pass: authoritatively classify the marker-less set.
+        """Second pass of the stale reconcile: authoritatively classify the marker-less set.
 
         Three-state classification:
         - sacct State in _SACCT_DEAD_STATES        -> DEAD-stale (reclaim + surface)
@@ -7955,8 +8229,8 @@ exit $snakemake_status
             return None  # default-safe: no sentinel ⇒ proceed
 
         this_host = socket.gethostname()
-        # Same single-source-of-truth bound the wait-rule poll cap and the
-        # R-STALE UNKNOWN bucket use. NOT a new tunable.
+        # Same bound the UNKNOWN bucket of _classify_stale_via_sacct uses (the
+        # wait-rule poll cap does not use it). NOT a new tunable.
         max_plausible_s = _max_plausible_job_lifetime_min(self.cfg_analysis) * 60
 
         live: list[str] = []
@@ -8172,7 +8446,7 @@ exit $snakemake_status
         """
         analysis_dir = self.analysis_paths.analysis_dir
 
-        # (1) Lock-check scoped to the (parametrized) delete namespace (C.5).
+        # (1) Lock-check scoped to the (parametrized) delete namespace.
         # Defaults preserve analysis.delete()'s Snakefile.delete + .snakemake_delete/;
         # the scoped reprocess-delete path passes Snakefile.reprocess_delete +
         # .snakemake_reprocess_delete/ so the guard inspects the correct lock dir
@@ -8216,7 +8490,7 @@ exit $snakemake_status
             ]
             alive += self._recover_pending_from_queued(_pending, analysis_dir)
 
-        # (3) Comment-recovery for the lost-sentinel window (C.4).
+        # (3) Comment-recovery for the lost-sentinel window.
         alive += self._recover_inflight_via_comment(known_jobids={j for _, j in alive})
 
         if alive and not override_in_flight:
@@ -8241,8 +8515,8 @@ exit $snakemake_status
 
     # Delete-rule resources. Delete rules are CPU-only filesystem work, so under
     # `--executor slurm` they must target the CPU processing partition — exactly
-    # like the report-tail plot rules (see the `report_tail_slurm_partition`
-    # comment in _emit_plot_rule). Without an explicit slurm_partition they inherit
+    # like the report-tail plot rules (see `RuleEmissionContext.report_tail_slurm_partition`
+    # and its consumer in _emit_plot_rule). Without an explicit slurm_partition they inherit
     # `default-resources`' slurm_partition={hpc_ensemble_partition} (set in
     # generate_snakemake_config),
     # which is the GPU ensemble partition, and are submitted with ZERO GRES —
@@ -8565,7 +8839,7 @@ exit $snakemake_status
             # per-(member, event). Each per-sub rule deletes that sub's processed/
             # (across all its events, only when start_with=='process') + that
             # sub's analysis_datatree.zarr via delete_member_reprocess_runner
-            # (item 5b). A master rule then deletes sensitivity_datatree.zarr,
+            # A master rule then deletes sensitivity_datatree.zarr,
             # fanning in on the per-sub flags. Rationale (vs the rejected
             # per-(member,evt) shape): ~n_member jobs instead of ~n_member*n_evt tiny SLURM
             # jobs (avoids scheduler flood on large suites), and reuses the
@@ -8780,6 +9054,7 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         process_timeseries: bool = True,
         override_clear_raw: ClearRawValue | None = None,
         pickup_where_leftoff: bool = True,
+        debug: bool = False,
         report_formats: list[str] | None = None,
         alive_by_token: dict[str, str] | None = None,
         alive_token_to_dir: dict[str, str] | None = None,
@@ -8827,6 +9102,10 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
             Runtime override for ``cfg_analysis.clear_raw`` (None reads YAML).
         pickup_where_leftoff : bool
             If True, resume simulations from last checkpoint
+        debug : bool
+            The run's ``--debug`` flag, emitted as ``--debug`` on every run-simulation rule
+            shell when True and on none when False, so the runner can make a coupled clean
+            start keep the previous run's snapshot files.
 
         Returns
         -------
@@ -9222,9 +9501,9 @@ onerror:
                 target_partition=analysis.cfg_analysis.hpc_ensemble_partition,
             )
 
-            # The per-member system config sources gpu_alloc_mode + gpu_hw so a
-            # sensitivity study spanning UVA (gres) and Frontier (gpus) emits the
-            # correct SLURM directive per member.
+            # gpu_alloc_mode comes from the shared hpc_system_config (one value for
+            # the whole master), while gpu_hw below is resolved per member from that
+            # member's ensemble partition.
             gpu_alloc_mode = self._base_builder._resolve_gpu_alloc_mode()
 
             # Setup-target flag this member depends on. Keyed by
@@ -9248,9 +9527,10 @@ onerror:
             # scheduler's local concurrency accounting and the --cpus-per-task fallback.
             snakemake_threads = cpus_per_sim
 
-            # gpu_hardware comes directly from the per-target cfg_system. Under the
-            # prefixed-column overlay mechanism, `system.gpu_hardware` overlay values
-            # already populated this field via the synthesized per-target YAML.
+            # gpu_hardware resolves from the HPC-system config -- the ensemble
+            # partition's PartitionSpec, via resolve_gpu_target -- never from
+            # cfg_system: gpu_hardware is retired from system_config, whose loader
+            # pops it with a warning, so a `system.gpu_hardware` column reaches nothing.
             gpu_hw = resolve_gpu_target(analysis.cfg_hpc_system, analysis.cfg_analysis.hpc_ensemble_partition)[0]
             sim_resources_member = self._base_builder._build_resource_block(
                 partition=analysis.cfg_analysis.hpc_ensemble_partition,
@@ -9361,7 +9641,7 @@ onerror:
             {sub_gpu_compile_config_args} \\
             --model-type {model_type} \\
             --member-id {member_id} \\
-            {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
+            {"--pickup-where-leftoff " if pickup_where_leftoff else ""}{"--debug " if debug else ""}\\
             --flag-output {{output}} \\
             --rule-name {sim_rule_name} {"--execution-locus " + _loc + " " if _loc else ""}\\
             --event-id {event_id} \\
@@ -9903,8 +10183,8 @@ onerror:
         #      hpc_mem_allocation_for_sim_output_processing_mb for 1.1m DEM)
         #      are honored — mirrors generate_master_snakefile_content.
         # Flag-name builders live in hhemt.constants (single
-        # source of truth for new code; existing hardcoded sites are
-        # tracked as a follow-up refactor).
+        # source of truth for new code; some existing sites still
+        # hardcode flag names).
         from hhemt.constants import (
             consolidate_analysis_flag,
             member_inputs_fingerprint_flag,
@@ -10015,7 +10295,8 @@ onerror:
             if not consolidate_inputs:
                 # This member has zero completed sims;
                 # skip emitting the per-member consolidate rule entirely. No
-                # fingerprint fallback. The rule_all reconciliation
+                # fingerprint fallback. The rule_all reconciliation (the completed_member_ids
+                # filter on rule all)
                 # excludes this member_id from rule_all's input list.
                 continue
 
@@ -10513,6 +10794,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
         which: Literal["TRITON", "SWMM", "both"] = "both",
         compression_level: int = 5,
         pickup_where_leftoff: bool = True,
+        debug: bool = False,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
         dry_run: bool = False,
         verbose: bool = True,
@@ -10576,6 +10858,10 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
             If True, resume simulations from last checkpoint
+        debug : bool
+            The run's ``--debug`` flag, emitted as ``--debug`` on every run-simulation rule
+            shell when True and on none when False, so the runner can make a coupled clean
+            start keep the previous run's snapshot files.
         dry_run : bool
             If True, only perform a dry run and return that result
         verbose : bool
@@ -10670,6 +10956,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 process_timeseries=process_timeseries,
                 override_clear_raw=override_clear_raw,
                 pickup_where_leftoff=pickup_where_leftoff,
+                debug=debug,
                 report_formats=report_formats,
                 alive_by_token=alive_by_token,
                 alive_token_to_dir=alive_token_to_dir,
@@ -10744,6 +11031,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 process_timeseries=process_timeseries,
                 override_clear_raw=override_clear_raw,
                 pickup_where_leftoff=pickup_where_leftoff,
+                debug=debug,
                 report_formats=report_formats,
                 alive_by_token=alive_by_token,
                 alive_token_to_dir=alive_token_to_dir,
@@ -10833,6 +11121,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             process_timeseries=process_timeseries,
             override_clear_raw=override_clear_raw,
             pickup_where_leftoff=pickup_where_leftoff,
+            debug=debug,
             report_formats=report_formats,
             alive_by_token=alive_by_token,
             alive_token_to_dir=alive_token_to_dir,
@@ -10926,7 +11215,8 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
         Sibling to :meth:`submit_workflow`. Writes the scoped master Snakefile
         to ``{analysis_dir}/Snakefile.reprocess`` via
         :meth:`generate_reprocess_master_snakefile_content` (overwrite baked),
-        runs the in-flight submission reconciliation guard, and invokes Snakemake with
+        runs the in-flight submission reconciliation guard
+        (``_pre_snakemake_invocation_guards``), and invokes Snakemake with
         ``--rerun-triggers mtime`` so downstream rules only re-fire when
         their outputs are missing or older than their inputs.
 
@@ -10952,8 +11242,8 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             entirely (handled by the upstream invalidation in
             :meth:`TRITONSWMM_sensitivity_analysis.reprocess`).
         execution_mode
-            ``"auto"`` (default) detects SLURM context; ``"local"`` / ``"slurm"``
-            force the mode.
+            ``"auto"`` (default) resolves from config via ``resolve_execution_locus``
+            (never from the SLURM environment); ``"local"`` / ``"slurm"`` force the mode.
         which
             ``"both"`` / ``"TRITON"`` / ``"SWMM"`` — threaded into the
             consolidate rule shells' ``--which`` flag.

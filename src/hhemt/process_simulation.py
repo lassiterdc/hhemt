@@ -32,7 +32,7 @@ from hhemt.exceptions import ProcessingError
 from hhemt.log import TRITONSWMM_model_log
 from hhemt.run_simulation import TRITONSWMM_run
 from hhemt.subprocess_utils import run_subprocess_with_tee
-from hhemt.swmm_output_parser import retrieve_SWMM_outputs_as_datasets
+from hhemt.swmm_output_parser import pollutant_time_of_max_conc_min, retrieve_SWMM_outputs_as_datasets
 from hhemt.utils import (
     _publish_flag_crash_safe,
     chapter_flag_for,
@@ -1393,6 +1393,14 @@ class TRITONSWMM_sim_post_processing:
             f_inp,
             swmm_timeseries_result_file,
         )
+        if model == "tritonswmm" and "pollutant" in ds_nodes.dims:
+            # Identical text for every event, so it survives consolidation's drop_conflicts rule.
+            ds_nodes.attrs["swmm_quality_limitation"] = SWMM_QUALITY_LIMITATION
+            ds_links.attrs["swmm_quality_limitation"] = SWMM_QUALITY_LIMITATION
+            # The same withholding the summaries get: these stores carry S2, S3, S5, S8, S9 (nodes) and
+            # S6 (links) as SWMM printed them, and the timeseries consolidation publishes them.
+            ds_nodes = self._apply_quality_stats_rule(ds_nodes, model)
+            ds_links = self._apply_quality_stats_rule(ds_links, model)
         node_mode = "tritonswmm_swmm_node" if model == "tritonswmm" else "swmm_only_node"
         link_mode = "tritonswmm_swmm_link" if model == "tritonswmm" else "swmm_only_link"
         # WRITE NODES
@@ -1965,6 +1973,75 @@ class TRITONSWMM_sim_post_processing:
             self.log.TRITON_summary_written.set(True)
         return
 
+    def _quality_stats_status(self, model_type: Literal["swmm", "tritonswmm"]) -> str:
+        """Why this event's water-quality statistics are or are not trustworthy, as the status text.
+
+        A coupled run that resumed from a SNAPSHOT at a build whose snapshot excludes SWMM's node and
+        link water-quality state restarts that state, so its pollutant statistics are withheld; a
+        resume by exact replay re-derives it and the statistics stay valid, and so does a snapshot
+        resume at a build listed in ``SWMM_QUALITY_SNAPSHOT_SHAS``, whose snapshot carries it (the
+        status then records the route: ``QUALITY_STATS_SNAPSHOT``). The route is read from the
+        per-event resume-event ledger, whose rows record the solver's own marker for each resume
+        (``path``: ``snapshot`` or ``replay``). For a tree whose ledger is absent the fallback is:
+        the sim resumed at least once and its TRITON cfg carries no ``swmm_snapshot_disable=1``
+        line, which means the snapshot route was available; at a carrying build that inferred
+        route yields ``QUALITY_STATS_COMPUTED``, because the statistics are valid by either route.
+        The build is read from the system log by `scenario.coupled_build_sha`, the same function
+        and mode rule the preparation-time default uses, so the two cannot disagree on one run.
+        """
+        from hhemt import resume_events
+        from hhemt.run_simulation import model_logfile_for
+        from hhemt.scenario import coupled_build_sha, snapshot_carries_quality_state
+
+        if model_type != "tritonswmm":
+            return QUALITY_STATS_COMPUTED
+        carried = snapshot_carries_quality_state(
+            coupled_build_sha(
+                getattr(getattr(self, "_system", None), "log", None),
+                execution_environment=getattr(
+                    getattr(getattr(self, "_analysis", None), "cfg_analysis", None), "execution_environment", "native"
+                ),
+            )
+        )
+        ledger = resume_events.ledger_path_for(model_logfile_for(self._analysis, self._scenario.event_iloc, model_type))
+        rows = resume_events.read_resume_events(ledger)
+        paths = [row.get("path") for row in rows]
+        if "snapshot" in paths:
+            return QUALITY_STATS_SNAPSHOT if carried else QUALITY_STATS_WITHHELD
+        if "replay" in paths:
+            return QUALITY_STATS_REPLAY
+        if not rows:
+            n_resumes = self.log.n_resumes.get() if self.log.n_resumes is not None else None
+            if n_resumes is not None and int(n_resumes) >= 1:
+                cfg = Path(self.scen_paths.triton_swmm_cfg)
+                carries_disable = cfg.exists() and "\nswmm_snapshot_disable=1" in f"\n{cfg.read_text()}"
+                if not carries_disable:
+                    return QUALITY_STATS_COMPUTED if carried else QUALITY_STATS_WITHHELD
+        return QUALITY_STATS_COMPUTED
+
+    def _apply_quality_stats_rule(self, ds, model_type):
+        """Record each event's water-quality status and withhold the statistics a snapshot resume spoils.
+
+        Applies only to a coupled dataset that carries pollutant results: a summary, or a per-scenario
+        node or link store. The status goes in a COORDINATE (``pollutant_stats_status``), not an
+        attribute, because consolidation drops an attribute whose text differs across events. On a
+        summary it is dimensioned on ``event_iloc``; a per-scenario store has no such dimension, so
+        there it is a scalar that the timeseries consolidation's concat along ``event_iloc`` turns
+        into a per-event vector. For a withheld event the statistics
+        in ``_QUALITY_STATS_VARIABLES`` and the quality-continuity and runoff-quality tables become
+        NaN; the concentration time series and the outfall volume (a hydraulic quantity) are kept.
+        """
+        if model_type != "tritonswmm" or "pollutant" not in ds.dims:
+            return ds
+        status = self._quality_stats_status(model_type)
+        if status == QUALITY_STATS_WITHHELD:
+            for name in list(ds.data_vars):
+                if name in _QUALITY_STATS_VARIABLES or name.startswith(("qual_routing_", "runoff_qual_")):
+                    ds[name] = xr.full_like(ds[name], np.nan, dtype=float)
+        if "event_iloc" in ds.dims:
+            return ds.assign_coords(pollutant_stats_status=("event_iloc", [status]))
+        return ds.assign_coords(pollutant_stats_status=status)
+
     @_deferred_log_writes
     def _export_SWMM_summaries(
         self,
@@ -2055,6 +2132,7 @@ class TRITONSWMM_sim_post_processing:
         # Summarize nodes
         if not nodes_already_written:
             ds_nodes_summary = summarize_swmm_simulation_results(ds_nodes_full, self._scenario.event_iloc)
+            ds_nodes_summary = self._apply_quality_stats_rule(ds_nodes_summary, model_type)
 
             elapsed_s = time.time() - start_time
             self._write_output(ds_nodes_summary, f_out_nodes, comp_level, verbose, mode=node_mode)
@@ -2066,6 +2144,7 @@ class TRITONSWMM_sim_post_processing:
         # Summarize links
         if not links_already_written:
             ds_links_summary = summarize_swmm_simulation_results(ds_links_full, self._scenario.event_iloc)
+            ds_links_summary = self._apply_quality_stats_rule(ds_links_summary, model_type)
 
             elapsed_s = time.time() - start_time
             self._write_output(ds_links_summary, f_out_links, comp_level, verbose, mode=link_mode)
@@ -2575,7 +2654,7 @@ def reclaim_scenario_scoped_classes(scen, classes, *, verbose: bool = False) -> 
             _ds = None
             _parse_error = None
             try:
-                _ds = parse_hydrology_rpt_summary(_hydro_rpt)
+                _ds = parse_hydrology_rpt_summary(_hydro_rpt, f_inp=scen.scen_paths.swmm_hydro_inp)
             except Exception as _exc:  # noqa: BLE001 -- any unreadable report is UNAVAILABLE
                 _parse_error = f"{type(_exc).__name__}: {_exc}"
             _declared = _P._declared_nonzero_subcatchments(scen.scen_paths.swmm_hydro_inp)
@@ -3570,6 +3649,28 @@ def load_triton_output_w_xarray(rds_dem, f_triton_output, varname, raw_out_type)
 
 
 # %% SUMMARIZATION FUNCTIONS
+
+#: One sentence, identical for every event, stamped on the coupled datasets that carry pollutant results.
+SWMM_QUALITY_LIMITATION = (
+    "Coupled TRITON-SWMM water quality: no subcatchment washoff reaches the coupled network; pollutant mass "
+    "leaving to the 2D surface is counted in Quality Routing Continuity External Outflow and is not "
+    "transported; concentrations are read from the SWMM report at 0.001 of each pollutant's unit."
+)
+QUALITY_STATS_COMPUTED = "computed"
+QUALITY_STATS_REPLAY = "computed: resumed by exact replay"
+QUALITY_STATS_WITHHELD = (
+    "withheld: resumed from a snapshot; SWMM water-quality state is not carried across a snapshot resume"
+)
+#: Statistics kept for an event that resumed from a snapshot written by a build that carries SWMM
+#: water-quality state (`scenario.SWMM_QUALITY_SNAPSHOT_SHAS`); the route stays a recorded fact.
+QUALITY_STATS_SNAPSHOT = "computed: resumed from a snapshot that carries SWMM water-quality state"
+#: Water-quality statistics set to NaN for an event that resumed from a snapshot (the continuity tables are
+#: matched by prefix in `_apply_quality_stats_rule`). Outfall volume and the concentration series are kept.
+_QUALITY_STATS_VARIABLES = frozenset(
+    {"pollutant_max_conc", "pollutant_time_of_max_conc_min", "outfall_total_load", "outfall_emc", "link_total_load"}
+)
+
+
 def summarize_swmm_simulation_results(ds, event_iloc, tstep_dimname="date_time"):
     """
     Summarize SWMM simulation results by computing max and last values for time-variant variables.
@@ -3595,10 +3696,24 @@ def summarize_swmm_simulation_results(ds, event_iloc, tstep_dimname="date_time")
         ds_summary = ds_summary.assign_coords(coords=dict(event_iloc=event_iloc))
         ds_summary = ds_summary.expand_dims("event_iloc")
         return ds_summary
+    # Pollutant concentration series are reduced by explicit rules below, NOT by the generic
+    # `_max`/`_last` pair: the cross-simulation identity check compares every `_max` that has a
+    # `_last` partner, so a generic pair would enter its compared set for every water-quality member.
+    quality_series = [v for v in ("pollutant_conc", "link_pollutant_conc") if v in ds.data_vars]
     lst_time_variant_vars = []
     for var in ds.data_vars:
-        if tstep_dimname in ds[var].coords:
+        if var not in quality_series and tstep_dimname in ds[var].coords:
             lst_time_variant_vars.append(var)
+
+    if "pollutant_conc" in quality_series:
+        conc = ds["pollutant_conc"]
+        ds["pollutant_max_conc"] = conc.max(dim=tstep_dimname, skipna=True)
+        # The peak's time was measured when the report was parsed (the simulation start is known there) and rides
+        # as the declared variable `pollutant_time_of_max_conc_min`. A caller that supplies none gets it from
+        # the first reported step.
+        if "pollutant_time_of_max_conc_min" not in ds.data_vars:
+            ds["pollutant_time_of_max_conc_min"] = pollutant_time_of_max_conc_min(conc, None, tstep_dimname)
+    ds = ds.drop_vars(quality_series)
 
     for var in lst_time_variant_vars:
         ds[f"{var}_max"] = ds[var].max(dim=tstep_dimname, skipna=True)

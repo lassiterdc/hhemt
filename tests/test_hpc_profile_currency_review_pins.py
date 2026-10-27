@@ -2,7 +2,7 @@
 
 These tests PASS against the gate as built. They are here because the gate's own test
 module (tests/test_hpc_profile_currency.py) stays green under two plausible wrong
-implementations, measured by the reviewer of package 1g:
+implementations, measured by the gate's reviewer:
 
 1. A gate that reads keys off the page TEXT and so counts a commented-out line
    (``# max_concurrent_cpus: null``) as a shown field. A reader copying the block gets no

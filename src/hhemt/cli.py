@@ -1,7 +1,13 @@
 """Command-line interface for H&H Ensemble Modeling Toolkit.
 
-Provides a Snakemake-first single-command CLI for running TRITON-SWMM
-workflows.
+The toolkit's operations are Python methods on the analysis and bundle objects. This
+module exposes them to a shell user as the Typer application behind the ``hhemt``
+console script: one subcommand per operation (``run``, ``reprocess``, ``delete``,
+``bundle``, ``combine``, and so on), each of which builds the objects it needs from
+the paths it is given, calls into the toolkit, and reports the outcome as an exit
+code. The simulation workflows themselves are planned and executed by Snakemake
+inside the toolkit calls these commands make. ``hhemt test`` is a sub-application
+mounted from ``suite/_cli.py``.
 """
 
 import json
@@ -27,8 +33,8 @@ def _parse_override_clear_raw(value: str | None) -> str | list | None:
     """Parse the ``--override-clear-raw`` CLI flag value.
 
     Accepts ``"all"``, ``"none"``, or a JSON list (e.g. ``'["tritonswmm","swmm"]'``).
-    Phase 3 plants this helper; Phase 4 reuses the same shape for
-    ``--override-force-rerun``.
+    ``--override-force-rerun`` is parsed by ``_parse_override_force_rerun`` below,
+    which reuses this helper's shape.
     """
     if value is None:
         return None
@@ -55,9 +61,10 @@ def _parse_override_force_rerun(value: str | None) -> str | dict | None:
         '{"subject": {"sa_id": ["serial_6_r1"]}, "stage": "process"}'
         '{"subject": {"event_iloc": [3, 7]}, "models": ["triton", "tritonswmm"]}'
 
-    ``models`` names WHICH model arms to force; omit it for every enabled model, which is
-    the historical behaviour. Naming a subset leaves the unnamed arms' completion state
-    untouched, so a correct arm is not invalidated by a force aimed at a damaged one.
+    ``models`` names WHICH model types to force; omit it for every enabled model, which is
+    the historical behaviour. Naming a subset leaves the unnamed model types' completion
+    state untouched, so a correct model type is not invalidated by a force aimed at a
+    damaged one.
 
     ``stage`` is a FLOOR: that stage and everything downstream re-run. Values are
     ``simulate`` (default, the historical meaning) / ``process`` / ``consolidate`` /
@@ -66,8 +73,6 @@ def _parse_override_force_rerun(value: str | None) -> str | dict | None:
     Snakemake rule and is always explicit. A subject-scoped ``render`` floor is rejected at
     config-load: ``plots/`` holds cross-sub aggregates with no subject token, so a scoped
     re-render would leave them stale.
-
-    Per cleanup-rerun-delete-redesign Phase 4; stage axis per [Q106].
     """
     if value is None:
         return None
@@ -78,7 +83,7 @@ def _parse_override_force_rerun(value: str | None) -> str | dict | None:
     except json.JSONDecodeError as exc:
         raise typer.BadParameter(
             f"--override-force-rerun expects 'all', 'none', a JSON subject dict like "
-            f"'{{\"member_id\":[0,5]}}', or a JSON stage form like "
+            f"'{{\"sa_id\":[0,5]}}', or a JSON stage form like "
             f'\'{{"subject":"all","stage":"render"}}\'; got: {value!r} ({exc})'
         ) from exc
 
@@ -95,11 +100,12 @@ def _root(ctx: typer.Context) -> None:
     """Root callback: one worktree-resolution guard for every CLI invocation.
 
     This is the single funnel for the console script, `python -m hhemt`, and
-    `python src/hhemt/cli.py`. Placing the guard here rather than in each command (or
-    in each of the 21 runner `__main__` blocks) is what keeps it out of the
-    copy-pasted-assert category the anti-bloat mandate forbids.
+    `python src/hhemt/cli.py`. Placing the guard here rather than in each command, or
+    in each runner module's `__main__` block, keeps it at ONE site: per-command copies
+    of one assert are many sites that must be edited together, and a command added
+    without its copy would run unguarded.
 
-    The 21 runner `__main__` blocks are deliberately NOT guarded: they are
+    The runner modules' `__main__` blocks are deliberately NOT guarded: they are
     subprocess-launched by Snakemake rules and inherit PYTHONPATH from the parent,
     which this guard has already validated when the parent came through the CLI.
     """
@@ -187,10 +193,20 @@ def run_command(
         "--override-force-rerun",
         help=(
             'Runtime override for cfg_analysis.force_rerun. Accepts "all", "none", '
-            "or a JSON dict: '{\"member_id\":[0,5,22]}' (sensitivity) or "
+            "or a JSON dict: '{\"sa_id\":[0,5,22]}' (sensitivity) or "
             "'{\"event_iloc\":[3,7]}' (non-sensitivity)."
         ),
         callback=lambda value: _parse_override_force_rerun(value),
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help=(
+            "Run in debug mode. Today it does exactly one thing: a coupled simulation that "
+            "starts from the beginning (a clean start) asks the solver to keep the previous "
+            "run's snapshot files, renamed rather than removed. Without --debug the toolkit asks for "
+            "them to be removed."
+        ),
     ),
     override_live_driver: str = typer.Option(
         None,
@@ -345,16 +361,16 @@ def run_command(
     Examples:
 
         # Run with default resume behavior
-        $ triton-swmm run \\
+        $ hhemt run \\
             --system-config system.yaml --analysis-config analysis.yaml
 
         # Fresh run with selected events
-        $ triton-swmm run \\
+        $ hhemt run \\
             --system-config system.yaml --analysis-config analysis.yaml \\
             --from-scratch --event-ilocs 0,1,2
 
         # Run with HPC overrides
-        $ triton-swmm run \\
+        $ hhemt run \\
             --system-config system.yaml --analysis-config analysis.yaml \\
             --partition debug --walltime 00:20:00
 
@@ -490,6 +506,7 @@ def run_command(
             override_clear_raw=override_clear_raw,
             override_force_rerun=override_force_rerun,
             override_live_driver=override_live_driver,
+            debug=debug,
             build_sifs=build_sifs,
             build_sifs_no_wait=build_sifs_no_wait,
             force_sif_rebuild=force_sif_rebuild,
@@ -576,11 +593,11 @@ def cleanup_orphans_command(
     Examples:
 
         # List orphans (no deletion)
-        $ triton-swmm cleanup-orphans --system-config system.yaml \\
+        $ hhemt cleanup-orphans --system-config system.yaml \\
             --analysis-config analysis.yaml
 
         # Actually delete
-        $ triton-swmm cleanup-orphans --system-config system.yaml \\
+        $ hhemt cleanup-orphans --system-config system.yaml \\
             --analysis-config analysis.yaml --apply --force
     """
     try:
@@ -710,7 +727,7 @@ def reprocess_command(
             "regenerate report+plots only."
         ),
     ),
-    # Phase 3: R8 SLURM-offload toggle for the opt-in deletion.
+    # SLURM-offload toggle for the opt-in deletion.
     delete_via_slurm: bool | None = typer.Option(
         None,
         "--delete-via-slurm/--no-delete-via-slurm",
@@ -739,7 +756,7 @@ def reprocess_command(
         "--override-force-rerun",
         help=(
             'Runtime override for cfg_analysis.force_rerun. Accepts "all", "none", '
-            "or a JSON dict: '{\"member_id\":[0,5,22]}' (sensitivity) or "
+            "or a JSON dict: '{\"sa_id\":[0,5,22]}' (sensitivity) or "
             "'{\"event_iloc\":[3,7]}' (non-sensitivity)."
         ),
         callback=lambda value: _parse_override_force_rerun(value),
@@ -761,16 +778,16 @@ def reprocess_command(
     Builds a scope-limited Snakefile at ``{analysis_dir}/Snakefile.reprocess``
     and runs it against a separate ``.snakemake_reprocess/`` working dir so
     the reprocess driver can coexist with a live simulation driver. Runs
-    the Phase-1 reconciliation guard before submission.
+    the submission-sentinel reconciliation guard before submission.
 
     Examples:
 
         # Re-aggregate datatree + render (common case)
-        $ triton-swmm reprocess --system-config system.yaml \\
+        $ hhemt reprocess --system-config system.yaml \\
             --analysis-config analysis.yaml --start-with consolidate
 
         # Re-render report only against existing plots
-        $ triton-swmm reprocess --system-config system.yaml \\
+        $ hhemt reprocess --system-config system.yaml \\
             --analysis-config analysis.yaml --start-with render
     """
     try:
@@ -874,9 +891,9 @@ def recompute_plan_command(
         help="Print progress messages",
     ),
 ):
-    """Print the ADR-16 dry-run recompute plan for a bug-fix commit.
+    """Print the dry-run recompute plan for a bug-fix commit.
 
-    Classifies this analysis's ADR-15-stamped scopes against ``--commit`` via the
+    Classifies this analysis's version-stamped scopes against ``--commit`` via the
     git ancestry predicate, resolves the recompute tier from the explicit
     ``--scope`` and the analysis's ``clear_raw`` state, and prints the recommended
     ``RecomputeAction`` plus the call it would dispatch into. DRY-RUN ONLY: it never
@@ -885,7 +902,7 @@ def recompute_plan_command(
     Examples:
 
         # What would repairing bug-fix HEAD require, if the bug is in consolidation?
-        $ triton-swmm recompute-plan --system-config system.yaml \\
+        $ hhemt recompute-plan --system-config system.yaml \\
             --analysis-config analysis.yaml --commit HEAD --scope consolidation
     """
     try:
@@ -983,20 +1000,20 @@ def check_invalidating_fixes_command(
         help="Print progress messages",
     ),
 ):
-    """Print the ADR-17 invalidating-fix registry-match report for this analysis.
+    """Print the invalidating-fix registry-match report for this analysis.
 
-    Classifies this analysis's ADR-15-stamped scopes against the in-repo registry
+    Classifies this analysis's version-stamped scopes against the in-repo registry
     (``src/hhemt/invalidating_fixes.yaml``) and prints any matched calculation-
     invalidating fixes plus the resolver's recommended ``RecomputeAction``.
 
     NON-BLOCKING: exits 0 EVEN WHEN matches are found — a registered invalidating fix
-    is INFORMATION, not a CLI failure (ADR-17 forbids mapping matches to a non-zero
-    exit). Non-zero is reserved for genuine config/IO errors. Read-only: never submits
+    is INFORMATION, not a CLI failure, so a match never maps to a non-zero
+    exit. Non-zero is reserved for genuine config/IO errors. Read-only: never submits
     a workflow, never touches the filesystem.
 
     Examples:
 
-        $ triton-swmm check-invalidating-fixes --system-config system.yaml \\
+        $ hhemt check-invalidating-fixes --system-config system.yaml \\
             --analysis-config analysis.yaml
     """
     try:
@@ -1034,7 +1051,7 @@ def check_invalidating_fixes_command(
                 for m in info:
                     console.print(f"[dim]INFO: {m.summary}[/dim]")
 
-        # Opt-in remote version-skew discovery (ADR-17 / git Q1). Best-effort, never
+        # Opt-in remote version-skew discovery. Best-effort, never
         # blocks: an unreachable remote degrades to a non-silent INFO (exit still 0).
         if check_remote:
             from .invalidating_fixes_skew import _REGISTRY_RAW_URL, discover_version_skew
@@ -1064,7 +1081,7 @@ def check_invalidating_fixes_command(
                     "default branch).[/green]"
                 )
 
-        # Non-blocking: matches are INFORMATION, not a failure. Exit 0 (ADR-17 / Q6).
+        # Non-blocking: matches are INFORMATION, not a failure. Exit 0.
         raise typer.Exit(0)
 
     except typer.Exit:
@@ -1216,7 +1233,7 @@ def synth_experiment_command(
     """Load-smoke the synthetic compute-config experiment: validate the config
     (coupling + partition-cap validators) and build the partition-as-axis matrix;
     unless --dry-run, also write the matrix CSV and generate the synthetic model.
-    The full ensemble run is via scripts/experiments/synth_compute_config.py (Phase 3)."""
+    The full ensemble run is via scripts/experiments/synth_compute_config.py."""
     try:
         from .toolkit import Toolkit
 
@@ -1308,6 +1325,30 @@ def run_experiment_command(
             "DISTINCT from --yes, which only accepts the override table."
         ),
     ),
+    override_clean_restart_members: str | None = typer.Option(
+        None,
+        "--override-clean-restart-members",
+        help=(
+            "Comma-separated sensitivity member ids to CLEAN-RESTART (e.g. '38,39'). "
+            "Each named member's runtime children are wiped, INCLUDING the per-model log "
+            "that carries n_resumes, so the member re-runs from checkpoint 0 AND its "
+            "resume counter resets to 0. DISTINCT from --override-force-rerun, which "
+            "prunes the checkpoints but leaves n_resumes where it was — a member "
+            "restarted that way runs fresh while still being scored as the RESUME arm of "
+            "a clean/resume pair. Use this one when the member must re-run as a CLEAN "
+            "member."
+        ),
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help=(
+            "Run in debug mode. Today it does exactly one thing: a coupled simulation that "
+            "starts from the beginning (a clean start) asks the solver to keep the previous "
+            "run's snapshot files, renamed rather than removed. Without --debug the toolkit asks for "
+            "them to be removed."
+        ),
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
@@ -1346,9 +1387,19 @@ def run_experiment_command(
             mode=mode,
             override_wipe_nonempty=override_wipe_nonempty,
             override_force_rerun=override_force_rerun,
+            # Parsed HERE rather than in a typer callback so an empty or
+            # whitespace-only value resolves to None (wipe nothing) instead of to a
+            # one-element list holding the empty string, which `_clean_restart_wipe`
+            # would resolve to a `member_` directory that cannot exist.
+            override_clean_restart_member_ids=(
+                [s.strip() for s in override_clean_restart_members.split(",") if s.strip()] or None
+                if override_clean_restart_members
+                else None
+            ),
+            debug=debug,
         )
         # A refused submit must not read as success to the shell: tk.run RETURNS a
-        # WorkflowResult and does not raise (measured on Irene job 18708464). The shared
+        # WorkflowResult and does not raise. The shared
         # reporter tests `success` before printing anything green, on the --dry-run arm too,
         # and returns the documented code (0, or 3 for a workflow that ran and reported failure).
         raise typer.Exit(
@@ -1867,20 +1918,18 @@ def delete_command(
     Refuses by default when ``_status/_submitted/*.json`` sentinels indicate
     live SLURM jobs. Pass ``--override-in-flight`` to bypass.
 
-    Per cleanup-rerun-delete-redesign Phase 2.
-
     Examples:
 
         # Inspect what would be deleted without acting
-        $ triton-swmm delete --system-config system.yaml \\
+        $ hhemt delete --system-config system.yaml \\
             --analysis-config analysis.yaml --dry-run
 
         # Delete after dry-run confirmation
-        $ triton-swmm delete --system-config system.yaml \\
+        $ hhemt delete --system-config system.yaml \\
             --analysis-config analysis.yaml --yes
 
         # Delete despite orphaned in-flight sentinels (use sparingly)
-        $ triton-swmm delete --system-config system.yaml \\
+        $ hhemt delete --system-config system.yaml \\
             --analysis-config analysis.yaml --override-in-flight --yes
     """
     try:
@@ -1935,8 +1984,6 @@ def delete_command(
 def _print_delete_dry_run_summary(analysis) -> None:
     """Print a per-scenario / per-member breakdown of what
     ``analysis.delete()`` would remove from disk, plus a total size estimate.
-
-    Per cleanup-rerun-delete-redesign Phase 2.
     """
     analysis_dir = analysis.analysis_paths.analysis_dir
     if not analysis_dir.exists():
@@ -2071,11 +2118,11 @@ def cleanup_orphan_delete_sentinels_command(
     Examples:
 
         # List dead/alive delete-sentinels (nothing removed)
-        $ triton-swmm cleanup-orphan-delete-sentinels --system-config system.yaml \\
+        $ hhemt cleanup-orphan-delete-sentinels --system-config system.yaml \\
             --analysis-config analysis.yaml
 
         # Remove the dead ones
-        $ triton-swmm cleanup-orphan-delete-sentinels --system-config system.yaml \\
+        $ hhemt cleanup-orphan-delete-sentinels --system-config system.yaml \\
             --analysis-config analysis.yaml --apply --force
     """
     try:
@@ -2182,7 +2229,7 @@ def cleanup_stale_metadata_command(
 ):
     """List or delete orphaned ``.snakemake/metadata/`` records left by past rule-output renames.
 
-    The Phase 8 rule-output renames (``.png``/``.svg`` → ``.html`` for
+    The plot rules' output renames (``.png``/``.svg`` → ``.html`` for
     system_overview, per_sim plots, and sensitivity_benchmarking) leave orphaned
     metadata records that Snakemake will trigger a one-shot full plot rebuild
     against on first post-rename invocation. This command identifies those
@@ -2191,11 +2238,11 @@ def cleanup_stale_metadata_command(
     Examples:
 
         # List orphans (no deletion)
-        $ triton-swmm cleanup-stale-metadata --system-config system.yaml \\
+        $ hhemt cleanup-stale-metadata --system-config system.yaml \\
             --analysis-config analysis.yaml
 
         # Actually delete
-        $ triton-swmm cleanup-stale-metadata --system-config system.yaml \\
+        $ hhemt cleanup-stale-metadata --system-config system.yaml \\
             --analysis-config analysis.yaml --apply --force
     """
     try:
@@ -2297,11 +2344,11 @@ def cleanup_settled_markers_command(
     Examples:
 
         # List settled markers (no deletion)
-        $ triton-swmm cleanup-settled-markers --system-config system.yaml \\
+        $ hhemt cleanup-settled-markers --system-config system.yaml \\
             --analysis-config analysis.yaml
 
         # Actually delete
-        $ triton-swmm cleanup-settled-markers --system-config system.yaml \\
+        $ hhemt cleanup-settled-markers --system-config system.yaml \\
             --analysis-config analysis.yaml --apply --force
     """
     try:
@@ -2475,7 +2522,7 @@ def _print_dry_run_summary(args: dict) -> None:
 
 
 def _list_excludable_callback(value: bool) -> bool:
-    """Print the ADR-20 excludable-input catalog and EXIT — before option validation.
+    """Print the excludable-input catalog and EXIT — before option validation.
 
     ``is_eager=True`` + ``typer.Exit`` is load-bearing, not stylistic. The ``bundle``
     command's ``--system-config`` and ``--analysis-config`` are REQUIRED options, so a
@@ -2848,7 +2895,7 @@ def ingest_command(
     ),
 ) -> None:
     """Fetch a published reprex bundle by DOI/PID, reconstitute it, and print the
-    runnable configs (ADR-13 C9).
+    runnable configs.
 
     A self-contained bundle (the default emit) carries every declared input, so the
     reconstituted experiment runs from scratch. Ingesting a DOI and running it executes
@@ -2919,8 +2966,11 @@ def combine_command(
 
     Runs a metadata-compatibility check across the bundles (aborting on any
     blocking divergence), merges their consolidated trees, renders one
-    cross-experiment report, and emits a standalone combined RO-Crate bundle at
-    ``output``. Returns a ``CombinedBundle`` whose report is regenerable.
+    cross-experiment report, and emits a standalone combined RO-Crate bundle into the
+    ``--output`` directory (by default a ``combined_{n}bundles_{git_sha}`` directory
+    beside the first bundle), then prints that directory's path. The combined
+    bundle's report can be regenerated later through the Python API
+    (``CombinedBundle.regenerate_report``).
     """
     from hhemt.bundle import combine_bundle
 
@@ -2946,12 +2996,11 @@ def report_from_bundle_command(
 ) -> None:
     # Render a fresh analysis_report from a portable render bundle.
     #
-    # Per Plan Phase 3's rewire, this is a thin wrapper over
+    # This is a thin wrapper over
     # Bundle.from_directory(bundle_root).regenerate_report(format=format).
     # The Bundle class derives the static_backend from the bundle's
-    # cfg_analysis.yaml (cfg-controlled default 'plotly' per Plan
-    # Phase 2 D3 + Decision 4); no static_backend kwarg is threaded
-    # through the CLI per Decision 3.3D.
+    # cfg_analysis.yaml (cfg-controlled, default 'plotly'), so no
+    # static_backend kwarg is threaded through the CLI.
     #
     import zipfile
 

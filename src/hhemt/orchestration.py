@@ -334,6 +334,11 @@ class WorkflowResult:
         ``batch_job`` (tmux) run leaves it empty whether or not it is waited on;
         nothing collects its failures, so the operator reads ``_status/_failed/``
         after the run.
+    retried_to_success : List[dict]
+        Jobs Snakemake restarted after a failed attempt and then finished, one
+        ``{rule, jobid, attempts}`` per job, where ``attempts`` counts every launch
+        including the finishing one. A disclosure only: it never affects ``success``.
+        Filled on the same paths as ``partial_failures``.
 
     Examples
     --------
@@ -353,6 +358,7 @@ class WorkflowResult:
     job_id: str | None = None
     message: str = ""
     partial_failures: list[dict] = field(default_factory=list)
+    retried_to_success: list[dict] = field(default_factory=list)
 
     def __bool__(self) -> bool:
         """Allow truthiness check: if result: ..."""
@@ -382,6 +388,13 @@ class WorkflowResult:
         if self.partial_failures:
             tokens = ", ".join(r.get("rule_token", "?") for r in self.partial_failures)
             parts.append(f"Partial failures ({len(self.partial_failures)}): {tokens}")
+
+        if self.retried_to_success:
+            retried = ", ".join(
+                f"{r.get('rule', '?')}[{r.get('jobid', '?')}] ×{r.get('attempts', '?')}"
+                for r in self.retried_to_success
+            )
+            parts.append(f"Retried to success ({len(self.retried_to_success)}): {retried}")
 
         return "\n".join(parts)
 

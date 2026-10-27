@@ -38,17 +38,32 @@ import pytest
 import hhemt.analysis_validation as av
 from hhemt.model_defects import REGISTRY, resolve
 
+#: The entries the resume check assesses: every registry entry except the `coupled`-trigger
+#: (every-coupled-run) ones, which `check_known_solver_defects` reports instead.
+_RESUME_REGISTRY = tuple(d for d in REGISTRY if d.trigger != "coupled")
+
 #: The sha the synthetic tier actually builds (`tests/fixtures/_triton_source_cache.py`).
 #: Restated rather than imported so this module stays free of that module's
 #: `platformdirs` / `hhemt.utils` import weight; `scripts/check_live_pin_registered.py`
 #: is what keeps the restatement honest, and `test_the_restated_pin_is_the_live_pin`
 #: below is the local tripwire.
-_SHA_REGISTERED = "031ea42b063ce1083e3d965597cdb44da2e748ef"
+_SHA_REGISTERED = "bb13ea28603d50879f8d85cd041c17f440fbdb2b"
 #: In NO registry set -- the state any branch tip occupies before someone registers it.
 _SHA_UNREGISTERED = "deadbeefcafef00ddeadbeefcafef00ddeadbeef"
-#: A build that genuinely carries all three defects. THE POSITIVE CONTROL: without it a
+#: A build that genuinely carries all three RESUME defects. THE POSITIVE CONTROL: without it a
 #: green on the two rows above is indistinguishable from a check that reports nothing.
+#: It does NOT carry the snapshot-traversal defect, and that is a property of the sha rather
+#: than a hole in the control: `external/swmm/src/solver/snapshot.c` does not exist here
+#: (`git ls-tree` -> 0 entries, against a control needle `src/triton.h` -> 1), and
+#: `is-ancestor 5fadf167 15eb18a5` -> rc 1. Listing it in that entry's `also_present_in`
+#: to make this control symmetric would assert a defect in code that is not there.
 _SHA_PRE_FIX = "15eb18a5d25afe5da295cb4b559a62669dbe5bc3"
+#: THE SECOND POSITIVE CONTROL, and the registry needs two because no single sha carries
+#: every registered defect: the three resume fixes are all ancestors of every build that has
+#: the snapshot payload at all. This is the outgoing pin -- it carries the snapshot payload
+#: and NOT the fix (`is-ancestor 23b75781 031ea42b` -> rc 1), so it resolves the
+#: snapshot defect PRESENT while the other three resolve assessed-ABSENT.
+_SHA_PRE_SNAPSHOT_FIX = "031ea42b063ce1083e3d965597cdb44da2e748ef"
 
 
 class _StubCfgSystem:
@@ -116,19 +131,127 @@ def test_unknown_producing_sha_is_na(monkeypatch):
 # -------------------------------------------------------------------------------------
 
 
-def test_pre_fix_sha_fails_and_names_every_defect(monkeypatch):
-    res = _run(monkeypatch, _SHA_PRE_FIX)
+@pytest.mark.parametrize("sha", [_SHA_PRE_FIX, _SHA_PRE_SNAPSHOT_FIX])
+def test_an_affected_sha_fails_and_its_present_count_matches_its_detail_rows(monkeypatch, sha):
+    """Property: on a build carrying >=1 registered defect the check FAILS, names every PRESENT
+    defect, and its PRESENT count equals its detail-row count -- so the remedy reaches the
+    operator once per present defect rather than once per registry member.
+
+    Class: REGRESSION. The single-sha form of this control asserted
+    `len(res.details) == len(REGISTRY)`, which held only while every registered defect was
+    present at one sha. The snapshot-traversal entry broke that -- measured 3 == 4 -- because
+    its `introduced_in` postdates `_SHA_PRE_FIX`.
+
+    Why it is required: it is the positive control for every discrimination test below. A green
+    on those means nothing if the check never reports a PRESENT defect at all, and the two arms
+    are what make the control TOTAL over the registry rather than over one sha's subset.
+
+    What kills it: making `check_known_resume_defects` emit a detail row per registry MEMBER
+    instead of per PRESENT defect re-reds both arms; so does dropping the FAIL on a present
+    defect.
+
+    A second correct implementation under which it still passes: one that renders the detail
+    rows in any other order, or that words the remedy differently -- the assertion turns on the
+    COUNT agreeing with the summary's own PRESENT figure, not on row order or wording.
+    """
+    res = _run(monkeypatch, sha)
     assert res.passed is False
-    ids = [d.defect_id for d in REGISTRY]
-    for defect_id in ids:
+    present_ids = [d.defect_id for d in _RESUME_REGISTRY if resolve(d, sha).status == "present"]
+    present = len(present_ids)
+    assert present >= 1, "this sha is not a positive control for anything"
+    # Each PRESENT defect is NAMED, which is what makes the FAIL actionable. The failing arm
+    # names its present set and not the whole registry -- the all-members naming belongs to the
+    # never-assessed arm, which `test_unregistered_row_names_its_indeterminate_count_and_the_defect_ids`
+    # covers. Asserting the whole registry here passed at _SHA_PRE_FIX only because three of its
+    # four members happened to be present and the fourth was named as indeterminate.
+    for defect_id in present_ids:
         assert defect_id in res.summary
-    # The remedy reaches the operator through `details`, one row per defect.
-    assert len(res.details) == len(ids)
+    assert len(res.details) == present
     assert all(r["scenario"] == "(analysis-level)" for r in res.details)
-    # And the denominator is on the FAILING arm too: a FAIL naming one defect out of three
-    # applicable ones must still say what happened to the other two.
-    assert f"{len(ids)} applicable registry defect(s)" in res.summary
-    assert f"{len(ids)} PRESENT" in res.summary
+    # The denominator is on the FAILING arm too: a FAIL naming one defect out of four
+    # applicable ones must still say what happened to the other three.
+    assert f"{len(_RESUME_REGISTRY)} applicable registry defect(s)" in res.summary
+    assert f"{present} PRESENT" in res.summary
+
+
+def test_the_two_positive_controls_together_cover_every_registered_defect():
+    """Property: the union of the two control shas' PRESENT sets is the whole registry.
+
+    Class: NEW CAPABILITY. The plausible wrong implementation is adding a registry entry whose
+    `also_present_in` names neither control sha -- the entry would then be asserted PRESENT
+    nowhere, and every discrimination test below would still pass. Red under it: the union
+    falls short of `REGISTRY` and this names the uncovered defect_id.
+
+    Why it is required: the arm above proves each control sha reports SOMETHING. Only this one
+    proves no registered defect is left without a positive control, which is the property that
+    silently decayed when the registry went from three entries to four.
+
+    What kills it: a new entry with no affected sha among the controls.
+
+    A second correct implementation under which it still passes: any registry whose entries
+    distribute differently across the two shas, or a third control sha added alongside -- the
+    assertion is on the UNION's coverage, not on which sha carries which defect.
+    """
+    covered = {
+        d.defect_id
+        for sha in (_SHA_PRE_FIX, _SHA_PRE_SNAPSHOT_FIX)
+        for d in REGISTRY
+        if resolve(d, sha).status == "present"
+    }
+    missing = {d.defect_id for d in REGISTRY} - covered
+    assert not missing, (
+        f"no positive control asserts these defect(s) PRESENT: {sorted(missing)}. Add an affected "
+        "sha to the entry's also_present_in, or add a control sha that carries it."
+    )
+
+
+def test_the_snapshot_defect_is_present_below_the_fix_and_absent_at_and_above_it(monkeypatch):
+    """Property: TRITON-SNAPSHOT-TRAVERSAL-GUARD resolves PRESENT on a build pinned below the
+    fix and ABSENT at the fix and above it.
+
+    Class: NEW CAPABILITY. The plausible wrong implementation is registering the new sha in
+    `known_absent_in` and forgetting the affected pin in `also_present_in` -- the entry then
+    resolves `indeterminate` on the build that actually carries the defect, which
+    `check_known_resume_defects` handles exactly like `absent` and reports as a PASS. Red under
+    it: the `present` assertion below fails while every other test in this file stays green.
+
+    Why it is required: the registry's whole purpose is per-sha discrimination, and an entry that
+    cannot separate an affected build from a fixed one certifies nothing. Measured basis for the
+    three points: `is-ancestor 23b75781 031ea42b` -> rc 1 (below), and
+    `is-ancestor 23b75781 c7b2fd1d` -> rc 0 (above).
+
+    What kills it: removing 031ea42b from `also_present_in`, or removing either fixed sha from
+    `known_absent_in`.
+
+    A second correct implementation under which it still passes: one that reaches the same three
+    verdicts through ancestry rather than through the explicit sets -- the assertion names the
+    STATUS at each point, and the rule only where the read path's clone-lessness makes the
+    explicit set the only reachable one.
+    """
+    from hhemt.model_defects import (
+        SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
+        SHA_SNAPSHOT_GUARD_PRIOR_PIN,
+        SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX,
+        SHA_WP1_SNAPSHOT_GUARD_AND_TESTS,
+    )
+
+    entry = next(d for d in REGISTRY if d.defect_id == "TRITON-SNAPSHOT-TRAVERSAL-GUARD")
+
+    below = resolve(entry, _SHA_PRE_SNAPSHOT_FIX)
+    assert below.status == "present", below
+    assert below.rule == "also_present_set", below
+
+    for sha in (SHA_SNAPSHOT_TRAVERSAL_GUARD_FIX, SHA_WP1_SNAPSHOT_GUARD_AND_TESTS, SHA_SNAPSHOT_GUARD_PRIOR_PIN):
+        at_or_above = resolve(entry, sha)
+        assert at_or_above.status == "absent", (sha, at_or_above)
+        assert at_or_above.rule == "known_absent_set", (sha, at_or_above)
+
+    # And the check itself reports the discrimination, not only the resolver: the affected pin
+    # FAILS and the live pin PASSES. Without this half the test would pass over a resolver whose
+    # verdict no consumer reads.
+    assert _run(monkeypatch, _SHA_PRE_SNAPSHOT_FIX).passed is False
+    assert _run(monkeypatch, _SHA_LIVE := SHA_MAIN_SWMM_PATH_REFUSAL_PIN).passed is True
+    assert _SHA_LIVE == _SHA_REGISTERED, "the live pin constant drifted from the registry's"
 
 
 # -------------------------------------------------------------------------------------
@@ -161,19 +284,19 @@ def test_registered_and_unregistered_rows_differ(monkeypatch):
 def test_registered_row_names_its_assessed_count(monkeypatch):
     res = _run(monkeypatch, _SHA_REGISTERED)
     assert res.passed is True
-    assert f"{len(REGISTRY)} applicable registry defect(s)" in res.summary
-    assert f"{len(REGISTRY)} assessed ABSENT" in res.summary
+    assert f"{len(_RESUME_REGISTRY)} applicable registry defect(s)" in res.summary
+    assert f"{len(_RESUME_REGISTRY)} assessed ABSENT" in res.summary
     assert "INDETERMINATE" not in res.summary
 
 
 def test_unregistered_row_names_its_indeterminate_count_and_the_defect_ids(monkeypatch):
     res = _run(monkeypatch, _SHA_UNREGISTERED)
     assert res.passed is True
-    assert f"{len(REGISTRY)} INDETERMINATE" in res.summary
+    assert f"{len(_RESUME_REGISTRY)} INDETERMINATE" in res.summary
     assert "NOT assessed at this pin" in res.summary
     # NAMING the unassessed defects is what makes the row actionable rather than merely
     # honest: the remedy is per-defect-set membership.
-    for defect in REGISTRY:
+    for defect in _RESUME_REGISTRY:
         assert defect.defect_id in res.summary
     assert "assessed ABSENT" not in res.summary
 
@@ -186,7 +309,7 @@ def test_disclosed_counts_sum_to_the_denominator(monkeypatch):
     """
     import re
 
-    for sha in (_SHA_REGISTERED, _SHA_UNREGISTERED, _SHA_PRE_FIX):
+    for sha in (_SHA_REGISTERED, _SHA_UNREGISTERED, _SHA_PRE_FIX, _SHA_PRE_SNAPSHOT_FIX):
         res = _run(monkeypatch, sha)
         denom = int(re.search(r"(\d+) applicable registry defect\(s\)", res.summary).group(1))
         parts = 0
@@ -229,16 +352,18 @@ def test_indeterminate_is_not_a_third_verdict(monkeypatch):
 # -------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("coupled,expected", [(True, 3), (False, 1)])
+@pytest.mark.parametrize("coupled,expected", [(True, 5), (False, 1)])
 def test_trigger_scoping_sets_the_denominator(monkeypatch, coupled, expected):
     """A `resumed_coupled` defect is out of scope for a pure-TRITON arm.
 
-    Two of the three registered defects carry `trigger="resumed_coupled"` and one carries
+    Four of the five registered defects carry `trigger="resumed_coupled"` and one carries
     `resumed_any`, so a pure-TRITON arm has ONE applicable defect. The expected values are
     DERIVED from the registry below as well as stated, so a registry addition fails here
-    loudly instead of making the literal silently wrong.
+    loudly instead of making the literal silently wrong -- which is what it did when the
+    snapshot-traversal entry landed, and the literal moved 3 -> 4 on that red, and again
+    4 -> 5 when the clean-start stale-snapshot entry landed.
     """
-    derived = sum(1 for d in REGISTRY if not (d.trigger == "resumed_coupled" and not coupled))
+    derived = sum(1 for d in _RESUME_REGISTRY if not (d.trigger == "resumed_coupled" and not coupled))
     assert derived == expected, f"registry membership changed: derived={derived} literal={expected}"
     res = _run(monkeypatch, _SHA_REGISTERED, coupled=coupled)
     assert f"{expected} applicable registry defect(s)" in res.summary

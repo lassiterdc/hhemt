@@ -24,6 +24,11 @@ def mock_analysis(tmp_path):
     analysis.cfg_analysis.hpc_cpus_per_node = 32
     analysis.cfg_analysis.hpc_total_nodes = 1
     analysis.cfg_analysis.mem_gb_per_cpu = 2
+    # _pre_snakemake_invocation_guards prints the realised retry ceiling and does
+    # arithmetic on these two fields; a bare Mock attribute raises TypeError, which the
+    # submit catch-all swallows into success=False. Values are the schema defaults.
+    analysis.cfg_analysis.hpc_restart_times_simulate = 2
+    analysis.cfg_analysis.hpc_consecutive_failure_budget_simulate = 3
     analysis.analysis_paths = Mock()
     analysis.analysis_paths.analysis_dir = tmp_path / "analysis"
     analysis._resource_manager = Mock()

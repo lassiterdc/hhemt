@@ -300,6 +300,29 @@ def _capture_binary_provenance(sub: "TRITONSWMM_analysis") -> dict | None:
     return prov or None
 
 
+def _systems_run_by(analysis) -> list:
+    """Every system a run of ``analysis`` executes: the master's, or each sensitivity target's.
+
+    A sensitivity analysis runs the systems of ``sensitivity.unique_system_targets`` rather
+    than the master's alone, because a ``system.*`` overlay column can switch a model on, or
+    name another template, for one row. The run-entry checks share this one enumeration so
+    they cannot disagree about which systems a run reads. A module function rather than a
+    method so the checks can be exercised on a stand-in analysis object.
+    """
+    if analysis.cfg_analysis.toggle_sensitivity_analysis:
+        return [target.system for target in analysis.sensitivity.unique_system_targets]
+    return [analysis._system]
+
+
+def _coupled_system_configs(analysis) -> list:
+    """The ``cfg_system`` of every system of ``analysis`` that runs the coupled model on a template."""
+    return [
+        system.cfg_system
+        for system in _systems_run_by(analysis)
+        if system.cfg_system.toggle_tritonswmm_model and system.cfg_system.SWMM_hydraulics is not None
+    ]
+
+
 class TRITONSWMM_analysis:
     """Orchestrates one ensemble of coupled TRITON-SWMM simulations.
 
@@ -2592,6 +2615,186 @@ class TRITONSWMM_analysis:
             "This is a launch RECEIPT, not an execution verdict (Gotcha 69): read the log.",
         )
 
+    def _inflow_check_templates(self) -> list[Path]:
+        """Every distinct SWMM template a SWMM run of this invocation will read, and no other.
+
+        A system's ``SWMM_hydraulics`` is read when its coupled model is on, and its
+        ``SWMM_full`` when its standalone SWMM model is on. A sensitivity analysis reads the
+        systems of ``self.sensitivity.unique_system_targets`` rather than the master's alone,
+        because a ``system.*`` overlay column can switch either model on, or name another
+        template, for one row; the master's templates are included exactly when some target
+        resolves to the master system.
+        """
+        templates: list[Path] = []
+        for system in _systems_run_by(self):
+            cfg = system.cfg_system
+            if cfg.toggle_tritonswmm_model and cfg.SWMM_hydraulics is not None:
+                templates.append(Path(cfg.SWMM_hydraulics))
+            if cfg.toggle_swmm_model and cfg.SWMM_full is not None:
+                templates.append(Path(cfg.SWMM_full))
+        distinct: list[Path] = []
+        for path in templates:
+            if path not in distinct:
+                distinct.append(path)
+        return distinct
+
+    def _refuse_undefined_inflow_nodes(self) -> None:
+        """Refuse, before any job is submitted, a SWMM template whose inflow lines name an undefined node.
+
+        SWMM stops on such a line inside the job, after it has waited in the queue; refusing at
+        submission costs nothing. Scenario preparation can itself run as a cluster job, which is
+        why the check runs here rather than there.
+        """
+        from .scenario import undefined_inflow_nodes
+
+        for template in self._inflow_check_templates():
+            undefined = undefined_inflow_nodes(template)
+            if undefined:
+                raise ConfigurationError(
+                    field="SWMM_hydraulics / SWMM_full",
+                    message=(
+                        f"SWMM template {template} has inflow lines naming node(s) that no "
+                        f"[JUNCTIONS], [OUTFALLS], [STORAGE] or [DIVIDERS] line defines: {undefined}. "
+                        "SWMM would stop on this line with ERROR 209 (undefined object); SWMM's "
+                        "report labels this section [INFLOW]."
+                    ),
+                    config_path=template,
+                )
+
+    def _refuse_invalid_coupling_declaration(self) -> None:
+        """Refuse, before any job is submitted, a coupled system whose coupling declaration is invalid.
+
+        Three refusals, checked per coupled system in this order: a TRITON cfg template that
+        already sets ``swmm_coupling_nodes``, which the toolkit writes itself, so two sources
+        of one declaration would disagree silently; the one-node-per-DEM-cell option under a
+        declared mode, where the option would silently remove declared nodes; and a
+        coupling-node file whose names are undefined, repeated, uncoordinated, absent or not
+        junctions. The solver repeats the file checks at startup, but only after the job has
+        queued. Runs before the empty-candidate and grid checks, so an empty file is refused
+        here and named as an empty file.
+        """
+        from .scenario import coupling_node_file_problems, triton_cfg_sets_coupling_nodes
+
+        for cfg in _coupled_system_configs(self):
+            cfg_template = Path(cfg.triton_swmm_configuration_template)
+            if triton_cfg_sets_coupling_nodes(cfg_template):
+                raise ConfigurationError(
+                    field="swmm_coupling_mode",
+                    message=(
+                        f"TRITON cfg template {cfg_template} sets swmm_coupling_nodes, which the toolkit "
+                        "writes itself for every coupled scenario. Remove that line from the template and "
+                        "declare coupling nodes with system_config.swmm_coupling_mode (and "
+                        "swmm_coupling_nodes_file for a list)."
+                    ),
+                    config_path=cfg_template,
+                )
+            mode = cfg.swmm_coupling_mode
+            if mode != "legacy" and self.cfg_analysis.one_coupled_inflow_node_per_dem_cell:
+                raise ConfigurationError(
+                    field="swmm_coupling_mode",
+                    message=(
+                        f"system_config.swmm_coupling_mode is '{mode}' and "
+                        "analysis_config.one_coupled_inflow_node_per_dem_cell is on. The one-per-cell "
+                        "option applies only to swmm_coupling_mode: legacy; under a declared mode the "
+                        "declaration is the coupled set. Turn the option off, or set swmm_coupling_mode: "
+                        "legacy."
+                    ),
+                    config_path=getattr(self, "analysis_config_yaml", None),
+                )
+            causes = coupling_node_file_problems(cfg)
+            if causes:
+                path = cfg.swmm_coupling_nodes_file
+                raise ConfigurationError(
+                    field="swmm_coupling_nodes_file",
+                    message=" ".join(
+                        f"Coupling-node file {path} (system_config.swmm_coupling_nodes_file): {cause.rstrip('.')}."
+                        for cause in causes
+                    ),
+                    config_path=Path(path),
+                )
+
+    def _refuse_coupled_system_with_no_coupling_candidate(self) -> None:
+        """Refuse, before any job is submitted, a coupled system that declares no coupling node.
+
+        Such a run would exchange no water between SWMM and the surface and still finish with
+        a success marker. Runs after the declaration check, which already refuses an empty
+        coupling-node file, so only the ``all_junctions`` and ``legacy`` causes reach here.
+        """
+        from .scenario import coupling_candidates
+
+        causes = {
+            "all_junctions": "it has no junction with a [COORDINATES] row",
+            "legacy": (
+                "no [INFLOWS] line with constituent FLOW names a node, and system_config.swmm_coupling_mode is 'legacy'"
+            ),
+        }
+        for cfg in _coupled_system_configs(self):
+            mode = cfg.swmm_coupling_mode
+            if mode not in causes or coupling_candidates(cfg):
+                continue
+            template = Path(cfg.SWMM_hydraulics)
+            raise ConfigurationError(
+                field="swmm_coupling_mode",
+                message=(
+                    f"SWMM template {template} declares no coupling node: {causes[mode]}. For a "
+                    "surface-only run, turn off toggle_tritonswmm_model and run the TRITON-only "
+                    "model (toggle_triton_model)."
+                ),
+                config_path=template,
+            )
+
+    def _refuse_coupling_nodes_outside_triton_grid(self, overwrite_system_inputs: bool) -> None:
+        """Refuse, before any job is submitted, a coupling candidate the TRITON grid does not contain.
+
+        TRITON-SWMM stops at startup on such a node, after the job has queued. The grid is the
+        one setup will use, by setup's own rule: the processed DEM's header when that file
+        exists, passes its integrity check and ``overwrite_system_inputs`` is False; otherwise
+        the header of the DEM setup will write, built in memory. Only candidate junctions with
+        a ``[COORDINATES]`` row are judged, because no other candidate is ever written to the
+        coupling list. Under ``legacy`` with the one-per-cell option on, a junction the ranking
+        would drop is refused too: the exact written set needs the per-cell grouping that runs
+        at preparation, and the node does lie outside the grid.
+        """
+        from .exceptions import ProcessingError
+        from .scenario import coupling_candidate_junction_coordinates, nodes_outside_triton_grid
+        from .system import _assert_dem_integrity, read_triton_grid_header, triton_grid_header
+
+        for system in _systems_run_by(self):
+            cfg = system.cfg_system
+            if not (cfg.toggle_tritonswmm_model and cfg.SWMM_hydraulics is not None):
+                continue
+            nodes = coupling_candidate_junction_coordinates(cfg)
+            if not nodes:
+                continue
+            header = None
+            dem_processed = Path(system.sys_paths.dem_processed)
+            if dem_processed.exists() and not overwrite_system_inputs:
+                try:
+                    _assert_dem_integrity(dem_processed)
+                    header = read_triton_grid_header(dem_processed)
+                except ProcessingError:
+                    header = None
+            if header is None:
+                header = triton_grid_header(system._coarsen_dem())
+            outside = nodes_outside_triton_grid(nodes, header)
+            if not outside:
+                continue
+            xll, yll, cell = header["xllcorner"], header["yllcorner"], header["cellsize"]
+            template = Path(cfg.SWMM_hydraulics)
+            listed = "; ".join(f"{name} ({x}, {y})" for name, x, y in outside)
+            field = "swmm_coupling_nodes_file" if cfg.swmm_coupling_mode == "list" else "swmm_coupling_mode"
+            raise ConfigurationError(
+                field=field,
+                message=(
+                    f"SWMM template {template}: {len(outside)} coupling node(s) lie outside the TRITON grid "
+                    f"(x {xll} to {xll + header['ncols'] * cell}, y {yll} to {yll + header['nrows'] * cell}): "
+                    f"{listed}. TRITON-SWMM would stop on each at startup "
+                    f'("Node_swmm {outside[0][0]} is out of bounds"). List only the nodes inside the domain in a '
+                    "coupling-node file (system_config.swmm_coupling_mode: list, with swmm_coupling_nodes_file)."
+                ),
+                config_path=template,
+            )
+
     def run(
         self,
         from_scratch: bool = False,
@@ -2609,6 +2812,7 @@ class TRITONSWMM_analysis:
         override_clean_restart_member_ids: list[str] | None = None,
         override_wipe_nonempty: bool = False,
         override_live_driver: str | None = None,
+        debug: bool = False,
         transfer_config: "PostRunTransferConfig | None" = None,
         report_config: "Path | None" = None,
         override_brand_theme: "Path | None" = None,
@@ -2653,6 +2857,13 @@ class TRITONSWMM_analysis:
         override_hpc_total_nodes : int | None
             Overrides `hpc_total_nodes` in the SBATCH script without mutating
             the config. Only valid for `multi_sim_run_method="1_job_many_srun_tasks"`.
+        debug : bool
+            Run in debug mode. Today it does exactly one thing: when a coupled simulation
+            starts from the beginning (a clean start, rather than a resume from a checkpoint),
+            the toolkit writes ``swmm_snapshot_keep_previous=1`` into its base cfg, asking the
+            solver to keep the previous run's snapshot files rather than remove them. Without
+            it the line is removed. A solver build that does not read the key ignores it.
+            Named ``debug`` rather than ``override_debug`` because it bridges no config field.
         transfer_config : PostRunTransferConfig | None
             If provided, automatically transfer results to the local machine
             after successful completion (requires ``wait_for_job_completion=True``).
@@ -2797,6 +3008,13 @@ class TRITONSWMM_analysis:
         from .exceptions import ConfigurationError
         from .orchestration import WorkflowResult, translate_mode, translate_phases
         from .report_renderers._reporting_sets import renderer_active
+
+        self._refuse_undefined_inflow_nodes()
+        self._refuse_invalid_coupling_declaration()
+        self._refuse_coupled_system_with_no_coupling_candidate()
+        self._refuse_coupling_nodes_outside_triton_grid(
+            overwrite_system_inputs=translate_mode("fresh" if from_scratch else "resume")["overwrite_system_inputs"]
+        )
 
         # _test/ deletion offer: if a leftover smoke-test subtree from a
         # prior analysis.test() exists, offer to delete it before the real run.
@@ -3176,6 +3394,7 @@ class TRITONSWMM_analysis:
             "extra_sbatch_args": extra_sbatch_args,
             "snakemake_diagnostics": snakemake_diagnostics,
             "override_live_driver": override_live_driver,
+            "debug": debug,
         }
         # override_pickup_where_leftoff decouples resume-on-retry from the mode:
         # translate_mode("fresh") (from_scratch=True) sets pickup_where_leftoff=False,
@@ -3229,6 +3448,7 @@ class TRITONSWMM_analysis:
             job_id=result_dict.get("job_id"),
             message=result_dict.get("message", ""),
             partial_failures=result_dict.get("partial_failures", []),
+            retried_to_success=result_dict.get("retried_to_success", []),
         )
 
     # ---- analysis.test(): end-to-end smoke test on a strict _test/ subset ----
@@ -3267,8 +3487,9 @@ class TRITONSWMM_analysis:
         reps = self._select_test_representatives()
         # Truncation happens INSIDE _build_test_analyses: the sliced-weather path
         # + reporting interval are carried THROUGH the model_validate overlay dict so
-        # the on-disk _test YAML the runner subprocess reloads (prepare_scenario_runner's
-        # --analysis-config) points at the short weather. An in-memory
+        # the on-disk _test YAML the runner subprocess reloads (prepare_scenario_runner.main
+        # reads its --analysis-config, which TRITONSWMM_analysis loads via load_analysis_config)
+        # points at the short weather. An in-memory
         # setattr would be discarded at that reload. Scenario-prep
         # regenerates the SWMM .inp window from the sliced weather automatically
         # (swmm_utils.create_swmm_inp_from_template), so no separate .inp-edit pass is needed.
@@ -3325,7 +3546,7 @@ class TRITONSWMM_analysis:
             backend = None
             if cfg_a.n_gpus and a.cfg_hpc_system is not None:
                 # resolve_gpu_target returns (gpu_hardware, gpu_compilation_backend)
-                # -- unpack hardware-first, matching
+                # (config/hpc_system.py::resolve_gpu_target) -- unpack hardware-first, matching
                 # _build_unique_system_targets.
                 _hardware, backend = resolve_gpu_target(a.cfg_hpc_system, partition)
             cfg_s = a._system.cfg_system
@@ -3432,7 +3653,8 @@ class TRITONSWMM_analysis:
             # ConfigurationError ("report_config.sensitivity is set but the analysis is
             # not a sensitivity analysis") whenever the master's reporting_set names a
             # benchmarking-validator set ("benchmarking" / "compute_sensitivity"),
-            # because the reference's member_csv resolves to None (run()'s member_csv). Scope
+            # because the reference's member_csv resolves to None (run() sets member_csv only
+            # for a sensitivity analysis). Scope
             # the report block to the non-sensitivity default: null the benchmarking
             # sensitivity: sub-block (report_config.sensitivity is Optional and is
             # "ignored for main analyses" per its field description)
@@ -3971,6 +4193,7 @@ class TRITONSWMM_analysis:
         override_force_rerun: ForceRerunValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
+        debug: bool = False,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
         dry_run: bool = False,
         verbose: bool = True,
@@ -4044,6 +4267,10 @@ class TRITONSWMM_analysis:
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
             If True, resume simulations from last checkpoint
+        debug : bool
+            The run's ``--debug`` flag, threaded to the workflow builder, which emits
+            ``--debug`` on every run-simulation rule shell. Today it does one thing: a coupled
+            clean start keeps the previous run's snapshot files instead of removing them.
         wait_for_completion : bool
             If True, wait for workflow completion (relevant for slurm jobs only)
         dry_run : bool
@@ -4069,7 +4296,13 @@ class TRITONSWMM_analysis:
             - job_id: str | None - Job ID (only for slurm mode)
             - message: str - Status message
         """
-        # Login-node preflight of config visibility. Refuse BEFORE anything is stamped, written or
+        self._refuse_undefined_inflow_nodes()
+        self._refuse_invalid_coupling_declaration()
+        self._refuse_coupled_system_with_no_coupling_candidate()
+        self._refuse_coupling_nodes_outside_triton_grid(overwrite_system_inputs=overwrite_system_inputs)
+
+        # Login-node preflight: refuse any analysis path a compute node cannot see.
+        # Refuse BEFORE anything is stamped, written or
         # deleted: under a slurm locus every rule reads these paths from a compute
         # node, and a node-local one costs the whole allocation. `mode` here is the
         # RESOLVED locus when run() delegated (analysis.py resolves it and passes it
@@ -4170,6 +4403,7 @@ class TRITONSWMM_analysis:
                     which=which,
                     compression_level=compression_level,
                     pickup_where_leftoff=pickup_where_leftoff,
+                    debug=debug,
                     wait_for_completion=wait_for_completion,
                     dry_run=dry_run,
                     verbose=verbose,
@@ -4209,6 +4443,7 @@ class TRITONSWMM_analysis:
                     which=which,
                     compression_level=compression_level,
                     pickup_where_leftoff=pickup_where_leftoff,
+                    debug=debug,
                     wait_for_completion=wait_for_completion,
                     dry_run=dry_run,
                     verbose=verbose,
@@ -4397,7 +4632,7 @@ class TRITONSWMM_analysis:
         # emits per-member consolidate rules + a experiment_consolidation rule that consume
         # from the correct paths. Pattern mirrors this class's sensitivity-dispatching
         # status properties (e.g. _scenarios_not_created) and the bundle CLI's own
-        # toggle_sensitivity_analysis dispatch.
+        # toggle_sensitivity_analysis dispatch (bundle_command in cli.py).
         if self.cfg_analysis.toggle_sensitivity_analysis:
             if would_clear:
                 raise ConfigurationError(
@@ -4477,7 +4712,7 @@ class TRITONSWMM_analysis:
         # _invalidate_downstream_flags had already unlinked
         # analysis_report.{html,zip} and the report-feeding plots, so a REFUSED
         # reprocess destroyed the artifact it was refusing to rebuild
-        # (measured on the UVA benchmarking_cpu_uva arm: report deleted, then
+        # (measured on the UVA benchmarking_cpu_uva experiment: report deleted, then
         # rc=1). Gate and self-sentinel write are one step: hoisting the
         # read-only gate alone would leave the refusal reachable after
         # destruction whenever another driver appears in the (minutes-long)
@@ -4585,10 +4820,15 @@ class TRITONSWMM_analysis:
         # Invalidate from start_with onward — deletes the upstream flag/artifact
         # that triggers Snakemake's mtime-driven re-fire: it deletes flags and
         # relies on the generator's baked overwrite.
-        # On dry_run, the flag deletion still happens (it is the cheap,
-        # rerun-recreated trigger that makes the --dry-run DAG meaningful);
-        # only the destructive consolidated-zarr deletion + DU restamp are
-        # skipped, because a dry run must not destroy what it previews.
+        # On dry_run, the flag deletion and the report-shell unlink
+        # (analysis_report.html, analysis_report.zip) still happen: they are the
+        # cheap, rerun-recreated triggers that make the --dry-run DAG meaningful.
+        # The consolidated-zarr deletion, the DU accounting and every figure
+        # deletion are skipped, because a dry run must not destroy what it
+        # previews. Pinned in part: the figures and the report shell by
+        # tests/test_reprocess_rebuild_invalidation.py::
+        # test_a_dry_run_reprocess_spares_every_figure_and_still_drops_the_report_shell,
+        # and the DU accounting by tests/test_du_dry_run_gate.py; no test pins the zarr or flag halves.
         self._invalidate_downstream_flags(
             start_with,
             regenerate_existing=regenerate_existing,
@@ -4764,7 +5004,8 @@ class TRITONSWMM_analysis:
         if not enabled_models:
             return False  # No models enabled — nothing to attest.
 
-        # Non-sensitivity path only; this method does not enumerate member flags.
+        # Non-sensitivity path only; this method does not enumerate member flags (sensitivity
+        # paths are handled by TRITONSWMM_sensitivity_analysis.reprocess).
         if getattr(self.cfg_analysis, "toggle_sensitivity_analysis", False):
             # Conservatively return False on a sensitivity master so the guard
             # short-circuits rather than admitting a false-positive.
@@ -4918,7 +5159,7 @@ class TRITONSWMM_analysis:
         #    outputs (summaries + timeseries, every model family) live under one
         #    directory: sims/{event_id}/processed/ (wired in TRITONSWMM_scenario.__init__).
         #    The raw out_triton/out_tritonswmm/out_swmm binaries are SIBLINGS under
-        #    sim_folder (same constructor), NOT under processed/, so deleting
+        #    sim_folder (same constructor, as ``ScenarioPaths.out_triton`` etc.), NOT under processed/, so deleting
         #    processed/ preserves the rebuild source. Single-dir deletion is
         #    drift-proof (no ScenarioPaths attr-name maintenance — the prior
         #    16-attr tuple had wrong names) and is exactly the granularity the
@@ -5414,10 +5655,11 @@ class TRITONSWMM_analysis:
         are absent on disk, delete the flag AND clear the per-model
         ``processing_log.outputs`` so:
 
-        1. the reprocess generator's emit gate
+        1. the reprocess generator's emit gate in ``workflow.py``
            (``start_with=='process' and not d_process_path.exists()``) re-emits
            the process rule, and
-        2. the runner's ``_already_written`` gate (in process_simulation.py,
+        2. the runner's ``_already_written`` gate
+           (``process_simulation.py::TRITONSWMM_sim_post_processing._already_written``,
            keyed on ``processing_log.outputs[...].success`` — NOT ``.exists()``)
            returns False so ``_export_*`` actually re-writes.
 
@@ -5488,7 +5730,7 @@ class TRITONSWMM_analysis:
             evt = compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(event_iloc))
             for model_type in scen.run.model_types_enabled:
                 # Flag name shape MUST match the generator gate's token shape
-                # (process_timeseries_flag_per_member for members; the non-member flag for
+                # (constants.process_timeseries_flag_per_member for members; the non-member flag for
                 # non-sensitivity) so the unlink hits exactly the flag the gate
                 # checks.
                 if is_sub:
@@ -5665,16 +5907,17 @@ class TRITONSWMM_analysis:
                 # MODEL AXIS. Same shape as the event guard two lines above: a model the
                 # force did not name keeps its processing_log records and its
                 # raw-outputs-cleared markers untouched. Without this the force would
-                # preserve a correct arm's FLAGS while silently resetting its LOG -- a
+                # preserve a correct model type's FLAGS while silently resetting its LOG -- a
                 # half-scoped invalidation of exactly the class this axis exists to remove.
                 if model_type not in spec.models:
                     continue
                 model_log = scen.get_log(model_type)
                 # Clear the processing_log dict and persist.
                 model_log.processing_log.outputs.clear()
-                # FORCE-RERUN MARKER, SET HERE and nowhere else. The completion short-circuit in
+                # FORCE-RERUN MARKER (force_rerun_pending), SET HERE and nowhere else. The completion
+                # short-circuit in
                 # prepare_simulation_command reads a record set DISJOINT from everything this
-                # method clears (simulation_completed + the per-arm terminal artifacts + the
+                # method clears (simulation_completed + the per-model-type terminal artifacts + the
                 # "Simulation ends" fallback), so without this write a stage="simulate" force
                 # re-fires the sim rule, runs no solver, re-emits a green c_run flag, and the
                 # processing rule re-crashes on the same raw. KEYED ON AN EXPLICIT OPT-IN, NOT
@@ -5742,7 +5985,7 @@ class TRITONSWMM_analysis:
                 raise RuntimeError("force_rerun scope='member' on an analysis with no sensitivity attribute")
             # THREADS `models`, not the default. This RE-DERIVES a spec from an existing
             # one -- it already threads `stage=spec.stage` deliberately -- so taking "all
-            # enabled" for the models here would widen a two-arm force back to three inside
+            # enabled" for the models here would widen a two-model-type force back to three inside
             # every member, silently, one function away from the guard above. DISCRIMINATOR
             # for a future construction site: any site passing `stage=spec.stage` rather
             # than a literal is threading and must thread `models` too.
@@ -6396,15 +6639,19 @@ class TRITONSWMM_analysis:
         """
         Cancel ongoing tmux workflow for this analysis.
 
-        This method sends SIGINT to the Snakemake process running in the tmux session,
-        which triggers Snakemake's built-in cancel_jobs() to cleanly cancel all worker jobs.
+        Two branches. By default (``rule_classes=None``) it sends SIGINT to the Snakemake
+        process running in the tmux session, which triggers Snakemake's built-in
+        cancel_jobs() to cancel ALL worker jobs. With ``rule_classes`` set it sends NO
+        SIGINT: it scancels only the jobs whose rule token starts with one of those
+        prefixes -- running AND pending -- then kills the tmux session, deliberately
+        leaving other jobs (e.g. post-sim processing) running (see ``_selective_cancel``).
 
         The method uses persistent log data to identify the session, so it works across
         terminal sessions (close terminal, reopen, reinitialize analysis, call cancel).
 
         **Key features:**
         - Checks if session is actually running before attempting cancellation
-        - Sends SIGINT to Snakemake process for clean cancellation
+        - Default branch: sends SIGINT to the Snakemake process for clean cancellation
         - Waits for Snakemake to finish canceling worker jobs
         - Asks SLURM whether any worker job recorded under the driver's run uuids is
           still live, and reports the workers unverified when it cannot ask
@@ -6553,12 +6800,12 @@ class TRITONSWMM_analysis:
         # Step 1b: SELECTIVE arm. Step 2's SIGINT reaches Snakemake's
         # cancel_jobs(), which cancels EVERY in-flight job -- sims and processing alike
         # -- and cannot be made selective, so a filtered cancel scancels the chosen
-        # jobids itself. That is ONE methodology with two arms, not a parallel path.
+        # jobids itself. That is ONE methodology with two branches, not a parallel path.
         #
         # WHY tmux kill-session AFTER, and why its weakness is the point. SIGHUP does
         # NOT reach Snakemake's handler (it registers SIGTERM only), so the executor's
         # scancel path is never invoked -- MEASURED 2026-08-29, three queued jobs
-        # survived with their submit times intact. That is exactly what this arm needs:
+        # survived with their submit times intact. That is exactly what this branch needs:
         # the driver is removed WITHOUT cancelling the processing jobs we deliberately
         # spared. They are independent allocations, they run to completion, and a later
         # run resumes them through the submission sentinels.

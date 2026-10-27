@@ -161,6 +161,9 @@ def return_swmm_outputs(
             f"SWMM output file not recognized while parsing time series. File passed: {swmm_timeseries_result_file}"
         )
 
+    quality_vars: dict[str, xr.DataArray] = {}
+    pollutants: list[tuple[str, str]] = []
+    simulation_start: str | None = None
     if use_rpt_for_tseries:
         (
             dict_section_lines,
@@ -169,6 +172,25 @@ def return_swmm_outputs(
             dict_system_results,
             valid,
         ) = parse_rpt_single_pass(swmm_timeseries_result_file)
+        # The coupled model's report is read as m3/s with no conversion, and SWMM writes its
+        # flows in the model's own unit, so a report in any other unit is refused here --
+        # the guard for reports the preparation check never saw, such as a reprocess of an
+        # existing analysis. Deliberately NOT in `_build_system_results`, which the
+        # hydrology report summary also reaches, and the hydrology model accepts LPS and
+        # MLD because its flows are converted.
+        if dict_system_results["flow_units"] != "cms":
+            from hhemt.exceptions import ProcessingError
+
+            raise ProcessingError(
+                operation="return_swmm_outputs",
+                filepath=Path(swmm_timeseries_result_file),
+                reason=(
+                    f"SWMM report flow units are {dict_system_results['flow_units'].upper()!r}; "
+                    "the toolkit reads the coupled model's report flows as m3/s without "
+                    "conversion, so the hydraulics model's [OPTIONS] FLOW_UNITS must be CMS. "
+                    "Fix it in the SWMM template named by system_config."
+                ),
+            )
         if valid is False:
             print(f"The RPT file seems to not contain any information: {swmm_timeseries_result_file}")
         # make sure the data arrays are data type float
@@ -185,13 +207,46 @@ def return_swmm_outputs(
             lst_dtypes_to_try=[str],
             coords_to_coerce=["node_id", "link_id"],
         )
+        # Water quality: only when the report itself says quality was routed.
+        if rpt_prints_water_quality(swmm_timeseries_result_file):
+            pollutants = _declared_pollutants(f_swmm_inp)
+            da_node_conc, da_link_conc = parse_rpt_pollutant_tseries(swmm_timeseries_result_file, pollutants)
+            if da_node_conc is not None:
+                quality_vars["pollutant_conc"] = da_node_conc
+            if da_link_conc is not None:
+                quality_vars["link_pollutant_conc"] = da_link_conc
+            rpt_content = Path(swmm_timeseries_result_file).read_text(encoding="latin-1")
+            simulation_start = _rpt_starting_date(rpt_content)
+            quality_vars.update(
+                parse_rpt_quality_summaries(
+                    rpt_content.splitlines(),
+                    pollutants,
+                    include_runoff_quality=False,
+                    filepath=swmm_timeseries_result_file,
+                )
+            )
+            del rpt_content
     else:
-        ds_node_tseries, ds_link_tseries = return_node_time_series_results_from_outfile(swmm_timeseries_result_file)
+        ds_node_tseries, ds_link_tseries, pollutants, out_start = return_node_time_series_results_from_outfile(
+            swmm_timeseries_result_file, f_inp=f_swmm_inp, return_quality=True
+        )
+        if pollutants:
+            simulation_start = out_start
+            quality_vars["pollutant_conc"] = ds_node_tseries["pollutant_conc"]
+            quality_vars["link_pollutant_conc"] = ds_link_tseries["link_pollutant_conc"]
+            ds_node_tseries = ds_node_tseries.drop_vars("pollutant_conc")
+            ds_link_tseries = ds_link_tseries.drop_vars("link_pollutant_conc")
         rpt_file = swmm_timeseries_result_file.with_suffix(".rpt")
         if rpt_file.exists():
             try:
                 with open(rpt_file, encoding="latin-1") as file:
                     rpt_lines = file.readlines()
+                if pollutants and lines_print_water_quality(rpt_lines):
+                    quality_vars.update(
+                        parse_rpt_quality_summaries(
+                            rpt_lines, pollutants, include_runoff_quality=True, filepath=rpt_file
+                        )
+                    )
                 lst_node_fld_summary = return_lines_for_section_of_rpt("Node Flooding Summary", lines=rpt_lines)
                 lst_node_flow_summary = return_lines_for_section_of_rpt("Node Inflow Summary", lines=rpt_lines)
                 lst_link_flow_summary = return_lines_for_section_of_rpt("Link Flow Summary", lines=rpt_lines)
@@ -272,10 +327,422 @@ def return_swmm_outputs(
     ds_nodes = xr.merge([ds_node_summaries, ds_node_tseries], join="outer")
     ds_links = xr.merge([ds_link_flow_summary, ds_link_tseries], join="outer")
     #
+    if quality_vars:
+        link_only = ("link_pollutant_conc", "link_total_load")
+        node_vars = {k: v for k, v in quality_vars.items() if k not in link_only and k != "washoff_total_load"}
+        link_vars = {k: v for k, v in quality_vars.items() if k in link_only}
+        ds_nodes = xr.merge([ds_nodes, xr.Dataset(node_vars)], join="outer")
+        if "washoff_total_load" in quality_vars:
+            ds_nodes = xr.merge([ds_nodes, xr.Dataset({"washoff_total_load": quality_vars["washoff_total_load"]})])
+        ds_links = xr.merge([ds_links, xr.Dataset(link_vars)], join="outer")
+        ds_nodes = _attach_pollutant_coords(ds_nodes, pollutants)
+        ds_links = _attach_pollutant_coords(ds_links, pollutants)
+    #
     ds_nodes.attrs = dict_system_results
     ds_links.attrs = dict_system_results
+    if "pollutant_conc" in ds_nodes.data_vars:
+        # The peak's time is measured here, where the simulation start is known, and stored as the declared
+        # variable it is. The start itself is NOT stored: a dataset attribute carrying it would be persisted
+        # in every quality-routed node store as a key the output data model does not declare.
+        ds_nodes["pollutant_time_of_max_conc_min"] = pollutant_time_of_max_conc_min(
+            ds_nodes["pollutant_conc"], simulation_start
+        )
     #
     return ds_nodes, ds_links
+
+
+# --- Water quality (SWMM pollutants) ---------------------------------------------------------
+#
+# Everything below is written ONLY for a model whose report prints `Water Quality .......... YES`
+# (SWMM prints NO whenever `IGNORE_QUALITY` is on or no pollutant is declared). On the `.out` path
+# the same predicate is the `.out`'s own pollutant count being above zero (`output.c`: it is zero
+# when quality is ignored). For every other model none of these names, coordinates, dimensions or
+# attribute keys exist, so its processed outputs are byte-identical to what they were.
+
+_RE_WATER_QUALITY = re.compile(r"^\s*Water Quality\s*\.+\s*(YES|NO)\s*$", re.MULTILINE)
+_RE_START_DATE = re.compile(r"^\s*Starting Date\s*\.+\s*(\S+\s+\S+)\s*$", re.MULTILINE)
+_RE_CONTINUITY_ROW = re.compile(r"^\s*(?P<label>[A-Za-z][^.]*?)\s*\.{2,}\s*(?P<vals>[-+0-9.eE\s]+?)\s*$")
+
+#: `Quality Routing Continuity` row labels to the variable-name stem each is stored under.
+_QUAL_ROUTING_TERMS = {
+    "Dry Weather Inflow": "dry_weather_inflow",
+    "Wet Weather Inflow": "wet_weather_inflow",
+    "Groundwater Inflow": "groundwater_inflow",
+    "RDII Inflow": "rdii_inflow",
+    "External Inflow": "external_inflow",
+    "External Outflow": "external_outflow",
+    "Flooding Loss": "flooding_loss",
+    "Exfiltration Loss": "exfiltration_loss",
+    "Mass Reacted": "mass_reacted",
+    "Initial Stored Mass": "initial_stored_mass",
+    "Final Stored Mass": "final_stored_mass",
+}
+#: `Runoff Quality Continuity` row labels to the variable-name stem each is stored under.
+_RUNOFF_QUAL_TERMS = {
+    "Initial Buildup": "initial_buildup",
+    "Surface Buildup": "surface_buildup",
+    "Wet Deposition": "wet_deposition",
+    "Sweeping Removal": "sweeping_removal",
+    "Infiltration Loss": "infiltration_loss",
+    "BMP Removal": "bmp_removal",
+    "Surface Runoff": "surface_runoff",
+    "Remaining Buildup": "remaining_buildup",
+}
+
+
+def lines_print_water_quality(lines) -> bool:
+    """Whether a report's text (any iterable of lines) prints ``Water Quality .......... YES``."""
+    for line in lines:
+        match = _RE_WATER_QUALITY.match(line.rstrip("\r\n"))
+        if match is not None:
+            return match.group(1) == "YES"
+    return False
+
+
+def rpt_prints_water_quality(f_rpt: Path) -> bool:
+    """Whether the report file prints ``Water Quality .......... YES``, reading only as far as needed.
+
+    SWMM writes that line in the options block near the top of the report, so the scan stops at
+    the first match; a multi-gigabyte coupled report is not read in full to answer this. A file
+    that carries no such line (empty, truncated before the options block) answers False.
+    """
+    with open(f_rpt, encoding="latin-1") as fh:
+        for line in fh:
+            match = _RE_WATER_QUALITY.match(line.rstrip("\r\n"))
+            if match is not None:
+                return match.group(1) == "YES"
+    return False
+
+
+def _declared_pollutants(f_inp):
+    """The model's pollutants as ``[(name, unit)]`` in ``[POLLUTANTS]`` order, refusing a model with none.
+
+    A report that prints ``Water Quality YES`` without the model file declaring a pollutant cannot
+    happen for a consistent pair, so an empty list is a mismatched pair and is refused rather than
+    silently producing no pollutant variables.
+    """
+    from hhemt.exceptions import ProcessingError
+    from hhemt.scenario import ordered_inp_pollutants
+
+    pollutants = ordered_inp_pollutants(f_inp)
+    if not pollutants:
+        raise ProcessingError(
+            operation="return_swmm_outputs",
+            filepath=Path(f_inp),
+            reason="the SWMM report says water quality was routed but the model file declares no [POLLUTANTS].",
+        )
+    return pollutants
+
+
+def _rpt_starting_date(text: str) -> str | None:
+    """The report's ``Starting Date`` value as ``MM/DD/YYYY HH:MM:SS`` text, or None when absent."""
+    match = _RE_START_DATE.search(text)
+    return match.group(1) if match else None
+
+
+def pollutant_time_of_max_conc_min(conc, simulation_start, tstep_dimname="date_time"):
+    """Minutes from the simulation start to the first step at which each series reaches its maximum.
+
+    ``conc`` is a concentration DataArray whose last-but-one axis is the time dimension; the result drops
+    that dimension. ``simulation_start`` is the report's ``Starting Date`` text (``MM/DD/YYYY HH:MM:SS``);
+    when it is None the origin is the first reported step. The unit and origin match ``time_of_max_flow_min``.
+    The first occurrence of a tied maximum is used; a series with no value gives NaN.
+    """
+    times = conc[tstep_dimname].values
+    origin = (
+        pd.to_datetime(simulation_start, format=RPT_DATETIME_FORMAT) if simulation_start else pd.Timestamp(times.min())
+    )
+    first = conc.fillna(-np.inf).argmax(dim=tstep_dimname)
+    when = times[first.values]
+    minutes = (when - np.datetime64(origin)) / np.timedelta64(1, "m")
+    has_value = conc.notnull().any(dim=tstep_dimname).values
+    return xr.DataArray(
+        np.where(has_value, minutes, np.nan),
+        dims=first.dims,
+        coords={d: first.coords[d] for d in first.dims if d in first.coords},
+    )
+
+
+def _attach_pollutant_coords(ds, pollutants):
+    """Return ``ds`` with the ``pollutant`` and ``pollutant_conc_units`` coordinates along ``pollutant``."""
+    names = [name for name, _ in pollutants]
+    units = [unit for _, unit in pollutants]
+    return ds.assign_coords(
+        pollutant=("pollutant", names),
+        pollutant_conc_units=("pollutant", units),
+    )
+
+
+def _linearize_mass(values, pollutants):
+    """Undo SWMM's ``LOG10`` on the mass values of a count (``#/L``) pollutant.
+
+    ``values`` has the pollutant as its LAST axis. SWMM prints every mass value of a count
+    pollutant as ``LOG10(x)`` and its macro returns ``x`` unchanged for ``x <= 0``, so a printed
+    ``0.000`` means zero (or one organism, which is negligible) and maps to 0; any other printed
+    value ``x`` is ``10**x``. Pollutants in a mass unit are returned as printed.
+    """
+    out = np.array(values, dtype=float, copy=True)
+    for k, (_, unit) in enumerate(pollutants):
+        if unit == "#/L":
+            col = out[..., k]
+            out[..., k] = np.where(col == 0.0, 0.0, 10.0**col)
+    return out
+
+
+def _rpt_table_rows(lines, title, *, until_dash):
+    """Token lists of the data rows of the pollutant table titled ``title``, or None when absent.
+
+    The table's rows sit after its SECOND dashed line. They end at the next dashed line when
+    ``until_dash`` (outfall loading and subcatchment washoff, which close with a dashed line
+    and a ``System`` row) or at the first blank line otherwise (link pollutant loads).
+    """
+    start = next((i for i, line in enumerate(lines) if title in line), None)
+    if start is None:
+        return None
+    dashes = 0
+    rows = []
+    for line in lines[start + 1 :]:
+        stripped = line.strip()
+        if stripped.startswith("---"):
+            dashes += 1
+            if dashes > 2 and until_dash:
+                break
+        elif dashes >= 2:
+            if not stripped:
+                break
+            rows.append(stripped.split())
+    return rows
+
+
+def _rpt_quality_continuity(lines, table_header, n_pollutants, filepath):
+    """Rows of one quality continuity table as ``{label: [value per pollutant]}``, scoped by header.
+
+    SWMM prints the table in groups of at most five pollutants, repeating the header for each
+    group, so the values of every group are concatenated in print order, which is the
+    ``[POLLUTANTS]`` order. A value count different from ``n_pollutants`` is refused.
+    """
+    rows: dict[str, list[float]] = {}
+    current = None
+    for line in lines:
+        opened = _continuity_table_opened_by(line)
+        if opened is not None:
+            current = opened
+        if current != table_header:
+            continue
+        match = _RE_CONTINUITY_ROW.match(line.rstrip("\r\n"))
+        if match is not None:
+            rows.setdefault(match.group("label").strip(), []).extend(float(v) for v in match.group("vals").split())
+    for label, vals in rows.items():
+        if len(vals) != n_pollutants:
+            from hhemt.exceptions import ProcessingError
+
+            raise ProcessingError(
+                operation="parse_rpt_quality_summaries",
+                filepath=Path(filepath),
+                reason=(
+                    f"{table_header} row {label!r} carries {len(vals)} value(s) but the model declares "
+                    f"{n_pollutants} pollutant(s)."
+                ),
+            )
+    return rows
+
+
+def _refuse_row_width(filepath, title, n_found, n_expected):
+    """Raise the ProcessingError for a pollutant table row whose field count is wrong."""
+    from hhemt.exceptions import ProcessingError
+
+    raise ProcessingError(
+        operation="parse_rpt_quality_summaries",
+        filepath=Path(filepath),
+        reason=f"a {title} row has {n_found} field(s); {n_expected} were expected for the declared pollutants.",
+    )
+
+
+def parse_rpt_quality_summaries(lines, pollutants, *, include_runoff_quality, filepath="<rpt>"):
+    """Read SWMM's water-quality summary tables from report ``lines`` into labelled arrays.
+
+    Returns ``{variable name: xr.DataArray}``, containing only the tables the report prints:
+
+    - ``outfall_total_load`` (node_id, pollutant), ``outfall_total_vol_10e6_ltr`` (node_id) and
+      ``outfall_emc`` (node_id, pollutant) from ``Outfall Loading Summary``. The event mean
+      concentration is the total load over the total volume in the pollutant's concentration
+      unit, and NaN where the volume is zero.
+    - ``link_total_load`` (link_id, pollutant) from ``Link Pollutant Load Summary``.
+    - ``washoff_total_load`` (subcatchment_id, pollutant) from ``Subcatchment Washoff Summary``.
+    - ``qual_routing_{term}`` and ``qual_routing_continuity_error_perc`` (pollutant) from
+      ``Quality Routing Continuity``; and, when ``include_runoff_quality``,
+      ``runoff_qual_{term}`` and ``runoff_qual_continuity_error_perc`` from ``Runoff Quality
+      Continuity``. Each is read from its own table (the continuity tables are header-scoped).
+
+    Every mass value of a count pollutant is linearized (see ``_linearize_mass``); concentrations
+    of the outfall table and the percentage errors are not masses and are used as printed.
+    """
+    names = [name for name, _ in pollutants]
+    units = [unit for _, unit in pollutants]
+    n = len(names)
+    out: dict[str, xr.DataArray] = {}
+
+    def _two_d(index_name, ids, matrix):
+        return xr.DataArray(matrix, dims=(index_name, "pollutant"), coords={index_name: list(ids), "pollutant": names})
+
+    rows = _rpt_table_rows(lines, "Outfall Loading Summary", until_dash=True)
+    if rows:
+        for row in rows:
+            if len(row) != 5 + n:
+                _refuse_row_width(filepath, "Outfall Loading Summary", len(row), 5 + n)
+        ids = [row[0] for row in rows]
+        volume = np.array([float(row[4]) for row in rows])
+        loads = _linearize_mass(np.array([[float(v) for v in row[5:]] for row in rows]), pollutants)
+        out["outfall_total_load"] = _two_d("node_id", ids, loads)
+        out["outfall_total_vol_10e6_ltr"] = xr.DataArray(volume, dims=("node_id",), coords={"node_id": ids})
+        emc = np.full(loads.shape, np.nan)
+        for k, unit in enumerate(units):
+            scale = {"mg/L": 1.0, "ug/L": 1000.0}.get(unit)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                if scale is not None:
+                    col = loads[:, k] / volume * scale
+                else:
+                    col = loads[:, k] / (volume * 1.0e6)
+            emc[:, k] = np.where(volume > 0.0, col, np.nan)
+        out["outfall_emc"] = _two_d("node_id", ids, emc)
+
+    rows = _rpt_table_rows(lines, "Link Pollutant Load Summary", until_dash=False)
+    if rows:
+        for row in rows:
+            if len(row) != 1 + n:
+                _refuse_row_width(filepath, "Link Pollutant Load Summary", len(row), 1 + n)
+        out["link_total_load"] = _two_d(
+            "link_id",
+            [row[0] for row in rows],
+            _linearize_mass(np.array([[float(v) for v in row[1:]] for row in rows]), pollutants),
+        )
+
+    rows = _rpt_table_rows(lines, "Subcatchment Washoff Summary", until_dash=True)
+    if rows:
+        for row in rows:
+            if len(row) != 1 + n:
+                _refuse_row_width(filepath, "Subcatchment Washoff Summary", len(row), 1 + n)
+        out["washoff_total_load"] = _two_d(
+            "subcatchment_id",
+            [row[0] for row in rows],
+            _linearize_mass(np.array([[float(v) for v in row[1:]] for row in rows]), pollutants),
+        )
+
+    def _continuity(header, prefix, terms):
+        table = _rpt_quality_continuity(lines, header, n, filepath)
+        for label, stem in terms.items():
+            if label in table:
+                mass = _linearize_mass(np.array(table[label]).reshape(1, n), pollutants)[0]
+                out[f"{prefix}_{stem}"] = xr.DataArray(mass, dims=("pollutant",), coords={"pollutant": names})
+        if "Continuity Error (%)" in table:
+            out[f"{prefix}_continuity_error_perc"] = xr.DataArray(
+                np.array(table["Continuity Error (%)"]), dims=("pollutant",), coords={"pollutant": names}
+            )
+
+    _continuity("Quality Routing Continuity", "qual_routing", _QUAL_ROUTING_TERMS)
+    if include_runoff_quality:
+        _continuity("Runoff Quality Continuity", "runoff_qual", _RUNOFF_QUAL_TERMS)
+    return out
+
+
+def _bulk_parse_pollutant_section(section_text, kind_filter, idx_colname, pollutants, filepath):
+    """Pollutant concentration columns of one rpt time-series section, as (idx, date_time, pollutant).
+
+    Every data row of a block must carry ``2 + 4 + n`` fields (date, time, the four hydraulic
+    columns, one concentration per declared pollutant); anything else raises a ``ProcessingError``
+    naming the file and ``n``. The pollutant names come from the model's ``[POLLUTANTS]`` section,
+    never from the report's column headers, which run together for identifiers of ten or more
+    characters. Returns None when the section holds no block of ``kind_filter``.
+    """
+    n = len(pollutants)
+    expected = 2 + 4 + n
+    ids, row_counts, parts = [], [], []
+    for match in _RE_TSERIES_BLOCK.finditer(section_text):
+        if match.group("kind") != kind_filter:
+            continue
+        data_text = match.group("data")
+        n_rows = data_text.count("\n")
+        if n_rows == 0:
+            continue
+        for row in data_text.split("\n"):
+            if row.strip() and len(row.split()) != expected:
+                from hhemt.exceptions import ProcessingError
+
+                raise ProcessingError(
+                    operation="parse_rpt_pollutant_tseries",
+                    filepath=Path(filepath),
+                    reason=(
+                        f"a {kind_filter} time-series row carries {len(row.split())} field(s); {expected} "
+                        f"were expected for {n} declared pollutant(s) (date, time, 4 hydraulic, {n} concentration)."
+                    ),
+                )
+        ids.append(match.group("id"))
+        row_counts.append(n_rows)
+        parts.append(data_text)
+    if not parts:
+        return None
+    cols = [f"c{k}" for k in range(n)]
+    df = pd.read_csv(
+        io.StringIO("".join(parts)),
+        sep=r"\s+",
+        header=None,
+        names=["date", "time", *cols],
+        usecols=[0, 1, *range(6, 6 + n)],
+        engine="c",
+        dtype={"date": str, "time": str},
+    )
+    df["date_time"] = pd.to_datetime(df["date"] + " " + df["time"], format=RPT_DATETIME_FORMAT, errors="coerce")
+    if df["date_time"].isna().any():
+        raise ValueError(
+            f"Parsed RPT date_time values contained NaT. Verify the RPT datetime format matches {RPT_DATETIME_FORMAT}."
+        )
+    df[idx_colname] = np.repeat(ids, row_counts)
+    ds = df.set_index([idx_colname, "date_time"])[cols].to_xarray()
+    da = ds.to_dataarray(dim="pollutant").transpose(idx_colname, "date_time", "pollutant")
+    return da.assign_coords(pollutant=[name for name, _ in pollutants]).astype(float)
+
+
+def parse_rpt_pollutant_tseries(f_rpt: Path, pollutants):
+    """Pollutant concentration series of a coupled report: ``(node DataArray, link DataArray)``.
+
+    ``pollutant_conc`` is (node_id, date_time, pollutant) and ``link_pollutant_conc`` is
+    (link_id, date_time, pollutant). The hydraulic columns are read by ``_bulk_parse_tseries``
+    and are untouched here; this is a second ``read_csv`` over the concentration columns only.
+    """
+    content = Path(f_rpt).read_text(encoding="latin-1")
+    m_node = _RE_NODE_TSERIES_SECTION.search(content)
+    m_link = _RE_LINK_TSERIES_SECTION.search(content)
+    node_end = m_link.start() if m_link else len(content)
+    node_section = content[m_node.end() : node_end] if m_node else ""
+    link_section = content[m_link.end() :] if m_link else ""
+    da_node = _bulk_parse_pollutant_section(node_section, "Node", "node_id", pollutants, f_rpt)
+    da_link = _bulk_parse_pollutant_section(link_section, "Link", "link_id", pollutants, f_rpt)
+    if da_node is not None:
+        da_node.name = "pollutant_conc"
+    if da_link is not None:
+        da_link.name = "link_pollutant_conc"
+    return da_node, da_link
+
+
+# The continuity tables SWMM prints in a `.rpt`, by the header line that opens each. A `Continuity Error (%)`
+# line and a `Flooding Loss` line mean different things in different tables, so the scans below take a figure
+# only from the table that owns it. Taking the LAST such line, as the scans did before, returns the water-quality
+# or groundwater table's value whenever a report prints one (SWMM prints them after the quantity tables).
+_CONTINUITY_TABLE_HEADERS = (
+    "Runoff Quantity Continuity",
+    "Runoff Quality Continuity",
+    "Groundwater Continuity",
+    "Flow Routing Continuity",
+    "Quality Routing Continuity",
+)
+
+
+def _continuity_table_opened_by(line):
+    """Return the continuity table a header `line` opens, or None when it opens none."""
+    for header in _CONTINUITY_TABLE_HEADERS:
+        if header in line:
+            return header
+    return None
 
 
 def return_swmm_system_outputs(rpt_lines):
@@ -287,8 +754,9 @@ def return_swmm_system_outputs(rpt_lines):
 
     - "Flow Routing Continuity" — gated on `Nobjects[NODE] > 0 && !IgnoreRouting`
       (massbal.c:299), so a link-free or `IGNORE_ROUTING YES` model omits it.
-    - "Analysis ended on" — written only at clean termination, so a coupled run
-      whose embedded SWMM never reached `swmm_report()` omits it.
+    - "Analysis ended on" — written by `swmm_close` on every run that reaches the
+      close, a clean finish or a run closed after an input or start error; a run
+      killed or aborted before the close omits it.
     - "Flow Units" / "Flooding Loss" — present on any complete `.rpt`
       (report.c:267 is unconditional inside `report_writeOptions()`), but absent
       from a zero-byte or header-truncated file, which `Path.exists()` does not
@@ -306,7 +774,7 @@ def return_swmm_system_outputs(rpt_lines):
     dereferences unguarded (three raising `UnboundLocalError`, one
     `AttributeError`) until 2026-07-15.
     """
-    encountered_flow_routing_continuity = False
+    current_continuity_table = None
     line_flw_units = None
     runoff_continuity_error_line = None
     flow_continuity_error_line = None
@@ -315,15 +783,16 @@ def return_swmm_system_outputs(rpt_lines):
     for line in rpt_lines:
         if "Flow Units" in line:
             line_flw_units = line
-        if "Flow Routing Continuity" in line:
-            encountered_flow_routing_continuity = True
+        opened = _continuity_table_opened_by(line)
+        if opened is not None:
+            current_continuity_table = opened
         if "Continuity Error (%)" in line:
-            # runoff routing is reported BEFORE flow routing
-            if encountered_flow_routing_continuity is False:
+            # Each error belongs to its own table: runoff to the quantity table, flow to the flow table.
+            if current_continuity_table == "Runoff Quantity Continuity":
                 runoff_continuity_error_line = line
-            else:
+            elif current_continuity_table == "Flow Routing Continuity":
                 flow_continuity_error_line = line
-        if "Flooding Loss" in line:
+        if "Flooding Loss" in line and current_continuity_table == "Flow Routing Continuity":
             system_flood_loss_line = line
         if "Analysis ended on" in line:
             analysis_end_line = line
@@ -399,7 +868,7 @@ def _scan_metadata_and_summaries(lines, summary_section_headers):
     """
     dict_section_lines = {header: [] for header in summary_section_headers}
     valid = False
-    encountered_flow_routing_continuity = False
+    current_continuity_table = None
     line_flw_units = None
     runoff_continuity_error_line = None
     flow_continuity_error_line = None
@@ -415,14 +884,15 @@ def _scan_metadata_and_summaries(lines, summary_section_headers):
             valid = True
         if "Flow Units" in line:
             line_flw_units = line
-        if "Flow Routing Continuity" in line:
-            encountered_flow_routing_continuity = True
+        opened = _continuity_table_opened_by(line)
+        if opened is not None:
+            current_continuity_table = opened
         if "Continuity Error (%)" in line:
-            if encountered_flow_routing_continuity is False:
+            if current_continuity_table == "Runoff Quantity Continuity":
                 runoff_continuity_error_line = line
-            else:
+            elif current_continuity_table == "Flow Routing Continuity":
                 flow_continuity_error_line = line
-        if "Flooding Loss" in line:
+        if "Flooding Loss" in line and current_continuity_table == "Flow Routing Continuity":
             system_flood_loss_line = line
         if "Analysis ended on" in line:
             analysis_end_line = line
@@ -506,6 +976,11 @@ def _bulk_parse_section(section_text, kind_filter, idx_colname, value_cols):
 
     Returns an xarray Dataset with dims (idx_colname, date_time) — the same shape
     the legacy `create_tseries_ds` produced for time-series blocks.
+
+    Only the date, the time and the declared `value_cols` are read. When a model
+    declares pollutants and routes quality, SWMM appends one concentration column
+    per pollutant to every row; those extra columns are not read, because with the
+    fixed `names=` below they would shift the fields and break the date parse.
     """
     ids = []
     row_counts = []
@@ -536,6 +1011,7 @@ def _bulk_parse_section(section_text, kind_filter, idx_colname, value_cols):
         sep=r"\s+",
         header=None,
         names=["date", "time", *value_cols],
+        usecols=list(range(2 + len(value_cols))),
         engine="c",
         dtype={"date": str, "time": str},
     )
@@ -558,17 +1034,18 @@ def _iter_rpt_lines(f_rpt: Path):
 
 
 def rpt_is_complete(f_rpt: Path) -> bool:
-    """Return True iff an SWMM `.rpt` proves the engine ran `swmm_report()` to completion.
+    """Return True iff an SWMM `.rpt` exists, is non-empty, carries the trailer and carries no SWMM error line.
 
-    The coupled TRITON-SWMM `hydraulics.rpt` (and any SWMM `.rpt`) writes its
-    summary/continuity tables and the ``Analysis ended on`` trailer ONLY at the
-    terminal ``swmm_end()`` -> ``swmm_report()`` step. SWMM has no report-resume
-    or report-append mechanism, so an ``.rpt`` that exists but lacks the trailer
-    is from a run that was killed/short-circuited before finalization (e.g. a
-    walltime-killed hotstart attempt). The ``Analysis ended on`` trailer is the
-    definitive completeness signal: ``Flow Units`` and ``Element Count`` are
-    written near ``swmm_start`` and can survive in a truncated `.rpt`, whereas
-    the trailer is present only when ``swmm_report()`` finished.
+    SWMM writes the ``Analysis ended on`` trailer from ``swmm_close`` (through
+    ``report_writeSysTime``) on EVERY run that reaches the close: a clean finish, and
+    also a run closed after an input or start error, whose report carries an
+    ``ERROR`` block beside the trailer. So a finalized report carrying an ``ERROR``
+    block is NOT complete, and the trailer alone is not a success signal. The trailer
+    is absent only from a run killed or aborted before the close (e.g. a
+    walltime-killed hotstart attempt); SWMM has no report-resume or report-append
+    mechanism. ``Flow Units`` and ``Element Count`` are written near ``swmm_start``
+    and can survive in a truncated `.rpt`; the trailer does not survive a kill
+    before the close.
 
     Consumed by coupled-sim completion detection to reject a false-positive
     "completed" marker on a resumed run whose embedded SWMM engine never emitted
@@ -578,15 +1055,16 @@ def rpt_is_complete(f_rpt: Path) -> bool:
     f_rpt = Path(f_rpt)
     if not f_rpt.exists() or f_rpt.stat().st_size == 0:
         return False
-    return rpt_status(f_rpt).finalized
+    _st = rpt_status(f_rpt)
+    return _st.finalized and not _st.has_errors
 
 
 class RptStatus(NamedTuple):
     """Both facts a SWMM `.rpt` can testify to, read in ONE pass.
 
     `finalized` is the terminal `Analysis ended on` trailer -- the engine reached
-    `swmm_report()`. `has_errors` is an `  ERROR {n}:` block -- the run reported a
-    fatal input or runtime error.
+    `swmm_close`, after a clean finish or after an error. `has_errors` is an
+    `  ERROR {n}:` block -- the run reported a fatal input or runtime error.
 
     THEY ARE INDEPENDENT, and that is the whole reason this returns a pair rather
     than a bool. A run that aborts during input validation writes the trailer AND
@@ -685,7 +1163,7 @@ LST_COL_HEADERS_SUBCATCH_RUNOFF_SUMMARY = (
 )
 
 
-def parse_hydrology_rpt_summary(f_rpt: Path):
+def parse_hydrology_rpt_summary(f_rpt: Path, f_inp: Path | None = None):
     """Capture everything a hydrology-only ``.rpt`` carries that nothing else does.
 
     WHY THIS EXISTS, and why it is not a duplicate of `_build_system_results`.
@@ -717,6 +1195,34 @@ def parse_hydrology_rpt_summary(f_rpt: Path):
         df = df.set_index("subcatchment_id")
     ds = df.to_xarray()
     ds = convert_datavars_to_dtype(ds, lst_dtypes_to_try=[float, str])
+    if lines_print_water_quality(rpt_lines):
+        # WATER QUALITY, only when the report says quality was routed: the subcatchment washoff
+        # loads and the Runoff Quality Continuity table, with the pollutants named from the
+        # hydrology model file (`f_inp`, by default the `.inp` beside the report).
+        from hhemt.exceptions import ProcessingError
+
+        inp = Path(f_inp) if f_inp is not None else Path(f_rpt).with_suffix(".inp")
+        if not inp.exists():
+            raise ProcessingError(
+                operation="parse_hydrology_rpt_summary",
+                filepath=Path(f_rpt),
+                reason=(
+                    f"the report says water quality was routed but the model file {inp} "
+                    "is not there to name the pollutants."
+                ),
+            )
+        pollutants = _declared_pollutants(inp)
+        quality = parse_rpt_quality_summaries(rpt_lines, pollutants, include_runoff_quality=True, filepath=f_rpt)
+        kept = {k: v for k, v in quality.items() if k == "washoff_total_load" or k.startswith("runoff_qual_")}
+        if "washoff_total_load" in kept and "subcatchment_id" in ds.coords:
+            # The washoff table lists the same subcatchments as the runoff summary; reindexing keeps
+            # this dataset's subcatchment_id axis exactly the runoff summary's.
+            kept["washoff_total_load"] = kept["washoff_total_load"].reindex(
+                subcatchment_id=ds["subcatchment_id"].values
+            )
+        elif "washoff_total_load" in kept:
+            del kept["washoff_total_load"]
+        ds = _attach_pollutant_coords(xr.merge([ds, xr.Dataset(kept)], join="left"), pollutants)
     ds.attrs = dict_system_results
     return ds
 
@@ -896,14 +1402,32 @@ def return_node_time_series_results_from_rpt(
     return ds_node_tseries, ds_link_tseries
 
 
-def return_node_time_series_results_from_outfile(f_outfile):
+def return_node_time_series_results_from_outfile(f_outfile, f_inp=None, return_quality=False):
+    """Read node and link time series from a SWMM ``.out`` file.
+
+    With ``return_quality`` the function returns ``(node ds, link ds, pollutants, start)`` where
+    ``pollutants`` is the model's ``[(name, unit)]`` list when the ``.out`` holds pollutant results
+    (its pollutant count is above zero, which SWMM makes zero whenever quality is ignored) and
+    ``[]`` otherwise, and ``start`` is the simulation start as ``MM/DD/YYYY HH:MM:SS``. Under that
+    gate the datasets carry ``pollutant_conc`` and ``link_pollutant_conc`` read from attribute index
+    ``6 + p`` (node) and ``5 + p`` (link), with names and units taken from ``f_inp``'s
+    ``[POLLUTANTS]`` section and never from the ``.out``'s unit flags, which report only the
+    first pollutant's unit. Without ``return_quality`` the two datasets are returned alone.
+    """
     from pyswmm import LinkSeries, NodeSeries, Output
 
+    pollutants: list[tuple[str, str]] = []
+    out_start = None
     with Output(str(f_outfile)) as out:
         d_links = out.links
         d_nodes = out.nodes
         units = out.units
-        if units["system"] != "SI":
+        # The FLOW unit, not the unit system: every series below is stored as m3/s with no
+        # conversion, and SWMM writes them in the model's own flow unit, so an SI model in
+        # LPS or MLD would pass a unit-system test and be read 1000 or 86.4 times too large.
+        # This is the standalone model's guard for outputs the preparation check never saw,
+        # such as a reprocess of an existing analysis.
+        if units["flow"] != "CMS":
             # RAISE, never sys.exit. SystemExit derives from BaseException, so no
             # `except Exception` in any caller catches it and the process dies with
             # no traceback -- the un-diagnosable shape that made an unrelated
@@ -915,11 +1439,12 @@ def return_node_time_series_results_from_outfile(f_outfile):
                 operation="return_node_time_series_results_from_outfile",
                 filepath=Path(f_outfile),
                 reason=(
-                    f"SWMM outputs are not in SI units (unit system reported: "
-                    f"{units['system']!r}). The model's [OPTIONS] FLOW_UNITS must be one of "
-                    "CMS, LPS or MLD; CFS, GPM and MGD are US units, and an ABSENT "
-                    "FLOW_UNITS line defaults to CFS. Fix it in the SWMM template named by "
-                    "system_config, not in the generated per-scenario .inp, which inherits it."
+                    f"SWMM outputs are not in cubic metres per second (flow unit reported: "
+                    f"{units['flow']!r}, unit system {units['system']!r}). The toolkit reads the "
+                    "standalone model's flows as m3/s without conversion, so its [OPTIONS] "
+                    "FLOW_UNITS must be CMS; an ABSENT FLOW_UNITS line defaults to CFS. Fix it "
+                    "in the SWMM template named by system_config, not in the generated "
+                    "per-scenario .inp, which inherits it."
                 ),
             )
         # PROCESSING NODES
@@ -1019,8 +1544,63 @@ def return_node_time_series_results_from_outfile(f_outfile):
             lst_dfs.append(df)
         #
         ds_link_tseries = pd.concat(lst_dfs, axis=1).to_xarray()
+        # WATER QUALITY, gated on the .out's own pollutant count (zero when quality is ignored).
+        n_out_pollutants = int(out.project_size[4]) if return_quality else 0
+        if n_out_pollutants > 0:
+            from hhemt.exceptions import ProcessingError
+
+            if f_inp is None:
+                raise ProcessingError(
+                    operation="return_node_time_series_results_from_outfile",
+                    filepath=Path(f_outfile),
+                    reason="the .out holds pollutant results but no model file was given to name them.",
+                )
+            pollutants = _declared_pollutants(f_inp)
+            if len(pollutants) != n_out_pollutants:
+                raise ProcessingError(
+                    operation="return_node_time_series_results_from_outfile",
+                    filepath=Path(f_outfile),
+                    reason=(f"the .out holds {n_out_pollutants} pollutant(s) but {f_inp} declares {len(pollutants)}."),
+                )
+            ds_node_tseries["pollutant_conc"] = _out_pollutant_series(
+                out.node_series, list(d_nodes.keys()), 6, "node_id", pollutants
+            )
+            ds_link_tseries["link_pollutant_conc"] = _out_pollutant_series(
+                out.link_series, list(d_links.keys()), 5, "link_id", pollutants
+            )
+        if return_quality:
+            start = getattr(out, "start", None)
+            out_start = start.strftime(RPT_DATETIME_FORMAT) if start is not None else None
     #
+    if return_quality:
+        return ds_node_tseries, ds_link_tseries, pollutants, out_start
     return ds_node_tseries, ds_link_tseries
+
+
+def _out_pollutant_series(series_reader, entity_ids, first_attribute, idx_colname, pollutants):
+    """Concentration series for every entity and pollutant as (idx, date_time, pollutant).
+
+    ``series_reader(entity_id, attribute_index)`` is pyswmm's ``Output.node_series`` or
+    ``Output.link_series``; pollutant ``p`` is attribute ``first_attribute + p``.
+    """
+    frames = []
+    for p, (name, _) in enumerate(pollutants):
+        rows = []
+        for entity_id in entity_ids:
+            series = series_reader(entity_id, first_attribute + p)
+            idx = pd.DatetimeIndex(list(series.keys()), name="date_time")
+            rows.append(
+                pd.Series(
+                    list(series.values()),
+                    index=pd.MultiIndex.from_arrays(
+                        [np.repeat(entity_id, len(idx)), idx], names=[idx_colname, "date_time"]
+                    ),
+                ).rename(name)
+            )
+        frames.append(pd.concat(rows))
+    df = pd.concat(frames, axis=1)
+    da = df.to_xarray().to_dataarray(dim="pollutant").transpose(idx_colname, "date_time", "pollutant")
+    return da.assign_coords(pollutant=[name for name, _ in pollutants]).astype(float)
 
 
 def create_tseries_ds(dict_lst_time_series, lst_col_headers, idx_colname):

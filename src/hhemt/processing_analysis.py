@@ -176,10 +176,11 @@ class TRITONSWMM_analysis_post_processing:
     # (wlevel(t)) + SWMM link (flow(t)) ONLY. The TRITON gridded (timestep_min, y, x) series
     # is deliberately excluded, and the exclusion is load-bearing rather than incidental:
     # measured on synth_cc_clean (2026-07-21), the gridded store is 6.610 MB/scenario of
-    # PAYLOAD against 0.079 MB for the SWMM node+link pair — an 83x ratio. (A "24x" figure
-    # appears in older notes; that is the DISK-BLOCK ratio, inflated toward parity because
-    # the SWMM stores are 62 tiny chunk files padded to 4 KiB blocks. Payload is the metric
-    # that governs consolidated-tree size, render-bundle size, and transfer time.)
+    # PAYLOAD against 0.079 MB for the SWMM node+link pair — an 83x ratio. (Measured as
+    # on-disk blocks instead, the ratio is ~24x, inflated toward parity because the SWMM
+    # stores are 62 tiny chunk files padded to 4 KiB blocks. Payload is the metric that
+    # governs consolidated-tree size, render-bundle size, and transfer time, so 24x is the
+    # wrong figure to size against.)
     # Consequence: adding the gridded series takes the 28-scenario master tree from 27 MB
     # to ~212 MB (7.9x) on the SMALLEST grid the toolkit runs, and is single-GB-scale per
     # scenario on a Norfolk fine grid (a 1.1 m DEM's full TRITON timeseries measured
@@ -187,13 +188,15 @@ class TRITONSWMM_analysis_post_processing:
     #
     # CORRECTION (2026-07-21) — an earlier version of this comment said the gridded series
     # "is NOT needed for the clean-vs-resume over-time figure." That was WRONG and is the
-    # kind of error that survives by being repeated: the figure's wlevel panel reads
-    # wlevel_m from THIS store. SWMM node head is NOT a substitute — different quantity,
-    # different solver — and the residuals under investigation are TRITON-side (14 of 15
-    # pairs on max_wlevel_m). The exclusion stands on COST alone, not on absence of a
-    # consumer. Today the figure is fed by a documented estate reproduction script reading
-    # the per-scenario stores directly; that is a BUNDLE-FIDELITY limitation, not evidence
-    # the data is unnecessary.
+    # kind of error that survives by being repeated. That figure plots the resumed-minus-
+    # clean difference against time for a clean/resumed pair of the same event, and its
+    # water-level panel reads wlevel_m from THIS store. SWMM node head is NOT a substitute
+    # — different quantity, different solver — and the residuals under investigation are
+    # TRITON-side (14 of 15 pairs on max_wlevel_m). The exclusion stands on COST alone, not
+    # on absence of a consumer. No renderer in this package draws that figure: it is drawn
+    # outside the toolkit by reading the per-scenario stores directly, which means a render
+    # bundle cannot reproduce it — a BUNDLE-FIDELITY limitation, not evidence the data is
+    # unnecessary.
     #
     # What the consumer actually needs is a REDUCTION -- max over (y, x) per timestep --
     # not the field (6.6 MB/scenario). On the synth model that is 144 float32/scenario, a
@@ -249,8 +252,9 @@ class TRITONSWMM_analysis_post_processing:
         consolidation-affecting config change invalidates an otherwise-complete tree
         with no operator action and no artifact deletion.
 
-        Evaluated against ``self._analysis.cfg_analysis`` — which, because consolidation
-        runs in its own subprocess, is the config that SUBPROCESS loaded from disk, i.e. the same object
+        Evaluated against ``self._analysis.cfg_analysis`` — which, because every consolidate
+        Snakemake rule runs ``consolidate_workflow`` as a separate process that reads a persisted
+        analysis config, is the config that SUBPROCESS loaded from disk, i.e. the same object
         the toggle-gated loops below read. That is why this predicate works where a
         driver-side kwarg cannot: the driver's in-memory config never reaches here.
 
@@ -298,9 +302,11 @@ class TRITONSWMM_analysis_post_processing:
         DataTree IS the canonical master-level artifact; per-scenario summaries
         are its only inputs.
 
-        This method has no overwrite parameter: it rebuilds on its own when the
-        tree is incomplete or stale, and a forced rerun is requested through
-        ``override_force_rerun`` on ``TRITONSWMM_analysis.run``.
+        This method has no overwrite parameter. An existing tree is reused only when it
+        is present, its log marks it complete, and both the inputs fingerprint and the
+        consolidation build stamp still match; otherwise it is rebuilt. A forced rerun is
+        requested through ``override_force_rerun`` on ``TRITONSWMM_analysis.run`` or
+        ``submit_workflow``.
         """
         fname_out = self._analysis.analysis_paths.analysis_datatree_zarr
         if fname_out is None:
@@ -347,12 +353,16 @@ class TRITONSWMM_analysis_post_processing:
                 print(f"DataTree zarr already present at {fname_out} and log complete. Not overwriting.")
             return fname_out
         if fname_out.exists() and _log_complete and (not _inputs_match or _build_mismatch):
-            # NO PRE-DELETE. Same reasoning as the sensitivity-master twin, plus one this
-            # tier owns: _retrieve_combined_output below raises FileNotFoundError when a
-            # summary is absent, and when this method is called from the master's
-            # member-ensure loop that exception is swallowed by allow_incomplete=True and
-            # the member is skipped -- so a pre-delete here destroyed the member's store
-            # AND dropped it from the master tree in one pass, silently.
+            # NO PRE-DELETE, for two reasons. First, write_datatree_zarr publishes through
+            # utils._publish_store_crash_safe, which leaves fname_out either ABSENT or a
+            # COMPLETE store by renaming the old store aside before replacing it; deleting
+            # it here would leave that rename nothing to preserve, so a failure before the
+            # write would leave NO store at all. Second, a reason this tier owns:
+            # _retrieve_combined_output below raises FileNotFoundError when a summary is
+            # absent, and when this method is called from the master's member-ensure loop
+            # that exception is swallowed by allow_incomplete=True and the member is skipped
+            # -- so a pre-delete here would destroy the member's store AND drop it from the
+            # master tree in one pass, silently.
             if verbose:
                 _why = (
                     _build_why
@@ -409,9 +419,10 @@ class TRITONSWMM_analysis_post_processing:
 
         # BOTH halves, from one pass. `emitted_attrs` is what makes the crate's descriptors
         # STORE-SOURCED; omitting it here leaves the crate on the static base map and therefore
-        # override-blind, which published `'Maximum flood velocity'` for a link-mode store that
-        # stamps `'Maximum conduit velocity'`. The capability landed one commit earlier and was
-        # unreached from production until this line threaded it.
+        # override-blind, which publishes `'Maximum flood velocity'` for a link-mode store that
+        # stamps `'Maximum conduit velocity'`. This is the only production call threading
+        # `emitted_attrs` into the analysis/member-tier crate; the experiment tier's own
+        # call is in sensitivity_analysis.py.
         _emitted_vars, _emitted_attrs = emitted_vars_and_attrs(_ds for _p, _ds in tree_dict.items() if _p != "/")
         _core_json, _graph_json = emit_provenance(
             self._analysis, emitted_vars=_emitted_vars, emitted_attrs=_emitted_attrs
@@ -442,9 +453,11 @@ class TRITONSWMM_analysis_post_processing:
 
         write_rocrate_sidecar(self._analysis.analysis_paths.analysis_dir, graph_json=_graph_json)
 
-        # ARM REFRESH AT THE WRITE BOUNDARY. Before this write existed, eda() and publish()
-        # were the ONLY sites rewriting this file, so a run that CONSOLIDATED AND STOPPED
-        # left cfg_analysis.yaml asserting the PRIOR arm while the newest store beside it
+        # ARM REFRESH AT THE WRITE BOUNDARY. Three other sites write this file: eda(), publish()
+        # (publishing._deposit_set), and the sensitivity master's consolidate_sensitivity_datatree,
+        # which writes it when the directory runs as a master. A regular analysis that
+        # CONSOLIDATED AND STOPPED runs none of them, so without this write it left
+        # cfg_analysis.yaml asserting the PRIOR arm while the newest store beside it
         # was the current arm's. Written here, at the boundary that just wrote the store,
         # the file describes the store it sits next to.
         # UNCONDITIONAL and idempotent: no read of the on-disk arm is performed, because a
@@ -452,8 +465,9 @@ class TRITONSWMM_analysis_post_processing:
         # would decline to fire on a malformed file -- the state most in need of repair.
         # Perturbs no scheduling: this file is a declared input of NO emitted Snakemake
         # rule, and the mtime-preserving rewrite primitive is migration-only.
-        # DOES NOT close the file-only residual: an archived tree, a bundle emitted from an
-        # already-stale root, and a migration still cannot detect arm reversion.
+        # DOES NOT cover readers for which this file is the ONLY record of the arm: an
+        # archived tree, a bundle emitted from a root whose file was already stale, and a
+        # migration still cannot detect that a directory's arm was changed back.
         import yaml as _yaml
 
         (self._analysis.analysis_paths.analysis_dir / "cfg_analysis.yaml").write_text(
@@ -470,8 +484,12 @@ class TRITONSWMM_analysis_post_processing:
         # The convergent operand for the build gate: stamp the CONSOLIDATION build that
         # just wrote this store, minted inline per producing_stamp()'s rule that a stamp
         # records the code that actually ran the stage. Placed beside the fingerprint set
-        # deliberately -- these two are the same mechanism and drifting them apart is what
-        # produced the non-convergent gate this replaces.
+        # deliberately: both are written by the stage they gate and read back by that same
+        # stage's reuse check, which is what lets each converge. Deliberately NOT the tree
+        # root's hhemt_producing_sha: that value is frozen at PROCESSING time, so comparing
+        # it against the running consolidation build mismatches on every call -- each
+        # rebuild re-derives the same processing-stage sha, and the next consolidation
+        # rebuilds again, indefinitely.
         if hasattr(self._analysis.log, "consolidation_build_stamp"):
             from hhemt.provenance import _write_consolidate_manifest
             from hhemt.provenance import producing_stamp as _producing_stamp
@@ -488,7 +506,7 @@ class TRITONSWMM_analysis_post_processing:
         from hhemt.du_sentinels import _infer_scope, sum_child_sentinels
 
         # DERIVED, never hardcoded. `scope` here is a BEHAVIOURAL SWITCH, not a label:
-        # sum_child_sentinels tests `scope == "analysis"` to add
+        # sum_child_sentinels (du_sentinels.py) tests `scope == "analysis"` to add
         # _EPHEMERAL_TOP_LEVEL_DIRS = {"_test"} to its skip set, so the value changes the
         # computed total and not merely the recorded string.
         #
@@ -502,7 +520,8 @@ class TRITONSWMM_analysis_post_processing:
         # does the real work is that per-member loop, which runs for every member each
         # time the master consolidate runs.
         #
-        # The per-member DU-sentinel write in consolidate_workflow.main corrected the label on the
+        # The per-member DU-sentinel write in consolidate_workflow.main (a scope="member" sentinel,
+        # written when `--member-id` is passed) corrected the label on the
         # per-member RULE path -- but it fires as a rule SIDE-EFFECT. Deriving here
         # removes the dependency on any rule firing again.
         _du_scope_dir = self._analysis.analysis_paths.analysis_dir
@@ -571,7 +590,12 @@ class TRITONSWMM_analysis_post_processing:
             open_kwargs = {"chunks": "auto", "engine": self._open_engine(), "decode_timedelta": False}
             if open_kwargs["engine"] == "zarr":
                 open_kwargs["consolidated"] = False
-            lst_ds.append(xr.open_dataset(ts_file, **open_kwargs))
+            # Stamp the CURRENT loop position as event_iloc, for the reason given in
+            # _retrieve_combined_output's loader. A per-scenario timeseries store carries no
+            # event_iloc today, so this adds an index coordinate equal to the positions the
+            # concat already produced and changes no data value; it keeps a store that ever
+            # does carry one from publishing a stale position.
+            lst_ds.append(xr.open_dataset(ts_file, **open_kwargs).assign_coords(event_iloc=[int(event_iloc)]))
         ds_ts = xr.concat(lst_ds, dim="event_iloc", combine_attrs="drop_conflicts", join="outer")
 
         from hhemt.scenario import compute_event_id_slug
@@ -592,7 +616,8 @@ class TRITONSWMM_analysis_post_processing:
             One of the eight keys in _MODE_CONFIG:
             "tritonswmm_triton", "tritonswmm_swmm_node", "tritonswmm_swmm_link",
             "tritonswmm_performance", "triton_only", "triton_only_performance",
-            "swmm_only_node", "swmm_only_link"
+            "swmm_only_node", "swmm_only_link". An unknown mode raises ``ValueError``
+            listing the valid keys.
         """
         if mode not in self._MODE_CONFIG:
             raise ValueError(f"Unknown mode: {mode}. Valid modes: {list(self._MODE_CONFIG.keys())}")
@@ -674,8 +699,14 @@ class TRITONSWMM_analysis_post_processing:
             if open_kwargs["engine"] == "zarr":
                 open_kwargs["consolidated"] = False
             ds = xr.open_dataset(summary_file, **open_kwargs)
-            # Normalize the producing-stamp coordinates before
-            # concat so mixed stamped (layout version 17+, V0017) / unstamped (legacy) summaries concat
+            # event_iloc is POSITIONAL. A summary not reprocessed after an add/remove
+            # still carries the position it was stamped with, so concat on the embedded
+            # value duplicates a coordinate (measured [0, 2, 2]). Re-stamp from the
+            # current loop position, as event_id below already is. In-memory only: the
+            # per-scenario store on disk is not rewritten.
+            ds = ds.assign_coords(event_iloc=[int(event_iloc)])
+            # Normalize the producing-stamp coordinates before concat so a mix of
+            # stamped (LAYOUT_VERSION 17+) and unstamped (legacy) summaries concats
             # cleanly. The "unknown" sentinel here exists ONLY in the in-memory
             # concatenated tree — it is never written back to the legacy flat
             # summary, so no historical provenance is fabricated.
@@ -686,7 +717,11 @@ class TRITONSWMM_analysis_post_processing:
             lst_ds.append(ds)
 
         # Column-set record normalization, mirroring the producing-stamp normalization in
-        # the loop above, and for the same reason.
+        # the loop above, and for the same reason. The record is the per-scenario
+        # PERF_COLUMN_SET_COORD that process_simulation stamps on the performance timeseries
+        # store and that rides the summary reduction into the summary read here -- the FIRST
+        # of the two heterogeneity-detection sites, covering one sim's allocations; the
+        # second is the member join below.
         # A summary written before the column-set guard shipped carries no column-set coord,
         # and a population mixing stamped and unstamped members must concat cleanly. The
         # sentinel exists ONLY in the in-memory concatenated tree -- it is never written
@@ -705,7 +740,8 @@ class TRITONSWMM_analysis_post_processing:
                 for d in lst_ds
             ]
 
-        # VARIABLE-SET HETEROGENEITY DETECTION, immediately before the join.
+        # VARIABLE-SET HETEROGENEITY DETECTION -- the second detection site, across members,
+        # immediately before the join.
         #
         # WHY HERE: `lst_ds` is still a LIST of Datasets each carrying its own variable
         # set. The concat one line below takes no `join=` and therefore defaults to
@@ -873,9 +909,10 @@ def emitted_vars_and_attrs(node_datasets) -> tuple[set[str], dict[str, dict[str,
 def _stamp_triton_provenance(tree: "xr.DataTree", analysis) -> None:
     """Stamp the producing-TRITON provenance onto a consolidated-tree ROOT as plain attrs.
 
-    Carries ``triton_producing_sha`` + ``triton_has_coupled_resume_fix`` — captured at
-    COMPILE time onto the system log (a DIFFERENT process on HPC; see
-    ``system.py::_capture_tritonswmm_provenance``) — onto the consolidated tree root. Kept
+    Carries ``triton_producing_sha``, plus the per-target TRITON and standalone-SWMM
+    producing records stamped below — each captured at COMPILE time onto the system log (a
+    DIFFERENT process on HPC; see ``system.py::_capture_tritonswmm_provenance``) — onto the
+    consolidated tree root. Kept
     as PLAIN root attrs (NOT ``metadata._EMBEDDED_PROV_KEYS``) so an additive provenance
     stamp does not churn the embedded-core byte-identity golden fixtures and needs no
     LAYOUT_VERSION bump. Shared by both consolidation sites
@@ -897,8 +934,9 @@ def _stamp_triton_provenance(tree: "xr.DataTree", analysis) -> None:
         _sha = _sys_log.triton_head_sha.get()
     except Exception:
         return
-    # ONE ATTR. `triton_producing_sha` is retained deliberately and is now the ONLY TRITON
-    # provenance this stamps: it is the registry's input, it is what the per-arm provenance table
+    # ONE CLONE-LEVEL ATTR. `triton_producing_sha` is retained deliberately and is the only
+    # CLONE-level TRITON sha this stamps; the per-target build shas are stamped by the loop
+    # below. It is the registry's input, it is what the per-arm provenance table
     # prints per arm, and under a split pin it is what makes the per-arm solver difference
     # legible in the report. The two per-defect booleans that were stamped beside it are
     # retired — see log.py. An OLD tree carrying them still reads correctly, because nothing
@@ -906,6 +944,35 @@ def _stamp_triton_provenance(tree: "xr.DataTree", analysis) -> None:
     # toolkit already treats as INDETERMINATE rather than as a false warn.
     if _sha is not None:
         tree.attrs["triton_producing_sha"] = str(_sha)
+    else:
+        # LOUD-ABSENT when THIS log says a TRITON target was built (native: a compile flag)
+        # or an image was set up (container: no compile flag is ever set, but setup records
+        # sif_sha256 before the label sha). A recorded build or image with no recorded sha is
+        # the lost-stamp signature, and this line is the only record of what consolidation
+        # read. Both unset (a reprex bundle, a legacy log) stay silent. Everything, the print
+        # included, sits inside the try: this function never raises.
+        try:
+            _built = [
+                _f
+                for _f in (
+                    "compilation_tritonswmm_cpu_successful",
+                    "compilation_tritonswmm_gpu_successful",
+                    "compilation_triton_cpu_successful",
+                    "compilation_triton_gpu_successful",
+                )
+                if getattr(_sys_log, _f).get() is True
+            ]
+            if _sys_log.sif_sha256.get():
+                _built.append("sif_sha256")
+            if _built:
+                print(
+                    f"[Provenance] WARNING: {_sys_log.logfile} records a TRITON build or image "
+                    f"({', '.join(_built)}) but no triton_head_sha; this consolidated tree is NOT "
+                    f"stamped with triton_producing_sha. last_writer={_sys_log.last_writer}",
+                    flush=True,
+                )
+        except Exception:
+            pass
 
     # Per-target TRITON and standalone-SWMM provenance, same carrier and same
     # graceful-absent rule as the clone-level sha above: captured at compile time onto the
@@ -931,7 +998,8 @@ def _stamp_triton_provenance(tree: "xr.DataTree", analysis) -> None:
 def _parse_replay_t(text: str, marker: str) -> "float | None":
     """Parse the numeric ``t=`` value from the LAST replay marker in a model log.
 
-    The model log is ``"w"``-truncated per exec, so this is the LAST
+    The model log is ``"w"``-truncated per exec (``run_simulation_runner`` reopens it in
+    ``"w"`` mode on every exec), so this is the LAST
     resume's replay boundary — the vertical-line marker the over-time figure needs.
     Best-effort: returns None when the marker is absent or unparseable.
     """
@@ -955,7 +1023,8 @@ def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis, *, df_status=N
     ``"w"``-mode last-exec log being cleared/purged) and bundle-portable, so a downstream combine
     / reprex consumer can assert genuine replay without the raw logs. Mirrors
     ``_stamp_triton_provenance``: a plain root attr (NOT an ``_EMBEDDED_PROV_KEYS`` member) so no
-    LAYOUT_VERSION bump / no golden churn. Best-effort; never raises.
+    LAYOUT_VERSION bump / no change to the provenance-core key set the tests pin. Best-effort;
+    never raises.
     """
     import json
 
@@ -988,7 +1057,7 @@ def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis, *, df_status=N
             if sub is None:
                 continue
             try:
-                text = model_logfile_for(sub, int(row["event_iloc"]), "tritonswmm").read_text()
+                text = model_logfile_for(sub, int(row["event_iloc"]), "tritonswmm").read_text(errors="replace")
             except Exception:  # noqa: BLE001 — log unreadable at consolidation: skip this sub, best-effort
                 continue
             key = str(_sa) if _sa is not None else str(row.get("scenario_directory", ""))
@@ -1012,9 +1081,9 @@ def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis, *, df_status=N
             # resume_t is TRITON sim-time SECONDS while schedule entries are checkpoint INDICES,
             # so the last requested boundary in seconds is schedule[-1] * TRITON_reporting_timestep_s.
             # The realized kill is a lower-bounded lag of the request, so the honored predicate is
-            # resume_t >= that product. COUPLED-ONLY: a pure-TRITON arm emits neither marker, so
-            # resume_t is None and the comparison is None here (its schedule verification rests on
-            # df_status n_resumes == len(schedule); see
+            # resume_t >= that product. COUPLED-ONLY: a TRITON-only sim (no coupled SWMM) emits
+            # neither marker, so resume_t is None and the comparison is None here (its schedule
+            # verification rests on df_status n_resumes == len(schedule); see
             # analysis_validation.check_resume_schedule_honored).
             _c = getattr(sub, "cfg_analysis", None)
             _sched = getattr(_c, "resume_interruption_schedule", None)
@@ -1141,7 +1210,9 @@ def return_lst_dic_of_unique_storm_idxs(ds):
             "node_id",
         ]:  # and (len(ds_triton[coord].values)>1):
             lst_coords.append(coord)
-    # find unique indices for unique storm ids
+    # Read the unique non-spatial coordinate combinations -- one per storm -- off a single
+    # probe element, selected by POSITION 1 along x and y, link_id, or node_id, of the
+    # first of max_wlevel_m / max_flow_cms / total_inflow_vol_10e6_ltr the dataset carries.
     if "max_wlevel_m" in ds.data_vars:
         datavar = "max_wlevel_m"
         idx_loc = dict(x=1, y=1)

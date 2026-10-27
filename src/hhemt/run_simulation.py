@@ -35,9 +35,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# In-SIF fallback paths for the model binary when a ContainerSpec does not pin an
-# explicit `exe_in_sif` entry for the model. The image recipes under sif/recipes/ install
-# the binaries under /opt/hhemt/bin. Keyed by model_type.
+#: EPA SWMM's end-of-run line prefix, printed by the engine's ``main()`` after the run returns,
+#: whether or not the analysis succeeded. Read by ``model_run_completed``'s raw-marker fallback.
+#: A named constant so the marker-parity test can compare it against the solver source at the
+#: pinned commit; a renamed engine line would otherwise leave every SWMM run reading incomplete.
+SWMM_COMPLETION_MARKER = "EPA SWMM completed"
+
+#: The clause EPA SWMM appends to that same line when the run had errors. Its presence turns
+#: an apparently completed SWMM run into a failed one; see ``model_run_completed``.
+SWMM_ERROR_MARKER = "There are errors."
+
+# In-SIF default binary NAMES, used when a ContainerSpec does not pin an explicit
+# `exe_in_sif` entry for the model: prepare_simulation_command builds the in-SIF path as
+# /opt/hhemt/bin/{name}, where the `.def` build installs the binaries. Keyed by model_type.
 _DEFAULT_EXE_NAME = {
     "triton": "triton_only.exe",
     "tritonswmm": "triton.exe",
@@ -306,6 +316,23 @@ def read_attempt_index_by_jobstep(model_logfile: Path) -> dict[str, int]:
     return out
 
 
+def failed_write_resume_message(f_step: int, n_step: int, failed_replay: bool) -> str:
+    """The picker's message when it resumes at a checkpoint F whose snapshot write FAILED.
+
+    ``failed_replay`` is the value the launch writes into F's cfg (`set_swmm_snapshot_failed_replay`),
+    so the message states what the solver will do with the cfg it is actually given.
+    """
+    then = (
+        "the solver replays the SWMM exchange history there (swmm_snapshot_failed_replay) and continues."
+        if failed_replay
+        else "the solver stops there with its write-failed error."
+    )
+    return (
+        f"Snapshot at checkpoint {f_step} failed to write (below unusable checkpoint {n_step}); "
+        f"resuming at checkpoint {f_step}, where {then}"
+    )
+
+
 class TRITONSWMM_run:
     """Launch and completion surface for one scenario's simulations.
 
@@ -320,6 +347,9 @@ class TRITONSWMM_run:
         self._scenario = scenario
         self._analysis = scenario._analysis
         self.weather_event_indexers = scenario.weather_event_indexers
+        # The coupled snapshot step-back taken by the last prepare_simulation_command call, or
+        # None. Written by _pick_resume_cfg_past_unusable_snapshot, read by the runner.
+        self.stepback_record: dict | None = None
 
     @property
     def _triton_swmm_raw_output_directory(self):
@@ -385,14 +415,14 @@ class TRITONSWMM_run:
         return self.model_run_completed("tritonswmm")
 
     def _coupled_swmm_report_finalized(self, model_type: str) -> bool:
-        """Return False only for a coupled TRITON-SWMM run whose SWMM report is unfinalized.
+        """Return False when this scenario's per-model terminal artifact is missing or unfinalized.
 
         Coupled completion is detected from the TRITON ``"Simulation ends"`` marker,
         which does NOT prove the coupled SWMM report was written. A
         resumed (or crashed / early-exited) coupled run can leave a 0-byte or
         truncated ``out_tritonswmm/swmm/hydraulics.rpt``. This gate additionally
-        requires that rpt to be finalized (carry the terminal ``"Analysis ended on"``
-        marker, via ``swmm_output_parser.rpt_is_complete``). Returning False here converts
+        requires that rpt to be finalized and error-free (carry the terminal ``"Analysis ended on"``
+        marker and no SWMM ``ERROR`` line, via ``swmm_output_parser.rpt_is_complete``). Returning False here converts
         a silent bad coupled output into a RETRIABLE failure, so the existing ``retries:``
         + ``--pickup-where-leftoff`` machinery re-runs (and resumes) the sim.
 
@@ -431,7 +461,7 @@ class TRITONSWMM_run:
             _log = self._analysis_level_model_logfile(model_type)
             if not _log.exists():
                 return False
-            if "Simulation ends" not in _log.read_text():
+            if "Simulation ends" not in _log.read_text(errors="replace"):
                 return False
             # SECOND conjunct, and it is about IDENTITY, not about completion.
             #
@@ -463,8 +493,8 @@ class TRITONSWMM_run:
             # not reach this conjunct: the log being consulted is keyed on `event_iloc` and
             # is therefore NOT this scenario's own log, so log-based truth is not what the
             # marker alone establishes. The principle is intact; the marker's PROVENANCE is
-            # the thing in doubt. That comment's block is narrowed to `tritonswmm` in this
-            # same change, so the two no longer contradict each other.
+            # the thing in doubt. That comment's block is narrowed to `tritonswmm`, so the two
+            # no longer contradict each other.
             #
             # `out_triton/performance.txt` is hereby a LIVE COMPLETION PREDICATE, not an
             # output, and MUST NEVER be added to a reclaim allowlist. Why that survives the
@@ -520,9 +550,9 @@ class TRITONSWMM_run:
         # returned False FOREVER — so a later hotstart-resume that genuinely ran to
         # t=end and finalized its coupled rpt was still reported incomplete, its
         # retry re-resumed from the t=end checkpoint, replayed to `dt: -nan`, and the
-        # rule burned every retry. Empirically confirmed on Rivanna (synth_cc_resume,
-        # job 17021807 step .1: COMPLETED 0:0, 144/144 cfgs written, hydraulics.rpt
-        # carrying "Analysis ended on" — recorded simulation_completed=False).
+        # rule burned every retry. Empirically confirmed on Rivanna (synth_cc_resume: a
+        # step that ended COMPLETED 0:0, 144/144 cfgs written, hydraulics.rpt carrying
+        # "Analysis ended on" — recorded simulation_completed=False).
         #
         # The latch only bites when the runner SURVIVES a failed sim (a SLURM
         # walltime kill reaps the runner before it can write False, which is why
@@ -545,7 +575,7 @@ class TRITONSWMM_run:
         log_file = self._analysis_level_model_logfile(model_type)
         if not log_file.exists():
             return False
-        log_content = log_file.read_text()
+        log_content = log_file.read_text(errors="replace")
         if model_type in ("triton", "tritonswmm"):
             success = "Simulation ends" in log_content
         else:  # swmm
@@ -560,7 +590,7 @@ class TRITONSWMM_run:
             # was always present in the captured output; the predicate stopped short
             # of it. WARNINGS are NOT failures (main.c:93 is a separate branch), so
             # only the errors clause disqualifies.
-            success = "EPA SWMM completed" in log_content and "There are errors." not in log_content
+            success = SWMM_COMPLETION_MARKER in log_content and SWMM_ERROR_MARKER not in log_content
 
         # Divergence check — WARN, but deliberately NOT load-bearing. TRITONSWMM ONLY.
         #
@@ -606,9 +636,9 @@ class TRITONSWMM_run:
                 # The message asserts NO outcome, deliberately. This site does not read the
                 # artifact that decides one: the return below is
                 # `success and _coupled_swmm_report_finalized(...)`, whose coupled arm turns
-                # on `hydraulics.rpt`. A finalized rpt yields True (complete, and the process
-                # rules then fail on the missing performance/); an absent or unfinalized rpt
-                # yields False (incomplete, retried, and NO process rule runs). Naming the
+                # on `hydraulics.rpt`. A finalized, error-free rpt yields True (complete, and the
+                # process rules then fail on the missing performance/); an absent, unfinalized or
+                # error-carrying rpt yields False (incomplete, retried, and NO process rule runs). Naming the
                 # deciding artifact instead of predicting a verdict is what keeps this true
                 # under a later change to that arm -- committing to one outcome is how the
                 # sentence this replaces came to be wrong.
@@ -619,10 +649,10 @@ class TRITONSWMM_run:
                     "file-level reclaim under out_tritonswmm/, or a failed rank-0 write). "
                     "Whether this run is nonetheless reported COMPLETE is decided by the "
                     "coupled rpt gate, which reads out_tritonswmm/swmm/hydraulics.rpt and "
-                    "NOT performance.txt: with a finalized rpt it is reported complete and "
-                    "the downstream process_* rules will fail on the missing performance/ "
-                    "directory; with an absent or unfinalized rpt it is reported incomplete "
-                    "and retried, and no process_* rule runs.",
+                    "NOT performance.txt: with a finalized, error-free rpt it is reported "
+                    "complete and the downstream process_* rules will fail on the missing "
+                    "performance/ directory; with an absent, unfinalized or error-carrying rpt "
+                    "it is reported incomplete and retried, and no process_* rule runs.",
                     model_type,
                     perf_file,
                 )
@@ -653,7 +683,7 @@ class TRITONSWMM_run:
         if not log_file.exists():
             return "no_log"
 
-        log_content = log_file.read_text()
+        log_content = log_file.read_text(errors="replace")
 
         if "DUE TO TIME LIMIT" in log_content:
             return "timeout"
@@ -732,21 +762,41 @@ class TRITONSWMM_run:
         Path | None
             Path to latest complete CFG checkpoint, or None if not available
         """
+        complete = self._complete_hotstart_cfgs(model_type)
+        if not complete:
+            return None
+        return complete[-1][1]
+
+    def _complete_hotstart_cfgs(self, model_type: Literal["triton", "tritonswmm"]) -> list[tuple[int, Path]]:
+        """Every COMPLETE ``config_NNNN.cfg`` checkpoint, as ``(reporting_step, path)`` oldest first.
+
+        "Complete" is the modal-line-count rule the resume picker has always used: a cfg the
+        solver was killed while writing is shorter than its siblings. The
+        ``swmm_snapshot_failed_replay`` line, which the launch writes or removes
+        (``set_swmm_snapshot_failed_replay``), is not counted, so an opt-in or opt-out resume
+        does not split the set. Split out of
+        ``_retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation`` (which
+        returns the last entry) because the snapshot step-back needs the earlier complete
+        checkpoints too, and a second copy of the rule would be a second place for it to
+        drift. Returns [] where that method returns None.
+        """
+        from hhemt.scenario import SWMM_SNAPSHOT_FAILED_REPLAY_KEY
+
         if model_type == "triton":
             output_dir = self._scenario.scen_paths.out_triton
         else:
             output_dir = self._scenario.scen_paths.out_tritonswmm
 
         if output_dir is None:
-            return None
+            return []
 
         cfg_dir = output_dir / "cfg"
         if not cfg_dir.exists():
-            return None
+            return []
 
         cfgs = list(cfg_dir.glob("*.cfg"))
         if len(cfgs) == 0:
-            return None
+            return []
 
         # Find latest complete CFG checkpoint
         dic_cfgs = {"step": [], "f_cfg": []}
@@ -759,14 +809,134 @@ class TRITONSWMM_run:
         df_cfgs["file_line_length"] = -1
         for step, cfg in df_cfgs.iloc[::-1].iterrows():
             file_as_list = read_text_file_as_list_of_strings(cfg["f_cfg"])
-            df_cfgs.loc[step, "file_line_length"] = len(file_as_list)
+            # The failed-write replay line is written by the toolkit into a RESUMED cfg and the
+            # solver copies it into every later one, so it is not counted: counting it would make
+            # cfgs from before and after an opt-in resume differ in length and the modal rule
+            # below would drop one group as "incomplete".
+            df_cfgs.loc[step, "file_line_length"] = len(
+                [line for line in file_as_list if not line.strip().startswith(f"{SWMM_SNAPSHOT_FAILED_REPLAY_KEY}=")]
+            )
 
         typical_length = df_cfgs["file_line_length"][df_cfgs["file_line_length"] > 0].mode().iloc[0]
         latest_complete = df_cfgs[df_cfgs["file_line_length"] == typical_length]
-        if latest_complete.empty:
-            return None
+        return [(int(step), Path(row["f_cfg"])) for step, row in latest_complete.iterrows()]
 
-        return Path(latest_complete.iloc[-1]["f_cfg"])
+    def _snapshot_path(self, checkpoint_id: int) -> Path:
+        """The coupled SWMM state snapshot the solver publishes for one checkpoint.
+
+        ``{out_tritonswmm}/swmm/{inp stem}_state_cp{K}.snapshot``, where the stem is the
+        hydraulics ``.inp`` filename up to its LAST ``"."`` and ``K`` is the same id as the
+        ``config_K.cfg`` written in that checkpoint block, unpadded. This mirrors the solver's
+        own naming (``snapshot_path_for`` in ``swmm_triton.h``). Check that naming in
+        code-expression form whenever the solver pin moves: a solver-side rename would
+        otherwise make every snapshot read as absent here, with no error.
+        """
+        stem = self._scenario.scen_paths.swmm_hydraulics_inp.name.rsplit(".", 1)[0]
+        return self._scenario.scen_paths.out_tritonswmm / "swmm" / f"{stem}_state_cp{checkpoint_id}.snapshot"
+
+    def _pick_resume_cfg_past_unusable_snapshot(self, newest_cfg: Path, *, verbose: bool = True) -> Path:
+        """Choose the hotstart cfg for a COUPLED resume, stepping back past an unusable snapshot.
+
+        THE PROBLEM. A coupled resume from ``config_N.cfg`` needs checkpoint N's SWMM state
+        snapshot. If the solver was killed while writing it, N has a ``.part`` or ``.killed``
+        marker and no published snapshot, and launching at N makes the solver abort -- every
+        retry, forever. An intact snapshot at an earlier checkpoint M is usually on disk, and
+        resuming from ``config_M.cfg`` loses only the work since M.
+
+        THE RULE, applied after the newest complete cfg N is known (it deletes nothing):
+
+        - GUARD. The step-back is only sound when the solver writes into the directory this
+          method reads snapshots from. Among cfg N's trimmed lines, the FIRST whose text
+          before its first ``=`` is exactly ``output_folder`` must have a right-hand side of
+          exactly ``out_tritonswmm`` or ``"out_tritonswmm"``. Anything else -- no such line,
+          a trailing comment, an absolute path, another name -- prints a warning naming the
+          line (or its absence) and returns N. Deliberately a two-form whitelist rather than a
+          port of the solver's parser: the solver erases only the ``#`` character of a
+          trailing comment, so a natural Python port strips the comment and accepts a value
+          the solver does not use.
+        - STEP 1. N's snapshot is published: return N.
+        - STEP 2. N's snapshot is not published and N has no ``.failed`` marker: let M be the
+          newest complete checkpoint below N with a published snapshot, and F the newest
+          checkpoint below N with a ``.failed`` marker that is above M (or any, when there is
+          no M). If F exists, return F: a failed snapshot write is a stop condition, never a
+          fall-back -- stepping past it would carry on beyond a writer that failed, often for a
+          cause such as a full disk that recurs at the next write -- and the solver launched at
+          F refuses with a clear error. When ``swmm_snapshot_failed_replay`` is True (the launch
+          writes it into F's cfg), F is still returned: the solver replays the SWMM exchange
+          history at F and continues (reason ``write-failed``), so the message says so. Else if M
+          exists, return M and record the step-back. Else return N.
+        - STEP 3. Otherwise (``.failed`` at N) return N, for the same reason: the solver
+          refuses at N, or, under ``swmm_snapshot_failed_replay=1``, replays there.
+
+        The step-back record ``{unusable_step, marker, reason, used_step}`` is left on
+        ``self.stepback_record`` and printed; the runner writes it into the ledger row of the
+        exec that resumes. ``marker`` is ``.killed``, ``.part`` or ``absent`` and ``reason`` is
+        ``killed-write`` for the first two and ``absent`` for the third.
+        """
+        n_step = return_the_reporting_step_from_a_cfg(newest_cfg)
+
+        output_folder_line = None
+        for raw in newest_cfg.read_text().splitlines():
+            line = raw.strip()
+            if "=" in line and line.split("=", 1)[0] == "output_folder":
+                output_folder_line = line
+                break
+        if output_folder_line is None or output_folder_line.split("=", 1)[1] not in (
+            "out_tritonswmm",
+            '"out_tritonswmm"',
+        ):
+            named = output_folder_line if output_folder_line is not None else "(no output_folder line)"
+            print(
+                f"WARNING: snapshot step-back REFUSED for {newest_cfg.name}: its output_folder line "
+                f'{named!r} is not exactly out_tritonswmm or "out_tritonswmm", so the snapshots '
+                "this toolkit can see may not be the ones the solver reads. Resuming from "
+                f"checkpoint {n_step} unchanged.",
+                flush=True,
+            )
+            return newest_cfg
+
+        s_n = self._snapshot_path(n_step)
+        if s_n.exists():
+            return newest_cfg
+        if Path(f"{s_n}.failed").exists():
+            return newest_cfg
+
+        complete = self._complete_hotstart_cfgs("tritonswmm")
+        published_below = [
+            (step, cfg) for step, cfg in complete if step < n_step and self._snapshot_path(step).exists()
+        ]
+        m = published_below[-1] if published_below else None
+
+        cfg_dir = newest_cfg.parent
+        failed_candidates = []
+        for f_cfg in cfg_dir.glob("*.cfg"):
+            step = return_the_reporting_step_from_a_cfg(f_cfg)
+            if step < n_step and (m is None or step > m[0]) and Path(f"{self._snapshot_path(step)}.failed").exists():
+                failed_candidates.append((step, f_cfg))
+        if failed_candidates:
+            f_step, f_cfg = max(failed_candidates)
+            if verbose:
+                print(
+                    failed_write_resume_message(
+                        f_step, n_step, bool(self._analysis.cfg_analysis.swmm_snapshot_failed_replay)
+                    ),
+                    flush=True,
+                )
+            return f_cfg
+        if m is None:
+            return newest_cfg
+
+        killed = Path(f"{s_n}.killed").exists()
+        part = Path(f"{s_n}.part").exists()
+        marker = ".killed" if killed else (".part" if part else "absent")
+        reason = "absent" if marker == "absent" else "killed-write"
+        self.stepback_record = {"unusable_step": n_step, "marker": marker, "reason": reason, "used_step": m[0]}
+        print(
+            f"Snapshot step-back: checkpoint {n_step} unusable (marker {marker}, reason {reason}); "
+            f"resuming from checkpoint {m[0]}.",
+            flush=True,
+        )
+        return m[1]
 
     def _hotstart_cfg_dir(self, model_type: Literal["triton", "tritonswmm"]) -> Path | None:
         """Directory of the ``config_NNNN.cfg`` hotstart checkpoints TRITON writes
@@ -878,7 +1048,7 @@ class TRITONSWMM_run:
         is the bash WRAPPER, and the sim itself is a remote ``srun`` STEP under a
         step ``slurmstepd``. A group SIGKILL reaps bash + the srun client too fast
         for srun to tear the step down, so ``triton.exe`` ORPHANS and runs to t=end
-        (empirically confirmed on Rivanna, ``proctrack/cgroup``, job 17018902). A
+        (empirically confirmed on Rivanna, ``proctrack/cgroup``). A
         group SIGTERM is CAUGHT by the srun client, which force-terminates the step
         and delivers an UNCATCHABLE SIGKILL to the task (``srun: ... task 0:
         Killed``) — so TRITON still cannot finalize-and-exit-0, but the kill is
@@ -900,10 +1070,10 @@ class TRITONSWMM_run:
                     # start_new_session=True, so it leads its own group). A group
                     # SIGKILL reaps bash + the srun client too fast for srun to tear
                     # the step down -> triton.exe ORPHANS and runs to t=end
-                    # (empirically confirmed on Rivanna, job 17018902). A group
+                    # (empirically confirmed on Rivanna). A group
                     # SIGTERM is CAUGHT by the srun client, which force-terminates the
                     # step and delivers an UNCATCHABLE SIGKILL to the task ("srun:
-                    # ... task 0: Killed", job 17018943) -- so TRITON still cannot
+                    # ... task 0: Killed") -- so TRITON still cannot
                     # finalize-and-exit-0, but the kill is routed through srun's
                     # handler, which a group SIGKILL fatally bypasses. New session
                     # isolates the group: no sibling step / batch job / orchestrator
@@ -954,6 +1124,7 @@ class TRITONSWMM_run:
         model_type: str = "tritonswmm",
         *,
         execution_locus: str | None = None,
+        debug: bool = False,
     ):
         """
         Prepare simulation command for specified model type.
@@ -966,6 +1137,17 @@ class TRITONSWMM_run:
             Print progress messages
         model_type : str
             One of: "triton", "tritonswmm", "swmm"
+        execution_locus : {"local", "slurm"} or None
+            The driver-resolved execution locus. "slurm" makes the launch srun-wrapped even
+            under a ``local`` dispatch label; None (legacy CLI,
+            ``_create_subprocess_sim_run_launcher``) leaves ``multi_sim_run_method`` alone to
+            decide. See the two-axis comment at the top of the body.
+        debug : bool
+            The run's ``--debug`` flag. Today it does exactly one thing: on a COUPLED launch
+            that hands the solver the base cfg (a clean start), the base cfg carries
+            ``swmm_snapshot_keep_previous=1`` when True and does not when False, so the solver
+            keeps the previous run's snapshot files rather than removing them. A resume
+            from a ``config_NNNN.cfg`` and every non-coupled launch leave the base cfg alone.
 
         Returns
         -------
@@ -975,9 +1157,13 @@ class TRITONSWMM_run:
         valid_types = ("triton", "tritonswmm", "swmm")
         if model_type not in valid_types:
             raise ValueError(f"model_type must be one of {valid_types}, got {model_type}")
+        # Reset per call, so a record left by an earlier call on this run object can never be
+        # written into the ledger row of a launch that did not step back.
+        self.stepback_record = None
 
         multi_sim_run_method = self._analysis.cfg_analysis.multi_sim_run_method
-        # Execution locus is a TWO-AXIS property, exactly as workflow.py resolves it
+        # Execution locus is a TWO-AXIS property, exactly as workflow.py resolves it in
+        # SnakemakeWorkflowBuilder._make_rule_emission_context's `_runs_under_slurm` predicate
         # (`multi_sim_run_method != "local" or self._resolved_execution_locus == "slurm"`):
         # the dispatch-family label OR the driver-resolved locus. A config-only
         # predicate here CANNOT express it, because `multi_sim_run_method="local"` +
@@ -993,7 +1179,7 @@ class TRITONSWMM_run:
         # DISJUNCTION, not a flag-wins conditional: the one cell where they differ
         # is an allocation-resident dispatch family carrying an explicit `local`
         # locus, and there the disjunction keeps the srun. A silent srun loss is
-        # the failure this whole change exists to remove, so the fail-safe arm
+        # the failure this predicate exists to prevent, so the fail-safe arm
         # wins over the marginally-more-precise one. Same shape as workflow.py's
         # own two-axis resolver, which is the authority cited above.
         using_srun = multi_sim_run_method in {"1_job_many_srun_tasks", "batch_job"} or execution_locus == "slurm"
@@ -1066,7 +1252,7 @@ class TRITONSWMM_run:
             # output_folder="out_tritonswmm" (scenario.py). Hardcoding out_tritonswmm
             # here left the standalone rung's /opt/hhemt/out_triton unbound inside the
             # read-only SIF -> `[ERROR] Error reading file: ` + Kokkos::Cuda finalize
-            # failure + exit 1 (Rivanna jobs 17090721/22/28/30/31/70). output_folder is
+            # failure + exit 1 (observed on Rivanna). output_folder is
             # the ONLY relative path in either generated cfg — DEM/MANNINGS/HYDROGRAPH/
             # HYDO_SRC_LOC/EXTBC are absolute and already inside the APPTAINER_BIND
             # closure (cspec.binds + system_directory_bind + {analysis_dir}:{analysis_dir}),
@@ -1131,6 +1317,13 @@ class TRITONSWMM_run:
             hotstart_cfg = self._retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation(
                 model_type=model_type
             )
+            # COUPLED SNAPSHOT STEP-BACK. Inside the hotstart branch and after the force branch,
+            # never ahead of it: a forced run has pruned every cfg, so there is nothing to step
+            # back from, and a step-back sited before the force branch would resume a run the
+            # force exists to restart. `_force_pending` is tested as well as relied on, so the
+            # ordering is not the only thing keeping the two apart.
+            if hotstart_cfg is not None and model_type == "tritonswmm" and not _force_pending:
+                hotstart_cfg = self._pick_resume_cfg_past_unusable_snapshot(hotstart_cfg, verbose=verbose)
             if hotstart_cfg is not None:
                 cfg = hotstart_cfg
                 sim_start_reporting_tstep = return_the_reporting_step_from_a_cfg(hotstart_cfg)
@@ -1155,6 +1348,35 @@ class TRITONSWMM_run:
                 # caught retroactively by check_coupled_resume_validity's replay-marker arm.
                 # n_resumes (incremented above) remains the first-class resume record that
                 # arm reads.
+
+        # CLEAN-START SNAPSHOT RETENTION. A coupled launch still holding the base cfg here is a
+        # clean start -- no hotstart cfg was chosen, whether because pickup is off, none exists,
+        # or the force branch pruned them -- and the solver's clean start disposes of the
+        # previous run's snapshot files according to this one cfg line. Written on EVERY such
+        # launch, set or removed, so the line always matches this invocation's flag rather than
+        # whichever run wrote it last; compare-and-write, so a matching file is not touched.
+        # The isinstance/exists conjunct keeps a scenario stand-in whose paths are not paths
+        # (several launch-form tests pass mocks) and a not-yet-generated base cfg out of the
+        # write; a real coupled launch reaches this with the generated base cfg on disk.
+        if (
+            model_type == "tritonswmm"
+            and isinstance(cfg, (str, Path))
+            and cfg == self._scenario.scen_paths.triton_swmm_cfg
+            and Path(cfg).exists()
+        ):
+            from hhemt.scenario import set_swmm_snapshot_keep_previous
+
+            set_swmm_snapshot_keep_previous(Path(cfg), bool(debug))
+
+        # FAILED-WRITE REPLAY OPT-IN. Written into the cfg THIS coupled launch passes to the
+        # solver -- the base cfg at a clean start, the chosen hotstart cfg at a resume -- on EVERY
+        # such launch, set or removed, so the line always matches this invocation's flag. A resume
+        # launches TRITON's own config_K.cfg, which copies the cfg of the launch that wrote it, so a
+        # key written only at preparation would never reach a resume of a run prepared without it.
+        if model_type == "tritonswmm" and isinstance(cfg, (str, Path)) and Path(cfg).exists():
+            from hhemt.scenario import set_swmm_snapshot_failed_replay
+
+            set_swmm_snapshot_failed_replay(Path(cfg), bool(self._analysis.cfg_analysis.swmm_snapshot_failed_replay))
 
         og_env = os.environ.copy()
         env = dict()
@@ -1469,10 +1691,10 @@ class TRITONSWMM_run:
                     f"--cpus-per-task={n_omp_threads} "
                     # "--exclusive "
                     "--cpu-bind=cores "
-                    "--overlap "  # KEPT on the CPU form this round, UNMEASURED. The historical
+                    "--overlap "  # KEPT on the CPU form, UNMEASURED. The historical
                     # claim ("without this, srun blocks waiting for resources already consumed
                     # by the batch script process") was REFUTED for the GPU form on the executor's
-                    # jobstep `mpi` path (UVA job 20348451, 2026-09-21: no-overlap step rc=0 in
+                    # jobstep `mpi` path (UVA, 2026-09-21: no-overlap step rc=0 in
                     # seconds), where the rule shell IS the batch step and nothing else holds
                     # the cores. Dropping it here needs its own probe (CPU flag set).
                     "--kill-on-bad-exit=1 "  # If any task exits non-zero (e.g. partial PMI
@@ -1573,7 +1795,7 @@ class TRITONSWMM_run:
                     # whole-node parent would otherwise over-expand --ntasks-per-gpu
                     # to the full node GPU count, so clamp with explicit --ntasks.
                     ntasks_flag = f"--ntasks={n_gpus} "
-                    overlap_flag = "--overlap "  # unchanged this round (not probed on Frontier)
+                    overlap_flag = "--overlap "  # kept (not probed on Frontier)
                 elif n_gpus >= 2 and multi_sim_run_method != "1_job_many_srun_tasks":
                     # UVA gres mode, MULTI-GPU (n_gpus>=2, single- OR multi-node) under
                     # the Snakemake slurm executor (per-rule jobstep). The per-rule sbatch
@@ -1601,11 +1823,11 @@ class TRITONSWMM_run:
                     # 24862 (present in 25.05.x, fixed 26.05.3): an --overlap step does not
                     # subtract Pass-1 GPU picks before Pass 2, so on a mixed-locality
                     # partial-node grant the step holds fewer GPUs than the job (member 40:
-                    # 2 of 4). Measured on UVA gpu-a6000 job 20348451: --overlap -> 3/4 GPUs
+                    # 2 of 4). Measured on UVA gpu-a6000: --overlap -> 3/4 GPUs
                     # + "Not enough gres to bind"; no --overlap -> 4/4, rc=0 in seconds (no
                     # hang: under the executor's jobstep `mpi` branch the rule shell IS the
-                    # batch step, nothing else holds the cores). Re-measured with the guard:
-                    # 20350116. The local-in-allocation form of this same branch
+                    # batch step, nothing else holds the cores), and re-measured with the guard
+                    # in place. The local-in-allocation form of this same branch
                     # (multi_sim_run_method == "local" inside a SLURM allocation, several sims
                     # as concurrent steps) is UNPROBED and keeps --overlap byte-identically:
                     # there a non-overlap step CAN block on a sibling step's resources.
@@ -1636,7 +1858,7 @@ class TRITONSWMM_run:
                     # ("More processors requested than permitted"). Empirically confirmed
                     # on UVA gpu-a6000 (2026-05-23).
                     ntasks_flag = ""
-                    overlap_flag = "--overlap "  # unchanged this round (parent carries --ntasks-per-gpu)
+                    overlap_flag = "--overlap "  # kept (parent carries --ntasks-per-gpu)
                 launch_cmd_str = (
                     f"srun "
                     f"-N {n_nodes_per_sim} "
@@ -1671,8 +1893,9 @@ class TRITONSWMM_run:
         # (PMI works); ${CONDA_PREFIX}/lib stays present so libstdc++ still resolves
         # to conda (GLIBCXX_3.4.31 for libgdal/libmuparser; module MPI dirs carry no
         # libstdc++). The MPI lib dir is derived generically from the resolved mpicc
-        # wrapper — never hardcoded. The guard (mpicc resolves AND <prefix>/lib
-        # exists) makes this a byte-identical no-op on hosts with no MPI compiler
+        # wrapper — never hardcoded. The guard (mpicc resolves AND the derived dir holds
+        # libmpi.so.40; the derivation is stated at the SWMM-path `_mpi_derive` comment)
+        # makes this a byte-identical no-op on hosts with no MPI compiler
         # wrapper (Frontier cray-mpich without mpicc, SWMM serial, local), so those
         # paths keep the prior conda-first behavior. Empirically confirmed by a live
         # 2-GPU salloc test on UVA Rivanna (2026-05-24): ldd flipped libmpi->module,
@@ -1688,8 +1911,8 @@ class TRITONSWMM_run:
             # Pre-exec modules FIRST (Frontier production: OLCF apptainer-enable-mpi/-gpu
             # + olcf-container-tools — they bind the open-ended host MPI+ROCm+compiler-
             # runtime closure so it need not be hand-enumerated into containlibs). They
-            # must precede cray-mpich-abi + the APPTAINERENV exports (validated probe
-            # job 4898044). Empty list => byte-identical to the prior emission.
+            # must precede cray-mpich-abi + the APPTAINERENV exports (validated by a
+            # probe job). Empty list => byte-identical to the prior emission.
             for _m in cspec.pre_exec_modules:
                 parts.append(f"module load {_m} 2>/dev/null")
             if cspec.cray_mpich_abi_module:
@@ -1776,10 +1999,10 @@ class TRITONSWMM_run:
         state conflicts when running multiple simulations concurrently.
 
         The launcher function:
-        1. Records initial simulation metadata in simlog
-        2. Executes the simulation subprocess
-        3. Returns the Popen object (does NOT wait for completion)
-        4. Caller is responsible for waiting and updating simlog
+        1. Opens ``sim_run_{event_iloc}.log`` beside the scenario log for the subprocess output
+        2. Starts ``python -m hhemt.run_simulation_runner`` for this scenario and model
+        3. Returns without waiting for completion
+        4. Leaves waiting to the caller, through ``finalize_sim``
 
         This non-blocking pattern allows multiple simulations to run concurrently
         when used with process polling in the concurrent execution methods.
@@ -1796,9 +2019,10 @@ class TRITONSWMM_run:
         Returns
         -------
         tuple
-            (launcher_func, metadata_dict) where:
-            - launcher_func: callable that returns (proc, start_time, sim_logfile)
-            - metadata_dict: dict with simulation metadata for logging
+            (launcher, finalize_sim) where:
+            - launcher: callable that returns (proc, start_time, sim_logfile, lf)
+            - finalize_sim: callable taking those four values; it waits for the
+              subprocess, closes the log handle and, when verbose, prints the outcome
         """
         import os
 
@@ -1831,7 +2055,8 @@ class TRITONSWMM_run:
             Returns
             -------
             tuple
-                (proc, start_time, sim_logfile) where proc is the Popen object
+                (proc, start_time, sim_logfile, lf) where proc is the Popen object
+                and lf the open log handle finalize_sim closes
             """
             if verbose:
                 print(
@@ -1853,7 +2078,10 @@ class TRITONSWMM_run:
 
         def finalize_sim(proc, start_time, sim_logfile, lf):
             """
-            Wait for simulation to complete and update simlog.
+            Wait for the simulation subprocess, close its log handle, and report.
+
+            Writes no log field: when verbose it prints the return code, the captured
+            output on failure, and whether ``model_run_completed`` reports the sim complete.
 
             Parameters
             ----------
