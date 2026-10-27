@@ -8,9 +8,6 @@
 - The [Quickstart](quickstart.md) completed. This tutorial runs the Norfolk-Irene
   case study, and the fully-worked path runs locally with no HPC.
 
-!!! warning
-    The full multi-config sweep (serial → OpenMP → MPI → hybrid → GPU under both execution modes) needs an HPC allocation and hours of compute and is not runnable in CI. This tutorial is authored-and-code-checked; run the pieces your hardware supports.
-
 !!! tip
     Run `analysis.test()` first. It runs a strict `_test/` subset (setup → run → process → consolidate → report) as a fast smoke before committing full compute. The setup step checks that the solver is already compiled rather than compiling it.
 
@@ -61,6 +58,9 @@ Two orthogonal axes control how a run executes: the per-sim compute config (`run
 ## Running on HPC
 
 To run the ensemble on a cluster, configure a cluster profile first (see the [HPC-profile setup guide](../how-to/hpc-profile-setup.md)), then set `multi_sim_run_method` and pass `--hpc-system-config` / `hpc_system_config=`. Rather than re-running each compute config by hand, let the toolkit do the sweep for you: the benchmarking sensitivity analysis (`benchmarking_uva_minimal.xlsx`, shipped in `test_data/norfolk_coastal_flooding/`) automates the compute-config sweep as a single analysis.
+
+!!! warning
+    The full multi-config sweep (serial → OpenMP → MPI → hybrid → GPU under both execution modes) needs an HPC allocation and hours of compute, so the project's continuous integration (CI) runs do not execute it. This tutorial is authored-and-code-checked; run the pieces your hardware supports.
 
 Before the first cluster run, read [Compile the solver: On a cluster](../how-to/compiling-the-solver.md#on-a-cluster), which says what a GPU partition needs that the worked path's Python call does not build.
 
