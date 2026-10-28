@@ -260,3 +260,131 @@ def test_sensitivity_attribute_is_bound_to_the_experiment_filename(synth_sensiti
 
     assert analysis.cfg_analysis.toggle_sensitivity_analysis is True
     assert analysis.analysis_paths.sensitivity_datatree_zarr.name == "experiment_datatree.zarr"
+
+
+def _two_store_root(root: Path, *, live: str, members: bool, cfg_arm: bool | None) -> Path:
+    """A root carrying BOTH ``experiment_datatree.zarr`` and ``analysis_datatree.zarr``.
+
+    Each store is a real zarr DataTree whose root attribute ``hhemt_producing_sha`` names
+    which one it is (``LIVE`` for the one named by ``live``, ``STALE`` for the other), so a
+    resolver's answer can be checked by reading the store it picked and not only its name.
+    ``members`` adds the ``members/`` directory only a sensitivity master carries;
+    ``cfg_arm`` writes a ``cfg_analysis.yaml`` naming that arm, or none when None.
+    """
+    import xarray as xr
+    import yaml
+
+    root.mkdir(parents=True)
+    for name in ("experiment_datatree.zarr", "analysis_datatree.zarr"):
+        tag = "LIVE" if name == live else "STALE"
+        ds = xr.Dataset(
+            attrs={"hhemt_producing_sha": tag, "hhemt_producing_version": "0", "hhemt_producing_dirty": "false"}
+        )
+        xr.DataTree(dataset=ds).to_zarr(str(root / name))
+    if members:
+        (root / "members").mkdir()
+    if cfg_arm is not None:
+        (root / "cfg_analysis.yaml").write_text(yaml.safe_dump({"toggle_sensitivity_analysis": cfg_arm}))
+    return root
+
+
+def _tag(store: Path) -> str:
+    """The ``hhemt_producing_sha`` tag stored in a fixture store's root attributes."""
+    import xarray as xr
+
+    return xr.open_datatree(str(store), engine="zarr", consolidated=False).attrs["hhemt_producing_sha"]
+
+
+def test_canonical_resolver_picks_the_live_store_on_a_configless_sensitivity_root(tmp_path):
+    """Property: with no arm supplied, no ``cfg_analysis.yaml`` and a ``members/`` directory,
+    ``resolve_experiment_tree`` returns ``experiment_datatree.zarr`` on a root carrying both
+    root stores, and that store is the live one.
+
+    Class: REGRESSION -- red before the resolver discovered the arm from ``members/``, when the
+    no-arm answer on this root was ``analysis_datatree.zarr`` (the stale store) with a warning.
+
+    Why it is required: a sensitivity master with no config is the one two-store root where the
+    name order alone and the regular-arm default give opposite answers; every caller that passes
+    no arm depends on this pick.
+
+    What kills it: removing the ``members/`` discovery, or making it override a supplied arm.
+
+    A second correct implementation that still passes: discovering the arm from any other
+    structural signal of a sensitivity master, so long as the live store is returned.
+    """
+    from hhemt.utils import resolve_experiment_tree
+
+    root = _two_store_root(tmp_path / "sens", live="experiment_datatree.zarr", members=True, cfg_arm=None)
+
+    picked = resolve_experiment_tree(root)
+
+    assert picked.name == "experiment_datatree.zarr"
+    assert _tag(picked) == "LIVE"
+
+
+def test_canonical_resolver_still_picks_the_regular_store_on_a_configless_regular_root(tmp_path):
+    """The must-not-fire control for the test above: with no config and no ``members/`` the root is
+    a regular analysis, and the resolver keeps returning ``analysis_datatree.zarr`` (the producer's
+    live store) with its two-store warning.
+
+    Class: REGRESSION on the other side of the same branch. It is red under an implementation that
+    treats an absent ``members/`` as a sensitivity master, and green before and after the change.
+
+    A second correct implementation that still passes: any discovery that leaves a root with
+    neither a config nor ``members/`` arm-unknown and answers as the regular arm.
+    """
+    from hhemt.utils import resolve_experiment_tree
+
+    root = _two_store_root(tmp_path / "reg", live="analysis_datatree.zarr", members=False, cfg_arm=None)
+
+    with pytest.warns(RuntimeWarning):
+        picked = resolve_experiment_tree(root)
+
+    assert picked.name == "analysis_datatree.zarr"
+    assert _tag(picked) == "LIVE"
+
+
+@pytest.mark.parametrize(
+    ("live", "members", "cfg_arm"),
+    [
+        ("analysis_datatree.zarr", False, None),
+        ("analysis_datatree.zarr", False, False),
+        ("experiment_datatree.zarr", True, None),
+        ("experiment_datatree.zarr", True, True),
+    ],
+    ids=["regular-no-config", "regular-config", "sensitivity-no-config", "sensitivity-config"],
+)
+def test_every_root_store_walker_resolves_a_two_store_root_to_the_live_store(tmp_path, live, members, cfg_arm):
+    """Property: the combine resolver, the metadata resolver, the analysis-validation stamp reader
+    and the canonical resolver all land on the LIVE store of a root carrying both root stores.
+
+    Class: REGRESSION -- before the walkers shared one resolver, the combine and metadata
+    resolvers returned the stale store on a regular root with no config, and the stamp reader
+    returned the stale store's stamp on every regular root, config or not.
+
+    What kills it: re-introducing a private ordering or a private name walk in any of the four.
+
+    A second correct implementation that still passes: any walker that obtains its pick from the
+    canonical resolver by any route.
+    """
+    import warnings
+    from types import SimpleNamespace
+
+    from hhemt.analysis_validation import _collect_stage_stamps
+    from hhemt.bundle._combine_merge import _resolve_root_tree
+    from hhemt.report_renderers.metadata import _resolve_consolidated_tree
+    from hhemt.utils import resolve_experiment_tree
+
+    root = _two_store_root(tmp_path / "root", live=live, members=members, cfg_arm=cfg_arm)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        picks = {
+            "canonical": resolve_experiment_tree(root),
+            "combine": _resolve_root_tree(root),
+            "metadata": _resolve_consolidated_tree(root, None),
+        }
+        stamp = _collect_stage_stamps(SimpleNamespace(analysis_paths=SimpleNamespace(analysis_dir=root)))["processing"]
+
+    assert {name: _tag(store) for name, store in picks.items()} == dict.fromkeys(picks, "LIVE")
+    assert stamp["hhemt_sha"] == "LIVE"

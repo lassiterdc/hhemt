@@ -20,7 +20,7 @@ from pathlib import Path
 import xarray as xr
 from xarray import DataTree
 
-from hhemt.utils import ROOT_TREE_NAMES
+from hhemt.utils import ROOT_TREE_NAMES, resolve_experiment_tree
 
 # A bundle ships exactly ONE root consolidated tree: a single-analysis bundle
 # ships analysis_datatree.zarr; a sensitivity-MASTER bundle ships
@@ -54,25 +54,12 @@ def _resolve_root_tree(bundle_root: Path) -> Path:
     bundle carrying neither raises (mirrors the prior single-name behavior; the
     ``test_merge_missing_tree_raises`` contract still holds).
     """
-    # ARM-ORDERED (D132). A bundle ships its cfg_analysis.yaml, so the arm is recoverable
-    # here; the canonical `hhemt.utils.ROOT_TREE_NAMES` is the fallback when it is not, imported
-    # rather than re-declared here (a private copy ordered analysis before sensitivity, the
-    # opposite of the canonical order, and a root carrying both retired names then resolved
-    # to a different store here than everywhere else). Ordering by the arm is what
-    # makes this correct on BOTH routes -- the fixed tuple is right on the stranding route and
-    # wrong on the producer route, and the two are byte-identical on disk.
-    from hhemt.utils import arm_from_config_dir
-
-    _arm = arm_from_config_dir(bundle_root)
-    _ordered: tuple[str, ...] = ROOT_TREE_NAMES
-    if _arm is False:
-        _ordered = (CONSOLIDATED_TREE_NAME, EXPERIMENT_TREE_NAME, SENSITIVITY_TREE_NAME)
-    elif _arm is True:
-        _ordered = (EXPERIMENT_TREE_NAME, SENSITIVITY_TREE_NAME, CONSOLIDATED_TREE_NAME)
-    for name in _ordered:
-        store = bundle_root / name
-        if store.exists():
-            return store
+    # The pick is made by the canonical resolver, which discovers the arm from the bundle's own
+    # cfg_analysis.yaml and then from a members/ directory, so a root carrying two stores
+    # resolves here exactly as it does everywhere else.
+    store = resolve_experiment_tree(bundle_root)
+    if store.exists():
+        return store
     raise FileNotFoundError(
         f"Bundle {bundle_root} ships none of {ROOT_TREE_NAMES}; combine requires "
         f"each bundle to ship its root consolidated tree (experiment_datatree.zarr "
