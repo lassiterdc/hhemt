@@ -482,7 +482,22 @@ unpaired_allowlist:
       the rename, so the exemption expires on the next change to this renderer.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: 8bdf78a84dc9828610db395f8d7952bb610d72bb8a6a60321b2553161bc78072
+    renderer_sha256: d6e4988663dcf0b2ff0fdca900877eed5d8241735ffa753039bcb7109a5c2dd8
+    justification_2026_10_28: >-
+      Package 2c, chunks 2c.2 and 2c.4 (developer ruling D-173, option 1). Caption RE-READ IN
+      FULL (23 lines: the three displayed sections, Provenance summary, Data availability and
+      Reproduction guide, plus the Sources block) against the diff. The diff of this renderer
+      against HEAD is ONE hunk, 18 insertions and 4 deletions, and it lies inside the
+      docstring of `_resolve_consolidated_tree`. Verified: the module's syntax tree with every
+      docstring blanked is IDENTICAL before and after, and the same comparison reports a
+      difference when a return statement of that function is altered, so no executable line
+      moved, `source_paths` is unchanged and the interpolated Sources block renders as before.
+      WHY THE CAPTION IS UNAFFECTED. The caption describes what the page shows, not how the
+      consolidated store is located: `grep -n -i -E "resolv|datatree|store|tree"` over the
+      caption returns no line. The docstring change states which store that helper resolves
+      and in which order, which no caption sentence asserts. This is a PAIRING discharge on a
+      re-read, not a formatting exemption. Digest recorded after the edit, so the exemption
+      expires on the next change to this renderer.
     justification_2026_10_01: >-
       WP-3C.2 (the provenance half). Caption RE-READ IN FULL against the diff. The change is
       ONE hunk in this renderer, in the same `parts.append` of the same `<p class='note'>`

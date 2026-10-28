@@ -181,3 +181,54 @@ def test_intercomparison_loads_a_fully_carried_child_store(tmp_path):
     assert CB._load_intercomparison_subs(
         _child_with_root_tree(tmp_path / "e", shallow=["members/member_0/experiment_datatree.zarr"])
     ) == ({}, {})
+
+
+def _walk_order(resolve, root: Path, names: tuple[str, ...]) -> list[str]:
+    """The priority order a resolver exhibits on a root carrying every name in ``names``.
+
+    Creates one empty directory per name (both resolvers decide by ``.exists()`` alone),
+    then repeatedly asks the resolver which store it picks and removes that store, so the
+    sequence of picks is the resolver's full ordering rather than only its first choice.
+    """
+    for name in names:
+        (root / name).mkdir()
+    order: list[str] = []
+    for _ in names:
+        picked = resolve(root)
+        order.append(picked.name)
+        picked.rmdir()
+    return order
+
+
+def test_combine_and_metadata_walkers_share_the_armless_root_tree_order(tmp_path):
+    """Property: with no ``cfg_analysis.yaml`` and no analysis object, the combine resolver and
+    the metadata resolver rank the three root-store names identically, and that ranking is
+    ``hhemt.utils.ROOT_TREE_NAMES``.
+
+    Class: REGRESSION -- red on the tree before ``_combine_merge`` imported the canonical
+    tuple, where its private copy ranked ``analysis_datatree.zarr`` ahead of
+    ``sensitivity_datatree.zarr`` (measured: combine picked experiment, analysis, sensitivity
+    while metadata picked experiment, sensitivity, analysis).
+
+    Why it is required: a root carrying both retired names resolved to a different store
+    depending on which module asked, and ``_resolve_consolidated_tree``'s docstring claimed the
+    two agreed. Asserting on the orderings' values is what keeps that claim from being text.
+
+    What kills it: re-introducing a second priority tuple in either module, or reordering
+    ``ROOT_TREE_NAMES`` in only one resolver's walk.
+
+    A second correct implementation that still passes: either resolver reaching the canonical
+    order by any route (a different loop, a helper, a sorted view of the tuple).
+    """
+    from hhemt.bundle._combine_merge import _resolve_root_tree
+    from hhemt.report_renderers.metadata import _resolve_consolidated_tree
+    from hhemt.utils import ROOT_TREE_NAMES
+
+    combine_root = tmp_path / "combine"
+    metadata_root = tmp_path / "metadata"
+    combine_root.mkdir()
+    metadata_root.mkdir()
+    combine_order = _walk_order(_resolve_root_tree, combine_root, ROOT_TREE_NAMES)
+    metadata_order = _walk_order(lambda r: _resolve_consolidated_tree(r, None), metadata_root, ROOT_TREE_NAMES)
+
+    assert combine_order == metadata_order == list(ROOT_TREE_NAMES)

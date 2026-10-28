@@ -552,10 +552,24 @@ _DECLARED_TREE_PATH_ATTRS = ("sensitivity_datatree_zarr", "analysis_datatree_zar
 def _resolve_consolidated_tree(analysis_dir: Path, analysis: TRITONSWMM_analysis | None) -> Path | None:
     """Locate the consolidated DataTree store, by existence, HPC- and bundle-alike.
 
-    Prefers the paths the analysis declares; falls back to the two canonical
-    filenames directly under ``analysis_dir`` so a reconstituted bundle (whose
-    ``analysis_paths`` may be repointed) still resolves. Existence-resolved over
-    the sensitivity-master name FIRST, mirroring ``_combine_merge._resolve_root_tree``.
+    Returns the first EXISTING candidate, or None when none exists.
+    Candidates, in this order:
+
+    1. the paths the analysis declares on ``analysis_paths``, looked up by the names in
+       ``_DECLARED_TREE_PATH_ATTRS`` (the sensitivity-master attribute first);
+    2. only when ``analysis`` is None: the store the root's own ``cfg_analysis.yaml`` names
+       by its arm (experiment store for a sensitivity master, the retired analysis store
+       for a regular analysis), when that file is present;
+    3. every name in ``hhemt.utils.ROOT_TREE_NAMES`` under ``analysis_dir``, in that
+       tuple's priority order.
+
+    Relation to ``_combine_merge._resolve_root_tree``: with ``analysis`` None the two rank the
+    three root-store names identically in every configuration state -- ``ROOT_TREE_NAMES`` order
+    with no ``cfg_analysis.yaml``, experiment/sensitivity/analysis when the config names a
+    sensitivity arm, analysis/experiment/sensitivity when it names a regular arm -- so on a
+    bundle root they resolve to the same store. They differ in two ways only: this function
+    tries the paths an ``analysis`` object declares first, and it returns None when no store
+    exists where that one raises ``FileNotFoundError``.
     """
     candidates: list[Path] = []
     paths = getattr(analysis, "analysis_paths", None) if analysis is not None else None
