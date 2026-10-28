@@ -162,10 +162,8 @@ class Toolkit:
         from .system import TRITONSWMM_system
         from .validation import assert_both_configs_load
 
-        # Meant to report BOTH documents' load errors in one round, but today it does
-        # not: config/loaders.py::_load_config turns every pydantic ValidationError into
-        # a ConfigurationError, which assert_both_configs_load does not catch, so the
-        # first failing document's error propagates alone.
+        # Reports BOTH documents' schema errors in one ConfigurationError, so one round of
+        # edits clears them. A missing file still raises FileNotFoundError on its own.
         assert_both_configs_load(Path(system_config), Path(analysis_config))
 
         system = TRITONSWMM_system(Path(system_config))
