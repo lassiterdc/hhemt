@@ -80,7 +80,7 @@ To wipe deliberately anyway, pass `override_wipe_nonempty=True`; the cost is
 printed before the delete. To remove an analysis rather than re-run it, use
 `hhemt delete`, which carries its own confirmation and in-flight guards. The
 command-line form of the same guard is described under
-[Run modes and the wipe guard](running-an-experiment-bundle.md#run-modes-and-the-wipe-guard).
+[Run modes and the wipe guard](running-an-experiment-definition.md#run-modes-and-the-wipe-guard).
 
 ## See re-processed results without re-simulating
 

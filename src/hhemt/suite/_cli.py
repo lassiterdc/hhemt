@@ -119,9 +119,11 @@ analysis_app = typer.Typer(
 
 @analysis_app.callback()
 def _analysis(
-    experiment: str = typer.Option(..., "--experiment", help="Path to the experiment bundle directory."),
+    experiment: str = typer.Option(..., "--experiment", help="Path to the experiment definition directory."),
     cluster: str | None = typer.Option(
-        None, "--cluster", help="Target cluster key. Optional when the bundle declares exactly one cluster."
+        None,
+        "--cluster",
+        help="Target cluster key. Optional when the experiment definition declares exactly one cluster.",
     ),
 ) -> None:
     """One end-to-end smoke run of YOUR experiment on its own cluster (analysis.test()).

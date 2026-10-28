@@ -262,7 +262,7 @@ def test_debug_is_a_parameter_at_every_layer_the_flag_crosses():
     not kinds.
     """
     from hhemt.analysis import TRITONSWMM_analysis
-    from hhemt.experiment_bundle import run_experiment
+    from hhemt.experiment_definition import run_experiment
     from hhemt.sensitivity_analysis import TRITONSWMM_sensitivity_analysis
     from hhemt.toolkit import Toolkit
     from hhemt.workflow import SensitivityAnalysisWorkflowBuilder, SnakemakeWorkflowBuilder

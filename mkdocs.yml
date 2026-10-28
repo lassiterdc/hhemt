@@ -127,7 +127,7 @@ nav:
       - Config filling: how-to/config-filling.md
       - Compile the solver: how-to/compiling-the-solver.md
       - Building container images: how-to/building-container-images.md
-      - Running an experiment bundle: how-to/running-an-experiment-bundle.md
+      - Running an experiment definition: how-to/running-an-experiment-definition.md
       - In-flight operations: how-to/in-flight-operations.md
       - Diagnosing a failed run: how-to/diagnosing-a-failed-run.md
       - Forcing re-runs: how-to/forcing-reruns.md

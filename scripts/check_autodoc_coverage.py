@@ -53,7 +53,7 @@ from local_src import assert_resolved_under, bind_local_src  # noqa: E402
 # rather than declared here. That is deliberate and it removes a defect class rather
 # than an instance of one: a hand-maintained tuple here mirrored a hand-maintained
 # rendering surface there, and the two silently diverged — measured 2026-08-26 at 6
-# entries here against 8 directives there, so `hhemt.experiment_bundle` and
+# entries here against 8 directives there, so `hhemt.experiment_definition` and
 # `hhemt.synthetic_experiment` rendered on the public API page while this gate
 # certified a surface that excluded them.
 #

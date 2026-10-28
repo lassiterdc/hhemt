@@ -85,7 +85,7 @@ submit to; a CPU partition needs only the CPU build. Running it a second time is
 also the way to check what is built, because a backend whose build already
 succeeded is skipped.
 
-For an [experiment bundle](running-an-experiment-bundle.md), the two config paths
+For an [experiment definition](running-an-experiment-definition.md), the two config paths
 are the resolved copies that `hhemt run-experiment --dry-run` writes to
 `$SCRATCH_DIR/resolved_configs/`.
 

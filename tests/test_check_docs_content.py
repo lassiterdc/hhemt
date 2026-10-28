@@ -73,7 +73,7 @@ PAGE_KEYED = {
 NOT_THE_PAGE_S_NAMES = {
     "hhemt.toolkit.Toolkit",
     "hhemt.bundle._combine.CombinedBundle",
-    "hhemt.config.experiment_bundle.ExperimentConfig",
+    "hhemt.config.experiment_definition.ExperimentConfig",
 }
 
 

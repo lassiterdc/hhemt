@@ -1,19 +1,19 @@
-# Running an experiment bundle
+# Running an experiment from its definition
 
-`hhemt run-experiment` runs a **self-describing experiment bundle**: a directory whose
+`hhemt run-experiment` runs a **self-describing experiment definition**: a directory whose
 `experiment.yaml` declares everything the run needs: the system and analysis configs, the
 input datasets, the per-cluster HPC profile, the container, and a resolvable toolkit pin. The
 descriptor is the *single config*: there are no positional config arguments to line up, and any
 CLI flag that would override a descriptor-declared value must be confirmed first.
 
-## The bundle layout
+## The experiment definition layout
 
-A conformant bundle (validated against the `ExperimentConfig` descriptor model, see
-[Verifying a bundle conforms](#verifying-a-bundle-conforms)) is a directory containing at least:
+A conformant definition (validated against the `ExperimentConfig` descriptor model, see
+[Verifying an experiment definition conforms](#verifying-an-experiment-definition-conforms)) is a directory containing at least:
 
 ```
 experiments/my_experiment/
-├── experiment.yaml          # the descriptor (schema: hhemt.config.experiment_bundle.ExperimentConfig)
+├── experiment.yaml          # the descriptor (schema: hhemt.config.experiment_definition.ExperimentConfig)
 ├── README.md                # runbook (required)
 ├── rerun.sh                 # re-run driver (required)
 └── configs/
@@ -21,15 +21,15 @@ experiments/my_experiment/
     └── analysis_config_uva.yaml
 ```
 
-The descriptor carries no identity key: the bundle is named by its directory, and the
+The descriptor carries no identity key: the experiment definition is named by its directory, and the
 analysis identity comes from the analysis config. A minimal `experiment.yaml`:
 
 ```yaml
 description: One-line description.
-system_config: configs/system_config_uva.yaml    # bundle-relative
-analysis_config: configs/analysis_config_uva.yaml # bundle-relative
+system_config: configs/system_config_uva.yaml    # definition-relative
+analysis_config: configs/analysis_config_uva.yaml # definition-relative
 hpc_system_config:
-  uva: ../../hpc/hpc_system_config_uva.yaml   # absolute, or relative to this bundle directory (the one holding experiment.yaml)
+  uva: ../../hpc/hpc_system_config_uva.yaml   # absolute, or relative to this experiment definition directory (the one holding experiment.yaml)
 inputs:
   - name: weather
     local_path: "${HHEMT_DATA_ROOT}/weather/forcing.nc"   # ${VAR}-templated, never a literal operator path
@@ -55,10 +55,10 @@ the RO-Crate.
 
 ```bash
 # Plan only, building the DAG and writing nothing:
-hhemt run-experiment --bundle experiments/my_experiment --cluster uva --dry-run
+hhemt run-experiment --experiment experiments/my_experiment --cluster uva --dry-run
 
 # Execute:
-hhemt run-experiment --bundle experiments/my_experiment --cluster uva
+hhemt run-experiment --experiment experiments/my_experiment --cluster uva
 ```
 
 `--cluster` selects which `hpc_system_config[<cluster>]` and which per-cluster `destinations`
@@ -85,10 +85,10 @@ Any other value is refused at parse time (exit 2); `hhemt run-experiment --help`
 
 ```bash
 # Start over, deleting the analysis directory (refused if it holds completed work):
-hhemt run-experiment --bundle experiments/my_experiment --cluster uva --mode fresh
+hhemt run-experiment --experiment experiments/my_experiment --cluster uva --mode fresh
 
 # Start over even though the directory holds completed work:
-hhemt run-experiment --bundle experiments/my_experiment --cluster uva --mode fresh --override-wipe-nonempty
+hhemt run-experiment --experiment experiments/my_experiment --cluster uva --mode fresh --override-wipe-nonempty
 ```
 
 The wipe guard refuses `--mode fresh` (exit 2) when the analysis directory still holds
@@ -109,7 +109,7 @@ runs them (and everything downstream) again in place. See
 
 ```bash
 # Re-run every completed scenario in place, no wipe:
-hhemt run-experiment --bundle experiments/my_experiment --cluster uva --override-force-rerun all
+hhemt run-experiment --experiment experiments/my_experiment --cluster uva --override-force-rerun all
 ```
 
 ## Waiting for completion
@@ -142,7 +142,7 @@ prints a side-by-side `descriptor (config)` vs `CLI override` table and requires
 
 ```bash
 # Non-interactive contexts (a submit script) must pass --yes to accept an override:
-hhemt run-experiment --bundle experiments/my_experiment --cluster uva --yes
+hhemt run-experiment --experiment experiments/my_experiment --cluster uva --yes
 ```
 
 Without `--yes`, a non-interactive invocation that would override the descriptor **refuses**
@@ -157,9 +157,9 @@ its own flag; see [Run modes and the wipe guard](#run-modes-and-the-wipe-guard).
 [CLI reference exit-code table](../reference/cli.md#exit-codes), which also lists the
 cases each code covers for this command.
 
-## Verifying a bundle conforms
+## Verifying an experiment definition conforms
 
-The descriptor model ships in the wheel, so an installed copy can validate a bundle
+The descriptor model ships in the wheel, so an installed copy can validate an experiment definition
 directly. Run this with the interpreter you installed `hhemt` into: inside that
 environment, `python3` resolves to it; from outside one, no interpreter on `PATH` will
 import `hhemt` and the snippet cannot work.
@@ -167,7 +167,7 @@ import `hhemt` and the snippet cannot work.
 ```bash
 python3 -c "
 import sys, yaml
-from hhemt.config.experiment_bundle import ExperimentConfig
+from hhemt.config.experiment_definition import ExperimentConfig
 ExperimentConfig.model_validate(yaml.safe_load(open(sys.argv[1] + '/experiment.yaml')))
 print('OK')" experiments/my_experiment
 ```

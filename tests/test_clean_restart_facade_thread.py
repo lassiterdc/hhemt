@@ -15,7 +15,7 @@ scientific comparison.
 
 Before the parameter was threaded it existed ONLY on ``analysis.run``:
 ``grep -c clean_restart`` returned 0 in all three of ``cli.py``, ``toolkit.py`` and
-``experiment_bundle.py``, so the estate's submit path -- which goes through
+``experiment_definition.py``, so the estate's submit path -- which goes through
 ``run-experiment`` -- could not reach it at all.
 
 THE INVARIANT: the parameter is reachable at EVERY layer, not merely at some. The
@@ -41,13 +41,13 @@ def test_the_parameter_is_present_at_every_facade_layer():
     as a pass on whichever layer it happened to check.
     """
     from hhemt.analysis import TRITONSWMM_analysis
-    from hhemt.experiment_bundle import run_experiment
+    from hhemt.experiment_definition import run_experiment
     from hhemt.toolkit import Toolkit
 
     missing = []
     for label, fn in (
         ("Toolkit.run", Toolkit.run),
-        ("experiment_bundle.run_experiment", run_experiment),
+        ("experiment_definition.run_experiment", run_experiment),
         ("analysis.run (the sink)", TRITONSWMM_analysis.run),
     ):
         if "override_clean_restart_member_ids" not in inspect.signature(fn).parameters:
@@ -133,12 +133,12 @@ def test_the_default_wipes_nothing_at_every_layer():
     them. Kills: defaulting the parameter to a list, or to a truthy sentinel, at any layer.
     """
     from hhemt.analysis import TRITONSWMM_analysis
-    from hhemt.experiment_bundle import run_experiment
+    from hhemt.experiment_definition import run_experiment
     from hhemt.toolkit import Toolkit
 
     for label, fn in (
         ("Toolkit.run", Toolkit.run),
-        ("experiment_bundle.run_experiment", run_experiment),
+        ("experiment_definition.run_experiment", run_experiment),
         ("analysis.run", TRITONSWMM_analysis.run),
     ):
         default = inspect.signature(fn).parameters["override_clean_restart_member_ids"].default

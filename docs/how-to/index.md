@@ -11,8 +11,8 @@ Task-oriented recipes for getting specific jobs done with the toolkit.
   once per machine and GPU target, and know when to build it again.
 - [Building container images](building-container-images.md): create the Apptainer
   images container mode runs in, with `hhemt build-sifs`.
-- [Running an experiment bundle](running-an-experiment-bundle.md): run a
-  self-describing `experiment.yaml` bundle with `hhemt run-experiment`.
+- [Running an experiment definition](running-an-experiment-definition.md): run a
+  self-describing `experiment.yaml` definition with `hhemt run-experiment`.
 - [In-flight operations](in-flight-operations.md): monitor, resume, and
   manage a running analysis.
 - [Diagnosing a failed run](diagnosing-a-failed-run.md): find what went wrong,

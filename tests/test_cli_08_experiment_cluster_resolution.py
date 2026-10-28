@@ -1,15 +1,15 @@
 """How `hhemt reset` and `hhemt run-experiment` decide which cluster an experiment targets.
 
-The problem this file guards: both verbs find an experiment from its bundle directory, and an
+The problem this file guards: both verbs find an experiment from its definition directory, and an
 experiment's analysis tree lives on one cluster. When the user omits `--cluster`, the verbs
-must pick the bundle's only declared cluster, and must refuse rather than guess when the
-bundle declares none or several, because `reset` deletes whatever tree it is pointed at.
+must pick the experiment definition's only declared cluster, and must refuse rather than guess when the
+definition declares none or several, because `reset` deletes whatever tree it is pointed at.
 Both verbs share one resolver, so every case runs against both.
 
 Nothing here builds an analysis, reaches Snakemake, compiles or simulates: `run-experiment`'s
 runner and `reset`'s case builder are replaced at their module seams
-(`hhemt.experiment_bundle.run_experiment` / `.build_case_from_bundle`, both imported inside
-the verb bodies) by recorders. The bundle's `experiment.yaml` is real and schema-valid,
+(`hhemt.experiment_definition.run_experiment` / `.build_case_from_definition`, both imported inside
+the verb bodies) by recorders. The experiment definition's `experiment.yaml` is real and schema-valid,
 because the resolver reads its declared clusters.
 """
 
@@ -22,7 +22,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-import hhemt.experiment_bundle as eb
+import hhemt.experiment_definition as eb
 from hhemt.cli import app
 
 runner = CliRunner()
@@ -32,8 +32,8 @@ class _Stop(Exception):
     """Raised by the run-experiment recorder so the verb ends once the cluster is recorded."""
 
 
-def _write_bundle(root: Path, clusters: list[str]) -> Path:
-    """A schema-valid experiment bundle declaring exactly `clusters` under hpc_system_config."""
+def _write_definition(root: Path, clusters: list[str]) -> Path:
+    """A schema-valid experiment definition declaring exactly `clusters` under hpc_system_config."""
     root.mkdir(parents=True, exist_ok=True)
     descriptor = {
         "description": "cluster-resolution fixture",
@@ -47,7 +47,7 @@ def _write_bundle(root: Path, clusters: list[str]) -> Path:
 
 
 def _patch_run_experiment(monkeypatch, recorded: list[str]) -> None:
-    def _fake(bundle_dir, cluster, **kwargs):
+    def _fake(definition_dir, cluster, **kwargs):
         recorded.append(cluster)
         raise _Stop
 
@@ -57,7 +57,7 @@ def _patch_run_experiment(monkeypatch, recorded: list[str]) -> None:
 def _patch_reset(monkeypatch, recorded: list[str], tmp_path: Path) -> None:
     gone = tmp_path / "analysis_dir_never_created"
 
-    def _fake(bundle, bundle_dir, cluster, **kwargs):
+    def _fake(definition, definition_dir, cluster, **kwargs):
         recorded.append(cluster)
         analysis = SimpleNamespace(
             analysis_paths=SimpleNamespace(analysis_dir=gone),
@@ -65,22 +65,22 @@ def _patch_reset(monkeypatch, recorded: list[str], tmp_path: Path) -> None:
         )
         return SimpleNamespace(analysis=analysis)
 
-    monkeypatch.setattr(eb, "build_case_from_bundle", _fake)
+    monkeypatch.setattr(eb, "build_case_from_definition", _fake)
 
 
 _VERBS = {
     "reset": lambda d: ["reset", "--experiment", str(d), "--yes"],
-    "run-experiment": lambda d: ["run-experiment", "--bundle", str(d)],
+    "run-experiment": lambda d: ["run-experiment", "--experiment", str(d)],
 }
 
 
-def _invoke(verb: str, bundle: Path, extra: list[str], monkeypatch, tmp_path: Path):
+def _invoke(verb: str, definition: Path, extra: list[str], monkeypatch, tmp_path: Path):
     recorded: list[str] = []
     if verb == "reset":
         _patch_reset(monkeypatch, recorded, tmp_path)
     else:
         _patch_run_experiment(monkeypatch, recorded)
-    result = runner.invoke(app, [*_VERBS[verb](bundle), *extra])
+    result = runner.invoke(app, [*_VERBS[verb](definition), *extra])
     return result, recorded
 
 
@@ -99,7 +99,7 @@ _STATES = {
 def test_experiment_verbs_resolve_the_cluster_one_way(verb, state, monkeypatch, tmp_path):
     """Property: both verbs resolve the target cluster by the same rule.
 
-    Class: every `reset` and `run-experiment` invocation, across the four bundle states the
+    Class: every `reset` and `run-experiment` invocation, across the four definition states the
     rule distinguishes (one declared cluster and no `--cluster`; two declared and none given;
     zero declared and none given; two declared with `--cluster` naming one) plus a control
     whose explicit, matching `--cluster` must resolve identically to the first state. Why it is
@@ -108,14 +108,14 @@ def test_experiment_verbs_resolve_the_cluster_one_way(verb, state, monkeypatch, 
     exit 2 and, where several are declared, must name each so the user can choose. What kills
     it: `reset` absent, `--cluster` still required, a default that picks the first of several,
     or a refusal that names no cluster. A second correct implementation under which it still
-    passes: one that reads the declared clusters from a different bundle field or resolves them
+    passes: one that reads the declared clusters from a different definition field or resolves them
     inside the runner rather than in the CLI, since only the cluster handed to the seam, the
     exit code and the named clusters are asserted.
     """
     declared, extra, expected = _STATES[state]
-    bundle = _write_bundle(tmp_path / "bundle", declared)
+    definition = _write_definition(tmp_path / "definition", declared)
 
-    result, recorded = _invoke(verb, bundle, extra, monkeypatch, tmp_path)
+    result, recorded = _invoke(verb, definition, extra, monkeypatch, tmp_path)
 
     if expected is None:
         assert result.exit_code == 2, f"exit {result.exit_code}: {result.output}"

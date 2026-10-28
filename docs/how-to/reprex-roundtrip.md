@@ -42,8 +42,8 @@ bundle_dir = sensitivity.reprex_bundle(container_defs=defs)
 
 Emitting without it raises `ConfigurationError`: no field of the analysis or HPC-system
 config names a `.def` (`ContainerSpec` has none), so it is an emit-time operator input.
-An experiment bundle is no longer an exception: its `container:` block (`ContainerRef`)
-names no recipe either, as [The bundle layout](running-an-experiment-bundle.md#the-bundle-layout)
+An experiment definition is no longer an exception: its `container:` block (`ContainerRef`)
+names no recipe either, as [The experiment definition layout](running-an-experiment-definition.md#the-experiment-definition-layout)
 describes. The family
 recipes now ship as package data under `src/hhemt/sif/recipes/`; copy the one your
 architecture needs and pass its path. A native analysis ignores the argument.

@@ -24,7 +24,7 @@ elsewhere and placed under its `sif_root`.
 
 ## See what would be built
 
-`build-sifs` needs to know which experiment's images to plan, so name a bundle with
+`build-sifs` needs to know which experiment's images to plan, so name an experiment definition with
 `--experiment`. Run the plan first; it writes nothing:
 
 ```bash
@@ -32,8 +32,8 @@ hhemt build-sifs --build-hpc-config hpc/uva.yaml --sif-build-config sif_build.ya
   --experiment experiments/my_experiment --dry-run
 ```
 
-`--experiment` is repeatable, and the bundle's system and analysis configs plus its
-HPC map are what derive the targets. With no bundle, name the three configs directly
+`--experiment` is repeatable, and the experiment definition's system and analysis configs plus its
+HPC map are what derive the targets. With no experiment definition, name the three configs directly
 instead, with `--system-config`, `--analysis-config` and `--target-hpc-config` as a
 positional triplet. Naming neither is refused.
 

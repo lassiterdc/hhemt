@@ -1,9 +1,9 @@
-"""Tests for the wheel-shipped descriptor-driven experiment-bundle runner (``hhemt.experiment_bundle``).
+"""Tests for the wheel-shipped descriptor-driven experiment-definition runner (``hhemt.experiment_definition``).
 
 Covers the CLI-versus-descriptor override gate and the fail-fast guards; the shared
 ``resolve_hpc_system_config`` precedence contract that
 ``scripts/experiments/container_validation.py`` imports (so a regression in the resolver is
-caught here, not on a cluster); ``${VAR}`` expansion in bundle configs; and what
+caught here, not on a cluster); ``${VAR}`` expansion in definition configs; and what
 ``run_experiment`` forwards to ``Toolkit.run``.
 """
 
@@ -16,14 +16,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-import hhemt.experiment_bundle as eb
-from hhemt.config.experiment_bundle import ExperimentConfig
+import hhemt.experiment_definition as eb
+from hhemt.config.experiment_definition import ExperimentConfig
 from hhemt.exceptions import ConfigurationError
 
 
-def _make_bundle(*, hpc: dict | None = None, container: dict | None = None) -> ExperimentConfig:
+def _make_definition(*, hpc: dict | None = None, container: dict | None = None) -> ExperimentConfig:
     data: dict = {
-        "description": "test bundle",
+        "description": "test definition",
         "system_config": "system.yaml",
         "analysis_config": "analysis.yaml",
         "toolkit_pin": {"version": "0.1.0"},
@@ -35,11 +35,11 @@ def _make_bundle(*, hpc: dict | None = None, container: dict | None = None) -> E
     return ExperimentConfig.model_validate(data)
 
 
-def _write_bundle_dir(tmp_path: Path, *, hpc: dict | None = None, container: dict | None = None) -> Path:
-    bundle_dir = tmp_path / "exp_test"
-    bundle_dir.mkdir()
+def _write_definition_dir(tmp_path: Path, *, hpc: dict | None = None, container: dict | None = None) -> Path:
+    definition_dir = tmp_path / "exp_test"
+    definition_dir.mkdir()
     data: dict = {
-        "description": "test bundle",
+        "description": "test definition",
         "system_config": "system.yaml",
         "analysis_config": "analysis.yaml",
         "toolkit_pin": {"version": "0.1.0"},
@@ -48,8 +48,8 @@ def _write_bundle_dir(tmp_path: Path, *, hpc: dict | None = None, container: dic
         data["hpc_system_config"] = hpc
     if container is not None:
         data["container"] = container
-    (bundle_dir / "experiment.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
-    return bundle_dir
+    (definition_dir / "experiment.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
+    return definition_dir
 
 
 def _write_hpc_config(tmp_path: Path, *, default_account: str, container: bool = False) -> Path:
@@ -79,22 +79,22 @@ def _write_hpc_config(tmp_path: Path, *, default_account: str, container: bool =
 
 
 def test_resolve_overrides_empty_when_cli_adds_nothing():
-    bundle = _make_bundle(hpc={"uva": "hpc/uva.yaml"})
+    definition = _make_definition(hpc={"uva": "hpc/uva.yaml"})
     # No CLI hpc override at all.
-    assert eb.resolve_overrides(bundle, {"cluster": "uva", "hpc_system_config_yaml": None}) == []
+    assert eb.resolve_overrides(definition, {"cluster": "uva", "hpc_system_config_yaml": None}) == []
     # CLI supplies the SAME value the descriptor declares — not an override.
-    assert eb.resolve_overrides(bundle, {"cluster": "uva", "hpc_system_config_yaml": "hpc/uva.yaml"}) == []
+    assert eb.resolve_overrides(definition, {"cluster": "uva", "hpc_system_config_yaml": "hpc/uva.yaml"}) == []
     # Descriptor is silent for this cluster — supplying a value fills a gap, not an override.
-    bundle_silent = _make_bundle(hpc={})
-    assert eb.resolve_overrides(bundle_silent, {"cluster": "uva", "hpc_system_config_yaml": "/x.yaml"}) == []
+    definition_silent = _make_definition(hpc={})
+    assert eb.resolve_overrides(definition_silent, {"cluster": "uva", "hpc_system_config_yaml": "/x.yaml"}) == []
 
 
 # ---- one OverrideReport per divergent field ----
 
 
 def test_resolve_overrides_reports_divergent_field():
-    bundle = _make_bundle(hpc={"uva": "hpc/uva.yaml"})
-    reports = eb.resolve_overrides(bundle, {"cluster": "uva", "hpc_system_config_yaml": "/other/path.yaml"})
+    definition = _make_definition(hpc={"uva": "hpc/uva.yaml"})
+    reports = eb.resolve_overrides(definition, {"cluster": "uva", "hpc_system_config_yaml": "/other/path.yaml"})
     assert len(reports) == 1
     r = reports[0]
     assert r.field == "hpc_system_config[uva]"
@@ -117,34 +117,36 @@ def test_format_override_gate_names_both_values():
 
 
 def test_run_experiment_non_tty_refuses_override(tmp_path, monkeypatch):
-    bundle_dir = _write_bundle_dir(tmp_path, hpc={"uva": "hpc/uva.yaml"})
+    definition_dir = _write_definition_dir(tmp_path, hpc={"uva": "hpc/uva.yaml"})
 
     class _FakeStdin:
         def isatty(self):
             return False
 
     monkeypatch.setattr(sys, "stdin", _FakeStdin())
-    # Guard: build_case_from_bundle must NOT be reached — the gate refuses first.
-    monkeypatch.setattr(eb, "build_case_from_bundle", lambda *a, **k: pytest.fail("gate should refuse before build"))
+    # Guard: build_case_from_definition must NOT be reached — the gate refuses first.
+    monkeypatch.setattr(
+        eb, "build_case_from_definition", lambda *a, **k: pytest.fail("gate should refuse before build")
+    )
 
     with pytest.raises(ConfigurationError):
-        eb.run_experiment(bundle_dir, "uva", hpc_system_config_yaml="/other/path.yaml", assume_yes=False)
+        eb.run_experiment(definition_dir, "uva", hpc_system_config_yaml="/other/path.yaml", assume_yes=False)
 
 
 # ---- assume_yes=True proceeds past the gate ----
 
 
 def test_run_experiment_assume_yes_proceeds(tmp_path, monkeypatch):
-    bundle_dir = _write_bundle_dir(tmp_path, hpc={"uva": "hpc/uva.yaml"})
+    definition_dir = _write_definition_dir(tmp_path, hpc={"uva": "hpc/uva.yaml"})
     sentinel = object()
 
     class _FakeTk:
         def run(self, **kwargs):
             return sentinel
 
-    monkeypatch.setattr(eb, "build_case_from_bundle", lambda *a, **k: _FakeTk())
+    monkeypatch.setattr(eb, "build_case_from_definition", lambda *a, **k: _FakeTk())
     result = eb.run_experiment(
-        bundle_dir, "uva", hpc_system_config_yaml="/other/path.yaml", assume_yes=True, dry_run=True
+        definition_dir, "uva", hpc_system_config_yaml="/other/path.yaml", assume_yes=True, dry_run=True
     )
     assert result is sentinel
 
@@ -153,18 +155,18 @@ def test_run_experiment_assume_yes_proceeds(tmp_path, monkeypatch):
 # ---- container.sif_root when the descriptor declares a container ----
 
 
-def test_build_case_from_bundle_rejects_placeholder_account(tmp_path):
+def test_build_case_from_definition_rejects_placeholder_account(tmp_path):
     hpc_path = _write_hpc_config(tmp_path, default_account="{your-allocation}")
-    bundle = _make_bundle(hpc={"uva": str(hpc_path)})
+    definition = _make_definition(hpc={"uva": str(hpc_path)})
     with pytest.raises(ConfigurationError, match="default_account"):
-        eb.build_case_from_bundle(bundle, tmp_path, "uva", hpc_system_config_yaml=hpc_path)
+        eb.build_case_from_definition(definition, tmp_path, "uva", hpc_system_config_yaml=hpc_path)
 
 
-def test_build_case_from_bundle_rejects_placeholder_sif_when_container_declared(tmp_path):
+def test_build_case_from_definition_rejects_placeholder_sif_when_container_declared(tmp_path):
     hpc_path = _write_hpc_config(tmp_path, default_account="real-account", container=True)
-    bundle = _make_bundle(hpc={"uva": str(hpc_path)}, container={})
+    definition = _make_definition(hpc={"uva": str(hpc_path)}, container={})
     with pytest.raises(ConfigurationError, match="container.sif_root"):
-        eb.build_case_from_bundle(bundle, tmp_path, "uva", hpc_system_config_yaml=hpc_path)
+        eb.build_case_from_definition(definition, tmp_path, "uva", hpc_system_config_yaml=hpc_path)
 
 
 # ---- shared resolver precedence (the contract scripts/experiments/container_validation.py imports) ----
@@ -178,7 +180,7 @@ def test_resolve_hpc_system_config_override_wins(tmp_path, monkeypatch):
     monkeypatch.setenv("HHEMT_HPC_SYSTEM_CONFIG", str(other))
     # The override wins with $HHEMT_HPC_SYSTEM_CONFIG naming another existing file: the
     # resolver consults no environment variable. This is the call shape
-    # container_validation.build_case uses (override only, bundle=None), where the override
+    # container_validation.build_case uses (override only, definition=None), where the override
     # is the only source the resolver accepts; without it, the resolver raises.
     assert eb.resolve_hpc_system_config("uva", override=override) == override.resolve()
 
@@ -201,7 +203,7 @@ def test_resolve_hpc_system_config_ignores_both_env_vars_and_raises_naming_the_t
     monkeypatch.setenv("HHEMT_HPC_SYSTEM_CONFIG", str(env_cfg))
     monkeypatch.setenv("HHEMT_DEPLOYMENT_CONFIG", str(deployment_config))
     with pytest.raises(ConfigurationError) as ei:
-        eb.resolve_hpc_system_config("uva", override=None, bundle=None)
+        eb.resolve_hpc_system_config("uva", override=None, definition=None)
     message = str(ei.value)
     assert "--hpc-system-config" in message
     assert "hpc_system_config['uva']" in message
@@ -236,57 +238,59 @@ def test_resolve_hpc_system_config_missing_file_message_names_no_environment_var
     [("experiments", "exp_test"), ("experiments", "group", "exp_test")],
     ids=["two-below-root", "three-below-root"],
 )
-def test_resolve_hpc_system_config_relative_entry_resolves_against_the_bundle_directory(tmp_path, monkeypatch, layout):
-    """Property: a relative descriptor entry resolves against the bundle directory, whatever the env says.
+def test_resolve_hpc_system_config_relative_entry_resolves_against_the_definition_directory(
+    tmp_path, monkeypatch, layout
+):
+    """Property: a relative descriptor entry resolves against the definition directory, whatever the env says.
 
-    Class: a relative `hpc_system_config[cluster]` for a bundle directory (the folder holding
+    Class: a relative `hpc_system_config[cluster]` for an experiment definition directory (the folder holding
     `experiment.yaml`) at two depths, `root/experiments/exp_test` and
-    `root/experiments/group/exp_test`, with a same-named file planted under the bundle's
+    `root/experiments/group/exp_test`, with a same-named file planted under the experiment definition's
     grandparent and under the directory `$HHEMT_DEPLOYMENT_CONFIG` names. Why required: the
-    descriptor travels with the bundle, so its relative entry must mean the file beside
-    `experiment.yaml` wherever the bundle sits and wherever the shell points. Killed by:
+    descriptor travels with the experiment definition, so its relative entry must mean the file beside
+    `experiment.yaml` wherever the experiment definition sits and wherever the shell points. Killed by:
     resolving against the grandparent, the env root, or the working directory when a
-    bundle_dir is given. Second correct implementation: deriving the base from the descriptor
-    file's own path instead of from `bundle_dir`.
+    definition_dir is given. Second correct implementation: deriving the base from the descriptor
+    file's own path instead of from `definition_dir`.
     """
-    bundle_dir = (tmp_path / "root").joinpath(*layout)
-    (bundle_dir / "hpc").mkdir(parents=True)
-    (bundle_dir / "hpc" / "uva.yaml").write_text("target", encoding="utf-8")
-    grandparent_decoy = bundle_dir.parent.parent / "hpc" / "uva.yaml"
+    definition_dir = (tmp_path / "root").joinpath(*layout)
+    (definition_dir / "hpc").mkdir(parents=True)
+    (definition_dir / "hpc" / "uva.yaml").write_text("target", encoding="utf-8")
+    grandparent_decoy = definition_dir.parent.parent / "hpc" / "uva.yaml"
     grandparent_decoy.parent.mkdir(parents=True, exist_ok=True)
     grandparent_decoy.write_text("grandparent decoy", encoding="utf-8")
     elsewhere = tmp_path / "elsewhere"
     (elsewhere / "hpc").mkdir(parents=True)
     (elsewhere / "hpc" / "uva.yaml").write_text("env decoy", encoding="utf-8")
     monkeypatch.setenv("HHEMT_DEPLOYMENT_CONFIG", str(elsewhere))
-    bundle = _make_bundle(hpc={"uva": "hpc/uva.yaml"})
-    resolved = eb.resolve_hpc_system_config("uva", bundle=bundle, bundle_dir=bundle_dir)
-    assert resolved == (bundle_dir / "hpc" / "uva.yaml").resolve()
+    definition = _make_definition(hpc={"uva": "hpc/uva.yaml"})
+    resolved = eb.resolve_hpc_system_config("uva", definition=definition, definition_dir=definition_dir)
+    assert resolved == (definition_dir / "hpc" / "uva.yaml").resolve()
 
 
-def test_resolve_hpc_system_config_relative_entry_absent_from_the_bundle_directory_is_refused(tmp_path):
-    """Property: a relative entry is looked up in the bundle directory only, never in a folder above it.
+def test_resolve_hpc_system_config_relative_entry_absent_from_the_definition_directory_is_refused(tmp_path):
+    """Property: a relative entry is looked up in the experiment definition directory only, never in a folder above it.
 
-    Class: a relative `hpc_system_config[cluster]` whose file is missing under the bundle
-    directory but present under the bundle's parent and grandparent. Why required: the entry
+    Class: a relative `hpc_system_config[cluster]` whose file is missing under the experiment definition
+    directory but present under the experiment definition's parent and grandparent. Why required: the entry
     means the file beside `experiment.yaml`; quietly using a same-named file further up would
-    run the experiment on another bundle's cluster settings with no message. Killed by:
+    run the experiment on another experiment definition's cluster settings with no message. Killed by:
     resolving against the grandparent, or searching upward until a match is found (the parent's
     copy). Second correct implementation: checking existence before building the path and
     raising with the same path named.
     """
-    bundle_dir = tmp_path / "root" / "experiments" / "exp_test"
-    bundle_dir.mkdir(parents=True)
-    for above in (bundle_dir.parent, bundle_dir.parent.parent):
+    definition_dir = tmp_path / "root" / "experiments" / "exp_test"
+    definition_dir.mkdir(parents=True)
+    for above in (definition_dir.parent, definition_dir.parent.parent):
         (above / "hpc").mkdir(parents=True, exist_ok=True)
         (above / "hpc" / "uva.yaml").write_text("not this one", encoding="utf-8")
-    bundle = _make_bundle(hpc={"uva": "hpc/uva.yaml"})
+    definition = _make_definition(hpc={"uva": "hpc/uva.yaml"})
     with pytest.raises(ConfigurationError) as ei:
-        eb.resolve_hpc_system_config("uva", bundle=bundle, bundle_dir=bundle_dir)
-    assert str(bundle_dir.resolve() / "hpc" / "uva.yaml") in str(ei.value)
+        eb.resolve_hpc_system_config("uva", definition=definition, definition_dir=definition_dir)
+    assert str(definition_dir.resolve() / "hpc" / "uva.yaml") in str(ei.value)
 
 
-# ---- ${VAR} expansion in bundle configs (the runner must load a config written with ${VAR}) ----
+# ---- ${VAR} expansion in definition configs (the runner must load a config written with ${VAR}) ----
 
 
 def test_expand_config_vars_resolves_and_materializes(tmp_path, monkeypatch):
@@ -310,7 +314,7 @@ def test_expand_config_vars_unset_raises(tmp_path, monkeypatch):
         eb.expand_config_vars(cfg, dest_dir=tmp_path)
 
 
-def test_build_case_from_bundle_expands_config_vars(tmp_path, monkeypatch):
+def test_build_case_from_definition_expands_config_vars(tmp_path, monkeypatch):
     # Real files the ${VAR} must resolve to.
     (tmp_path / "system.yaml").write_text("k: ${HHEMT_TEST_VAR}/s\n", encoding="utf-8")
     (tmp_path / "analysis.yaml").write_text("k: ${HHEMT_TEST_VAR}/a\n", encoding="utf-8")
@@ -319,7 +323,7 @@ def test_build_case_from_bundle_expands_config_vars(tmp_path, monkeypatch):
     monkeypatch.setenv("HHEMT_TEST_VAR", str(tmp_path))
     monkeypatch.setenv("SCRATCH_DIR", str(tmp_path))  # materialize resolved copies here
     hpc_path = _write_hpc_config(tmp_path, default_account="real-account")
-    bundle = _make_bundle(hpc={"uva": str(hpc_path)})
+    definition = _make_definition(hpc={"uva": str(hpc_path)})
 
     captured: dict = {}
 
@@ -332,7 +336,7 @@ def test_build_case_from_bundle_expands_config_vars(tmp_path, monkeypatch):
 
     # from_configs is a @classmethod; patch with a classmethod so the cls arg is absorbed.
     monkeypatch.setattr(tk_mod.Toolkit, "from_configs", classmethod(lambda cls, **kw: _fake_from_configs(**kw)))
-    eb.build_case_from_bundle(bundle, tmp_path, "uva", hpc_system_config_yaml=hpc_path)
+    eb.build_case_from_definition(definition, tmp_path, "uva", hpc_system_config_yaml=hpc_path)
     for key in ("system_config", "analysis_config"):
         p = captured[key]
         assert p.is_file(), p
@@ -353,7 +357,7 @@ def test_build_case_from_bundle_expands_config_vars(tmp_path, monkeypatch):
     ],
 )
 def test_run_experiment_wait_autodetect(tmp_path, monkeypatch, wait_arg, dry_run, slurm_job_id, expected_wait):
-    bundle_dir = _write_bundle_dir(tmp_path, hpc={"uva": "hpc/uva.yaml"})
+    definition_dir = _write_definition_dir(tmp_path, hpc={"uva": "hpc/uva.yaml"})
     captured: dict = {}
 
     class _FakeTk:
@@ -361,13 +365,13 @@ def test_run_experiment_wait_autodetect(tmp_path, monkeypatch, wait_arg, dry_run
             captured.update(kwargs)
             return object()
 
-    monkeypatch.setattr(eb, "build_case_from_bundle", lambda *a, **k: _FakeTk())
+    monkeypatch.setattr(eb, "build_case_from_definition", lambda *a, **k: _FakeTk())
     if slurm_job_id is None:
         monkeypatch.delenv("SLURM_JOB_ID", raising=False)
     else:
         monkeypatch.setenv("SLURM_JOB_ID", slurm_job_id)
     eb.run_experiment(
-        bundle_dir,
+        definition_dir,
         "uva",
         hpc_system_config_yaml="/other/path.yaml",
         assume_yes=True,
@@ -384,7 +388,7 @@ def test_run_experiment_threads_override_force_rerun_to_tk_run(tmp_path, monkeyp
     """RED pre-fix: `run_experiment` had no `override_force_rerun` keyword, and `**cli_overrides`
     swallowed it silently, so nothing reached `tk.run` (KeyError at the capture, not TypeError).
     The satisfying arm is the omitted keyword arriving as None (read the config field)."""
-    bundle_dir = _write_bundle_dir(tmp_path, hpc={"uva": "hpc/uva.yaml"})
+    definition_dir = _write_definition_dir(tmp_path, hpc={"uva": "hpc/uva.yaml"})
     captured: dict = {}
 
     class _FakeTk:
@@ -392,9 +396,9 @@ def test_run_experiment_threads_override_force_rerun_to_tk_run(tmp_path, monkeyp
             captured.update(kwargs)
             return object()
 
-    monkeypatch.setattr(eb, "build_case_from_bundle", lambda *a, **k: _FakeTk())
+    monkeypatch.setattr(eb, "build_case_from_definition", lambda *a, **k: _FakeTk())
     eb.run_experiment(
-        bundle_dir,
+        definition_dir,
         "uva",
         hpc_system_config_yaml="/other/path.yaml",
         assume_yes=True,
@@ -403,7 +407,7 @@ def test_run_experiment_threads_override_force_rerun_to_tk_run(tmp_path, monkeyp
     assert captured["override_force_rerun"] == {"event_iloc": [3]}
 
     captured.clear()
-    eb.run_experiment(bundle_dir, "uva", hpc_system_config_yaml="/other/path.yaml", assume_yes=True)
+    eb.run_experiment(definition_dir, "uva", hpc_system_config_yaml="/other/path.yaml", assume_yes=True)
     assert captured["override_force_rerun"] is None
 
 
@@ -412,7 +416,7 @@ def test_run_experiment_forwards_mode_to_tk_run(tmp_path, monkeypatch):
     (a StrEnum member compares equal to the bare word), and the default is resume."""
     from hhemt.orchestration import RunMode
 
-    bundle_dir = _write_bundle_dir(tmp_path, hpc={"uva": "hpc/uva.yaml"})
+    definition_dir = _write_definition_dir(tmp_path, hpc={"uva": "hpc/uva.yaml"})
     captured: dict = {}
 
     class _FakeTk:
@@ -420,16 +424,18 @@ def test_run_experiment_forwards_mode_to_tk_run(tmp_path, monkeypatch):
             captured.update(kwargs)
             return object()
 
-    monkeypatch.setattr(eb, "build_case_from_bundle", lambda *a, **k: _FakeTk())
-    eb.run_experiment(bundle_dir, "uva", hpc_system_config_yaml="/other/path.yaml", assume_yes=True, mode=RunMode.fresh)
+    monkeypatch.setattr(eb, "build_case_from_definition", lambda *a, **k: _FakeTk())
+    eb.run_experiment(
+        definition_dir, "uva", hpc_system_config_yaml="/other/path.yaml", assume_yes=True, mode=RunMode.fresh
+    )
     assert captured["mode"] == "fresh"
 
     captured.clear()
-    eb.run_experiment(bundle_dir, "uva", hpc_system_config_yaml="/other/path.yaml", assume_yes=True)
+    eb.run_experiment(definition_dir, "uva", hpc_system_config_yaml="/other/path.yaml", assume_yes=True)
     assert captured["mode"] == "resume"
 
 
-# ---- resolver precedence with a bundle supplied: no entry for this cluster still refuses ----
+# ---- resolver precedence with an experiment definition supplied: no entry for this cluster still refuses ----
 
 
 @pytest.mark.parametrize(
@@ -439,37 +445,37 @@ def test_run_experiment_forwards_mode_to_tk_run(tmp_path, monkeypatch):
         pytest.param({"frontier": "hpc/hpc_system_config_frontier.yaml"}, id="descriptor-declares-another-cluster"),
     ],
 )
-def test_resolve_hpc_system_config_bundle_without_this_cluster_ignores_env_and_raises(
+def test_resolve_hpc_system_config_definition_without_this_cluster_ignores_env_and_raises(
     tmp_path, monkeypatch, declared_hpc
 ):
     """Property: a supplied descriptor with no entry for the cluster still refuses, whatever the env names.
 
-    Class: no override, a bundle and its bundle_dir supplied (the arguments that
-    `build_case_from_bundle` and the CLI pass, which is what `run-experiment` reaches), the
+    Class: no override, an experiment definition and its definition_dir supplied (the arguments that
+    `build_case_from_definition` and the CLI pass, which is what `run-experiment` reaches), the
     descriptor declaring either no `hpc_system_config` or only other clusters, and both
     `$HHEMT_HPC_SYSTEM_CONFIG` and `$HHEMT_DEPLOYMENT_CONFIG` naming existing files. Why
-    required: the env-free arm above passes `bundle=None`, the arguments the
+    required: the env-free arm above passes `definition=None`, the arguments the
     container-validation driver passes, so an environment fallback restored only for the
-    bundle-supplied path, which is the path every production caller takes, would pass it; this
+    definition-supplied path, which is the path every production caller takes, would pass it; this
     arm is the same refusal at the position production occupies. Killed by: any environment
-    read reachable when a bundle is supplied without this cluster's entry, for example an
-    `elif bundle is not None and os.environ.get("HHEMT_HPC_SYSTEM_CONFIG")` branch before the
+    read reachable when an experiment definition is supplied without this cluster's entry, for example an
+    `elif definition is not None and os.environ.get("HHEMT_HPC_SYSTEM_CONFIG")` branch before the
     refusal. Second correct implementation: looking the entry up with
-    `bundle.hpc_system_config.get(cluster)` and refusing on `None` with differently worded text
+    `definition.hpc_system_config.get(cluster)` and refusing on `None` with differently worded text
     that still names `--hpc-system-config` and `hpc_system_config['uva']`.
     """
     deployment_config = tmp_path / "estate"
-    bundle_dir = deployment_config / "experiments" / "exp_test"
-    bundle_dir.mkdir(parents=True)
+    definition_dir = deployment_config / "experiments" / "exp_test"
+    definition_dir.mkdir(parents=True)
     (deployment_config / "hpc").mkdir()
     (deployment_config / "hpc" / "hpc_system_config_uva.yaml").write_text("z", encoding="utf-8")
     env_cfg = tmp_path / "env.yaml"
     env_cfg.write_text("y", encoding="utf-8")
     monkeypatch.setenv("HHEMT_HPC_SYSTEM_CONFIG", str(env_cfg))
     monkeypatch.setenv("HHEMT_DEPLOYMENT_CONFIG", str(deployment_config))
-    bundle = _make_bundle(hpc=declared_hpc)
+    definition = _make_definition(hpc=declared_hpc)
     with pytest.raises(ConfigurationError) as ei:
-        eb.resolve_hpc_system_config("uva", override=None, bundle=bundle, bundle_dir=bundle_dir)
+        eb.resolve_hpc_system_config("uva", override=None, definition=definition, definition_dir=definition_dir)
     message = str(ei.value)
     assert "--hpc-system-config" in message
     assert "hpc_system_config['uva']" in message

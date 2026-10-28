@@ -2,10 +2,10 @@
 map-driven exit codes.
 
 Every node is solver-free BY CONSTRUCTION. The verb imports `run_experiment` INSIDE its body
-(`from .experiment_bundle import run_experiment`), so the seam is the module attribute
-`hhemt.experiment_bundle.run_experiment`: patching it there is what the command resolves at
+(`from .experiment_definition import run_experiment`), so the seam is the module attribute
+`hhemt.experiment_definition.run_experiment`: patching it there is what the command resolves at
 call time, and the patched callable never opens a config, builds a Toolkit, or reaches
-Snakemake. The parser-refusal nodes never enter the body at all. The `--bundle` directory
+Snakemake. The parser-refusal nodes never enter the body at all. The `--experiment` directory
 must exist (`exists=True`), so `tmp_path` with an empty `experiment.yaml` suffices: the fake
 never reads it. The `Toolkit.run` guard node builds a Toolkit around a `SimpleNamespace`
 analysis whose `run` is a recording spy. `hhemt run`'s side of the shared-reporter node
@@ -30,7 +30,7 @@ import pydantic
 import pytest
 from typer.testing import CliRunner
 
-import hhemt.experiment_bundle as eb
+import hhemt.experiment_definition as eb
 from hhemt.cli import app
 from hhemt.cli_utils import EXIT_CODE_MAP, map_exception_to_exit_code
 from hhemt.exceptions import (
@@ -50,14 +50,14 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
-def bundle_dir(tmp_path: Path) -> Path:
-    """An existing directory for `--bundle` (Typer checks `exists=True`); never read."""
+def definition_dir(tmp_path: Path) -> Path:
+    """An existing directory for `--experiment` (Typer checks `exists=True`); never read."""
     (tmp_path / "experiment.yaml").write_text("", encoding="utf-8")
     return tmp_path
 
 
-def _base_argv(bundle_dir: Path) -> list[str]:
-    return ["run-experiment", "--bundle", str(bundle_dir), "--cluster", "uva"]
+def _base_argv(definition_dir: Path) -> list[str]:
+    return ["run-experiment", "--experiment", str(definition_dir), "--cluster", "uva"]
 
 
 def _patch_seam(monkeypatch, fn) -> None:
@@ -92,42 +92,42 @@ def _pydantic_validation_error() -> pydantic.ValidationError:
     raise AssertionError("model_validate accepted a non-int; the probe is broken")
 
 
-def test_mode_invalid_value_is_a_usage_error(bundle_dir, monkeypatch):
+def test_mode_invalid_value_is_a_usage_error(definition_dir, monkeypatch):
     """VIOLATING arm. RED pre-fix: `--mode bogus` was forwarded and the verb exited 0."""
     captured: dict = {}
     _patch_seam(monkeypatch, _returning(WorkflowResult(success=True, mode="local"), captured))
-    result = runner.invoke(app, _base_argv(bundle_dir) + ["--mode", "bogus"])
+    result = runner.invoke(app, _base_argv(definition_dir) + ["--mode", "bogus"])
     assert result.exit_code == 2
     assert "--mode" in result.output
     assert captured == {}, "the parser must refuse before the body runs"
 
 
-def test_mode_overwrite_is_refused(bundle_dir, monkeypatch):
+def test_mode_overwrite_is_refused(definition_dir, monkeypatch):
     """VIOLATING arm for the retired word. RED pre-fix: `overwrite` was accepted (exit 0)."""
     captured: dict = {}
     _patch_seam(monkeypatch, _returning(WorkflowResult(success=True, mode="local"), captured))
-    result = runner.invoke(app, _base_argv(bundle_dir) + ["--mode", "overwrite"])
+    result = runner.invoke(app, _base_argv(definition_dir) + ["--mode", "overwrite"])
     assert result.exit_code == 2
     assert captured == {}
 
 
 @pytest.mark.parametrize("mode", ["fresh", "resume"])
-def test_mode_valid_values_reach_run_experiment(bundle_dir, monkeypatch, mode):
+def test_mode_valid_values_reach_run_experiment(definition_dir, monkeypatch, mode):
     """SATISFYING arm, green in both states: the value arrives at the seam (as a StrEnum
     member, which compares equal to the bare word)."""
     captured: dict = {}
     _patch_seam(monkeypatch, _returning(WorkflowResult(success=True, mode="local"), captured))
-    result = runner.invoke(app, _base_argv(bundle_dir) + ["--mode", mode])
+    result = runner.invoke(app, _base_argv(definition_dir) + ["--mode", mode])
     assert result.exit_code == 0
     assert captured["mode"] == mode
     assert isinstance(captured["mode"], str)
 
 
-def test_mode_default_is_resume(bundle_dir, monkeypatch):
+def test_mode_default_is_resume(definition_dir, monkeypatch):
     """SATISFYING arm, green in both states: omitting --mode resumes."""
     captured: dict = {}
     _patch_seam(monkeypatch, _returning(WorkflowResult(success=True, mode="local"), captured))
-    result = runner.invoke(app, _base_argv(bundle_dir))
+    result = runner.invoke(app, _base_argv(definition_dir))
     assert result.exit_code == 0
     assert captured["mode"] == "resume"
 
@@ -175,32 +175,32 @@ def test_toolkit_run_refuses_unknown_mode():
     assert calls[-1]["from_scratch"] is False
 
 
-def test_failure_result_exits_3_and_prints_no_green(bundle_dir, monkeypatch):
+def test_failure_result_exits_3_and_prints_no_green(definition_dir, monkeypatch):
     """RED pre-fix: exit 1 with `run-experiment complete (success=False)` on stdout.
 
     `== 3` is the admissible assertion (`!= 0` is green pre-fix and inadmissible).
     """
     _patch_seam(monkeypatch, _returning(WorkflowResult(success=False, mode="local", message="Snakemake failed.")))
-    result = runner.invoke(app, _base_argv(bundle_dir))
+    result = runner.invoke(app, _base_argv(definition_dir))
     assert result.exit_code == 3
     assert "complete" not in result.stdout
     assert "failed" in result.stderr
     assert "Snakemake failed." in result.stderr
 
 
-def test_partial_failure_result_names_failed_rules(bundle_dir, monkeypatch):
+def test_partial_failure_result_names_failed_rules(definition_dir, monkeypatch):
     """RED pre-fix: no per-rule line existed and the verb exited 1."""
     failures = [{"rule_token": "run_triton_evt-0", "reason": "walltime kill"}]
     _patch_seam(
         monkeypatch,
         _returning(WorkflowResult(success=False, mode="local", message="1 rule failed", partial_failures=failures)),
     )
-    result = runner.invoke(app, _base_argv(bundle_dir))
+    result = runner.invoke(app, _base_argv(definition_dir))
     assert result.exit_code == 3
     assert "run_triton_evt-0" in result.stderr
 
 
-def test_dry_run_failure_result_is_not_reported_ok(bundle_dir, monkeypatch):
+def test_dry_run_failure_result_is_not_reported_ok(definition_dir, monkeypatch):
     """Contract pin for the reporter's ORDERING (`success` before the dry-run arm).
 
     RED pre-fix: exit 0 with `--dry-run OK` printed. A `WorkflowResult(success=False)`
@@ -209,13 +209,13 @@ def test_dry_run_failure_result_is_not_reported_ok(bundle_dir, monkeypatch):
     print green.
     """
     _patch_seam(monkeypatch, _returning(WorkflowResult(success=False, mode="local", message="plan failed")))
-    result = runner.invoke(app, _base_argv(bundle_dir) + ["--dry-run"])
+    result = runner.invoke(app, _base_argv(definition_dir) + ["--dry-run"])
     assert result.exit_code == 3
     assert "OK" not in result.stdout
     assert "planned cleanly" not in result.stdout
 
 
-def test_reporter_prints_producer_text_literally(bundle_dir, monkeypatch):
+def test_reporter_prints_producer_text_literally(definition_dir, monkeypatch):
     """Producer text is data, not markup. RED pre-fix (and RED against an unescaped reporter):
     a message carrying `[/job]` raised MarkupError inside the print, the catch-all re-raised
     on the same text, and click exited 1 with nothing on either stream; a `[run_x]` token
@@ -228,33 +228,33 @@ def test_reporter_prints_producer_text_literally(bundle_dir, monkeypatch):
             WorkflowResult(success=False, mode="local", message="sbatch refused [/job]", partial_failures=failures)
         ),
     )
-    result = runner.invoke(app, _base_argv(bundle_dir))
+    result = runner.invoke(app, _base_argv(definition_dir))
     assert result.exit_code == 3
     assert "sbatch refused [/job]" in result.stderr
     assert "[run_triton_evt-0] (walltime [kill])" in result.stderr
 
 
-def test_dry_run_success_exits_0(bundle_dir, monkeypatch):
+def test_dry_run_success_exits_0(definition_dir, monkeypatch):
     """SATISFYING arm, green in both states."""
     _patch_seam(monkeypatch, _returning(WorkflowResult(success=True, mode="local", message="plan ok")))
-    result = runner.invoke(app, _base_argv(bundle_dir) + ["--dry-run"])
+    result = runner.invoke(app, _base_argv(definition_dir) + ["--dry-run"])
     assert result.exit_code == 0
     assert "failed" not in result.stderr
 
 
-def test_success_result_prints_detail_lines(bundle_dir, monkeypatch):
+def test_success_result_prints_detail_lines(definition_dir, monkeypatch):
     """The reporter owns the detail lines on run-experiment too. RED pre-fix: the verb
     never printed the job id."""
     _patch_seam(
         monkeypatch, _returning(WorkflowResult(success=True, mode="slurm", job_id="18708464", execution_time=12.5))
     )
-    result = runner.invoke(app, _base_argv(bundle_dir))
+    result = runner.invoke(app, _base_argv(definition_dir))
     assert result.exit_code == 0
     assert "18708464" in result.stdout
     assert "12.5" in result.stdout
 
 
-def test_run_and_run_experiment_share_the_result_reporter(bundle_dir, tmp_path, monkeypatch):
+def test_run_and_run_experiment_share_the_result_reporter(definition_dir, tmp_path, monkeypatch):
     """The ONE node that pins decision 6's "cannot diverge": both verbs route their result
     through `hhemt.cli_utils.report_workflow_result`. Built on a RECORDING SPY returning 0
     (a sentinel raised inside a verb's try body is swallowed to exit 10 and discriminates
@@ -312,7 +312,7 @@ def test_run_and_run_experiment_share_the_result_reporter(bundle_dir, tmp_path, 
     # --- hhemt run-experiment: the seam returns a second, distinct result ---
     exp_result = WorkflowResult(success=True, mode="slurm")
     _patch_seam(monkeypatch, _returning(exp_result))
-    result = runner.invoke(app, _base_argv(bundle_dir))
+    result = runner.invoke(app, _base_argv(definition_dir))
     assert result.exit_code == 0, result.output
 
     assert [(verb, dry_run) for verb, dry_run, _ in seen] == [("run", True), ("run-experiment", False)]
@@ -320,16 +320,16 @@ def test_run_and_run_experiment_share_the_result_reporter(bundle_dir, tmp_path, 
     assert seen[1][2] is exp_result
 
 
-def test_override_force_rerun_reaches_run_experiment(bundle_dir, monkeypatch):
+def test_override_force_rerun_reaches_run_experiment(definition_dir, monkeypatch):
     """RED pre-fix: Typer refused the unknown option (exit 2). The shared callback parses
     the JSON form, so a dict (not the string) arrives at the seam."""
     captured: dict = {}
     _patch_seam(monkeypatch, _returning(WorkflowResult(success=True, mode="local"), captured))
-    result = runner.invoke(app, _base_argv(bundle_dir) + ["--override-force-rerun", '{"event_iloc":[3]}'])
+    result = runner.invoke(app, _base_argv(definition_dir) + ["--override-force-rerun", '{"event_iloc":[3]}'])
     assert result.exit_code == 0, result.output
     assert captured["override_force_rerun"] == {"event_iloc": [3]}
 
-    result = runner.invoke(app, _base_argv(bundle_dir))
+    result = runner.invoke(app, _base_argv(definition_dir))
     assert result.exit_code == 0
     assert captured["override_force_rerun"] is None, "omitted means read the config field"
 
@@ -362,7 +362,7 @@ def test_every_map_row_has_an_instance_in_this_module():
 
 
 @pytest.mark.parametrize(("name", "exc"), _MAPPED_INSTANCES, ids=[n for n, _ in _MAPPED_INSTANCES])
-def test_exception_class_maps_to_documented_code(bundle_dir, monkeypatch, name, exc):
+def test_exception_class_maps_to_documented_code(definition_dir, monkeypatch, name, exc):
     """The expected code is READ FROM THE MAP, so the node discriminates on the verb's
     behaviour rather than on a literal. RED pre-fix for WorkflowError and SimulationError
     (the verb exited 5), CompilationError, WorkflowPlanningError and CLIValidationError
@@ -370,17 +370,17 @@ def test_exception_class_maps_to_documented_code(bundle_dir, monkeypatch, name, 
     (5), RuntimeError (10) and pydantic.ValidationError (pre-fix the map ALSO said 10, so
     the map-read form cannot see that row; `test_schema_invalid_config_exits_2` does)."""
     _patch_seam(monkeypatch, _raising(exc))
-    result = runner.invoke(app, _base_argv(bundle_dir))
+    result = runner.invoke(app, _base_argv(definition_dir))
     assert result.exit_code == map_exception_to_exit_code(exc)
     assert result.exit_code != 1
 
 
-def test_schema_invalid_config_exits_2(bundle_dir, monkeypatch):
+def test_schema_invalid_config_exits_2(definition_dir, monkeypatch):
     """The MAP ENTRY, discriminated by a BARE pydantic ValidationError through the seam
     (a wrapped ConfigurationError would exit 2 through the existing row and pass without
     the entry). RED pre-fix: 10 `Unexpected Error`."""
     _patch_seam(monkeypatch, _raising(_pydantic_validation_error()))
-    result = runner.invoke(app, _base_argv(bundle_dir))
+    result = runner.invoke(app, _base_argv(definition_dir))
     assert result.exit_code == 2
     assert "Configuration Error" in result.stderr
     # pydantic's own bracketed suffix is producer text in both worlds; it survives only when the
@@ -388,11 +388,11 @@ def test_schema_invalid_config_exits_2(bundle_dir, monkeypatch):
     assert "input_type=str" in result.stderr
 
 
-def test_exit_1_is_not_a_run_experiment_code(bundle_dir, monkeypatch):
+def test_exit_1_is_not_a_run_experiment_code(definition_dir, monkeypatch):
     """Exit 1 is retired: click reserves it for an escaped exception, and the published
     tables classify by failure class. RED pre-fix: success=False exited 1."""
     _patch_seam(monkeypatch, _returning(WorkflowResult(success=False, mode="local", message="x")))
-    assert runner.invoke(app, _base_argv(bundle_dir)).exit_code == 3
+    assert runner.invoke(app, _base_argv(definition_dir)).exit_code == 3
 
 
 def test_quickstart_notebook_uses_no_retired_mode():

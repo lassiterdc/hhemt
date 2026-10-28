@@ -32,11 +32,11 @@ config's `analysis_dir` places it elsewhere.
 This word has three senses, and the page you are reading tells
 you which.
 
-- An **experiment bundle** is a directory holding an `experiment.yaml`
+- An **experiment definition** is a directory holding an `experiment.yaml`
   descriptor that points to a system config and an analysis config, and records
   the input datasets, the toolkit version it is pinned to and whether it runs in
   a container. Its schema is `ExperimentConfig`. See
-  [Running an experiment bundle](../how-to/running-an-experiment-bundle.md).
+  [Running an experiment definition](../how-to/running-an-experiment-definition.md).
 - A **case-study experiment** is the object that `NorfolkIreneExperiment.load`
   and `TRITON_SWMM_experiment.from_case_study` return. It holds a system as
   `.system` and an analysis as `.analysis`, built from a [case study](#case-study).
@@ -44,10 +44,12 @@ you which.
   the place where `experiment_datatree.zarr` is written, with one node per
   completed [member](#member).
 
-### experiment bundle
+### experiment definition
 
 The directory with an `experiment.yaml` descriptor that makes a study runnable by
-someone else. It is the first sense of [experiment](#experiment).
+someone else. It is the first sense of [experiment](#experiment). It names the
+configs and inputs a run needs and holds none of the run's outputs, so it is not a
+[bundle](#bundle).
 
 ### event ensemble
 
@@ -268,7 +270,7 @@ report contains. See [Reporting sets](reporting-sets.md).
 
 A portable zip that `bundle_report_data()` writes, holding the
 data behind a report's figures, the configs and the Snakefile, so that you can
-re-render the report on another machine. It is not an experiment bundle.
+re-render the report on another machine. It is not an experiment definition.
 
 ### EDA
 
@@ -278,6 +280,14 @@ a result belongs to the model or to how it was computed. See
 [Exploratory analysis](../explanation/exploratory-analysis.md).
 
 ## Publishing and reproducing
+
+### bundle
+
+A reproducible and shareable directory for an experiment or an analysis, holding its
+inputs, its outputs and its metadata, that can be published to an open data-sharing
+repository such as Zenodo or HydroShare. The [render bundle](#render-bundle) and the
+reprex bundle (see [reprex](#reprex)) are bundles. The directory holding an
+`experiment.yaml` is not: it is an [experiment definition](#experiment-definition).
 
 ### reprex
 

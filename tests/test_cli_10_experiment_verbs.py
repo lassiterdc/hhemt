@@ -8,8 +8,8 @@ experiment build and the facades replaced by recorders, and asserts on what the 
 called with.
 
 Nothing here builds an analysis, reaches Snakemake, compiles or simulates. The experiment
-build is replaced at `hhemt.experiment_bundle.build_case_from_bundle`, which the verbs reach
-through `hhemt.cli.build_experiment_analysis`; the bundle's `experiment.yaml` is real, so the
+build is replaced at `hhemt.experiment_definition.build_case_from_definition`, which the verbs reach
+through `hhemt.cli.build_experiment_analysis`; the experiment definition's `experiment.yaml` is real, so the
 shared cluster resolver runs for real.
 """
 
@@ -25,14 +25,14 @@ from typer.testing import CliRunner
 
 import hhemt.bundle
 import hhemt.config.loaders
-import hhemt.experiment_bundle as eb
+import hhemt.experiment_definition as eb
 from hhemt.cli import app
 
 runner = CliRunner()
 
 
-def _write_bundle(root: Path) -> Path:
-    """A schema-valid experiment bundle declaring ONE cluster, so `--cluster` may be omitted."""
+def _write_definition(root: Path) -> Path:
+    """A schema-valid experiment definition declaring ONE cluster, so `--cluster` may be omitted."""
     root.mkdir(parents=True, exist_ok=True)
     descriptor = {
         "description": "experiment-verb fixture",
@@ -74,7 +74,7 @@ class _Recorder:
 
 @pytest.fixture
 def experiment(tmp_path):
-    return _write_bundle(tmp_path / "bundle")
+    return _write_definition(tmp_path / "definition")
 
 
 @pytest.fixture
@@ -83,7 +83,7 @@ def stub_build(monkeypatch):
     calls: list = []
     state = {"sensitivity": False, "test_result": None, "clusters": []}
 
-    def _fake_build(bundle, bundle_dir, cluster, **kwargs):
+    def _fake_build(definition, definition_dir, cluster, **kwargs):
         state["clusters"].append(cluster)
         analysis = _Recorder(calls, "analysis")
         analysis.cfg_analysis = SimpleNamespace(toggle_sensitivity_analysis=state["sensitivity"])
@@ -96,7 +96,7 @@ def stub_build(monkeypatch):
         analysis.test = _test
         return SimpleNamespace(analysis=analysis)
 
-    monkeypatch.setattr(eb, "build_case_from_bundle", _fake_build)
+    monkeypatch.setattr(eb, "build_case_from_definition", _fake_build)
     return calls, state
 
 
@@ -361,8 +361,8 @@ def test_reprex_check_exit_code_reports_whether_the_bundle_fits(tmp_path, stub_c
 def test_status_prints_the_built_analysis_workflow_status(experiment, stub_build):
     """Property: `status` prints the built analysis's `get_workflow_status()` and nothing else runs.
 
-    Class: `status --experiment` on a bundle with one declared cluster. Why it is required:
-    status is a read; it must report the experiment the bundle resolves to and call no
+    Class: `status --experiment` on an experiment definition with one declared cluster. Why it is required:
+    status is a read; it must report the experiment the experiment definition resolves to and call no
     submitting facade. What kills it: not calling `get_workflow_status`, calling anything else,
     or not printing its return. A second correct implementation under which it still passes:
     rendering the status through a table, since containment of its text is asserted.
