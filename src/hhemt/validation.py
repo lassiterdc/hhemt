@@ -259,14 +259,15 @@ def assert_both_configs_load(system_yaml: Path, analysis_yaml: Path) -> None:
     The loader validates one model at a time and raises on the first, so a user with
     errors in both configs fixes one set, re-runs, and only then learns about the other.
     `docs/how-to/config-filling.md` promises the opposite. This runs both loads, collects
-    both `ValidationError`s, and raises ONE `ConfigurationError` carrying both.
+    both schema failures, and raises ONE `ConfigurationError` carrying both. A schema
+    failure reaches this loop as a `ConfigurationError` (the loader converts pydantic's
+    `ValidationError` and names the file); a missing file (`FileNotFoundError`) or an
+    empty one (`ValueError`) is not a schema failure and propagates unchanged.
 
     Purely additive: on the all-clear path it returns None and the caller constructs as
     before. The double read of two small YAMLs is deliberate -- it keeps this helper from
     having to hand its parsed models to two constructors with different signatures.
     """
-    from pydantic import ValidationError
-
     from hhemt.config.loaders import load_analysis_config, load_system_config
 
     problems: list[str] = []
@@ -276,7 +277,7 @@ def assert_both_configs_load(system_yaml: Path, analysis_yaml: Path) -> None:
     ):
         try:
             loader(Path(path))
-        except ValidationError as exc:
+        except ConfigurationError as exc:
             problems.append(f"{label} config ({path}):\n{exc}")
     if problems:
         raise ConfigurationError(
