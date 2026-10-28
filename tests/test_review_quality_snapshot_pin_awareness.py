@@ -135,8 +135,15 @@ def _prepared_cfg(tmp_path, monkeypatch, *, producing, head, environment):
     from tests.test_scenario_boundary_guards import _scenario_for_coupled_cfg
 
     tmp_path.mkdir(parents=True, exist_ok=True)
+    # A container run's image is built from TRITONSWMM_branch_key and the image preflight holds
+    # the image's recorded commit to it, so the configured pin is the recorded build there.
     scen, cfg = _scenario_for_coupled_cfg(
-        tmp_path, monkeypatch, rim_from_dem=False, environment=environment, recorded_sha=None
+        tmp_path,
+        monkeypatch,
+        rim_from_dem=False,
+        environment=environment,
+        branch_key=head if environment == "container" else None,
+        recorded_sha=None,
     )
     scen._analysis.cfg_analysis.swmm_snapshot_disable = None
     scen._system.log = _log(producing, head)
