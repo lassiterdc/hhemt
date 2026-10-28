@@ -373,7 +373,7 @@ def test_every_registered_defect_is_absent_at_the_live_pin():
     and at `a146fb6` (`SHA_CURATED_MAIN_PIN`, which stays the estate's family-C pin, so
     dropping its assertion would lose the only all-entries check at a pin a production run uses).
     Why: an entry missing a pin reads `ancestry_unresolvable` on the read path, which never fails a
-    check and so hides a regression. What kills it: dropping either pin from one entry's
+    check and so hides a regression. What kills it: dropping any of the three pins from one entry's
     `known_absent_in`. Second correct implementation: deriving the membership from the pin file at
     import; the assertion reads the verdicts only.
     """

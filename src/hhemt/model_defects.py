@@ -410,11 +410,12 @@ SHA_US_UNIT_LENGTH_FIX = "65e7f68153cfc3d6b2aa57d5fbde2544e9f2d35e"
 #: 3a29997..a146fb6` in the fork. A curated commit is a NEW tree: no wp1 commit is its ancestor.
 SHA_CURATED_MAIN_PIN = "a146fb6ed7c22790fb9a15ff854c446db4519ad2"
 
-#: The fork's `main` as the synthetic tier's pin from the move that carries SWMM water-quality
+#: The fork's `main` as the synthetic tier's previous pin from the move that carries SWMM water-quality
 #: state across a snapshot resume: "fix(swmm): carry water-quality state across a snapshot
-#: resume" (`bd18215`, `git merge-base --is-ancestor a146fb6 bd18215` -> rc 0). It is the
-#: `known_absent_in` member of every REGISTRY entry, which is what
-#: `scripts/check_live_pin_registered.py` asserts at commit time. The vendored SWMM is still
+#: resume" (`bd18215`, `git merge-base --is-ancestor a146fb6 bd18215` -> rc 0). It is a
+#: `known_absent_in` member of every REGISTRY entry, which
+#: `tests/test_model_defects.py::test_every_registered_defect_is_absent_at_the_live_pin` asserts;
+#: `scripts/check_live_pin_registered.py` reads only the live pin. The vendored SWMM is still
 #: `VERSION 5.2.3` there (`external/swmm/CMakeLists.txt`); only `external/swmm/src/solver/snapshot.c`
 #: carries solver source changes against `SHA_CURATED_MAIN_PIN` (`git diff --stat a146fb6 bd18215`:
 #: 10 files, `src/` untouched). This is NOT an entry of any defect: the quality-state fact is

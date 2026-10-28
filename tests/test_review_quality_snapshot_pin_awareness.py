@@ -10,7 +10,8 @@ through a restatement of the helper they read.
 
 The two build identities come from the defect registry's constants, not from the module under test,
 so the separate set in `hhemt.scenario` is checked against an independently written literal; the
-registry's own tests assert that literal equals the synthetic tier's pin.
+registry's constant `SHA_MAIN_QUALITY_SNAPSHOT_PIN` is the synthetic tier's previous pin, and it stays a member
+of that set beside the live pin.
 """
 
 from __future__ import annotations
