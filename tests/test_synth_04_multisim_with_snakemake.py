@@ -828,15 +828,23 @@ def test_cleanup_stale_metadata_auto_applies_after_rule_rename(
     metadata_dir = analysis.analysis_paths.analysis_dir / ".snakemake" / "metadata"
     metadata_dir.mkdir(parents=True, exist_ok=True)
 
-    # Gate fires with cleanup_stale_metadata=True (default).
+    # Gate fires with cleanup_stale_metadata=True (default) on a real (non-dry) run.
     with (
         patch.object(analysis, "_invoke_snakemake_cleanup_metadata") as mock_inv,
         patch.object(analysis, "submit_workflow"),
     ):
-        analysis.run(cleanup_stale_metadata=True, dry_run=True, verbose=False)
+        analysis.run(cleanup_stale_metadata=True, dry_run=False, verbose=False)
     mock_inv.assert_called_once()
     called_paths = mock_inv.call_args[0][0]
     assert called_paths == orphan_paths
+
+    # Under dry_run the gate reports and deletes nothing: the cleanup is not invoked.
+    with (
+        patch.object(analysis, "_invoke_snakemake_cleanup_metadata") as mock_inv_dry,
+        patch.object(analysis, "submit_workflow"),
+    ):
+        analysis.run(cleanup_stale_metadata=True, dry_run=True, verbose=False)
+    mock_inv_dry.assert_not_called()
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
@@ -852,7 +860,7 @@ def test_cleanup_stale_metadata_disabled_skips_invocation(
         patch.object(analysis, "_invoke_snakemake_cleanup_metadata") as mock_inv,
         patch.object(analysis, "submit_workflow"),
     ):
-        analysis.run(cleanup_stale_metadata=False, dry_run=True, verbose=False)
+        analysis.run(cleanup_stale_metadata=False, dry_run=False, verbose=False)
     mock_inv.assert_not_called()
 
 
