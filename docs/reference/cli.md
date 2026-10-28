@@ -73,7 +73,7 @@ safe to inspect first: each has a listing mode before it has a deleting mode.
 | Command | What it does |
 |---|---|
 | `delete` | Delete an entire analysis tree by dispatching per-scenario Snakemake delete jobs. **Not `rm -rf`-equivalent**: it refuses by default while any simulation is in flight. Use `--dry-run` first. |
-| `reset` | Delete an experiment's whole analysis tree so its next run starts from nothing: `hhemt reset --experiment {bundle dir} --yes`, with `--cluster` optional when the bundle declares one cluster and required when it declares none or several. It runs the same distributed delete as `delete`, so it refuses while simulations are in flight. Without `--yes` it asks for confirmation. A reset is a command and never a config field. |
+| `reset` | Delete an experiment's whole analysis tree so its next run starts from nothing: `hhemt reset --experiment {bundle dir} --yes`, with `--cluster` optional when the bundle declares one cluster and required when it declares none or several. It runs the same distributed delete as `delete`, so it refuses while simulations are in flight. Without `--yes` it asks for confirmation. `--dry-run` prints the same per-scenario disk preview as `delete --dry-run` and deletes nothing. A reset is a command and never a config field. |
 | `cleanup-orphans` | List or delete member directories orphaned by an edit to the sensitivity spreadsheet. |
 | `cleanup-stale-metadata` | List or delete orphaned `.snakemake/metadata/` records left by past rule-output renames. |
 | `cleanup-orphan-delete-sentinels` | Clear known-dead orphan delete sentinels left by killed delete workers. |
