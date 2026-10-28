@@ -276,8 +276,7 @@ def recover_rows(job_ids: list[str], *, timeout_s: float = 60.0) -> list[dict[st
             return []
         if proc.returncode != 0:
             print(
-                f"[job-recovery] WARNING: sacct exited {proc.returncode}; "
-                f"recovered nothing for this chunk",
+                f"[job-recovery] WARNING: sacct exited {proc.returncode}; recovered nothing for this chunk",
                 file=sys.stderr,
                 flush=True,
             )

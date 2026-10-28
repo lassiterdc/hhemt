@@ -26,6 +26,7 @@ same pattern as ``tests/test_synth_03_perf_tseries_diff.py``; no analysis-instan
 harness is required because V0008 + this regression share one source of truth with
 the production aggregator (Phase 1 Spec 8 architectural constraint).
 """
+
 from __future__ import annotations
 
 import pytest

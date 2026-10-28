@@ -36,6 +36,7 @@ def _vocab_name(name: str) -> str:
     """
     return _CHECK_VOCABULARY.get(name, (name, ""))[0]
 
+
 _INLINE_STYLE = (
     "<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
     "padding:12px;color:#333;margin:0;}h2{color:#232D4B;border-bottom:2px solid #232D4B;"
@@ -141,8 +142,7 @@ def _compat_divergence_finding(combined_root: Path) -> dict | None:
     if not unexpected:
         return None
     _lines = "; ".join(
-        f"{d.get('field_name')} ({d.get('bundle_a')} vs {d.get('bundle_b')}): "
-        f"{_divergence_message(d)}"
+        f"{d.get('field_name')} ({d.get('bundle_a')} vs {d.get('bundle_b')}): {_divergence_message(d)}"
         for d in unexpected
     )
     return {
@@ -223,9 +223,7 @@ def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
     )
 
 
-def _render_rollup_html(
-    child_reports: list[tuple[str, list[dict]]], *, derived: list[dict] | None = None
-) -> str:
+def _render_rollup_html(child_reports: list[tuple[str, list[dict]]], *, derived: list[dict] | None = None) -> str:
     # Union of check names across experiments, preserving first-seen order.
     check_names: list[str] = []
     seen: set[str] = set()

@@ -62,9 +62,7 @@ class SWMMFullModelBuilder:
         self.cfg_analysis = scenario._analysis.cfg_analysis
         self.system = scenario._system
 
-    def create_full_model_from_template(
-        self, swmm_model_template, destination: Path
-    ) -> None:
+    def create_full_model_from_template(self, swmm_model_template, destination: Path) -> None:
         """
         Create full SWMM model from template file.
 

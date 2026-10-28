@@ -7,6 +7,7 @@ Totality proof composes two set-equality guards:
       _POLICY_TO_BUCKET key.
 (1) composed with (2) proves field_bucket is total over config Path fields.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -22,6 +23,7 @@ from hhemt.config.reprex_taxonomy import (
 
 _VALID_BUCKETS = {"user", "hpc", "experiment"}
 
+
 def test_policy_to_bucket_is_total() -> None:
     """Every PathPolicy member maps to a bucket (the enum-coverage guard).
 
@@ -31,10 +33,12 @@ def test_policy_to_bucket_is_total() -> None:
     assert set(_POLICY_TO_BUCKET) == set(PathPolicy)
     assert set(_POLICY_TO_BUCKET.values()) <= _VALID_BUCKETS
 
+
 @pytest.mark.parametrize("field_name", sorted(_PATH_FIELD_POLICY))
 def test_field_bucket_returns_valid_bucket(field_name: str) -> None:
     """Behavioral: every config Path field classifies to a valid bucket."""
     assert field_bucket(field_name) in _VALID_BUCKETS
+
 
 def test_field_bucket_raises_on_non_path_field() -> None:
     """Contract: a non-path / unknown field raises KeyError."""
@@ -57,17 +61,17 @@ def test_field_bucket_is_total() -> None:
     bucketed = set(_FIELD_BUCKET) | set(_PATH_FIELD_POLICY)
     assert bucketed == all_fields, {
         "unbucketed": all_fields - bucketed,  # new field, no bucket -> FAIL loudly
-        "stale": bucketed - all_fields,       # removed/renamed field -> FAIL loudly
+        "stale": bucketed - all_fields,  # removed/renamed field -> FAIL loudly
     }
 
 
 @pytest.mark.parametrize(
     "column, expected",
     [
-        ("hpc.partition", "hpc"),                       # hpc.* root -> hpc
+        ("hpc.partition", "hpc"),  # hpc.* root -> hpc
         ("system.target_dem_resolution", "experiment"),  # system.* -> strip -> experiment
-        ("analysis.n_gpus", "hpc"),                     # analysis.* -> strip -> hpc
-        ("n_gpus", "hpc"),                              # bare HPC field
+        ("analysis.n_gpus", "hpc"),  # analysis.* -> strip -> hpc
+        ("n_gpus", "hpc"),  # bare HPC field
     ],
 )
 def test_column_bucket(column: str, expected: str) -> None:
@@ -151,9 +155,13 @@ def test_bundle_does_not_import_reprex_taxonomy() -> None:
         visitor = _ModuleLevelImportVisitor()
         visitor.visit(ast.parse(py.read_text(), filename=str(py)))
         for node in visitor.imports:
-            if isinstance(node, ast.ImportFrom) and node.module and (
-                node.module == "hhemt.config.reprex_taxonomy"
-                or node.module.startswith("hhemt.config.reprex_taxonomy.")
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module
+                and (
+                    node.module == "hhemt.config.reprex_taxonomy"
+                    or node.module.startswith("hhemt.config.reprex_taxonomy.")
+                )
             ):
                 offenders.append(f"{py.name}: from {node.module} import ...")
             elif isinstance(node, ast.Import):

@@ -37,9 +37,7 @@ def test_write_returns_expected_figures_from_one_traversal(tmp_path: Path):
     assert isinstance(expected, tuple), "expected-figure set must be a tuple"
     for p in expected:
         assert isinstance(p, Path), "expected figures are Paths, not quoted literals"
-        assert p.is_absolute(), (
-            "paths must be absolute so p.exists() in the preflight is CWD-independent"
-        )
+        assert p.is_absolute(), "paths must be absolute so p.exists() in the preflight is CWD-independent"
 
     # The quoted Snakefile literal and the Path must be the same string plus quotes --
     # that equality is the whole reason the extension is resolved once.

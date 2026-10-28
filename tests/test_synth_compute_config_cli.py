@@ -13,9 +13,7 @@ MOD = "scripts.experiments.synth_compute_config"
 
 
 def _run(*argv):
-    return subprocess.run(
-        [sys.executable, "-m", MOD, *argv], capture_output=True, text=True
-    )
+    return subprocess.run([sys.executable, "-m", MOD, *argv], capture_output=True, text=True)
 
 
 def test_clean_fails_closed_without_a_sha():
@@ -61,8 +59,10 @@ def test_intercomparison_takes_two_distinct_shas():
 def test_intercomparison_fails_closed_on_both_shas():
     r = _run(
         "intercomparison",
-        "--clean-system-directory", "/tmp/c",
-        "--resume-system-directory", "/tmp/r",
+        "--clean-system-directory",
+        "/tmp/c",
+        "--resume-system-directory",
+        "/tmp/r",
     )
     assert r.returncode == 2, r.stderr
     assert "--tritonswmm-sha" in r.stderr or "--clean-tritonswmm-sha" in r.stderr

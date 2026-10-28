@@ -44,9 +44,7 @@ def _write_cpu_build_log(system: TRITONSWMM_system) -> None:
     p.write_text(_TRITON_OK)
 
 
-def test_resolvable_gpu_path_with_missing_log_still_reports_failure(
-    synth_multi_sim_builder, tmp_path
-):
+def test_resolvable_gpu_path_with_missing_log_still_reports_failure(synth_multi_sim_builder, tmp_path):
     """ARM 1 — anti-masking. Passes pre- AND post-fix; guards the stated constraint.
 
     Fails only if a future change widens the abstention to cover a resolvable path,
@@ -67,9 +65,7 @@ def test_resolvable_gpu_path_with_missing_log_still_reports_failure(
     assert system.compilation_triton_only_successful is False
 
 
-def test_bare_then_mutated_system_abstains_and_does_not_clobber(
-    synth_multi_sim_builder, tmp_path
-):
+def test_bare_then_mutated_system_abstains_and_does_not_clobber(synth_multi_sim_builder, tmp_path):
     """ARM 2 — FAILS pre-fix on BOTH assertions.
 
     Pre-fix (a) is False: the aggregate ANDs the `TRITON_build_dir_gpu is None` branch.
@@ -130,9 +126,7 @@ def _analysis_with(system, monkeypatch, analysis):
     return analysis
 
 
-def test_summary_discloses_abstention_when_gpu_path_unresolvable(
-    synth_multi_sim_builder, tmp_path, monkeypatch
-):
+def test_summary_discloses_abstention_when_gpu_path_unresolvable(synth_multi_sim_builder, tmp_path, monkeypatch):
     """ARM (a) — the disclosure must FIRE. Fails pre-fix: the branch did not exist."""
     cfg_yaml = _isolated_system_yaml(synth_multi_sim_builder, tmp_path)
     system = TRITONSWMM_system(cfg_yaml)
@@ -145,9 +139,7 @@ def test_summary_discloses_abstention_when_gpu_path_unresolvable(
     assert "GPU compile term NOT evaluated" in result.summary
 
 
-def test_summary_is_silent_when_gpu_path_resolves(
-    synth_multi_sim_builder, tmp_path, monkeypatch
-):
+def test_summary_is_silent_when_gpu_path_resolves(synth_multi_sim_builder, tmp_path, monkeypatch):
     """ARM (b) — anti-over-firing. Holds in BOTH the pre-fix and post-fix worlds."""
     cfg_yaml = _isolated_system_yaml(synth_multi_sim_builder, tmp_path)
     system = TRITONSWMM_system(cfg_yaml, gpu_hardware="a6000", gpu_compilation_backend="CUDA")
@@ -156,7 +148,6 @@ def test_summary_is_silent_when_gpu_path_resolves(
     )
     result = check_system_setup(_analysis_with(system, monkeypatch, synth_multi_sim_builder))
     assert "GPU compile term NOT evaluated" not in result.summary
-
 
 
 # ---------------------------------------------------------------------------
@@ -192,9 +183,7 @@ def _seed_log(cfg_yaml: Path, **fields) -> Path:
     return log_path
 
 
-def test_hydrated_logfield_clear_writes_none_and_set_none_does_not(
-    synth_multi_sim_builder, tmp_path
-):
+def test_hydrated_logfield_clear_writes_none_and_set_none_does_not(synth_multi_sim_builder, tmp_path):
     """GUARD, on the HYDRATED path — the one that matters. FAILS pre-Spec-7/8.
 
     The prior version of this guard built a system in a bare tmp_path, so no log file

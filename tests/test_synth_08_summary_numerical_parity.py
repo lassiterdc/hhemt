@@ -68,6 +68,7 @@ def _make_synth_ds(
         coords={"timestep_min": timestep_min, "y": y, "x": x},
     )
 
+
 def test_streaming_argmax_helper_basic(tmp_path: Path):
     """Direct test of the new helper — primary + companions on a small fixture."""
     from hhemt.process_simulation import _streaming_argmax_with_companions
@@ -89,6 +90,7 @@ def test_streaming_argmax_helper_basic(tmp_path: Path):
     assert "velocity_y_mps_at_argmax" in result
     assert result["max_velocity_mps"].shape == (10, 10)
 
+
 def test_all_nan_cells_produce_nan_outputs(tmp_path: Path):
     """All-NaN cells must produce NaN max, NaN argmax, NaN companion values."""
     from hhemt.process_simulation import _streaming_argmax_with_companions
@@ -97,9 +99,11 @@ def test_all_nan_cells_produce_nan_outputs(tmp_path: Path):
     ds = ds.assign(velocity_mps=(ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5)
 
     result = _streaming_argmax_with_companions(
-        ds=ds, primary_var="velocity_mps",
+        ds=ds,
+        primary_var="velocity_mps",
         companion_vars=["velocity_x_mps", "velocity_y_mps"],
-        dim="timestep_min", chunksize_mb=10.0,
+        dim="timestep_min",
+        chunksize_mb=10.0,
     )
 
     assert np.isnan(result["max_velocity_mps"][0, 0])
@@ -108,6 +112,7 @@ def test_all_nan_cells_produce_nan_outputs(tmp_path: Path):
     assert np.isnan(result["velocity_y_mps_at_argmax"][0, 0])
     # Cell (1, 1) is also all-NaN.
     assert np.isnan(result["max_velocity_mps"][1, 1])
+
 
 def test_first_occurrence_tie_semantics_within_chunk():
     """Within a single chunk, ties resolve to the earliest timestep."""
@@ -118,13 +123,16 @@ def test_first_occurrence_tie_semantics_within_chunk():
 
     # chunk_size large enough to put timesteps 5 and 25 in the same chunk.
     result = _streaming_argmax_with_companions(
-        ds=ds, primary_var="velocity_mps",
+        ds=ds,
+        primary_var="velocity_mps",
         companion_vars=["velocity_x_mps", "velocity_y_mps"],
-        dim="timestep_min", chunksize_mb=100.0,
+        dim="timestep_min",
+        chunksize_mb=100.0,
     )
 
     # Cell (2, 2) has tied max at timesteps 5 and 25; first occurrence (t=5, value=2.0 * 5 = 10.0).
     assert result["argmax_timestep_min"][2, 2] == 10.0  # timestep_min[5] = 5*2 = 10.0
+
 
 def test_first_occurrence_tie_semantics_across_chunk_boundary():
     """Across chunk boundaries, ties resolve to the earlier chunk's index."""
@@ -137,13 +145,16 @@ def test_first_occurrence_tie_semantics_across_chunk_boundary():
     # With ntsteps=50 and chunksize forcing ~10 timesteps per chunk,
     # t=5 lands in chunk 0 (timesteps 0-9), t=25 lands in chunk 2 (timesteps 20-29).
     result = _streaming_argmax_with_companions(
-        ds=ds, primary_var="velocity_mps",
+        ds=ds,
+        primary_var="velocity_mps",
         companion_vars=["velocity_x_mps", "velocity_y_mps"],
-        dim="timestep_min", chunksize_mb=0.1,
+        dim="timestep_min",
+        chunksize_mb=0.1,
     )
 
     # First-occurrence tie still wins (strict `>` in update).
     assert result["argmax_timestep_min"][2, 2] == 10.0  # t=5 value, not t=25.
+
 
 def test_numerical_parity_with_reference(tmp_path: Path):
     """Numerical parity against a reference implementation on a small fixture.
@@ -183,15 +194,18 @@ def test_numerical_parity_with_reference(tmp_path: Path):
 
     # Streaming under test
     result = _streaming_argmax_with_companions(
-        ds=ds, primary_var="velocity_mps",
+        ds=ds,
+        primary_var="velocity_mps",
         companion_vars=["velocity_x_mps", "velocity_y_mps"],
-        dim="timestep_min", chunksize_mb=0.5,  # forces multiple chunks
+        dim="timestep_min",
+        chunksize_mb=0.5,  # forces multiple chunks
     )
 
     np.testing.assert_allclose(result["max_velocity_mps"], ref_max, equal_nan=True)
     np.testing.assert_allclose(result["argmax_timestep_min"], ref_argmax_dim, equal_nan=True)
     np.testing.assert_allclose(result["velocity_x_mps_at_argmax"], ref_vx_at_argmax, equal_nan=True)
     np.testing.assert_allclose(result["velocity_y_mps_at_argmax"], ref_vy_at_argmax, equal_nan=True)
+
 
 def test_peak_rss_under_4gb_on_synth_dem(tmp_path: Path):
     """R1: peak RSS during streaming summary on a synth 1000x1000 50-tstep DEM stays under 4 GB."""
@@ -204,9 +218,11 @@ def test_peak_rss_under_4gb_on_synth_dem(tmp_path: Path):
     # (tracemalloc undercounts numpy/C-extension allocations).
     baseline_rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     _ = _streaming_argmax_with_companions(
-        ds=ds, primary_var="velocity_mps",
+        ds=ds,
+        primary_var="velocity_mps",
         companion_vars=["velocity_x_mps", "velocity_y_mps"],
-        dim="timestep_min", chunksize_mb=200.0,
+        dim="timestep_min",
+        chunksize_mb=200.0,
     )
     peak_rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 

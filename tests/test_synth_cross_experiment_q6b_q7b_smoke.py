@@ -42,10 +42,22 @@ def test_intercomparison_splits_by_model_q6b(tmp_path):
                     {"experiment": "resume", "role": "resume"},
                 ],
                 "pairs": [
-                    {"config": cfg, "variable": "max_wlevel_m", "event_iloc": 0,
-                     "identical": True, "max_abs_diff": 0.0, "model": "TRITON-SWMM"},
-                    {"config": cfg, "variable": "max_wlevel_m", "event_iloc": 0,
-                     "identical": True, "max_abs_diff": 0.0, "model": "TRITON"},
+                    {
+                        "config": cfg,
+                        "variable": "max_wlevel_m",
+                        "event_iloc": 0,
+                        "identical": True,
+                        "max_abs_diff": 0.0,
+                        "model": "TRITON-SWMM",
+                    },
+                    {
+                        "config": cfg,
+                        "variable": "max_wlevel_m",
+                        "event_iloc": 0,
+                        "identical": True,
+                        "max_abs_diff": 0.0,
+                        "model": "TRITON",
+                    },
                 ],
             }
         ),

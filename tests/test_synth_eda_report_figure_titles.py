@@ -20,23 +20,17 @@ def _fig():
 
 
 def test_titled_figure_emits_a_section_header():
-    html = render_scrollable_report(
-        [FigureSpec(figure=_fig(), title=_TITLE)], [], title="doc", plotly_js_mode="cdn"
-    )
+    html = render_scrollable_report([FigureSpec(figure=_fig(), title=_TITLE)], [], title="doc", plotly_js_mode="cdn")
     assert _TITLE in html, "FigureSpec.title was discarded — no per-figure header rendered"
     assert 'class="eda-figure-title"' in html
 
 
 def test_untitled_figure_emits_no_header():
-    html = render_scrollable_report(
-        [FigureSpec(figure=_fig(), title="")], [], title="doc", plotly_js_mode="cdn"
-    )
+    html = render_scrollable_report([FigureSpec(figure=_fig(), title="")], [], title="doc", plotly_js_mode="cdn")
     assert 'class="eda-figure-title"' not in html
 
 
 def test_title_is_html_escaped():
     """S2 applies `| e` explicitly because this template renders with autoescape OFF."""
-    html = render_scrollable_report(
-        [FigureSpec(figure=_fig(), title="a<b>c")], [], title="doc", plotly_js_mode="cdn"
-    )
+    html = render_scrollable_report([FigureSpec(figure=_fig(), title="a<b>c")], [], title="doc", plotly_js_mode="cdn")
     assert "a&lt;b&gt;c" in html

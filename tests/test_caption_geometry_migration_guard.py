@@ -16,6 +16,7 @@ produced this track's defects:
       (`fig.add_annotation(..., yref="paper", y=<negative literal>)`) instead of
       going through the module -- the S4 defect exactly.
 """
+
 from __future__ import annotations
 
 import re
@@ -30,9 +31,7 @@ _OWNER = {"figure_caption.py", "figure_layout.py"}
 
 _CALLS_CAPTION = re.compile(r"\badd_figure_caption\s*\(")
 _HARDCODED_B = re.compile(r"margin\s*=\s*dict\([^)]*\bb\s*=\s*\d+")
-_RAW_BOTTOM_ANNOTATION = re.compile(
-    r"add_annotation\((?:[^()]|\([^()]*\))*?y\s*=\s*-\s*0\.\d+", re.S
-)
+_RAW_BOTTOM_ANNOTATION = re.compile(r"add_annotation\((?:[^()]|\([^()]*\))*?y\s*=\s*-\s*0\.\d+", re.S)
 
 
 def find_violations(source: str) -> list[str]:
@@ -98,7 +97,7 @@ def test_every_deferral_carries_a_reason():
         assert len(reason) > 40, f"{mod} deferral needs a real reason, not a placeholder"
 
 
-#--- negative controls: the guard must be able to fail ----
+# --- negative controls: the guard must be able to fail ----
 
 
 @pytest.mark.parametrize(

@@ -43,9 +43,7 @@ def test_all_self_contained_fields_have_catalog_entry() -> None:
     silently become un-excludable (invisible to ``--list-excludable``), and the operator
     would have no way to opt out of the very input that pushed them over quota.
     """
-    self_contained = {
-        f for f, p in _PATH_FIELD_POLICY.items() if p in _SELF_CONTAINED_POLICIES
-    }
+    self_contained = {f for f, p in _PATH_FIELD_POLICY.items() if p in _SELF_CONTAINED_POLICIES}
     missing = sorted(self_contained - set(_EXCLUDABLE_CATALOG))
     extra = sorted(set(_EXCLUDABLE_CATALOG) - self_contained)
     assert not missing, f"self-contained fields with no catalog entry: {missing}"
@@ -119,9 +117,7 @@ def _write_bundle(root: Path, *, deposits: list[dict], cfg_value: str) -> Path:
     """Minimal on-disk bundle: a manifest + a reconstituted system cfg pointing at an
     input that is NOT on disk (i.e. an excluded one)."""
     root.mkdir(parents=True, exist_ok=True)
-    (root / "bundle_manifest.json").write_text(
-        json.dumps({"analysis_id": "x", "input_deposit": deposits})
-    )
+    (root / "bundle_manifest.json").write_text(json.dumps({"analysis_id": "x", "input_deposit": deposits}))
     (root / "cfg_system.yaml").write_text(f"DEM_fullres: {cfg_value}\n")
     (root / "cfg_analysis.yaml").write_text("weather_timeseries: null\n")
     return root
@@ -151,9 +147,7 @@ def test_unfetchable_input_fails_closed_with_its_citation(tmp_path: Path) -> Non
     )
 
     with pytest.raises(ProcessingError) as exc:
-        TRITON_SWMM_experiment._assert_declared_inputs_exist(
-            root / "cfg_system.yaml", root / "cfg_analysis.yaml"
-        )
+        TRITON_SWMM_experiment._assert_declared_inputs_exist(root / "cfg_system.yaml", root / "cfg_analysis.yaml")
 
     msg = str(exc.value)
     assert "REFERENCED, not carried" in msg
@@ -193,9 +187,7 @@ def test_fetchable_input_is_fetched_and_sha_verified(tmp_path: Path, monkeypatch
     monkeypatch.setattr(TRITON_SWMM_experiment, "_fetch_file_by_url", _fake_fetch)
 
     # Must NOT raise: the input is materialized by the fetch.
-    TRITON_SWMM_experiment._assert_declared_inputs_exist(
-        root / "cfg_system.yaml", root / "cfg_analysis.yaml"
-    )
+    TRITON_SWMM_experiment._assert_declared_inputs_exist(root / "cfg_system.yaml", root / "cfg_analysis.yaml")
 
     assert calls == [("https://example.org/dem.tif", "deadbeef")]
     assert dem.exists()
@@ -227,6 +219,4 @@ def test_fetch_failure_is_terminal_not_a_silent_skip(tmp_path: Path, monkeypatch
     monkeypatch.setattr(TRITON_SWMM_experiment, "_fetch_file_by_url", _boom)
 
     with pytest.raises(ProcessingError, match="BY REFERENCE"):
-        TRITON_SWMM_experiment._assert_declared_inputs_exist(
-            root / "cfg_system.yaml", root / "cfg_analysis.yaml"
-        )
+        TRITON_SWMM_experiment._assert_declared_inputs_exist(root / "cfg_system.yaml", root / "cfg_analysis.yaml")

@@ -6,9 +6,7 @@ from hhemt.swmm_output_parser import retrieve_SWMM_outputs_as_datasets
 
 
 def main() -> None:
-    ref_dir = (
-        Path(__file__).resolve().parents[1] / "test_data" / "swmm_refactoring_reference"
-    )
+    ref_dir = Path(__file__).resolve().parents[1] / "test_data" / "swmm_refactoring_reference"
     ref_inp = ref_dir / "hydraulics.inp"
     ref_rpt = ref_dir / "hydraulics.rpt"
 

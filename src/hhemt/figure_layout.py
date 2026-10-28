@@ -15,8 +15,14 @@ exists to remove. Add that only when a second call site needs it.
 from __future__ import annotations
 
 
-def align_x(domains: dict[str, list[float]], *, ref: str, edge: str = "left",
-            pad_px: float = 0.0, fig_width_px: float | None = None) -> float:
+def align_x(
+    domains: dict[str, list[float]],
+    *,
+    ref: str,
+    edge: str = "left",
+    pad_px: float = 0.0,
+    fig_width_px: float | None = None,
+) -> float:
     """Paper-x of the requested ``edge`` of the box named ``ref``.
 
     ``domains`` maps a name to a ``[x0, x1]`` paper-coordinate pair -- the same

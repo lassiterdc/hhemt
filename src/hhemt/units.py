@@ -68,7 +68,7 @@ TIME_AXIS_PROVENANCE_UNITS_HOURS: str = "hours from event start"
 # coordinates is a semantic regression the helper prevents.
 
 _EPSG_TO_HORIZONTAL_UNIT: dict[int, str] = {
-    32147: "ft",   # NAD83 / Virginia South (ftUS)
+    32147: "ft",  # NAD83 / Virginia South (ftUS)
     # extend as additional projections appear in production configs
 }
 
@@ -92,9 +92,9 @@ def northing_axis_label(crs_epsg: int | None) -> str:
 # both the elevation unit (m / ftUS / ft) and the datum (NAVD88, etc.).
 # Add rows here when a new vertical CRS appears in production configs.
 _EPSG_TO_VERTICAL_UNIT_AND_DATUM: dict[int, tuple[str, str]] = {
-    5703: ("m", "NAVD88"),       # NAVD88 height (meters)
-    6360: ("ftUS", "NAVD88"),    # NAVD88 height (US survey feet)
-    8228: ("ft", "NAVD88"),      # NAVD88 height (international feet)
+    5703: ("m", "NAVD88"),  # NAVD88 height (meters)
+    6360: ("ftUS", "NAVD88"),  # NAVD88 height (US survey feet)
+    8228: ("ft", "NAVD88"),  # NAVD88 height (international feet)
 }
 
 

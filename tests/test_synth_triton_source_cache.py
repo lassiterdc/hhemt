@@ -23,9 +23,7 @@ from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_cas
 
 
 def _git(*args: str, cwd: Path) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True, check=True
-    )
+    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=True)
 
 
 def _init_origin(root: Path) -> Path:
@@ -60,10 +58,14 @@ def test_borrower_is_healthy_detects_a_missing_canonical(tmp_path):
     # already reachable through the alternate (1 own object), which is what the
     # production https:// clone does.
     _git(
-        "-c", "protocol.file.allow=always",
-        "clone", "-q",
-        "--reference", str(canonical / ".git"),
-        f"file://{origin}", str(borrower),
+        "-c",
+        "protocol.file.allow=always",
+        "clone",
+        "-q",
+        "--reference",
+        str(canonical / ".git"),
+        f"file://{origin}",
+        str(borrower),
         cwd=tmp_path,
     )
     pin = _git("rev-parse", "HEAD", cwd=borrower).stdout.strip()
@@ -153,8 +155,7 @@ def test_standalone_clone_is_reborrowed_in_place_without_losing_the_build(tmp_pa
     alternates = standalone / ".git" / "objects" / "info" / "alternates"
     assert alternates.read_text().strip() == str(canonical / ".git" / "objects")
     assert _git("config", "--get", "gc.auto", cwd=standalone).stdout.strip() == "0", (
-        "config parity with a fresh --reference clone is what makes the two "
-        "provisioning paths converge on one state"
+        "config parity with a fresh --reference clone is what makes the two provisioning paths converge on one state"
     )
 
 
@@ -173,8 +174,9 @@ def test_bare_canonical_fails_loud_not_silently(tmp_path):
     _git("init", "-q", "-b", "main", cwd=super_origin)
     _git("config", "user.email", "t@t.invalid", cwd=super_origin)
     _git("config", "user.name", "t", cwd=super_origin)
-    _git("-c", "protocol.file.allow=always", "submodule", "add", "-q",
-         str(sub_origin), "external/tiny", cwd=super_origin)
+    _git(
+        "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(sub_origin), "external/tiny", cwd=super_origin
+    )
     _git("commit", "-q", "-m", "add submodule", cwd=super_origin)
 
     bare = tmp_path / "canonical_bare.git"
@@ -186,9 +188,10 @@ def test_bare_canonical_fails_loud_not_silently(tmp_path):
     _git("config", "submodule.alternateErrorStrategy", "die", cwd=borrower)
 
     result = subprocess.run(
-        ["git", "-c", "protocol.file.allow=always",
-         "submodule", "update", "--init", "--recursive"],
-        cwd=str(borrower), capture_output=True, text=True,
+        ["git", "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive"],
+        cwd=str(borrower),
+        capture_output=True,
+        text=True,
     )
     assert result.returncode != 0, (
         "a bare (modules-less) canonical must fail LOUD; it exited 0, which means the "
@@ -228,9 +231,7 @@ def test_software_root_is_real_dir_and_object_store_is_borrowed():
     Three assertions on the alternates, not one: existence alone passes on a
     tree whose donor was gc'd or removed.
     """
-    builder = retrieve_synth_TRITON_SWMM_test_case(
-        analysis_name="single_sim", start_from_scratch=False, skip_run=True
-    )
+    builder = retrieve_synth_TRITON_SWMM_test_case(analysis_name="single_sim", start_from_scratch=False, skip_run=True)
     assert not builder._software_root.is_symlink()
     triton = builder._software_root / "triton"
     assert triton.is_dir() and not triton.is_symlink()

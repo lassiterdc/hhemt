@@ -43,6 +43,7 @@ References:
     plus extraction of ``_aggregate_perf_tseries`` / ``_aggregate_perf_summary``
     as module-level helpers.
 """
+
 from __future__ import annotations
 
 import json

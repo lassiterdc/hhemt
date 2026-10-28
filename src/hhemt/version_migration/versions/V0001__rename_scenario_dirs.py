@@ -9,6 +9,7 @@ Walks both:
   - {target_dir}/sims/                          (top-level)
   - {target_dir}/subanalyses/sa_*/sims/         (per sub-analysis)
 """
+
 from __future__ import annotations
 
 import logging

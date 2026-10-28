@@ -69,6 +69,6 @@ def test_delete_mode_helper_delegates():
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
     for method in (None, "local", "batch_job", "1_job_many_srun_tasks"):
-        assert SnakemakeWorkflowBuilder._resolve_delete_mode_from_method(
+        assert SnakemakeWorkflowBuilder._resolve_delete_mode_from_method(None, method) == resolve_execution_locus(
             None, method
-        ) == resolve_execution_locus(None, method)
+        )
