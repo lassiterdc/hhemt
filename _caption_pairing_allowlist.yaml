@@ -1032,3 +1032,28 @@ unpaired_allowlist:
       unit lines, result 0), so no clause is falsified, weakened or left ambiguous and
       there is no caption edit to make. Digest recorded at the post-change renderer
       content, so this exemption expires on the next change to the renderer.
+  - renderer: cross_experiment_errors_and_warnings
+    caption: src/hhemt/report_templates/captions/cross_experiment_errors_and_warnings.rst
+    renderer_sha256: f21f64573528580847c6d0fd4a62230be59b5b404f5068db80f0b103d5459e4b
+    justification_2026_10_28: >-
+      Re-read 2026-10-28 against this renderer's diff. The change is whitespace and line wrapping
+      only: one blank line before _INLINE_STYLE, two adjacent f-string literals in
+      _compat_divergence_finding joined into one literal (same characters), and _render_rollup_html's
+      signature on one line; the module's AST, docstrings included, is identical to HEAD (ast.dump
+      equality), so no emitted column, unit, row or panel moved. This caption was read in full: it
+      describes the per-experiment pass/fail roll-up, hover text for a FAIL and the
+      derived-across-experiments rows, and none of those is touched by the diff, so no clause is
+      falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at
+      the post-change renderer content, so this exemption expires on the next change to the renderer.
+  - renderer: disk_utilization
+    caption: src/hhemt/report_templates/captions/disk_utilization.rst
+    renderer_sha256: 6e7de8ed6b77156e4736d3f78fad50ef8b9fb7a13212333a54f1fed5d3522315
+    justification_2026_10_28: >-
+      Re-read 2026-10-28 against this renderer's diff. The only change is that one build_columns_spec
+      call in _du_table_html has its three keyword arguments split one per line; the module's AST,
+      docstrings included, is identical to HEAD (ast.dump equality), so no emitted column, unit or
+      panel moved. This caption was read in full: it describes the total and per-sub-path breakdown in
+      MiB, the _status/_du.json sentinel source and the re-run prompt when the sentinel is absent, and
+      none of those is touched by the diff, so no clause is falsified, weakened or left ambiguous and
+      there is no caption edit to make. Digest recorded at the post-change renderer content, so this
+      exemption expires on the next change to the renderer.

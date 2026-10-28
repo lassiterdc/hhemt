@@ -63,7 +63,9 @@ def _du_table_html(rows: list[tuple[str, int]]) -> str:
         columns=["Scope", _SIZE_COL],
     )
     columns_spec = build_columns_spec(
-        df_du, visible_columns_default=None, header_filter=True,
+        df_du,
+        visible_columns_default=None,
+        header_filter=True,
     )
     for _spec in columns_spec:
         if _spec.get("field") == _SIZE_COL:

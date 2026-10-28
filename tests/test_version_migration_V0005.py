@@ -5,6 +5,7 @@ under v4/ or v5/ to avoid colliding with the auto-discovery glob in
 test_version_migration_golden.py::_discover_fixture_pairs (which requires
 each v{N}/ directory to be a single full-corpus chain fixture).
 """
+
 from __future__ import annotations
 
 import shutil

@@ -74,7 +74,5 @@ def test_absence_gate_skips_when_backing_artifact_missing(tmp_path):
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        paths = render_eda_plots(
-            tmp_path, cfg_analysis=None, eda_cfg=eda_config(enabled_plots=list(_SENS_KINDS))
-        )
+        paths = render_eda_plots(tmp_path, cfg_analysis=None, eda_cfg=eda_config(enabled_plots=list(_SENS_KINDS)))
     assert paths == []

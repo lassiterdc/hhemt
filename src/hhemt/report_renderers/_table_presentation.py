@@ -113,10 +113,10 @@ def plotly_table_header(labels: list[str], **overrides: object) -> dict:
 #: `_tabulator_defaults.build_html_document` is currently a warn-and-fall-back stub), the
 #: static shim can be deleted and this tuple collapses to one implementation.
 TABLE_CAPABILITIES: tuple[str, ...] = (
-    "sort",                 # click a header to sort; a declared default sort on load
-    "filter_per_column",    # one filter control per column, ANDed across columns
-    "filter_compound",      # >1 criterion per column with an explicit AND/OR connector
-    "column_visibility",    # per-column show/hide, with group-level show-all/hide-all
-    "copy_table",           # copy the filtered rows x visible columns to the clipboard
-    "reset_state",          # clear persisted table state and re-render
+    "sort",  # click a header to sort; a declared default sort on load
+    "filter_per_column",  # one filter control per column, ANDed across columns
+    "filter_compound",  # >1 criterion per column with an explicit AND/OR connector
+    "column_visibility",  # per-column show/hide, with group-level show-all/hide-all
+    "copy_table",  # copy the filtered rows x visible columns to the clipboard
+    "reset_state",  # clear persisted table state and re-render
 )

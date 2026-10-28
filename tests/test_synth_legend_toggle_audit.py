@@ -30,12 +30,10 @@ from hhemt.report_renderers import (
 
 # Report configs used by the run() calls in the sibling integration tests.
 _SYNTH_MULTISIM_REPORT_CONFIG = (
-    Path(__file__).resolve().parents[1]
-    / "configs" / "reports" / "synth_multisim_report_config.yaml"
+    Path(__file__).resolve().parents[1] / "configs" / "reports" / "synth_multisim_report_config.yaml"
 )
 _SYNTH_SENSITIVITY_REPORT_CONFIG = (
-    Path(__file__).resolve().parents[1]
-    / "configs" / "reports" / "synth_sensitivity_report_config.yaml"
+    Path(__file__).resolve().parents[1] / "configs" / "reports" / "synth_sensitivity_report_config.yaml"
 )
 
 
@@ -43,6 +41,7 @@ _SYNTH_SENSITIVITY_REPORT_CONFIG = (
 def _trace_plots_data(tr) -> bool:
     """True if the trace plots at least one finite point (not a NaN-coords swatch)."""
     import numpy as np
+
     xs = getattr(tr, "x", None)
     if xs is None:
         return True  # heatmap/bar with z/etc. — treated as plotting data
@@ -132,9 +131,7 @@ def test_peak_flood_depth_legend_togglable(_ran_multisim, monkeypatch, tmp_path)
     fig = _capture_fig(
         monkeypatch,
         per_sim_peak_flood_depth,
-        lambda: per_sim_peak_flood_depth.render(
-            analysis, report_cfg, out, event_iloc=event_iloc
-        ),
+        lambda: per_sim_peak_flood_depth.render(analysis, report_cfg, out, event_iloc=event_iloc),
     )
     violations = _legend_items_have_togglable_elements(fig)
     assert violations == [], f"peak_flood_depth dangling legend items: {violations}"
@@ -152,9 +149,7 @@ def test_conduit_flow_legend_togglable(_ran_multisim, monkeypatch, tmp_path):
     fig = _capture_fig(
         monkeypatch,
         per_sim_conduit_flow,
-        lambda: per_sim_conduit_flow.render(
-            analysis, report_cfg, out, event_iloc=event_iloc
-        ),
+        lambda: per_sim_conduit_flow.render(analysis, report_cfg, out, event_iloc=event_iloc),
     )
     violations = _legend_items_have_togglable_elements(fig)
     assert violations == [], f"conduit_flow dangling legend items: {violations}"
@@ -180,14 +175,10 @@ def _ran_sensitivity(tritonswmm_cpu_compiled, synth_sensitivity_analysis_cached)
 
 
 @pytest.mark.slow
-def test_sensitivity_benchmarking_legend_togglable(
-    _ran_sensitivity, monkeypatch, tmp_path
-):
+def test_sensitivity_benchmarking_legend_togglable(_ran_sensitivity, monkeypatch, tmp_path):
     analysis = _ran_sensitivity
     report_cfg = analysis.cfg_analysis.report
-    assert report_cfg.sensitivity is not None, (
-        "sensitivity report cfg must be set for the benchmarking renderer"
-    )
+    assert report_cfg.sensitivity is not None, "sensitivity report cfg must be set for the benchmarking renderer"
     independent_vars = list(report_cfg.sensitivity.independent_vars)
     assert independent_vars, "no independent_vars to drive sensitivity benchmarking"
     independent_var = independent_vars[0]
@@ -195,12 +186,7 @@ def test_sensitivity_benchmarking_legend_togglable(
     fig = _capture_fig(
         monkeypatch,
         sensitivity_benchmarking,
-        lambda: sensitivity_benchmarking.render(
-            analysis, report_cfg, out, independent_var=independent_var
-        ),
+        lambda: sensitivity_benchmarking.render(analysis, report_cfg, out, independent_var=independent_var),
     )
     violations = _legend_items_have_togglable_elements(fig)
-    assert violations == [], (
-        f"sensitivity_benchmarking ({independent_var}) dangling legend items: "
-        f"{violations}"
-    )
+    assert violations == [], f"sensitivity_benchmarking ({independent_var}) dangling legend items: {violations}"

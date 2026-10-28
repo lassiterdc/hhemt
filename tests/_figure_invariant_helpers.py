@@ -79,7 +79,7 @@ def assert_caption_wrap_is_consistent_with_the_figure(fig) -> None:
             )
         else:
             assert 0.0 < wrap_w <= content_w + 0.5, (
-                f"caption {key!r} wrapped at {wrap_w}px, wider than the {content_w}px the " f"figure can draw"
+                f"caption {key!r} wrapped at {wrap_w}px, wider than the {content_w}px the figure can draw"
             )
 
 

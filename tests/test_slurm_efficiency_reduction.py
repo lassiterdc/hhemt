@@ -32,24 +32,40 @@ _REAL_STEPS = {
     # index. This job carries the MAJORITY shape -- `python` at `.0` -- which is 4,771 of
     # the campaign's 5,198 jobs; the 319-job minority whose `.0` IS a solver step is a
     # different fixture, because a majority-shape fixture cannot reach that branch.
-    "18396137.0": {"JobID": "18396137.0", "MainJobID": "18396137", "Elapsed": "00:01:51",
-                   "JobName": "python",
-                   "TotalCPU": "00:00:00", "MaxRSS": "491288K", "RequestedMem_MB": "4000",
-                   "TRESUsageInTot": "cpu=00:00:17,energy=0,mem=491288K"},
-    "18396137.1": {"JobID": "18396137.1", "MainJobID": "18396137", "Elapsed": "00:00:15",
-                   "JobName": "triton.exe",
-                   "TotalCPU": "00:00:00", "MaxRSS": "49524K", "State": "CANCELLED",
-                   "TRESUsageInTot": "cpu=00:00:13,energy=0,mem=49524K"},
-    "18396137.4": {"JobID": "18396137.4", "MainJobID": "18396137", "Elapsed": "00:00:20",
-                   "JobName": "triton.exe",
-                   "TotalCPU": "00:00:00", "MaxRSS": "50860K", "State": "COMPLETED"},
+    "18396137.0": {
+        "JobID": "18396137.0",
+        "MainJobID": "18396137",
+        "Elapsed": "00:01:51",
+        "JobName": "python",
+        "TotalCPU": "00:00:00",
+        "MaxRSS": "491288K",
+        "RequestedMem_MB": "4000",
+        "TRESUsageInTot": "cpu=00:00:17,energy=0,mem=491288K",
+    },
+    "18396137.1": {
+        "JobID": "18396137.1",
+        "MainJobID": "18396137",
+        "Elapsed": "00:00:15",
+        "JobName": "triton.exe",
+        "TotalCPU": "00:00:00",
+        "MaxRSS": "49524K",
+        "State": "CANCELLED",
+        "TRESUsageInTot": "cpu=00:00:13,energy=0,mem=49524K",
+    },
+    "18396137.4": {
+        "JobID": "18396137.4",
+        "MainJobID": "18396137",
+        "Elapsed": "00:00:20",
+        "JobName": "triton.exe",
+        "TotalCPU": "00:00:00",
+        "MaxRSS": "50860K",
+        "State": "COMPLETED",
+    },
 }
 _REAL_RECOVERY = {
     "18396137": {
-        "job": {"JobID": "18396137", "Elapsed": "00:02:00", "TotalCPU": "00:03.744",
-                "NNodes": "1", "NCPUS": "1"},
-        "batch": {"JobID": "18396137.batch", "Elapsed": "00:02:00", "TotalCPU": "00:03.744",
-                  "MaxRSS": "327556K"},
+        "job": {"JobID": "18396137", "Elapsed": "00:02:00", "TotalCPU": "00:03.744", "NNodes": "1", "NCPUS": "1"},
+        "batch": {"JobID": "18396137.batch", "Elapsed": "00:02:00", "TotalCPU": "00:03.744", "MaxRSS": "327556K"},
     }
 }
 

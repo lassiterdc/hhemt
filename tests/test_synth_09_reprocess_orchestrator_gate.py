@@ -12,9 +12,7 @@ from hhemt import orchestrator_sentinels as osent
 
 
 def _write_sentinel(analysis_dir, driver_id, mode, **kw):
-    return osent.write_orchestrator_sentinel(
-        analysis_dir, driver_id=driver_id, workflow_submission_mode=mode, **kw
-    )
+    return osent.write_orchestrator_sentinel(analysis_dir, driver_id=driver_id, workflow_submission_mode=mode, **kw)
 
 
 def test_a_no_orchestrator_sentinel_proceeds(synthetic_multisim_builder):
@@ -69,9 +67,7 @@ def test_e_single_job_dead_jobid_reclaimed(synthetic_multisim_builder, monkeypat
     gate actually imports.
     """
     b = synthetic_multisim_builder
-    s = _write_sentinel(
-        b.analysis_paths.analysis_dir, "d3", "1_job_many_srun_tasks", slurm_jobid="55"
-    )
+    s = _write_sentinel(b.analysis_paths.analysis_dir, "d3", "1_job_many_srun_tasks", slurm_jobid="55")
     monkeypatch.setattr("hhemt.workflow._slurm_job_is_live", lambda jid, **k: False)
     assert b._orchestrator_liveness_gate() is None
     assert not Path(s).exists()  # reclaimed
@@ -80,9 +76,7 @@ def test_e_single_job_dead_jobid_reclaimed(synthetic_multisim_builder, monkeypat
 def test_e2_single_job_live_jobid_refuses(synthetic_multisim_builder, monkeypatch):
     """1_job_many_srun_tasks arm: squeue-live jobid ⇒ gate refuses, sentinel kept."""
     b = synthetic_multisim_builder
-    s = _write_sentinel(
-        b.analysis_paths.analysis_dir, "d4", "1_job_many_srun_tasks", slurm_jobid="56"
-    )
+    s = _write_sentinel(b.analysis_paths.analysis_dir, "d4", "1_job_many_srun_tasks", slurm_jobid="56")
     monkeypatch.setattr("hhemt.workflow._slurm_job_is_live", lambda jid, **k: True)
     err = b._orchestrator_liveness_gate()
     assert err is not None and "orchestration driver" in err.stderr
@@ -177,9 +171,7 @@ def test_f2_foreign_host_sentinel_ages_out(synthetic_multisim_builder, monkeypat
     assert not Path(s).exists()
 
 
-def test_g_legacy_sentinel_without_hostname_is_unknown_not_dead(
-    synthetic_multisim_builder, monkeypatch
-):
+def test_g_legacy_sentinel_without_hostname_is_unknown_not_dead(synthetic_multisim_builder, monkeypatch):
     """Backward compat: a sentinel predating the hostname field must NOT be
     dead-classified from a negative host-local probe."""
     b = synthetic_multisim_builder
@@ -208,9 +200,7 @@ def test_i_missing_tmux_binary_is_unknown_not_dead(synthetic_multisim_builder, m
     """T2: tmux unavailable (Lmod module not loaded) must yield UNKNOWN-held --
     NOT a FileNotFoundError, and NOT a silent false-proceed."""
     b = synthetic_multisim_builder
-    s = _write_sentinel(
-        b.analysis_paths.analysis_dir, "d-notmux", "batch_job", tmux_session_name="sess-x"
-    )
+    s = _write_sentinel(b.analysis_paths.analysis_dir, "d-notmux", "batch_job", tmux_session_name="sess-x")
     monkeypatch.setattr("subprocess.run", _fake_run(tmux_available=False))
     err = b._orchestrator_liveness_gate()
     assert err is not None and "UNKNOWN/held" in err.stderr
@@ -222,17 +212,13 @@ def test_j_tmux_probe_is_tristate_on_same_host(synthetic_multisim_builder, monke
     """tmux RAN and answered: a live session refuses; an absent session on a
     KNOWN-same-host sentinel is dead evidence and is reclaimed."""
     b = synthetic_multisim_builder
-    s_live = _write_sentinel(
-        b.analysis_paths.analysis_dir, "d-tmux-live", "batch_job", tmux_session_name="alive-sess"
-    )
+    s_live = _write_sentinel(b.analysis_paths.analysis_dir, "d-tmux-live", "batch_job", tmux_session_name="alive-sess")
     monkeypatch.setattr("subprocess.run", _fake_run(tmux_alive={"alive-sess"}))
     assert b._orchestrator_liveness_gate() is not None
     assert Path(s_live).exists()
     Path(s_live).unlink()
 
-    s_dead = _write_sentinel(
-        b.analysis_paths.analysis_dir, "d-tmux-dead", "batch_job", tmux_session_name="gone-sess"
-    )
+    s_dead = _write_sentinel(b.analysis_paths.analysis_dir, "d-tmux-dead", "batch_job", tmux_session_name="gone-sess")
     monkeypatch.setattr("subprocess.run", _fake_run(tmux_alive=set()))
     assert b._orchestrator_liveness_gate() is None
     assert not Path(s_dead).exists()

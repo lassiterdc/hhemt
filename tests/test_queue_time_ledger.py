@@ -36,10 +36,7 @@ def _append_wall_row(model_logfile: Path, jobid: str, wall_s: float, attempt: in
     """Mirror of the F11 producer at sim-finalize."""
     with open(_ledger_for(model_logfile), "a") as f:
         f.write(
-            json.dumps(
-                {"attempt": attempt, "wall_s": float(wall_s), "completed": True, "slurm_jobid": jobid}
-            )
-            + "\n"
+            json.dumps({"attempt": attempt, "wall_s": float(wall_s), "completed": True, "slurm_jobid": jobid}) + "\n"
         )
 
 
@@ -85,9 +82,7 @@ def test_queue_rows_do_not_perturb_the_wall_total(tmp_path):
     _append_queue_row(log, "2001", 12.0)
     _append_queue_row(log, "2002", 7200.0)
 
-    assert read_walltime_ledger_total_s(log) == wall_before, (
-        "interleaved queue rows must not change the wall total"
-    )
+    assert read_walltime_ledger_total_s(log) == wall_before, "interleaved queue rows must not change the wall total"
     total, coverage, _ = read_queue_ledger_seconds(log)
     assert total == 7212.0
     assert coverage == "2/2"
@@ -121,9 +116,9 @@ def test_partial_coverage_is_disclosed_as_partial(tmp_path):
     """
     log = tmp_path / "logs" / "sims" / "model_tritonswmm_evt3.log"
     log.parent.mkdir(parents=True, exist_ok=True)
-    _append_wall_row(log, "4001", 100.0, attempt=0)   # pre-O21 allocation: no queue row
-    _append_wall_row(log, "4002", 100.0, attempt=1)   # pre-O21 allocation: no queue row
-    _append_queue_row(log, "4003", 60.0)              # post-O21 allocation
+    _append_wall_row(log, "4001", 100.0, attempt=0)  # pre-O21 allocation: no queue row
+    _append_wall_row(log, "4002", 100.0, attempt=1)  # pre-O21 allocation: no queue row
+    _append_queue_row(log, "4003", 60.0)  # post-O21 allocation
     _append_wall_row(log, "4003", 100.0, attempt=2)
 
     total, coverage, _ = read_queue_ledger_seconds(log)
@@ -163,9 +158,7 @@ def test_record_queue_time_is_not_applicable_off_batch_job(tmp_path, monkeypatch
     log = tmp_path / "logs" / "sims" / "model_tritonswmm_evt0.log"
     log.parent.mkdir(parents=True, exist_ok=True)
 
-    outcome = rsr._record_queue_time(
-        model_logfile=log, jobid="5001", run_method="1_job_many_srun_tasks", event_iloc=0
-    )
+    outcome = rsr._record_queue_time(model_logfile=log, jobid="5001", run_method="1_job_many_srun_tasks", event_iloc=0)
     assert outcome == "not-applicable"
     assert called == [], "the probe must not run when the mode has no per-sim queue"
     assert not (log.parent / "_walltime").exists(), "no ledger may be created"
@@ -181,16 +174,9 @@ def test_record_queue_time_records_on_batch_job(tmp_path, monkeypatch):
     log = tmp_path / "logs" / "sims" / "model_tritonswmm_evt0.log"
     log.parent.mkdir(parents=True, exist_ok=True)
 
-    assert (
-        rsr._record_queue_time(
-            model_logfile=log, jobid="5002", run_method="batch_job", event_iloc=0
-        )
-        == "recorded"
-    )
+    assert rsr._record_queue_time(model_logfile=log, jobid="5002", run_method="batch_job", event_iloc=0) == "recorded"
     rows = [
-        json.loads(x)
-        for x in (log.parent / "_walltime" / f"{log.stem}.jsonl").read_text().splitlines()
-        if x.strip()
+        json.loads(x) for x in (log.parent / "_walltime" / f"{log.stem}.jsonl").read_text().splitlines() if x.strip()
     ]
     assert rows == [{"slurm_jobid": "5002", "queue_s": 105.0}]
 
@@ -207,10 +193,7 @@ def test_record_queue_time_reports_unavailable_when_probe_returns_none(tmp_path,
     log.parent.mkdir(parents=True, exist_ok=True)
 
     assert (
-        rsr._record_queue_time(
-            model_logfile=log, jobid="5003", run_method="batch_job", event_iloc=0
-        )
-        == "unavailable"
+        rsr._record_queue_time(model_logfile=log, jobid="5003", run_method="batch_job", event_iloc=0) == "unavailable"
     )
     assert not (log.parent / "_walltime").exists()
 
@@ -232,8 +215,5 @@ def test_record_queue_time_never_raises_on_write_failure(tmp_path, monkeypatch):
     log = tmp_path / "logs" / "sims" / "model_swmm_evt0.log"
 
     assert (
-        rsr._record_queue_time(
-            model_logfile=log, jobid="5004", run_method="batch_job", event_iloc=0
-        )
-        == "write-failed"
+        rsr._record_queue_time(model_logfile=log, jobid="5004", run_method="batch_job", event_iloc=0) == "write-failed"
     )

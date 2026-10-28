@@ -37,7 +37,7 @@ _SRC = Path(__file__).resolve().parents[1] / "src" / "hhemt"
 _IN_SLURM_ALLOWLIST: dict[str, str] = {
     "resource_management.py": "SIZING",
     "workflow.py": "ENVIRONMENT-FACT",  # tmux reattach-node resolution
-    "log_utils.py": "RECORDING",        # logging context only
+    "log_utils.py": "RECORDING",  # logging context only
 }
 
 # The DEFINITION of in_slurm is exempt by ROLE, not by filename: `in_slurm` on the

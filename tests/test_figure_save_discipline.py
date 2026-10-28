@@ -42,38 +42,25 @@ from pathlib import Path
 
 import pytest
 
-_RENDERERS_DIR = (
-    Path(__file__).resolve().parents[1]
-    / "src" / "hhemt" / "report_renderers"
-)
+_RENDERERS_DIR = Path(__file__).resolve().parents[1] / "src" / "hhemt" / "report_renderers"
 
 _FORBIDDEN_SAVE_METHODS: frozenset[str] = frozenset({"savefig"})
-_FORBIDDEN_TEXT_WRITERS_IN_RENDER: frozenset[str] = frozenset(
-    {"write_text", "write_bytes"}
-)
+_FORBIDDEN_TEXT_WRITERS_IN_RENDER: frozenset[str] = frozenset({"write_text", "write_bytes"})
 
 
 def _renderer_files() -> list[Path]:
-    return sorted(
-        p for p in _RENDERERS_DIR.glob("*.py")
-        if not p.stem.startswith("_")
-    )
+    return sorted(p for p in _RENDERERS_DIR.glob("*.py") if not p.stem.startswith("_"))
 
 
 def _is_method_call(call: ast.Call, method_set: frozenset[str]) -> bool:
-    return (
-        isinstance(call.func, ast.Attribute)
-        and call.func.attr in method_set
-    )
+    return isinstance(call.func, ast.Attribute) and call.func.attr in method_set
 
 
 def _walk_render_function_calls(tree: ast.AST):
     """Yield (call_node, enclosing_funcname) for every Call inside a
     ``def render(...)`` (or ``def render_*``) function body."""
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and (
-            node.name == "render" or node.name.startswith("render_")
-        ):
+        if isinstance(node, ast.FunctionDef) and (node.name == "render" or node.name.startswith("render_")):
             for child in ast.walk(node):
                 if isinstance(child, ast.Call):
                     yield child, node.name
@@ -113,9 +100,7 @@ def test_renderer_does_not_bypass_emit_helper(path: Path) -> None:
     violations = _lint_source(src, filename=path.name)
     if violations:
         msg = "\n".join(violations)
-        raise AssertionError(
-            f"Figure-save discipline violations in {path.name}:\n{msg}"
-        )
+        raise AssertionError(f"Figure-save discipline violations in {path.name}:\n{msg}")
 
 
 def test_emit_plot_with_sources_html_branch_compliant() -> None:

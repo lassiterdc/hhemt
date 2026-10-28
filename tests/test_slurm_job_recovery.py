@@ -106,8 +106,8 @@ def test_recover_rows_keeps_the_two_classes_and_the_fields_that_motivated_them(m
     job = next(r for r in rows if r["StepKind"] == "job")
     batch = next(r for r in rows if r["StepKind"] == "batch")
 
-    assert job["Elapsed"] == "00:02:00"          # absent from every surviving step
-    assert batch["TotalCPU"] == "00:03.744"      # the ONLY nonzero TotalCPU
+    assert job["Elapsed"] == "00:02:00"  # absent from every surviving step
+    assert batch["TotalCPU"] == "00:03.744"  # the ONLY nonzero TotalCPU
     assert job["MainJobID"] == batch["MainJobID"] == "18396137"
 
 
@@ -120,7 +120,7 @@ def test_recovered_job_elapsed_is_not_derivable_from_the_steps():
     another route still PASSES. A hypothetical implementation that synthesised Elapsed as
     max-of-steps or sum-of-steps FAILS here, which is the point.
     """
-    job_elapsed_s = 120           # 00:02:00, from the job row
+    job_elapsed_s = 120  # 00:02:00, from the job row
     step_elapsed_s = [111, 15, 20]  # .0, .1, .4
     assert job_elapsed_s != max(step_elapsed_s)
     assert job_elapsed_s != sum(step_elapsed_s)

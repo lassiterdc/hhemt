@@ -53,15 +53,12 @@ def test_bundle_report_data_is_opt_in():
                 continue
             src = inspect.getsource(method)
             assert "bundle_report_data" not in src, (
-                f"{cls.__name__}.{method_name} contains a call to "
-                f"bundle_report_data — opt-in invariant violated."
+                f"{cls.__name__}.{method_name} contains a call to bundle_report_data — opt-in invariant violated."
             )
 
 
 def _assert_report_exists_with_figures(report_path: Path) -> None:
-    assert report_path.exists(), (
-        f"{report_path} not produced by report-from-bundle"
-    )
+    assert report_path.exists(), f"{report_path} not produced by report-from-bundle"
     text = report_path.read_text()
     assert "<img" in text, "report contains no <img> tags — likely empty render"
 
@@ -82,13 +79,11 @@ def test_bundle_round_trip(request, tmp_path, fixture_name):
     assert bundle_path.exists(), "bundle zip not emitted"
 
     result = subprocess.run(
-        ["hhemt", "report-from-bundle", str(bundle_path),
-         "--format", "html"],
-        capture_output=True, text=True,
+        ["hhemt", "report-from-bundle", str(bundle_path), "--format", "html"],
+        capture_output=True,
+        text=True,
     )
-    assert result.returncode == 0, (
-        f"report-from-bundle failed:\n{result.stdout}\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"report-from-bundle failed:\n{result.stdout}\n{result.stderr}"
 
     unpack_dir = bundle_path.parent / bundle_path.stem
     rendered_html = unpack_dir / "analysis_report.html"
@@ -102,7 +97,8 @@ def _extract_wrapper_block(html: str) -> str:
     from an analysis_report.html string. Returns empty string if absent."""
     m = re.search(
         r'<div class="description">(.*?)</div>',
-        html, re.DOTALL,
+        html,
+        re.DOTALL,
     )
     return m.group(1) if m else ""
 
@@ -111,7 +107,7 @@ def _scrub_generated_at(block: str) -> str:
     """Replace the ISO timestamp recorded in `config["report"]["generated_at"]`
     so the wrapper-block diff allowlists only that field."""
     return re.sub(
-        r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?',
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?",
         "GENERATED_AT_PLACEHOLDER",
         block,
     )
@@ -121,9 +117,7 @@ def _scrub_generated_at(block: str) -> str:
     "fixture_name",
     ["rendered_synth_multi_sim", "rendered_synth_sensitivity"],
 )
-def test_bundle_baseline_wrapper_section_matches(
-    request, tmp_path, fixture_name
-):
+def test_bundle_baseline_wrapper_section_matches(request, tmp_path, fixture_name):
     """Phase 5 deferred step 7: the local re-render's workflow-description
     wrapper block must match the HPC-baseline's same block, allowlisting
     only the `generated_at` ISO timestamp.
@@ -143,13 +137,11 @@ def test_bundle_baseline_wrapper_section_matches(
     )
 
     result = subprocess.run(
-        ["hhemt", "report-from-bundle", str(bundle_path),
-         "--format", "html"],
-        capture_output=True, text=True,
+        ["hhemt", "report-from-bundle", str(bundle_path), "--format", "html"],
+        capture_output=True,
+        text=True,
     )
-    assert result.returncode == 0, (
-        f"report-from-bundle failed:\n{result.stdout}\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"report-from-bundle failed:\n{result.stdout}\n{result.stderr}"
 
     unpack_dir = bundle_path.parent / bundle_path.stem
     local = (unpack_dir / "analysis_report.html").read_text()

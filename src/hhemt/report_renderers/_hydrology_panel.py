@@ -58,14 +58,10 @@ def load_event_hydrology_data(
             ws = ws.sel({time_var: slice(*window)})
         times = ws[time_var].values
         rainfall = ws[rain_var].values.astype(float)
-        bc_water_level = (
-            ws[bc_var].values.astype(float) if bc_var is not None else np.zeros_like(rainfall)
-        )
+        bc_water_level = ws[bc_var].values.astype(float) if bc_var is not None else np.zeros_like(rainfall)
         rain_attrs = dict(ws[rain_var].attrs)
         bc_attrs = dict(ws[bc_var].attrs) if bc_var is not None else {}
-    times_min = (
-        (times - times[0]).astype("timedelta64[s]").astype(float) / units.SECONDS_PER_MINUTE
-    )
+    times_min = (times - times[0]).astype("timedelta64[s]").astype(float) / units.SECONDS_PER_MINUTE
     return {
         "times_min": times_min,
         "rainfall": rainfall,
@@ -104,10 +100,7 @@ def draw_event_hydrology_panel(
     bc_var = hydro_data["bc_var"]
 
     rain_units = units.rainfall_provenance_units(cfg_analysis.rainfall_units)
-    bc_units = (
-        units.bc_provenance_units(cfg_analysis.storm_tide_units)
-        if cfg_analysis.storm_tide_units else ""
-    )
+    bc_units = units.bc_provenance_units(cfg_analysis.storm_tide_units) if cfg_analysis.storm_tide_units else ""
 
     rain_ref = ProvenanceRef(
         source_path=weather_rel_path,
@@ -117,19 +110,28 @@ def draw_event_hydrology_panel(
     )
     if prov is not None:
         with prov.artist(
-            axes_id="ax_rain", kind="bar",
+            axes_id="ax_rain",
+            kind="bar",
             note="rainfall time series (event hydrology — top sub-panel)",
         ) as a:
             a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
             a.add_channel("y", rain_ref, units=rain_units)
             ax_rain.bar(
-                times_hr, rainfall, width=1.0 / units.MINUTES_PER_HOUR, align="edge",
-                color=panel_cfg.rain_color, edgecolor="none",
+                times_hr,
+                rainfall,
+                width=1.0 / units.MINUTES_PER_HOUR,
+                align="edge",
+                color=panel_cfg.rain_color,
+                edgecolor="none",
             )
     else:
         ax_rain.bar(
-            times_hr, rainfall, width=1.0 / units.MINUTES_PER_HOUR, align="edge",
-            color=panel_cfg.rain_color, edgecolor="none",
+            times_hr,
+            rainfall,
+            width=1.0 / units.MINUTES_PER_HOUR,
+            align="edge",
+            color=panel_cfg.rain_color,
+            edgecolor="none",
         )
 
     ax_rain.set_title(panel_cfg.panel_title)
@@ -150,19 +152,24 @@ def draw_event_hydrology_panel(
     )
     if prov is not None:
         with prov.artist(
-            axes_id="ax_bc", kind="line2d",
+            axes_id="ax_bc",
+            kind="line2d",
             note="boundary condition water level (event hydrology — bottom sub-panel)",
         ) as a:
             a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
             a.add_channel("y", bc_ref, units=bc_units)
             ax_bc.plot(
-                times_hr, bc_water_level,
-                color=panel_cfg.bc_line_color, linewidth=panel_cfg.bc_line_width,
+                times_hr,
+                bc_water_level,
+                color=panel_cfg.bc_line_color,
+                linewidth=panel_cfg.bc_line_width,
             )
     else:
         ax_bc.plot(
-            times_hr, bc_water_level,
-            color=panel_cfg.bc_line_color, linewidth=panel_cfg.bc_line_width,
+            times_hr,
+            bc_water_level,
+            color=panel_cfg.bc_line_color,
+            linewidth=panel_cfg.bc_line_width,
         )
 
     ax_bc.set_ylabel(units.bc_water_level_axis_label(cfg_analysis.storm_tide_units or "m"))
@@ -248,9 +255,7 @@ def draw_event_hydrology_panel_plotly(
         col=col,
     )
 
-    rain_title, rain_px = wrap_axis_title(
-        _units.rainfall_axis_label(rainfall_units), axis_extent_px=axis_extent_px
-    )
+    rain_title, rain_px = wrap_axis_title(_units.rainfall_axis_label(rainfall_units), axis_extent_px=axis_extent_px)
     bc_title, bc_px = wrap_axis_title(
         _units.bc_water_level_axis_label(storm_tide_units or "m"), axis_extent_px=axis_extent_px
     )

@@ -7,15 +7,14 @@ long_name, units, and cell_methods, and the tree root to carry
 ``Conventions: 'CF-1.13'`` and ``analysis_id``. This migration backfills
 these from the canonical source ``cf_conventions.py``.
 """
+
 from __future__ import annotations
 
 from hhemt.version_migration.context import MigrationContext
 
 version_from: int = 3
 version_to: int = 4
-description: str = (
-    "Backfill CF-1.13 attributes on analysis_datatree.zarr per cf_conventions stipulation"
-)
+description: str = "Backfill CF-1.13 attributes on analysis_datatree.zarr per cf_conventions stipulation"
 
 
 def upgrade(ctx: MigrationContext) -> None:

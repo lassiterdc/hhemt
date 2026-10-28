@@ -13,7 +13,7 @@ def _quantize(v):
 
 def test_mask_excludes_the_seaward_extreme_from_the_cap():
     """The boundary condition must not set the colorbar for the inland floodplain."""
-    z = np.array([[0.4, 0.5], [0.6, 9.9]])          # 9.9 = seaward boundary cell
+    z = np.array([[0.4, 0.5], [0.6, 9.9]])  # 9.9 = seaward boundary cell
     mask = np.array([[True, True], [True, False]])  # watershed excludes it
     assert np.nanmax(_apply_mask(z, mask)) == 0.6
 

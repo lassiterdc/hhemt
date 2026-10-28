@@ -22,9 +22,7 @@ from hhemt.report_renderers.cross_experiment_errors_and_warnings import (
 
 
 def _write(root, pairs):
-    (root / "combined_intercomparison.json").write_text(
-        json.dumps({"pairs": pairs}), encoding="utf-8"
-    )
+    (root / "combined_intercomparison.json").write_text(json.dumps({"pairs": pairs}), encoding="utf-8")
     return root
 
 

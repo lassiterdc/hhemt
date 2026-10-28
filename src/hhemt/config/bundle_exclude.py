@@ -131,9 +131,7 @@ class BundleExcludeConfig(BaseModel):
                     f"Run `hhemt bundle --list-excludable` for the authoritative menu."
                 )
             if not entry.excludable:
-                raise ValueError(
-                    f"'{field_name}' is catalogued as NOT excludable: {entry.reproducibility_cost}"
-                )
+                raise ValueError(f"'{field_name}' is catalogued as NOT excludable: {entry.reproducibility_cost}")
 
             is_list_field = _PATH_FIELD_POLICY.get(field_name) is PathPolicy.BUNDLE_RELATIVE_LIST
             if is_list_field and not isinstance(ref, dict):

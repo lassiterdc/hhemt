@@ -26,9 +26,7 @@ _GEOJSON = {
             "properties": {"id": 1},
             "geometry": {
                 "type": "Polygon",
-                "coordinates": [
-                    [[3.5, 17.5], [220.5, 17.5], [220.5, 416.5], [3.5, 416.5], [3.5, 17.5]]
-                ],
+                "coordinates": [[[3.5, 17.5], [220.5, 17.5], [220.5, 416.5], [3.5, 416.5], [3.5, 17.5]]],
             },
         }
     ],
@@ -45,9 +43,7 @@ def test_bundle_root_resolves_external_relative(tmp_path):
     """Bundle context: external/watershed.geojson resolves (behavior must not change)."""
     root = tmp_path / "bundle"
     _write_geojson(root / "external" / "watershed.geojson")
-    (root / "cfg_system.yaml").write_text(
-        yaml.safe_dump({"watershed_gis_polygon": "external/watershed.geojson"})
-    )
+    (root / "cfg_system.yaml").write_text(yaml.safe_dump({"watershed_gis_polygon": "external/watershed.geojson"}))
     assert cd._watershed_polygon(root) is not None
 
 
@@ -60,9 +56,7 @@ def test_live_analysis_root_resolves_via_cfg_system(tmp_path):
     root = tmp_path / "analysis_dir"
     root.mkdir()
     abs_poly = _write_geojson(tmp_path / "elsewhere" / "synth_cache" / "watershed.geojson")
-    (root / "cfg_system.yaml").write_text(
-        yaml.safe_dump({"watershed_gis_polygon": str(abs_poly)})
-    )
+    (root / "cfg_system.yaml").write_text(yaml.safe_dump({"watershed_gis_polygon": str(abs_poly)}))
     assert not (root / "external").exists()
     poly = cd._watershed_polygon(root)
     assert poly is not None, "live-analysis root failed to resolve the watershed polygon"

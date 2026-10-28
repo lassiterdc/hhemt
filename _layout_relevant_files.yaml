@@ -4333,3 +4333,67 @@ non_breaking_allowlist:
       their constants), called at run entry and in _generate_TRITON_SWMM_cfg before the cfg is
       written. DECIDING MEASUREMENT: it writes no file and changes no file preparation writes; a
       refused run stops before its cfg exists, and an admitted run's cfg is byte-identical to before. The layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/bundle_exclude.py
+    layout_signature: 64a335d5a3ab9962e075ba2c57cb976b7b4061f6b6107ccab27f5694c90997cb
+    justification: >-
+      NON-BREAKING. Whole-tree ruff-format pass (ruff 0.15.17). FORMATTING-ONLY: the module's AST,
+      docstrings included, is identical before and after (ast.dump equality against the parent blob),
+      so no key, file name, zarr group or _version.json field the file writes or reads changes. The
+      layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN
+      EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/version_migration/versions/V0001__rename_scenario_dirs.py
+    layout_signature: 6761b2e4303f652873de552bc0ebcac6d7ca4fa780b87df5fbc73cb23b58a63b
+    justification: >-
+      NON-BREAKING. Whole-tree ruff-format pass (ruff 0.15.17). FORMATTING-ONLY: the module's AST,
+      docstrings included, is identical before and after (ast.dump equality against the parent blob),
+      so no key, file name, zarr group or _version.json field the file writes or reads changes. The
+      layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN
+      EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/version_migration/versions/V0002__snakemake_flag_rename.py
+    layout_signature: 1ae58926a06f1a8ce1a53da0c483da6462dba02f17c965af7bb8539a9eeea55c
+    justification: >-
+      NON-BREAKING. Whole-tree ruff-format pass (ruff 0.15.17). FORMATTING-ONLY: the module's AST,
+      docstrings included, is identical before and after (ast.dump equality against the parent blob),
+      so no key, file name, zarr group or _version.json field the file writes or reads changes. The
+      layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN
+      EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/version_migration/versions/V0003__datatree_consolidation.py
+    layout_signature: 55c74668c655676ddfc2a93f67fd3d049f95c0e77e2116390ee82454477e2a25
+    justification: >-
+      NON-BREAKING. Whole-tree ruff-format pass (ruff 0.15.17). FORMATTING-ONLY: the module's AST,
+      docstrings included, is identical before and after (ast.dump equality against the parent blob),
+      so no key, file name, zarr group or _version.json field the file writes or reads changes. The
+      layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN
+      EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/version_migration/versions/V0004__cf_conventions_backfill.py
+    layout_signature: f9a43a682cb7bdca7922c0d0ed93988c2801cedf84d361ab9a5e83eb6c465eb4
+    justification: >-
+      NON-BREAKING. Whole-tree ruff-format pass (ruff 0.15.17). FORMATTING-ONLY: the module's AST,
+      docstrings included, is identical before and after (ast.dump equality against the parent blob),
+      so no key, file name, zarr group or _version.json field the file writes or reads changes. The
+      layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN
+      EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/version_migration/versions/V0006__fingerprint_schema_v3.py
+    layout_signature: a591a1f0bf7142688a5616c0bd0c3d9241fca40b980ce9ea280665f2f34bf5f2
+    justification: >-
+      NON-BREAKING. Whole-tree ruff-format pass (ruff 0.15.17). FORMATTING-ONLY: the module's AST,
+      docstrings included, is identical before and after (ast.dump equality against the parent blob),
+      so no key, file name, zarr group or _version.json field the file writes or reads changes. The
+      layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN
+      EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/version_migration/versions/V0007__setup_target_flag_rename.py
+    layout_signature: 0929bd0ede4f6229867607e9045005dd9b1b47215eba5a5d37314357defc4425
+    justification: >-
+      NON-BREAKING. Whole-tree ruff-format pass (ruff 0.15.17). FORMATTING-ONLY: the module's AST,
+      docstrings included, is identical before and after (ast.dump equality against the parent blob),
+      so no key, file name, zarr group or _version.json field the file writes or reads changes. The
+      layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN
+      EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/version_migration/versions/V0008__fix_per_rank_diff_aggregation.py
+    layout_signature: a538834ee9b2e27c826da8eff533f2ce48ea65b39cf79b33dfa62841e9918404
+    justification: >-
+      NON-BREAKING. Whole-tree ruff-format pass (ruff 0.15.17). FORMATTING-ONLY: the module's AST,
+      docstrings included, is identical before and after (ast.dump equality against the parent blob),
+      so no key, file name, zarr group or _version.json field the file writes or reads changes. The
+      layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN
+      EXPIRY: this row expires on the next change to this path.

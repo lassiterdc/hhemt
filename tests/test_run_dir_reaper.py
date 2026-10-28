@@ -74,6 +74,7 @@ def test_sweep_root_has_no_default():
     import inspect
 
     from tests.fixtures._run_dir_reaper import sweep
+
     p = inspect.signature(sweep).parameters["runs_root"]
     assert p.default is inspect.Parameter.empty, "sweep() must never default its root"
 
@@ -83,6 +84,7 @@ def test_sweep_refuses_real_root_from_a_test_body():
     passes both when the guard fires and when the guard is deleted and nothing
     happened to be reapable."""
     from tests.fixtures._run_dir_reaper import default_runs_root, sweep
+
     with pytest.raises(RuntimeError, match="refusing to sweep the real cache root"):
         sweep(default_runs_root(), signals=_NO_SIGNALS, ttl_days=7)
 
