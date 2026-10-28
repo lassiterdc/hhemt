@@ -4325,3 +4325,11 @@ non_breaking_allowlist:
     justification: >-
       NON-BREAKING. Re-states swmm_node_rim_from_dem's description to name the content test the
       guard now makes. Description text only; no field, default or validator changes. The layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/scenario.py
+    layout_signature: 30aff501cae94f9987ce6786a605426c422fd69a57990d3130bf92438d0ffd93
+    justification: >-
+      NON-BREAKING. Adds the check that a coupled run's TRITON build couples the toolkit's list
+      (triton_coupling_read, keyless_inflows_read, require_triton_couples_the_listed_nodes and
+      their constants), called at run entry and in _generate_TRITON_SWMM_cfg before the cfg is
+      written. DECIDING MEASUREMENT: it writes no file and changes no file preparation writes; a
+      refused run stops before its cfg exists, and an admitted run's cfg is byte-identical to before. The layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next change to this path.

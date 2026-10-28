@@ -2713,6 +2713,39 @@ class TRITONSWMM_analysis:
                     config_path=Path(path),
                 )
 
+    def _refuse_coupling_the_triton_build_would_not_read(self) -> None:
+        """Refuse, before any job is submitted, a coupled run whose TRITON build would couple other nodes.
+
+        A TRITON build that does not read ``swmm_coupling_nodes`` ignores the toolkit's list and
+        couples the nodes its own ``[INFLOWS]`` read names (``scenario.keyless_inflows_read``).
+        Judged per coupled system on its template: the candidate junctions the list would carry,
+        against that read, as multisets (``scenario.require_triton_couples_the_listed_nodes``).
+        In container mode the commit judged is ``TRITONSWMM_branch_key``, which the image
+        preflight holds the image's recorded commit to. A template naming a placeholder node
+        (a ``$`` in the name) is left to scenario preparation, which judges the filled file.
+        """
+        from .scenario import (
+            coupling_candidate_junction_coordinates,
+            keyless_inflows_read,
+            require_triton_couples_the_listed_nodes,
+        )
+
+        environment = self.cfg_analysis.execution_environment
+        for cfg in _coupled_system_configs(self):
+            template = Path(cfg.SWMM_hydraulics)
+            listed = [name for name, _x, _y in coupling_candidate_junction_coordinates(cfg)]
+            if any("$" in n for n in listed) or any("$" in n for n in keyless_inflows_read(template)):
+                continue
+            require_triton_couples_the_listed_nodes(
+                listed,
+                template,
+                one_per_cell=bool(self.cfg_analysis.one_coupled_inflow_node_per_dem_cell),
+                execution_environment=environment,
+                software_directory=cfg.TRITONSWMM_software_directory,
+                branch_key=cfg.TRITONSWMM_branch_key,
+                recorded_sha=cfg.TRITONSWMM_branch_key if environment == "container" else None,
+            )
+
     def _refuse_coupled_system_with_no_coupling_candidate(self) -> None:
         """Refuse, before any job is submitted, a coupled system that declares no coupling node.
 
@@ -3015,6 +3048,7 @@ class TRITONSWMM_analysis:
         self._refuse_coupling_nodes_outside_triton_grid(
             overwrite_system_inputs=translate_mode("fresh" if from_scratch else "resume")["overwrite_system_inputs"]
         )
+        self._refuse_coupling_the_triton_build_would_not_read()
 
         # _test/ deletion offer: if a leftover smoke-test subtree from a
         # prior analysis.test() exists, offer to delete it before the real run.
@@ -4300,6 +4334,7 @@ class TRITONSWMM_analysis:
         self._refuse_invalid_coupling_declaration()
         self._refuse_coupled_system_with_no_coupling_candidate()
         self._refuse_coupling_nodes_outside_triton_grid(overwrite_system_inputs=overwrite_system_inputs)
+        self._refuse_coupling_the_triton_build_would_not_read()
 
         # Login-node preflight: refuse any analysis path a compute node cannot see.
         # Refuse BEFORE anything is stamped, written or

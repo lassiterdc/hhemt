@@ -574,6 +574,44 @@ def set_swmm_coupling_nodes(cfg_content: str, nodes_file) -> str:
     return f'{text}{separator}{SWMM_COUPLING_NODES_KEY}="{nodes_file}"\n'
 
 
+#: How a TRITON build reads ``swmm_coupling_nodes``, as the text appears in its ``src/config_utils.h``.
+#: A build whose file carries it couples exactly the nodes the toolkit lists. A build whose file
+#: does not ignores the list and couples the nodes its own ``[INFLOWS]`` read names instead.
+SWMM_COUPLING_NODES_READ = 'argsd("swmm_coupling_nodes"'
+
+#: The TRITON commits a CONTAINER image may carry that read ``swmm_coupling_nodes``. A container
+#: run has no host clone, so its commit is looked up here instead. Each member is admitted by
+#: content: ``git show {sha}:src/config_utils.h`` carries ``SWMM_COUPLING_NODES_READ``.
+SWMM_COUPLING_NODES_CONTAINER_SHAS = frozenset(
+    {
+        "a146fb6ed7c22790fb9a15ff854c446db4519ad2",
+        "bd18215972c348020d53b3a8a1a64ee6266cae28",
+        "bb13ea28603d50879f8d85cd041c17f440fbdb2b",
+    }
+)
+
+#: The sha256 of the ``[INFLOWS]`` read of the key-less TRITON builds: the lines of
+#: ``src/swmm_triton.h`` from the one carrying ``line.find("INFLOWS")`` through the next one
+#: carrying ``infile.close()``, each ending in a newline, carriage returns kept (the file's lines
+#: end in CRLF). Byte-identical at 15eb18a5, b3820a44,
+#: a38338b0, 031ea42b and the head of ORNL's ``triton-swmm`` branch, a57ce39.
+#: ``keyless_inflows_read`` re-implements that block, so a key-less build whose block hashes
+#: otherwise is refused as unrecognized rather than compared against a rule it does not follow.
+KEYLESS_INFLOWS_READ_SHA256 = "e86ed6c13b7813b0e82c0133007f18418a76f4c09fb8d0bd3fe205c5c44324aa"
+
+#: The key-less TRITON commits a CONTAINER image may carry, each admitted by content: its
+#: ``src/swmm_triton.h`` read block hashes to ``KEYLESS_INFLOWS_READ_SHA256``.
+KEYLESS_INFLOWS_READ_CONTAINER_SHAS = frozenset(
+    {
+        "15eb18a5d25afe5da295cb4b559a62669dbe5bc3",
+        "b3820a448f304b3f732f4b6fac5564adf86ac333",
+        "a38338b09e62e57c936f51516bbdbe495d89a546",
+        "031ea42b063ce1083e3d965597cdb44da2e748ef",
+        "a57ce39d0643dac5135d5cd5c10f81d1db3daf2d",
+    }
+)
+
+
 def set_hhemt_output_folder(cfg_text: str, folder: str) -> tuple[str, list[str]]:
     """Give a TRITON cfg exactly one active ``output_folder="{folder}"`` line; return it and the values removed.
 
@@ -710,6 +748,169 @@ def require_dem_rim_capable_triton(
             f"{required_sha}, the first that reads the key. An older build would ignore the key "
             "and run with SWMM's rims. Move TRITONSWMM_branch_key to a commit at or after it and "
             "rebuild, or set swmm_node_rim_from_dem to False."
+        ),
+    )
+
+
+def _inflows_read_block(header_text: str) -> str | None:
+    """The ``[INFLOWS]`` read block of a TRITON ``src/swmm_triton.h``, or None when it has none.
+
+    The lines from the first one carrying ``line.find("INFLOWS")`` through the next one carrying
+    ``infile.close()``, each ending in a newline: the span ``KEYLESS_INFLOWS_READ_SHA256`` hashes.
+    ``header_text`` must keep its carriage returns, which the hash covers.
+    """
+    lines = header_text.split("\n")
+    start = next((i for i, line in enumerate(lines) if 'line.find("INFLOWS")' in line), None)
+    if start is None:
+        return None
+    end = next((i for i in range(start, len(lines)) if "infile.close()" in lines[i]), None)
+    if end is None:
+        return None
+    return "".join(line + "\n" for line in lines[start : end + 1])
+
+
+def triton_coupling_read(*, execution_environment, software_directory, branch_key, recorded_sha) -> str | None:
+    """How the TRITON build a run uses decides its coupled nodes: ``"list"``, ``"inflows"`` or None.
+
+    ``"list"``: the build reads ``swmm_coupling_nodes`` and couples the toolkit's list.
+    ``"inflows"``: it does not, and its ``[INFLOWS]`` read is the one ``keyless_inflows_read``
+    re-implements. None: there is no build to judge yet (no native clone source, or no recorded
+    container commit), which a later stage judges. A key-less build whose read is not
+    recognized raises ``ConfigurationError``, as does a container commit that differs from
+    ``branch_key`` or is listed in neither set.
+    """
+    import hashlib
+
+    field = "TRITONSWMM_branch_key"
+    if execution_environment == "container":
+        if not recorded_sha:
+            return None
+        sha = str(recorded_sha)
+        if branch_key and sha == str(branch_key):
+            if sha in SWMM_COUPLING_NODES_CONTAINER_SHAS:
+                return "list"
+            if sha in KEYLESS_INFLOWS_READ_CONTAINER_SHAS:
+                return "inflows"
+        raise ConfigurationError(
+            field=field,
+            message=(
+                f"The container's TRITON commit is {sha} and TRITONSWMM_branch_key is {branch_key!r}; "
+                "the toolkit can judge which nodes the solver couples only when the two are equal and "
+                f"the commit is one known to read swmm_coupling_nodes ({sorted(SWMM_COUPLING_NODES_CONTAINER_SHAS)}) "
+                "or one whose [INFLOWS] read the toolkit recognizes "
+                f"({sorted(KEYLESS_INFLOWS_READ_CONTAINER_SHAS)}). Build the image at a listed commit."
+            ),
+        )
+    d = Path(software_directory) if software_directory is not None else None
+    cfg_utils = d / "src" / "config_utils.h" if d is not None else None
+    if cfg_utils is None or not cfg_utils.is_file():
+        return None
+    if SWMM_COUPLING_NODES_READ in cfg_utils.read_text(errors="replace"):
+        return "list"
+    swmm_h = d / "src" / "swmm_triton.h"
+    # Read as bytes: TRITON's sources end lines in CRLF, and a text read would drop the CR the
+    # hash covers, so every key-less build would read as unrecognized.
+    block = _inflows_read_block(swmm_h.read_bytes().decode("utf-8", errors="replace")) if swmm_h.is_file() else None
+    if block is not None and hashlib.sha256(block.encode()).hexdigest() == KEYLESS_INFLOWS_READ_SHA256:
+        return "inflows"
+    raise ConfigurationError(
+        field=field,
+        message=(
+            f"The TRITON build at {d} does not read swmm_coupling_nodes, so it ignores the coupling-node "
+            "list the toolkit writes, and its [INFLOWS] read in src/swmm_triton.h is not one the toolkit "
+            "recognizes, so the toolkit cannot tell which nodes it would couple. Move "
+            "TRITONSWMM_branch_key to a commit that reads swmm_coupling_nodes and rebuild."
+        ),
+    )
+
+
+_C_SPACE = " \t\n\v\f\r"
+
+
+def keyless_inflows_read(inp_path) -> list[str]:
+    """The node names a TRITON build that does not read ``swmm_coupling_nodes`` couples, in order.
+
+    That build's own rule (``src/swmm_triton.h``, the block ``KEYLESS_INFLOWS_READ_SHA256``
+    hashes): every line containing ``INFLOWS`` opens a block; the next two lines are skipped
+    whatever they hold; then the first whitespace-separated token of each line is taken until a
+    line that is empty or all whitespace. Every inflow line counts, whatever its constituent, so
+    a node with a FLOW line and a pollutant line is read twice. Lines are split on newline only,
+    as ``std::getline`` does, and a final newline opens no empty line.
+    """
+    with open(inp_path, encoding="utf-8", errors="replace", newline="") as fh:
+        text = fh.read()
+    lines = text.split("\n")
+    if text.endswith("\n"):
+        lines.pop()
+    names: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        i += 1
+        if "INFLOWS" not in line:
+            continue
+        i += 2
+        while i < len(lines):
+            line = lines[i]
+            i += 1
+            if not line.strip(_C_SPACE):
+                break
+            token = line.strip(_C_SPACE).split()[0]
+            names.append(token)
+    return names
+
+
+def require_triton_couples_the_listed_nodes(
+    listed, hydraulics_inp, *, one_per_cell: bool, execution_environment, software_directory, branch_key, recorded_sha
+) -> None:
+    """Refuse a coupled run whose TRITON build would couple other nodes than the toolkit lists.
+
+    ``listed`` is the toolkit's coupling list, or the path of the list file a scenario wrote,
+    read only when a judgement needs it. A build that reads ``swmm_coupling_nodes`` couples
+    ``listed``, and passes. A build that does not couples ``keyless_inflows_read(hydraulics_inp)``
+    instead. That run passes only when the
+    two are equal as MULTISETS after SWMM's case fold, so a node such a build reads twice, which
+    its same-cell check would abort on, is refused here, naming it. On such a build the
+    one-node-per-DEM-cell option is refused outright, because the solver reads nothing it
+    changes. No build to judge yet (see ``triton_coupling_read``) passes.
+    """
+    from collections import Counter
+
+    read = triton_coupling_read(
+        execution_environment=execution_environment,
+        software_directory=software_directory,
+        branch_key=branch_key,
+        recorded_sha=recorded_sha,
+    )
+    if read != "inflows":
+        return
+    if one_per_cell:
+        raise ConfigurationError(
+            field="one_coupled_inflow_node_per_dem_cell",
+            message=(
+                "analysis_config.one_coupled_inflow_node_per_dem_cell is on, but the TRITON build "
+                f"({branch_key}) does not read swmm_coupling_nodes, so it couples the nodes its "
+                "[INFLOWS] read names and the option changes nothing it reads. Turn the option off, or "
+                "move TRITONSWMM_branch_key to a commit that reads swmm_coupling_nodes."
+            ),
+        )
+    if isinstance(listed, (str, Path)):
+        listed = read_coupling_node_file(listed)
+    read_names = keyless_inflows_read(hydraulics_inp)
+    toolkit = Counter(_swmm_fold(n) for n in listed)
+    solver = Counter(_swmm_fold(n) for n in read_names)
+    if toolkit == solver:
+        return
+    toolkit_only = sorted((toolkit - solver).elements())
+    solver_only = sorted((solver - toolkit).elements())
+    raise ConfigurationError(
+        field="TRITONSWMM_branch_key",
+        message=(
+            f"The TRITON build ({branch_key}) does not read swmm_coupling_nodes, so it couples the nodes "
+            f"named in the [INFLOWS] section of {hydraulics_inp}, reading each once per line, instead of the "
+            f"toolkit's coupling list. Listed by the toolkit and not read that many times by the build: "
+            f"{toolkit_only}. Read by the build and not listed that many times: {solver_only}. Move "
+            "TRITONSWMM_branch_key to a commit that reads swmm_coupling_nodes, or make the two agree."
         ),
     )
 
@@ -1253,6 +1454,18 @@ class TRITONSWMM_scenario:
                 recorded_sha=self._system.log.triton_head_sha.get(),
             )
         cfg_content = append_swmm_node_rim_from_dem(cfg_content, self._analysis.cfg_analysis.swmm_node_rim_from_dem)
+        # The coupling-node list this scenario wrote, judged against the filled hydraulics.inp
+        # the solver reads: run entry judged the template, which a placeholder can leave open.
+        cfg_system = self._system.cfg_system
+        require_triton_couples_the_listed_nodes(
+            coupling_nodes_file_for(self.scen_paths.swmm_hydraulics_inp),
+            self.scen_paths.swmm_hydraulics_inp,
+            one_per_cell=bool(self._analysis.cfg_analysis.one_coupled_inflow_node_per_dem_cell),
+            execution_environment=self._analysis.cfg_analysis.execution_environment,
+            software_directory=cfg_system.TRITONSWMM_software_directory,
+            branch_key=cfg_system.TRITONSWMM_branch_key,
+            recorded_sha=self._system.log.triton_head_sha.get(),
+        )
         if cfg_content != cfg_as_written:
             self.scen_paths.triton_swmm_cfg.write_text(cfg_content)
 
