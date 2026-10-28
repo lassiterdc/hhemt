@@ -232,3 +232,31 @@ def test_combine_and_metadata_walkers_share_the_armless_root_tree_order(tmp_path
     metadata_order = _walk_order(lambda r: _resolve_consolidated_tree(r, None), metadata_root, ROOT_TREE_NAMES)
 
     assert combine_order == metadata_order == list(ROOT_TREE_NAMES)
+
+
+def test_sensitivity_attribute_is_bound_to_the_experiment_filename(synth_sensitivity_analysis):
+    """Property: on a constructed sensitivity analysis, ``analysis_paths.sensitivity_datatree_zarr``
+    is the path ``experiment_datatree.zarr``, which is the binding ``analysis.py`` makes in its
+    constructor when ``toggle_sensitivity_analysis`` is true.
+
+    I70 (named and pinned, NOT repaired). The attribute's name says "sensitivity" and the file it
+    is bound to says "experiment"; the two disagree. This test records the disagreement as it
+    stands, deliberately pinned and not repaired, so that nobody changes one side without
+    noticing the other. IT GOES RED WHEN I70 IS REPAIRED -- by renaming the attribute or by rebinding the
+    filename -- and it is then REWRITTEN to the repaired pair, never loosened (no ``in`` check, no
+    suffix match, no deletion of the assertion).
+
+    Class: NEW CAPABILITY. The plausible wrong implementation is a constructor that binds the
+    attribute to ``sensitivity_datatree.zarr`` (the retired name); the assertion is red under it.
+
+    Why the subject is a constructed analysis and not an ``AnalysisPaths`` built here: an
+    ``AnalysisPaths`` the test builds would assert the value the test supplied. The subject is
+    the binding the constructor makes. It also does not read source text.
+
+    A second correct implementation that still passes: the constructor computing the same path
+    through a helper, a different join, or a differently named local variable.
+    """
+    analysis = synth_sensitivity_analysis
+
+    assert analysis.cfg_analysis.toggle_sensitivity_analysis is True
+    assert analysis.analysis_paths.sensitivity_datatree_zarr.name == "experiment_datatree.zarr"

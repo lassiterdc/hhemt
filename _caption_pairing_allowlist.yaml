@@ -484,7 +484,7 @@ unpaired_allowlist:
     caption: src/hhemt/report_templates/captions/metadata.rst
     renderer_sha256: d6e4988663dcf0b2ff0fdca900877eed5d8241735ffa753039bcb7109a5c2dd8
     justification_2026_10_28: >-
-      Package 2c, chunks 2c.2 and 2c.4 (developer ruling D-173, option 1). Caption RE-READ IN
+      The renderer's change is a docstring rewrite of the consolidated-store resolver. Caption RE-READ IN
       FULL (23 lines: the three displayed sections, Provenance summary, Data availability and
       Reproduction guide, plus the Sources block) against the diff. The diff of this renderer
       against HEAD is ONE hunk, 18 insertions and 4 deletions, and it lies inside the
