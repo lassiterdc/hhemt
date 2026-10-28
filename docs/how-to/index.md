@@ -1,4 +1,4 @@
-# How-To Guides
+# How-To Table of Contents
 
 Task-oriented recipes for getting specific jobs done with the toolkit.
 

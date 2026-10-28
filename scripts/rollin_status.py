@@ -29,10 +29,10 @@ SPECS = [
     ("N1a", "N1", "src/hhemt/eda/cross_sim_identity.py", "def _ref_rank"),
     ("N1b", "N1", "src/hhemt/eda/_config_diff.py", "groups = _group_by_identity(subs, root)"),
     ("N2", "N2", "src/hhemt/report_plot_ids.py", "Cross-hardware raw byte identity over time"),
-    ("N3a", "N3", "src/hhemt/eda/raw_resume_identity.py", "N3 (user ruling): ONE GPU family"),
+    ("N3a", "N3", "src/hhemt/eda/raw_byte_identity.py", "N3 (user ruling): ONE GPU family"),
     ("N3c", "N3", "src/hhemt/eda/_plotting.py", 'if fam == "gpu":'),
-    ("N3d", "N3", "src/hhemt/report_templates/captions/b4b_clean_identity.rst", "over time"),
-    ("N4a", "N4", "src/hhemt/eda/raw_resume_identity.py", "_collapse_replicates"),
+    ("N3d", "N3", "src/hhemt/report_templates/captions/raw_byte_identity.rst", "over time"),
+    ("N4a", "N4", "src/hhemt/eda/raw_byte_identity.py", "_collapse_replicates"),
     ("N4b", "N4", "src/hhemt/eda/_plotting.py", "Each row aggregates"),
     ("N5", "N5", "src/hhemt/report_renderers/cross_experiment_intercomparison.py", "_asymmetry_note"),
     (
@@ -72,7 +72,7 @@ SPECS = [
 CLUSTER_TESTS = {
     "S8": ["test_armc_fires_on_postfix_replayed_without_scatter", "test_armc_suppressed_when_arm_a_fires"],
     "N1": ["test_reference_rank_selects_serial", "test_grouping_rule_is_identical_across_model_arms"],
-    "N2": ['b4b_clean_identity") =='],  # N2's prescribed humanize_plot_id assertion
+    "N2": ['raw_byte_identity") =='],  # N2's prescribed humanize_plot_id assertion
     "N3": ["test_b4b_family_key_collapses_every_gpu_hardware", "test_b4b_ref_key_is_deterministic"],
     "N4": ["test_collapse_replicates_folds_worst_case", "test_b4b_caption_discloses"],
     "N5": ["test_intercomparison_derives_the_per_model_row_denominator"],

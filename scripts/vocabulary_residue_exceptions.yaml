@@ -187,7 +187,7 @@ exceptions:
       interoperates with the RENAMED definition-CSV column BY VALUE rather than by name, so the
       differing column names are immaterial. Closing this deferral changes a user-visible
       research output and a public API, and is a separate decision.
-  - path: src/hhemt/eda/raw_resume_identity.py
+  - path: src/hhemt/eda/raw_byte_identity.py
     token: "sa_id"
     reason: >-
       the `sa_id` identity column is a STANDING deferral -- it is the df_status /

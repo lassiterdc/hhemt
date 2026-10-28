@@ -91,10 +91,10 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("_plotting.py", P2, "_b4b_faceted_figure"): (
         "Pre-existing EDA figure, no Iteration-7 feedback item. Retire when figure_layout.align_x is adopted here."
     ),
-    ("raw_resume_identity.py", P1, "build_binary_timestep_figure"): (
+    ("raw_byte_identity.py", P1, "build_binary_timestep_figure"): (
         "Pre-existing EDA figure, out of Iteration-7 scope."
     ),
-    ("raw_resume_identity.py", P2, "build_binary_timestep_figure"): (
+    ("raw_byte_identity.py", P2, "build_binary_timestep_figure"): (
         "Pre-existing EDA figure, out of Iteration-7 scope."
     ),
     ("system_overview.py", P1, "_build_system_overview_figure"): (

@@ -1,4 +1,4 @@
-# Tutorials
+# Tutorials Table of Contents
 
 Learning-oriented, end-to-end walkthroughs that take you from zero to a working
 coupled TRITON-SWMM run.

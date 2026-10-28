@@ -25,12 +25,12 @@ SIM_IDS = ['event_index.0', 'event_index.1', 'event_index.2']
 ILOC_BY_EVENT_ID = {'event_index.0': 0, 'event_index.1': 1, 'event_index.2': 2}
 
 from hhemt.report_plot_ids import (
-    event_labels_from_status as _event_labels_from_status,
+    event_sidebar_labels_from_status as _event_sidebar_labels_from_status,
     report_label_value as _report_label_value,
     member_labels_from_status as _member_labels_from_status,
 )
 
-_EVENT_LABELS = _event_labels_from_status(workflow.basedir)
+_EVENT_SIDEBAR_LABELS = _event_sidebar_labels_from_status(workflow.basedir)
 _MEMBER_LABELS = _member_labels_from_status(workflow.basedir)
 
 
@@ -495,7 +495,7 @@ rule plot_per_sim_event_page:
             "plots/per_sim/{event_id}/event_page__evt.{event_id}.html",
             caption="report/captions/per_sim_event_page.rst",
             category="Per Simulation Results",
-            labels=(lambda w: {"figure": "Simulation results", "event": _report_label_value(_EVENT_LABELS, w.event_id, "event")}),
+            labels=(lambda w: {"figure": "Simulation results", "event": _report_label_value(_EVENT_SIDEBAR_LABELS, w.event_id, "event")}),
         )
     wildcard_constraints:
         event_id="[A-Za-z0-9_.]+",
@@ -680,18 +680,20 @@ rule export_scenario_status:
     output:
         csv = "scenario_status.csv",
         md  = "workflow_summary.md",
-        # The read-model is written by THIS rule's shell (export_scenario_status.py:444
-        # and :477) and was previously undeclared. Snakemake builds its DAG from declared
-        # interfaces, so an undeclared side-effect write to a file that
-        # plot_errors_and_warnings declares as an INPUT (:3268) cannot propagate: the plot
+        # The read-model is written by THIS rule's shell (the post-CSV
+        # persist_validation_report call in export_scenario_status.main) and was previously
+        # undeclared. Snakemake builds its DAG from declared interfaces, so an undeclared
+        # side-effect write to a file that plot_errors_and_warnings declares as an INPUT
+        # (_build_plot_rule_block_errors_and_warnings) cannot propagate: the plot
         # rule is evaluated against the JSON's mtime at BUILD time, classified up to date,
         # excluded -- and then this rule rewrites the JSON after the DAG is fixed, creating
         # an inversion with no scheduled consumer.
         #
-        # SAFETY (measured, Round 19): two rules declaring one output is NOT a silent smell
+        # SAFETY (measured): two rules declaring one output is NOT a silent smell
         # -- Snakemake raises AmbiguousRuleException at DAG BUILD naming both rules. This
-        # declaration does not create that case: consolidate_workflow.py:489 writes the same
-        # file from its SHELL without declaring it. The invariant this rests on is that the
+        # declaration does not create that case: no other rule declares or writes the
+        # read-model; its only other writer, TRITONSWMM_analysis.eda, runs in-process
+        # outside the workflow and declares nothing. The invariant this rests on is that the
         # read-model stays declared in EXACTLY ONE rule; break it and the failure is loud.
         #
         # SCOPE, stated so this is not over-read: declaring the output is a real fix for a

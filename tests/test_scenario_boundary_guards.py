@@ -1380,6 +1380,7 @@ def _scenario_for_coupled_cfg(
         swmm_snapshot_keep_all=False,
         swmm_node_rim_from_dem=rim_from_dem,
         execution_environment=environment,
+        one_coupled_inflow_node_per_dem_cell=False,
     )
     cfg_system = SimpleNamespace(
         toggle_use_constant_mannings=True,
@@ -1415,7 +1416,9 @@ def test_the_dem_rim_option_writes_its_exact_cfg_line_only_when_set(tmp_path, mo
     """Property, with its control: True puts ``swmm_node_rim_from_dem=1`` on a line of its own.
 
     Class: coupled TRITON cfgs generated with the option on and off, for a build that reads
-    the key (container mode, recorded and configured commit both the first listed commit).
+    the key (container mode, recorded and configured commit both ``a146fb6e``, a curated commit
+    that reads this key and ``swmm_coupling_nodes``,
+    so the coupling check passes too).
     Why: TRITON reads the value with ``atoi`` and splits ``key=value`` without trimming, so only
     the exact line ``swmm_node_rim_from_dem=1`` turns the option on, and with the option off
     no line beginning with the key may appear. What kills it: not appending the line, writing
@@ -1423,15 +1426,15 @@ def test_the_dem_rim_option_writes_its_exact_cfg_line_only_when_set(tmp_path, mo
     implementation: placing the line before the other appended keys; the assertions read the
     set of whole lines and the absence of the key's prefix.
     """
-    from hhemt.scenario import SWMM_NODE_RIM_FROM_DEM_FIRST_SHA
+    reads_both = "a146fb6ed7c22790fb9a15ff854c446db4519ad2"
 
     scen, cfg = _scenario_for_coupled_cfg(
         tmp_path,
         monkeypatch,
         rim_from_dem=rim_from_dem,
         environment="container",
-        branch_key=SWMM_NODE_RIM_FROM_DEM_FIRST_SHA,
-        recorded_sha=SWMM_NODE_RIM_FROM_DEM_FIRST_SHA,
+        branch_key=reads_both,
+        recorded_sha=reads_both,
     )
     scen._generate_TRITON_SWMM_cfg()
     lines = cfg.read_text().splitlines()
@@ -1537,9 +1540,11 @@ def test_the_dem_rim_option_in_container_mode_needs_a_recorded_listed_commit(
     the exact cfg line.
     """
     from hhemt.exceptions import ConfigurationError
-    from hhemt.scenario import SWMM_NODE_RIM_FROM_DEM_FIRST_SHA
 
-    sha = {"first": SWMM_NODE_RIM_FROM_DEM_FIRST_SHA, "other": "f" * 40}
+    # "first" is a listed commit that reads the rim key AND swmm_coupling_nodes, so the
+    # coupling check preparation also runs passes; the rim key's first commit (1b797e6d)
+    # reads no swmm_coupling_nodes and its coupled read is not recognized, so it is refused.
+    sha = {"first": "a146fb6ed7c22790fb9a15ff854c446db4519ad2", "other": "f" * 40}
     scen, cfg = _scenario_for_coupled_cfg(
         tmp_path,
         monkeypatch,
@@ -2713,3 +2718,295 @@ def test_with_the_mode_omitted_a_junction_without_a_flow_line_outside_the_grid_i
     fake = _coupling_analysis(system)
     with pytest.raises(ConfigurationError, match=r"J2 \(45, 5\)"):
         TRITONSWMM_analysis._refuse_coupling_nodes_outside_triton_grid(fake, overwrite_system_inputs=False)
+
+
+def test_the_dem_rim_option_passes_a_native_build_that_reads_the_key_without_descending(tmp_path):
+    """Property: a native clone whose config_utils.h reads the key passes, whatever its ancestry.
+
+    Class: a clone that does not contain the required commit, with and without the key's read in
+    ``src/config_utils.h``; and a curated commit in the container set. Why: a curated commit is a
+    new tree, so ``a146fb6e`` and its descendants ``bd18215`` and ``bb13ea28`` read the key
+    without descending from the first commit that added it, and an ancestry test alone refuses
+    it. What kills it:
+    ancestry as the only test, or accepting a clone without the read. Second correct
+    implementation: the content test after the ancestry test; the assertions read only whether
+    the guard raises.
+    """
+    from hhemt.exceptions import ConfigurationError
+    from hhemt.scenario import SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS, require_dem_rim_capable_triton
+
+    clone = tmp_path / "triton"
+    _two_commit_clone(clone)
+    (clone / "src").mkdir()
+    cfg_utils = clone / "src" / "config_utils.h"
+
+    def guard():
+        require_dem_rim_capable_triton(
+            execution_environment="native",
+            software_directory=clone,
+            branch_key=None,
+            recorded_sha=None,
+            required_sha="0" * 40,
+        )
+
+    cfg_utils.write_text(
+        '\t\targlist.swmm_node_rim_from_dem = atoi((argsd("swmm_node_rim_from_dem", argmap, "0")).c_str());\r\n'
+    )
+    guard()
+    cfg_utils.write_text('\t\targlist.other = argsd("other", argmap, "");\r\n')
+    with pytest.raises(ConfigurationError, match="swmm_node_rim_from_dem"):
+        guard()
+    assert "a146fb6ed7c22790fb9a15ff854c446db4519ad2" in SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS
+
+
+# ---------------------------------------------------------------------------
+# A TRITON build that does not read swmm_coupling_nodes: it ignores the
+# toolkit's list and couples the nodes its own [INFLOWS] read names
+# ---------------------------------------------------------------------------
+
+#: TRITON's [INFLOWS] read block, byte for byte as ``src/swmm_triton.h`` carries it at the key-less
+#: builds (CRLF line ends included), so a fake clone carrying it is the recognized read.
+_KEYLESS_INFLOWS_BLOCK = (
+    '\t\t\tif (line.find("INFLOWS") != std::string::npos){\r\n'
+    "\t\t\t\tstd::getline(infile, line); // Skip header line\r\n"
+    "\t\t\t\tstd::getline(infile, line); // Skip separator line\r\n"
+    "            while (std::getline(infile, line)) {\r\n"
+    "            \tif (std::all_of(line.begin(), line.end(), [](char c) { return std::isspace(c); })) {\r\n"
+    "\t\t\t\t\t\t// Line consists only of whitespace characters\r\n"
+    "\t\t\t\t\t\tbreak; // Stop reading\r\n"
+    "\t\t\t\t  \t}\r\n"
+    "            \tstd::string nodeij;\r\n"
+    "               std::istringstream iss(line);\r\n"
+    "               if (iss >> nodeij) {\r\n"
+    "               \tnodeID.push_back(nodeij);\r\n"
+    "              \t}\r\n"
+    "           \t}\r\n"
+    "\t\t\t}\r\n"
+    "\t\t}\r\n"
+    "\t\tinfile.close();\r\n"
+)
+
+_KEYLESS_INP = """[JUNCTIONS]
+;;Name           Elevation  MaxDepth   InitDepth  SurDepth   Aponded
+J1 1 2 0 0 0
+J2 1 2 0 0 0
+
+[INFLOWS]
+;;Node           Constituent      Time Series      Type     Mfactor  Sfactor  Baseline Pattern
+;;-------------- ---------------- ---------------- -------- -------- -------- -------- --------
+{inflows}
+
+[COORDINATES]
+;;Node           X-Coord            Y-Coord
+;;-------------- ------------------ ------------------
+J1 5 5
+J2 15 5
+"""
+
+_FLOW_BOTH = 'J1 FLOW "" FLOW 1 1 0\nJ2 FLOW "" FLOW 1 1 0'
+_FLOW_BOTH_PLUS_TSS = 'J1 FLOW "" FLOW 1 1 0\nJ1 TSS "" CONCEN 1 1 0\nJ2 FLOW "" FLOW 1 1 0'
+
+
+def _keyless_inp(tmp_path, inflows, name="k"):
+    path = tmp_path / f"{name}.inp"
+    path.write_text(_KEYLESS_INP.format(inflows=inflows))
+    return path
+
+
+def _fake_triton(tmp_path, *, reads_key, block=_KEYLESS_INFLOWS_BLOCK, name="triton"):
+    """A TRITON source tree holding only the two files the coupling judgement reads."""
+    src = tmp_path / name / "src"
+    src.mkdir(parents=True)
+    read = 'argsd("swmm_coupling_nodes", argmap, "")' if reads_key else 'argsd("other_key", argmap, "")'
+    (src / "config_utils.h").write_text(f"\t\targlist.k = {read};\n")
+    (src / "swmm_triton.h").write_bytes(("// before\r\n" + block + "// after\r\n").encode())
+    return tmp_path / name
+
+
+def _judge(listed, inp, clone, *, one_per_cell=False):
+    from hhemt.scenario import require_triton_couples_the_listed_nodes
+
+    require_triton_couples_the_listed_nodes(
+        listed,
+        inp,
+        one_per_cell=one_per_cell,
+        execution_environment="native",
+        software_directory=clone,
+        branch_key="pin",
+        recorded_sha=None,
+    )
+
+
+def test_the_keyless_inflows_read_follows_the_solver_rule(tmp_path):
+    """Property: the re-implemented read takes the first token of EVERY line of each [INFLOWS] block.
+
+    Class: inflow sections with a pollutant line beside a FLOW line, and a section with no header
+    lines. Why: the key-less solver skips exactly two lines after the header and then reads until
+    a blank line, whatever the constituent, so it reads a node with two lines twice and drops the
+    first two data lines of a header-less section. What kills it: reading FLOW lines only,
+    de-duplicating, or parsing the section by SWMM's rules. Second correct implementation: a
+    regex over the section text that mirrors the same skip; the assertions read only the list.
+    """
+    from hhemt.scenario import keyless_inflows_read
+
+    assert keyless_inflows_read(_keyless_inp(tmp_path, _FLOW_BOTH_PLUS_TSS)) == ["J1", "J1", "J2"]
+    bare = tmp_path / "bare.inp"
+    bare.write_text('[INFLOWS]\nJ1 FLOW "" FLOW 1 1 0\nJ2 FLOW "" FLOW 1 1 0\nJ3 FLOW "" FLOW 1 1 0\n\n')
+    assert keyless_inflows_read(bare) == ["J3"]
+
+
+def test_a_keyless_build_reading_a_node_twice_is_refused_naming_it(tmp_path):
+    """Property: on a key-less build the list and the read are compared as MULTISETS.
+
+    Class: the double-entry template (J1 with a FLOW and a TSS line) on a key-less build, the same
+    template on a build that reads the key, and the plain template on the key-less build. Why:
+    the key-less build reads J1 twice and its same-cell check then aborts, while the set of names
+    equals the toolkit's list, so a set comparison admits the run. What kills it: comparing sets,
+    judging a build that reads the key, or refusing an equal multiset. Second correct
+    implementation: sorted-list equality; the assertions read only whether it raises and what
+    the message names.
+    """
+    from hhemt.exceptions import ConfigurationError
+
+    keyless = _fake_triton(tmp_path, reads_key=False, name="keyless")
+    reading = _fake_triton(tmp_path, reads_key=True, name="reading")
+    doubled = _keyless_inp(tmp_path, _FLOW_BOTH_PLUS_TSS, name="doubled")
+    with pytest.raises(ConfigurationError) as excinfo:
+        _judge(["J1", "J2"], doubled, keyless)
+    assert excinfo.value.field == "TRITONSWMM_branch_key"
+    assert "not listed that many times: ['J1']" in str(excinfo.value)
+    _judge(["J1", "J2"], doubled, reading)  # must not fire: this build couples the list
+    _judge(["J1", "J2"], _keyless_inp(tmp_path, _FLOW_BOTH, name="plain"), keyless)  # equal multisets
+
+
+def test_a_keyless_build_whose_inflows_read_is_not_recognized_is_refused(tmp_path):
+    """Property: a key-less build is judged only when its [INFLOWS] read is the recognized block.
+
+    Class: the recognized block, and the same block with its two-line skip changed to one. Why:
+    the comparison re-implements that block, so a build reading differently would be compared
+    against a rule it does not follow. What kills it: a recognizer that matches any block, or one
+    that reads the file as text and loses the CRLF the hash covers. Second correct
+    implementation: comparing the block text itself; the assertions read only the verdict.
+    """
+    from hhemt.exceptions import ConfigurationError
+    from hhemt.scenario import triton_coupling_read
+
+    def read(clone):
+        return triton_coupling_read(
+            execution_environment="native", software_directory=clone, branch_key="pin", recorded_sha=None
+        )
+
+    assert read(_fake_triton(tmp_path, reads_key=False, name="known")) == "inflows"
+    assert read(_fake_triton(tmp_path, reads_key=True, name="reads")) == "list"
+    one_skip = "".join(
+        line for line in _KEYLESS_INFLOWS_BLOCK.splitlines(keepends=True) if "Skip separator line" not in line
+    )
+    altered = _fake_triton(tmp_path, reads_key=False, block=one_skip, name="altered")
+    with pytest.raises(ConfigurationError, match="not one the toolkit recognizes"):
+        read(altered)
+    assert read(tmp_path / "no_clone") is None
+
+
+def test_the_one_per_cell_option_is_refused_on_a_keyless_build(tmp_path):
+    """Property: on a key-less build the per-cell option is refused outright; on a reading build it is not.
+
+    Class: an equal-multiset template with the option on, on each build. Why: a key-less build
+    reads nothing the option changes, so the option would claim a reduction the solver never
+    makes. What kills it: refusing only when the multisets differ. Second correct implementation:
+    checking the option before the read; the assertions read whether it raises and the field.
+    """
+    from hhemt.exceptions import ConfigurationError
+
+    plain = _keyless_inp(tmp_path, _FLOW_BOTH)
+    with pytest.raises(ConfigurationError) as excinfo:
+        _judge(["J1", "J2"], plain, _fake_triton(tmp_path, reads_key=False, name="keyless"), one_per_cell=True)
+    assert excinfo.value.field == "one_coupled_inflow_node_per_dem_cell"
+    _judge(["J1", "J2"], plain, _fake_triton(tmp_path, reads_key=True, name="reading"), one_per_cell=True)
+
+
+@pytest.mark.parametrize(
+    ("recorded", "configured", "verdict"),
+    [
+        ("a146fb6ed7c22790fb9a15ff854c446db4519ad2", "a146fb6ed7c22790fb9a15ff854c446db4519ad2", "list"),
+        ("031ea42b063ce1083e3d965597cdb44da2e748ef", "031ea42b063ce1083e3d965597cdb44da2e748ef", "inflows"),
+        ("031ea42b063ce1083e3d965597cdb44da2e748ef", "a146fb6ed7c22790fb9a15ff854c446db4519ad2", "refused"),
+        ("f" * 40, "f" * 40, "refused"),
+        (None, "a146fb6ed7c22790fb9a15ff854c446db4519ad2", None),
+    ],
+)
+def test_a_container_build_is_judged_by_its_listed_commit(recorded, configured, verdict):
+    """Property: in container mode the commit decides, through two listed sets.
+
+    Class: a key-reading commit, a recognized key-less commit, a mismatch, an unlisted commit, and
+    no recorded commit. Why: there is no host clone, so the recorded commit must equal the
+    configured one and be listed. What kills it: trusting the configured commit alone, or treating
+    an unlisted commit as key-reading. Second correct implementation: the equality checked after
+    the lookup; the assertions read only the verdict.
+    """
+    from hhemt.exceptions import ConfigurationError
+    from hhemt.scenario import triton_coupling_read
+
+    def read():
+        return triton_coupling_read(
+            execution_environment="container", software_directory=None, branch_key=configured, recorded_sha=recorded
+        )
+
+    if verdict == "refused":
+        with pytest.raises(ConfigurationError):
+            read()
+    else:
+        assert read() == verdict
+
+
+def test_run_entry_refuses_a_coupled_run_its_keyless_build_would_couple_differently(tmp_path):
+    """Property: the run-entry check judges every coupled system's template against its build.
+
+    Class: a legacy template whose J1 carries a FLOW and a TSS line, on a key-less and on a
+    reading build, through the analysis method. Why: the toolkit lists J1 once and the key-less
+    build reads it twice, so the run would be admitted and then aborted by the solver. What kills
+    it: not calling the check, or passing it the wrong build. Second correct implementation: a
+    loop over the systems in the caller; the assertions read only whether the method raises.
+    """
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.exceptions import ConfigurationError
+
+    inp = _keyless_inp(tmp_path, _FLOW_BOTH_PLUS_TSS)
+
+    def analysis(clone):
+        system = _coupling_system(tmp_path, inp, mode="legacy")
+        system.cfg_system.TRITONSWMM_software_directory = clone
+        system.cfg_system.TRITONSWMM_branch_key = "pin"
+        fake = _coupling_analysis(system)
+        fake.cfg_analysis.execution_environment = "native"
+        return fake
+
+    with pytest.raises(ConfigurationError, match="J1"):
+        TRITONSWMM_analysis._refuse_coupling_the_triton_build_would_not_read(
+            analysis(_fake_triton(tmp_path, reads_key=False, name="keyless"))
+        )
+    TRITONSWMM_analysis._refuse_coupling_the_triton_build_would_not_read(
+        analysis(_fake_triton(tmp_path, reads_key=True, name="reading"))
+    )
+
+
+@pytest.mark.parametrize("set_name", ["SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS", "SWMM_COUPLING_NODES_CONTAINER_SHAS"])
+def test_the_live_pin_is_listed_in_each_container_set(set_name):
+    """Moving the synthetic tier's `TRITON_PIN` without listing the new pin in a container set reds here.
+
+    Property: the live `TRITON_PIN` is a member of `SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS` and of
+    `SWMM_COUPLING_NODES_CONTAINER_SHAS`, one case per set, so a failure names the set that lacks it.
+    Class: NEW CAPABILITY. Plausible wrong implementation: a pin move that registers the new sha in
+    `model_defects` (which `scripts/check_live_pin_registered.py` enforces) and forgets these sets,
+    which that guard does not cover; red because the live pin is absent from the named set.
+    Reachability: the pin and each set are independent module-level constants edited by hand.
+    Both-states anchor: the assertion turns on membership of one constant in another, whatever
+    either is worded as. Why required: once both sets are consulted, a coupled container run on an
+    image recorded at an unlisted pin is refused, and so is a rim run. What kills it: dropping the
+    live pin from either set, or moving `TRITON_PIN` to an unlisted sha. A deliberate move to a pin
+    that does not read the keys also reds this, which is the intended prompt to decide whether such
+    a build may run in a container.
+    """
+    import hhemt.scenario
+    from tests.fixtures._triton_source_cache import TRITON_PIN
+
+    assert TRITON_PIN in getattr(hhemt.scenario, set_name)

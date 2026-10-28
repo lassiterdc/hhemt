@@ -49,7 +49,7 @@ def test_override_force_rerun_event_iloc_on_sensitivity_fails(synth_sensitivity_
 def test_override_force_rerun_member_id_on_non_sensitivity_fails(synth_multi_sim_analysis):
     """force_rerun.member_id is not allowed when toggle_sensitivity_analysis=False."""
     analysis = synth_multi_sim_analysis
-    with pytest.raises(ConfigurationError, match="member_id requires toggle_sensitivity_analysis=True"):
+    with pytest.raises(ConfigurationError, match="sa_id requires toggle_sensitivity_analysis=True"):
         analysis._validate_force_rerun_targets({"sa_id": ["0"]})
 
 

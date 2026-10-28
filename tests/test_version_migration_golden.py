@@ -576,3 +576,91 @@ def test_v9_to_v10_backfills_plot_id_and_orphans_old_stem_figures(
     runner.run_migration(work, target=10, apply=True, cfg_paths=_cfg_paths_from_fixture(work))
     assert json.loads(manifest_path.read_text())["plot_id"] == "peak_flood_depth__evt.event_id.0"
     assert not figure.exists()
+
+
+def test_v25_to_v26_moves_the_old_stem_byte_identity_artifacts(tmp_path: Path) -> None:
+    """V0026 retires the old stem of the raw byte-identity artifacts on a migrated tree.
+
+    Property: after the 25->26 migration no file under ``eda/`` or ``plots/eda/`` carries the
+    old stem where ``analysis_validation`` (``eda/*.verdict.json``) or the bundle harvest
+    (``*.manifest.json``) globs, and the backing data survives under the new stem.
+
+    Class: every tree carrying old-stem artifacts, across the three states V0026 tells apart:
+    data and figures with no new-stem file, a new-stem file already present, and figures with
+    no backing data at either stem.
+
+    Why it is required: the zarr is computed from raw rasters that are often cleared, so
+    deleting it loses data nothing can recompute, while leaving it under the old stem keeps a
+    second, stale copy of the check in the report.
+
+    What kills it: an ``upgrade`` that stamps the version and plans nothing (the old-stem
+    verdict stays globbed), one that deletes the data instead of moving it, or one that moves
+    the manifest without rewriting its ``plot_id``.
+
+    A second correct implementation under which it still passes: renaming with the
+    ``rename_dir`` primitive instead of ``move_dir``; the assertions read only the resulting
+    file names and the manifest's fields.
+
+    The common golden fixtures carry no ``eda/`` or ``plots/`` tree, so the parametrized round
+    trip exercises only V0026's no-op path; this test seeds a copied ``v25`` tree instead.
+    """
+    import importlib
+
+    v0026 = importlib.import_module("hhemt.version_migration.versions.V0026__raw_byte_identity_stem")
+    old, new = v0026.OLD_STEM, v0026.NEW_STEM
+
+    def seed(work: Path, *, with_data: bool, with_new: bool) -> tuple[Path, Path]:
+        eda = work / "eda"
+        figures = work / "plots" / "eda"
+        eda.mkdir(parents=True)
+        figures.mkdir(parents=True)
+        if with_data:
+            (eda / f"{old}.zarr").mkdir()
+            (eda / f"{old}.zarr" / "zarr.json").write_text('{"old": true}')
+            zarr_path = str(eda / f"{old}.zarr")
+            manifest = {"plot_id": old, "artifact_path": zarr_path, "full_res_path": zarr_path}
+            (eda / f"{old}.manifest.json").write_text(json.dumps(manifest))
+            (eda / f"{old}.verdict.json").write_text(json.dumps({"name": "Raw byte-for-byte identity"}))
+        if with_new:
+            (eda / f"{new}.zarr").mkdir()
+            (eda / f"{new}.zarr" / "zarr.json").write_text('{"new": true}')
+            (eda / f"{new}.verdict.json").write_text("{}")
+        (figures / f"{old}.html").write_text("<html></html>")
+        (figures / f"{old}.manifest.json").write_text(json.dumps({"plot_id": old}))
+        return eda, figures
+
+    def migrate(work: Path) -> None:
+        runner.run_migration(work, target=26, apply=True, cfg_paths=_cfg_paths_from_fixture(work))
+
+    # Data and figures, no new-stem file: the data moves and is re-pointed, the figures go.
+    work = _copy_fixture("v25", tmp_path / "moved")
+    eda, figures = seed(work, with_data=True, with_new=False)
+    migrate(work)
+    assert sorted(p.name for p in eda.iterdir()) == [f"{new}.manifest.json", f"{new}.verdict.json", f"{new}.zarr"]
+    assert sorted(p.name for p in figures.iterdir()) == []
+    moved = json.loads((eda / f"{new}.manifest.json").read_text())
+    assert moved["plot_id"] == new
+    assert moved["artifact_path"].endswith(f"{new}.zarr")
+    assert moved["full_res_path"].endswith(f"{new}.zarr")
+    assert (eda / f"{new}.zarr" / "zarr.json").read_text() == '{"old": true}'
+    migrate(work)  # idempotent: nothing old is left to plan against
+    assert sorted(p.name for p in eda.iterdir()) == [f"{new}.manifest.json", f"{new}.verdict.json", f"{new}.zarr"]
+
+    # A new-stem file already present: it is kept, and the old one is moved out of the globs.
+    work = _copy_fixture("v25", tmp_path / "collision")
+    eda, figures = seed(work, with_data=True, with_new=True)
+    migrate(work)
+    assert (eda / f"{new}.zarr" / "zarr.json").read_text() == '{"new": true}'
+    assert sorted(p.name for p in eda.glob("*.verdict.json")) == [f"{new}.verdict.json"]
+    assert (eda / f"{old}.zarr.superseded-v0026").is_dir()
+    assert sorted(p.name for p in figures.iterdir()) == []
+
+    # No backing data at either stem: nothing can rebuild the figure, so it is kept aside.
+    work = _copy_fixture("v25", tmp_path / "no_data")
+    eda, figures = seed(work, with_data=False, with_new=False)
+    migrate(work)
+    assert sorted(p.name for p in figures.glob("*.manifest.json")) == []
+    assert sorted(p.name for p in figures.iterdir()) == [
+        f"{old}.html.superseded-v0026",
+        f"{old}.manifest.json.superseded-v0026",
+    ]

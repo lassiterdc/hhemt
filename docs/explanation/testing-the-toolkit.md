@@ -10,12 +10,15 @@ behind them, and it deliberately carries no commands of its own.
 A test that compiles the coupled solver or executes a simulation costs minutes. A
 test that decides something before a simulation starts costs milliseconds. Running
 both sets on every change would make the fast feedback loop useless, so the suite is
-split into a fast tier and a compile tier.
+split into a fast tier and a compile tier. The fast tier holds everything the toolkit
+decides before a simulation starts, plus the on-disk layout contract. The compile tier
+holds every test that compiles TRITON-SWMM or asserts on a tree a simulation produced.
 
-The split is derived rather than declared. Each test's tier follows from the fixtures
-it requests, resolved when pytest collects the suite, so the same test lands in the
-same tier on every machine. An earlier arrangement decided the tier from whether a
-compiler happened to be on your PATH, which meant two developers running the same
+The split is derived rather than declared. Each test's tier, carried by the
+`compile_tier` marker, follows from the fixtures it requests, resolved when pytest
+collects the suite, so the same test lands in the same tier on every machine. An
+earlier arrangement decided the tier from whether `cmake` happened to be on your
+PATH, which meant two developers running the same
 recipe could gate on different sets of tests without either of them knowing.
 
 ## The fixture cache, and why a rebuild is silent

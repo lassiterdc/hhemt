@@ -1,15 +1,23 @@
-"""Shared orchestration layer for TRITON-SWMM workflows.
+"""Shared vocabulary for launching a TRITON-SWMM workflow and reporting on it.
 
-This module provides high-level orchestration methods that consolidate
-parameter translation logic in a single place. The intent-based API simplifies
-both CLI and programmatic usage.
+The ``hhemt run-experiment`` CLI, the ``Toolkit`` facade and the experiment-bundle
+runner accept the same run modes, and ``TRITONSWMM_analysis.run()`` and the
+``Toolkit`` hand back the same result and status objects. ``run()`` itself takes a
+``from_scratch`` flag rather than a mode and expands it with ``translate_mode``.
+This module defines each shared piece once, so every layer reads one definition
+instead of restating its own:
 
-Key components:
-- WorkflowResult: Structured result object from workflow execution
-- WorkflowStatus: Status report for workflow completion state
-- PhaseStatus: Status of individual workflow phases
-- Mode translation: User-friendly modes → low-level workflow parameters
-- State detection: Infer what needs to run based on log files
+- ``RunMode`` and ``translate_mode``: the closed set of run modes, and the
+  low-level ``submit_workflow`` flags each mode expands to.
+- ``resolve_execution_locus``: whether a workflow runs locally or under SLURM.
+- ``RunOverrides``: the per-invocation overrides, carried through the
+  ``submit_workflow`` layers as one argument.
+- ``WorkflowResult``: what one ``run()`` call returns.
+- ``WorkflowStatus`` and ``PhaseStatus``: what a status check reports.
+- ``translate_phases``: the setup/prepare/process flags for a list of phases.
+
+Nothing here reads logs or the filesystem. ``TRITONSWMM_analysis.get_workflow_status``
+inspects an analysis and fills a ``WorkflowStatus``.
 """
 
 from dataclasses import dataclass, field
@@ -53,8 +61,8 @@ def resolve_execution_locus(
     """THE resolver for execution locus. Every site needing a locus calls this.
 
     An explicit ``execution_mode`` of ``"local"`` or ``"slurm"`` is an OVERRIDE and
-    passes through unchanged. That arm carries the ``[Q8]`` shape --
-    ``multi_sim_run_method="local"`` plus ``execution_mode="slurm"`` -- and is why a
+    passes through unchanged. That arm carries a ``local``-family config submitted
+    to SLURM -- ``multi_sim_run_method="local"`` plus ``execution_mode="slurm"`` -- and is why a
     caller handed an already-resolved mode needs no second term, unlike
     ``workflow.py``'s report-tail predicate, which must reconstruct the override from
     ``_resolved_execution_locus`` because by that point it is no longer readable off
@@ -67,9 +75,10 @@ def resolve_execution_locus(
     ``$SLURM_JOB_ID`` happened to be set is the defect this rule exists to prevent
     (``8249167f``): a synth fixture running inside an array element reached
     ``generate_snakemake_config(mode="slurm")`` and tripped its max_concurrent_jobs
-    assert. ``in_slurm`` must ALSO not become config-only -- its live consumers are
-    ``resource_management.py`` (allocation-derived SIZING) and ``workflow.py``'s
-    ``_generate_submission_script`` assert and tmux module-load gate.
+    assert. ``in_slurm`` must ALSO not become config-only -- its live readers are
+    ``workflow.py``'s ``_generate_submission_script`` assert and tmux module-load
+    gate, and ``resource_management.py`` computes the same ``$SLURM_JOB_ID`` test
+    independently for allocation-derived SIZING.
     ``run_simulation.py``'s ``using_srun`` no longer reads it: that predicate CONSUMES
     this function's result through a threaded ``--execution-locus`` and adds a
     fail-safe family term, so it is a consumer, not another resolver.
@@ -115,7 +124,11 @@ class PhaseStatus:
     details : Dict[str, str]
         Phase-specific status details (key: detail_name, value: formatted string)
     failed_items : List[str]
-        Items that failed in this phase (e.g., event ilocs, file paths)
+        Directory paths of the scenarios not yet complete in this phase. Despite the
+        name it holds scenarios never started as well as ones that failed;
+        ``get_workflow_status`` fills it for the preparation and simulation phases
+        only, and ``WorkflowStatus.simulations_failed`` / ``simulations_pending``
+        separate the two for simulation.
 
     Examples
     --------
@@ -170,15 +183,19 @@ class WorkflowStatus:
     consolidation : PhaseStatus
         Status of analysis-level consolidation phase
     total_simulations : int
-        Total number of simulations configured
+        Number of scenarios the analysis defines (``n_scenarios``). Despite the field
+        name it counts scenarios, not model runs: a scenario with two enabled models
+        counts once.
     simulations_completed : int
-        Number of simulations successfully completed
+        Number of scenarios in which every enabled model run completed
     simulations_failed : int
-        Number of simulations that failed
+        Number of scenarios with at least one unfinished model run that wrote a
+        model log -- a run that started and did not finish
     simulations_pending : int
-        Number of simulations not yet attempted
+        Number of scenarios whose unfinished model runs wrote no model log -- runs
+        not yet started (a run killed before its first log line also counts here)
     current_phase : str
-        Which phase is currently incomplete
+        The first incomplete phase, or ``"complete"`` when every phase is done
     recommended_mode : RunMode
         Recommended execution mode, a ``RunMode`` member (``fresh`` or ``resume``, the
         modes translate_mode accepts). A complete analysis recommends ``fresh``.
@@ -190,7 +207,7 @@ class WorkflowStatus:
     >>> status = analysis.get_workflow_status()
     >>> print(status)
     >>> if not status.simulation.complete:
-    ...     print(f"Retry {len(status.simulation.failed_items)} failed sims")
+    ...     print(f"{len(status.simulation.failed_items)} scenarios still to run")
     """
 
     analysis_id: str
@@ -245,7 +262,7 @@ class WorkflowStatus:
 
             if phase.failed_items:
                 n_show = min(3, len(phase.failed_items))
-                lines.append(f"    ✗ {len(phase.failed_items)} failed:")
+                lines.append(f"    ✗ {len(phase.failed_items)} incomplete:")
                 for item in phase.failed_items[:n_show]:
                     lines.append(f"      - {item}")
                 if len(phase.failed_items) > n_show:
@@ -266,49 +283,68 @@ class WorkflowStatus:
 
 @dataclass
 class WorkflowResult:
-    """Structured result from workflow execution.
+    """Typed result of one ``TRITONSWMM_analysis.run()`` call.
 
-    This replaces the dict-based return from submit_workflow() with a
-    typed, structured object that provides better IDE support and clearer
-    semantics.
+    ``run()`` builds it from the dict that ``submit_workflow`` returns. What
+    ``success`` certifies depends on the launch. On a ``batch_job`` tmux launch the
+    caller does not wait on -- ``run(wait_for_job_completion=False)``, the default
+    on a SLURM locus -- and on the detached SIF-build chain, ``success=True``
+    records that the launch was made, not that every rule then succeeded, so read
+    ``_status/_failed/`` or the produced outputs for the outcome. A waited tmux
+    launch reports whether the session's Snakemake exited 0.
 
     Attributes
     ----------
     success : bool
-        Whether the workflow completed successfully
+        Whether the workflow succeeded -- on an unwaited detached launch, whether the
+        launch did
     mode : str
-        Execution mode used: "local" or "slurm"
+        The launch label the submit layer returned (for example ``local``,
+        ``slurm``, ``batch_job``, ``tmux`` or ``detached-build-chain``), falling
+        back to the resolved locus, ``local`` or ``slurm``, when it returned none
     execution_time : Optional[float]
-        Total execution time in seconds (None for async SLURM jobs)
+        Wall-clock seconds from the start of ``run()``'s pre-submit steps (after any
+        SIF build prestep) to its return, set only when ``success`` is True and the
+        resolved locus is local; None otherwise
     phases_completed : List[str]
-        Which workflow phases were executed
+        The phases the call requested, listed only when ``success`` is True. Derived
+        from the flags passed to ``submit_workflow``, not observed from outputs.
         Possible values: ["setup", "prepare", "simulate", "process", "consolidate"]
     events_processed : List[int]
-        Event ilocs that were processed
-    snakefile_path : Path
-        Path to the generated Snakefile
+        Every event iloc of the analysis when ``success`` is True, empty otherwise --
+        the events in scope, not a per-event completion record
+    snakefile_path : Optional[Path]
+        Path to the generated Snakefile, or None when the submit layer returned none
     job_id : Optional[str]
-        SLURM job ID (only for SLURM mode)
+        SLURM job ID, or the process id of the detached SIF-build chain; None when
+        there is neither
     message : str
         Human-readable status message
     partial_failures : List[dict]
         Rules that permanently failed under ``--keep-going`` (the sweep let the
-        rest of the DAG complete). Each entry carries at least ``rule_token`` and
-        ``reason``. Non-empty implies ``success=False``. Populated only on the
-        blocking submit paths (``local`` / ``1_job_many_srun_tasks``); a detached
-        ``batch_job`` (tmux) run has no in-process completion point and leaves this
-        empty (operator inspects ``_status/_failed/`` post-hoc — captured follow-up).
+        rest of the DAG complete). An entry is either a parsed ``_status/_failed/``
+        marker, whose keys depend on its writer -- a simulation runner's marker
+        carries ``slurm_jobid``, ``run_uuid``, ``sa_id``, ``model_type``,
+        ``event_id``, ``status`` and ``finished_at``, but neither ``rule_token`` nor
+        ``reason`` -- or a record carrying ``rule_token`` and ``reason``, for a
+        failure seen only in the Snakemake log or an unreadable marker. Non-empty
+        implies ``success=False``. Filled only where the call waited on Snakemake:
+        always on ``local``, and on ``1_job_many_srun_tasks`` only when ``run()``
+        waits (``wait_for_job_completion=True``). A
+        ``batch_job`` (tmux) run leaves it empty whether or not it is waited on;
+        nothing collects its failures, so the operator reads ``_status/_failed/``
+        after the run.
     retried_to_success : List[dict]
         Jobs Snakemake restarted after a failed attempt and then finished, one
         ``{rule, jobid, attempts}`` per job, where ``attempts`` counts every launch
         including the finishing one. A disclosure only: it never affects ``success``.
-        Populated on the same blocking paths as ``partial_failures``.
+        Filled on the same paths as ``partial_failures``.
 
     Examples
     --------
     >>> result = analysis.run(from_scratch=True)
     >>> if result.success:
-    ...     print(f"Processed {len(result.events_processed)} events")
+    ...     print(f"{len(result.events_processed)} events in scope")
     >>> if result:  # Truthiness check
     ...     print("Success!")
     """
@@ -368,8 +404,8 @@ class RunOverrides:
     """Runtime override knobs for a single workflow invocation.
 
     Each field follows the override-prefix convention: None means
-    read-config-when-None (the resolved value comes from cfg_analysis /
-    cfg_system); a concrete value overrides the config for this invocation
+    read-config-when-None (the resolved value comes from cfg_analysis); a
+    concrete value overrides the config for this invocation
     only. Carried as one argument through the submit_workflow facade chain
     instead of five individual keyword params.
 
@@ -377,10 +413,12 @@ class RunOverrides:
     ``live_driver`` bridges no config field: it is a per-invocation operator
     ASSERTION that one specific orchestration driver is dead, consumed once by
     ``_acquire_submit_driver_claim`` and never read from config. It rides this
-    carrier anyway because D4 made the builder and sensitivity layers
-    overrides-only, and adding a sixth individual keyword to the sensitivity
-    facade would re-open the shape D4 closed. Carrying the exception in writing
-    is preferred to a structural regression that leaves no trace.
+    carrier anyway because the builder and sensitivity ``submit_workflow`` layers
+    accept overrides ONLY through this carrier. Deliberately NOT a sixth
+    individual keyword on the sensitivity facade: that would bring back the
+    per-layer threading the carrier replaced, and a layer that omitted it would
+    hand ``_acquire_submit_driver_claim`` no assertion, so the gate would raise
+    ``WorkflowError`` on the very driver the operator had named as dead.
     """
 
     clear_raw: "ClearRawValue | None" = None
@@ -425,7 +463,6 @@ def translate_mode(mode: RunMode | Literal["fresh", "resume"]) -> dict:
             "pickup_where_leftoff": False,
         },
         "resume": {
-            # "from_scratch": False,
             "overwrite_system_inputs": False,
             "recompile_if_already_done_successfully": False,
             "overwrite_scenario_if_already_set_up": False,
@@ -445,7 +482,9 @@ def translate_phases(
     ----------
     phases : Optional[List[str]]
         Which phases to run. If None, runs all phases.
-        Valid phases: ["setup", "prepare", "simulate", "process", "consolidate"]
+        Valid phases: ["setup", "prepare", "process"]. ``"simulate"`` and
+        ``"consolidate"`` raise ``ValueError``: simulation follows preparation and
+        consolidation follows processing, so neither has a flag of its own.
 
     Returns
     -------
@@ -460,7 +499,6 @@ def translate_phases(
     >>> params["process_timeseries"]
     False
     """
-    # If no phases specified, run everything
     if phases is None:
         return {
             "process_system_level_inputs": True,
@@ -473,15 +511,11 @@ def translate_phases(
         if phase not in valid_phases:
             raise ValueError(f"Invalid phase specified. Must be one of: {valid_phases}")
 
-    # Translate phase names to flags
     params = {
         "process_system_level_inputs": "setup" in phases,
         "compile_TRITON_SWMM": "setup" in phases,
         "prepare_scenarios": "prepare" in phases,
         "process_timeseries": "process" in phases,
     }
-
-    # Note: "simulate" phase is always enabled if scenarios are prepared
-    # Note: "consolidate" phase is handled automatically by workflow's consolidate rule
 
     return params

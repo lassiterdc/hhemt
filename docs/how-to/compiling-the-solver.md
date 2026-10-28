@@ -27,7 +27,8 @@ Compile from the same Python session you run from. For the Norfolk example:
 
 ```python
 from hhemt.experiments import NorfolkIreneExperiment
-norfolk = NorfolkIreneExperiment.load()
+# hhemt_sha is the commit you run: `git rev-parse HEAD`
+norfolk = NorfolkIreneExperiment.load(hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT")
 norfolk.system.compile_TRITON_SWMM()
 ```
 
@@ -62,7 +63,8 @@ A run on a GPU partition needs a GPU build, and that build is keyed to the
 partition: the GPU architecture and backend come from the partition's entry in your
 [HPC system profile](hpc-profile-setup.md), and the environment modules the profile
 lists are loaded inside the build script. The Python calls above never read the
-profile. On a cluster use the command-line form, which reads it, and pass the
+profile, so on their own they build only the CPU backend. On a cluster use the
+command-line form, which reads it, and pass the
 partition your analysis config names in `hpc_ensemble_partition`:
 
 ```bash
@@ -115,19 +117,10 @@ clears the analysis directory, and the build lives under the software directory.
 
 ## If a run stops at setup
 
-A run stops at its first step when the setup check finds an uncompiled model. It
-writes no `a_setup_*` flag under `{analysis_dir}/_status/`, and `logs/setup.log` in
-the analysis directory (`logs/setup_target_{N}.log` on an experiment) ends with a
-line naming the model:
-
-```text
-TRITON-SWMM is enabled but not compiled and --compile-triton-swmm not specified
-```
-
-The TRITON-only and SWMM checks write the same line with their own names and
-flags. The flag the line names belongs to the command above; `hhemt run` and
-`analysis.run()` do not take it. Compile as shown for your machine, then start the
-run again: setup work that completed is kept.
+A run stops at its first step when the setup check finds an uncompiled model.
+[Diagnosing a failed run](diagnosing-a-failed-run.md#setup-says-a-model-is-enabled-but-not-compiled)
+shows the line it leaves in the setup log and what to do; the compile it asks for is
+the one on this page for your machine.
 
 ## See also
 

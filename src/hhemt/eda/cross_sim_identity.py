@@ -6,7 +6,7 @@ flow / over-full-flow / over-full-depth (``max_flow_cms`` /
 sims sharing an event iloc on a SENSITIVITY MASTER (members that vary only
 compute config must produce identical physics). On the strict path
 (``within_family=True``) the reference is anchored PER HARDWARE FAMILY
-(``raw_resume_identity._b4b_family_key``: cpu / gpu): within each family it is the
+(``raw_byte_identity._b4b_family_key``: cpu / gpu): within each family it is the
 SERIAL-CPU sub whose summaries are present (falling back to the smallest present
 compute config, then lexicographic ``member_id``); verdict passes iff every sub is exactly
 equal to ITS OWN family's reference for every tracked variable. Serial CPU is the CPU
@@ -319,7 +319,7 @@ def _summary_paths(analysis: TRITONSWMM_analysis) -> list[Path]:
     derivation: the derivation subscripts ``_MODE_CONFIG``'s VALUES and reads
     ``analysis.df_sims``, both outside the stub contract both EDA test files document;
     constructing a scenario has a mkdir side effect this module has no business incurring
-    (raw_resume_identity.py takes plain directory Paths for the same reason); and a real
+    (raw_byte_identity.py takes plain directory Paths for the same reason); and a real
     scenario cannot be built from a stub sub at all, so the derivation is untestable in
     the fast tier.
 
@@ -497,21 +497,21 @@ def _ref_rank(item: tuple[str, object]) -> tuple:
 
 
 def _family_key(sub) -> str:
-    """Hardware-family bucket for a sub — DELEGATES to ``raw_resume_identity._b4b_family_key``.
+    """Hardware-family bucket for a sub — DELEGATES to ``raw_byte_identity._b4b_family_key``.
 
     NOT a fourth family rule. ``_b4b_family_key`` already takes a sub and already encodes the
     N3 user ruling (ONE gpu family, not one per GPU hardware); ``_config_diff``'s
     ``_hw_family_key`` is the group-shaped sibling of the same rule and its docstring names a
     third differently-shaped implementation as the divergence to avoid.
 
-    The import is FUNCTION-LOCAL and must stay that way: ``raw_resume_identity.py:35`` imports
+    The import is FUNCTION-LOCAL and must stay that way: ``raw_byte_identity.py:35`` imports
     ``compare_variable_exact`` from THIS module at module level, and ``hhemt/eda/__init__.py``
-    loads ``cross_sim_identity`` (line 38) BEFORE ``raw_resume_identity`` (line 39) — so a
+    loads ``cross_sim_identity`` (line 38) BEFORE ``raw_byte_identity`` (line 39) — so a
     module-level import here re-enters this module before ``compare_variable_exact`` (line 94)
     is defined and raises at package load. ``_b4b_family_key`` itself reaches
     ``_config_diff._gpu_hardware`` by the same local-import idiom.
     """
-    from hhemt.eda.raw_resume_identity import _b4b_family_key
+    from hhemt.eda.raw_byte_identity import _b4b_family_key
 
     return _b4b_family_key(sub)
 
@@ -614,10 +614,11 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
     #
     # A NON-PRIMARY family reference is deliberately NOT skipped below: its own family reference
     # is itself, so it self-compares to identical/0.0 and KEEPS its artifact row. That is the
-    # same self-compare baseline marker raw_resume_identity uses (F3c, raw_resume_identity.py
-    # :700-706). Skipping it instead would drop it from the artifact's member_id coord, leaving
+    # same self-compare baseline marker raw_byte_identity uses (F3c, the reference row's
+    # self-compare in check_raw_byte_identity). Skipping it instead would drop it from the
+    # artifact's member_id coord, leaving
     # _config_diff._identity_labels with no label for the 1-GPU group — and since
-    # _config_diff.py:898 re-references every GPU group to that group, the whole GPU half of the
+    # _config_diff._family_reference_group re-references every GPU group to that group, the whole GPU half of the
     # config-diff identity column would render "differs". Do not "simplify" this to skip all
     # references.
     fam_of: dict[str, str] = (
@@ -783,7 +784,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
     # contract is deliberately unchanged, because the non-primary family references self-compare
     # and therefore already carry their own `identity_group` label in the array. This attr is
     # pure disclosure: it lets a reader of the artifact tell WHICH reference each row was
-    # measured against. JSON-encoded to match raw_resume_identity's
+    # measured against. JSON-encoded to match raw_byte_identity's
     # `reference_config_by_family` attr convention.
     artifact_ds.attrs["reference_member_id_by_family"] = json.dumps(ref_by_family)
 

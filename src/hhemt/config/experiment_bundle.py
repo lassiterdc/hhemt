@@ -150,7 +150,10 @@ class ExperimentConfig(BaseModel):
     analysis_config: str = Field(description="Bundle-relative path to the analysis config YAML.")
     hpc_system_config: dict[str, str] = Field(
         default_factory=dict,
-        description="Cluster-name -> estate-relative hpc_system_config path.",
+        description=(
+            "Cluster-name -> hpc_system_config path: absolute, or relative to the bundle directory, "
+            "the directory holding experiment.yaml."
+        ),
     )
     inputs: list[DatasetRef] = Field(default_factory=list, description="Input datasets.")
     toolkit_pin: ToolkitPin = Field(

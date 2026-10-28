@@ -11,20 +11,23 @@ the single source of truth for `standard_name`, `long_name`, `units`, and
 ## The output tiers
 
 hhemt writes results at four tiers, and they differ in both shape and format.
+The per-system tier is written only by an explicit
+`system.process.consolidate_system_datatree()` call, which no run makes.
 
 | Tier | Artifact | Format |
 |---|---|---|
-| Per-scenario | `sims/{event_id}/processed/` | Flat Zarr (default) or NetCDF, selected by `target_processed_output_type` (NetCDF is not supported when a TRITON model is enabled; see below) |
+| Per-scenario | `sims/{event_id}/processed/` | Flat Zarr (default) or NetCDF, selected by `target_processed_output_type`; see below |
 | Per-analysis | `analysis_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr |
 | Per-experiment | `experiment_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr |
-| Per-system | `system_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr |
+| Per-system | `system_datatree.zarr` | Hierarchical `xarray.DataTree`, always Zarr. Written only by an explicit `system.process.consolidate_system_datatree()` call; each call adds the analyses bound to the system at that call |
 
-NetCDF is not available for every model. `hhemt run` and `Toolkit.from_configs`
-refuse `target_processed_output_type: nc` at preflight whenever
-`toggle_triton_model` or `toggle_tritonswmm_model` is enabled, because the
-gridded TRITON timeseries does not support NetCDF output. With only
-`toggle_swmm_model` enabled, `nc` is accepted and applies to the per-scenario
-summaries and the SWMM node and link timeseries.
+NetCDF is available for every model. With `target_processed_output_type: nc`,
+each per-scenario artifact the output type governs is one NetCDF file under
+`sims/{event_id}/processed/` in place of a Zarr store, whichever of
+`toggle_triton_model`, `toggle_tritonswmm_model` and `toggle_swmm_model` are
+enabled. Those artifacts are the gridded TRITON timeseries and summaries, the performance timeseries
+and summaries, and the SWMM node and link timeseries and summaries. The hydrology capture summaries,
+`hydrology_inflow_summary.zarr` and `hydrology_rpt_summary.zarr`, stay Zarr under either output type.
 
 A regular analysis writes the per-scenario and per-analysis tiers in its own
 directory, and writes no experiment tree. A sensitivity analysis writes one
@@ -66,6 +69,39 @@ killed between those two steps leaves it behind indefinitely, so a `.chapters`
 directory beside a flagged store is harmless leftover rather than an incomplete
 result. A forced rerun of the scenario removes both the flag and the `.chapters`
 directory.
+
+### The per-scenario tier
+
+The per-scenario processing step, `hhemt.process_timeseries_runner`, writes this
+tier. For each scenario it calls `write_timeseries_outputs` and then
+`write_summary_outputs` on the scenario's post-processing object, which converts
+the solver's raw output into the processed stores. The tier lives in
+`{analysis_dir}/sims/{event_id}/processed/`, one directory for each scenario.
+
+### The per-analysis tier
+
+`consolidate_to_datatree()` on the analysis's `process` object writes this tier. It
+assembles the per-scenario summaries into
+`{analysis_dir}/analysis_datatree.zarr`. Only an analysis that is not a sensitivity
+analysis binds that path. A sensitivity analysis has the store in each member's
+directory, under `members/member_{member_id}/`.
+
+### The per-experiment tier
+
+`consolidate_sensitivity_datatree()` on a sensitivity analysis writes this tier. It
+first makes sure each member has its own `analysis_datatree.zarr`, then assembles
+the members into `{analysis_dir}/experiment_datatree.zarr` at the experiment root,
+with one node for each completed member. A regular analysis does not bind this
+path.
+
+### The per-system tier
+
+`system.process.consolidate_system_datatree()` writes this tier, into
+`system_datatree.zarr` in the system directory. It is written only when that
+method is called explicitly. No run, command-line command or test calls it.
+Its writes use append mode over the analyses bound to the system, so the store
+holds the analyses that were bound when some call ran. An analysis that was not
+bound at any call has no group in it.
 
 ## Opening the consolidated output
 
@@ -179,6 +215,8 @@ The `performance.*` columns are timing records, not physical results:
 - On a **hotstart-resumed** simulation these are cumulative across every
   allocation, so they will exceed what a scheduler reports as elapsed time for
   the final allocation. That is correct, not double-counting.
+- The `perf_*` columns of `df_status` and `scenario_status.csv` read these same
+  values, so both points hold for them too.
 
 ## See also
 

@@ -167,7 +167,7 @@ def test_intercomparison_loads_a_fully_carried_child_store(tmp_path):
     """Satisfying inputs: the same tree loads unless the manifest names the ROOT TREE itself.
 
     The last two arms are what keep the predicate NARROW, and they are not interchangeable.
-    ``eda/b4b_clean_identity.zarr`` is the real-world case the narrow placement exists for --
+    ``eda/raw_byte_identity.zarr`` is the real-world case the narrow placement exists for --
     a figure qualified an EDA artifact while the root tree was carried in full -- and it is
     what a later reader will look for. ``members/member_0/experiment_datatree.zarr`` shares the
     root tree's BASENAME while differing in path, and it is the only arm that separates a
@@ -176,7 +176,7 @@ def test_intercomparison_loads_a_fully_carried_child_store(tmp_path):
     assert CB._load_intercomparison_subs(_child_with_root_tree(tmp_path / "b", shallow=[])) == ({}, {})
     assert CB._load_intercomparison_subs(_child_with_root_tree(tmp_path / "c", shallow=None)) == ({}, {})
     assert CB._load_intercomparison_subs(
-        _child_with_root_tree(tmp_path / "d", shallow=["eda/b4b_clean_identity.zarr"])
+        _child_with_root_tree(tmp_path / "d", shallow=["eda/raw_byte_identity.zarr"])
     ) == ({}, {})
     assert CB._load_intercomparison_subs(
         _child_with_root_tree(tmp_path / "e", shallow=["members/member_0/experiment_datatree.zarr"])

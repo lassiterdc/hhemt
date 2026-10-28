@@ -600,7 +600,7 @@ _TRITON_CHECKPOINT_ATTEMPT_MARKER = "Reading checkpoint files"
 #: (``triton.h``: ``if (!try_restore_state_snapshot(...)) replay_exchange_history(...)``).
 #: Emitted at ``swmm_triton.h:963`` @ ``658a7a37``, DELIBERATELY in the same ``...to t=``
 #: shape as the replay marker above so ONE matcher discriminates both and the existing
-#: numeric parse (``_parse_replay_t`` / ``eda/raw_resume_identity.parse_resume_timestep``)
+#: numeric parse (``_parse_replay_t`` / ``eda/raw_byte_identity.parse_resume_timestep``)
 #: works on either unchanged.
 #:
 #: THE TWO MARKERS ARE MUTUALLY EXCLUSIVE WITHIN ONE EXEC, by construction rather than by
@@ -2212,7 +2212,7 @@ def _enumerated_eda_templates(analysis: TRITONSWMM_analysis) -> tuple:
        contain none, and the multisim plot dispatcher passes no ``predicate_inputs``,
        so a multisim neither emits nor enumerates EDA rules whatever set it names.
     2. The active set must carry an ``eda_compute_sensitivity`` selection. ``default``
-       and ``benchmarking`` do not; ``compute-sensitivity``/``dem-resolution``/``b4b``
+       and ``benchmarking`` do not; ``compute_sensitivity``/``dem_resolution``/``compute_config_byte_identity``
        do. This is the discriminating term.
     3. ``eda.enabled_plots`` must be non-empty — TRUE by default (non-empty
        default_factory), which is why it cannot carry the predicate alone.
@@ -2420,8 +2420,9 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
     # `analysis._retrieve_weather_indexer_using_integer_index(i)` raised `KeyError` on the
     # first index past the event count (measured on the synth fixture: n_scenarios=4,
     # df_sims index=[0] -> KeyError: 1). That raise propagated out of `validate_analysis`,
-    # so `persist_validation_report` -- whose call sites swallow it as non-fatal
-    # (export_scenario_status.py and analysis.py's eda()) -- silently wrote NO master-level
+    # so `persist_validation_report` -- whose call sites all swallow such a raise as
+    # non-fatal (today there are two: export_scenario_status.main's post-CSV re-persist
+    # and TRITONSWMM_analysis.eda) -- silently wrote NO master-level
     # validation_report.json at all, while every sub wrote its own. The master scope was also the wrong sims root: a
     # master's `sims/` is empty (scenarios live under `members/member_N/sims/`), so even
     # without the raise this check examined zero scenarios on every sensitivity run.
@@ -2802,10 +2803,11 @@ def validate_analysis(analysis: TRITONSWMM_analysis, *, df_status=None) -> Valid
             check_eda_calc_ran(analysis),  # enumerated EDA figures vs present eda/*.verdict.json
             check_data_availability(analysis),  # reclaim disclosure: which artifact classes were reclaimed
             check_forcing_tail_influence(analysis),  # regression detector: maxima set after the forcing ended
-            # Registered only because `check_provenance_completeness` now builds every
-            # CheckResult it returns with valid keywords (`details=`, `level=`; see the note
-            # at its returns) and so cannot raise TypeError here. This list is built eagerly
-            # and both persist_validation_report call sites swallow
+            # Registered ONLY together with the kwarg repair above, never before it: every
+            # CheckResult `check_provenance_completeness` returns is built with valid keywords
+            # (`details=`, `level=`), so it cannot raise TypeError here. This
+            # list is built eagerly and both persist_validation_report call sites --
+            # export_scenario_status.main and TRITONSWMM_analysis.eda -- swallow
             # exceptions non-fatally, so a wired-but-raising check leaves the read-model
             # unwritten -- and what that produces FORKS on prior state. On a FRESH tree
             # validation_report.json is missing, workflow.py declares it as an output: of

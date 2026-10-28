@@ -34,6 +34,7 @@ from hhemt.run_simulation import TRITONSWMM_run
 from hhemt.subprocess_utils import run_subprocess_with_tee
 from hhemt.swmm_output_parser import pollutant_time_of_max_conc_min, retrieve_SWMM_outputs_as_datasets
 from hhemt.utils import (
+    _publish_flag_crash_safe,
     chapter_flag_for,
     chapter_store_for,
     chapters_dir_for,
@@ -50,6 +51,7 @@ from hhemt.utils import (
     return_dic_zarr_encodings,
     unified_flag_for,
     verify_and_flag_chapter,
+    write_netcdf,
     write_zarr,
     write_zarr_then_netcdf,
 )
@@ -291,20 +293,14 @@ class TRITONSWMM_sim_post_processing:
         verbose: bool = False,
         override_clear_raw: "ClearRawValue | None" = None,
     ) -> None:
-        """Stream TRITON binary outputs into a chunked zarr store via batched
-        appends. Single-sites the load-chunk + flush-byte-cap logic shared by the
-        TRITON-SWMM (model_type='tritonswmm') and TRITON-only (model_type='triton')
-        timeseries paths. The two prior loops differed only in the model_type
-        passed to latest_sim_date(); everything else was byte-identical."""
-        # BACK HALF OF A TEMPORARY-REFUSAL MARKER PAIR. This writer emits a ZARR STORE to
-        # whatever path it is handed, and the path it is handed carries the
-        # target_processed_output_type extension -- so under 'nc' it produces a zarr store
-        # named '*.nc' that the reader then opens with h5netcdf and raises on. Because of
-        # that, validation._validate_gridded_output_type refuses
-        # target_processed_output_type='nc' at preflight whenever this writer is
-        # reachable. A converting tail added at or below this function is the condition
-        # that retires that refusal: delete the helper and its preflight_validate call in
-        # the same change, and delete this comment with them.
+        """Stream TRITON binary outputs into flagged zarr chapter stores via batched
+        appends, then publish them at ``fname_out`` in the configured output type: a
+        chunked zarr store under ``zarr`` (``utils.merge_chapters_to_unified``), one
+        NetCDF file under ``nc`` (``publish_chapters_to_netcdf``). Single-sites the
+        load-chunk + flush-byte-cap logic shared by the TRITON-SWMM
+        (model_type='tritonswmm') and TRITON-only (model_type='triton') timeseries
+        paths. The two prior loops differed only in the model_type passed to
+        latest_sim_date(); everything else was byte-identical."""
         # Chunked processing: size the in-memory load chunk
         from hhemt.utils import estimate_timesteps_per_chunk
 
@@ -358,11 +354,14 @@ class TRITONSWMM_sim_post_processing:
         _scen_dir = self._scenario.scen_paths.sim_folder
         _chapters.mkdir(parents=True, exist_ok=True)
         reap_unflagged_chapters(_chapters, scenario_dir=_scen_dir)
+        # Under either output type the flag is written only after the artifact at fname_out
+        # is published complete (merge_chapters_to_unified for zarr,
+        # publish_chapters_to_netcdf for nc), so returning here never skips a publish.
         if unified_flag_for(fname_out).exists():
             warnings.warn(
                 f"{Path(fname_out).name} already carries its unified completion flag; "
-                "skipping the CHAPTER WRITER only -- the caller still consolidates this "
-                "store's metadata. Re-entering the writer would rebuild a chapter set "
+                "skipping the CHAPTER WRITER only -- under zarr the caller still consolidates "
+                "this store's metadata. Re-entering the writer would rebuild a chapter set "
                 "from whatever raw files survived the per-chapter clear and republish a "
                 "TRUNCATED store under a flag that still certifies it complete.",
                 stacklevel=2,
@@ -544,7 +543,10 @@ class TRITONSWMM_sim_post_processing:
             del ds_batch
             pending_chunks = []
 
-        merge_chapters_to_unified(_chapters, fname_out, scenario_dir=_scen_dir)
+        if self._analysis.cfg_analysis.target_processed_output_type == "nc":
+            publish_chapters_to_netcdf(_chapters, fname_out, scenario_dir=_scen_dir, compression_level=comp_level)
+        else:
+            merge_chapters_to_unified(_chapters, fname_out, scenario_dir=_scen_dir)
         if _freed_bytes:
             print(f"[Chunked Processing] Reclaimed {_freed_bytes} raw byte(s) across chapters.", flush=True)
 
@@ -1201,12 +1203,14 @@ class TRITONSWMM_sim_post_processing:
             override_clear_raw=override_clear_raw,
         )
 
-        # Consolidate metadata
-        if verbose:
-            print("[Chunked Processing] Consolidating zarr metadata", flush=True)
-        import zarr
+        # Consolidated metadata belongs to a zarr STORE. Under nc the writer published a
+        # NetCDF file at fname_out, and zarr.consolidate_metadata would raise on it.
+        if self._analysis.cfg_analysis.target_processed_output_type == "zarr":
+            if verbose:
+                print("[Chunked Processing] Consolidating zarr metadata", flush=True)
+            import zarr
 
-        zarr.consolidate_metadata(fname_out)
+            zarr.consolidate_metadata(fname_out)
 
         if verbose:
             print(f"[Chunked Processing] Complete: {fname_out.name}", flush=True)
@@ -1280,12 +1284,14 @@ class TRITONSWMM_sim_post_processing:
             override_clear_raw=override_clear_raw,
         )
 
-        # Consolidate metadata
-        if verbose:
-            print("[Chunked Processing] Consolidating zarr metadata", flush=True)
-        import zarr
+        # Consolidated metadata belongs to a zarr STORE. Under nc the writer published a
+        # NetCDF file at fname_out, and zarr.consolidate_metadata would raise on it.
+        if self._analysis.cfg_analysis.target_processed_output_type == "zarr":
+            if verbose:
+                print("[Chunked Processing] Consolidating zarr metadata", flush=True)
+            import zarr
 
-        zarr.consolidate_metadata(fname_out)
+            zarr.consolidate_metadata(fname_out)
 
         if verbose:
             print(f"[Chunked Processing] Complete: {fname_out.name}", flush=True)
@@ -2464,7 +2470,7 @@ class TRITONSWMM_sim_post_processing:
             return
 
         # The raw_swmm_binaries class no-ops when clear_raw == "none", and the decline is
-        # LOGGED rather than silent. Its only reader, eda.raw_resume_identity.compare_swmm_raw,
+        # LOGGED rather than silent. Its only reader, eda.raw_byte_identity.compare_swmm_raw,
         # needs out_tritonswmm/swmm/hydraulics.out ALONGSIDE the raw H/QX/QY/MH set that
         # clear_raw governs; on a preserve-raws run those .out files are still live evidence.
         # A policy that silently declines is indistinguishable from one that ran, which is the
@@ -2473,7 +2479,7 @@ class TRITONSWMM_sim_post_processing:
             print(
                 f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: "
                 "'raw_swmm_binaries' is elected but clear_raw == 'none' -- declining that "
-                "class. eda.raw_resume_identity.compare_swmm_raw reads "
+                "class. eda.raw_byte_identity.compare_swmm_raw reads "
                 "out_tritonswmm/swmm/*.out together with the raw H/QX/QY/MH set that "
                 "clear_raw preserves, so those files are still live evidence on this run.",
                 flush=True,
@@ -3017,9 +3023,9 @@ def _aggregate_perf_tseries(
                 "a slightly different formatted length, leaving one writer's overhang "
                 "behind. TRITON's own writer truncates (output.h uses a default-mode "
                 "std::ofstream), so a single process cannot produce this. Treat it as "
-                "evidence of duplicate simulation execution for this scenario (see the "
-                "racing-runner duplication class in the architecture doc's gotchas), "
-                "NOT as a TRITON output-format bug. Every other artifact this sim wrote "
+                "evidence of duplicate simulation execution for this scenario (two "
+                "copies of the simulation running against the same scenario directory "
+                "at once), NOT as a TRITON output-format bug. Every other artifact this sim wrote "
                 "is under the same doubt; the performance dump is merely the only one "
                 "where the interleave is textually visible.\n"
                 f" Skipped files:\n{_detail}"
@@ -3323,7 +3329,7 @@ def parse_performance_file(filepath):
 #: `return_fpath_wlevels` iterates it to build the frame and `triton_raw_frame_or_raise`
 #: inverts it to name a short variable by its PREFIX in the ragged message, so the two
 #: cannot disagree about which name goes with which file.
-#: IT LIVES HERE AND NOT IN eda/raw_resume_identity.py, and the direction is the reason:
+#: IT LIVES HERE AND NOT IN eda/raw_byte_identity.py, and the direction is the reason:
 #: that module imports FROM this one (`from hhemt.process_simulation import ...`), and this
 #: module imports nothing from `hhemt.eda` -- measured, 0 occurrences -- so defining it
 #: there and importing it here would invert the dependency and cycle.
@@ -3377,7 +3383,7 @@ def return_fpath_wlevels(fldr_out_triton: Path, reporting_interval_s: int | floa
     # THIS FUNCTION DESCRIBES WHAT IT FOUND. IT REFUSES NOTHING AND IT INVENTS NOTHING.
     # The refusal moved to `triton_raw_frame_or_raise` below, because it is a POLICY and
     # not a property of enumeration: of the eight consumption points measured at aaefe392,
-    # SEVEN tolerate a partial frame by design (three in eda/raw_resume_identity.py, four
+    # SEVEN tolerate a partial frame by design (three in eda/raw_byte_identity.py, four
     # in the private estate, all of which carry their own `isinstance`/`dropna`/membership
     # guards) and exactly ONE wants the refusal. A fail-closed default here was a rule
     # imposed on callers whose requirements this function cannot know, and it broke every
@@ -3509,6 +3515,72 @@ def triton_raw_frame_or_raise(fldr_out_triton, reporting_interval_s, *, model_la
             ),
         )
     return df_outputs
+
+
+def publish_chapters_to_netcdf(chapters: Path, fname_out, *, scenario_dir: Path, compression_level: int = 5) -> None:
+    """Publish a flagged chapter set as ONE NetCDF file at ``fname_out``, then flag it, then drop the chapters.
+
+    This is the ``nc`` arm of the gridded TRITON timeseries writer; the ``zarr`` arm is
+    ``utils.merge_chapters_to_unified``. Both consume the same flagged chapter stores, and both
+    end in the same three-state order, which is what makes a crash at any point resumable:
+
+    1. The file is written under ``{fname_out}.tmp`` and moved onto ``fname_out`` with
+       ``os.replace``, so ``fname_out`` is either absent or a complete NetCDF file. Writing
+       ``fname_out`` directly would leave a truncated file there on a crash, because
+       ``utils.write_netcdf`` has no temp-and-rename of its own.
+    2. The ``{fname_out}.done`` flag is written only after that move. The writer returns early
+       when the flag exists, so a flag written before the file is published would make a
+       truncated or missing file permanent.
+    3. The chapters are deleted only after the flag. Raw outputs are cleared chapter by chapter
+       as the chapters are written, so the chapters are the sole copy of the data until the
+       flag certifies the published file.
+
+    A write that raises leaves no file at ``fname_out``, no flag, and every chapter in place;
+    the next invocation finds the chapters already cover every timestep and publishes again.
+
+    Deliberately NOT ``utils.merge_chapters_to_unified`` followed by a conversion: that function
+    writes the flag and deletes the chapters as soon as its zarr store is published, so a crash
+    during the conversion would leave neither the chapters nor the NetCDF file.
+    """
+    final = Path(fname_out)
+    flag = unified_flag_for(final)
+    tmp = final.with_name(final.name + ".tmp")
+    parts = completed_chapters(chapters)
+    if not parts:
+        raise ProcessingError(
+            operation="publish_chapters_to_netcdf",
+            filepath=str(chapters),
+            reason="no flagged chapter stores to publish",
+        )
+    if sorted(parts) != list(range(len(parts))):
+        raise ProcessingError(
+            operation="publish_chapters_to_netcdf",
+            filepath=str(chapters),
+            reason=(
+                f"chapter index set {sorted(parts)} is not contiguous from 0; a flagged chapter's "
+                "store is missing and publishing would write a file with an interior gap and flag it complete"
+            ),
+        )
+    # A temp left by a process killed mid-write is a partial file and is never promoted.
+    if tmp.exists():
+        tmp.unlink()  # EXEMPT-DU: transient-intermediate
+    stores = [xr.open_zarr(parts[k], consolidated=False) for k in sorted(parts)]
+    try:
+        ds = xr.concat(stores, dim="timestep_min")
+        try:
+            write_netcdf(ds, tmp, compression_level)
+        except BaseException:
+            if tmp.exists():
+                tmp.unlink()  # EXEMPT-DU: transient-intermediate
+            raise
+    finally:
+        for store in stores:
+            store.close()
+    os.replace(tmp, final)
+    _publish_flag_crash_safe(flag)
+    from hhemt.du_sentinels import delete_and_account
+
+    delete_and_account([chapters], scope_dir=scenario_dir, scope="scenario")
 
 
 def load_triton_output_w_xarray(rds_dem, f_triton_output, varname, raw_out_type):

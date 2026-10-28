@@ -36,8 +36,6 @@ src/hhemt/eda/_context.py	system_overview.py:138	hhemt.eda.load_eda_context
 src/hhemt/eda/compute_sensitivity.py	analysis_validation.py:55	hhemt.eda.check_cross_hardware_magnitude
 src/hhemt/eda/compute_sensitivity.py	analysis_validation.py:55	hhemt.eda.check_rank_sensitivity
 src/hhemt/eda/compute_sensitivity.py	analysis_validation.py:55	hhemt.eda.check_resume_sensitivity
-src/hhemt/eda/cross_sim_identity.py	_config_diff.py:898	hhemt.eda.check_cross_sim_identity
-src/hhemt/eda/raw_resume_identity.py	process_simulation.py:1842	hhemt.eda.check_raw_b4b
 src/hhemt/experiment_bundle.py	orchestration.py:381	hhemt.experiment_bundle.run_experiment
 src/hhemt/experiment_bundle.py	toolkit.py:309	hhemt.experiment_bundle.run_experiment
 src/hhemt/experiments.py	_emit.py:844	hhemt.experiments.TRITON_SWMM_experiment

@@ -1,9 +1,13 @@
 """
-Production examples for TRITON-SWMM toolkit.
+Turn a case study or a published bundle into a runnable TRITON-SWMM experiment.
 
-This module provides utilities for loading and running production examples.
-Examples are organized as case studies (e.g., Norfolk coastal flooding) with
-associated HydroShare data and configuration templates.
+The problem: a user should not have to assemble system and analysis configs by hand to
+run a known example or to reproduce someone else's published run. This module builds a
+ready ``TRITON_SWMM_experiment`` (system + analysis) two ways. ``from_case_study`` fills
+an in-repo case study's config templates (for example Norfolk coastal flooding) and
+fetches its data from the case's host (HydroShare or Zenodo). ``from_doi`` fetches a
+published reprex bundle by DOI or PID, reconstitutes its configs, and places or rebuilds
+the container images it needs.
 
 Generic API (for any case study):
     from hhemt.experiments import TRITON_SWMM_experiment
@@ -17,6 +21,8 @@ Generic API (for any case study):
         case_config_filename="case.yaml",
         weather_events_to_simulate="hurricane_irene_event_index.csv",
         analysis_description="Single Simulation of Hurricane Irene 8-27-2011",
+        # hhemt_sha is the commit you run: `git rev-parse HEAD`
+        hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT",
     )
     system = example.system
 
@@ -33,7 +39,7 @@ Adding New Case Studies:
 
     class MiamiExample:
         @classmethod
-        def load(cls, download_if_exists=False, example_data_dir=None):
+        def load(cls, download_if_exists=False, example_data_dir=None, *, hhemt_sha):
             return TRITON_SWMM_experiment.from_case_study(
                 case_name="miami_flooding",
                 system_config_template="template_system_config.yaml",
@@ -43,6 +49,7 @@ Adding New Case Studies:
                 analysis_description="Miami flooding example",
                 download_if_exists=download_if_exists,
                 example_data_dir=example_data_dir,
+                hhemt_sha=hhemt_sha,
             )
 
 For test infrastructure (synthetic weather, isolated test directories),
@@ -94,11 +101,13 @@ from hhemt.config.loaders import (
 from hhemt.config.system import system_config
 from hhemt.exceptions import ConfigurationError, ProcessingError
 
-#: The published surface of this module. Declared because `docs/reference/api.md`
-#: renders `::: hhemt.experiments` and `scripts/check_autodoc_coverage.py` derives
-#: its expected set from each rendered module's `__all__`: without this the
-#: directive contributes ZERO expected symbols and the gate certifies a surface
-#: that excludes the class every tutorial's first line imports.
+#: The published surface of this module. The API reference (`docs/reference/api.md`
+#: and its `api-*.md` pages) renders `::: hhemt.experiments`, and `scripts/check_autodoc_coverage.py` reads this list
+#: two ways. Its anchor check takes the expected set from `__all__` when one is declared,
+#: falling back to the module's public top-level defs, so this list pins that set to
+#: exactly these names rather than to whatever is defined at module level. Its docstring
+#: check reads `__all__` ONLY, so without this list no symbol here would be checked for an
+#: empty docstring.
 __all__ = [
     "TRITON_SWMM_experiment",
     "NorfolkIreneExperiment",
@@ -132,20 +141,22 @@ class TRITON_SWMM_experiment:
         Args:
             cfg_system_yaml: Path to system configuration YAML
             cfg_analysis_yaml: Path to analysis configuration YAML
-            case_name: In-repo case-study name, used to resolve the packaged
-                ``test_data/{case_name}/`` tree. ``None`` for a DOI-ingested bundle
+            case_name: In-repo case-study name, used to resolve the repository's
+                ``test_data/{case_name}/`` tree, which is not package data, so it is
+                present only in a source checkout. ``None`` for a DOI-ingested bundle
                 (``from_doi``), which carries no in-repo test-data tree — the
                 ``retrieve_test_data_directory`` lookup is skipped and
                 ``test_case_directory`` is ``None``; ``from_doi`` sets
                 ``bundle_root`` instead.
-            hpc_system_config_yaml: Path to the per-cluster ``hpc_system_config.yaml``
-                (ADR-6). The bundle NEVER carries this — ADR-9 makes the reproducer's
-                HPC-specific config an external input by design — so ``from_doi``
-                acquires it and passes it here. REQUIRED for a container-mode
-                experiment (``execution_environment: container``): the ContainerSpec
-                that renders ``apptainer exec {sif}`` lives on it
-                (``config/hpc_system.py::ContainerSpec``). ``None`` (default) keeps
-                today's native behavior byte-identical.
+            hpc_system_config_yaml: Path to the per-cluster ``hpc_system_config.yaml``.
+                The bundle NEVER carries this: the reproducer's HPC-specific config is an
+                external input by design, because it names the reproducer's own cluster,
+                account and image root. So ``from_doi`` acquires it and passes it here.
+                REQUIRED for a container-mode experiment (``execution_environment:
+                container``): the ContainerSpec that renders ``apptainer exec {sif}`` lives
+                on it (``config/hpc_system.py::ContainerSpec``). ``None`` (default) is the
+                native path: the analysis gets no HPC config, so no ContainerSpec resolves
+                and no container prefix is applied.
         """
         self.system = TRITONSWMM_system(cfg_system_yaml)
         self.analysis = TRITONSWMM_analysis(
@@ -155,8 +166,9 @@ class TRITON_SWMM_experiment:
         )
         # Link back, mirroring the link-back in `Toolkit.from_configs` and in the
         # test-case-builder fixture.
-        # Without it `system.analysis` raises RuntimeError (system.py:218-221) and
-        # `Toolkit(exp.system)` is impossible (Toolkit.__init__ reads system.analysis).
+        # Without it the `TRITONSWMM_system.analysis` property raises RuntimeError ("No
+        # analysis defined") and `Toolkit(exp.system)` is impossible (Toolkit.__init__
+        # reads system.analysis).
         # This constructor was the sole system+analysis pair-builder omitting it.
         self.system._analysis = self.analysis
         self.test_case_directory = self.retrieve_test_data_directory(case_name) if case_name is not None else None
@@ -175,9 +187,11 @@ class TRITON_SWMM_experiment:
         Returns
         -------
         Path
-            The ``test_data/{case_name}/`` directory beside the installed
-            package. The path is returned whether or not it exists; callers that
-            need the data present are responsible for downloading it.
+            The ``test_data/{case_name}/`` directory two levels above the ``hhemt``
+            package directory: the repository root in a src-layout checkout.
+            ``test_data/`` is not package data, so from an installed wheel the path does
+            not exist. The path is returned whether or not it exists; nothing here
+            creates or downloads it.
         """
         test_data_dir = files(cnst.APP_NAME).parents[1].joinpath(f"test_data/{case_name}/")  # type: ignore
         return test_data_dir
@@ -201,7 +215,7 @@ class TRITON_SWMM_experiment:
 
         This is the high-level API for loading any case study. It handles:
         - Template filling with data directory paths
-        - HydroShare data download
+        - Data download from the case's host (HydroShare or Zenodo, per its case manifest)
         - System and analysis configuration generation
 
         Parameters
@@ -220,13 +234,15 @@ class TRITON_SWMM_experiment:
         analysis_description : str
             Free-text description written verbatim into the generated analysis config.
         download_if_exists : bool, default False
-            Re-download the HydroShare data even when it is already present.
+            Re-download the case study's data from its host even when it is already present.
         example_data_dir : Path or None
             Override for the data storage location, when one is given.
         hhemt_sha : str
-            REQUIRED, keyword-only ([Q331]): the FULL 40-hex hhemt commit this experiment runs,
+            REQUIRED, keyword-only: the FULL 40-hex hhemt commit this experiment runs,
             written into the generated analysis config's ``hhemt_sha`` field over the template's
-            non-40-hex FILL-ME placeholder — nothing defaults it.
+            non-40-hex placeholder (Norfolk's reads ``REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT``)
+            — nothing defaults it, because the analysis refuses to construct when the running
+            toolkit is at a different commit.
 
         Returns
         -------
@@ -298,11 +314,16 @@ class TRITON_SWMM_experiment:
         config-declared simulation input at its bundle-relative location, so a
         self-contained bundle reconstitutes to inputs that all exist on disk. That is
         a from-scratch runnable experiment, dependent externally only on the
-        reproducer's user-specific and HPC-specific configs and on the container SIF,
-        which is built on ingest from the carried ``.def`` recipe or transferred in a
-        separate phase. A bundle emitted with a ``bundle_exclude_config`` opt-out
-        carries the excluded inputs by reference, via an ``input_deposit`` block
-        fetched on ingest.
+        reproducer's user-specific and HPC-specific configs and, for a container-mode
+        bundle, on the container images: the bundle carries each image's producer
+        manifest (not a ``.def`` recipe and not the image), and ingest keeps an image
+        already present under the reproducer's ``container.sif_root`` or rebuilds it on
+        this checkout. A bundle emitted with a ``bundle_exclude_config`` opt-out
+        carries the excluded inputs by reference, via an ``input_deposit`` block per
+        input. On ingest an input whose block carries a ``contentUrl`` is fetched and
+        sha256-verified; one whose block has no ``contentUrl`` (licensed or restricted
+        data) is not fetched, and the ingest stops with a ``ProcessingError`` that names
+        its citation and the path to place it at.
 
         Trust boundary: ingesting a DOI and running it executes shell derived from the
         fetched config, so ingest only deposits you trust. ``expected_sha256`` pins the
@@ -329,15 +350,13 @@ class TRITON_SWMM_experiment:
             outputs the toolkit creates at setup rather than bundled inputs, and they
             must be non-null for ``TRITONSWMM_system`` to construct.
         hpc_system_config_yaml : Path or None
-            Path to your cluster's ``hpc_system_config.yaml``. Resolution precedence
-            is this argument, then ``$HHEMT_HPC_SYSTEM_CONFIG``, then None. The bundle
-            never carries it, because a DOI-downloaded bundle is contracted to run
-            with no external dependency beyond the reproducer's user-specific and
-            HPC-specific configs. It is required for a container-mode bundle, because
-            the ContainerSpec that renders ``apptainer exec {sif}`` lives on it. Start
-            from a worked in-tree example under
-            ``test_data/norfolk_coastal_flooding/`` or from the shape sketched in the
-            bundle's ``hpc_system_config.template.yaml``.
+            Path to your cluster's ``hpc_system_config.yaml``. It is read only from
+            this argument; no environment variable is consulted, and None means no HPC
+            config (the native path). The bundle never carries it, because it describes
+            the reproducer's own cluster: its partitions, account and container-image
+            directory. It is required for a container-mode bundle, because the
+            ContainerSpec that renders ``apptainer exec {sif}`` lives on it.
+            Start from the shape sketched in the bundle's ``hpc_system_config.template.yaml``.
 
             On the container path ``from_doi`` writes a derived copy at
             ``{software_dir}/hpc_system_config.resolved.yaml`` whose
@@ -364,7 +383,7 @@ class TRITON_SWMM_experiment:
             bundle's carried images are not already present under the reproducer's
             ``container.sif_root``: each missing image is REBUILT through the same transaction
             the producer used, on THIS checkout — which must be at the carried ``hhemt_sha``
-            (a different commit, or a wheel install, is refused; item 11).
+            (a different commit, or a wheel install, is refused with ``ConfigurationError``).
         """
         from hhemt.bundle import Bundle
         from hhemt.bundle._emit import (
@@ -408,7 +427,7 @@ class TRITON_SWMM_experiment:
         # the directory carries no bundle_manifest.json.
         Bundle.from_directory(bundle_root)
 
-        # R3: fail closed unless the crate names a runnable workflow (mainEntity).
+        # Fail closed unless the crate names a runnable workflow (mainEntity).
         cls._assert_bundle_has_workflow(bundle_root)
 
         # Reconstitute the runnable config pair with bundle-relative paths resolved
@@ -423,17 +442,19 @@ class TRITON_SWMM_experiment:
 
         # Materialize-or-fail: a self-contained bundle carries every declared input, so
         # this passes; it fails closed (naming every absent input) on a malformed/partial
-        # bundle. This is the only real gate — the load-time existence check is inert on
-        # the reconstituted YAML string values.
+        # bundle. It runs before any config model is constructed over the reconstituted
+        # YAML, so it is the first existence check these paths meet, and the only one that
+        # fetches by-reference inputs and reports a missing one with its citation.
         cls._assert_declared_inputs_exist(system_config_path, analysis_config_path)
 
-        # ADR-6/ADR-9: the HPC config is the reproducer's, never bundle-carried.
+        # The HPC config is the reproducer's own and is never carried by the bundle.
         hpc_cfg_path = cls._resolve_hpc_system_config(hpc_system_config_yaml)
 
-        # ADR-21: resolve every carried image under the reproducer's container.sif_root,
-        # rebuilding any that is absent, then point a DERIVED config copy at that root.
-        # Container-mode only — a native bundle skips this
-        # entirely and its behavior is byte-identical to today (R9).
+        # Resolve every carried image under the reproducer's container.sif_root (or
+        # {software_dir}/sifs when the config names none), rebuilding any that is absent,
+        # then point a DERIVED config copy at that root. Container-mode only — a native
+        # bundle skips this block entirely, so a native ingest never needs an HPC config or
+        # an image; a container-mode ingest given no HPC config is refused just below.
         cfg_analysis_dict = read_yaml(analysis_config_path)
         if cfg_analysis_dict.get("execution_environment") == "container":
             if hpc_cfg_path is None:
@@ -442,19 +463,17 @@ class TRITON_SWMM_experiment:
                     message=(
                         "This bundle is container-mode (execution_environment='container') "
                         "but no hpc_system_config was supplied. The bundle deliberately does "
-                        "not carry one (ADR-9: the reproducer's HPC-specific config is an "
-                        "external input). Pass hpc_system_config_yaml=... (or `hhemt ingest "
-                        "--hpc-system-config ...`), or set $HHEMT_HPC_SYSTEM_CONFIG. Start "
-                        "from a worked example: "
-                        "test_data/norfolk_coastal_flooding/hpc_system_config_uva.yaml, or "
-                        f"the shape sketched at {bundle_root}/hpc_system_config.template.yaml."
+                        "not carry one, because it describes your own cluster: its partitions, "
+                        "account and container-image directory. Pass hpc_system_config_yaml=... "
+                        "(or `hhemt ingest --hpc-system-config ...`). "
+                        f"Start from the shape sketched at {bundle_root}/hpc_system_config.template.yaml."
                     ),
                     config_path=None,
                 )
             resolved_software_dir = software_dir or (bundle_root / "software")
-            # SIF quest (ADR-21): the bundle carries the PRODUCER MANIFEST of every image its matrix
+            # The bundle carries the PRODUCER MANIFEST of every image its matrix
             # resolved to (bundle_manifest.json["sif_manifests"]). Place each at its identity path
-            # under the reproducer's container.sif_root, rebuilding any that is absent through the
+            # under _sif_root (resolved just below), rebuilding any that is absent through the
             # same transaction on THIS checkout (which must be at the carried hhemt_sha), then write
             # a DERIVED config that carries sif_root. No .def and no source tree are carried.
             from hhemt.config.hpc_system import hpc_system_config as _hpc_model
@@ -470,9 +489,10 @@ class TRITON_SWMM_experiment:
                 raise ConfigurationError(
                     field="bundle_manifest.json",
                     message=(
-                        "container-mode bundle carries no sif_manifests: it was emitted by a pre-ADR-21 "
-                        "toolkit (BUNDLE_SCHEMA_VERSION < 6) or before the producer ran hhemt build-sifs. "
-                        "Re-emit from a producer whose images are built."
+                        "this container-mode bundle's bundle_manifest.json carries no sif_manifests "
+                        "list, so the container images its simulations ran in cannot be identified. "
+                        "Fetch an unmodified copy of the bundle, or ask its producer to re-emit it "
+                        "with this toolkit version."
                     ),
                     config_path=None,
                 )
@@ -511,29 +531,18 @@ class TRITON_SWMM_experiment:
 
     @classmethod
     def _resolve_hpc_system_config(cls, override: Path | None = None) -> Path | None:
-        """Resolve the reproducer's hpc_system_config (ADR-6/ADR-9 external input).
+        """Resolve the reproducer's hpc_system_config, an external input the bundle never carries.
 
-        Precedence: explicit ``override`` > ``$HHEMT_HPC_SYSTEM_CONFIG`` > None. Mirrors
-        the proven-green operator chain in
-        ``scripts/experiments/container_validation.py::_resolve_hpc_system_config`` (:86-119),
-        MINUS its ``$HHEMT_DEPLOYMENT_CONFIG/hpc/hpc_system_config_{cluster}.yaml`` tier —
-        that tier needs a ``cluster`` name ``from_doi`` does not have, and the private-estate
-        layout must not leak into library code.
-
-        Returns None when neither source is set (the native path — unchanged behavior).
-        Raises FileNotFoundError when a source names a path that does not exist, so a typo
-        fails loudly rather than silently degrading to native.
+        ``override`` is the ONLY source: no environment variable is consulted, so the call
+        that ran names the config it used. Returns None when ``override`` is None (the
+        native path). Raises FileNotFoundError when ``override`` names a path that is not a
+        file, so a typo fails loudly rather than silently degrading to native. Otherwise
+        prints the path it chose and returns it resolved absolute.
         """
-        import os
-
-        if override is not None:
-            path = Path(override).expanduser()
-            source = "hpc_system_config_yaml argument"
-        elif os.environ.get("HHEMT_HPC_SYSTEM_CONFIG"):
-            path = Path(os.environ["HHEMT_HPC_SYSTEM_CONFIG"]).expanduser()
-            source = "$HHEMT_HPC_SYSTEM_CONFIG"
-        else:
+        if override is None:
             return None
+        path = Path(override).expanduser()
+        source = "hpc_system_config_yaml argument"
         if not path.is_file():
             raise FileNotFoundError(f"hpc_system_config not found at {path} (from {source}).")
         print(f"[Ingest] hpc_system_config: {path} (from {source})", flush=True)
@@ -541,9 +550,11 @@ class TRITON_SWMM_experiment:
 
     @classmethod
     def _set_sif_root(cls, hpc_cfg_path: Path, *, sif_root: Path, target_path: Path) -> Path:
-        """ADR-21: write a DERIVED hpc_system_config whose ``container.sif_root`` names the
-        directory the carried images were placed under; the retired pointer keys are dropped so
-        a carried pre-quest config does not trip the hard refusal. A derived FILE is required:
+        """Write a DERIVED hpc_system_config whose ``container.sif_root`` names the
+        directory the carried images were placed under, and return its path. The retired
+        pointer keys (``sif_path``, ``sif_paths_by_arch``, ``sif_sha256``) are dropped so a
+        config written before they were retired does not trip the hard refusal those keys
+        now raise. A derived FILE is required:
         every downstream consumer re-loads the YAML from the path it is handed. The user's
         original config is never modified."""
         cfg = read_yaml(hpc_cfg_path)
@@ -606,9 +617,10 @@ class TRITON_SWMM_experiment:
     ) -> None:
         """For every carried manifest: keep an image already at its identity path under
         ``sif_root`` whose manifest records the carried digest; otherwise REBUILD it through the
-        standard build DAG (Specs 9-13) on this checkout, refusing when the running toolkit is not
-        at the carried ``hhemt_sha``. Runs the DAG in the FOREGROUND (an ingest is an operator
-        action and `hhemt ingest` is its login-node driver); no experiment is submitted here."""
+        standard build DAG (``hhemt.sif.driver.run_build_dag``) on this checkout, refusing when
+        the running toolkit is not at the carried ``hhemt_sha``. Runs the DAG in the FOREGROUND
+        (an ingest is an operator action and `hhemt ingest` is its login-node driver); no
+        experiment is submitted here."""
         from hhemt.config.loaders import yaml_to_model
         from hhemt.config.sif_build import sif_build_config
         from hhemt.sif.driver import run_build_dag
@@ -726,23 +738,27 @@ class TRITON_SWMM_experiment:
 
     @staticmethod
     def _assert_bundle_has_workflow(bundle_root: Path) -> None:
-        """R3: fail closed unless the bundle's RO-Crate names a runnable workflow.
+        """Fail closed unless the bundle's RO-Crate names a runnable workflow.
 
         Reads the crate ROOT entity's ``mainEntity`` ``@id`` (the placement
         ``metadata.upgrade_doc_to_workflow_run_crate`` writes) and verifies the
-        referenced workflow file exists under ``bundle_root``. A crate that is absent,
-        carries no ``mainEntity``, or points at a missing workflow file is a mis-pointed
-        ADR-11 data deposit rather than a runnable reprex bundle — a key-presence test
-        alone is a weaker gate than "this bundle carries a runnable workflow"."""
+        referenced workflow file exists under ``bundle_root``. Each failure raises
+        ``ProcessingError``: an emitted bundle with no crate (emit copies the crate only
+        when the analysis directory has one), a crate with no root ``mainEntity`` (a plain RO-Crate
+        rather than a Workflow-Run-Crate), or a ``mainEntity`` naming a workflow file the
+        bundle does not carry. A data-only deposit never reaches this check: the only
+        caller, ``from_doi``, runs ``Bundle.from_directory`` first, which refuses a
+        directory with no ``bundle_manifest.json``. A key-presence test alone is a weaker
+        gate than "this bundle carries a runnable workflow"."""
         crate_path = bundle_root / "ro-crate-metadata.json"
         if not crate_path.exists():
             raise ProcessingError(
                 operation="doi_ingest_crate",
                 filepath=str(crate_path),
                 reason=(
-                    "the fetched bundle carries no ro-crate-metadata.json; it is not a "
-                    "runnable reprex bundle (likely a mis-pointed ADR-11 data deposit). "
-                    "Ingest the reprex-bundle DOI, not the data-deposit DOI."
+                    "the fetched bundle carries no ro-crate-metadata.json, so it is not a "
+                    "runnable reprex bundle. Ingest the DOI of a bundle deposited with "
+                    "`hhemt publish --reprex-bundle`."
                 ),
             )
         graph = json.loads(crate_path.read_text()).get("@graph", [])
@@ -754,9 +770,9 @@ class TRITON_SWMM_experiment:
                 operation="doi_ingest_crate",
                 filepath=str(crate_path),
                 reason=(
-                    "the fetched crate has no root `mainEntity` (not a Workflow-Run-"
-                    "Crate); it is a plain RO-Crate or a mis-pointed ADR-11 data "
-                    "deposit, not a runnable reprex bundle."
+                    "the fetched crate's root entity has no `mainEntity` (it is not a "
+                    "Workflow-Run-Crate), so the bundle names no runnable workflow. Ingest the "
+                    "DOI of a bundle deposited with `hhemt publish --reprex-bundle`."
                 ),
             )
         workflow_path = bundle_root / workflow_id
@@ -773,7 +789,7 @@ class TRITON_SWMM_experiment:
 
     @classmethod
     def _materialize_input_deposits(cls, bundle_root: Path, missing: list[tuple[str, str]]) -> list[tuple[str, str]]:
-        """Fetch the excluded inputs a bundle carries BY REFERENCE (ADR-20, as amended).
+        """Fetch the excluded inputs a bundle carries BY REFERENCE.
 
         This is outcome 2 of the three-outcome materialize gate. For each declared-but-absent
         input, look up its ``input_deposit`` block in ``bundle_manifest.json``:
@@ -850,12 +866,14 @@ class TRITON_SWMM_experiment:
         ``reconstitute_runnable_analysis_config``, read the bundle archive with a bare
         ``yaml.safe_load`` and write it back with ``yaml.safe_dump`` — they construct no
         model, so no validator sees the values. (2) Each file's first model construction
-        happens LATER: ``system_config.yaml`` in ``TRITONSWMM_system(...)`` and
-        ``analysis_config.yaml`` in ``TRITONSWMM_analysis(...)``, both after this gate has
-        run. This gate is therefore the first and only check they meet, and it is the only
-        one that fetches via ``contentUrl``, sha256-verifies, and reports citation +
-        place-it-at. Do NOT read this as "every bundle-archive read is covered" — it is
-        not, and the two bare reads above are the counterexamples. It is an ORDERING
+        happens AFTER this gate has run: on the container path ``analysis_config.yaml`` is
+        first loaded by ``yaml_to_model`` in ``_assert_carried_covers_matrix``, and
+        otherwise by ``TRITONSWMM_analysis(...)``; ``system_config.yaml`` is first loaded
+        by ``TRITONSWMM_system(...)``. This gate is therefore the FIRST existence check
+        they meet (later model loads re-check existence), and it is the only one that
+        fetches via ``contentUrl``, sha256-verifies, and reports citation + place-it-at.
+        Do NOT read this as "every bundle-archive read is covered" — it is not, and the
+        two bare reads above are the counterexamples. It is an ORDERING
         property of THIS call path.
 
         Only CARRIED-INPUT fields are checked (the same ``BUNDLE_RELATIVE`` family the
@@ -975,7 +993,7 @@ class TRITON_SWMM_experiment:
         weatherpath = placeholder_weather_path.parent / weather_events_to_simulate
         filled_yaml_data["weather_events_to_simulate"] = str(weatherpath)
         filled_yaml_data["analysis_description"] = analysis_description
-        filled_yaml_data["hhemt_sha"] = hhemt_sha  # [Q331]: over the template's FILL-ME placeholder; never defaulted
+        filled_yaml_data["hhemt_sha"] = hhemt_sha  # over the template's non-40-hex placeholder; never defaulted
         cfg_system = load_system_config(cfg_system_yaml)
         analysis_id = filled_yaml_data["analysis_id"]
         cfg_yaml = Path(cfg_system.system_directory) / f"config_analysis_{analysis_id}.yaml"
@@ -1024,13 +1042,14 @@ class TRITON_SWMM_experiment:
         """
         Load system configuration for any case study.
 
-        Handles template filling, HydroShare download, and config generation.
+        Handles template filling, download from the case's host (HydroShare or Zenodo, per
+        its case manifest), and config generation.
 
         Args:
             case_name: Case study name
             system_config_template: System config template filename
             case_config_filename: Case metadata filename
-            download_if_exists: If True, re-download HydroShare data
+            download_if_exists: If True, re-download the case data from its host
             example_data_dir: Optional data directory override
             verbose: If True, print download messages
 
@@ -1056,9 +1075,9 @@ class TRITON_SWMM_experiment:
         if Path(mapping["DATA_DIR"]).exists() and not download_if_exists:
             pass
         else:
-            if verbose:
-                print(f"Download example data to {mapping['DATA_DIR']} using Hydroshare")
             if case_manifest.host == "zenodo":
+                if verbose:
+                    print(f"Download example data to {mapping['DATA_DIR']} using Zenodo")
                 cls._download_data_from_zenodo(
                     case_manifest,
                     Path(mapping["HYDROSHARE_ROOT"]),
@@ -1066,6 +1085,8 @@ class TRITON_SWMM_experiment:
                     expected_manifest=case_manifest.manifest,
                 )
             else:
+                if verbose:
+                    print(f"Download example data to {mapping['DATA_DIR']} using HydroShare")
                 hs = cls._connect_to_hydroshare(res_identifier)
                 cls._download_data_from_hydroshare(
                     res_identifier,
@@ -1140,13 +1161,16 @@ class TRITON_SWMM_experiment:
         hs=None,
         validate: bool = True,
     ) -> Path:
-        """Generic host-dispatched deposit fetch (ADR-12/C7; R4) — the single
-        implementation the case-study data fetch AND the bundle-zip ingestion both route
-        through. Returns the PAYLOAD ROOT: ``dest`` for Zenodo (flat files under their
-        record keys), the extracted BAG ROOT (renamed to ``dest``) for HydroShare
-        (deposited files under ``data/contents/``). Both hosts run the host-agnostic
-        streaming-sha256 ``_verify_manifest`` against the returned root, preserving the
-        ``case manifest sha256 uses streaming chunked read`` stipulation.
+        """Generic host-dispatched deposit fetch — the single implementation the
+        case-study data fetch AND the bundle-zip ingestion both route through, so the two
+        cannot drift in how they resolve, cache or verify a deposit. Returns the PAYLOAD
+        ROOT: ``dest`` for Zenodo (flat files under their record keys), the extracted BAG
+        ROOT (renamed to ``dest``) for HydroShare (deposited files under ``data/contents/``).
+        The host-agnostic ``_verify_manifest`` checks the returned root against
+        ``expected_manifest`` — always for HydroShare, and for Zenodo only when
+        ``validate=True`` (the default). It reads each file in 1 MiB chunks so a multi-GB
+        asset never sits whole in memory, and produces digests identical to a whole-file
+        read.
 
         Contract points the seam owns: (i) host-key resolution — Zenodo resolves
         ``pid or doi.rsplit('zenodo.', 1)[-1]`` and rejects a non-numeric record id
@@ -1254,10 +1278,11 @@ class TRITON_SWMM_experiment:
     def _fetch_file_by_url(cls, url: str, dest: Path, *, expected_sha256: str | None = None) -> Path:
         """Streaming 1 MiB-chunk download of a single URL to ``dest`` (the digest core).
 
-        Used by the Zenodo per-file branch of ``_fetch_deposit_files`` AND by the crate's
-        by-reference SIF fetch (``downloadUrl`` + ``sha256``), which is a URL fetch that
-        cannot be expressed through the ``(host, doi|pid)`` deposit signature. When
-        ``expected_sha256`` is given, the downloaded file is sha256-verified."""
+        Used by the Zenodo per-file branch of ``_fetch_deposit_files`` AND by
+        ``_materialize_input_deposits``'s fetch of an input the bundle carries by reference
+        (its ``contentUrl``), which is a URL fetch that cannot be expressed through the
+        ``(host, doi|pid)`` deposit signature. When ``expected_sha256`` is given, the
+        downloaded file is sha256-verified and a mismatch raises ``ProcessingError``."""
         import requests  # explicit dep declared in pyproject
 
         dest = Path(dest)
@@ -1299,8 +1324,8 @@ class TRITON_SWMM_experiment:
         """Raise ProcessingError if any manifest-declared file is absent or sha256-mismatched.
 
         Keys in ``expected_manifest`` are POSIX paths relative to ``bag_root`` (the
-        extracted bag root — the dir containing ``data/`` and the bagit control files,
-        i.e. the dir ``_download_data_from_hydroshare`` names ``unzipped_folder``). This
+        extracted bag root — the dir containing ``data/`` and the bagit control files, which
+        ``_fetch_deposit_files`` then renames to ``dest``; for Zenodo it is ``dest``). This
         is the SAME key base ``generate_case_manifest.compute_manifest`` uses, so a
         manifest computed against the bag root verifies against the bag root. An empty
         or ``None`` manifest is a no-op (the Norfolk pre-population ``manifest: {}`` state).
@@ -1326,7 +1351,7 @@ class TRITON_SWMM_experiment:
                     filepath=str(fpath),
                     reason=(
                         f"sha256 mismatch for {rel_name}: expected {expected_sha}, got {actual_sha}. "
-                        "The Hydroshare resource may have been reorganized; "
+                        "The deposit may have been reorganized; "
                         "regenerate case.yaml via generate_case_manifest if intended."
                     ),
                 )
@@ -1357,8 +1382,8 @@ class TRITON_SWMM_experiment:
                 operation="hydroshare_connect",
                 filepath=None,
                 reason=(
-                    "hsclient is not installed. Install optional dependencies with "
-                    "`pip install .[tests]`. Alternatively, download the data manually: "
+                    "hsclient, which hhemt requires, could not be imported, so this install is "
+                    "incomplete; reinstall hhemt to restore it. Alternatively, download the data manually: "
                     f"https://www.hydroshare.org/resource/{res_identifier}/"
                 ),
             )
@@ -1477,7 +1502,7 @@ class NorfolkIreneExperiment:
         example_data_dir : Path or None
             Override for the data directory, when one is given.
         hhemt_sha : str
-            REQUIRED, keyword-only ([Q331]): the FULL 40-hex hhemt commit this experiment runs.
+            REQUIRED, keyword-only: the FULL 40-hex hhemt commit this experiment runs.
 
         Returns
         -------
@@ -1526,7 +1551,7 @@ class NorfolkObservedExperiment:
         hhemt_sha: str,
     ) -> TRITON_SWMM_experiment:
         """
-        Load Norfolk coastal flooding example.
+        Load the Norfolk observed-event ensemble (observed events from years with complete coverage).
 
         Parameters
         ----------
@@ -1535,7 +1560,7 @@ class NorfolkObservedExperiment:
         example_data_dir : Path or None
             Override for the data directory, when one is given.
         hhemt_sha : str
-            REQUIRED, keyword-only ([Q331]): the FULL 40-hex hhemt commit this experiment runs.
+            REQUIRED, keyword-only: the FULL 40-hex hhemt commit this experiment runs.
 
         Returns
         -------
@@ -1543,8 +1568,8 @@ class NorfolkObservedExperiment:
             Instance with the Norfolk system loaded.
         """
 
-        # this method just changes the weather_events_to_simulate
-        # for analysis config
+        # Differs from NorfolkIreneExperiment.load only in the two analysis-config values
+        # below: the weather-event index CSV and the analysis description.
 
         weather_events_to_simulate = "obs_event_summaries_from_yrs_with_complete_coverage.csv"
         analysis_description = "Observed event ensemble"

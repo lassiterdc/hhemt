@@ -1,13 +1,30 @@
-"""Tests for orphan cleanup on analysis.run() — auto-cleanup-removed-members plan.
+"""Tests for orphan cleanup on analysis.run().
+
+An orphan is an on-disk artifact of a sensitivity member that is no longer a row
+of the sensitivity CSV (its member_id is absent from df_setup.index): a member
+directory, a ``_status`` flag, an input-fingerprint file, or a group in the
+master's consolidated tree. While any exist, analysis.run() on the master refuses
+to proceed unless it is called with cleanup_orphans=True.
 
 Covers:
-- find_orphan_status_flags returns flags for member_ids absent from df_setup.index
-- find_orphan_datatree_groups returns member_id strings absent from df_setup.index
+- find_orphan_status_flags and find_orphan_datatree_groups return the synthesized
+  member-999 artifacts; find_orphan_input_fingerprints returns member-999's file and
+  also excludes a present member's (only the fingerprint test checks exclusion)
 - cleanup_all_orphans(dry_run=True, force=False) returns the union without deleting
-- cleanup_all_orphans(dry_run=False, force=True) deletes all three artifact classes
+- cleanup_all_orphans(dry_run=False, force=True) deletes the orphan member dir and
+  flags and removes the whole consolidated tree so it is rebuilt
+- cleanup_all_orphans(dry_run=False, force=False) refuses with ValueError
 - analysis.run(cleanup_orphans=False) raises ConfigurationError when orphans exist
-- analysis.run(cleanup_orphans=True) deletes orphans then proceeds to submit_workflow
-- CLI cleanup-orphans --apply --force deletes all three artifact classes
+- analysis.run(cleanup_orphans=True, dry_run=True) deletes nothing
+- analysis.run(cleanup_orphans=True, dry_run=False) deletes orphans, then proceeds
+  to a (mocked) submit_workflow
+- analysis.run() on the shared cached sensitivity tree, and with
+  cleanup_orphans=True on a non-sensitivity analysis, does not raise. In this file,
+  orphans are synthesized only into an isolated clone
+  (sensitivity_analysis_with_orphans), never into the shared tree. Not established:
+  that no test elsewhere leaves orphans in the shared tree.
+
+The CLI ``cleanup-orphans`` command is not exercised in this file.
 """
 
 from __future__ import annotations
@@ -18,22 +35,31 @@ import pytest
 
 from hhemt.exceptions import ConfigurationError
 
+# Every node here either reaches the compile tier through its fixtures (and is marked
+# compile_tier for that at collection) or builds a synthetic case into the shared
+# cache (the two *_cached nodes). The fast tier (Gate A) deselects both marks, so
+# this module-wide mark is what keeps the two cache-bearing nodes out of it.
+# Not established: whether any node here actually spawns a Snakemake subprocess.
 pytestmark = pytest.mark.requires_snakemake_subprocess
 
 
 @pytest.fixture
-def sensitivity_analysis_with_orphans(synth_sensitivity_analysis_cached):
+def sensitivity_analysis_with_orphans(synthetic_sensitivity_completed_isolated):
     """Yield a TRITONSWMM_analysis whose on-disk state contains orphan member artifacts.
 
-    Builds on the cached sensitivity fixture, then synthesizes:
+    Builds on an isolated clone of the completed sensitivity fixture, then
+    synthesizes artifacts for a member 999 that the sensitivity CSV does not have:
     - A members/member_999/ directory (orphan dir)
-    - _status/b_prepare_member-999_evt-foo_complete.flag
-    - _status/c_run_tritonswmm_member-999_evt-foo_complete.flag
-    - _status/e_consolidate_member-999_complete.flag
-    - _status/member-999_inputs.json (orphan input-fingerprint, Gotcha 17)
-    - sensitivity_datatree.zarr/member_999/ subdirectory if the parent zarr exists
+    - six _status flags for member-999: b_prepare, c_run for each of the three
+      model types, d_process, and e_consolidate
+    - _status/member-999_inputs.json (orphan input-fingerprint: the workflow
+      builder writes one per member when it builds the Snakefile, so removing a
+      member's CSV row orphans it like the member's dir and flags)
+    - a member_999/ group directory inside the master's consolidated tree
+      (``analysis_paths.sensitivity_datatree_zarr``, which resolves to
+      ``experiment_datatree.zarr``), if that store exists
     """
-    analysis = synth_sensitivity_analysis_cached
+    analysis = synthetic_sensitivity_completed_isolated.experiment
     analysis_dir = analysis.analysis_paths.analysis_dir
 
     orphan_member_dir = analysis_dir / "members" / "member_999"
@@ -53,7 +79,7 @@ def sensitivity_analysis_with_orphans(synth_sensitivity_analysis_cached):
     for f in orphan_flags:
         f.write_text("")
 
-    # Orphan input-fingerprint (Gotcha 17): member-999 absent from df_setup.index.
+    # Orphan input-fingerprint: member-999 absent from df_setup.index.
     (status_dir / "member-999_inputs.json").write_text("{}")
 
     zarr_path = analysis.analysis_paths.sensitivity_datatree_zarr
@@ -77,7 +103,7 @@ def test_find_orphan_datatree_groups(sensitivity_analysis_with_orphans):
     member = sensitivity_analysis_with_orphans.sensitivity
     zarr_path = sensitivity_analysis_with_orphans.analysis_paths.sensitivity_datatree_zarr
     if zarr_path is None or not zarr_path.exists():
-        pytest.skip("sensitivity_datatree.zarr not present in fixture")
+        pytest.skip("analysis_paths.sensitivity_datatree_zarr is not present in fixture")
     orphans = member.find_orphan_datatree_groups()
     assert "999" in orphans
 
@@ -136,9 +162,11 @@ def test_cleanup_all_orphans_force_required(sensitivity_analysis_with_orphans):
 
 def test_run_aborts_when_orphans_and_flag_false(sensitivity_analysis_with_orphans):
     """The orphan gate fires after report_config validation in analysis.run().
-    The fixture has no report_config.sensitivity, so validate_sensitivity_independent_vars
-    would raise its own ConfigurationError before the orphan gate is reached. Mock it
-    out so the orphan-specific ConfigurationError can surface for the assertion."""
+    The fixture's inline report block names the ``benchmarking`` reporting set, and
+    that set's validator calls validate_sensitivity_independent_vars before the
+    orphan gate is reached. The mock isolates the orphan gate from that validator,
+    so the ConfigurationError asserted here can only be the orphan gate's.
+    Not established: whether that validator raises on the isolated clone."""
     analysis = sensitivity_analysis_with_orphans
     with patch("hhemt.config.report.validate_sensitivity_independent_vars"):
         with pytest.raises(ConfigurationError, match="cleanup_orphans=True"):
@@ -146,11 +174,14 @@ def test_run_aborts_when_orphans_and_flag_false(sensitivity_analysis_with_orphan
 
 
 def test_run_dry_run_preserves_all_orphans(sensitivity_analysis_with_orphans):
-    """R1+R4: analysis.run(cleanup_orphans=True, dry_run=True) must NOT delete any
-    orphan artifact. The hardcoded dry_run=False at the cleanup_all_orphans call
-    site (analysis.py) made a dry-run silently and irrecoverably delete orphans;
-    D1 forwards dry_run so a dry-run is a true no-op. Covers all four orphan
-    classes: member dir, _status flag, input-fingerprint, datatree group."""
+    """analysis.run(cleanup_orphans=True, dry_run=True) must NOT delete any
+    orphan artifact. run() passes its own dry_run into cleanup_all_orphans at the
+    orphan gate (analysis.py), so a dry run reports orphans and deletes none. An
+    implementation that passes a fixed dry_run=False there deletes them, silently
+    and irrecoverably, during a call the user asked to be a dry run, and fails this
+    test. Covers all four orphan classes: member dir, _status flag,
+    input-fingerprint, and the datatree group (only when the consolidated store
+    exists; see the fixture)."""
     analysis = sensitivity_analysis_with_orphans
     analysis_dir = analysis.analysis_paths.analysis_dir
     status_dir = analysis_dir / "_status"
@@ -171,9 +202,9 @@ def test_run_dry_run_preserves_all_orphans(sensitivity_analysis_with_orphans):
 
 
 def test_run_cleans_when_flag_true(sensitivity_analysis_with_orphans):
-    # D1: run(dry_run=True) now forwards dry_run into cleanup_all_orphans, so a
-    # dry-run no longer deletes (see test_run_dry_run_preserves_all_orphans). The
-    # "cleans when flag true" intent is the APPLY path — dry_run=False.
+    # run(dry_run=True) forwards dry_run into cleanup_all_orphans, so a dry run
+    # deletes nothing (see test_run_dry_run_preserves_all_orphans). "Cleans when
+    # flag true" is therefore exercised on the APPLY path — dry_run=False.
     analysis = sensitivity_analysis_with_orphans
     with patch("hhemt.config.report.validate_sensitivity_independent_vars"):
         with patch.object(
@@ -199,8 +230,11 @@ def test_run_no_orphans_proceeds_silently(synth_sensitivity_analysis_cached):
 
 
 def test_run_cleanup_orphans_is_noop_on_non_sensitivity(synth_multi_sim_analysis_cached):
-    """cleanup_orphans=True on a non-sensitivity analysis must not raise and must
-    not attempt orphan detection (no `self.sensitivity` exists).
+    """cleanup_orphans=True on a non-sensitivity analysis must not raise.
+
+    The body asserts only that run() does not raise. What skips orphan detection
+    is the gate's ``toggle_sensitivity_analysis`` condition, which is false here,
+    so the gate never reaches ``self.sensitivity``.
     """
     analysis = synth_multi_sim_analysis_cached
     assert not analysis.cfg_analysis.toggle_sensitivity_analysis

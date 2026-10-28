@@ -261,6 +261,13 @@ DOCS_SOURCE_FILENAMES: tuple[tuple[str, str, str, str, int], ...] = (
         "_SUPERSEDED",
         1,
     ),
+    (
+        "reference/output-data-model.md",
+        "analysis_datatree.zarr.superseded-v0025",
+        "hhemt.version_migration.versions.V0025__retire_stranded_regular_store",
+        "_SUPERSEDED",
+        1,
+    ),
 )
 
 #: Filename-shaped inline literals, for the unregistered residual only -- never
@@ -634,10 +641,19 @@ def _scanned_markdown(docs_dir: Path) -> list[Path]:
 
     A UNION of two halves, and both are load-bearing:
 
-    * every `.md` git tracks in the repository. `rglob` over a directory
-      expressed "what is on disk under `docs/`", which was never this gate's
-      population: thirteen tracked `.md` files sit outside it, and published
-      pages name two of them.
+    * every `.md` git tracks in the repository AND whose file is present in
+      the working tree. `rglob` over a directory expressed "what is on disk
+      under `docs/`", which was never this gate's population: thirteen tracked
+      `.md` files sit outside it, and published pages name two of them. The
+      presence test is what keeps a deleted page out before its deletion is
+      staged: `git ls-files` lists every path the index still records, so a
+      page removed from disk whose deletion is not yet staged stays listed,
+      while a staged deletion is already gone from the list. Without the test,
+      every caller that reads each member's text -- the three marker finders,
+      `scan` and `scan_advisory` -- raised `FileNotFoundError`, and
+      `mkdocs build` reaches the three finders through
+      `hooks/marker_governance_table.py`. An absent page ships nothing, so
+      leaving it out narrows nothing that ships.
     * every `.md` on disk under `docs_dir`. The generated config-schema page is
       BUILD OUTPUT and this project gitignores it, so a tracked-only population
       drops it -- which would pin `main()`'s generated-file count at 0 forever
@@ -677,6 +693,7 @@ def _scanned_markdown(docs_dir: Path) -> list[Path]:
             f"the derivation exists to remove."
         ) from exc
     tracked = {repo_root / rel for rel in out.split("\0") if rel}
+    tracked = {path for path in tracked if path.exists()}
     return sorted(tracked | set(docs_dir.resolve().rglob("*.md")))
 
 
@@ -810,7 +827,8 @@ import yaml  # noqa: E402
 
 # ---- The RENDERED-DOCSTRING population ------------------------------------
 #
-# Every member `mkdocstrings` renders on `docs/reference/api.md`, DERIVED FROM
+# Every member `mkdocstrings` renders on `docs/reference/api.md` and its `api-*.md`
+# pages, DERIVED FROM
 # `griffe` -- the library `mkdocstrings` itself uses -- under the options this
 # repository's own `mkdocs.yml` declares. Nothing here models the renderer.
 #
@@ -826,7 +844,7 @@ import yaml  # noqa: E402
 #     `analysis.py` classes rendered unscanned while `experiment_bundle.py`'s
 #     imported `ExperimentConfig` was scanned and rendered nowhere.
 #   * It keyed members by their ORIGIN module. The page keys them by the module
-#     `api.md` declares them through, so 52 of 173 names -- every re-exported
+#     the API pages declare them through, so 52 of 173 names -- every re-exported
 #     symbol, which is to say every name a public API page exists to present --
 #     were names no reader or link ever sees.
 #
@@ -865,7 +883,7 @@ import yaml  # noqa: E402
 # an earlier measurement of it read as smaller than it is.
 #
 # `filters` is READ from `mkdocs.yml` rather than written here, because the
-# population is a property of that file plus `api.md`, and a second copy of a
+# population is a property of that file plus the API pages, and a second copy of a
 # setting is a second thing to drift. An option this cannot model raises rather
 # than being ignored: a silent no-op on a setting somebody wrote deliberately is
 # the same failure that produced the three defects above, wearing a config file.
@@ -1145,7 +1163,7 @@ def rendered_docstrings(src: Path = None, api_page: Path = None) -> list[tuple[s
     if not resolved:
         roots_text = ", ".join(str(root) for root in roots)
         raise PopulationDerivationError(
-            f"no module named on {api_page} resolved under {roots_text} -- nothing to check."
+            f"no module named on {api_page} or its pages resolved under {roots_text} -- nothing to check."
         )
     loader.resolve_aliases(external=False)
 
@@ -1254,7 +1272,7 @@ def published_source_lines(src: Path = SRC_ROOT, api_page: Path = API_PAGE) -> d
     if not resolved:
         roots_text = ", ".join(str(root) for root in roots)
         raise PopulationDerivationError(
-            f"no module named on {api_page} resolved under {roots_text} -- nothing to check."
+            f"no module named on {api_page} or its pages resolved under {roots_text} -- nothing to check."
         )
     loader.resolve_aliases(external=False)
 
@@ -1713,7 +1731,7 @@ def _run(args: argparse.Namespace) -> int:
         f"scanned {len(shipped)} shipped-metadata file(s) for placeholders and line "
         f"citations only: {', '.join(shipped) if shipped else '(none found)'}",
         f"scanned {sum(len(v) for v in spans.values())} published source line(s) across "
-        f"{len(spans)} file(s) from {API_PAGE.name} -- every line the page renders for a "
+        f"{len(spans)} file(s) from {API_PAGE.name} and its api-*.md pages -- every line the pages render for a "
         f"member, which is its SOURCE BODY as well as its docstring because show_source is "
         f"on -- for placeholders and line citations only; their vocabulary and punctuation "
         f"are D22b out-of-scope and are reported under --advisory, never gated",

@@ -18,7 +18,7 @@ def test_compute_sensitivity_set_wires_eda_renderer():
     """R11 (data-level, no compile): the compute-sensitivity set carries the EDA
     adapter as a conditional (has_eda_artifact) renderer landing under Key
     Results, and its bundle template co-sources the category + a .html ext."""
-    s = get_reporting_set("compute-sensitivity")
+    s = get_reporting_set("compute_sensitivity")
     eda_sels = [sel for sel in s.renderer_selection if sel.builder_key == "eda_compute_sensitivity"]
     assert len(eda_sels) == 1, "compute-sensitivity must carry exactly one eda_compute_sensitivity renderer"
     sel = eda_sels[0]
@@ -88,7 +88,7 @@ def test_r12_combined_report_assembles_from_two_sensitivity_masters(synthetic_tw
     assert isinstance(combined, CombinedBundle)
     report = out / "analysis_report.html"
     assert report.exists()
-    assert "Cross-Experiment Compatibility" in report.read_text()
+    assert "Combine Provenance & Compatibility" in report.read_text()
     # Regen round-trips against the bundle root (no re-merge; reads the read-model).
     regen = combined.regenerate_report(format="html")
     assert regen.exists()

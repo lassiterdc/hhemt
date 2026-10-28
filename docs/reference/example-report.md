@@ -18,7 +18,8 @@ The container is chosen by the `format` argument, which defaults to `"zip"`.
 `render_report()` with no argument writes `{analysis_dir}/analysis_report.zip`,
 containing `report.html` plus per-figure `data/*.html` entries. Pass
 `format="html"` for a single self-contained `analysis_report.html` with every
-figure inlined. There is no size-based selection between them.
+figure inlined, larger than the zip but opened with no unzip step. There is no
+size-based selection between them.
 
 ## Sidebar sections
 
@@ -36,8 +37,8 @@ set renders, in sidebar order:
 | Metadata | RO-Crate provenance, the reproduction guide, and SLURM efficiency |
 | Appendix | The `scenario_status.csv` table (emitted by the default set, but not yet declared in its sidebar order) |
 
-The `b4b`, `benchmarking`, `combined`, `compute-sensitivity` and
-`dem-resolution` sets render different selections; each declares its own
+The `compute_config_byte_identity`, `benchmarking`, `combined`, `compute_sensitivity` and
+`dem_resolution` sets render different selections; each declares its own
 sidebar order.
 
 ## Viewing a report you did not generate

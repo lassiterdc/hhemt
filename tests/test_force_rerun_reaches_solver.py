@@ -96,7 +96,7 @@ def test_a2_ragged_frame_is_RETURNED_by_the_enumerator_not_refused(tmp_path):
     EVIDENTIARY BAR: this fails under the PRE-MOVE implementation for the right reason --
     pre-move the enumerator raises ProcessingError here and the call never returns. It is
     the guard against re-introducing a raise in the enumerator, which would break the three
-    eda/raw_resume_identity.py consumers and the four estate consumption points with no
+    eda/raw_byte_identity.py consumers and the four estate consumption points with no
     other test noticing. Same fixture as test_a, deliberately: one fixture, two subjects,
     so a reader can see that the condition did not change -- only who refuses it."""
     _seed_raw(tmp_path, {"MH": 16, "H": 17, "QX": 17, "QY": 17})

@@ -1,13 +1,15 @@
 """Unit tests for per-member system config support.
 
 Tests `_build_unique_system_targets()`, `_create_members()` system assignment,
-and backward compatibility (no `system_config_yaml` column).
+and backward compatibility (no `system_config_yaml` column), plus the
+`_get_config_args` override the per-target Snakemake rules use and the preflight
+validator `_validate_per_member_system_configs`.
 
-End-to-end coverage lands in Phase 4 (`test_PC_07_per_member_system_configs.py`'s
-multi-target sensitivity run). These tests exercise the Phase 1 surface in
-isolation by stubbing `TRITONSWMM_system` instantiation so the dedup tuple
+The compile-target logic is exercised in isolation: `TRITONSWMM_system`
+instantiation is stubbed so the dedup tuple
 `(target_dem_resolution, gpu_hardware, gpu_compilation_backend)` drives the test
-behavior, not real cfg loading.
+behavior, not real cfg loading. Nothing here compiles or runs a solver, so a
+multi-target run end to end is not covered by this file.
 """
 
 import json
@@ -19,17 +21,20 @@ import pandas as pd
 import pytest
 import yaml
 
+import hhemt.analysis as analysis_mod
 from hhemt import sensitivity_analysis as member_mod
+from hhemt.config.analysis import analysis_config
 from hhemt.config.loaders import load_system_config
 from hhemt.exceptions import ConfigurationError
 from hhemt.sensitivity_analysis import (
     TRITONSWMM_sensitivity_analysis,
-    UniqueSystemTarget,
+    _UniqueSystemTarget,
 )
 from hhemt.validation import (
     ValidationResult,
     _validate_per_member_system_configs,
 )
+from tests.test_config_validation import _minimal_analysis_config_dict
 
 
 def _touch(path: Path) -> Path:
@@ -46,11 +51,11 @@ def _make_stub_system(target_dem_resolution: float, gpu_hardware, gpu_compilatio
         "gpu_compilation_backend": gpu_compilation_backend,
     }
     cfg_system = SimpleNamespace(**_fields)
-    # Faithful model_dump/model_dump_json shim (Class A) so the
-    # _build_unique_system_targets YAML-write (sensitivity_analysis.py:1432)
-    # and master-reuse short-circuit (:1436) run without AttributeError.
-    # **_kwargs absorbs the mode="json" call at :1432; the dict/sorted-json
-    # over the stub's own fields gives discriminating equality at :1436.
+    # Faithful model_dump/model_dump_json shim so the YAML write
+    # (`cfg.model_dump(mode="json")`) and the master-reuse short-circuit
+    # (`cfg.model_dump_json() == ...`) in _build_unique_system_targets run without
+    # AttributeError. **_kwargs absorbs the mode="json" argument; the dict/sorted-json
+    # over the stub's own fields gives discriminating equality for the short-circuit.
     cfg_system.model_dump = lambda **_kwargs: dict(_fields)
     cfg_system.model_dump_json = lambda **_kwargs: json.dumps(_fields, sort_keys=True)
     return SimpleNamespace(cfg_system=cfg_system, system_config_yaml=system_config_yaml)
@@ -61,17 +66,17 @@ def _make_member_instance_for_unit_test(monkeypatch, yaml_to_attrs: dict[Path, t
     instance = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
     master_cfg = SimpleNamespace(
         sensitivity_analysis=Path("/fake/sensitivity.csv"),
-        # partition-as-sensitivity-axis (DQ7a): _build_unique_system_targets resolves
+        # The partition is a sensitivity axis, so _build_unique_system_targets resolves
         # the per-row ensemble partition; None => CPU/no-GPU dedup-tuple (None, None).
         hpc_ensemble_partition=None,
         # preflight_validate reads these (validation.py): the partition-overlay
         # validator early-returns unless multi_sim_run_method == "1_job_many_srun_tasks".
         multi_sim_run_method="local",
         toggle_sensitivity_analysis=True,
-        # ADR-1 / M-7: _build_unique_system_targets reads this to set
-        # execution_container_mode on each per-target TRITONSWMM_system
-        # (sensitivity_analysis.py:2149). It is a REAL analysis_config field
-        # (config/analysis.py:426, Literal["native","container"], default "native").
+        # _build_unique_system_targets reads this to set execution_container_mode
+        # on each per-target TRITONSWMM_system. It is a REAL analysis_config field
+        # (analysis_config.execution_environment, Literal["native","container"],
+        # default "native").
         # "native" is the production default and makes the container branch a
         # provable no-op, so the dedup assertions below are unchanged in meaning.
         execution_environment="native",
@@ -84,11 +89,18 @@ def _make_member_instance_for_unit_test(monkeypatch, yaml_to_attrs: dict[Path, t
         hpc_system_config_yaml=None,
     )
 
-    # GPU hw/backend/modules were retired off system_config (Phase 4c) and are now
-    # passed to TRITONSWMM_system(...) as constructor kwargs, resolved per-target from
-    # the ensemble partition (sensitivity_analysis.py:1983-1988). Absorb them; on the
-    # CPU/no-hpc unit path resolve_gpu_target(None, None) => (None, None).
+    # GPU hw/backend/modules are no longer system_config fields: they are passed to
+    # TRITONSWMM_system(...) as constructor kwargs, resolved per-target from the
+    # ensemble partition (resolve_gpu_target and resolve_additional_modules in
+    # _build_unique_system_targets). Absorb them; on the CPU/no-hpc unit path
+    # resolve_gpu_target(None, None) => (None, None).
     def fake_constructor(yaml_path, gpu_hardware=None, gpu_compilation_backend=None, **_kwargs):
+        """Stand-in for TRITONSWMM_system: return a stub for a known YAML path.
+
+        A path in ``yaml_to_attrs`` yields that row's dedup tuple. A synthesized
+        ``_generated/`` YAML yields its dumped DEM resolution, with the GPU pair taken
+        from the constructor kwargs. Any other path raises AssertionError.
+        """
         resolved = Path(yaml_path).resolve()
         if resolved in yaml_to_attrs:
             target_dem_resolution, _y_hw, _y_backend = yaml_to_attrs[resolved]
@@ -144,14 +156,13 @@ def test_build_unique_system_targets_dedups_by_compile_tuple(monkeypatch, tmp_pa
     targets = instance._build_unique_system_targets(df)
 
     assert len(targets) == 2
-    # Find the target containing member_ids 0+1
     by_ids = {tuple(t.analysis_ids): t for t in targets}
     assert ("0", "1") in by_ids
     assert ("2",) in by_ids
     collapsed = by_ids[("0", "1")]
     # Each unique target's canonical config is a synthesized YAML materialized
-    # under `_generated/target_{id}.yaml` (system-synthesis contract, commit
-    # 60103a4 — `system_config_yaml=generated_yaml` at sensitivity_analysis.py).
+    # under `_generated/target_{id}.yaml`: _build_unique_system_targets constructs
+    # the target with `system_config_yaml=generated_yaml` (sensitivity_analysis.py).
     # The collapsing rows 0+1 are the first compile-tuple group → target_0.
     assert collapsed.system_config_yaml == tmp_path / "_generated" / "target_0.yaml"
     assert collapsed.system_config_yaml.is_file()
@@ -200,68 +211,107 @@ def test_build_unique_system_targets_raises_on_missing_yaml(monkeypatch, tmp_pat
     assert "sensitivity_analysis.system_config_yaml" == exc_info.value.field
 
 
-def test_backward_compat_no_system_config_yaml_column(monkeypatch):
-    """When `system_config_yaml` column is absent, fallback wraps master system.
+def test_backward_compat_no_system_config_yaml_column(monkeypatch, tmp_path):
+    """With no per-member system column, construction makes one compile target on the master system.
 
-    Exercises the __init__ branch by directly stubbing the construction surface.
-    The fallback creates exactly one UniqueSystemTarget aggregating every member_id.
+    The experiment is built through its real ``__init__``. Only the setup table, member
+    construction and the workflow builder are stubbed; the setup table has three members
+    and no system column, so construction takes the path that reuses the master system.
+
+    Property: exactly one compile target, built on the master system, holding members
+    ``["0", "1", "2"]``, with no target partition.
+    Class: any setup table with no column that varies the system per member.
+    Why it is required: every member runs on the build its target names, so a member left
+    out of the one target has no build, and a target on another system compiles the wrong one.
+    What kills it: keeping only some members on the fallback target, or building that
+    target on a system other than the master's.
+    A second correct implementation under which it still passes: one that routes this
+    case through the per-target builder and lets it collapse to a single target.
     """
-    instance = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
-    master_system = _make_stub_system(10.0, None, None, Path("/fake/master_cfg_system.yaml").resolve())
-    df_setup_full = pd.DataFrame({"sa_id": ["0", "1", "2"], "run_mode": ["mpi", "openmp", "serial"]}).set_index("sa_id")
+    master_system = _make_stub_system(10.0, None, None, (tmp_path / "master.yaml").resolve())
+    df_setup_full = pd.DataFrame(
+        {"run_mode": ["mpi", "openmp", "serial"]}, index=pd.Index(["0", "1", "2"], name="sa_id")
+    )
+    monkeypatch.setattr(TRITONSWMM_sensitivity_analysis, "_retrieve_df_setup", lambda self: df_setup_full)
+    monkeypatch.setattr(TRITONSWMM_sensitivity_analysis, "_create_members", lambda self: {})
+    monkeypatch.setattr(member_mod, "SensitivityAnalysisWorkflowBuilder", lambda self: None)
+    analysis = SimpleNamespace(
+        _system=master_system,
+        analysis_paths=SimpleNamespace(analysis_dir=tmp_path),
+        cfg_analysis=SimpleNamespace(hpc_ensemble_partition=None),
+        cfg_hpc_system=None,
+        case_manifest_yaml=None,
+        _case_manifest=None,
+    )
 
-    # Emulate the __init__ fallback branch directly.
-    instance._system = master_system
-    instance._has_per_member_system_configs = "system_config_yaml" in df_setup_full.columns
-    assert instance._has_per_member_system_configs is False
-    fallback_targets = [
-        UniqueSystemTarget(
-            target_id=0,
-            system_config_yaml=master_system.system_config_yaml,
-            system=master_system,
-            analysis_ids=list(df_setup_full.index.astype(str)),
-        )
-    ]
-    assert len(fallback_targets) == 1
-    assert fallback_targets[0].analysis_ids == ["0", "1", "2"]
-    assert fallback_targets[0].system is master_system
+    experiment = TRITONSWMM_sensitivity_analysis(analysis, is_main_orchestrator=True)
+
+    assert experiment._has_per_member_system_configs is False
+    assert len(experiment.unique_system_targets) == 1
+    target = experiment.unique_system_targets[0]
+    assert target.system is master_system
+    assert target.analysis_ids == ["0", "1", "2"]
+    assert target.target_partition is None
 
 
 def test_create_members_assigns_system_per_target(monkeypatch, tmp_path):
-    """members with shared target share `_system`; different target has its own."""
-    yaml_a = (tmp_path / "system_A.yaml").resolve()
-    yaml_c = (tmp_path / "system_C.yaml").resolve()
-    for p in (yaml_a, yaml_c):
-        p.touch()
+    """Each member is constructed on its own compile target's system.
 
-    # Build targets directly (skipping _build_unique_system_targets internals);
-    # this isolates `_create_members`'s member_id→system reverse-lookup.
-    sys_a = _make_stub_system(10.0, None, None, yaml_a)
-    sys_c = _make_stub_system(5.0, None, None, yaml_c)
-    targets = [
-        UniqueSystemTarget(0, yaml_a, sys_a, ["0", "1"]),
-        UniqueSystemTarget(1, yaml_c, sys_c, ["2"]),
+    ``_create_members`` runs for real on three members over two compile targets: members
+    0 and 1 on target 0, member 2 on target 1. The master analysis config is a real
+    minimal config that Pydantic validates. Only the member analysis class is stubbed,
+    to record the system each member is constructed with.
+
+    Property: members 0 and 1 are constructed with target 0's system and member 2 with
+    target 1's.
+    Class: any assignment of members to two or more compile targets.
+    Why it is required: a member constructed on another target's system runs the build
+    compiled for that other target.
+    What kills it: giving every member the first target's system, or the master's.
+    A second correct implementation under which it still passes: one that finds each
+    member's target by searching the target list per member instead of building a map.
+    """
+    master_cfg = analysis_config.model_validate(_minimal_analysis_config_dict(tmp_path))
+    instance = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
+    sys_a = _make_stub_system(10.0, None, None, tmp_path / "A.yaml")
+    sys_c = _make_stub_system(5.0, None, None, tmp_path / "C.yaml")
+    instance.unique_system_targets = [
+        _UniqueSystemTarget(0, tmp_path / "A.yaml", sys_a, ["0", "1"]),
+        _UniqueSystemTarget(1, tmp_path / "C.yaml", sys_c, ["2"]),
     ]
+    instance.df_setup = pd.DataFrame(index=pd.Index(["0", "1", "2"], name="sa_id"))
+    instance.member_prefix = "member_"
+    instance.members_dir = tmp_path / "members"
+    instance._is_main_orchestrator = True
+    instance._skip_log_update = True
+    instance.experiment = SimpleNamespace(
+        cfg_analysis=master_cfg, analysis_config_yaml=tmp_path / "master.yaml", hpc_system_config_yaml=None
+    )
+    system_of_member = {}
 
-    member_id_to_system: dict = {}
-    for t in targets:
-        for member_id in t.analysis_ids:
-            member_id_to_system[member_id] = t.system
+    def record_member(*, analysis_config_yaml, system, **_kwargs):
+        """Stand-in member analysis: record the system it is built on, keyed by its config name."""
+        system_of_member[Path(analysis_config_yaml).stem] = system
+        return SimpleNamespace(system=system)
 
-    assert member_id_to_system["0"] is member_id_to_system["1"]
-    assert member_id_to_system["0"] is not member_id_to_system["2"]
-    assert member_id_to_system["0"] is sys_a
-    assert member_id_to_system["2"] is sys_c
+    monkeypatch.setattr(analysis_mod, "TRITONSWMM_analysis", record_member)
+
+    members = instance._create_members()
+
+    assert set(members) == {"0", "1", "2"}
+    assert system_of_member["member_0"] is sys_a
+    assert system_of_member["member_1"] is sys_a
+    assert system_of_member["member_2"] is sys_c
 
 
 def test_compile_and_preprocess_all_targets_iterates_unique_targets():
-    """Phase 2: new method calls process_system_level_inputs + compile_TRITON_SWMM once per target."""
+    """Calls process_system_level_inputs and compile_TRITON_SWMM once per target."""
     instance = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
     sys_a = MagicMock()
     sys_c = MagicMock()
     instance.unique_system_targets = [
-        UniqueSystemTarget(0, Path("/fake/A.yaml"), sys_a, ["0", "1"]),
-        UniqueSystemTarget(1, Path("/fake/C.yaml"), sys_c, ["2"]),
+        _UniqueSystemTarget(0, Path("/fake/A.yaml"), sys_a, ["0", "1"]),
+        _UniqueSystemTarget(1, Path("/fake/C.yaml"), sys_c, ["2"]),
     ]
     instance._update_experiment_log = MagicMock()
 
@@ -279,14 +329,14 @@ def test_compile_and_preprocess_all_targets_iterates_unique_targets():
 
 
 def test_compile_TRITON_SWMM_for_sensitivity_analysis_iterates_unique_targets():
-    """Phase 2: refactored method invokes compile_TRITON_SWMM on each target's system, not self._system."""
+    """Invokes compile_TRITON_SWMM on each target's system, not on self._system."""
     instance = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
     sys_a = MagicMock()
     sys_c = MagicMock()
     instance._system = MagicMock()  # must NOT be called
     instance.unique_system_targets = [
-        UniqueSystemTarget(0, Path("/fake/A.yaml"), sys_a, ["0", "1"]),
-        UniqueSystemTarget(1, Path("/fake/C.yaml"), sys_c, ["2"]),
+        _UniqueSystemTarget(0, Path("/fake/A.yaml"), sys_a, ["0", "1"]),
+        _UniqueSystemTarget(1, Path("/fake/C.yaml"), sys_c, ["2"]),
     ]
     instance._update_experiment_log = MagicMock()
 
@@ -301,10 +351,9 @@ def test_compile_TRITON_SWMM_for_sensitivity_analysis_iterates_unique_targets():
 def test_attributes_varied_filters_system_config_yaml():
     """`analysis_independent_vars` excludes `system_config_yaml` defensively.
 
-    The single `_attributes_varied_for_analysis()` method was split (Phase 2
-    analysis-config column migration, commit dca9869) into the
-    `analysis_independent_vars` / `system_independent_vars` properties, which
-    read `self._df_setup_full.columns` directly. `system_config_yaml` is skipped
+    Analysis-side and system-side independent variables are separate properties,
+    `analysis_independent_vars` and `system_independent_vars`, each reading
+    `self._df_setup_full.columns` directly. `system_config_yaml` is skipped
     explicitly in `analysis_independent_vars`; bare `run_mode` / `n_omp_threads`
     are recognized as analysis_config fields.
     """
@@ -317,11 +366,11 @@ def test_attributes_varied_filters_system_config_yaml():
 
 
 # =========================================================================
-# Phase 3: Snakemake workflow generation
+# Snakemake workflow generation: _get_config_args' per-target --system-config override
 # =========================================================================
 
 
-def test_phase3_get_config_args_accepts_system_config_override():
+def test_get_config_args_accepts_system_config_override():
     """SnakemakeWorkflowBuilder._get_config_args(system_config_yaml=...) overrides self.system."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
@@ -341,7 +390,7 @@ def test_phase3_get_config_args_accepts_system_config_override():
     assert "/default/system.yaml" not in args
 
 
-def test_phase3_get_config_args_falls_back_to_self_system():
+def test_get_config_args_falls_back_to_self_system():
     """Without override, _get_config_args uses self.system.system_config_yaml."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
@@ -360,24 +409,8 @@ def test_phase3_get_config_args_falls_back_to_self_system():
     assert "--analysis-config /default/analysis.yaml" in args
 
 
-def test_phase3_member_id_to_target_id_map_reverses_target_membership():
-    """The member_id→target_id reverse map mirrors target.member_ids membership.
-
-    Locks the design invariant used inside generate_master_snakefile_content: each
-    member's setup-target dependency derives from this map.
-    """
-    targets = [
-        UniqueSystemTarget(0, Path("/a.yaml"), object(), ["0", "1"]),
-        UniqueSystemTarget(1, Path("/c.yaml"), object(), ["2"]),
-    ]
-    member_id_to_target_id = {
-        str(member_id): target.target_id for target in targets for member_id in target.analysis_ids
-    }
-    assert member_id_to_target_id == {"0": 0, "1": 0, "2": 1}
-
-
 # =========================================================================
-# Phase 4: Validation and testing
+# Preflight validation of per-member system configs
 # =========================================================================
 
 
@@ -418,8 +451,8 @@ def _minimal_system_dict(tmp_path: Path) -> dict:
         "toggle_tritonswmm_model": True,
         "toggle_swmm_model": True,
         "target_dem_resolution": 10.0,
-        # `crs` became a required system_config field (commit c9fe93f, CRSConfig
-        # submodel). Supplied via the legacy flat `crs_epsg` key, which the
+        # `crs` is a required system_config field (a CRSConfig submodel). It is
+        # supplied here via the legacy flat `crs_epsg` key, which the
         # system_config before-validator promotes into the nested
         # `crs: {horizontal_epsg}` form.
         "crs_epsg": 6440,
@@ -437,9 +470,9 @@ def _write_system_yaml(dest: Path, **overrides) -> Path:
 def _master_system_for_test(tmp_path: Path) -> object:
     """Return a master cfg_system instance with toggles_triton+tritonswmm+swmm = True.
 
-    ``tmp_path`` is REQUIRED (it had a vestigial ``= None`` default the body ignored):
-    ``_minimal_system_dict`` materializes the declared inputs under it, and a ``None``
-    would surface as a TypeError inside ``_touch`` rather than at the call site.
+    ``tmp_path`` is REQUIRED, with no default: ``_minimal_system_dict`` materializes
+    the declared inputs under it, and a ``None`` would surface as a TypeError inside
+    ``_touch`` rather than at the call site.
     """
     # Writes a one-shot YAML to the SYSTEM TEMP DIR (NamedTemporaryFile, unlinked in the
     # finally below) -- what lands under tmp_path is the nine declared inputs that YAML
@@ -461,7 +494,7 @@ def _cfg_analysis_stub(csv_path: Path) -> SimpleNamespace:
     return SimpleNamespace(toggle_sensitivity_analysis=True, sensitivity_analysis=csv_path)
 
 
-def test_phase4_validator_skips_when_sensitivity_analysis_off(tmp_path):
+def test_validator_skips_when_sensitivity_analysis_off(tmp_path):
     """No CSV read, no errors when toggle_sensitivity_analysis=False."""
     result = ValidationResult(context="test")
     cfg_system = _master_system_for_test(tmp_path)
@@ -471,7 +504,7 @@ def test_phase4_validator_skips_when_sensitivity_analysis_off(tmp_path):
     assert result.issue_count == 0
 
 
-def test_phase4_validator_skips_when_no_system_config_yaml_column(tmp_path):
+def test_validator_skips_when_no_system_config_yaml_column(tmp_path):
     """Backward compat: CSV without `system_config_yaml` column is a no-op."""
     csv_path = tmp_path / "no_col.csv"
     csv_path.write_text("member_id,run_mode\n0,mpi\n1,openmp\n")
@@ -480,7 +513,7 @@ def test_phase4_validator_skips_when_no_system_config_yaml_column(tmp_path):
     assert result.is_valid
 
 
-def test_phase4_validator_flags_missing_yaml(tmp_path):
+def test_validator_flags_missing_yaml(tmp_path):
     """A non-existent system_config_yaml path produces a structured error."""
     csv_path = tmp_path / "missing.csv"
     csv_path.write_text(f"member_id,system_config_yaml\n0,{tmp_path / 'does_not_exist.yaml'}\n")
@@ -492,7 +525,7 @@ def test_phase4_validator_flags_missing_yaml(tmp_path):
     assert all("sensitivity_analysis.system_config_yaml" in e.field for e in result.errors)
 
 
-def test_phase4_validator_flags_invalid_yaml_via_pydantic(tmp_path):
+def test_validator_flags_invalid_yaml_via_pydantic(tmp_path):
     """An on-disk YAML that fails Pydantic validation surfaces as a load error."""
     bad_yaml = tmp_path / "bad_system.yaml"
     bad_yaml.write_text("not: a: valid: system_config: schema\n")
@@ -504,7 +537,7 @@ def test_phase4_validator_flags_invalid_yaml_via_pydantic(tmp_path):
     assert any("Failed to load" in str(e) for e in result.errors)
 
 
-def test_phase4_validator_flags_model_toggle_mismatch(tmp_path):
+def test_validator_flags_model_toggle_mismatch(tmp_path):
     """A member YAML with different model toggles produces an error."""
     # Template has all three toggles True. Build a member YAML with only
     # triton enabled — Snakefile generation would route the wrong runner.
@@ -522,7 +555,7 @@ def test_phase4_validator_flags_model_toggle_mismatch(tmp_path):
     assert any("model toggles" in str(e).lower() for e in result.errors)
 
 
-def test_phase4_validator_passes_when_toggles_match_master(tmp_path):
+def test_validator_passes_when_toggles_match_master(tmp_path):
     """A member YAML with matching toggles + different DEM resolution is valid."""
     sub_yaml = _write_system_yaml(tmp_path / "sub_dem20.yaml", target_dem_resolution=20.0)
     csv_path = tmp_path / "valid.csv"
@@ -532,11 +565,12 @@ def test_phase4_validator_passes_when_toggles_match_master(tmp_path):
     assert result.is_valid, [str(e) for e in result.errors]
 
 
-def test_phase4_validator_flags_canonical_yaml_divergence_post_dedup(tmp_path):
+def test_validator_flags_canonical_yaml_divergence_post_dedup(tmp_path):
     """Two YAMLs with the same compile tuple but divergent non-key fields error."""
     # Same target_dem_resolution + gpu_hardware + gpu_compilation_backend, but
-    # differ on a non-dedup-key field (constant_mannings) — Phase 4 Decision 2
-    # canonical-YAML correctness check should flag this.
+    # differ on a non-dedup-key field (constant_mannings) — the canonical-YAML
+    # correctness check must flag this, because the two rows collapse to one compile
+    # target and only one of the two YAMLs is used to build it.
     yaml_a = _write_system_yaml(
         tmp_path / "a.yaml",
         target_dem_resolution=10.0,
@@ -557,7 +591,7 @@ def test_phase4_validator_flags_canonical_yaml_divergence_post_dedup(tmp_path):
     assert any("collapse to the same compile target" in str(e) for e in result.errors)
 
 
-def test_phase4_validator_dedup_allows_identical_non_key_fields(tmp_path):
+def test_validator_dedup_allows_identical_non_key_fields(tmp_path):
     """Two YAMLs with the same compile tuple and identical non-key fields are valid."""
     yaml_a = _write_system_yaml(tmp_path / "a.yaml", target_dem_resolution=10.0)
     yaml_b = _write_system_yaml(tmp_path / "b.yaml", target_dem_resolution=10.0)
@@ -568,13 +602,13 @@ def test_phase4_validator_dedup_allows_identical_non_key_fields(tmp_path):
     assert result.is_valid, [str(e) for e in result.errors]
 
 
-def test_phase4_validator_two_resolutions_no_dedup_collision(tmp_path):
-    """End-to-end synthetic equivalent: two members with different DEM resolutions.
+def test_validator_two_resolutions_no_dedup_collision(tmp_path):
+    """Two members with different DEM resolutions clear the validator.
 
-    Mirrors the Phase 4 phase-doc end-to-end fixture design without needing real
-    Norfolk data: validate that two valid system configs at different
-    target_dem_resolution values clear the validator (no false-positive dedup
-    divergence because the dedup-key differs).
+    Uses two synthetic system configs rather than real Norfolk data, and checks that
+    configs at different target_dem_resolution values clear the validator (no
+    false-positive dedup divergence, because the dedup key differs). Validator only:
+    nothing is built or run.
     """
     yaml_10 = _write_system_yaml(tmp_path / "sys_10m.yaml", target_dem_resolution=10.0)
     yaml_20 = _write_system_yaml(tmp_path / "sys_20m.yaml", target_dem_resolution=20.0)
@@ -585,8 +619,8 @@ def test_phase4_validator_two_resolutions_no_dedup_collision(tmp_path):
     assert result.is_valid, [str(e) for e in result.errors]
 
 
-def test_phase4_preflight_invokes_per_member_validator(tmp_path, monkeypatch):
-    """preflight_validate() routes per-member validation through the new helper."""
+def test_preflight_invokes_per_member_validator(tmp_path, monkeypatch):
+    """preflight_validate() routes per-member validation through _validate_per_member_system_configs."""
     yaml_bad = tmp_path / "missing.yaml"  # intentionally never created
     csv_path = tmp_path / "wired.csv"
     csv_path.write_text(f"member_id,system_config_yaml\n0,{yaml_bad}\n")
@@ -596,17 +630,17 @@ def test_phase4_preflight_invokes_per_member_validator(tmp_path, monkeypatch):
         toggle_sensitivity_analysis=True,
         sensitivity_analysis=csv_path,
         # `_validate_setup_mem_sizing` reads this; >=8000 short-circuits its
-        # warning so this test stays focused on the per-SA wiring point.
+        # warning so this test stays focused on the per-member wiring point.
         hpc_mem_allocation_for_setup_mb=8000,
         # The partition-overlay validator (validation.py) reads this; != the
         # single-allocation mode => it early-returns, keeping this test on the
-        # per-SA wiring point rather than the partition surface.
+        # per-member wiring point rather than the partition surface.
         multi_sim_run_method="local",
         target_processed_output_type="zarr",
         # Minimal analysis-side attrs touched by other preflight validators
         # are bypassed by patching validate_analysis_config and
         # validate_data_consistency to no-ops; this test exercises only the
-        # wiring point added by Phase 4, not the full preflight surface.
+        # per-member wiring point, not the full preflight surface.
     )
     from hhemt import validation as vmod
 

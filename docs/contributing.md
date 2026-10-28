@@ -3,14 +3,14 @@
 
 ## Licensing of contributions
 
-This project is currently released under the
-[PolyForm Noncommercial License 1.0.0](https://github.com/lassiterdc/hhemt/blob/main/LICENSE).
+This project's source is licensed under the
+[GNU Affero General Public License, version 3 or any later version (AGPL-3.0-or-later)](https://www.gnu.org/licenses/agpl-3.0.html) (see `LICENSE`).
 
 By submitting a contribution (a pull request, patch, or any other work)
 to this project, you agree that:
 
 1. **Inbound = outbound.** Your contribution is provided under the same
-   license as the project (PolyForm Noncommercial License 1.0.0), and
+   license as the project (AGPL-3.0-or-later), and
    you have the right to submit it under that license.
 
 2. **Forward relicensing.** You grant the maintainer permission to
@@ -25,10 +25,9 @@ open an issue to discuss before submitting.
 ## Development setup
 
 1. Fork and clone the repository.
-2. Create the supported conda environment. See the "Installation" section of
-   `README.md` for the four commands and for why both `--no-deps` flags are
-   required. A plain `pip install -e .` inside a conda environment displaces
-   conda-resolved packages such as `numpy` and `pandas`.
+2. Create the supported conda environment by following
+   [Installation](how-to/installation.md#option-a-recommended-full-conda-env-from-yaml),
+   both `--no-deps` flags included; that page says why each is required.
 3. To build the documentation, install the `[docs]` extra: `pip install -e ".[docs]"`.
    `environment.yaml` does not ship the docs tooling, so this step is separate from
    step 2. Do NOT add `--no-deps` here — unlike the two `--no-deps` installs above,
@@ -68,9 +67,9 @@ open an issue to discuss before submitting.
   installed by neither `environment.yaml` nor any `pyproject.toml` extra — install it
   separately (https://github.com/casey/just), or run the commands under the `qa:`
   recipe in `justfile` yourself, in the order they appear there.
-- The suite has two tiers, and `just qa` runs the first one:
-    - **Gate A — `just test-fast`.** Everything the toolkit decides before a simulation
-      starts, plus the on-disk layout contract. Run it before opening a pull request —
+- The suite has [two tiers](explanation/testing-the-toolkit.md#two-tiers-and-why-the-split-does-not-depend-on-your-machine),
+  and `just qa` runs the first one:
+    - **Gate A — `just test-fast`.** The fast tier. Run it before opening a pull request —
       it is NOT what CI runs: `.github/workflows/test.yml` runs bare `pytest` with no
       marker filter, and `compile-tests.yml` is the job that must be a required status
       check before a release PR. `just qa` does NOT invoke this recipe either — it
@@ -81,9 +80,8 @@ open an issue to discuss before submitting.
       `environment.yaml` pins to Python 3.11 — and a module-level import present in one
       resolution and absent from the other changes what is collected before any marker
       is evaluated.
-    - **Gate B — `just test-gated`.** The whole suite with no marker filter, including
-      every test that compiles TRITON-SWMM or asserts on a tree a simulation produced.
-      It requires the `hhemt` conda environment for `cmake` and `mpic++`, it takes
+    - **Gate B — `just test-gated`.** The whole suite with no marker filter, the compile
+      tier included. It requires the `hhemt` conda environment for `cmake` and `mpic++`, it takes
       substantially longer than Gate A, and it is the invocation a release is gated on.
       Run it detached rather than waiting on it interactively — `nohup … &`, `tmux`, or
       your cluster's batch scheduler are all fine.
@@ -92,9 +90,7 @@ open an issue to discuss before submitting.
       refuses to execute SWMM unless the session declares a permitted *venue*.
       `just test-gated` sets `HHEMT_COMPILE_VENUE=toolchain` for you, so following the
       recipe above needs no environment work. You set it by hand only when you invoke
-      `pytest` directly and want the compile tier. The token RELAXES and never ARMS —
-      absent, misspelt, or unrecognised, it lands on the safe side at both read sites,
-      so a typo tightens the guard rather than disarming it. `PERMITTED_VENUES` in
+      `pytest` directly and want the compile tier. `PERMITTED_VENUES` in
       `src/hhemt/_compile_venue.py` names a CAPABILITY rather than a machine and today
       has exactly one member, `toolchain`.
     - **Where those runs happen, which the code does not enforce.** Test runs that
@@ -108,9 +104,8 @@ open an issue to discuss before submitting.
       [CLI reference](reference/cli.md#hhemt-test-toolkit)).
       For why the guard is shaped this way, see
       [the compile venue, and why the token relaxes rather than arms](explanation/testing-the-toolkit.md#the-compile-venue-and-why-the-token-relaxes-rather-than-arms).
-  Which tier `just qa` gives you does NOT depend on your machine: `compile_tier` is
-  derived from each test's fixtures at collection time, so the split is the same
-  everywhere. Before this was declared it depended on whether `cmake` was on your PATH.
+  Which tier `just qa` gives you does NOT depend on your machine; see
+  [Two tiers, and why the split does not depend on your machine](explanation/testing-the-toolkit.md#two-tiers-and-why-the-split-does-not-depend-on-your-machine).
   Your FIRST run of either gate downloads about 360 MB of example data from HydroShare
   if `test_data/norfolk_coastal_flooding` is not already present. That is a one-time
   cost per machine, not per run, and it can dominate the wall clock on a slow link.
@@ -170,7 +165,7 @@ voice and is not held to the project's prose conventions.
 
 ## Branching and releases
 
-`develop` is the default branch; all work branches from and merges back into `develop`. `main` is release-only and advances only via a validated `develop` → `main` release pull request (all tests green, docs complete), tagged `vX.Y.Z`. See [Branching and release model](explanation/branching-and-release-model.md) for the two branches, how to branch as a contributor, what counts as a release, and the two independent version axes.
+See [Branching and release model](explanation/branching-and-release-model.md) for the two branches, how to branch as a contributor, what counts as a release, the tests that carry a structural gate, and the two independent version axes.
 
 ---
 

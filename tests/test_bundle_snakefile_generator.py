@@ -50,8 +50,8 @@ REGEN_RULE_SET = {
     "plot_eda_dem_resolution_error_ecdf",
     "plot_eda_dem_resolution_diff_maps",
     "plot_eda_dem_resolution_coupling_table",
-    # b4b: emitted only for a bundle whose cfg_analysis selects reporting_set="b4b".
-    "plot_b4b_clean_identity",
+    # b4b: emitted only for a bundle whose cfg_analysis selects reporting_set="compute_config_byte_identity".
+    "plot_raw_byte_identity",
 }
 
 NON_REGEN_RULES = {
@@ -337,12 +337,12 @@ def test_dem_resolution_bundle_emits_all_four_eda_rules(sensitivity_bundle: Path
     """
     from hhemt.report_renderers._reporting_sets import get_reporting_set
 
-    _set_reporting_set(sensitivity_bundle, "dem-resolution")
+    _set_reporting_set(sensitivity_bundle, "dem_resolution")
     text = generate_regeneration_snakefile(sensitivity_bundle, static_backend="matplotlib")
 
     expected = {
         f"plot_{tmpl.rule_name}" if not tmpl.rule_name.startswith("plot_") else tmpl.rule_name
-        for sel in get_reporting_set("dem-resolution").renderer_selection
+        for sel in get_reporting_set("dem_resolution").renderer_selection
         if sel.builder_key == "eda_compute_sensitivity"
         for tmpl in sel.rule_spec_template
     }
@@ -358,7 +358,7 @@ def test_compute_sensitivity_bundle_emits_its_eda_rule(sensitivity_bundle: Path)
     This is the set whose EDA figure was silently omitted from every regenerated
     bundle before the harvest read the reporting set from config.
     """
-    _set_reporting_set(sensitivity_bundle, "compute-sensitivity")
+    _set_reporting_set(sensitivity_bundle, "compute_sensitivity")
     text = generate_regeneration_snakefile(sensitivity_bundle, static_backend="matplotlib")
     assert _eda_rule_names(text) == {"plot_eda_compute_sensitivity"}
 
@@ -372,7 +372,7 @@ def test_b4b_bundle_emits_config_diff_maps_eda_rule(sensitivity_bundle: Path) ->
     used before). This exercises the emission path so a listed-but-unemitted output
     would surface here rather than as a ``MissingInputException`` at snakemake parse.
     """
-    _set_reporting_set(sensitivity_bundle, "b4b")
+    _set_reporting_set(sensitivity_bundle, "compute_config_byte_identity")
     text = generate_regeneration_snakefile(sensitivity_bundle, static_backend="matplotlib")
     assert "plot_eda_compute_sensitivity" in _eda_rule_names(text), (
         f"b4b bundle did not emit the config_diff_maps EDA rule; emitted: {_eda_rule_names(text)}"
@@ -405,7 +405,7 @@ def test_unknown_reporting_set_raises_named_configuration_error(sensitivity_bund
     message = str(excinfo.value)
     assert "reporting_set" in message
     assert "dem-resolutoin" in message
-    assert "dem-resolution" in message, "the error should list the registered sets"
+    assert "dem_resolution" in message, "the error should list the registered sets"
 
 
 @pytest.fixture
@@ -487,3 +487,37 @@ def test_coupled_bundle_emission_unaffected_by_the_gate(sensitivity_bundle: Path
 
     assert "rule plot_per_sim_per_member_conduit_flow:" in text
     assert "{" not in _input_block(text, "all")
+
+
+def test_reporting_set_rename_old_key_bundle_regenerates_like_a_new_key_bundle(
+    sensitivity_bundle: Path, tmp_path: Path
+) -> None:
+    """A bundle whose cfg_analysis names an old set key regenerates the same rules as a new-key bundle.
+
+    Property: a copy of the ``sensitivity_bundle`` fixture whose ``cfg_analysis.yaml``
+    names ``dem-resolution`` regenerates through ``generate_regeneration_snakefile`` with
+    the same rule-name set as a copy naming ``dem_resolution``, and that set carries the
+    four DEM-resolution EDA rules.
+    Class: NEW CAPABILITY. The plausible wrong implementation renames in the config model
+    only; the bundle regenerator reads the YAML as a raw dict, so an old bundle would be
+    refused with ``ConfigurationError`` and published bundles would stop regenerating.
+    Reachability: the generator delegates to ``resolve_reporting_set_names``; artifact:
+    the docstring of ``bundle/snakefile_generator.py`` at its set-resolution helper.
+    Both-states anchor: the assertion turns on the emitted rule-name sets, which the old
+    code produced for any registered key, and the non-empty EDA anchor stops two empty
+    sets from comparing equal.
+    Second correct implementation: renaming in the generator before it calls the resolver
+    passes too, since only the emitted rule names are compared.
+    """
+    import warnings
+
+    second = tmp_path / "second_copy"
+    shutil.copytree(sensitivity_bundle, second)
+    _set_reporting_set(sensitivity_bundle, "dem-resolution")
+    _set_reporting_set(second, "dem_resolution")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        old_text = generate_regeneration_snakefile(sensitivity_bundle, static_backend="matplotlib")
+    new_text = generate_regeneration_snakefile(second, static_backend="matplotlib")
+    assert _extract_rule_names(old_text) == _extract_rule_names(new_text)
+    assert len(_eda_rule_names(new_text)) == 4

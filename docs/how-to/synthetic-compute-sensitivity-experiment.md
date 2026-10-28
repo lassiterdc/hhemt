@@ -91,8 +91,8 @@ tk.analysis.eda()                                           # emit plots/eda/ fi
 tk.analysis.render_report()                                 # renders the active reporting set
 ```
 
-Select the `compute-sensitivity` reporting set by setting
-`report.reporting_set: compute-sensitivity` on the analysis config (see
+Select the `compute_sensitivity` reporting set by setting
+`report.reporting_set: compute_sensitivity` on the analysis config (see
 [Reporting sets](../reference/reporting-sets.md)). The rendered report then
 carries the compute-config EDA figures under **Key Results**, alongside the
 benchmarking figures.
@@ -132,14 +132,14 @@ doubling), so each coarse grid is a clean aggregation of the finest, which is th
 **reference** (never "truth": its own error is unquantified). Then select the
 DEM-resolution reporting set:
 
-- `report.reporting_set: dem-resolution` on the analysis config (see
+- `report.reporting_set: dem_resolution` on the analysis config (see
   [Reporting sets](../reference/reporting-sets.md)), and
 - `eda_config.enabled_plots: [dem_resolution_cost_error, dem_resolution_diff_maps, dem_resolution_error_ecdf, dem_resolution_coupling_table]`.
 
 !!! warning "The two EDA families are mutually exclusive per experiment"
-    The `compute-sensitivity` family's `config_diff_maps` requires a **uniform**
+    The `compute_sensitivity` family's `config_diff_maps` requires a **uniform**
     grid across members and raises a named `ProcessingError` on a
-    mixed-resolution master; the `dem-resolution` family requires the varying grid.
+    mixed-resolution master; the `dem_resolution` family requires the varying grid.
     Pick one reporting set per experiment: do not mix `config_diff_maps` with the
     `dem_resolution_*` renderers.
 

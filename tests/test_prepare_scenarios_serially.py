@@ -12,6 +12,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV
+
 
 @pytest.fixture
 def cached_case(tmp_path, monkeypatch):
@@ -19,7 +21,7 @@ def cached_case(tmp_path, monkeypatch):
     no simulation, no shared-root write."""
     from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
 
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     return retrieve_synth_TRITON_SWMM_test_case(
         analysis_name="prepare_serially_probe", start_from_scratch=False, skip_run=True
     )

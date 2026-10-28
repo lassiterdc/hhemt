@@ -30,11 +30,11 @@ legitimately moved would be measuring the configuration.
   MIRROR B -- rendered but NOT derived, MINUS the explained class. Gate A's
   population is DOCSTRING-bearing; the site's anchor set is HEADING-bearing, so a
   manifested module with no module docstring renders an anchor and contributes no
-  member. Measured 2026-09-10 at HEAD ``0bedcc64``: exactly two, ``hhemt.analysis``
-  and ``hhemt.sensitivity_analysis``, both of which open with ``# %%`` and no
-  docstring. That set is DERIVED here (manifested-and-absent), never pinned by
-  name, so adding a docstring to either one retires its exemption automatically.
-  Anything in MIRROR B outside that class FAILS.
+  member. That explained class is DERIVED here (manifested and absent from the
+  population), never pinned by name or count: a module enters it by lacking a
+  module docstring and leaves it the moment one is written. The success line names
+  its current members, or prints "(none)" when it is empty. Anything in MIRROR B
+  outside that class FAILS.
 
 BASELINE -- has the published surface widened since the pinned baseline? The
 baseline is the FULL page-keyed population with NO exclusion rule, and the

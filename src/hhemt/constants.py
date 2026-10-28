@@ -1,7 +1,22 @@
+"""Named values that several modules must spell identically, kept in one place.
+
+A literal that two modules each write out drifts the moment one of them is edited,
+and the mismatch usually shows only at run time: a status flag one rule writes and
+another never finds, or a figure a sweep deletes that a guard meant to spare. This
+module holds those values once. It carries the layout-version re-exports, the
+Norfolk example-case file names, the column headers the SWMM report parser emits,
+the ``analysis.test()`` defaults and the test and case directory names, the Globus
+endpoint identifiers for UVA and Frontier, the registry of analysis subtrees that
+figure-deleting sweeps spare, and the ``_status/`` flag-name builders together with
+their inverse parser.
+"""
+
 import re
 
-# Re-exports from version_migration.constants so the CI Check A
-# (Phase 4 scripts/check_layout_version.py) can grep without importing.
+# Re-exported from version_migration.constants so callers can import the layout
+# version from here (provenance.py does). This is not the source of truth:
+# scripts/check_layout_version.py reads src/hhemt/version_migration/constants.py
+# directly, so a version bump is made there.
 from hhemt.version_migration.constants import (  # noqa: F401
     LAYOUT_VERSION,
     MINIMUM_SUPPORTED_VERSION,
@@ -13,22 +28,26 @@ NORFOLK_ANALYSIS_CONFIG = "template_analysis_config.yaml"
 NORFOLK_SYSTEM_CONFIG = "template_system_config.yaml"
 NORFOLK_CASE_CONFIG = "case.yaml"
 
-#: The EDA subdirectory name under an analysis's ``plots/``. Read by BOTH figure-deleting
-#: consumers -- bundle/_emit.py::_prune_undeclared_figures and workflow.py's render-floor
-#: branch -- which must exempt it for the same reason: those figures come from
-#: analysis.eda(), a non-Snakemake in-process facade, so no rule regenerates them after
-#: deletion. It lives HERE rather than in either consumer because bundle/ imports
-#: workflow.py (four module-level sites) and not the reverse, so the constant cannot sit in
-#: bundle/ without inverting that direction.
+#: The EDA subdirectory name under an analysis's ``plots/``. Its only reader in
+#: src/hhemt is UNREGENERABLE_ANALYSIS_SUBTREES below, through which
+#: utils.select_regenerable_figures decides what the figure-deleting callers spare. Most
+#: figures here come from analysis.eda(), a non-Snakemake in-process facade, and nothing
+#: rebuilds those after deletion. The exception is a figure the active reporting set's own
+#: rules write under plots/eda/ (compute_sensitivity's ``plots/eda/config_diff_maps``, for
+#: example): its report rule rebuilds it, so a caller that passes ``report_rule_stems``
+#: still deletes it.
 EDA_PLOTS_SUBDIR = "eda"
 
-#: Analysis-dir-relative subtrees produced OUTSIDE the Snakemake graph. No rule
-#: regenerates what lives here, so no deletion sweep may remove it. This names the
-#: FACT rather than either policy that consumes it: the figure-deletion helper in
-#: utils.py consumes the whole set, while bundle/_emit.py's undeclared-figure prune
-#: keeps its own narrower EDA_PLOTS_SUBDIR exemption because its question is about
-#: FIGURES and eda_local/ is not one. That non-consumption is deliberate; do not
-#: "unify" them.
+#: Analysis-dir-relative subtrees produced OUTSIDE the Snakemake graph, which a
+#: deletion sweep spares. What lives here is rebuilt by no rule, with one exception: a
+#: figure under plots/eda/ that the active reporting set's own rules write is rebuilt
+#: by its report rule, so utils.select_regenerable_figures still selects it when the
+#: caller passes ``report_rule_stems`` (from utils.report_rule_figure_stems). This
+#: names the subtrees; the selector applies that carve-out. The selector and
+#: provenance.collect_plot_stamps consume the whole set. bundle/_emit.py's
+#: undeclared-figure prune reaches it through the same selector, rooted at plots/ so
+#: only plots/eda applies, and passes no report-rule stems, so it spares every figure
+#: there.
 #:
 #: `eda_local` is PRECAUTIONARY. No sweep in this codebase reaches it today: every
 #: deletion walk is rooted at `{analysis_dir}/plots` and eda_local/ is a SIBLING of
@@ -114,12 +133,11 @@ GLOBUS_SYSTEM_ENDPOINTS: dict[str, tuple[str, str, bool, str | None]] = {
 # ============================================================================
 # Status-flag builders — single source of truth for `_status/*.flag` paths.
 #
-# Phase 1 scope (Option C of the sensitivity-master reprocess gap plan,
-# 2026-05-21): centralize ONLY the patterns referenced by the new code in
-# `workflow.py::generate_reprocess_master_snakefile_content` and the lines
-# being rewritten there. The other ~58 hardcoded flag-name occurrences
-# elsewhere in the codebase are out of scope for this plan; folding them in
-# is tracked as a follow-up. Adopt-the-principle, don't expand-the-patch.
+# These builders cover the sensitivity-workflow flag shapes and the member input
+# fingerprint. They are not yet the only spelling: other sites still write flag
+# names inline (for example sensitivity_analysis.py's per-member e_consolidate
+# unlink and analysis.py's c_run_ glob), so a change to a flag name must also be
+# made at those sites.
 #
 # Naming convention: descriptive function names communicate purpose at the
 # call site (the on-disk `c_run_*` / `d_process_*` / `e_consolidate_*`

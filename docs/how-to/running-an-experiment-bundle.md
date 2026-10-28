@@ -29,7 +29,7 @@ description: One-line description.
 system_config: configs/system_config_uva.yaml    # bundle-relative
 analysis_config: configs/analysis_config_uva.yaml # bundle-relative
 hpc_system_config:
-  uva: hpc/hpc_system_config_uva.yaml   # relative to $HHEMT_DEPLOYMENT_CONFIG, or to the directory two levels above this bundle
+  uva: ../../hpc/hpc_system_config_uva.yaml   # absolute, or relative to this bundle directory (the one holding experiment.yaml)
 inputs:
   - name: weather
     local_path: "${HHEMT_DATA_ROOT}/weather/forcing.nc"   # ${VAR}-templated, never a literal operator path
@@ -97,7 +97,8 @@ sentinel; the refusal names what it found. Pass `--override-wipe-nonempty` to de
 deliberately. This flag is not `--yes`: `--yes` accepts the descriptor-override table (see
 [The override gate](#the-override-gate)) and authorizes no deletion, and
 `--override-wipe-nonempty` authorizes the deletion and accepts no override. To remove an
-analysis rather than re-run it, use `hhemt delete`, which carries its own confirmation.
+analysis instead, see the `hhemt delete` note under
+[Add scenarios or events to a running sweep](forcing-reruns.md#add-scenarios-or-events-to-a-running-sweep).
 
 To re-run completed scenarios without deleting anything, keep `--mode resume` and pass
 `--override-force-rerun`: `all`, `none`, or a JSON subject dict such as
@@ -152,17 +153,9 @@ its own flag; see [Run modes and the wipe guard](#run-modes-and-the-wipe-guard).
 
 ## Exit codes
 
-These are the same codes, with the same meanings, as the
-[CLI reference exit-code table](../reference/cli.md#exit-codes).
-
-| Code | Meaning |
-|------|---------|
-| 0 | success (or `--dry-run` planned cleanly) |
-| 2 | configuration error (bad `experiment.yaml`, a schema-invalid `system.yaml` or `analysis.yaml`, unset `${VAR}`, missing/placeholder `default_account` or `container.sif_root`, declined override gate, an unknown `--mode` value, `--mode fresh` refused by the wipe guard) |
-| 3 | workflow or compilation failure, including a workflow that ran and reported failure (Snakemake exited non-zero, `sbatch` refused the submission, or a rule failed permanently) and a `--dry-run` whose plan failed; the console output printed just before the exit names the cause |
-| 4 | simulation failure |
-| 5 | processing failure |
-| 10 | unexpected error |
+`hhemt run-experiment` exits with the codes in the
+[CLI reference exit-code table](../reference/cli.md#exit-codes), which also lists the
+cases each code covers for this command.
 
 ## Verifying a bundle conforms
 

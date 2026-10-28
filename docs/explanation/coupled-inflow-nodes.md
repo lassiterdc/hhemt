@@ -126,6 +126,7 @@ model is off, carries no record and is reported as not measured.
 | One node per cell with a declared mode | Before any job is submitted, when `one_coupled_inflow_node_per_dem_cell` is on and `swmm_coupling_mode` is `list` or `all_junctions`. | Turn the option off, or set `swmm_coupling_mode: legacy`. |
 | No coupling node declared | Before any job is submitted, when a coupled system's candidates are empty: under `all_junctions`, no junction has a `[COORDINATES]` row; under `legacy`, no inflow line with constituent `FLOW` names a node. | Declare coupling nodes, or for a surface-only run turn off `toggle_tritonswmm_model` and run the TRITON-only model (`toggle_triton_model`). |
 | Coupling node outside the TRITON grid | Before any job is submitted, when a candidate junction lies outside the grid TRITON will be given, judged by TRITON's own placement rule against the processed DEM's header, or against the DEM setup will write when there is none, it fails its integrity check, or the run overwrites it. TRITON-SWMM would stop on each such node at startup. | List only the nodes inside the domain in a coupling-node file (`swmm_coupling_mode: list`, with `swmm_coupling_nodes_file`). |
+| TRITON build that would couple other nodes | Before any job is submitted, and again at scenario preparation against the filled model, when the run's TRITON build does not read `swmm_coupling_nodes`. Such a build ignores the coupling list and couples the nodes named in the `[INFLOWS]` section, reading each once per line, so a node with two inflow lines is read twice and the build stops at its same-cell check. It is refused when those names, counted, differ from the coupling list; when its `[INFLOWS]` read is not one the toolkit recognizes; or when `one_coupled_inflow_node_per_dem_cell` is on. The message names the nodes on each side. | Move `TRITONSWMM_branch_key` to a TRITON commit that reads `swmm_coupling_nodes` and rebuild, or make the inflow lines and the coupling list agree. |
 | No node of a cell can be coupled | At scenario preparation, when every candidate in a DEM cell is an outfall, a storage node or a divider. The message gives each node's reason. | Move the inflow to a junction, or remove the inflow line. |
 | Cross-section that cannot be sized | At scenario preparation, only with the one-node-per-cell option, when ranking a cell needs the flow area of a shape `calc_area` does not handle. The message names the link, its shape and its node. | Add the shape's full-area formula to `calc_area` in `src/hhemt/scenario.py`. |
 | Node without coordinates | At scenario preparation, when a coupling candidate has no `[COORDINATES]` line, so its DEM cell is unknown; and, when the hydrology model is used, when any node of the hydrology model has none. | Add the node's coordinates. |
@@ -145,9 +146,10 @@ Setting `swmm_node_rim_from_dem: true` in the analysis configuration takes each
 coupled node's rim from the DEM instead: the elevation of the node's grid cell minus
 the node's invert. It is off by default. Only solver builds that read the option
 honour it, so scenario preparation stops with a named error when the build the run
-uses is not known to read it. In native mode the TRITON clone must include the
-commit that added the option; in container mode the image's recorded TRITON commit
-must match `TRITONSWMM_branch_key` and be one of the commits known to read it.
+uses is not known to read it. In native mode the TRITON clone's
+`src/config_utils.h` must read the option, or the clone must include the commit that
+added it; in container mode the image's recorded TRITON commit must match
+`TRITONSWMM_branch_key` and be one of the commits known to read it.
 
 The surface hydrographs are converted to cubic metres per second from the
 hydrology model's own flow unit before TRITON reads them, so an `LPS` or `MLD`

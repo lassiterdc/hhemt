@@ -10,9 +10,8 @@ Pass `override_force_rerun` to `analysis.run()`:
 
 ??? note "Why a forced re-run clears two things, not one"
     The invalidation is two-layer: it deletes the `_status/*.flag` markers *and*
-    clears the per-scenario processing-log records. Both are needed, because a
-    surviving completion record would otherwise cause the step to be skipped even
-    with its flag gone.
+    clears the per-scenario processing-log records, because completion is tracked
+    by both ([Surprising cases](../explanation/rerun-faq.md#surprising-cases)).
 
 ```python
 # Re-run everything, regardless of the recorded completion state:

@@ -3618,6 +3618,24 @@ non_breaking_allowlist:
       2026-09-18 three-commit landing and the Q2 landing both used.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/scenario.py
+    layout_signature: 07d9220b17860b5e623457fe75b9e9b8cd58c77c657aebd3ae3f42bb447a6dbd
+    justification: >-
+      NON-BREAKING. Chunk 2d.8's repair mint rewrote two docstring regions of this
+      file and nothing else: the paragraph of `_weather_step_seconds`'s docstring that
+      cited `swmm_utils.py` by line, and three lines of `_swmm_inp_for_sim_duration`'s
+      docstring that carried stale line citations. Both regions now carry session a1.2's
+      text from `e6017913` byte for byte, so the two branches merge this file cleanly in
+      either order. No executable statement changes: only docstring text moved, so no
+      path, filename, zarr group, Snakemake rule, fingerprint payload, _version.json
+      field or figure stem can have moved.
+      PLACEMENT: this row sits directly after the last scenario.py row both branches
+      share, not at the list's tail, where both branches already append and a keep-both
+      resolution would make Check B's last-row-wins read this signature against a1.2's
+      file. Once a1.2 lands, its later row is the last scenario.py row and matches the
+      merged file.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
   - path: src/hhemt/scenario_inputs.py
     layout_signature: 9c2d66fc0a0ad1da2711c24cd1f71a3794c1c409f66103bd29758fea1824d58b
     justification: >-
@@ -3737,6 +3755,15 @@ non_breaking_allowlist:
       governs the on-disk analysis tree.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 5348e13305f121a4e3f7b3b60ab917acea8c73a12d8e925d13a16052704c12da
+    justification: >-
+      NON-BREAKING for the on-disk layout. Package 2b (rulings D-102, D-106, D-107):
+      `dataset_license` becomes OPTIONAL with no default and accepts the seven current
+      Creative Commons SPDX ids (CC0-1.0, CC-BY-4.0, CC-BY-SA-4.0, CC-BY-NC-4.0,
+      CC-BY-NC-SA-4.0, CC-BY-ND-4.0, CC-BY-NC-ND-4.0) instead of two with a CC0-1.0 default;
+      its description and option glossary are rewritten. No field is added, removed or
+      renamed, so no config key, path, filename or persisted structure moves.
   - path: src/hhemt/log.py
     layout_signature: 1eefec18e1e0de888f60b48cae89cc3a6f559a153927e9cca78d8fd17739253c
     justification: >-
@@ -4027,6 +4054,120 @@ non_breaking_allowlist:
       omits the field now carries NO license in its RO-Crate, where it previously carried
       CC0-1.0. That is a change to what a NEW consolidation writes, not to any artifact an
       existing analysis wrote; existing trees keep the license they were consolidated with,
+      and both previous values remain valid.
+      RE-SIGNED after the package 2b comment and docstring repair (ruling D-110): the syntax
+      tree with string constants blanked and the string-constant count are unchanged from the
+      originally signed content (proof_one_check), so only prose moved.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/base.py
+    layout_signature: c1d1c699ab3c4766d74f9c6d39f234376ae22a5b8692670f59a70544a73e8a1e
+    justification: >-
+      NON-BREAKING. Package 2b (ruling D-107): the class-definition glossary check in
+      `cfgBaseModel.__pydantic_init_subclass__` now reads an optional closed set
+      (`Literal[...] | None`) through a new private helper `_unwrap_single_optional`, so an
+      optional closed-set field can carry its glossary. It changes which config CLASSES may
+      RE-SIGNED after the package 2b comment and docstring repair (ruling D-110): the syntax
+      tree with string constants blanked and the string-constant count are unchanged from the
+      originally signed content (proof_one_check), so only prose moved.
+      be defined, never what a config file contains or what any analysis writes to disk; a
+      union with two or more non-None members is still refused as before.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 7525806ad4ded0eec3bdf6388f7bf242970e653669979f0adb5f3adc8186d2b6
+    justification: >-
+      NON-BREAKING. Package 3d (item I66, the nc second arm): under target_processed_output_type
+      'nc' both gridded TRITON exports now publish ONE NetCDF FILE at the '.nc' path through
+      publish_chapters_to_netcdf (temporary name, os.replace, then the .done flag, then the
+      chapters deleted), where they previously published a zarr store at that path; and
+      zarr.consolidate_metadata now runs only under 'zarr'. Under 'zarr', the default, the
+      published store is unchanged: the same merge_chapters_to_unified call on the same path.
+      GROUND, and it is a statement about which COMPLETED trees can exist, because LAYOUT_VERSION
+      describes the state a completed analysis carries: every completed nc-gridded tree that can
+      exist was written before 2026-02-13 (e9cf3b98), at layout 0, which
+      MINIMUM_SUPPORTED_VERSION = 0 keeps supported, and carries a NetCDF FILE at the '.nc' path
+      -- the kind this change writes -- so no completed state moves. Runs between e9cf3b98 and
+      b00f8f77 published a zarr store there and never completed (the summary step raised on it),
+      and after b00f8f77 preflight refused the configuration. No migration under
+      version_migration/versions/ names the gridded timeseries or a '.nc' path.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 9910afd9b0b12884ea5b81f84bb0351c94c4d1574647db69d8ea7549793005da
+    justification: >-
+      NON-BREAKING. Package 3d (item I66): the option glossary strings of
+      target_processed_output_type are rewritten, because the nc refusal they described is
+      retired. Only description strings inside json_schema_extra changed; no field is added,
+      removed, renamed, retyped or reordered, so no config key, path, filename or persisted
+      structure moves. The ground for the behaviour the new text describes is the same as the
+      process_simulation.py row above: every completed nc-gridded tree that can exist was
+      written before 2026-02-13 (e9cf3b98), at layout 0, which MINIMUM_SUPPORTED_VERSION = 0
+      keeps supported, and carries a NetCDF FILE at the '.nc' path, so no completed state moves.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/experiment_bundle.py
+    layout_signature: "6343438ce86fec5c11a190046d85e7cc05771c4dc469ffa4a7c5ea656e379bdc"
+    justification: >-
+      NON-BREAKING. Package 2d, chunk 2d.3 (item I83, ruling D-114): the description string of
+      ExperimentConfig.hpc_system_config is rewritten to state that a relative entry is
+      measured from the bundle directory, the directory holding experiment.yaml, which is the
+      base the resolver now uses. Only that description changes. The runtime model reports
+      the same 7 fields, in the same order, with the same requiredness before and after
+      (description, system_config, analysis_config and toolkit_pin required; hpc_system_config,
+      inputs and container optional). A description is schema metadata read by the
+      documentation renderer and absent from every serialized artifact, so no config key,
+      path, filename or persisted structure moves and no migration has anything to act on.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: "e417549971f864353c3118dd18d9bba63ce731c52584d4e8b864670fc96ee1d3"
+    justification: >-
+      NON-BREAKING. Package 3d, chunk 3d.5 (landing-research finding B3): the description
+      string of analysis_config.remove_after_processing names the module
+      eda.raw_byte_identity.compare_swmm_raw where it named eda.raw_resume_identity.compare_swmm_raw,
+      the module's name before 1e.7 renamed it. One module name inside one field description
+      changes; no field is added, removed, renamed, retyped or reordered. A description is
+      schema metadata read by the documentation renderer and absent from every serialized
+      artifact, so no config key, path, filename or persisted structure moves and no migration
+      has anything to act on.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/report.py
+    layout_signature: "d7dae6c7e26956ce125cc8bd47492921a35a9926acff13292543e802230baafd"
+    justification: >-
+      NON-BREAKING. Package 1e, chunk 1e.18 (item I50a, rulings D-157 and D-158): adds the rename table _REPORTING_SET_RENAMES and the helper that applies it, and applies the helper in the reporting_set field validator and in resolve_reporting_set_names. A config-schema behaviour change with no on-disk consequence.
+      No analysis-tree path, filename, zarr layout, log key or persisted structure moves, so no
+      LAYOUT_VERSION bump and no V{NNNN} migration has anything to act on. The reporting-set key
+      reaches cfg_analysis.yaml inside published bundles, and a bundle or configuration naming an
+      old key still loads through the rename table, which is why a config-format rename is carried
+      by the table and its warning and not by a layout migration.
+      THE SIGNATURE IS THIS FILE'S FINAL 1e.18 CONTENT. None of the 38 enumerated prose
+      substitutions falls in this file, so the repair round did not edit it.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/eda.py
+    layout_signature: "920d6d027acbcc9ae741396691580494a603c3461b332a6a3a6897da7cb38648"
+    justification: >-
+      NON-BREAKING. Package 1e, chunk 1e.18 (item I50a, rulings D-157 and D-158): this file is named because the repair round rewrites the reporting-set key quoted in the enabled_plots field description, the file's only 1e.18 edit.
+      No analysis-tree path, filename, zarr layout, log key or persisted structure moves, so no
+      LAYOUT_VERSION bump and no V{NNNN} migration has anything to act on. The reporting-set key
+      reaches cfg_analysis.yaml inside published bundles, and a bundle or configuration naming an
+      old key still loads through the rename table, which is why a config-format rename is carried
+      by the table and its warning and not by a layout migration.
+      THE SIGNATURE IS THE CONTENT AFTER THAT SUBSTITUTION, this file's final 1e.18 state.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/constants.py
+    layout_signature: "2ecf4492ecbd351919e2db55544e7230d57043443f3f78cb4b9961758ee5a22c"
+    justification: >-
+      NON-BREAKING. Package 1e, chunk 1e.18 (item I50a, rulings D-157 and D-158): this file is named because the repair round rewrites the reporting-set key quoted in one comment, the file's only 1e.18 edit.
+      No analysis-tree path, filename, zarr layout, log key or persisted structure moves, so no
+      LAYOUT_VERSION bump and no V{NNNN} migration has anything to act on. The reporting-set key
+      reaches cfg_analysis.yaml inside published bundles, and a bundle or configuration naming an
+      old key still loads through the rename table, which is why a config-format rename is carried
+      by the table and its warning and not by a layout migration.
+      THE SIGNATURE IS THE CONTENT AFTER THAT SUBSTITUTION, this file's final 1e.18 state.
       and both previous values remain valid. This row is signed on the develop tree, and
       supersedes the previous last row for this path.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
@@ -4125,3 +4266,70 @@ non_breaking_allowlist:
       persisted key, file name, zarr group or _version.json field changes.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 4486791eec7245203cb58129c2fe0ef5244c1524097dbaf4cd9692a8900f611d
+    justification: >-
+      NON-BREAKING. Re-signed for the merge of develop 355f08d9 into docs-and-experiment-system.
+      The resolution takes each conflict hunk's code from one side (the merge chunk's AST
+      code-invariance gate), so it adds no persisted key, file name, zarr group or _version.json
+      field beyond what each side already carries. The layout_signature is the file's sha256 at
+      this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next
+      change to this path.
+  - path: src/hhemt/config/report.py
+    layout_signature: db86a3e9d4febbd584bcfe84731784f5158319f62237ad4eb4a2f37dd9b711c0
+    justification: >-
+      NON-BREAKING. Re-signed for the merge of develop 355f08d9 into docs-and-experiment-system.
+      The resolution takes each conflict hunk's code from one side (the merge chunk's AST
+      code-invariance gate), so it adds no persisted key, file name, zarr group or _version.json
+      field beyond what each side already carries. The layout_signature is the file's sha256 at
+      this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next
+      change to this path.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 55ceb753231d2a1059da5f6e652662040c81000266fdefda32631b08f23cee16
+    justification: >-
+      NON-BREAKING. Re-signed for the merge of develop 355f08d9 into docs-and-experiment-system.
+      The resolution takes each conflict hunk's code from one side (the merge chunk's AST
+      code-invariance gate), so it adds no persisted key, file name, zarr group or _version.json
+      field beyond what each side already carries. The layout_signature is the file's sha256 at
+      this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next
+      change to this path.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 2ca7ea2527edc19d6e5d06c27b2f486885e0c5dcc19433cdb00c44173968d39d
+    justification: >-
+      NON-BREAKING. Re-signed for the merge of develop 355f08d9 into docs-and-experiment-system.
+      The resolution takes each conflict hunk's code from one side (the merge chunk's AST
+      code-invariance gate), so it adds no persisted key, file name, zarr group or _version.json
+      field beyond what each side already carries. The layout_signature is the file's sha256 at
+      this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next
+      change to this path.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 60a51f748ab5fa1150fdfc5639de2ad00d96e367574820fea00d1219f1d8a0e4
+    justification: >-
+      NON-BREAKING. Re-signed for the merge of develop 355f08d9 into docs-and-experiment-system.
+      The resolution takes each conflict hunk's code from one side (the merge chunk's AST
+      code-invariance gate), so it adds no persisted key, file name, zarr group or _version.json
+      field beyond what each side already carries. The layout_signature is the file's sha256 at
+      this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next
+      change to this path.
+  - path: src/hhemt/scenario.py
+    layout_signature: 58e67053f1e394a5bb2275d476ea894598d9879280d604838cc5a7aba3294cc8
+    justification: >-
+      NON-BREAKING. The DEM-rim guard (require_dem_rim_capable_triton) also accepts a native
+      TRITON clone whose src/config_utils.h reads swmm_node_rim_from_dem, and the curated commit
+      a146fb6e and its descendants bd18215 and bb13ea28 join its
+      container set. DECIDING MEASUREMENT: no file preparation writes
+      is renamed, moved, added or restructured; a run the guard refused may now prepare, and the
+      cfg it then writes carries the line the option always wrote. The layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: a309ebbe4b1e685eec23613ef5ce33705c515ec57bb6107298360063c28542bd
+    justification: >-
+      NON-BREAKING. Re-states swmm_node_rim_from_dem's description to name the content test the
+      guard now makes. Description text only; no field, default or validator changes. The layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/scenario.py
+    layout_signature: 30aff501cae94f9987ce6786a605426c422fd69a57990d3130bf92438d0ffd93
+    justification: >-
+      NON-BREAKING. Adds the check that a coupled run's TRITON build couples the toolkit's list
+      (triton_coupling_read, keyless_inflows_read, require_triton_couples_the_listed_nodes and
+      their constants), called at run entry and in _generate_TRITON_SWMM_cfg before the cfg is
+      written. DECIDING MEASUREMENT: it writes no file and changes no file preparation writes; a
+      refused run stops before its cfg exists, and an admitted run's cfg is byte-identical to before. The layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next change to this path.

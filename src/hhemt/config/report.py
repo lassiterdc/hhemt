@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import warnings
 from pathlib import Path
 from typing import Literal
 
@@ -665,7 +666,7 @@ class SensitivityReportConfig(cfgBaseModel):
             warnings.warn(
                 "report.sensitivity.mode is retired (ADR-5 ReportingSet "
                 "registry). Reporting-set selection now lives on "
-                "report.reporting_set (default 'benchmarking' for "
+                "report.reporting_set (default 'sensitivity' for "
                 "sensitivity analyses). The legacy `mode:` key is ignored this "
                 "cycle and will be rejected in a future release.",
                 DeprecationWarning,
@@ -923,7 +924,7 @@ class report_config(cfgBaseModel):
             "entries in the ReportingSet registry (report_renderers/_reporting_sets.py); "
             "a bare string is normalized to a one-element list, and an empty "
             "list is treated as absent and takes the sentinel path. The sentinel "
-            "'default' resolves at analysis.run() entry to 'benchmarking' when "
+            "'default' resolves at analysis.run() entry to 'sensitivity' when "
             "toggle_sensitivity_analysis is True, else to the standard set, and cannot "
             "be named alongside another set. Validated against the registry at "
             "run-entry (NOT at field-construction time — that would create a "
@@ -976,13 +977,16 @@ class report_config(cfgBaseModel):
         if _is_absent_reporting_set(v):
             return ["default"]
         if isinstance(v, str):
-            return [v]
-        if not isinstance(v, (list, tuple)):
+            v = [v]
+        elif not isinstance(v, (list, tuple)):
             raise ValueError("reporting_set must be a set name or a list of set names")
         v = list(v)
         non_strings = [m for m in v if not isinstance(m, str)]
         if non_strings:
             raise ValueError(f"reporting_set members must be strings; got {non_strings!r}")
+        # Rename before the duplicate check so an old key listed beside its own new key is refused,
+        # and store the new key so a bundle never dumps the old one into cfg_analysis.yaml.
+        v = _apply_reporting_set_renames(v)
         repeated = sorted({m for m in v if v.count(m) > 1})
         if repeated:  # a duplicate doubles a contributor's templates into the merge
             raise ValueError(f"reporting_set names the same set more than once: {repeated}")
@@ -1081,6 +1085,47 @@ def _is_absent_reporting_set(value: object) -> bool:
     return value in ABSENT_REPORTING_SET_FORMS
 
 
+#: Every renamed reporting-set key. A configuration or a published bundle that
+#: still names an old key is rewritten to the new one, with one warning listing each rename
+#: applied, as config/eda.py's _EDA_RENAMES does for renamed plot kinds.
+_REPORTING_SET_RENAMES: dict[str, str] = {
+    "b4b": "compute_config_byte_identity",
+    "compute-sensitivity": "compute_sensitivity",
+    "dem-resolution": "dem_resolution",
+}
+
+
+def _apply_reporting_set_renames(names: list[str] | tuple[str, ...]) -> list[str]:
+    """Rewrite every renamed reporting-set key in ``names`` and warn once for the lot.
+
+    Three places receive a set name that a configuration or a published bundle may
+    still spell the old way: the ``report_config.reporting_set`` field validator, the
+    raw-dict resolver ``resolve_reporting_set_names`` and the published
+    ``eda._promote.register_eda_plot_in_reporting_set``. They all call this function,
+    so the table is applied by one implementation and the warning text cannot diverge.
+
+    Only ``str`` members are looked up: a non-``str`` member is returned unchanged so
+    the caller's own member-type arm names it, because a table lookup on an unhashable
+    member raises ``TypeError`` before that arm is reached. Order is preserved, since
+    first-appearance order determines renderer merge order. A member that is not an old
+    key passes through untouched, so a list with no renamed member emits no warning.
+    """
+    rewritten = [
+        _REPORTING_SET_RENAMES[member] if isinstance(member, str) and member in _REPORTING_SET_RENAMES else member
+        for member in names
+    ]
+    # The warning lists each rename once, in table order rather than member order, so a selection
+    # naming two old keys, or one old key twice, announces the same text however it is spelled.
+    applied = [f"{old} -> {new}" for old, new in _REPORTING_SET_RENAMES.items() if old in names]
+    if applied:
+        warnings.warn(
+            f"report.reporting_set: renamed [{', '.join(applied)}]; update the configuration to the new name(s).",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+    return rewritten
+
+
 def resolve_reporting_set_names(
     reporting_set: str | list[str] | tuple[str, ...] | None,
     *,
@@ -1153,6 +1198,9 @@ def resolve_reporting_set_names(
             ),
             config_path=None,
         )
+    # Renamed keys are rewritten after rule 2 and before rule 3, so an old key listed beside its
+    # own new key is refused by rule 3 as a duplicate instead of doubling that set's templates.
+    requested = tuple(_apply_reporting_set_renames(requested))
     # Rule 3.
     repeated = sorted({n for n in requested if requested.count(n) > 1})
     if repeated:
@@ -1180,7 +1228,7 @@ def resolve_reporting_set_names(
     for raw in requested:
         name = raw
         if name == "default":
-            name = "benchmarking" if is_sensitivity else "default"
+            name = "sensitivity" if is_sensitivity else "default"
         if not isinstance(name, str) or name not in REPORTING_SETS:
             raise ConfigurationError(
                 field="reporting_set",

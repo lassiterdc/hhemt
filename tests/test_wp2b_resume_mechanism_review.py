@@ -2,7 +2,7 @@
 
 AUTHORED BY THE REVIEWER HALF OF THE BUILDER PAIR, NOT BY THE IMPLEMENTER. Nothing here
 edits `analysis_validation.py`, `processing_analysis.py`, `model_defects.py`, or
-`eda/raw_resume_identity.py`; this file only ASSERTS over them. SOP section 8's
+`eda/raw_byte_identity.py`; this file only ASSERTS over them. SOP section 8's
 no-self-review rule is intact.
 
 FIVE TESTS, AND THEY ARE NOT THE SAME KIND. Read the per-test docstring before reading its
@@ -46,7 +46,7 @@ import pandas as pd
 import pytest
 
 import hhemt.analysis_validation as av
-from hhemt.eda.raw_resume_identity import parse_resume_timestep
+from hhemt.eda.raw_byte_identity import parse_resume_timestep
 from hhemt.model_defects import REGISTRY, resolve
 from hhemt.processing_analysis import _parse_replay_t
 from hhemt.resume_events import _parse_leading_float
@@ -158,7 +158,7 @@ def test_marker_literal_module_sets_are_equal():
     exactly the member the class exists to exclude.
 
     Measured at `358e0e51`: both sets are
-    {analysis_validation, eda/raw_resume_identity, processing_analysis, resume_events}.
+    {analysis_validation, eda/raw_byte_identity, processing_analysis, resume_events}.
     A green is a tripwire, not a finding.
     """
     replay_pat = re.compile(r"_TRITON_REPLAY_MARKER|REPLAY_MARKER|SWMM exchange history replayed")
@@ -343,7 +343,7 @@ def test_the_three_numeric_parses_agree_over_the_solver_emitted_shape_family(tmp
 
     4R says "the existing numeric parse ... works on either unchanged", singular, and
     `analysis_validation.py` names two of them in one breath as if interchangeable. There
-    are three: `eda/raw_resume_identity.parse_resume_timestep` (token rule),
+    are three: `eda/raw_byte_identity.parse_resume_timestep` (token rule),
     `processing_analysis._parse_replay_t` (regex rule), and
     `resume_events._parse_leading_float` (token rule plus an empty-tail guard).
 

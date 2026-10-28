@@ -1,3 +1,15 @@
+# Suite-wide fixtures and hooks for the tests under tests/.
+#
+# Most of the suite builds synthetic analyses into one shared on-disk cache, and the
+# hard problems here all come from that sharing: a test must not redirect, wipe or
+# half-build a tree another test will read. So besides the fixtures themselves this
+# file holds four mechanisms that police the cache:
+#   * a tripwire that fails any test leaving the runs-root override env var changed;
+#   * a collection hook that marks every test reaching the coupled compile as
+#     `compile_tier`, so the fast tier can deselect it;
+#   * an end-of-session sweep that reclaims stale run dirs from the cache;
+#   * completion markers that the completed-tree fixtures write and check, so a tree
+#     whose build did not finish is rebuilt rather than handed out.
 import contextlib
 import hashlib
 import os
@@ -15,7 +27,7 @@ _SYNTH_SENSITIVITY_REPORT_CONFIG = (
 )
 
 
-# census-green-up Phase 1 — builder cache-wipe isolation.
+# Builder cache-wipe isolation.
 # start_from_scratch=True builder fixtures whose analysis_name collides with a
 # session *_completed cache (synth_multi_sim / synth_sensitivity) must NOT
 # fast_rmtree-wipe that shared on-disk cache mid-suite (it is the copy-on-read
@@ -26,7 +38,7 @@ _SYNTH_SENSITIVITY_REPORT_CONFIG = (
 # construction (monkeypatch is function-scoped and unavailable at session scope).
 @contextlib.contextmanager
 def _runs_root_override_env(path):
-    key = "HHEMT_TEST_RUNS_ROOT_OVERRIDE"
+    key = _TEST_RUNS_ROOT_OVERRIDE_ENV
     old = os.environ.get(key)
     os.environ[key] = str(path)
     try:
@@ -65,8 +77,10 @@ def _runs_root_override_env(path):
 # `if` is never reached. With the fail inside `finally`, the leak surfaces and Python
 # chains the finalizer's error as its `__context__`, so both are reported.
 #
-# Keyed to the builder's constant, imported rather than restated, so a renamed variable
-# is an ImportError here rather than a silently disarmed check. Scoped to that ONE key:
+# Keyed to the builder's constant, imported rather than restated, so a renamed Python
+# constant is an ImportError here rather than a silently disarmed check. The setters in
+# this file write through the same constant, so a change to its VALUE moves them and
+# this check together. Scoped to that ONE key:
 # a session-lifetime env change for any other key (e.g. the non-interactive lock-clear
 # toggle below) must not fire this.
 _RUNS_ROOT_OVERRIDE_SNAPSHOT = pytest.StashKey[object]()
@@ -107,20 +121,24 @@ def pytest_runtest_teardown(item, nextitem):
             )
 
 
-# import tests.fixtures.test_case_catalog as cases
-
-
 _COMPILE_GUARD_ENV = "HHEMT_FORBID_COMPILE"
 
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
-    """Derive `compile_tier` from the fixture closure, then arm the guard for Gate A.
+    """Mark every test whose fixture closure reaches the coupled compile as `compile_tier`.
 
+    The mark is what lets the fast tier (`just test-fast`, called Gate A in this
+    repository's contributing guide) deselect these tests with
+    `-m "not compile_tier ..."`.
     `item.fixturenames` is the TRANSITIVE closure, so a test reaching the compile gate
     through `synthetic_*_completed` or an `_isolated` clone is marked without being
     named. `tryfirst=True` is what makes this run before pytest's own `-m` filter by
     CONTRACT rather than by conftest registration order.
+
+    This hook does not decide whether the compile guard is armed: the repo-root
+    conftest.py arms it by default. Here it is only force-armed, when
+    HHEMT_FORBID_COMPILE=1 (see the comment below).
     """
     for item in items:
         if "tritonswmm_cpu_compiled" in item.fixturenames:
@@ -143,16 +161,18 @@ def pytest_report_header(config):
     KNOWN LIMIT, stated rather than discovered later: pytest suppresses report headers
     under `-q`, and the Rivanna harness runs `pytest -q`. So this reaches an interactive
     or default run and NOT the SLURM chunk logs; the per-chunk provenance stamp in
-    `harness/pytest_suite/submit_suite_uva.sh` is the surface that covers those, and it
-    records the same (remote, commit) pair.
+    `harness/pytest_suite/submit_suite_uva.sh`, a script in the private estate
+    repository rather than in this one, is the surface that covers
+    those, and it records the same (remote, commit) pair.
     """
     from tests.fixtures._triton_source_cache import model_version_lines
 
     return model_version_lines()
 
 
-# Phase 4 — periodic TTL+liveness backstop for the synthetic_test_runs cache.
-# WHY THIS HOOK, AND WHY THESE GUARDS (all four are load-bearing):
+# Periodic TTL+liveness backstop for the synthetic_test_runs cache.
+# WHY THIS HOOK, AND WHY THESE GUARDS (the first four bullets are the hook's four
+# guards, each load-bearing; the last two describe the sweep itself):
 #   * pytest_sessionfinish fires ONCE per xdist worker PLUS ONCE in the
 #     controller (probed: 3 firings at -n 2). Without the `workerinput` guard,
 #     N workers race the same rmtree walk and one gets FileNotFoundError
@@ -163,13 +183,20 @@ def pytest_report_header(config):
 #     A best-effort cache sweep must never decide the suite's verdict.
 #   * exitstatus 2/3/4 = INTERRUPTED / INTERNAL_ERROR / USAGE_ERROR. A Ctrl-C'd
 #     or misinvoked run should not then spend wall time deleting.
+#   * HHEMT_DISABLE_RUN_DIR_REAPER=1 or CI returns early. The suite's SLURM-array
+#     runner (hhemt.suite._runner) sets the variable for every chunk: each chunk is a
+#     pytest controller rather than an xdist worker, so without it an early-finishing
+#     chunk would sweep the shared slug cache while sibling chunks still read it.
+#     Not established: why a bare CI environment disables the sweep as well.
 #   * The report is part of the feature: the cache reached 5.0 GB unnoticed
 #     because nothing ever said what it held. A silent reaper preserves that.
-#   * First-run-gated apply (friction reaper-backstop-auto-apply-safety): the
-#     wrapper deletes ONLY after a per-machine acknowledgment sentinel exists
-#     (see _run_dir_reaper._reaper_ack_path). Until then it runs DRY and prints
-#     the review-then-`touch` prompt, so "reviewed before any --apply" (phase-4
-#     DoD) holds on the automated path while "self-clean" holds once acked.
+#   * First-run-gated apply: the wrapper deletes ONLY after a per-machine
+#     acknowledgment sentinel exists (see _run_dir_reaper._reaper_ack_path).
+#     Until then it runs DRY and prints the review-then-`touch` prompt. An
+#     automatic delete on a machine whose cache nobody has looked at would
+#     remove run dirs no developer ever saw listed; the gate makes a human
+#     review the reclaim list once before any delete, and every later session
+#     on that machine then cleans up unattended.
 def pytest_sessionfinish(session, exitstatus):
     import os
     import warnings
@@ -218,10 +245,15 @@ def _pytest_uses_non_interactive_snakemake_lock_clear():
     invocation. Production / CLI users do not set the sentinel env var, so
     the interactive prompt remains the default outside the test suite.
 
-    Phase 1 of synth-test-isolation-and-runtime (Decision D1-Option-D): the
-    helper-body branch is the single firing point for the unconditional
-    pre-snakemake clear required by R4. Fixtures do not clear separately;
-    this fixture just toggles policy.
+    Stale lock files from a killed run and ``incomplete/`` markers from an
+    interrupted one both make Snakemake halt at startup, which in a test
+    session turns one earlier failure into a string of follow-up failures.
+    This fixture only toggles the policy; the clear itself runs inside
+    ``_check_and_clear_snakemake_lock``, so it covers every run or submit the
+    builder makes, including ones a test body triggers, rather than only the
+    invocations a fixture makes at setup. The reprocess path is the exception:
+    it passes ``skip_lock_check=True``, which returns before this clear, so the
+    two ``synthetic_*_completed`` fixtures below still clear on their own.
     """
     prior = os.environ.get(_NON_INTERACTIVE_LOCK_CLEAR_ENV)
     os.environ[_NON_INTERACTIVE_LOCK_CLEAR_ENV] = "1"
@@ -279,7 +311,7 @@ def ack_node_local_configs(monkeypatch):
     NEVER set this inside ``synth_sensitivity_analysis`` or ``synth_multi_sim_analysis``
     themselves. All nine arms of ``tests/test_node_local_config_guard.py`` consume the
     first of those, so a fixture-level acknowledgement disarms the guard's own regression
-    suite -- including its two discriminating ``pytest.raises(ConfigurationError)`` arms.
+    suite -- including its discriminating ``pytest.raises(ConfigurationError)`` arms.
     Adopting it at an unrelated test subtracts nothing from that suite.
     """
     monkeypatch.setenv("HHEMT_ALLOW_NODE_LOCAL_CONFIGS", "1")
@@ -287,9 +319,9 @@ def ack_node_local_configs(monkeypatch):
 
 @pytest.fixture
 def synth_multi_sim_analysis(tmp_path, monkeypatch):
-    # census-green-up Phase 1: isolate this start_from_scratch=True wipe under
-    # tmp_path so it cannot fast_rmtree the shared synth_multi_sim session cache.
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    # Isolate this start_from_scratch=True wipe under tmp_path so it cannot
+    # fast_rmtree the shared synth_multi_sim session cache.
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=True)
     return case.analysis
 
@@ -302,12 +334,13 @@ def synth_multi_sim_analysis_cached():
 
 @pytest.fixture(scope="session")
 def synth_multi_sim_builder(tmp_path_factory):
-    """Configured-but-not-run multi-sim analysis (Phase 2,
-    synth-test-isolation-and-runtime). No DEM/landuse preprocessing, no compile,
-    no scenario prep — sufficient for `generate_snakefile_content`-only tests.
-    Session-scoped so the 4 collapsed symmetry tests share one builder."""
-    # census-green-up Phase 1: isolate this start_from_scratch=True wipe under a
-    # per-session tmp dir so it cannot fast_rmtree the shared synth_multi_sim cache.
+    """Configured-but-not-run multi-sim analysis. No DEM/landuse preprocessing,
+    no compile, no scenario prep — enough for tests that read the analysis's
+    configuration or generate its Snakefile without running anything.
+    Session-scoped so every such test shares one construction rather than
+    each paying for its own."""
+    # Isolate this start_from_scratch=True wipe under a per-session tmp dir so
+    # it cannot fast_rmtree the shared synth_multi_sim cache.
     with _runs_root_override_env(tmp_path_factory.mktemp("synth_multi_sim_builder")):
         case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(
             start_from_scratch=True,
@@ -318,11 +351,10 @@ def synth_multi_sim_builder(tmp_path_factory):
 
 @pytest.fixture(scope="session")
 def synth_sensitivity_builder(tmp_path_factory):
-    """Configured-but-not-run sensitivity analysis (Phase 2,
-    synth-test-isolation-and-runtime). Same contract as `synth_multi_sim_builder`
-    but consumes the sensitivity-CSV factory."""
-    # census-green-up Phase 1: isolate this start_from_scratch=True wipe under a
-    # per-session tmp dir so it cannot fast_rmtree the shared synth_sensitivity cache.
+    """Configured-but-not-run sensitivity analysis. Same contract as
+    `synth_multi_sim_builder` but consumes the sensitivity-CSV factory."""
+    # Isolate this start_from_scratch=True wipe under a per-session tmp dir so
+    # it cannot fast_rmtree the shared synth_sensitivity cache.
     with _runs_root_override_env(tmp_path_factory.mktemp("synth_sensitivity_builder")):
         case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(
             start_from_scratch=True,
@@ -335,19 +367,19 @@ def synth_sensitivity_builder(tmp_path_factory):
 def synthetic_multisim_builder(tmp_path, monkeypatch):
     """Synthetic-tier SnakemakeWorkflowBuilder for at-most-once-guard unit tests.
 
-    Yields ``analysis._workflow_builder`` from a fresh synth multisim
+    Returns ``analysis._workflow_builder`` from a fresh synth multisim
     analysis (start_from_scratch=True) so ``_status/`` starts empty and
-    ``_status/_submitted/`` is writable. No simulations are executed —
-    Phase 1 unit tests construct sentinel files directly and exercise the
+    ``_status/_submitted/`` is writable. No simulations are executed — the
+    guard's unit tests construct sentinel files directly and exercise the
     reconciliation guard's classification logic in isolation.
 
     The builder exposes ``analysis_paths``, ``_reconcile_inflight_submissions``,
     and ``_recover_inflight_via_comment`` — the exact surface the guard's
     test cases monkeypatch against.
     """
-    # census-green-up Phase 1: isolate this start_from_scratch=True wipe under
-    # tmp_path so it cannot fast_rmtree the shared synth_multi_sim session cache.
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    # Isolate this start_from_scratch=True wipe under tmp_path so it cannot
+    # fast_rmtree the shared synth_multi_sim session cache.
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=True)
     return case.analysis._workflow_builder
 
@@ -390,9 +422,9 @@ def synth_triton_and_tritonswmm_analysis_cached():
 
 @pytest.fixture
 def synth_sensitivity_analysis(tmp_path, monkeypatch):
-    # census-green-up Phase 1: isolate this start_from_scratch=True wipe under
-    # tmp_path so it cannot fast_rmtree the shared synth_sensitivity session cache.
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    # Isolate this start_from_scratch=True wipe under tmp_path so it cannot
+    # fast_rmtree the shared synth_sensitivity session cache.
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(start_from_scratch=True)
     return case.analysis
 
@@ -496,7 +528,13 @@ def synth_sensitivity_mixed_prefixed_columns():
 # hours across three cluster runs, and ten tests reported as FAILED for a precondition
 # their own fixture had not met.
 #
-# Four arms. Arm 0 is what makes the other three terminate.
+# The arms are named by `_marker_state`'s result. `absent` (no readable marker) and
+# `stale` (a marker written by different builder sources or a different toolkit sha)
+# both rebuild; `unsatisfied` (a current marker whose payload is missing) warns, then
+# rebuilds (ARM 3, `_warn_unsatisfied`); `complete` hands the tree out. ARM 0,
+# `_finish_build`, ends every rebuild and is what makes the others terminate: it
+# raises if the payload is still missing, so a rebuild ends in a marker that holds
+# or in an error, never in another rebuild.
 _FIXTURE_MARKER_REL = "_status/_fixture_complete.json"
 
 _BUILDER_SOURCES = (
@@ -513,6 +551,11 @@ def _builder_provenance() -> dict:
     already applies the same idea to figures -- `StalePlotsError: figures built at X,
     report rendering at Y` -- and that check is what catches a tree built by a different
     toolkit than the one now reading it.
+
+    The digest covers ``_BUILDER_SOURCES``, which includes THIS file's own bytes. So
+    any edit to this conftest, a comment-only edit included, reads every cached marker
+    as ``stale``, and the ``synthetic_*_completed`` fixtures re-run their workflow on
+    the next session.
     """
     import subprocess
 
@@ -607,30 +650,31 @@ def _warn_unsatisfied(analysis_dir: Path, payload: tuple[str, ...], fixture_name
 
 
 @pytest.fixture(scope="session")
-def synthetic_multisim_completed(triton_only_cpu_compiled):
+def synthetic_multisim_completed(tritonswmm_cpu_compiled, triton_only_cpu_compiled):
     """Yield a synth multisim TRITONSWMM_analysis with sim outputs produced.
 
-    Requests ``triton_only_cpu_compiled`` (which itself requests
-    ``tritonswmm_cpu_compiled``, so the compile-tier gate and marker are unchanged):
+    Requests ``triton_only_cpu_compiled`` beside ``tritonswmm_cpu_compiled``:
     synth_multi_sim carries ``toggle_triton_model=True`` and the workflow's ``setup``
     rule ASSERTS a TRITON-only build rather than producing one, so without it the
     ``run()`` below fails on a cold build cache unless some earlier test compiled it.
 
-    Used by Phase 2 reprocess tests. Session-scoped: the first invocation
-    in a pytest session runs the synth multisim through
-    ``analysis.run(from_scratch=False, ...)`` if the analysis is not
-    already at the ``e_consolidate_complete.flag`` state; subsequent
-    invocations reuse the materialized analysis from the test-case cache.
+    Consumed directly, and through ``synthetic_multisim_completed_isolated``,
+    by tests that need a completed multisim tree, the reprocess tests among
+    them. Session-scoped: the first invocation in a pytest session runs the
+    synth multisim through ``analysis.run(from_scratch=False, ...)`` unless
+    this fixture's own completion marker is current AND that marker's payload is
+    present on disk (see ``_marker_state``); subsequent invocations reuse the
+    materialized analysis from the test-case cache.
 
-    Stale ``.snakemake/locks/`` / ``.snakemake/incomplete/`` (and the
-    reprocess-side ``.snakemake_reprocess/.snakemake/locks/`` /
-    ``.snakemake_reprocess/.snakemake/incomplete/``) directories from
-    prior interrupted runs are silently cleared before yielding.
-    Follow-up: integrate this clear into the broader
-    ``_pytest_uses_non_interactive_snakemake_lock_clear`` autouse fixture
-    described by stipulation
-    ``library/docs/stipulations/hhemt/snakemake fixture setup clears locks and incomplete.md``
-    (cross-plan synth-test-isolation work; not yet implemented).
+    Before handing the tree out it clears ``locks/`` and ``incomplete/`` under
+    the analysis dir's ``.snakemake/``, and under ``.snakemake_reprocess/`` when
+    that directory exists (the reprocess working directory of an earlier
+    design; reprocess now runs in the analysis dir itself). The session-wide
+    ``_pytest_uses_non_interactive_snakemake_lock_clear`` policy does not cover
+    this: the reprocess path passes ``skip_lock_check=True`` and returns before
+    that clear, and the test bodies call ``analysis.reprocess()``.
+    Not established: whether a stale ``incomplete/`` marker would still halt a
+    reprocess invocation, which runs with ``--nolock``.
     """
     import shutil
     from pathlib import Path as _Path
@@ -652,8 +696,8 @@ def synthetic_multisim_completed(triton_only_cpu_compiled):
             shutil.rmtree(sub_root / "incomplete", ignore_errors=True)
             (sub_root / "log").mkdir(parents=True, exist_ok=True)
 
-    # Ensure the analysis is in a "post-consolidate" state. If
-    # ``e_consolidate_complete.flag`` is absent, run() once to materialize.
+    # Ensure the analysis is in a "post-consolidate" state: run() once unless
+    # this fixture's completion marker is current and its payload is present.
     payload = ("analysis_datatree.zarr", "_status/e_consolidate_complete.flag")
     state = _marker_state(analysis_dir, payload)
     if state == "unsatisfied":
@@ -679,21 +723,20 @@ def synthetic_multisim_completed(triton_only_cpu_compiled):
 def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
     """Yield a synth sensitivity master analysis with all sims + consolidations produced.
 
-    Used by Phase 3 sensitivity-reprocess tests. Session-scoped: the first
-    invocation in a pytest session runs the synth sensitivity master through
-    ``sensitivity.submit_workflow(mode="local")`` if the analysis is not
-    already at the ``f_consolidate_experiment_complete.flag`` state; subsequent
-    invocations reuse the materialized analysis from the test-case cache.
+    Consumed by the sensitivity-reprocess, EDA, validation-report, config-diff
+    and DU-sentinel test modules. Session-scoped: the first invocation in a
+    pytest session runs the synth sensitivity master through
+    ``sensitivity.submit_workflow(mode="local")`` unless this fixture's own
+    completion marker is current AND that marker's payload is present on disk
+    (see ``_marker_state``); subsequent invocations reuse the materialized
+    analysis from the test-case cache.
 
     Returns the ``TRITONSWMM_sensitivity_analysis`` object (master analysis
-    accessible via ``.experiment``). Stale ``.snakemake/locks/`` /
-    ``.snakemake/incomplete/`` (and the reprocess-side
-    ``.snakemake_reprocess/.snakemake/locks/`` /
-    ``.snakemake_reprocess/.snakemake/incomplete/``) directories from prior
-    interrupted runs are silently cleared before yielding, mirroring the
-    Phase 2 fixture pattern (``synthetic_multisim_completed``).
+    accessible via ``.experiment``). Before handing it out it clears the same
+    stale Snakemake subtrees that ``synthetic_multisim_completed`` clears, for
+    the same reason: the reprocess path skips the session-wide clear.
 
-    Canonical EDA-loop fixture (ADR-9/ADR-10). EDA functions
+    The canonical fixture for the EDA loop. EDA functions
     (check_cross_sim_identity, analysis.eda()) take a TRITONSWMM_analysis;
     pass synthetic_sensitivity_completed.experiment (NOT the fixture object
     itself, which is the sensitivity wrapper). Warm-cache precondition: the first
@@ -720,22 +763,31 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
             shutil.rmtree(sub_root / "incomplete", ignore_errors=True)
             (sub_root / "log").mkdir(parents=True, exist_ok=True)
 
-    # Ensure the master analysis is in a "post-master-consolidate" state. If
-    # ``f_consolidate_experiment_complete.flag`` is absent, run the master
-    # sensitivity workflow once locally to materialize per-member flags + the
-    # master flag + the sensitivity_datatree.zarr.
+    # Ensure the master analysis is in a "post-master-consolidate" state: unless
+    # this fixture's completion marker is current and its payload is present,
+    # run the master sensitivity workflow once locally to materialize the
+    # per-member flags, the master flag and the experiment_datatree.zarr.
     payload = ("experiment_datatree.zarr", "_status/f_consolidate_experiment_complete.flag")
     state = _marker_state(analysis_dir, payload)
     if state == "unsatisfied":
         _warn_unsatisfied(analysis_dir, payload, "synthetic_sensitivity_completed")
     if state != "complete":
+        # Stamp the master's layout version before the direct facade call below writes into it.
+        # Stamping here keeps this fixture correct whether or not that facade stamps the master itself;
+        # on a master that already carries this version's stamp, the call is a no-op. On a master
+        # stamped at a different version, or holding results with no stamp, it raises
+        # ``LayoutVersionError`` rather than relabelling it.
+        from hhemt.version_migration import LAYOUT_VERSION
+        from hhemt.version_migration.state import stamp_new_target
+
+        stamp_new_target(analysis_dir, LAYOUT_VERSION)
         sensitivity.submit_workflow(mode="local")
         _finish_build(analysis_dir, payload, "synthetic_sensitivity_completed")
 
     return sensitivity
 
 
-# ========== D1 copy-on-read isolation (census-green-up Phase 1) ==========
+# ========== Copy-on-read isolation ==========
 # Per-test isolated clones of the session-scoped ``*_completed`` fixtures, built
 # on the in-tree clone helper (``tests/_failing_fixture_helpers.clone_analysis_to_tmp``),
 # which copies the FULL system_directory (configs + nested analysis_dir +
@@ -745,7 +797,7 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
 # ``pytest tests/`` run yields the same per-test verdict as an isolated ``-k`` run.
 @pytest.fixture
 def synthetic_multisim_completed_isolated(synthetic_multisim_completed, tmp_path):
-    """Per-test isolated copy of ``synthetic_multisim_completed`` (D1)."""
+    """Per-test isolated copy of ``synthetic_multisim_completed``."""
     from tests._failing_fixture_helpers import clone_analysis_to_tmp
 
     return clone_analysis_to_tmp(synthetic_multisim_completed, tmp_path)
@@ -753,7 +805,7 @@ def synthetic_multisim_completed_isolated(synthetic_multisim_completed, tmp_path
 
 @pytest.fixture
 def synthetic_sensitivity_completed_isolated(synthetic_sensitivity_completed, tmp_path):
-    """Per-test isolated copy of ``synthetic_sensitivity_completed`` (D1) — clones
+    """Per-test isolated copy of ``synthetic_sensitivity_completed`` — clones
     the master system_directory (with ``members/``) so master AND per-member
     reprocess paths re-derive under tmp_path."""
     from tests._failing_fixture_helpers import clone_analysis_to_tmp
@@ -762,42 +814,28 @@ def synthetic_sensitivity_completed_isolated(synthetic_sensitivity_completed, tm
     return master_clone.sensitivity
 
 
-def test_isolated_fixture_does_not_perturb_session_tree(
-    synthetic_multisim_completed, synthetic_multisim_completed_isolated
-):
-    """Lock the D1 copy-on-read contract: a destructive op on the isolated clone
-    leaves the shared session tree's _status flags intact."""
-    session_dir = synthetic_multisim_completed.analysis_paths.analysis_dir
-    flag = session_dir / "_status" / "e_consolidate_complete.flag"
-    before = hashlib.sha1(flag.read_bytes()).hexdigest() if flag.exists() else None
-    a = synthetic_multisim_completed_isolated
-    a.reprocess(
-        start_with="consolidate",
-        execution_mode="local",
-        regenerate_existing=True,
-        verbose=False,
-    )
-    after = hashlib.sha1(flag.read_bytes()).hexdigest() if flag.exists() else None
-    assert before == after, "isolated reprocess leaked into the session tree"
-    assert a.analysis_paths.analysis_dir != session_dir, "clone shares the session dir"
-
-
 @pytest.fixture(scope="session")
 def tritonswmm_cpu_compiled():
     """Pre-compile TRITON-SWMM CPU once per test session for each synthetic
     test-case family used by the coupled-mode tests.
 
+    It builds three things, not one. The loop builds the coupled TRITON-SWMM CPU
+    target for synth_all_models and synth_multi_sim, plus standalone SWMM for each
+    family whose config sets ``toggle_swmm_model``. After the loop it builds the
+    TRITON-only CPU target (``build_triton_cpu``) on the synth_all_models case.
+
     Required by coupled-mode tests whose `prepare_scenario` CPU gate
-    (scenario.py:1274-1279) checks `_system.compilation_cpu_successful`.
+    in scenario.py checks `_system.compilation_cpu_successful`.
     That property does NOT read the system log: it reads
     `sys_paths.compilation_logfile_cpu` — `{tritonswmm_dir}/
-    build_tritonswmm_cpu/compilation.log` (system.py:191) — greps two build
-    markers, and WRITES the system-log field as a side effect
-    (system.py:2219-2231). Since `_software_root` is shared across every
-    synth family (test_case_builder.py:354 pins it to the slug root), that
-    log is one file for all of them. No causal justification for iterating
-    families is offered here, because the measured mechanism does not
-    supply one; the loop covers synth_all_models and synth_multi_sim.
+    build_tritonswmm_cpu/compilation.log` — greps two build markers, and
+    WRITES the system-log field as a side effect
+    (`TRITONSWMM_system.compilation_cpu_successful` in system.py). Since
+    `_software_root` is shared across every synth family (the
+    `self._software_root = _slug_runs_root / "_software"` assignment in
+    test_case_builder.py pins it to the slug root), that log is one file for
+    all of them. No causal justification for iterating families is offered
+    here, because the measured mechanism does not supply one.
 
     Process-safety note: this fixture writes to the slug `_software/` tree
     under platformdirs. Concurrent test sessions compiling against the same
@@ -852,37 +890,45 @@ def tritonswmm_cpu_compiled():
             case.analysis._system.compile_SWMM(
                 recompile_if_already_done_successfully=False,
             )
+    case = Local_TestCases.retrieve_synth_all_models_test_case(start_from_scratch=False)
+    case.analysis._system.compile_TRITON_only(backends=["cpu"], recompile_if_already_done_successfully=False)
 
 
 @pytest.fixture(scope="session")
 def triton_only_cpu_compiled(tritonswmm_cpu_compiled):
-    """Ensure the SHARED TRITON-only CPU build exists, for tests whose case
-    carries ``toggle_triton_model=True`` and reaches ``prepare_scenario``.
+    """Request the SHARED TRITON-only CPU build, for tests whose case carries
+    ``toggle_triton_model=True`` and reaches ``prepare_scenario``.
 
-    Distinct from ``tritonswmm_cpu_compiled``, which builds the COUPLED target
-    (``build_tritonswmm_cpu``). The TRITON-only target is a different build dir
-    (``build_triton_cpu``, system.py:180) with a different marker, and nothing
-    else in the suite produces it — ``grep -rn 'compile_TRITON_only' tests/``
-    returns only ``test_synth_00_compile_models.py``, which is a TEST rather
-    than a fixture and therefore cannot be depended on for ordering.
+    The TRITON-only target is a different build dir from the COUPLED one
+    (``build_triton_cpu``, ``sys_paths.TRITON_build_dir_cpu``, against
+    ``build_tritonswmm_cpu``), with a different marker. Its dependency
+    ``tritonswmm_cpu_compiled`` already builds it on the same synth_all_models
+    case, so once that fixture has run, this fixture's call finds the build done
+    and does nothing (``recompile_if_already_done_successfully=False``). It is
+    kept as the explicit request: a test that needs this build says so by name
+    rather than relying on what another fixture happens to build. Hoisting it to
+    module scope in test_multi_model_integration.py, whose module-level mark already
+    requests ``tritonswmm_cpu_compiled``, would force no build that mark does not
+    already force.
 
-    Requested PER TEST rather than at module scope, and the warrant is COST,
-    not safety. Do NOT hoist this to module scope: the module-level pytestmark
-    (test_multi_model_integration.py:17-19) covers TestSWMMOnlyIntegration too,
-    so hoisting would force a TRITON-only build on tests that never reach the
-    guard.
-
-    DO NOT read the per-test placement as self-policing. A sibling that needs
-    this build and forgets to request it fails loudly ONLY on a COLD
-    ~/.cache/hhemt/synthetic_test_runs/{slug}/_software/. On a WARM one -- the
-    developer's own machine, and any box that has run the compile tier once --
-    the shared build_triton_cpu tier already exists, the property reads True,
-    and the omission is INVISIBLE until someone runs on a clean checkout or CI.
-    There is no gate that catches a missing request here.
+    The one population still exposed is a test holding NEITHER fixture. On a COLD
+    ~/.cache/hhemt/synthetic_test_runs/{slug}/_software/, such a test that reaches
+    a workflow run fails at the run's setup rule, which asserts that the build
+    exists and does not produce one. One that reaches only ``prepare_scenario``
+    fails there: with ``ConfigurationError`` ("No ... CPU build is present") when
+    the cache holds no coupled compilation log either, otherwise with
+    ``CompilationError``. On a WARM cache -- any box that has run the compile tier
+    once -- the build already exists and the missing request is INVISIBLE.
+    ``tests/test_build_request_census.py`` fails on such a test whose run its static
+    call walk reaches, unless the test carries a ``compile_tier`` mark applied by
+    hand, which the census counts as a build request. One so marked, one reached by
+    dynamic dispatch or through a call resolving outside ``tests/`` and ``hhemt``,
+    and one that reaches only ``prepare_scenario`` are not caught, and nothing in
+    this tree gates them.
 
     Depends on ``tritonswmm_cpu_compiled`` for its skip/escalate gate (toolchain
     absent, or pyswmm-stack mismatch) rather than duplicating it, so this
-    fixture adds a build and no new gating policy.
+    fixture adds no gating policy of its own.
     """
     from tests.fixtures.test_case_catalog import Local_TestCases
 
@@ -893,14 +939,15 @@ def triton_only_cpu_compiled(tritonswmm_cpu_compiled):
     )
 
 
-# ========== Phase 3a: Session-scope rendered_synth_* fixtures (R7) ==========
+# ========== Session-scope rendered_synth_* fixtures ==========
 
 
 def _mtime_sha_snapshot(analysis_dir: Path) -> dict[str, tuple[float, str]]:
     """Return ``{relative_path: (mtime, sha1)}`` for ``_status/*.flag`` and
     every ``*.manifest.json`` under ``plots/``. Used by the session-scope
-    rendered-fixture finalizers to enforce read-only consumption (R-CP-3:
-    SHA-1 is the durable invariant; mtime-only drift is a warning)."""
+    rendered-fixture finalizers to enforce read-only consumption. SHA-1 is
+    the invariant they enforce; mtime is recorded but a change in it alone is
+    not treated as a mutation (see :func:`_assert_no_sha_drift`)."""
     snapshot: dict[str, tuple[float, str]] = {}
     status_dir = analysis_dir / "_status"
     if status_dir.exists():
@@ -925,10 +972,10 @@ def _assert_no_sha_drift(
     final: dict[str, tuple[float, str]],
 ) -> None:
     """Compare two snapshots from :func:`_mtime_sha_snapshot`. Hard-fails on
-    SHA-changed or deleted entries (R7 read-only invariant); mtime-only
-    differences are downgraded to a pytest warning (R-CP-3 mitigation:
-    read-write `open()` without writes still bumps mtime on some
-    filesystems)."""
+    SHA-changed or deleted entries, because a session fixture's consumers may
+    only read its tree. mtime-only differences are collected and then dropped
+    without being reported, because a read-write `open()` without writes still
+    bumps mtime on some filesystems and failing on it would blame a reader."""
     drift: list[str] = []
     for k, (m0, sha0) in initial.items():
         if k not in final:
@@ -945,7 +992,7 @@ def _assert_no_sha_drift(
 
 
 @pytest.fixture(scope="session")
-def rendered_synth_multi_sim(tritonswmm_cpu_compiled, tmp_path_factory):
+def rendered_synth_multi_sim(tritonswmm_cpu_compiled, triton_only_cpu_compiled, tmp_path_factory):
     """Session-scope: build, run, and render the synth multisim analysis once.
 
     Depends on ``tritonswmm_cpu_compiled`` for its compile-tier GATE: that
@@ -953,8 +1000,8 @@ def rendered_synth_multi_sim(tritonswmm_cpu_compiled, tmp_path_factory):
     and HARD-FAILS under ``HHEMT_REQUIRE_COMPILE_TIER=1`` (compile-tests.yml),
     so a real compile regression can never hide behind the skip.
 
-    Promoted from function-scope per Phase 3a (R7,
-    synth-test-isolation-and-runtime). Builds its own case from
+    Session-scoped rather than function-scoped, so the build, run and render
+    are paid once per session rather than once per consuming test. Builds its own case from
     ``Local_TestCases`` (a session-scope fixture cannot depend on the
     function-scope ``synth_multi_sim_analysis``). Renders both ``html`` and
     ``zip`` formats so bundle round-trip tests find both artifacts. The
@@ -968,10 +1015,10 @@ def rendered_synth_multi_sim(tritonswmm_cpu_compiled, tmp_path_factory):
     legitimately mutate that shared tree (e.g.
     ``test_synth_04_multisim_with_snakemake.py::test_run_and_render_report``,
     which calls ``analysis.run()`` + ``render_report()`` on it) then trip this
-    fixture's R7 no-drift finalizer, whose ``pytest.fail`` surfaces as an ERROR
+    fixture's no-drift finalizer, whose ``pytest.fail`` surfaces as an ERROR
     against whichever test happens to be LAST in the session. A private
     runs_root makes the snapshotted tree unreachable by non-consumers, so the
-    R7 guard polices exactly what it claims to police."""
+    no-drift guard polices exactly what it claims to police."""
     with _runs_root_override_env(tmp_path_factory.mktemp("rendered_synth_multi_sim")):
         case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(
             start_from_scratch=True,
@@ -991,7 +1038,7 @@ def rendered_synth_sensitivity(tritonswmm_cpu_compiled, tmp_path_factory):
     once. See ``rendered_synth_multi_sim`` for contract details (including the
     ``tritonswmm_cpu_compiled`` compile-tier gate and why the runs_root is
     private). Uses ``_SYNTH_SENSITIVITY_REPORT_CONFIG`` (relocated from
-    ``test_synth_08_bundle_round_trip.py`` in Phase 3a)."""
+    ``test_synth_08_bundle_round_trip.py``)."""
     with _runs_root_override_env(tmp_path_factory.mktemp("rendered_synth_sensitivity")):
         case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(
             start_from_scratch=True,
@@ -1006,7 +1053,7 @@ def rendered_synth_sensitivity(tritonswmm_cpu_compiled, tmp_path_factory):
 
 
 @pytest.fixture(scope="session")
-def rendered_synth_sensitivity_triton_only(tritonswmm_cpu_compiled, tmp_path_factory):
+def rendered_synth_sensitivity_triton_only(tritonswmm_cpu_compiled, triton_only_cpu_compiled, tmp_path_factory):
     """Session-scope: build, run, and render the PURE-TRITON synth sensitivity master
     once -- the pure-TRITON arm of the same-named-figure fungibility test
     (``test_synth_fungibility_same_named_figures``). Byte-mirror of
@@ -1014,8 +1061,10 @@ def rendered_synth_sensitivity_triton_only(tritonswmm_cpu_compiled, tmp_path_fac
     master (``toggle_tritonswmm_model=False``), so ``system_overview`` renders DEM-only
     and DROPS the SWMM ``.inp`` sources -- making the two arms' same-named figures differ
     ONLY by SWMM-specific sources. Same ``tritonswmm_cpu_compiled`` compile-tier gate and
-    private-``runs_root`` contract; the TRITON-SWMM CPU binary is compiled on demand by
-    ``.run()`` (pure-TRITON needs no separate toolchain). Uses the same
+    private-``runs_root`` contract. A pure-TRITON master runs the TRITON-only CPU binary,
+    which ``.run()`` does not compile; it is built before the run, by this fixture's
+    ``triton_only_cpu_compiled`` request (and already by ``tritonswmm_cpu_compiled``,
+    which that fixture depends on). Uses the same
     ``_SYNTH_SENSITIVITY_REPORT_CONFIG`` report shape (model-agnostic)."""
     with _runs_root_override_env(tmp_path_factory.mktemp("rendered_synth_sensitivity_triton_only")):
         case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_triton_only(
@@ -1032,21 +1081,20 @@ def rendered_synth_sensitivity_triton_only(tritonswmm_cpu_compiled, tmp_path_fac
 
 @pytest.fixture
 def synthetic_two_bundle_fixture(rendered_synth_multi_sim, tmp_path):
-    """Two hermetic synthetic bundles for the PIP-2 combine proof (R10).
+    """Two hermetic synthetic single-analysis bundles for the combine round trip.
 
-    Emits ONE real SINGLE-ANALYSIS bundle from the cached rendered-multisim
-    analysis to ``tmp_path`` (NEVER the default analysis_dir/render_bundle/, which
-    the session fixture's no-SHA-drift finalizer would flag), unpacks it, and
+    Consumed by ``tests/test_synth_combine_pip2.py``. Emits ONE real
+    SINGLE-ANALYSIS bundle from the cached rendered-multisim analysis to
+    ``tmp_path`` (NEVER the default analysis_dir/render_bundle/, which the
+    session fixture's no-SHA-drift finalizer would flag), unpacks it, and
     derives a second combine-compatible bundle as a filesystem copy.
 
-    A SINGLE-analysis bundle is required (not a sensitivity-master bundle): the
-    Phase-2 merge layer reads ``bundle_root/analysis_datatree.zarr``
-    (``_combine_merge.CONSOLIDATED_TREE_NAME``), which is the consolidated tree a
-    single analysis ships at its root. A sensitivity master instead ships
-    ``sensitivity_datatree.zarr`` at root (its per-sub trees live under
-    ``members/member_N/analysis_datatree.zarr``), so ``combine_bundle`` would raise
-    ``FileNotFoundError`` in merge. Combining sensitivity-master bundles is a
-    routed follow-up (generalize the merge to accept ``sensitivity_datatree.zarr``).
+    A single-analysis bundle ships its consolidated tree at its root as
+    ``_combine_merge.CONSOLIDATED_TREE_NAME``, and the fixture asserts that
+    before returning, so a drift in bundle shape fails here, naming what the
+    root does hold, rather than somewhere inside combine. Sensitivity-master
+    bundles ship a different root tree and are covered by
+    ``synthetic_two_sensitivity_bundle_fixture``.
 
     The two bundles differ only in ways the checker cannot see (compute config is
     not bundled — the checker reads cfg_system/cfg_analysis identity fields only),
@@ -1095,12 +1143,15 @@ def synthetic_two_bundle_fixture(rendered_synth_multi_sim, tmp_path):
 
 @pytest.fixture
 def synthetic_two_sensitivity_bundle_fixture(rendered_synth_sensitivity, tmp_path):
-    """Two hermetic synthetic SENSITIVITY-MASTER bundles for the R12 combine proof.
+    """Two hermetic synthetic SENSITIVITY-MASTER bundles for the combined-report test.
 
-    Mirrors ``synthetic_two_bundle_fixture`` but over the sensitivity master,
-    which ships ``sensitivity_datatree.zarr`` at its root (SENSITIVITY_TREE_NAME)
-    rather than ``analysis_datatree.zarr``. Proves the combine generalization
-    (``_open_experiment_tree`` resolves either root tree name). Emits ONE real
+    Consumed by ``test_r12_combined_report_assembles_from_two_sensitivity_masters``
+    in ``tests/test_synth_compute_sensitivity_report.py``. Mirrors
+    ``synthetic_two_bundle_fixture`` but over the sensitivity master, which ships
+    a different root tree than a single analysis does
+    (``EXPERIMENT_TREE_NAME``, or ``SENSITIVITY_TREE_NAME`` on a bundle produced
+    before layout V0021). Proves that combine accepts a master bundle
+    (``_open_experiment_tree`` resolves whichever root tree name is present). Emits ONE real
     sensitivity-master bundle to ``tmp_path`` (NEVER the default
     analysis_dir/render_bundle/, which the session fixture's no-SHA-drift
     finalizer would flag), unpacks it, and derives a second combine-compatible
@@ -1149,8 +1200,8 @@ def synth_prepared_scenario(tritonswmm_cpu_compiled, triton_only_cpu_compiled, t
     """
     from tests.fixtures.test_case_catalog import Local_TestCases
 
-    # census-green-up Phase 1 idiom (see `_runs_root_override_env` at the top of this
-    # file): a SESSION-scoped builder sets the override only AROUND construction and
+    # The idiom of `_runs_root_override_env` (top of this file): a SESSION-scoped
+    # builder sets the override only AROUND construction and
     # restores it before its value is handed out. A bare `os.environ[...] =` here leaked
     # `{basetemp}/capture0` to every later fixture-free reader in the process and
     # rerouted them under /tmp -- measured 2026-09-11 (run 20260911T040021Z_512952158d51
@@ -1168,20 +1219,20 @@ def synth_case_hydrology_disabled(tmp_path, monkeypatch):
     """A synth analysis with toggle_use_swmm_for_hydrology=False.
 
     Constructed through `additional_system_configs` rather than by mutating
-    `cfg_system` on a built analysis: Gotcha 73 -- the runners read the PERSISTED
+    `cfg_system` on a built analysis: the runners read the PERSISTED
     config from a subprocess, so an in-memory mutation never reaches them.
 
     Shape verified against the live call site at
     tests/test_synth_timeseries_consolidation.py:104-114, which is the same seam the
     private-estate runner uses: the builder is the CLASS
-    `retrieve_synth_TRITON_SWMM_test_case` (test_case_builder.py:283), not a
+    `retrieve_synth_TRITON_SWMM_test_case` (in test_case_builder.py), not a
     `Local_TestCases` method, and runs-root isolation is the env override rather than
     a keyword -- which is what keeps `start_from_scratch=True`'s wipe off the shared
-    session cache (the sanctioned exception in the per-worktree-cache stipulation).
+    session cache.
     """
     from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
 
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     return retrieve_synth_TRITON_SWMM_test_case(
         analysis_name="synth_hydrology_disabled",
         n_events=1,

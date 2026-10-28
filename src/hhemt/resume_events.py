@@ -36,7 +36,7 @@ close a cycle if the constants had been sourced the other way.
 
 WHAT THE EMITTED SHAPE PINS. The solver
 emits the four fields in one line, in the existing ``...to t=`` shape, so the numeric parse
-at ``eda/raw_resume_identity.py`` keeps working unchanged. That shape pins TWO of the four
+at ``eda/raw_byte_identity.py`` keeps working unchanged. That shape pins TWO of the four
 fields exactly -- the path (which marker literal appears) and the resume time (the first
 whitespace token after the literal). The remaining two are pinned by VOCABULARY rather than
 by position: the reason is a closed three-value set matched as a literal token, and the
@@ -187,7 +187,7 @@ def ledger_path_for(model_logfile: Path) -> Path:
 def _parse_leading_float(tail: str) -> float | None:
     """The resume time from the text immediately following a marker literal.
 
-    The token rule is IDENTICAL to ``eda/raw_resume_identity.parse_resume_timestep``'s --
+    The token rule is IDENTICAL to ``eda/raw_byte_identity.parse_resume_timestep``'s --
     first whitespace token, trailing ``.,;`` stripped -- deliberately, because that consumer
     is what constrains the emitted shape in the first place. Restating the rule rather than
     importing it keeps this module a leaf; the two are pinned together by a test.

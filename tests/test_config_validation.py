@@ -1,3 +1,14 @@
+"""Schema-level tests for the toolkit's configuration models.
+
+A malformed config should fail when it is loaded, with the offending field named,
+rather than hours later inside a workflow. These tests build minimal system,
+analysis, report and synthetic-experiment configs in memory and assert which values
+load, how they are normalized, and which are refused. Beside the config models they
+cover the reporting-set registry and how its sets compose, the category-sort
+comparator the report surgery writes into the rendered HTML, and the default Globus
+exclude list. No test here compiles or runs a solver.
+"""
+
 from pathlib import Path
 
 import pytest
@@ -17,9 +28,11 @@ def _touch(path: Path) -> Path:
 
 def _minimal_system_config_dict(tmp_path: Path) -> dict:
     system_dir = tmp_path / "system"
-    system_dir.mkdir(
-        parents=True, exist_ok=True
-    )  # output root must exist for model_dump()->model_validate() round-trips
+    # Not what makes this dict validate: system_directory is a toolkit-owned output
+    # and is exempt from the load-time existence check (test_toolkit_owned_output_*
+    # below validates it absent). Not established: whether any importer of this
+    # helper relies on the directory existing, so the mkdir stays.
+    system_dir.mkdir(parents=True, exist_ok=True)
     return {
         "system_directory": str(system_dir),
         "watershed_gis_polygon": str(_touch(tmp_path / "inputs" / "watershed.shp")),
@@ -124,7 +137,8 @@ def test_analysis_config_explicit_toggle_dependency(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Phase 1 — report_config schema validation
+# report_config schema validation, and the run-entry checks that tie its
+# sensitivity block to the sensitivity CSV
 # ---------------------------------------------------------------------------
 
 
@@ -143,11 +157,12 @@ def test_report_config_loads_default(tmp_path: Path):
     )
     cfg = yaml_to_model(yaml_path, report_config)
     assert cfg.figure_defaults.dpi == 120
-    assert cfg.sensitivity is None  # F-I-7: default is None
+    assert cfg.sensitivity is None
 
 
 def test_report_config_rejects_unknown_field(tmp_path: Path):
-    """Flag 7 — `extra='forbid'` regression test."""
+    """An unknown report key fails at load (`extra='forbid'`) rather than being
+    silently ignored, so a misspelled key such as `system-map` is caught."""
     from hhemt.config.loaders import yaml_to_model
     from hhemt.config.report import report_config
 
@@ -195,7 +210,9 @@ def test_validate_sensitivity_independent_vars_missing_columns(tmp_path: Path):
 
 
 def test_validate_sensitivity_independent_vars_charset(tmp_path: Path):
-    """Flag 17 — Snakemake-safe charset validation."""
+    """An independent_vars name outside the Snakemake-wildcard-safe charset (here one
+    containing a space) is refused, because each name is substituted into the
+    `independent_var` Snakemake wildcard."""
     import pandas as pd
 
     from hhemt.config.report import (
@@ -213,7 +230,7 @@ def test_validate_sensitivity_independent_vars_charset(tmp_path: Path):
 
 
 def test_validate_sensitivity_fails_when_block_missing_but_csv_present(tmp_path: Path):
-    """F-I-6 — sensitivity CSV present with no sensitivity block raises."""
+    """A sensitivity CSV with no sensitivity block in the report config raises."""
     from hhemt.config.report import (
         report_config,
         validate_sensitivity_independent_vars,
@@ -247,9 +264,9 @@ def test_test_reference_report_scoping_passes_and_guard_intact():
     sensitivity-config<->sensitivity-analysis guard still fires for an UN-scoped
     benchmarking report on a non-sensitivity run.
 
-    This pins the _build_test_members overlay-scoping recipe (analysis.py:
-    2725-2733) at the validator layer: the fix nulls report.sensitivity and resets
-    report.reporting_set to the 'default' sentinel for the reference sub.
+    This pins, at the validator layer, the overlay-scoping recipe in
+    TRITONSWMM_analysis._build_test_analyses: it nulls report.sensitivity and
+    resets report.reporting_set to the 'default' sentinel for the reference member.
     """
     from hhemt.config.report import (
         SensitivityReportConfig,
@@ -258,25 +275,28 @@ def test_test_reference_report_scoping_passes_and_guard_intact():
     )
     from hhemt.exceptions import ConfigurationError
 
-    # Pre-fix state: a member cfg inherits the sensitivity master's report
-    # block verbatim onto a non-sensitivity reference (explicit benchmarking-validator
-    # reporting_set + a sensitivity: benchmarking block). The guard MUST still fire
-    # here -- Option A does NOT mask it.
+    # Unscoped: a member cfg inherits the sensitivity master's report block verbatim
+    # onto a non-sensitivity reference (explicit benchmarking-validator reporting_set
+    # + a sensitivity: benchmarking block). The guard must still fire here, because the
+    # scoping lives in the overlay recipe and not in the validator: a validator
+    # carve-out that let this pass would also pass a genuinely misconfigured run.
     unscoped = report_config(
         reporting_set="benchmarking",
         sensitivity=SensitivityReportConfig(independent_vars=["n_devices"]),
     )
-    # MOVED REFERENT (S16): this match= string was written against
-    # validate_sensitivity_independent_vars. The S16 shape check in
-    # validate_active_reporting_set now PRE-EMPTS that call, so the literal is
-    # produced by the shape branch instead. The bytes are unchanged and the
-    # function under assertion is not -- recorded so the guard is not read as
-    # still testing what it originally tested.
+    # MOVED REFERENT: this match= string was written against
+    # validate_sensitivity_independent_vars. validate_active_reporting_set now
+    # compares the selected set's declared shape with the analysis shape FIRST, and
+    # a benchmarking set (shape "sensitivity") on a non-sensitivity run fails that
+    # comparison, so the literal is now produced by the shape branch. The test still
+    # calls validate_active_reporting_set; only the branch producing this literal
+    # moved. Recorded so this assertion is not read as still exercising
+    # validate_sensitivity_independent_vars.
     with pytest.raises(ConfigurationError, match="not a sensitivity analysis"):
         validate_active_reporting_set(unscoped, is_sensitivity=False, sensitivity_csv_path=None)
 
-    # Post-fix state: the overlay-scoping recipe nulls sensitivity and resets
-    # reporting_set to the 'default' sentinel. A non-sensitivity reference now
+    # Scoped state: the overlay-scoping recipe nulls sensitivity and resets
+    # reporting_set to the 'default' sentinel. A non-sensitivity reference then
     # resolves to the standard set and passes validation.
     scoped = report_config.model_validate({**unscoped.model_dump(), "sensitivity": None, "reporting_set": "default"})
     resolved = validate_active_reporting_set(scoped, is_sensitivity=False, sensitivity_csv_path=None)
@@ -284,7 +304,8 @@ def test_test_reference_report_scoping_passes_and_guard_intact():
 
 
 # ---------------------------------------------------------------------------
-# Phase 1 (P1a) — named-reporting-sets: registry + reporting_set selector + D4
+# Named reporting sets: the registry, the reporting_set selector, and how a
+# selection resolves and is validated
 # ---------------------------------------------------------------------------
 
 
@@ -297,9 +318,9 @@ def test_reporting_sets_registry_imports_cleanly():
     )
 
     # Exact-set equality (NOT a subset check) so an accidental registry member
-    # still fails. `combined` (PIP-1 cross-experiment), `compute-sensitivity`
-    # (PIP-2 / R11 in-report EDA), `dem-resolution` (D13, the four-figure
-    # DEM-resolution EDA family) and `b4b` (Phase 4, the raw-output byte-for-byte
+    # still fails. `combined` (the cross-experiment report), `compute-sensitivity`
+    # (the in-report compute-sensitivity EDA), `dem-resolution` (the four-figure
+    # DEM-resolution EDA family) and `b4b` (the raw-output byte-for-byte
     # comparison family) are shipped, exercised sets; the assertion simply trailed
     # their landing.
     assert set(REPORTING_SETS) == {
@@ -307,9 +328,9 @@ def test_reporting_sets_registry_imports_cleanly():
         "benchmarking",
         "sensitivity",
         "combined",
-        "compute-sensitivity",
-        "dem-resolution",
-        "b4b",
+        "compute_sensitivity",
+        "dem_resolution",
+        "compute_config_byte_identity",
     }
     assert get_reporting_set("benchmarking").validator_key == "benchmarking"
     assert get_reporting_set("default").validator_key == "none"
@@ -318,17 +339,17 @@ def test_reporting_sets_registry_imports_cleanly():
 def test_reporting_set_field_defaults_to_default():
     from hhemt.config.report import report_config
 
-    # S19: the field_validator normalizes every value to a list; the sentinel
-    # string is the DEFAULT and normalizes like any other bare string.
+    # The default is the one-element list ["default"] (the sentinel), and the
+    # field_validator keeps every accepted value in that list form.
     assert report_config().reporting_set == ["default"]
 
 
 def test_reporting_set_field_normalizes_a_bare_string_to_a_list():
-    """The differently-positioned satisfying arm: coercion, not validation.
+    """A bare string is coerced to a one-element list.
 
-    A pass-through 'fix' that only rejects bad lists satisfies every list arm and
-    fails here, which is why this arm and not a two-name list is the one that
-    discriminates.
+    A fix that only rejected bad lists and passed every other value through would
+    pass every list arm and fail here, which is why this arm, and not a two-name
+    list, is the one that tells the two apart.
     """
     from hhemt.config.report import report_config
 
@@ -341,8 +362,8 @@ def test_reporting_set_field_preserves_member_order():
     correct one on every other arm in this file."""
     from hhemt.config.report import report_config
 
-    IN_A = ["dem-resolution", "compute-sensitivity"]
-    IN_B = ["compute-sensitivity", "dem-resolution"]
+    IN_A = ["dem_resolution", "compute_sensitivity"]
+    IN_B = ["compute_sensitivity", "dem_resolution"]
     a = report_config(reporting_set=IN_A).reporting_set
     b = report_config(reporting_set=IN_B).reporting_set
     assert a == IN_A
@@ -358,7 +379,7 @@ def test_reporting_set_field_preserves_member_order():
 
 
 def test_legacy_mode_key_rewritten_with_deprecation_warning():
-    """R3 — a pre-conversion report_config.yaml carrying
+    """A pre-conversion report_config.yaml carrying
     sensitivity.mode: benchmarking loads with a DeprecationWarning and the
     legacy `mode` key dropped (no extra_forbidden), independent_vars retained."""
     from hhemt.config.report import report_config
@@ -381,7 +402,7 @@ def test_legacy_mode_key_rewritten_with_deprecation_warning():
 
 
 def test_resolve_active_reporting_set_sentinel_resolution():
-    """The 'default' sentinel resolves to 'benchmarking' for sensitivity
+    """The 'default' sentinel resolves to 'sensitivity' for sensitivity
     analyses and to the standard 'default' set otherwise (CSV-free)."""
     from hhemt.config.report import (
         report_config,
@@ -390,7 +411,7 @@ def test_resolve_active_reporting_set_sentinel_resolution():
 
     cfg = report_config()  # reporting_set == ["default"]
     assert resolve_active_reporting_set(cfg, is_sensitivity=False).name == "default"
-    assert resolve_active_reporting_set(cfg, is_sensitivity=True).name == "benchmarking"
+    assert resolve_active_reporting_set(cfg, is_sensitivity=True).name == "sensitivity"
 
 
 def test_resolve_active_reporting_set_explicit_value_taken_verbatim():
@@ -405,7 +426,7 @@ def test_resolve_active_reporting_set_explicit_value_taken_verbatim():
 
 
 def test_resolve_active_reporting_set_unknown_raises():
-    """R2 — an unknown reporting_set raises ConfigurationError naming the
+    """An unknown reporting_set raises ConfigurationError naming the
     registered sets (CSV-free resolver; this is what the render-path fail-soft
     catches before degrading to 'default')."""
     from hhemt.config.report import (
@@ -422,7 +443,7 @@ def test_resolve_active_reporting_set_unknown_raises():
     assert "benchmarking" in msg and "default" in msg  # registered sets named
 
 
-# --- resolve_reporting_set_names: the shared name-taking helper (Plan Phase 5 / D14) ---
+# --- resolve_reporting_set_names: the shared name-taking helper ---
 #
 # resolve_active_reporting_set above is now a thin config-object wrapper over
 # this helper. The helper exists so raw-dict callers -- specifically the bundle
@@ -448,8 +469,9 @@ def test_resolve_reporting_set_names_sentinel_matches_config_object_path():
 
 # ---------------------------------------------------------------------------
 # The four spellings of an ABSENT report.reporting_set, held once so the
-# resolver-side and model-side oracles below cannot drift apart -- D72's whole
-# content is that those two entry points agree.
+# resolver-side and model-side oracles below cannot drift apart: the property
+# under test is that both entry points treat every absent form as the 'default'
+# sentinel.
 #
 #   None  -- a blank YAML scalar, and what `_report.get("reporting_set")`
 #            returns at the three bundle-harvest call sites when the key is
@@ -457,22 +479,23 @@ def test_resolve_reporting_set_names_sentinel_matches_config_object_path():
 #   ""    -- an explicitly-blank YAML scalar.
 #   []    -- an explicitly-empty YAML sequence.
 #   ()    -- not reachable from YAML; it is reachable from the resolver's
-#            published signature, which admits tuple[str, ...]. At the MODEL it
-#            is not a distinct form at all: pydantic coerces it to [] before
-#            this module's validator runs. Kept to pin that acceptance.
+#            published signature, which admits tuple[str, ...]. The model's
+#            mode="before" field validator in config/report.py also receives ()
+#            as-is and treats it as absent by membership in
+#            ABSENT_REPORTING_SET_FORMS. Kept so both entry points are pinned on it.
 # ---------------------------------------------------------------------------
 _ABSENT_FORMS = (None, "", [], ())
 _ABSENT_IDS = ("none", "empty-string", "empty-list", "empty-tuple")
 
 # The sentinel's two resolutions. Keyed by is_sensitivity so a mutant that
 # hardcodes either arm is red in exactly one column.
-_SENTINEL_NAME = {False: "default", True: "benchmarking"}
+_SENTINEL_NAME = {False: "default", True: "sensitivity"}
 
 
 @pytest.mark.parametrize("is_sensitivity", [False, True], ids=["main", "sensitivity"])
 @pytest.mark.parametrize("absent", _ABSENT_FORMS, ids=_ABSENT_IDS)
 def test_resolve_reporting_set_names_treats_none_and_empty_as_the_sentinel(absent, is_sensitivity):
-    """D72, RAW-RESOLVER half: all four absent forms take the sentinel path."""
+    """Raw-resolver half: all four absent forms take the sentinel path."""
     from hhemt.config.report import resolve_reporting_set_names
 
     assert resolve_reporting_set_names(absent, is_sensitivity=is_sensitivity) == (_SENTINEL_NAME[is_sensitivity],)
@@ -481,12 +504,11 @@ def test_resolve_reporting_set_names_treats_none_and_empty_as_the_sentinel(absen
 @pytest.mark.parametrize("is_sensitivity", [False, True], ids=["main", "sensitivity"])
 @pytest.mark.parametrize("absent", _ABSENT_FORMS, ids=_ABSENT_IDS)
 def test_absent_reporting_set_resolves_to_the_sentinel_through_the_model(absent, is_sensitivity):
-    """D72, CONFIG-MODEL half -- the entry point a user's YAML actually takes.
+    """Config-model half -- the entry point a user's YAML actually takes.
 
-    Asserted on the RESOLVED set name rather than on cfg.reporting_set, because
-    the stored shape is a free choice between normalizing at the field and
-    carrying the sentinel to the resolver. Both designs satisfy D72; only this
-    oracle is silent about which one was picked.
+    Asserted on the RESOLVED set name only. The stored value is pinned separately,
+    by test_reporting_set_field_treats_every_absent_form_as_the_default below, so
+    this oracle covers the resolution and that one the storage.
     """
     from hhemt.config.report import report_config, resolve_active_reporting_set
 
@@ -498,9 +520,11 @@ def test_absent_reporting_set_resolves_to_the_sentinel_through_the_model(absent,
 def test_omitted_reporting_set_resolves_to_the_sentinel_through_the_model(is_sensitivity):
     """The reference the four forms above are claimed EQUAL to.
 
-    Not a case of that parametrize: an omitted field takes the Field default and
-    pydantic does not run a mode="after" validator on a default, so this is the
-    one form whose value never passes through the normalization at all.
+    Not a case of that parametrize: an omitted field takes its value from the Field
+    default (["default"]) rather than from the caller. That value still passes
+    through the mode="before" normalization, because the field sets
+    validate_default=True, so what this pins is that the default itself takes the
+    sentinel path.
     """
     from hhemt.config.report import report_config, resolve_active_reporting_set
 
@@ -512,9 +536,11 @@ def test_omitted_reporting_set_resolves_to_the_sentinel_through_the_model(is_sen
 def test_falsy_reporting_set_is_a_type_error_at_the_resolver(falsy):
     """The absent forms must not be recognised by TRUTHINESS.
 
-    Two cases, not five: 0 == False == 0.0 is one equivalence class under the
-    `==` an idiomatic `if not value:` mutant would collapse, and set() / {} is
-    the other. A third case buys nothing this pair does not already buy.
+    The guard under test is membership in ABSENT_REPORTING_SET_FORMS, which
+    compares by `==`. 0 == False == 0.0, so membership cannot tell those three
+    apart and 0 stands for all of them. set() stands for the falsy containers that
+    are neither a str, a list nor a tuple, which the resolver's type check refuses.
+    A truthiness test (`if not value:`) would take both as absent.
     """
     from hhemt.config.report import resolve_reporting_set_names
     from hhemt.exceptions import ConfigurationError
@@ -525,11 +551,10 @@ def test_falsy_reporting_set_is_a_type_error_at_the_resolver(falsy):
 
 @pytest.mark.parametrize("falsy", [0, 0.0], ids=["zero", "zero-float"])
 def test_falsy_scalar_reporting_set_is_rejected_by_the_model(falsy):
-    """Same guard at the model, restricted to the SCALAR class deliberately.
+    """Same guard at the model, restricted to the SCALAR class.
 
-    pydantic coerces a set into list[str], so set() is ACCEPTED here and stored
-    as []. That divergence is a finding awaiting a ruling, not a property to
-    freeze -- see the round output, not an assertion.
+    The non-scalar falsy forms (set(), {}, b"") are also refused at the model, and
+    test_reporting_set_field_refuses_a_falsy_non_selection below pins them there.
     """
     from hhemt.config.report import report_config
 
@@ -542,7 +567,7 @@ def test_resolve_reporting_set_names_takes_non_default_verbatim():
     from hhemt.config.report import resolve_reporting_set_names
 
     for is_sensitivity in (False, True):
-        assert resolve_reporting_set_names("dem-resolution", is_sensitivity=is_sensitivity) == ("dem-resolution",)
+        assert resolve_reporting_set_names("dem_resolution", is_sensitivity=is_sensitivity) == ("dem_resolution",)
 
 
 def test_resolve_reporting_set_names_unknown_raises_naming_the_requested_value():
@@ -559,26 +584,26 @@ def test_resolve_reporting_set_names_unknown_raises_naming_the_requested_value()
     msg = str(exc.value)
     assert "reporting_set" in msg
     assert "dem-resolutoin" in msg
-    assert "dem-resolution" in msg  # registered sets named
+    assert "dem_resolution" in msg  # registered sets named
 
 
 def test_resolve_reporting_set_names_fences_the_sentinel_in_a_list():
-    """S19 rule 4: 'default' cannot be listed alongside another set -- it is a
+    """'default' cannot be listed alongside another set -- it is a
     sentinel that resolves by analysis shape, so it has no meaning as one member
     of a composition."""
     from hhemt.config.report import resolve_reporting_set_names
     from hhemt.exceptions import ConfigurationError
 
     with pytest.raises(ConfigurationError) as exc:
-        resolve_reporting_set_names(["default", "dem-resolution"], is_sensitivity=False)
+        resolve_reporting_set_names(["default", "dem_resolution"], is_sensitivity=False)
     msg = str(exc.value)
     assert "default" in msg
-    assert "dem-resolution" in msg
+    assert "dem_resolution" in msg
 
 
 def test_compose_single_name_returns_registry_object():
-    """FQ2's byte-identity guarantee expressed as an executable assertion: a
-    one-name composition returns the registered object itself, not a copy."""
+    """A one-name composition returns the registered object itself, not a copy, so
+    a single-set selection cannot differ from the registered set in any field."""
     from hhemt.report_renderers._reporting_sets import (
         REPORTING_SETS,
         compose_reporting_sets,
@@ -597,7 +622,7 @@ def test_validate_composed_disabled_renderers_accepts_a_key_only_one_member_carr
     )
 
     cfg = report_config(
-        reporting_set=["sensitivity", "compute-sensitivity"],
+        reporting_set=["sensitivity", "compute_sensitivity"],
         disabled_renderers=["eda_compute_sensitivity"],
     )
     active = validate_active_reporting_set(
@@ -606,11 +631,11 @@ def test_validate_composed_disabled_renderers_accepts_a_key_only_one_member_carr
         sensitivity_csv_path=None,
         varied_axes=frozenset({"n_omp_threads"}),
     )
-    assert active.name == "sensitivity+compute-sensitivity"
+    assert active.name == "sensitivity+compute_sensitivity"
 
 
 def test_validate_active_reporting_set_unknown_raises():
-    """R2 — validate_active_reporting_set surfaces the same unknown-set error
+    """validate_active_reporting_set surfaces the same unknown-set error
     at run-entry."""
     from hhemt.config.report import (
         report_config,
@@ -637,8 +662,13 @@ def test_validate_active_reporting_set_benchmarking_delegates_csv(tmp_path: Path
 
     csv_path = tmp_path / "member.csv"
     pd.DataFrame({"n_omp_threads": [1, 2]}).to_csv(csv_path, index=False)
-    cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads", "missing_col"]))
-    # reporting_set "default" + is_sensitivity True -> "benchmarking" -> CSV check.
+    cfg = report_config(
+        reporting_set="benchmarking",
+        sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads", "missing_col"]),
+    )
+    # Named explicitly: the "default" sentinel now resolves to "sensitivity" on a
+    # sensitivity analysis, whose validator_key is "none", so only an explicit
+    # "benchmarking" selection reaches the CSV check this test exercises.
     with pytest.raises(ConfigurationError, match="missing_col"):
         validate_active_reporting_set(
             cfg,
@@ -649,10 +679,10 @@ def test_validate_active_reporting_set_benchmarking_delegates_csv(tmp_path: Path
 
 
 def test_validate_active_reporting_set_returns_the_composed_set(tmp_path: Path):
-    """Happy path: resolves to 'benchmarking' for a sensitivity analysis whose
-    independent_vars all match the CSV, and returns that SET. A one-name selection
-    composes to the registered object ITSELF, which is the byte-identity guarantee
-    expressed as an assertion."""
+    """Happy path: an explicit 'benchmarking' selection on a sensitivity analysis whose
+    independent_vars all match the CSV returns that SET. A one-name selection
+    composes to the registered object ITSELF, so the selection cannot differ from
+    the registered set in any field."""
     import pandas as pd
 
     from hhemt.config.report import (
@@ -664,7 +694,10 @@ def test_validate_active_reporting_set_returns_the_composed_set(tmp_path: Path):
 
     csv_path = tmp_path / "member.csv"
     pd.DataFrame({"n_omp_threads": [1, 2]}).to_csv(csv_path, index=False)
-    cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads"]))
+    cfg = report_config(
+        reporting_set="benchmarking",
+        sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads"]),
+    )
     active = validate_active_reporting_set(
         cfg,
         is_sensitivity=True,
@@ -676,11 +709,12 @@ def test_validate_active_reporting_set_returns_the_composed_set(tmp_path: Path):
 
 
 def test_composition_preserves_first_appearance_order():
-    """Composed order is pinned by NOTHING else in the S19 test set.
+    """Composed order is pinned by nothing else in this file.
 
-    Every other order assertion stops at the field or resolver layer, and A2 compares
-    rule-name SETS, so compose_reporting_sets could emit its merged templates reversed
-    or sorted and every other assertion would stay green.
+    Every other order assertion stops at the field or resolver layer, and the
+    composed-set emission check in test_synth_05_sensitivity_analysis_with_snakemake.py
+    compares rule-name SETS, so compose_reporting_sets could emit its merged templates
+    reversed or sorted and every other assertion would stay green.
 
     Asserted over the TEMPLATE sequence, not the builder_key sequence: for this pair
     the builder_key sequences are IDENTICAL in both orders because both members carry
@@ -695,9 +729,9 @@ def test_composition_preserves_first_appearance_order():
     def _t(s):
         return [t.rule_name for sel in s.renderer_selection for t in sel.rule_spec_template]
 
-    A, B = REPORTING_SETS["dem-resolution"], REPORTING_SETS["compute-sensitivity"]
-    ab = _t(compose_reporting_sets(("dem-resolution", "compute-sensitivity")))
-    ba = _t(compose_reporting_sets(("compute-sensitivity", "dem-resolution")))
+    A, B = REPORTING_SETS["dem_resolution"], REPORTING_SETS["compute_sensitivity"]
+    ab = _t(compose_reporting_sets(("dem_resolution", "compute_sensitivity")))
+    ba = _t(compose_reporting_sets(("compute_sensitivity", "dem_resolution")))
 
     # Together these two kill a sorted- or set-based merge.
     assert ab != ba, "composition is order-insensitive"
@@ -724,10 +758,11 @@ def test_required_axes_derivation_matches_template_wildcards():
     with `sensitivity_benchmarking`, while the axis it requires is a system-config field
     that no template is wildcarded on.
 
-    The failing direction is verified, not assumed: three violating registries built with
-    `dataclasses.replace` (a frozen dataclass blocks mutation, not derivation) each drive
-    this assertion to raise -- including a `sensitivity` set given the benchmarking axis
-    figure while keeping its `()`, which is the exact regression this test exists to catch.
+    Not established from this file: the failing direction. Violating registries can be
+    derived with `dataclasses.replace` (a frozen dataclass blocks mutation, not
+    derivation) -- for example a `sensitivity` set given the benchmarking axis figure
+    while keeping its `()`, the exact regression this test exists to catch -- and three
+    such registries were reported to make this assertion raise, but none is built here.
     """
     from hhemt.report_renderers._reporting_sets import REPORTING_SETS
 
@@ -745,14 +780,20 @@ def test_required_axes_derivation_matches_template_wildcards():
 
 
 # ---------------------------------------------------------------------------
-# Phase 1 (P1a) — _react_surgery category_order threading (FQ2)
+# _react_surgery: the sidebar category order a reporting set threads into the
+# rendered report's category sort comparator
 # ---------------------------------------------------------------------------
 
 
 def test_react_surgery_order_js_none_default_is_byte_identical():
-    """FQ2 byte-identity: the None-default (historical) ORDER literal is exactly
-    the pre-refactor hardcoded comparator dict, so non-passing callers see no
-    change in the rendered HTML."""
+    """The ORDER literal a caller gets when it passes no category_order is pinned
+    verbatim, so a change to _react_surgery's module default -- which reorders the
+    sidebar of every report rendered without an explicit order -- fails here.
+
+    It does not equal the ORDER dict the comparator hardcoded before the order became
+    configurable: that dict also ranked "Simulation Health (placeholder)" fifth, and
+    the module default no longer carries that category.
+    """
     from hhemt.report_renderers._react_surgery import (
         _DEFAULT_CATEGORY_ORDER,
         _order_js,
@@ -760,8 +801,7 @@ def test_react_surgery_order_js_none_default_is_byte_identical():
 
     expected = (
         '{"Workflow Status": 1, "Errors and Warnings": 2, "Key Results": 3, '
-        '"System Information": 4, "Simulation Health (placeholder)": 5, '
-        '"Per Simulation Results": 6}'
+        '"System Information": 4, "Per Simulation Results": 5}'
     )
     assert _order_js(_DEFAULT_CATEGORY_ORDER) == expected
 
@@ -785,37 +825,39 @@ def test_react_surgery_threads_config_driven_category_order():
 
 
 def test_react_surgery_none_default_matches_hardcoded_comparator():
-    """Render regression: with category_order=None the surgered comparator is
-    byte-identical to the historical hardcoded comparator (the standard sidebar
-    order). This is the render-path observable for the default set."""
+    """Render regression: with category_order=None the surgered comparator embeds
+    _react_surgery's module default order, the five-category standard sidebar order.
+    This is the render-path observable for that default; the ORDER literal it pins is
+    the one the test above pins at _order_js."""
     from hhemt.report_renderers._react_surgery import (
         apply_post_process_surgery,
     )
 
     html = "sort((a, b) => a.localeCompare(b))"
-    out = apply_post_process_surgery(html)  # no category_order -> historical default
+    out = apply_post_process_surgery(html)  # no category_order -> the module default order
     assert (
         '(a, b) => {const ORDER = {"Workflow Status": 1, "Errors and Warnings": 2, '
         '"Key Results": 3, "System Information": 4, '
-        '"Simulation Health (placeholder)": 5, "Per Simulation Results": 6}; '
+        '"Per Simulation Results": 5}; '
         "return (ORDER[a] ?? 99) - (ORDER[b] ?? 99) || a.localeCompare(b);}"
     ) in out
 
 
 def test_report_artifacts_not_in_globus_exclude_patterns():
-    """Flag 14 — R12 automated Globus-exclude audit."""
+    """No default Globus exclude pattern may match a report artifact, so the default
+    transfer carries the rendered report and its plots."""
     from hhemt.config.globus import DEFAULT_EXCLUDE_PATTERNS
 
     for bad in ("plots", "report", "analysis_report.html"):
         assert not any(bad in p for p in DEFAULT_EXCLUDE_PATTERNS), (
             f"{bad!r} would match an entry of DEFAULT_EXCLUDE_PATTERNS "
-            f"{DEFAULT_EXCLUDE_PATTERNS}; R12 requires report artifacts "
-            "to be included in the default Globus transfer."
+            f"{DEFAULT_EXCLUDE_PATTERNS}; report artifacts (plots, the report "
+            "directory and analysis_report.html) must be included in the default Globus transfer."
         )
 
 
 def test_pydantic_config_field_names_are_snakemake_wildcard_safe():
-    """Phase 1 R9 — every system_config and analysis_config field name MUST match
+    """Every system_config and analysis_config field name MUST match
     `^[A-Za-z0-9_.]+$` so the prefixed-column overlay mechanism (which routes
     `system.{field}` / `analysis.{field}` cells into Snakemake wildcards) cannot
     silently break on a future field addition with a hyphen or other unsafe char.
@@ -842,12 +884,13 @@ def test_pydantic_config_field_names_are_snakemake_wildcard_safe():
 
 
 # ---------------------------------------------------------------------------
-# Phase 1 — cleanup-rerun-delete-redesign: clear_raw + force_rerun fields
+# clear_raw and force_rerun (raw-output cleanup and forced reruns), and the
+# in-flight wait bound
 # ---------------------------------------------------------------------------
 
 
 def test_clear_raw_defaults_to_none(tmp_path: Path):
-    """Loading an analysis_config without `clear_raw` defaults to 'none' (strict-safe)."""
+    """Loading an analysis_config without `clear_raw` defaults to 'none' (delete nothing)."""
     cfg = _minimal_analysis_config_dict(tmp_path)
     del cfg["clear_raw"]
     loaded = analysis_config.model_validate(cfg)
@@ -855,7 +898,7 @@ def test_clear_raw_defaults_to_none(tmp_path: Path):
 
 
 def test_force_rerun_defaults_to_none(tmp_path: Path):
-    """Loading an analysis_config without `force_rerun` defaults to 'none' (strict-safe)."""
+    """Loading an analysis_config without `force_rerun` defaults to 'none' (re-run nothing)."""
     cfg = _minimal_analysis_config_dict(tmp_path)
     del cfg["force_rerun"]
     loaded = analysis_config.model_validate(cfg)
@@ -944,8 +987,10 @@ def test_force_rerun_event_iloc_requires_no_sensitivity(tmp_path: Path):
 )
 def test_force_rerun_rejects_invalid_dict_shapes(value, match, tmp_path: Path):
     cfg = _minimal_analysis_config_dict(tmp_path)
-    # Use sensitivity-on so member_id paths don't trip on the cross-field rule
-    # before the per-field validator gets a chance to fire.
+    # Sensitivity is on so the `sa_id` cases are legal on the toggle axis. It no longer
+    # decides which error fires: the dict-shape rules live on ForceRerunSpec and run
+    # during field validation, ahead of analysis_config's cross-field toggle check, so
+    # their error is raised first even with sensitivity off.
     cfg["toggle_sensitivity_analysis"] = True
     cfg["sensitivity_analysis"] = str(_touch(tmp_path / "inputs" / "sensitivity.csv"))
     cfg["force_rerun"] = value
@@ -975,7 +1020,7 @@ def test_hpc_max_wait_for_inflight_min_field_bounds(value, should_raise, tmp_pat
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 — process_append_batch_memory_budget_mb resolver (job-RAM budget)
+# process_append_batch_memory_budget_mb resolver (job-RAM budget)
 # ---------------------------------------------------------------------------
 
 
@@ -996,7 +1041,7 @@ def test_process_append_batch_budget_resolves_from_job_ram(tmp_path: Path, monke
 
 
 def test_process_append_batch_budget_ceiling_raises(tmp_path: Path):
-    """A hand-set value exceeding 0.5 * job_RAM raises (R4 guard 1)."""
+    """A hand-set value exceeding 0.5 * job_RAM raises."""
     cfg = _minimal_analysis_config_dict(tmp_path)
     cfg["hpc_mem_allocation_for_sim_output_processing_mb"] = 12000
     cfg["process_append_batch_memory_budget_mb"] = 7000  # > 0.5 * 12000 = 6000
@@ -1005,7 +1050,8 @@ def test_process_append_batch_budget_ceiling_raises(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 — static_plot_configs layer-4 field (V-8 / R-7)
+# static_plot_configs: per-plot publication config paths, existence-checked
+# element by element
 # ---------------------------------------------------------------------------
 
 
@@ -1029,7 +1075,7 @@ def test_static_plot_configs_existent_list_validates(tmp_path: Path):
 
 
 def test_static_plot_configs_nonexistent_path_raises(tmp_path: Path):
-    """A list element that does not exist raises at config-load (R-7 / V-8) —
+    """A list element that does not exist raises at config-load —
     the dedicated list-aware validator, since the base `*` validator only
     existence-checks scalar Path fields."""
     cfg = _minimal_analysis_config_dict(tmp_path)
@@ -1041,17 +1087,16 @@ def test_static_plot_configs_nonexistent_path_raises(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# compile-bearing-synth-ci-tier Phase 1 — toolkit-owned-output path exemption
+# toolkit-owned-output path exemption from the load-time existence check
 # ---------------------------------------------------------------------------
 
 
 def test_toolkit_owned_output_dirs_exempt_from_existence_check(tmp_path: Path):
-    """R1/R2: a toolkit-owned-output software-dir field validates even when its
-    value is a non-existent Path (the json_schema_extra sentinel exempts it
-    BEFORE the isinstance(v, Path) existence check, which under mode="after"
-    reaches EVERY entry shape and not only the model_dump(mode="python")
-    re-validation path this line originally qualified); a genuine INPUT path
-    field still fails fast on a non-existent Path."""
+    """A toolkit-owned-output software-dir field validates even when its value is a
+    non-existent Path: the json_schema_extra sentinel exempts it BEFORE the
+    isinstance(v, Path) existence check, which under mode="after" is reached by
+    every entry shape, the model_dump(mode="python") re-validation path included.
+    A genuine INPUT path field still fails fast on a non-existent Path."""
     cfg = _minimal_system_config_dict(tmp_path)
     # A non-existent Path. The "(not str)" qualifier this comment used to carry is
     # obsolete under mode="after": pydantic coerces a str to Path before the validator
@@ -1065,16 +1110,18 @@ def test_toolkit_owned_output_dirs_exempt_from_existence_check(tmp_path: Path):
     assert not validated.TRITONSWMM_software_directory.exists()
     assert (
         not validated.SWMM_software_directory.exists()
-    )  # R2: Optional sentinel field is exempted when SET to an absent Path (not merely when None)
+    )  # Optional sentinel field is exempted when SET to an absent Path (not merely when None)
 
-    # A5-1/A5-2 widen the sentinel from TWO fields to FOUR. A FORWARD GUARD: it is green
-    # both pre- and post-fix, so it demonstrates no gap was open -- it fails only if a
-    # later change drops the sentinel or arms the check ahead of the skip.
+    # system_directory carries the same sentinel (four fields do: the three directory
+    # fields of system_config and analysis_config.analysis_dir). A FORWARD GUARD: it
+    # was green before and after the sentinel was extended to it, so it demonstrates no
+    # gap was open -- it fails only if a later change drops the sentinel or arms the
+    # check ahead of the skip.
     outs = _minimal_system_config_dict(tmp_path)
     outs["system_directory"] = str(tmp_path / "absent_root" / "system")  # absent, exempt
     assert not Path(system_config.model_validate(outs).system_directory).exists()
 
-    # R2: a genuine INPUT Path field pointing at an absent file still raises.
+    # A genuine INPUT Path field pointing at an absent file still raises.
     bad = _minimal_system_config_dict(tmp_path)
     # Deliberately a str here, not a Path: under mode="after" both are coerced, and a
     # str is the shape a YAML load actually produces -- which is the entry path this
@@ -1085,15 +1132,16 @@ def test_toolkit_owned_output_dirs_exempt_from_existence_check(tmp_path: Path):
 
 
 def test_toolkit_owned_output_exempt_under_overlay_revalidation(tmp_path: Path):
-    """R3: reproduce the sensitivity overlay-revalidation round-trip that
-    sensitivity_analysis.py:1971 performs — base.model_dump() (mode='python')
-    yields the software dirs as PosixPath, then model_validate({**dumped,
-    **overlay}) re-fires the wildcard validator against those Paths. Pre-fix this
-    raised on the absent software dirs; post-fix the toolkit_owned_output sentinel
-    exempts them. This is the fresh-worktree / per-row construction surface (R3),
-    covered here WITHOUT the compile toolchain."""
+    """Reproduce the sensitivity overlay-revalidation round-trip that
+    TRITONSWMM_sensitivity_analysis._build_unique_system_targets performs —
+    base.model_dump() (mode='python') yields the software dirs as PosixPath, then
+    model_validate({**dumped, **overlay}) re-fires the `*` field validator,
+    cfgBaseModel._check_paths_exist, against those Paths. Without the
+    toolkit_owned_output sentinel this raises on the absent software dirs, which is
+    what every per-row system config on a fresh checkout meets before the clone step
+    creates them; covered here WITHOUT the compile toolchain."""
     base = system_config.model_validate(_minimal_system_config_dict(tmp_path))
-    dumped = base.model_dump()  # mode='python' -> PosixPath preserved (A2)
+    dumped = base.model_dump()  # mode='python' -> PosixPath preserved
     dumped["TRITONSWMM_software_directory"] = tmp_path / "_software" / "triton"  # absent
     dumped["SWMM_software_directory"] = tmp_path / "_software" / "swmm"  # absent
     overlay = {"target_dem_resolution": 10.0}  # a representative overlaid cell
@@ -1134,7 +1182,8 @@ def test_model_arms_rejects_duplicates(tmp_path: Path):
 
 def test_model_arms_rejects_unknown_arm(tmp_path: Path):
     """A typo must fail at config-load naming the field, not as a bare KeyError
-    from inside _build_case (which gives the operator no field name)."""
+    from inside `_build_case` in scripts/experiments/synth_compute_config.py (which
+    gives the operator no field name)."""
     with pytest.raises(ValidationError, match="unknown arm"):
         _synth_cfg(tmp_path, model_arms=("tritonswmm", "tritn"))
 
@@ -1153,17 +1202,24 @@ def test_model_arms_exempt_from_pydantic_protected_namespace():
     assert synthetic_experiment_config.model_config.get("extra") == "forbid"
 
 
+# ---------------------------------------------------------------------------
+# report.reporting_set field: its own normalization of absent forms, and the
+# values it refuses
+# ---------------------------------------------------------------------------
+
+
 def test_reporting_set_field_treats_every_absent_form_as_the_default():
-    """D72 at the FIELD, not only at the resolver.
+    """Absent forms normalize at the FIELD, not only at the resolver.
 
     A YAML `reporting_set:` with nothing after it parses to None; `reporting_set: ""`
     to the empty string; `reporting_set: []` to the empty list. All are ways of
     writing "I made no selection" and must store the default, exactly as an omitted
     key does. Before this arm, None was rejected by the ANNOTATION (so no validator
     ever ran) and "" was stored as [""], which the resolver then refused as an
-    unknown set name -- a regression no existing arm could see, because every other
-    absent-value test enters at resolve_reporting_set_names directly and so misses
-    the normalization the field interposes above it.
+    unknown set name. This arm asserts the STORED value (`== ["default"]`).
+    test_absent_reporting_set_resolves_to_the_sentinel_through_the_model also enters
+    through the field but asserts only the resolved set name, so the two together
+    pin both the stored value and its resolution.
     """
     from hhemt.config.report import report_config
 
@@ -1176,7 +1232,7 @@ def test_reporting_set_field_refuses_a_falsy_non_selection():
     """The trap the absent arm must not swallow.
 
     0, False and b"" are FALSY but are not selections; a truthiness test would turn
-    each into the default set silently. Membership against the four D72 forms is
+    each into the default set silently. Membership against the four absent forms is
     what keeps them a field-named error. b"" and set() are the arms that also
     require mode="before": at mode="after" the annotation coerces them to "" and []
     respectively, and the absent arm would then accept both.
@@ -1192,19 +1248,262 @@ def test_reporting_set_field_refuses_an_unordered_container():
     """First-appearance order is load-bearing, so an unordered input is refused.
 
     `reporting_set: !!set {a: null, b: null}` is reachable from a YAML config and
-    parses to a Python set. Before S19 the field was annotated `str` and refused
+    parses to a Python set. When the field was annotated `str` it refused
     it; the list widening made the union's `list[str]` arm coerce ANY iterable,
     so a set began storing in whatever order that interpreter's hash seed
     produced -- observed to differ across fresh interpreters. mode="before" runs
     ahead of that coercion, so the isinstance guard sees the set and refuses it,
     matching what resolve_reporting_set_names has always done on the raw-dict
-    path. This arm asserts the FIELD and the RESOLVER accept the same shapes.
+    path. This arm asserts that the FIELD and the RESOLVER both refuse a set, so the
+    two entry points agree on this one shape.
     """
     from hhemt.config.report import report_config, resolve_reporting_set_names
     from hhemt.exceptions import ConfigurationError
 
-    unordered = {"dem-resolution", "compute-sensitivity"}
+    unordered = {"dem_resolution", "compute_sensitivity"}
     with pytest.raises(ValidationError):
         report_config(reporting_set=unordered)
     with pytest.raises(ConfigurationError):
         resolve_reporting_set_names(unordered, is_sensitivity=False)
+
+
+def test_reporting_set_rename_model_rewrites_an_old_key_with_one_warning():
+    """An old reporting-set key loads at the model as its new key, announced by exactly one warning.
+
+    Property: for each old key, ``report_config(reporting_set=X).reporting_set`` equals
+    the one-element list of the new key, for X the bare string AND the one-element list,
+    and the load emits exactly one warning that begins ``report.reporting_set: renamed``
+    and names ``{old} -> {new}``.
+    Class: NEW CAPABILITY. The plausible wrong implementation is a table applied only on
+    the list branch, so a bare ``b4b`` (the common spelling) is stored unchanged and
+    dumped into every bundle's ``cfg_analysis.yaml``; this test reds under it.
+    Reachability: a bare string reaches the validator's scalar arm, which returned early
+    before the table could run; artifact: ``config/report.py::_normalize_reporting_set_value``.
+    Both-states anchor: the assertion turns on the stored value and the warning count, both
+    present in the old code (stored value unchanged, zero warnings), not on new wording.
+    Counting is done under ``simplefilter("always")`` because ``pytest.warns`` tolerates
+    extra warnings and so cannot tell one rename announcement from three.
+    Second correct implementation: a table applied inside a ``model_validator(mode="before")``
+    rather than the field validator still passes, since the test reads only the stored value.
+    """
+    import warnings
+
+    from hhemt.config.report import report_config
+
+    renames = (
+        ("b4b", "compute_config_byte_identity"),
+        ("compute-sensitivity", "compute_sensitivity"),
+        ("dem-resolution", "dem_resolution"),
+    )
+    for old, new in renames:
+        for spelling in (old, [old]):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                cfg = report_config(reporting_set=spelling)
+            assert cfg.reporting_set == [new]
+            renamed = [w for w in caught if str(w.message).startswith("report.reporting_set: renamed")]
+            assert len(renamed) == 1, [str(w.message) for w in caught]
+            assert f"{old} -> {new}" in str(renamed[0].message)
+
+
+def test_reporting_set_rename_resolver_rewrites_an_old_key_with_one_warning():
+    """The raw-dict resolver returns the new key for an old one, with exactly one warning.
+
+    Property: ``resolve_reporting_set_names(X, is_sensitivity=True)`` returns the
+    one-tuple of the new key for X the bare string and the one-element list, with exactly
+    one ``report.reporting_set: renamed`` warning.
+    Class: NEW CAPABILITY. The plausible wrong implementation is the table applied in the
+    model only: a bundle's ``cfg_analysis.yaml`` is read as a raw dict and never passes
+    through the model, so ``generate_regeneration_snakefile`` would refuse an old bundle.
+    Reachability: the bundle callers pass the raw value to this function; artifact:
+    ``bundle/snakefile_generator.py`` calls ``resolve_reporting_set_names``.
+    Both-states anchor: the assertion turns on the returned tuple and the warning count,
+    properties of the old code as well (a refusal is not a tuple), not on message wording
+    beyond the stable prefix.
+    Second correct implementation: renaming inside rule 2's normalization rather than
+    between rules 2 and 3 still passes, since only the returned tuple is read.
+    """
+    import warnings
+
+    from hhemt.config.report import resolve_reporting_set_names
+
+    renames = (
+        ("b4b", "compute_config_byte_identity"),
+        ("compute-sensitivity", "compute_sensitivity"),
+        ("dem-resolution", "dem_resolution"),
+    )
+    for old, new in renames:
+        for spelling in (old, [old]):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                resolved = resolve_reporting_set_names(spelling, is_sensitivity=True)
+            assert resolved == (new,)
+            renamed = [w for w in caught if str(w.message).startswith("report.reporting_set: renamed")]
+            assert len(renamed) == 1, [str(w.message) for w in caught]
+            assert f"{old} -> {new}" in str(renamed[0].message)
+
+
+def test_reporting_set_rename_register_eda_plot_returns_the_new_key():
+    """Registering an EDA plot against an old set key is renamed rather than refused.
+
+    Property: ``register_eda_plot_in_reporting_set("config_diff_maps", "compute-sensitivity")``
+    returns a record whose ``set_name`` is ``compute_sensitivity``.
+    Class: NEW CAPABILITY. The plausible wrong implementation applies the table at the
+    registry lookup (``REPORTING_SETS[set_name]``), which the membership check above it
+    never lets an old name reach, so the old name is refused with ``ValueError``.
+    Reachability: the membership check runs first on every call; artifact:
+    ``eda/_promote.py::register_eda_plot_in_reporting_set``.
+    Both-states anchor: the assertion turns on the returned record's ``set_name``, which
+    the old code produced for a registered name, not on a new message.
+    Second correct implementation: renaming through a private helper shared with the model
+    validator, or inline in this function, both pass since only the record is read.
+    """
+    import warnings
+
+    from hhemt.eda._promote import register_eda_plot_in_reporting_set
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        record = register_eda_plot_in_reporting_set("config_diff_maps", "compute-sensitivity")
+    assert record.set_name == "compute_sensitivity"
+
+
+def test_reporting_set_rename_refuses_an_old_and_a_new_key_for_one_set_as_a_duplicate():
+    """An old key listed beside its own new key is a duplicate at the model and at the resolver.
+
+    Property: ``["b4b", "compute_config_byte_identity"]`` is refused at the model
+    (``ValidationError``) AND at the resolver (``ConfigurationError``), each matched on
+    the message text ``names the same set more than once``.
+    Class: NEW CAPABILITY. The plausible wrong implementation renames AFTER the duplicate
+    check, so both spellings pass it and the merge doubles the set's templates.
+    Reachability: the two spellings are distinct strings until the table runs; artifact:
+    the duplicate arm in ``_normalize_reporting_set_value`` and rule 3 of the resolver.
+    Both-states anchor: the assertion turns on the duplicate message text, which exists in
+    the old code. At the resolver the exception type alone does not discriminate, because
+    before this chunk the new key is unregistered and rule 5 raises ``ConfigurationError``
+    for it; the message match is what keeps the pre-chunk red from being vacuous.
+    Second correct implementation: renaming before rule 2's tuple conversion passes too.
+    """
+    import warnings
+
+    from hhemt.config.report import report_config, resolve_reporting_set_names
+    from hhemt.exceptions import ConfigurationError
+
+    pair = ["b4b", "compute_config_byte_identity"]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(ValidationError, match="names the same set more than once"):
+            report_config(reporting_set=pair)
+        with pytest.raises(ConfigurationError, match="names the same set more than once"):
+            resolve_reporting_set_names(pair, is_sensitivity=True)
+
+
+def test_reporting_set_rename_new_keys_load_and_resolve_without_a_warning():
+    """A new key loads at the model and resolves at the resolver, and announces nothing.
+
+    Property: each new key, bare and listed, loads at the model and resolves at the
+    resolver with ZERO ``report.reporting_set: renamed`` warnings.
+    Class: NEW CAPABILITY. The plausible wrong implementation warns on every load
+    (for example by warning whenever the table is consulted rather than when a member is
+    rewritten); it passes the one-warning test for an old key and reds here.
+    Reachability: every config naming a new key reaches the table lookup; artifact:
+    ``config/report.py::_apply_reporting_set_renames``.
+    Both-states anchor: the assertion turns on the warning count and the stored value,
+    which are properties of the old code too (before this chunk the resolver half raises
+    because the new keys are not registered, the model half passes because it checks
+    shape only).
+    Second correct implementation: warning once per call after the loop rather than per
+    member passes, since only the count of rename announcements is read.
+    """
+    import warnings
+
+    from hhemt.config.report import report_config, resolve_reporting_set_names
+
+    new_keys = ("compute_config_byte_identity", "compute_sensitivity", "dem_resolution")
+    for new in new_keys:
+        for spelling in (new, [new]):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                cfg = report_config(reporting_set=spelling)
+                resolved = resolve_reporting_set_names(spelling, is_sensitivity=True)
+            assert cfg.reporting_set == [new]
+            assert resolved == (new,)
+            renamed = [w for w in caught if str(w.message).startswith("report.reporting_set: renamed")]
+            assert renamed == [], [str(w.message) for w in renamed]
+
+
+def test_reporting_set_rename_table_pins_old_keys_to_registered_new_keys():
+    """The rename table maps exactly the three old keys onto registered keys, and no registered key.
+
+    Property: every value of ``_REPORTING_SET_RENAMES`` is a key of ``REPORTING_SETS``,
+    none of its keys is, and its keys equal the three old keys by literal.
+    Class: NEW CAPABILITY. Plausible wrong implementations: a value that misspells a
+    registry key (the rename then resolves to an unregistered set and rule 5 refuses it
+    for a reason that looks like a user typo), and an old key left registered beside its
+    replacement (two sets for one family).
+    Reachability: the table and the registry are plain module attributes; artifact:
+    ``config/report.py::_REPORTING_SET_RENAMES`` and ``_reporting_sets.REPORTING_SETS``.
+    Both-states anchor: the assertion turns on set membership, a property that holds or
+    fails whatever the wording of any message.
+    The import is inside the body because a module-level import of the table makes this
+    whole module fail collection before the table exists, which satisfies the pre-chunk
+    red vacuously and stops the module's other tests.
+    Second correct implementation: a table built from a function rather than a dict
+    literal still passes, since only the mapping is read.
+    """
+    from hhemt.config.report import _REPORTING_SET_RENAMES
+    from hhemt.report_renderers._reporting_sets import REPORTING_SETS
+
+    assert set(_REPORTING_SET_RENAMES) == {"b4b", "compute-sensitivity", "dem-resolution"}
+    assert all(new in REPORTING_SETS for new in _REPORTING_SET_RENAMES.values())
+    assert not any(old in REPORTING_SETS for old in _REPORTING_SET_RENAMES)
+
+
+def test_reporting_set_rename_warning_lists_each_rename_once_in_table_order():
+    """The rename warning lists each applied rename once, in the rename table's order.
+
+    Property: for every ordering of a list naming two old keys, and for a list naming one
+    old key twice, the one ``report.reporting_set: renamed`` warning emitted by the model
+    and by the resolver carries the same bracketed list: each applied rename once, ordered
+    as ``_REPORTING_SET_RENAMES`` orders its keys.
+    Class: the input class is a selection naming two or more old-key members, in any member
+    order, including a repeated old key.
+    Why it is required: the warning text is fixed with its order, so a configuration that
+    lists ``dem-resolution`` before ``b4b`` must announce the same text as one listing them
+    the other way; a member-ordered list makes the announcement depend on spelling order and
+    repeats a rename that was applied once.
+    What kills it: building the applied list while iterating the selection's members rather
+    than the table's items.
+    Second correct implementation: collecting the applied old keys into a set and then
+    filtering the table's items by membership in it passes too, since only the emitted text
+    is read.
+    """
+    import warnings
+
+    from hhemt.config.report import report_config, resolve_reporting_set_names
+    from hhemt.exceptions import ConfigurationError
+
+    expected = "report.reporting_set: renamed [b4b -> compute_config_byte_identity, dem-resolution -> dem_resolution]"
+    for spelling in (["dem-resolution", "b4b"], ["b4b", "dem-resolution"]):
+        for load in (
+            lambda s: report_config(reporting_set=s),
+            lambda s: resolve_reporting_set_names(s, is_sensitivity=True),
+        ):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                load(spelling)
+            renamed = [str(w.message) for w in caught if str(w.message).startswith("report.reporting_set: renamed")]
+            assert len(renamed) == 1, renamed
+            assert renamed[0].startswith(expected), renamed[0]
+    once = "report.reporting_set: renamed [compute-sensitivity -> compute_sensitivity];"
+    for load, refusal in (
+        (lambda s: report_config(reporting_set=s), ValidationError),
+        (lambda s: resolve_reporting_set_names(s, is_sensitivity=True), ConfigurationError),
+    ):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(refusal, match="names the same set more than once"):
+                load(["compute-sensitivity", "compute-sensitivity"])
+        renamed = [str(w.message) for w in caught if str(w.message).startswith("report.reporting_set: renamed")]
+        assert len(renamed) == 1, renamed
+        assert renamed[0].startswith(once), renamed[0]

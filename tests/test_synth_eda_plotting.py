@@ -71,15 +71,15 @@ def test_b4b_absent_backing_zarr_emits_degradation_panel_not_skip(tmp_path):
     but does not exist'. Pre-fix, render_eda_plots' absence gate skipped it (returned []), which
     at report-assembly time raised WorkflowError. b4b renderers ignore cfg_analysis, so a bare
     tmp_path + a b4b enabled_plots entry exercises the path with no completed-run fixture."""
-    (tmp_path / "eda").mkdir()  # exists but carries NO b4b_clean_identity.zarr
+    (tmp_path / "eda").mkdir()  # exists but carries NO raw_byte_identity.zarr
     paths = render_eda_plots(
         tmp_path,
         cfg_analysis=None,
-        eda_cfg=eda_config(enabled_plots=["b4b_clean_identity"]),
+        eda_cfg=eda_config(enabled_plots=["raw_byte_identity"]),
     )
     assert len(paths) == 1, "the b4b figure must be emitted (degradation panel), not absence-skipped"
     out = paths[0]
-    assert out == tmp_path / "plots" / "eda" / "b4b_clean_identity.html"
+    assert out == tmp_path / "plots" / "eda" / "raw_byte_identity.html"
     assert out.exists()
     assert "unavailable" in out.read_text().lower()  # the honest-degradation annotation text
 
@@ -97,7 +97,7 @@ def test_eda_config_drops_retired_b4b_clean_vs_resume_kind():
         cfg = eda_config(
             enabled_plots=[
                 "config_diff_maps",
-                "b4b_clean_identity",
+                "raw_byte_identity",
                 "b4b_clean_vs_resume",
                 "eda_rank_sensitivity",
             ]
@@ -105,7 +105,7 @@ def test_eda_config_drops_retired_b4b_clean_vs_resume_kind():
     assert "b4b_clean_vs_resume" not in cfg.enabled_plots
     assert cfg.enabled_plots == [
         "config_diff_maps",
-        "b4b_clean_identity",
+        "raw_byte_identity",
         "eda_rank_sensitivity",
     ]
 
@@ -153,3 +153,71 @@ def test_enumerated_config_diff_maps_emits_when_backing_artifact_absent(tmp_path
         "MissingOutputException ('marked for report but does not exist')"
     )
     assert "not applicable" in output_path.read_text().lower()
+
+
+def test_eda_config_renames_the_raw_byte_identity_predecessor_kind():
+    """A config naming the raw byte-identity figure's pre-rename kind loads with it renamed.
+
+    Property: an ``eda.enabled_plots`` entry naming the kind ``raw_byte_identity`` carried
+    before its rename is rewritten to ``raw_byte_identity`` at config load, with a
+    DeprecationWarning, and the other entries keep their order.
+
+    Class: every saved analysis config and every bundle's baked ``cfg_analysis.yaml`` written
+    before the rename. Without the rewrite, ``analysis.eda()`` skips the unknown kind
+    silently and ``Bundle.eda()`` raises on it, so the figure is lost either way.
+
+    What kills it: removing the ``raw_byte_identity`` entry from ``config/eda.py``'s
+    ``_EDA_RENAMES``, misspelling its key, or mapping it to another kind; the predecessor
+    list below then differs from the anchor.
+
+    A second correct implementation under which it still passes: performing the rewrite in a
+    field validator on ``enabled_plots`` instead of the model's before-validator; the
+    assertions read only the map's predecessor, the loaded list and the warning.
+
+    The old name is taken from V0026's ``OLD_STEM``, the stem the layout migration moves on
+    disk, rather than spelled here or derived from the rename map. A name derived from the
+    map would only show that the map agrees with itself, and a misspelled key would pass.
+    """
+    import importlib
+
+    import pytest
+
+    from hhemt.config.eda import _EDA_RENAMES, eda_config
+
+    v0026 = importlib.import_module("hhemt.version_migration.versions.V0026__raw_byte_identity_stem")
+    predecessors = [old for old, new in _EDA_RENAMES.items() if new == "raw_byte_identity"]
+    assert predecessors == [v0026.OLD_STEM]
+    with pytest.warns(DeprecationWarning, match="retired EDA figure kind"):
+        cfg = eda_config(enabled_plots=["config_diff_maps", v0026.OLD_STEM])
+    assert cfg.enabled_plots == ["config_diff_maps", "raw_byte_identity"]
+
+
+def test_eda_config_rename_warning_names_the_rename_it_applied():
+    """The rename DeprecationWarning names the rename actually applied, from the rename map.
+
+    Property: loading a config whose ``enabled_plots`` carries the raw byte-identity figure's
+    predecessor kind warns with ``{old} -> raw_byte_identity`` and does not name the
+    ``eda_cross_sim_identity -> config_diff_maps`` rename, which was not applied.
+
+    Class: every load that rewrites a subset of ``_EDA_RENAMES``; the message must describe
+    that subset and nothing else.
+
+    What kills it: a warning text that hard-codes one rename's arrow, or that lists the whole
+    map instead of the renames applied.
+
+    A second correct implementation under which it still passes: naming each applied rename
+    on its own line, or in a different order; the assertions test only containment.
+    """
+    import warnings
+
+    from hhemt.config.eda import _EDA_RENAMES, eda_config
+
+    predecessors = [old for old, new in _EDA_RENAMES.items() if new == "raw_byte_identity"]
+    assert len(predecessors) == 1, predecessors
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        eda_config(enabled_plots=[predecessors[0]])
+    messages = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert len(messages) == 1, messages
+    assert f"{predecessors[0]} -> raw_byte_identity" in messages[0]
+    assert "eda_cross_sim_identity -> config_diff_maps" not in messages[0]

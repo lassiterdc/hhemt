@@ -126,10 +126,12 @@ an experiment) ends with a line of this shape:
 TRITON-SWMM is enabled but not compiled and --compile-triton-swmm not specified
 ```
 
-In native mode the setup step checks for a compiled solver and never builds one.
+The TRITON-only and SWMM checks write the same line with their own names and
+flags. In native mode the setup step checks for a compiled solver and never builds one.
 The flag the line names belongs to the standalone compile command, and neither
 `hhemt run` nor `analysis.run()` takes it. Compile once, following
-[Compile the solver](compiling-the-solver.md), then start the run again.
+[Compile the solver](compiling-the-solver.md), then start the run again: setup work
+that completed is kept.
 
 ### The job died at walltime
 
@@ -138,9 +140,8 @@ it does not restart from zero. Raise the simulation retry count rather than the
 walltime if checkpoints are frequent enough.
 
 ??? note "Why `perf_*` exceeds the scheduler's elapsed time on a resumed run"
-    The `perf_*` columns on a resumed run are cumulative across allocations, so
-    they will exceed what the scheduler reports for the final allocation. That is
-    correct, and not a sign that anything went wrong.
+    [A caveat on performance columns](../reference/output-data-model.md#a-caveat-on-performance-columns)
+    explains it, and why it is correct.
 
 ### The report is wrong but the results are fine
 
@@ -163,17 +164,15 @@ need re-running.
 
 ## 4. Read the exit code, if you have one
 
-The CLI uses structured exit codes: `2` config, `3` workflow/compilation, `4`
-simulation, `5` processing. See the [CLI reference](../reference/cli.md#exit-codes).
-
-**A `10` is the catch-all**, and what to do about one is on that same page.
+The CLI uses structured exit codes, one per failure class. The
+[CLI reference](../reference/cli.md#exit-codes) lists them and says what to do about a
+code it does not map.
 
 ## 5. Check the report's own validation section
 
-A rendered report carries an **Errors and Warnings** section built from the same
-post-completion validation the toolkit runs internally: system-level checks,
-aggregate per-scenario checks, granular per-scenario failures, and
-resource-utilisation mismatches. On an analysis that completed far enough to
+A rendered report carries an **Errors and Warnings** section, whose contents
+[The interactive analysis report](../reference/example-report.md#sidebar-sections)
+lists. On an analysis that completed far enough to
 render, read that before reading logs: it is the same information, already
 triaged.
 

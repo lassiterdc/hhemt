@@ -1195,7 +1195,7 @@ def run_chunk(args: argparse.Namespace) -> int:
     # whole point: every other sidecar here is a `pytest_sessionfinish` artifact and is
     # simply absent when the chunk is cancelled or hits walltime.
     env[LOGREPORT_ENV] = str(run_dir / f"chunk-{cid:02d}.reports.jsonl")
-    # Latent, NOT the measured cause. tests/conftest.py:77 runs a run-dir reaper against
+    # Latent, NOT the measured cause. pytest_sessionfinish in tests/conftest.py runs a run-dir reaper against
     # the SHARED slug cache at every session end, and each chunk is a controller rather
     # than an xdist worker, so an early-finishing chunk sweeps while siblings still run.
     # It is refuted as this run's mechanism -- the sweep skips anything younger than

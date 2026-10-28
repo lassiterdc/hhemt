@@ -76,12 +76,16 @@ def test_render_floor_preserves_flags_and_deletes_snakemake_figures(synth_sensit
 
 
 def test_render_floor_exempts_plots_eda(synth_sensitivity_analysis):
-    """RQ4. `plots/eda/` survives a render floor; no Snakemake rule regenerates it.
+    """RQ4. The seeded `plots/eda/config_diff_maps` survives a render floor.
 
-    Those figures come from `analysis.eda()`, a non-Snakemake in-process facade,
-    so deleting them here removes the family permanently -- a re-render restores
-    only the Snakemake-driven figures. `bundle/_emit.py::_prune_undeclared_figures`
-    already carries this exemption; the render branch did not.
+    It survives because the fixture's active reporting set, `benchmarking`, writes no
+    `plots/eda/` figure, so no report rule would rebuild it. Such figures come from
+    `analysis.eda()`, a non-Snakemake in-process facade, so deleting them here would
+    remove them permanently -- a re-render restores only the figures a report rule
+    writes. Under a set whose active rules write that figure (`compute-sensitivity`
+    with EDA plots enabled) the render floor deletes it, because its rule rebuilds it.
+    `bundle/_emit.py::_prune_undeclared_figures` already carries this exemption; the
+    render branch did not.
     """
     analysis = synth_sensitivity_analysis
     _status_dir, _flags, snakemake_fig, eda_fig = _seed_status_and_plots(analysis)

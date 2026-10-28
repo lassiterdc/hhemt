@@ -707,7 +707,7 @@ def build_manifest(
         # DISCLOSURE FOR A LATER READER DIFFING TWO RUNS: the FIRST run with
         # tree_isolation_per_chunk=true is NOT red-set-comparable to any baseline before it.
         # Isolation gives each chunk a fresh analysis-tree root, so synthetic_multisim_completed
-        # and synthetic_sensitivity_completed (tests/conftest.py:533, :596) gate on a
+        # and synthetic_sensitivity_completed (both fixtures in tests/conftest.py) gate on a
         # _marker_state that is never "complete" and REBUILD rather than adopt. Every test
         # downstream of them then runs against a tree built by that chunk instead of one
         # persisted in the slug cache. A test that passed partly because of residue another

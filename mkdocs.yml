@@ -28,10 +28,13 @@ theme:
     #
     # `navigation.indexes` is PRESENT and is the structural fix for two pages
     # sharing one name: it attaches a section's `index.md` to the section NODE,
-    # so "How-To Guides" in the sidebar opens the index instead of expanding to
-    # reveal a child also called "How-To Guides". It requires each section's
-    # first nav entry to be a bare `{section}/index.md`, which this nav already
-    # satisfies for all four sections.
+    # so clicking a section in the sidebar opens its index page instead of
+    # expanding to reveal a first child carrying the same label as the section.
+    # It acts only where a section's first nav entry is a bare `index.md`. In
+    # this nav every top-level section node except `Contributing` has such a
+    # first child, which `navigation.indexes` attaches as the node's page;
+    # `Contributing`'s first child is the titled `contributing.md`, so it
+    # carries none.
     - navigation.indexes
     - navigation.top
   palette:
@@ -66,6 +69,8 @@ markdown_extensions:
       base_path:
         - docs/_snippets
       check_paths: true
+      auto_append:
+        - abbreviations.md
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -76,6 +81,12 @@ plugins:
   - search
   - htmlproofer:
       validate_external_urls: false
+      # A link from one API page to a symbol on another is an autorefs link, and
+      # htmlproofer looks for its anchor among the target page's Markdown headings,
+      # where a symbol anchor never is. mkdocs-autorefs already fails the strict
+      # build on a cross-reference it cannot resolve, so these are not unchecked.
+      ignore_urls:
+        - "../api-*/#hhemt*"
   - mkdocstrings:
       handlers:
         python:
@@ -99,7 +110,12 @@ exclude_docs: |
   _snippets/
 
 nav:
-  - Home: index.md
+  - Home:
+      - index.md
+      - Capabilities: explanation/capabilities.md
+      - Limitations and constraints: explanation/limitations.md
+      - Coupled inflow nodes: explanation/coupled-inflow-nodes.md
+      - Software availability: explanation/software-availability.md
   - Installation: how-to/installation.md
   - Tutorials:
       - tutorials/index.md
@@ -118,26 +134,29 @@ nav:
       - Combining experiments: how-to/combining-experiments.md
       - Synthetic compute-sensitivity experiment: how-to/synthetic-compute-sensitivity-experiment.md
       - Running the exploratory analysis: how-to/running-eda.md
+      - Exploratory analysis: explanation/exploratory-analysis.md
       - Publishing and fetching: how-to/publishing.md
       - Reprex round-trip: how-to/reprex-roundtrip.md
       - DOI round-trip (operator): how-to/doi-roundtrip-e2e.md
   - Reference:
       - reference/index.md
-      - API Reference: reference/api.md
+      - API Reference:
+          - reference/api.md
+          - reference/api-toolkit.md
+          - reference/api-analysis.md
+          - reference/api-bundles.md
+          - reference/api-experiments.md
+          - reference/api-eda.md
+          - reference/api-version-migration.md
       - Configuration schema: reference/config-schema.md
       - CLI reference: reference/cli.md
       - Output data model: reference/output-data-model.md
       - FAIR scope table: reference/fair-scope-table.md
       - Reporting sets: reference/reporting-sets.md
+      - Glossary: reference/glossary.md
       - The interactive analysis report: reference/example-report.md
-  - Explanation:
-      - explanation/index.md
-      - Capabilities: explanation/capabilities.md
-      - Limitations and constraints: explanation/limitations.md
-      - Coupled inflow nodes: explanation/coupled-inflow-nodes.md
-      - Software availability: explanation/software-availability.md
-      - Rerun FAQ: explanation/rerun-faq.md
+  - FAQ: explanation/rerun-faq.md
+  - Contributing:
+      - Contributing guide: contributing.md
       - Branching and release model: explanation/branching-and-release-model.md
-      - Exploratory analysis: explanation/exploratory-analysis.md
       - Testing the toolkit: explanation/testing-the-toolkit.md
-  - Contributing: contributing.md

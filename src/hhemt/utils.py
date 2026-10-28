@@ -1,3 +1,18 @@
+"""Shared filesystem, zarr/NetCDF publication, and small I/O helpers for hhemt.
+
+Most of the toolkit writes stores that other processes read, often on shared HPC
+filesystems where a writer can be killed mid-write. This module holds the pieces that
+keep those writes safe and findable: the crash-safe store and flag publishers, the
+chaptered per-scenario timeseries store and its merge, the resolver for an
+experiment's root consolidated store across layout versions, the selector that decides
+which report figures a re-render may delete, and the store writers. Three functions
+publish through the crash-safe store publisher: the zarr writers (`write_zarr`,
+`write_datatree_zarr`) and the chapter merge (`merge_chapters_to_unified`). The NetCDF
+writers write their output file in place, so a crash mid-write can leave a partial file.
+The remaining helpers are thin wrappers for YAML, JSON, templates, text files, sbatch
+submission and timestamps.
+"""
+
 import datetime
 import importlib.util
 import json
@@ -60,8 +75,9 @@ def arm_from_config_dir(root) -> bool | None:
 
     THE ARM IS THE BASIS OF ROOT-STORE RESOLUTION and the resolvers below hold no analysis
     object. A root ships `cfg_analysis.yaml` when it is a BUNDLE (copied at emit) or when a
-    producer has written one -- `eda()`, `publish()`, and, once `### D132` applies, either
-    consolidation writer. Presence is therefore CONDITIONAL rather than population-keyed:
+    producer has written one -- `eda()`, `publish()`, and both consolidation writers
+    (`consolidate_to_datatree` and `consolidate_sensitivity_datatree`). Presence is
+    therefore CONDITIONAL rather than population-keyed:
     this returns None on a root that has none, and a caller that gets None keeps its prior
     behaviour rather than acquiring a default. None means UNKNOWN and is never coerced to
     False -- a missing config and a regular analysis are different states and a bool would
@@ -337,21 +353,26 @@ def fast_rmtree(
     missing_ok: bool = True,
     onerror: Callable | None = None,
 ) -> int:
-    """Fast, cross-platform directory delete. Returns bytes reclaimed.
+    """Delete a file, a symlink or a directory tree, fast; return the bytes measured first.
 
-    Uses OS-native delete commands for speed; falls back to shutil.rmtree.
+    Uses OS-native delete commands for a directory; falls back to shutil.rmtree.
+
+    The existence test and the size measurement both FOLLOW symlinks. A live symlink
+    is unlinked and its target is kept, but the returned count is the TARGET's size.
+    A dangling symlink reads as missing: it is left in place and the call returns 0,
+    or raises FileNotFoundError when ``missing_ok`` is False.
 
     THIS IS A PRIMITIVE, NOT AN ACCOUNTING SITE. It measures and deletes; it
     maintains no DU sentinel. Every DU-counted deletion under src/hhemt/ routes
     through `du_sentinels.delete_and_account`, which calls this and adjusts the
-    owning scope's sentinel once ([Q354] ruling 4; clause 1). Calling this directly
+    owning scope's sentinel once. Calling this directly
     outside du_sentinels.py is a `check_du_sentinel_sites` violation unless the
     site carries a still-valid `# EXEMPT-DU:` category.
 
     Parameters
     ----------
     path : str | Path
-        Directory path to delete.
+        File, symlink or directory to delete (see above for how a symlink is treated).
     missing_ok : bool
         If True, silently return when path does not exist.
     onerror : callable, optional
@@ -438,8 +459,8 @@ def _recover_and_clear_publish_temps(final, aside, tmp) -> None:
     An earlier draft preferred .aside on the ground that it is "trustworthy by
     construction -- only ever a renamed complete `final`". That rests on the
     ABSENT-or-COMPLETE invariant, WHICH THIS MODULE ESTABLISHES, so it does not
-    hold over the stores this change INHERITS: on the first run after it ships,
-    every `final` on disk was written by the unprotected path and may be a
+    hold over stores written before this publish path existed: on the first run
+    under it, every `final` on disk was written by the unprotected path and may be a
     silent-fill partial. Measured: with an inherited partial at .aside and a
     complete store at .tmp, that draft restored the partial and deleted the
     complete one, announcing that it was restoring the last known-good copy.
@@ -545,15 +566,22 @@ def chapters_dir_for(fname_out) -> Path:
 
 
 def unified_flag_for(fname_out) -> Path:
+    """Completion flag for the merged store: ``{name}.done`` beside it.
+
+    The flag, not the store's existence, is what lets the chapters be deleted: it is
+    written only after the merged store has been published.
+    """
     root = Path(fname_out)
     return root.with_name(root.name + ".done")
 
 
 def chapter_store_for(chapters: Path, k: int) -> Path:
+    """Store path of chapter ``k``, zero-padded to five digits so name order is index order."""
     return chapters / f"chapter_{k:05d}.zarr"
 
 
 def chapter_flag_for(chapters: Path, k: int) -> Path:
+    """Completion flag of chapter ``k``. A chapter counts as complete only when this exists."""
     return chapters / f"chapter_{k:05d}.done"
 
 
@@ -565,9 +593,9 @@ def verify_and_flag_chapter(store: Path, flag: Path, n_expected: int) -> None:
     and is what lets the chapter-set guard compare a resume against the builds that
     actually flagged chapters. It follows the flag deliberately: recording before the
     flag lands would name a build for a chapter a failed verify never flagged. The flag is a
-    positive completion marker in the Gotcha-40 sense, and the clear that follows
-    it destroys the raw inputs, so the flag must not be written on an unchecked
-    store.
+    positive completion marker -- its presence is the only evidence later steps accept
+    that the chapter finished -- and the clear that follows it destroys the raw inputs,
+    so the flag must not be written on an unchecked store.
 
     WHAT THE FLAG ATTESTS, stated exactly, because an earlier docstring overclaimed
     it. It attests that `to_zarr` RETURNED and that the resulting store OPENS. It
@@ -635,8 +663,8 @@ def covered_timesteps(chapters: Path) -> set:
     DEPENDENCY THIS RESTS ON, named because nothing protects it: exact set membership
     requires that `timestep_min` round-trips through zarr UNENCODED. return_dic_zarr_encodings
     does not encode it today -- its float32 branch iterates ds.data_vars and its coordinate
-    loop handles only Unicode -- but NO spec in this set touches that module and NO test pins
-    the property, so a one-line edit there would silently break resume by making
+    loop handles only Unicode -- but NO test pins the property, so a one-line edit there
+    would silently break resume by making
     `t not in _covered_ts` true for timesteps that ARE covered.
     """
     out = set()
@@ -682,11 +710,11 @@ def clear_raw_for_timesteps(df_outputs, timesteps, *, scenario_dir: Path) -> int
     list: it deletes only paths named in `df_outputs`, which contains the
     per-variable per-timestep data files and nothing else.
     """
-    # ONE accounting call for the whole chapter (clause 1). The pre-2026-09-13 form
-    # called fast_rmtree(p, analysis_dir=...) per file, and each call re-summed the
-    # ANALYSIS scope over ~3,798 sentinel-less children -- 528 times per chapter
-    # flush. That is the chunk-6 stall. The tool below stats only what it deletes
-    # and adjusts only this scenario's sentinel.
+    # ONE accounting call for the whole chapter. The pre-2026-09-13 form called
+    # fast_rmtree(p, analysis_dir=...) per file, and each call re-summed the ANALYSIS
+    # scope over ~3,798 sentinel-less children -- 528 times per chapter flush, which
+    # stalled processing. The tool below stats only what it deletes and adjusts only
+    # this scenario's sentinel.
     from hhemt.du_sentinels import delete_and_account
 
     paths = df_outputs.loc[list(timesteps)].to_numpy().ravel()
@@ -826,7 +854,7 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) 
     # a silent repair would succeed, and that is the intended trade.
     # SCOPED TO THE NON-CONCAT AXES, and the scope is load-bearing in BOTH directions.
     # The concat axis is legitimately repaired ten lines below by the _time_chunks
-    # unification, which this change RETAINS -- so asserting uniformity there would
+    # unification, which stays in place -- so asserting uniformity there would
     # duplicate a live repair and contradict the passing test that pins it
     # (test_merged_store_keeps_the_inherited_time_chunk_grid[measured-production-shape]
     # merges chapters stored at time-chunk 17 and 3 and expects success). The non-concat
@@ -836,8 +864,8 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) 
     # NO `chunks is not None` GUARD, and its absence is deliberate. `open_zarr` reports
     # the STORED grid and a zarr store always has one: measured, a chapter written with
     # NO declared encoding comes back carrying the grid zarr guessed for it, never None.
-    # A None-guard here would be a branch that cannot be entered, which is the defect
-    # class this round exists to remove.
+    # A None-guard here would be a branch that cannot be entered, and an unenterable
+    # branch reads to the next editor as a case that can happen.
     _spatial: dict[str, set[tuple]] = {}
     for _k in sorted(parts):
         _chap = xr.open_zarr(parts[_k], consolidated=False)
@@ -955,7 +983,6 @@ def fix_line_endings(file_path, target_ending="\n"):
             print(f"✓ Fixed line endings in: {file_path}")
             return True
         else:
-            # print(f"✓ Already correct: {file_path}")
             return False
 
     except Exception as e:
@@ -965,10 +992,17 @@ def fix_line_endings(file_path, target_ending="\n"):
 
 def run_bash_script(
     bash_script: Path,
-    dependent_job_id: int | str | list | None = None,
+    dependent_job_id: int | str | list[str] | None = None,
     dependency_type: Literal["afterok", "afterany"] = "afterok",
     verbose: bool = True,
 ):
+    """Submit ``bash_script`` with ``sbatch`` and return the SLURM job id as a string.
+
+    ``dependent_job_id`` adds ``--dependency={dependency_type}:{id}``; a list is joined
+    with commas, so it must hold strings. The id returned is the last token of sbatch's
+    stdout. A non-zero sbatch exit raises ``BatchJobSubmissionError`` carrying the
+    command and stderr.
+    """
     cmd = ["sbatch"]
     dpdndncy = ""
     if dependent_job_id:
@@ -1004,6 +1038,7 @@ def run_bash_script(
 
 
 def archive_directory_contents(dir: Path):
+    """Move every entry of ``dir`` except ``_archive`` itself into ``dir/_archive``, creating it."""
     archive_dir = dir / "_archive"
     archive_dir.mkdir(exist_ok=True, parents=True)
     for item in dir.iterdir():
@@ -1012,8 +1047,14 @@ def archive_directory_contents(dir: Path):
         shutil.move(str(item), archive_dir / item.name)
 
 
-def create_mask_from_shapefile(da_to_mask, shapefile_path=None, series_single_row_of_gdf=None):  # , COORD_EPSG):
-    # da_to_mask, shapefile_path = da_sim_wlevel, f_mitigation_aois
+def create_mask_from_shapefile(da_to_mask, shapefile_path=None, series_single_row_of_gdf=None):
+    """Boolean mask on ``da_to_mask``'s grid, True inside the given geometries.
+
+    Pass the geometries as a vector file path or as one GeoDataFrame row; when both are
+    given the row wins, and when neither is given the call raises because no shapes
+    are bound. The mask uses ``da_to_mask.rio.transform()``, so the geometries must
+    already be in the raster's CRS -- nothing reprojects them.
+    """
     og_shape = da_to_mask.shape
     import geopandas as gpd
     import rasterio.features
@@ -1034,16 +1075,19 @@ def create_mask_from_shapefile(da_to_mask, shapefile_path=None, series_single_ro
 
 
 def read_yaml(f_yaml: Path | str):
+    """Parse a YAML file with the safe loader, so arbitrary Python tags are refused."""
     return yaml.safe_load(Path(f_yaml).read_text())
 
 
 def write_yaml(data: dict, f_yaml: Path | str):
+    """Overwrite ``f_yaml`` with ``data``. Not atomic: a crash mid-write leaves a partial file."""
     with open(f_yaml, "w") as file:
         yaml.dump(data, file)
     return
 
 
 def get_package_root(package_name: str) -> Path:
+    """Directory holding an importable package's origin file; raises ImportError if it is not found."""
     spec = importlib.util.find_spec(package_name)
     if spec is None or spec.origin is None:
         raise ImportError(f"Package {package_name} not found")
@@ -1051,10 +1095,16 @@ def get_package_root(package_name: str) -> Path:
 
 
 def get_package_data_root(package_name) -> Path:
+    """The platform's per-user data directory for ``package_name``. It is not created here."""
     return Path(user_data_dir(package_name))
 
 
 def fill_template(f_template: Path, mapping: dict):
+    """Fill a ``string.Template`` file from ``mapping`` and return the text.
+
+    Uses ``safe_substitute``, so a placeholder missing from ``mapping`` is left in the
+    output verbatim rather than raising.
+    """
     with open(f_template) as T:
         template = Template(T.read())
         filled = template.safe_substitute(mapping)
@@ -1062,6 +1112,7 @@ def fill_template(f_template: Path, mapping: dict):
 
 
 def create_from_template(f_template: Path, mapping: dict, f_out: Path):
+    """Write ``fill_template``'s result to ``f_out``, creating parent directories, and return it."""
     filled = fill_template(f_template, mapping)
     f_out.parent.mkdir(parents=True, exist_ok=True)
     with open(f_out, "w+") as f1:
@@ -1070,6 +1121,11 @@ def create_from_template(f_template: Path, mapping: dict, f_out: Path):
 
 
 def find_all_keys_in_template(f_template):
+    """Names inside ``{...}`` in a template file, de-duplicated in first-seen order.
+
+    Only braced placeholders are found: a bare ``$name`` that ``fill_template`` would
+    also substitute is not listed.
+    """
     with open(f_template) as f:
         text = f.read()
     keys = re.findall(r"\{([^}]+)\}", text)
@@ -1078,12 +1134,20 @@ def find_all_keys_in_template(f_template):
 
 
 def load_json(file: Path):
+    """Parse a JSON file."""
     with open(file) as f:
         log = json.load(f)
     return log
 
 
 def write_json(data: dict, file: Path):
+    """Write ``data`` to ``file`` atomically, creating parent directories.
+
+    The document is written and fsync'd under a per-process temp name, then moved over
+    ``file`` with ``os.replace``, so a reader never sees a partial document. The replace
+    is unconditional; use ``write_json_exclusive`` to refuse an existing file. Values
+    JSON cannot encode, such as paths and datetimes, are written as ``str()``.
+    """
     file.parent.mkdir(exist_ok=True, parents=True)
     pid = os.getpid()
     tmp_path = file.with_suffix(file.suffix + f".{pid}.tmp")
@@ -1154,12 +1218,14 @@ def replace_substring_in_file(file_path, old_substring, new_substring, verbose=F
 
 
 def read_text_file_as_string(file):
+    """Return a text file's whole contents."""
     with open(file) as f:
         contents = f.read()
     return contents
 
 
 def current_datetime():
+    """Local time with its UTC offset, as ISO 8601 to the second (e.g. ``2026-01-07T10:03:37-05:00``)."""
     return (
         datetime.datetime.now()
         .astimezone()
@@ -1170,12 +1236,9 @@ def current_datetime():
 
 
 def current_datetime_string(filepath_friendly: bool = False):
-    """
-    Docstring for current_datetime_string
+    """Return ``current_datetime()``, optionally with every colon removed for use in a path.
 
-    Generates a datetime string following following  ISO 8601 format conventions.
-
-    :param filepath_friendly: If True, colons are replaced with nothing, e.g.,
+    :param filepath_friendly: If True, colons are removed, e.g.
         2026-01-07T10:03:37-05:00 becomes 2026-01-07T100337-0500
     :type filepath_friendly: bool
     """
@@ -1187,21 +1250,24 @@ def current_datetime_string(filepath_friendly: bool = False):
 
 
 def string_to_datetime(dt: str):
+    """Parse an ISO 8601 string, such as ``current_datetime()`` returns, into a datetime."""
     return datetime.datetime.fromisoformat(dt)
 
 
 def read_header(file, nlines):
+    """The first ``nlines`` lines of a text file, newlines kept; fewer if the file is shorter."""
     lst_lines = []
     with open(file) as f:
         for _i in range(nlines):
             line = f.readline()
             if not line:
-                break  # Stop if file has fewer than 6 lines
+                break  # end of file before `nlines` lines
             lst_lines.append(line)
     return lst_lines
 
 
 def read_text_file_as_list_of_strings(file):
+    """Return a text file's lines, each with its trailing newline kept."""
     with open(file) as f:
         contents = f.readlines()
     return contents
@@ -1348,6 +1414,15 @@ def return_dic_zarr_encodings(
         The dataset to encode.
     clevel : int, default=5
         Compression level for Blosc.
+    store_float32 : bool, default=False
+        Store floating-point data variables as float32; integer variables are unaffected.
+    time_chunk : int or None
+        Chunk length along ``timestep_min`` for numeric variables that carry that axis;
+        every other axis keeps its full extent. Ignored when ``chunk_grid`` is given.
+    chunk_grid : tuple of (timestep_min, y, x) lengths, or None
+        Chunk lengths for numeric variables that carry ``timestep_min``, matched to the
+        dims BY NAME; an axis it does not name keeps its full extent, and no length is
+        clamped to the variable's own extent. Takes precedence over ``time_chunk``.
 
     Returns
     -------
@@ -1376,10 +1451,9 @@ def return_dic_zarr_encodings(
                 # A DECLARED grid wins. The dims are matched BY NAME, never by
                 # position, so a variable whose axis order differs still receives the
                 # intended per-axis lengths; an axis the grid does not name keeps its
-                # full extent. Each length is clamped to the variable's own extent
-                # only where that is safe -- zarr accepts a chunk LARGER than the
-                # extent, and relying on that is what lets a short final chapter carry
-                # the same grid as its siblings.
+                # full extent. No length is clamped to the variable's own extent:
+                # zarr accepts a chunk LARGER than the extent, and relying on that is
+                # what lets a short final chapter carry the same grid as its siblings.
                 _named = dict(zip(("timestep_min", "y", "x"), chunk_grid, strict=True))
                 enc["chunks"] = tuple(_named.get(d, s) for d, s in zip(ds[var].dims, ds[var].shape, strict=True))
             elif time_chunk is not None and "timestep_min" in ds[var].dims:
@@ -1402,6 +1476,7 @@ def return_dic_zarr_encodings(
 
 
 def return_dic_autochunk(ds):
+    """A chunk spec asking dask to size every dimension of ``ds`` itself (``"auto"`` per dim)."""
     chunk_dict = {}
     for var in ds.dims:
         chunk_dict[var] = "auto"
@@ -1479,17 +1554,17 @@ def estimate_timesteps_per_chunk(
 
 def prev_power_of_two(n: int | float) -> int:
     """
-    Return the largest power of 2 less than or equal to n.
+    Return the largest power of 2 less than or equal to n, with a floor of 1.
 
     Parameters
     ----------
     n : int or float
-        Input number (must be positive)
+        Input number, truncated to int. Any value below 1 returns 1.
 
     Returns
     -------
     int
-        Largest power of 2 <= n
+        Largest power of 2 <= n for n >= 1; 1 for any n below 1.
 
     Examples
     --------
@@ -1501,8 +1576,6 @@ def prev_power_of_two(n: int | float) -> int:
     n = int(n)
     if n < 1:
         return 1
-    if n <= 0:
-        raise ValueError("n must be positive")
     return 1 << (n.bit_length() - 1)
 
 
@@ -1685,7 +1758,8 @@ def compute_optimal_chunks(
             # Calculate how much "budget" remains for chunking
             remaining_budget = target_nonspatial_chunk // nonspatial_chunk_product
             chunk_size = min(coord_len, prev_power_of_two(remaining_budget))
-            # Ensure at least some chunking for large dimensions
+            # A LENGTH-0 dimension reaches this branch (only length 1 is caught above),
+            # and min(0, ...) would give it chunk length 0; this keeps it at 1.
             if chunk_size < 1:
                 chunk_size = 1
 
@@ -1728,6 +1802,7 @@ def compute_optimal_chunks(
 
 
 def get_file_size_MiB(f: Path):
+    """Size in MiB (1024**2 bytes); a path whose final suffix is ``.zarr`` is summed as a directory."""
     if f.name.split(".")[-1] == "zarr":
         size_bytes = zarr_size_bytes(f)
     else:
@@ -1736,6 +1811,7 @@ def get_file_size_MiB(f: Path):
 
 
 def zarr_size_bytes(zarr_path: Path) -> int:
+    """Sum of the apparent sizes of every file under a store directory, not the blocks it occupies."""
     return sum(f.stat().st_size for f in zarr_path.rglob("*") if f.is_file())
 
 
@@ -1767,6 +1843,12 @@ def write_datatree_zarr(
 
 
 def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto"):
+    """Write a Dataset to a zarr store through the crash-safe publisher.
+
+    ``fname_out`` is either absent or complete afterwards, never partial (see
+    ``_publish_store_crash_safe``). Numeric variables are Blosc-compressed at
+    ``compression_level``; ``chunks="auto"`` lets dask size every dimension.
+    """
     encoding = return_dic_zarr_encodings(ds, compression_level)
     if chunks == "auto":
         chunks = return_dic_autochunk(ds)
@@ -1784,7 +1866,12 @@ def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto"):
 
 
 def write_zarr_then_netcdf(ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"):
-    # encoding = return_dic_zarr_encodings(ds, compression_level)
+    """Write NetCDF at ``fname_out`` by way of a temporary ``{fname_out}.zarr``.
+
+    The Dataset is written to zarr, reopened lazily, and written to NetCDF; the
+    intermediate is then removed. A failure to remove it is printed, not raised, so a
+    stray ``.zarr`` can survive a successful call.
+    """
     if chunks == "auto":
         chunks = return_dic_autochunk(ds)
     ds = ds.chunk(chunks)
@@ -1809,6 +1896,7 @@ def write_zarr_then_netcdf(ds, fname_out, compression_level: int = 5, chunks: st
 
 
 def return_dic_netcdf_encodings(ds: xr.Dataset, clevel: int = 5) -> dict:
+    """NetCDF encodings: zlib with shuffle at ``clevel`` for numeric data variables only."""
     encoding = {}
     for var in ds.data_vars:
         if ds[var].dtype.kind in {"i", "u", "f"}:
@@ -1818,6 +1906,12 @@ def return_dic_netcdf_encodings(ds: xr.Dataset, clevel: int = 5) -> dict:
 
 
 def write_netcdf(ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"):
+    """Write a Dataset to NetCDF with the h5netcdf engine.
+
+    Unlike ``write_zarr`` this writes ``fname_out`` directly, with no temp-and-rename,
+    so a crash mid-write leaves a partial file at that path. A Dataset that cannot be
+    rechunked is written as a shallow copy instead.
+    """
     encoding = return_dic_netcdf_encodings(ds, compression_level)
     if chunks == "auto":
         chunk_dict = return_dic_autochunk(ds)
@@ -1906,12 +2000,131 @@ def figure_exists_for(sidecar: Path) -> bool:
     return any(p for p in sidecar.parent.glob(stem + ".*") if not p.name.endswith(".manifest.json"))
 
 
+def report_rule_figure_stems(analysis) -> frozenset[str]:
+    """The figures the analysis's active reporting set writes through its plot rules.
+
+    Each entry is a rule's output path relative to the analysis directory with its
+    extension placeholder removed, so ``plots/eda/config_diff_maps`` stands for every
+    extension that rule may emit. A ``{wildcard}`` in a template is kept and matches
+    one run of characters containing no ``/`` (see ``is_report_rule_figure``). Read from the
+    registry's rule-spec templates and nothing else.
+
+    This answers one question for two consumers that must agree: which figures under
+    a subtree the forced re-render otherwise spares (``plots/eda/``) are nevertheless
+    rebuilt by a report rule. ``select_regenerable_figures`` deletes them and
+    ``provenance.collect_plot_stamps`` checks their build stamps. A figure only
+    ``analysis.eda()`` writes is in neither set.
+
+    A template counts only when the generated Snakefile would both emit its rule and
+    request its output, because a figure is rebuilt only then. Deleting a figure whose
+    rule the Snakefile drops loses it, and checking it refuses a report that does not
+    show it. So the gates the workflow generators apply are applied here, through the
+    same predicate table (``_ReportingSetDispatchMixin._RENDERER_PREDICATES``) and the
+    same ``renderer_active`` test: a selection whose predicate is false, or whose
+    renderer is in ``report.disabled_renderers``, contributes nothing, and the
+    in-report EDA renderer also needs a non-empty ``eda.enabled_plots``, the condition
+    under which the generators request its figures.
+
+    ``analysis`` is duck-typed the way the render path resolves its category order:
+    ``_active_reporting_set`` when present (set at ``run()`` entry), else the set
+    ``cfg_analysis.report`` resolves to, using ``_cfg_report`` first when present. A
+    selection that fails to resolve falls back to the registry ``default`` set, which
+    writes no ``plots/eda/`` figure, so a bad config spares and skips every figure
+    there exactly as before this function existed. A missing ``eda`` block reads as
+    the ``eda_config`` default, and a missing disable list as empty.
+
+    The predicate inputs are derived from the analysis config the way the reprocess
+    generator derives them: ``has_eda_artifact`` is ``bool(eda.enabled_plots)``, and
+    ``has_preserved_raw_outputs`` is true when ``clear_raw`` is ``"none"`` or a list that
+    does not name the analysis's model. A predicate whose input cannot be derived from
+    the config reads as false, so its templates are omitted. None of those templates
+    lies under ``plots/eda/``, where this set is consulted.
+
+    Not established: the sensitivity-master generator reads ``has_preserved_raw_outputs``
+    from a run-time ``override_clear_raw`` when one is passed, which neither the build
+    check nor the deleting callers hold. A forced render run with a clear-raw override
+    that differs from the config can therefore disagree with that Snakefile about the
+    ``compute_config_byte_identity`` set's two ``plots/eda/`` figures.
+    """
+    from hhemt.config.eda import eda_config
+    from hhemt.config.report import resolve_active_reporting_set
+    from hhemt.exceptions import ConfigurationError
+    from hhemt.report_renderers._reporting_sets import (
+        ReportingSetCompositionError,
+        get_reporting_set,
+        renderer_active,
+    )
+    from hhemt.workflow import _ReportingSetDispatchMixin
+
+    active = getattr(analysis, "_active_reporting_set", None)
+    if active is None:
+        try:
+            cfg_report = getattr(analysis, "_cfg_report", None)
+            if cfg_report is None:
+                cfg_report = analysis.cfg_analysis.report
+            active = resolve_active_reporting_set(
+                cfg_report, is_sensitivity=analysis.cfg_analysis.toggle_sensitivity_analysis
+            )
+        except (ConfigurationError, ReportingSetCompositionError, KeyError):
+            active = get_reporting_set("default")
+
+    cfg_analysis = getattr(analysis, "cfg_analysis", None)
+    cfg_report = getattr(analysis, "_cfg_report", None) or getattr(cfg_analysis, "report", None)
+    disabled = list(getattr(cfg_report, "disabled_renderers", None) or ())
+    has_eda_artifact = bool((getattr(cfg_analysis, "eda", None) or eda_config()).enabled_plots)
+    clear_raw = getattr(cfg_analysis, "clear_raw", None)
+    has_preserved_raw_outputs = clear_raw == "none"
+    if isinstance(clear_raw, list):
+        holder = getattr(analysis, "experiment", analysis)
+        model_types = holder._get_enabled_model_types() if hasattr(holder, "_get_enabled_model_types") else []
+        has_preserved_raw_outputs = bool(model_types) and model_types[0] not in clear_raw
+    predicate_inputs = {
+        "has_eda_artifact": has_eda_artifact,
+        "has_preserved_raw_outputs": has_preserved_raw_outputs,
+    }
+    predicates = _ReportingSetDispatchMixin._RENDERER_PREDICATES
+
+    stems: set[str] = set()
+    for selection in active.renderer_selection:
+        if selection.predicate_key is not None and not predicates[selection.predicate_key](predicate_inputs):
+            continue
+        if not renderer_active(selection.builder_key, disabled):
+            continue
+        if selection.builder_key == "eda_compute_sensitivity" and not has_eda_artifact:
+            continue
+        for tmpl in selection.rule_spec_template:
+            if tmpl.predicate_key is not None and not predicates[tmpl.predicate_key](predicate_inputs):
+                continue
+            stems.add(tmpl.output_path_template.removesuffix("__OUTPUT_EXT__"))
+    return frozenset(stems)
+
+
+def is_report_rule_figure(rel_stem: str, report_rule_stems) -> bool:
+    """True when the analysis-dir-relative figure stem ``rel_stem`` is one a report rule writes.
+
+    ``report_rule_stems`` comes from ``report_rule_figure_stems``. An exact match is
+    tried first; a stem carrying ``{wildcard}`` segments matches when each segment
+    spans characters other than ``/``, which is how Snakemake fills a wildcard here.
+    """
+    if rel_stem in report_rule_stems:
+        return True
+    for stem in report_rule_stems:
+        if "{" in stem:
+            pattern = "".join(
+                "[^/]+" if part.startswith("{") else re.escape(part) for part in re.split(r"(\{[^}]*\})", stem)
+            )
+            if re.fullmatch(pattern, rel_stem):
+                return True
+    return False
+
+
 def select_regenerable_figures(
     analysis_dir,
     root,
     *,
     keep: "Callable[[Path], bool] | None" = None,
     on_select: "Callable[[Path], None] | None" = None,
+    report_rule_stems: "frozenset[str]" = frozenset(),
 ) -> "list[Path]":
     """Select regenerable figures under `root`, sparing unregenerable subtrees.
 
@@ -1938,6 +2151,10 @@ def select_regenerable_figures(
     sweeping `{analysis_dir}/plots` can only ever match the first, and a caller
     sweeping the analysis root matches both. The subset each caller sees therefore
     follows from its sweep root and is not a per-caller skip list anyone maintains.
+    Inside a matched subtree a figure is spared only when no active report rule writes
+    it: a figure whose stem is in ``report_rule_stems`` is selected anyway, because its
+    report rule rebuilds it. What stays spared is the figures nothing rebuilds, such as
+    those ``analysis.eda()`` writes under ``plots/eda/``.
 
     THE ROOTING PRECONDITION IS THE GUARANTEE, AND IT IS SUFFICIENT ON ITS OWN.
     The registry key is only computable when `root` is `analysis_dir` or lies under
@@ -1961,10 +2178,9 @@ def select_regenerable_figures(
 
     THE DRY-RUN GATE IS THE CALLER'S. The cost of suppressing the deletion is that a
     previewed DAG under-reports the plot rules a real run would fire, because on the
-    preserved-flag arm an absent output is the only remaining re-fire trigger. Which
-    way that trade falls is governed by the `reprocess dry_run performs no destructive
-    mutation` stipulation and is under re-verification; this function takes no
-    position on it and each call site carries the decision in one expression.
+    preserved-flag arm an absent output is the only remaining re-fire trigger. This
+    function takes no position on which way that trade falls; each call site carries
+    the decision in one expression.
 
     ORPHAN SIDECARS SURVIVE. A `.manifest.json` is skipped at the top of the walk and
     is selected only as the pair of a figure selected in the same iteration, so a
@@ -1989,6 +2205,12 @@ def select_regenerable_figures(
         Invoked with each eligible FIGURE path (never a sidecar) as it is selected.
         Used for per-figure logging and for the bundle prune's `removed` list; never
         for side effects the deletion depends on.
+    report_rule_stems : frozenset of str, optional
+        The figures the analysis's active reporting set writes, from
+        ``report_rule_figure_stems``. A figure inside an unregenerable subtree is
+        still selected when its stem is one of these, because a report rule rebuilds
+        it. Empty (the default) spares every such figure; bundle/_emit.py passes
+        nothing.
 
     Returns
     -------
@@ -2022,7 +2244,9 @@ def select_regenerable_figures(
             continue
         rel = path.relative_to(analysis_dir).as_posix()
         if any(rel == p or rel.startswith(p + "/") for p in UNREGENERABLE_ANALYSIS_SUBTREES):
-            continue
+            rel_stem = (path.parent / path.stem).relative_to(analysis_dir).as_posix()
+            if not is_report_rule_figure(rel_stem, report_rule_stems):
+                continue
         if keep is not None and keep(path):
             continue
         if on_select is not None:

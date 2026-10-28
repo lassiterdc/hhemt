@@ -1,4 +1,19 @@
 # %%
+"""Launch, resume and completion bookkeeping for one scenario's simulation.
+
+A scenario runs up to three models -- TRITON alone, TRITON coupled with SWMM, and SWMM
+alone -- on a workstation, inside a SLURM allocation, or inside an Apptainer image.
+``TRITONSWMM_run.prepare_simulation_command`` turns the analysis config into the one
+``bash -lc`` command that launches a model correctly in that setting: the thread and GPU
+environment, module loads, the shared-library search order, srun or mpirun wrapping, the
+container wrap, and the hotstart checkpoint to resume from. The same class decides whether
+a model has already finished, so a rerun skips it, and where its logs and checkpoints live.
+
+The module-level functions resolve the model runtime-log path (``model_logfile_for``), read
+the append-only per-attempt ledger the runner writes beside that log, ask SLURM for an
+allocation's queue time, and parse a checkpoint's reporting step from its filename.
+"""
+
 import logging
 import math
 import os
@@ -34,7 +49,7 @@ SWMM_ERROR_MARKER = "There are errors."
 # `exe_in_sif` entry for the model: prepare_simulation_command builds the in-SIF path as
 # /opt/hhemt/bin/{name}, where the `.def` build installs the binaries. Keyed by model_type.
 _DEFAULT_EXE_NAME = {
-    "triton": "triton.exe",
+    "triton": "triton_only.exe",
     "tritonswmm": "triton.exe",
     "swmm": "runswmm",
 }
@@ -83,18 +98,17 @@ def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "
     if getattr(analysis.cfg_analysis, "is_experiment_member", False):
         analysis_id = str(analysis.cfg_analysis.analysis_id) + "_"
         # Derive the MASTER analysis dir STRUCTURALLY, from this sub's own analysis_dir.
-        # A sub's dir is always `{master_analysis_dir}/members/member_{member_id}` (single
-        # writer: `TRITONSWMM_sensitivity_analysis.__init__` sets `members_dir` and
-        # `_create_members` places each member under it; the same two-level convention
-        # `du_sentinels._infer_scope` detects via `parent.name == "members"`), so
+        # A sub's dir is always `{master_analysis_dir}/members/{analysis_id}` (single
+        # writer: TRITONSWMM_sensitivity_analysis, whose __init__ sets `members_dir` and
+        # whose _create_members places each member under it; du_sentinels._infer_scope
+        # detects the same two-level convention via parent.name == "members"), so
         # `.parent.parent` IS the master analysis_dir and this expression equals the
-        # master's `analysis_paths.simlog_directory` (built in `TRITONSWMM_analysis.__init__`
-        # as `analysis_log_directory / "sims"`) by construction.
+        # master's `analysis_paths.simlog_directory` (`{analysis_dir}/logs/sims`, set in
+        # TRITONSWMM_analysis.__init__) by construction.
         #
         # DO NOT restore the previous `experiment_cfg_yaml.parent / "logs" / "sims"`
         # form. `experiment_cfg_yaml` is the USER'S config-file path
-        # (`TRITONSWMM_sensitivity_analysis._create_members` assigns it
-        # experiment.analysis_config_yaml), so
+        # (_create_members assigns it experiment.analysis_config_yaml), so
         # that form anchored the model logs to an arbitrary directory that
         # `run(from_scratch=True)`'s fast_rmtree(analysis_dir) does not cover. Empirically
         # (Rivanna, 2026-08-01, synth_cc_resume_triton): the wipe ran, out_triton/ was
@@ -106,7 +120,7 @@ def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "
         #
         # Deliberately NO fallback to the old location here. A fallback would silently
         # re-admit the stale-evidence skip this fixes. The one place a fallback IS correct
-        # is eda/raw_resume_identity.py, which reads historical completed arms and gates
+        # is eda/raw_byte_identity.py, which reads historical completed arms and gates
         # nothing.
         log_dir = analysis.analysis_paths.analysis_dir.parent.parent / "logs" / "sims"
     return log_dir / f"model_{model_type}_{analysis_id}evt{event_iloc}.log"
@@ -213,15 +227,15 @@ def read_queue_ledger_seconds(model_logfile: Path) -> tuple[float | None, str, d
 
     Returns `(total_seconds_or_None, coverage, by_jobid)`:
       * total  -- the sum across every allocation that recorded a queue row, or None when
-                  NO row carries `queue_s` (a tree written before queue capture existed, or
-                  1_job_many_srun_tasks, where
-                  the capture is deliberately absent). None is NOT zero; see the probe.
+                  NO row carries `queue_s` (a tree written before the runner recorded
+                  queue time, or 1_job_many_srun_tasks, where the capture is deliberately
+                  absent). None is NOT zero; see the probe.
       * coverage -- "k/n", k = allocations with a queue row, n = allocations seen (counted
                   from `wall_s` rows plus queue rows, deduplicated on slurm_jobid). A tree
-                  that resumed across the point where queue capture was added reports e.g.
+                  that resumed across the point where queue capture began reports e.g.
                   "2/5", so a PARTIAL total is legible as partial rather than passing as
-                  complete. This is the disclosed-denominator discipline -- a bare total
-                  cannot distinguish "summed 5 of 5" from "summed 2 of 5".
+                  complete -- a bare total cannot distinguish "summed 5 of 5" from "summed
+                  2 of 5".
       * by_jobid -- per-allocation queue seconds, so the report can show each SLURM row its
                   OWN wait rather than repeating the sim total across every row of a
                   resumed sim (which would read as each allocation having waited the total).
@@ -320,6 +334,15 @@ def failed_write_resume_message(f_step: int, n_step: int, failed_replay: bool) -
 
 
 class TRITONSWMM_run:
+    """Launch and completion surface for one scenario's simulations.
+
+    Bound to one ``TRITONSWMM_scenario`` and its analysis. Builds each model's launch
+    command (``prepare_simulation_command``), decides whether a model already completed
+    (``model_run_completed``), locates raw outputs, performance files and hotstart
+    checkpoints, prunes checkpoints for a deterministic resume, and drives the optional
+    mid-run kill the multi-resume harness uses.
+    """
+
     def __init__(self, scenario: "TRITONSWMM_scenario") -> None:
         self._scenario = scenario
         self._analysis = scenario._analysis
@@ -393,10 +416,6 @@ class TRITONSWMM_run:
 
     def _coupled_swmm_report_finalized(self, model_type: str) -> bool:
         """Return False when this scenario's per-model terminal artifact is missing or unfinalized.
-
-        The artifact per model: swmm, ``out_swmm/full.rpt`` (finalized AND error-free);
-        tritonswmm, ``out_tritonswmm/swmm/hydraulics.rpt`` (finalized and error-free); triton, the run-log
-        completion marker AND ``out_triton/performance.txt``.
 
         Coupled completion is detected from the TRITON ``"Simulation ends"`` marker,
         which does NOT prove the coupled SWMM report was written. A
@@ -673,6 +692,11 @@ class TRITONSWMM_run:
 
     @property
     def performance_timeseries_dir(self):
+        """The ``performance/`` subdirectory of the coupled model's raw output directory.
+
+        TRITON writes its per-checkpoint performance files there. Coupled TRITON-SWMM only:
+        the base is ``_triton_swmm_raw_output_directory``, and this takes no model_type.
+        """
         return self._triton_swmm_raw_output_directory / "performance"
 
     def performance_file(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> Path:
@@ -937,7 +961,7 @@ class TRITONSWMM_run:
         """Delete every ``config_NNNN.cfg`` whose reporting step EXCEEDS ``target_step``,
         so the resume picker is FORCED to select exactly ``target_step``.
 
-        Deterministic same-timestep interruption. The multi-resume harness kills
+        Purpose: a deterministic same-timestep interruption. The multi-resume harness kills
         on a POLL (``wait_with_deterministic_checkpoint_kill``, 2 s), so a fast config
         (rank-8 OpenMP/Hybrid, GPU: sub-2 s reporting periods) writes several more
         checkpoints between the threshold being met and the SIGTERM landing. The picker
@@ -1138,11 +1162,12 @@ class TRITONSWMM_run:
         self.stepback_record = None
 
         multi_sim_run_method = self._analysis.cfg_analysis.multi_sim_run_method
-        # Execution locus is a TWO-AXIS property, exactly as SnakemakeWorkflowBuilder's
-        # `_runs_under_slurm` predicate (in `_make_rule_emission_context`) resolves it:
+        # Execution locus is a TWO-AXIS property, exactly as workflow.py resolves it in
+        # SnakemakeWorkflowBuilder._make_rule_emission_context's `_runs_under_slurm` predicate
+        # (`multi_sim_run_method != "local" or self._resolved_execution_locus == "slurm"`):
         # the dispatch-family label OR the driver-resolved locus. A config-only
         # predicate here CANNOT express it, because `multi_sim_run_method="local"` +
-        # `execution_mode="slurm"` routes every sim to a
+        # `execution_mode="slurm"` (the doi_emitter path) routes every sim to a
         # per-rule sbatch while keeping the `local` label. Keying on the label alone
         # dropped the srun entirely for that path -- a 2-GPU sim ran as ONE rank with
         # HIP_VISIBLE_DEVICES set to the full list (the 0%-util failure the GPU block
@@ -1186,16 +1211,16 @@ class TRITONSWMM_run:
         n_nodes_per_sim = self._analysis.cfg_analysis.n_nodes
 
         # Container mode: the SIF carries the pre-compiled binary (setup_workflow.py
-        # skips the on-cluster compile in container mode). Rewrite `exe` to
+        # skips the on-cluster compile). Rewrite `exe` to
         # `apptainer exec [gpu_flag] {sif} {in-SIF exe}`. The gpu_flag is applied
         # ONLY on GPU sim rungs (derived here from run_mode) — NEVER on CPU/processing
-        # rungs (this is why a per-class exec_args map is unnecessary). Placed
-        # AFTER the compute-config resolution so `run_mode`/`n_gpus` are
-        # defined; inserting at the `exe` assignment site would NameError run_mode.
+        # rungs, which is why no per-rung exec_args map is needed. Placed AFTER the
+        # compute-config resolution so `run_mode`/`n_gpus` are defined; inserting at
+        # the `exe` assignment site would NameError run_mode.
         cspec = resolve_container_spec(self._analysis.cfg_hpc_system)
         if self._analysis.cfg_analysis.execution_environment == "container" and cspec is not None:
             exe_in_sif = cspec.exe_in_sif.get(model_type) or f"/opt/hhemt/bin/{_DEFAULT_EXE_NAME[model_type]}"
-            # Per-arch SIF resolution (multi-SIF cross-hardware): resolve THIS
+            # Per-arch SIF resolution (one image per GPU architecture): resolve THIS
             # row's arch (gpu_hardware) from its (member) partition and pick the
             # matching image by resolving its identity under container.sif_root — there
             # is no pointer map and no fallback. Key is gpu_hardware ("a100"/"a6000") —
@@ -1213,7 +1238,7 @@ class TRITONSWMM_run:
             )
             _gpu = f"{cspec.gpu_flag} " if (run_mode == "gpu" and cspec.gpu_flag) else ""
             _extra = (" ".join(cspec.extra_exec_args) + " ") if cspec.extra_exec_args else ""
-            # ROOT CAUSE of zero output in container mode: TRITON derives its output
+            # Why container runs once produced zero output: TRITON derives its output
             # base dir from argv[0] two directory levels up (config_utils get_root_dir).
             # In-SIF the exe is /opt/hhemt/bin/{exe} -> two-up = /opt/hhemt INSIDE the
             # read-only SIF, so the relative output_folder write silently fails (native
@@ -1438,7 +1463,7 @@ class TRITONSWMM_run:
         # ----------------------------
         # Build command
         # ----------------------------
-        # additional_modules is injected onto the system object (no longer a system_config field).
+        # additional_modules is injected onto the system object; system_config no longer carries it.
         modules = self._scenario._system.additional_modules
         module_load_cmd = ""
 
@@ -1518,7 +1543,7 @@ class TRITONSWMM_run:
                 '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
             )
             if module_load_cmd:
-                # mode-guard: the in-container loader ignores host LD_LIBRARY_PATH
+                # Container mode emits nothing: the in-container loader ignores host LD_LIBRARY_PATH
                 post_module_ld = (
                     ""
                     if _container_mode
@@ -1651,8 +1676,8 @@ class TRITONSWMM_run:
 
         # Container mode (UVA host-OpenMPI): the OUTER srun carries --mpi={srun_mpi}
         # (e.g. pmix) so the in-container OpenMPI wires up via SLURM PMIx. Frontier
-        # (srun_mpi=None) emits nothing (the Cray-PALS path, where --mpi=pmix must never
-        # be passed). Precomputed as a token (NOT an inline conditional in the implicit-
+        # (srun_mpi=None) emits nothing (Cray-PALS path; no --mpi=pmix is ever emitted
+        # for it). Precomputed as a token (NOT an inline conditional in the implicit-
         # concat srun tuple, which would be a syntax error); "" in native mode so the
         # srun string stays byte-identical.
         _mpi_flag = f"--mpi={cspec.srun_mpi} " if (cspec is not None and cspec.srun_mpi) else ""
@@ -1676,7 +1701,7 @@ class TRITONSWMM_run:
                     # launch failure where only remote-node tasks fail), srun sends SIGKILL to
                     # all surviving tasks immediately rather than waiting for them to exit
                     # naturally. Prevents indefinite hangs when tasks are blocked at MPI_Init
-                    # PMI_Barrier waiting for failed peers (observed as a 118-min hang).
+                    # PMI_Barrier waiting for failed peers (observed as a 118-minute hang).
                     f"{_mpi_flag}"
                     f"{exe} {cfg}"
                 )
@@ -1747,8 +1772,8 @@ class TRITONSWMM_run:
                 #   hhemt.gpu_bind_guard wrapper. This is the branch every UVA
                 #   multi-GPU benchmarking member takes.
                 #
-                # The alloc flavor is hpc_system_config.gpu_allocation_flavor (system-level),
-                # reachable via the analysis; it is no longer a system_config field.
+                # The allocation flavor is hpc_system_config.gpu_allocation_flavor
+                # (system-level), reached through the analysis; "gpus" when unset.
                 _cfg_hpc = self._analysis.cfg_hpc_system
                 gpu_alloc_mode = (
                     _cfg_hpc.gpu_allocation_flavor
@@ -1774,7 +1799,8 @@ class TRITONSWMM_run:
                 elif n_gpus >= 2 and multi_sim_run_method != "1_job_many_srun_tasks":
                     # UVA gres mode, MULTI-GPU (n_gpus>=2, single- OR multi-node) under
                     # the Snakemake slurm executor (per-rule jobstep). The per-rule sbatch
-                    # is routed through the mpi+tasks resource path (gres_multi_gpu = gpus_total>=2 -> mpi=True,
+                    # is routed by workflow.py's gres multi-GPU resource path
+                    # (gres_multi_gpu = gpus_total>=2 -> mpi=True,
                     # tasks=N, tasks_per_gpu=0), so it carries an explicit --ntasks=N and
                     # SUPPRESSES --ntasks-per-gpu. Keyed on n_gpus (NOT node count) because
                     # that routing is node-count-agnostic: a single-node strict-subset
@@ -1786,7 +1812,7 @@ class TRITONSWMM_run:
                     # conflict (unlike the single-node else below) — mirror the Frontier
                     # gpus form: explicit --ntasks + explicit per-rank GPU binding.
                     # Surfaced on UVA gpu-a100/a6000 g2 by a cross-hardware run
-                    # (2026-07-18); the multi-node case (2026-07-01) is the
+                    # (2026-07-18); the multi-node case (2026-07-01, job 16708076) is the
                     # same root cause. Single-node 1-GPU gres, 1_job_many_srun_tasks, and
                     # the local in-allocation path keep the --ntasks-per-gpu=1 form below
                     # (the 2026-05-23 collision constraint is still binding there — their
@@ -1874,7 +1900,7 @@ class TRITONSWMM_run:
         # paths keep the prior conda-first behavior. Empirically confirmed by a live
         # 2-GPU salloc test on UVA Rivanna (2026-05-24): ldd flipped libmpi->module,
         # libstdc++->conda; the 2-rank srun ran 9.5+ min vs the prior 49s crash.
-        # --- container-mode host-side injector env (OUTSIDE the wrap) ---
+        # --- container-mode host-side injector env (set OUTSIDE the apptainer wrap) ---
         # Apptainer does NOT import the host LD_LIBRARY_PATH; the host Cray-MPICH ABI
         # bind is realized by exporting APPTAINERENV_LD_LIBRARY_PATH (Apptainer PREPENDS
         # it inside the container ahead of the SIF-baked /opt/mpich/lib). Emitted as a
@@ -1915,7 +1941,7 @@ class TRITONSWMM_run:
             '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
         )
         if module_load_cmd:
-            # mode-guard: the in-container loader ignores host LD_LIBRARY_PATH
+            # Container mode emits nothing: the in-container loader ignores host LD_LIBRARY_PATH
             post_module_ld = (
                 ""
                 if _container_mode
@@ -2110,5 +2136,10 @@ class TRITONSWMM_run:
 
 
 def return_the_reporting_step_from_a_cfg(f_cfg: Path):
+    """Reporting step encoded in a hotstart checkpoint filename: ``config_N.cfg`` -> N.
+
+    Reads the integer after the last underscore and before the first dot, and raises
+    ValueError when that segment is not an integer.
+    """
     step = int(f_cfg.name.split("_")[-1].split(".")[0])
     return step

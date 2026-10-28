@@ -1,4 +1,15 @@
-"""Regression tests for scripts/check_docs_content.py's rendered-docstring population.
+"""Regression tests for scripts/check_docs_content.py, the docs-content gate.
+
+The gate's findings are the union `main()` builds from five sources: the docs
+markdown (minus the shipped-metadata files), the shipped metadata files themselves
+(`SHIPPED_METADATA`), the docstrings the API reference page renders (minus the line
+citations the citation ledger tolerates), the ledger's orphaned entries, and the
+docs-to-source filename check. These tests pin how the rendered-docstring and
+markdown populations are derived (from the renderer's own configuration, keyed the
+way the page keys it), which findings reach the exit code and which stay advisory,
+what each marker page may exempt itself from, the exit code each failure path
+reaches, the docs-to-source filename agreement rule (class 6), and the path-sense
+``master`` ban.
 
 The central assertion is a FIXTURE, not a count and not a recorded run. A count
 passes when the population shrinks and something else grows; a recorded run
@@ -29,7 +40,7 @@ def _load():
 
 cdc = _load()
 
-#: Symbols whose docstrings carry a bare `path:line` citation at the pinned HEAD.
+#: Symbols whose docstrings carry a bare `path:line` citation.
 #: `assert_coupling_nodes_distinct` is the one a `__all__`-keyed (STRICT) derivation
 #: LOSES -- its module declares no `__all__`. If this list stops being reached, the
 #: population has silently narrowed and the gate is under-reporting, not clean.
@@ -92,19 +103,19 @@ def test_population_reaches_the_symbols_only_the_renderer_s_own_model_finds():
 
 
 def test_population_is_keyed_the_way_the_page_is():
-    """Defect 3: the right bytes under the wrong name are still the wrong name.
+    """The right bytes under the wrong name are still the wrong name.
 
     Asserted two ways, because the pinned trio is illustrative and the invariant
     is general: no name the page can emit contains a private path segment, since
     `filters: ["!^_"]` keeps private members off the page entirely. A derivation
-    that keys by origin module reintroduces `_combine`, `_emit`, `_context` and
-    sixteen more.
+    that keys by origin module reintroduces `_combine`, `_emit`, `_context` and,
+    when this was measured, sixteen more.
     """
     reached = {q for q, _home, _line, _doc in _population()}
     intruders = NOT_THE_PAGE_S_NAMES & reached
     assert not intruders, (
         f"{sorted(intruders)} are not names the page emits. The population is keyed by "
-        f"origin module rather than by the module `api.md` declares the symbol through."
+        f"origin module rather than by the module the API pages declare the symbol through."
     )
     private = sorted(q for q in reached if any(seg.startswith("_") for seg in q.split(".")))
     assert not private, (
@@ -120,9 +131,10 @@ def test_each_docstring_is_reached_under_exactly_one_name():
     fires when the population gains names nobody thought to list. That is the
     failure mode of applying `filters` without also requiring an alias to be
     exported: a re-exported symbol is then reached under every module that
-    imports it, and `ConfigurationError` alone arrives four times. Measured, that
-    rule yields 438 names over 271 docstring sites; the correct rule is a
-    bijection, 183 over 183.
+    imports it, and `ConfigurationError` alone arrives four times. Measured when
+    this test was written, that rule yielded 438 names over 271 docstring sites;
+    the correct rule is a bijection, one name per site (183 over 183 at that
+    measurement).
     """
     per_site: dict[tuple[str, int], list[str]] = {}
     for qualname, home, line, _doc in _population():
@@ -181,7 +193,7 @@ def test_an_option_written_at_its_own_default_is_a_no_op(tmp_path):
 
 
 def test_filters_are_read_from_mkdocs_yml_rather_than_written_here():
-    """The population is a property of `mkdocs.yml` plus `api.md`, read not copied."""
+    """The population is a property of `mkdocs.yml` plus the API pages, read not copied."""
     assert cdc._handler_options()["filters"] == ["!^_"], (
         "mkdocs.yml's python-handler `filters` is no longer what this gate reads; "
         "the population and the page have diverged at the configuration surface"
@@ -207,7 +219,7 @@ def test_reading_option_defaults_does_not_broadcast_upstream_deprecations():
 
     Measured: `griffe` imports at 0 warnings, `mkdocstrings_handlers.python` at
     350, and an unsilenced module-scope import made this gate exit 1 under
-    `-W error::DeprecationWarning`. The cache is reset first because a earlier
+    `-W error::DeprecationWarning`. The cache is reset first because an earlier
     test may already have paid the import, which would make this pass vacuously.
     """
     import warnings as _warnings
@@ -264,6 +276,11 @@ def test_every_manifested_module_contributes_at_least_one_member():
     assert pop, "population is empty"
 
     def strict_names(tree):
+        """True when a top-level plain assignment binds the name ``__all__`` (``__all__ = ...``).
+
+        Annotated (``__all__: list[str] = ...``), augmented (``__all__ += ...``) and
+        tuple-target assignments are not detected.
+        """
         for node in tree.body:
             if isinstance(node, _ast.Assign) and any(getattr(t, "id", None) == "__all__" for t in node.targets):
                 return True
@@ -297,7 +314,8 @@ def test_empty_population_raises_rather_than_passing_vacuously(tmp_path):
 
 
 def test_citations_in_docstrings_are_gated_not_advisory():
-    """Layer 1's boundary, asserted on ROUTING rather than on a live defect.
+    """The binary classes reach the gated population, asserted on ROUTING rather
+    than on a live defect.
 
     A synthetic docstring is used deliberately: asserting that the real
     population currently yields a citation is green only until the source is
@@ -320,7 +338,8 @@ def test_citations_in_docstrings_are_gated_not_advisory():
 
 
 def test_prose_classes_do_not_reach_the_gated_population():
-    """Layer 2's boundary: `### D22b` prose classes stay out of the exit code."""
+    """The prose classes (`em-dash`, `banned-word-estate`) stay out of the exit code:
+    `src/` prose is advisory only, never gated."""
     codes = {c for c, _p, _l, _e in cdc.scan_rendered_docstrings()}
     assert "em-dash" not in codes and "banned-word-estate" not in codes
 
@@ -383,10 +402,10 @@ def test_missing_git_raises_rather_than_yielding_an_empty_corpus(tmp_path):
 
 
 def test_main_returns_2_without_git_rather_than_a_traceback(tmp_path, capsys):
-    """The failure path the project's only caller can never reach.
+    """The failure path the gate's CI caller can never reach.
 
-    `docs-build.yml` runs `main()` on every CI run, but always inside a git
-    checkout, where `_repo_root` succeeds and the raise never fires. The path is
+    `docs-build.yml` runs the gate through `scripts/docs_gates.sh`, but always
+    inside a git checkout, where `_repo_root` succeeds and the raise never fires. The path is
     UNEXERCISED rather than undriven, which is why a handler too narrow to catch
     it stayed invisible.
 
@@ -449,18 +468,41 @@ def test_a_module_contributing_zero_members_reaches_exit_2_rather_than_escaping(
     with the FINDINGS exit code.
 
     Driven by neutering the filter predicate, which makes every module contribute
-    zero non-module members; the two manifested modules that carry no module
-    docstring then contribute nothing at all and the real guard fires at its real
-    site.
+    zero non-module members, and by manifesting one module the test writes itself,
+    `zero_member_probe`, which carries no module docstring; that module then
+    contributes nothing at all and the real guard fires at its real site.
     """
+    import tempfile
+
     monkeypatch.setattr(cdc, "_passes_filters", lambda _name, _filters: False)
 
-    rc = cdc.main(["--docs-dir", str(_REPO / "docs")])
+    # The manifest names one module of the test's own, which carries no module
+    # docstring, so the guard's trigger is this module rather than whichever toolkit
+    # module happens to lack a docstring. Its one function is dropped by the neutered
+    # filter, so the module contributes nothing.
+    with tempfile.TemporaryDirectory() as scratch:
+        src = Path(scratch) / "src"
+        src.mkdir()
+        (src / "zero_member_probe.py").write_text(
+            'def documented():\n    """A member the neutered filter drops."""\n', encoding="utf-8"
+        )
+        api_page = Path(scratch) / "api.md"
+        api_page.write_text("# API Reference\n\n::: zero_member_probe\n", encoding="utf-8")
+        monkeypatch.setattr(cdc, "SRC_ROOT", src)
+        monkeypatch.setattr(cdc, "API_PAGE", api_page)
+        # `published_source_lines` binds both paths as default arguments at import,
+        # so the module globals above do not reach it; it is the call that derives
+        # the population first, and the guard under test sits inside it.
+        real_published = cdc.published_source_lines
+        monkeypatch.setattr(cdc, "published_source_lines", lambda **kw: real_published(src, api_page, **kw))
+
+        rc = cdc.main(["--docs-dir", str(_REPO / "docs")])
 
     assert rc == 2, "the STRICT signature is a derivation failure and owes the documented exit 2"
     err = capsys.readouterr().err
     assert "contributed zero documented members" in err, f"exit 2 came from a different path: {err[:400]!r}"
     assert "docs dir not found" not in err, "this is the docs-dir path, not the derivation path"
+    assert "zero_member_probe" in err, f"the guard fired on a module other than the test's own: {err[:400]!r}"
 
 
 def test_an_unanticipated_failure_returns_3_with_its_traceback(capsys, monkeypatch):
@@ -472,7 +514,8 @@ def test_an_unanticipated_failure_returns_3_with_its_traceback(capsys, monkeypat
     at all rather than letting the exception escape, and whether the traceback
     survives. Pre-fix the exception escapes `main()` and this test errors; a
     re-raise implementation would return the process to exit 1, which is the
-    FINDINGS code and the collision the round repairs.
+    FINDINGS code: an unanticipated failure would then read as findings, the
+    collision exit 3 exists to prevent.
 
     Unexercised by construction: no real input produces a `KeyError` here, which
     is exactly why a backstop is what covers it.
@@ -543,7 +586,7 @@ def test_a_relative_docs_dir_yields_the_same_population(monkeypatch):
     of every docs page in the union -- they do not compare equal, so the set does
     not merge them. Measured at 88 members instead of 51, every docs page counted
     twice, and the first `relative_to(repo_root)` raising an uncaught ValueError
-    on an invocation the pre-A19 gate served at exit 0.
+    on an invocation the gate served at exit 0 before its population became a union.
 
     Every OTHER test in this file passes an absolute docs dir, and every one of
     them is green under that defect. That is why this arm exists rather than a
@@ -580,7 +623,7 @@ def test_marker_pages_declare_exactly_the_pinned_exemptions():
 
 
 def test_no_marker_page_exempts_the_binary_classes():
-    """The omission the repair CONSISTS of, asserted rather than trusted.
+    """No marker page exempts itself from the binary classes, asserted rather than trusted.
 
     `binary` stays spellable so the class split lives in the pages rather than in
     the module -- which means nothing but this test stops a page declaring it.
@@ -701,6 +744,7 @@ def _docs_dir():
 
 
 def test_a_registered_module_that_is_absent_is_a_finding_not_a_skip():
+    """A row naming a module that does not exist yields `docs-source-module-absent`."""
     rows = ((_PAGE, "x.zarr", "hhemt.version_migration.versions.V9999__nope", "_X", 1),)
     out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
     assert [f[0] for f in out] == ["docs-source-module-absent"], out
@@ -708,6 +752,7 @@ def test_a_registered_module_that_is_absent_is_a_finding_not_a_skip():
 
 
 def test_a_registered_attribute_that_is_absent_is_a_finding_not_a_skip():
+    """A row naming a constant its module lacks yields `docs-source-attribute-absent`."""
     rows = ((_PAGE, "x.zarr", _V0022, "_NO_SUCH_NAME", 1),)
     out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
     assert [f[0] for f in out] == ["docs-source-attribute-absent"], out
@@ -728,6 +773,7 @@ def test_a_non_literal_constant_is_its_own_finding_rather_than_a_crash():
 
 
 def test_a_literal_disagreeing_with_its_constant_is_reported_with_the_bound_value():
+    """A page literal that differs from its constant names the constant's actual value."""
     rows = ((_PAGE, "WRONG.zarr", _V0022, "_SUPERSEDED", 1),)
     out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
     assert [f[0] for f in out] == ["docs-source-literal-disagrees"], out
@@ -735,6 +781,7 @@ def test_a_literal_disagreeing_with_its_constant_is_reported_with_the_bound_valu
 
 
 def test_a_registered_page_that_is_absent_is_a_finding_not_a_skip():
+    """A row naming a docs page that does not exist yields `docs-source-page-absent`."""
     rows = (("reference/no-such-page.md", "sensitivity_datatree.zarr", _V0022, "_RETIRED_SENSITIVITY", 1),)
     out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
     assert [f[0] for f in out] == ["docs-source-page-absent"], out
@@ -791,7 +838,11 @@ def test_the_shipped_registry_is_satisfied_by_the_tree_it_ships_with():
 
 
 def test_the_path_sense_master_ban_reaches_fenced_content_and_spares_the_role_sense():
-    """Both of Spec 1's forms, pinned inside fences, plus the role-sense population.
+    """Both forms of the path-sense `master` ban, pinned inside fences, plus the
+    role-sense population.
+
+    The two forms are `master` as a path delimiter (`.../master/`) and `master` as
+    an artifact noun (`master sidecar`, `master zarr` and the like).
 
     The entry's reach is the CLASS's property rather than the pattern's: every
     path-sense site this corpus has carried has been inside a fenced block, so

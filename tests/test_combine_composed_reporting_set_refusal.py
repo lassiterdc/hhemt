@@ -66,12 +66,12 @@ def test_composed_child_raises_naming_both_sets(tmp_path):
     from hhemt.bundle.combined_snakefile_generator import _distinct_child_categories
     from hhemt.exceptions import ConfigurationError
 
-    _child_crate(tmp_path, "exp_b", ["benchmarking", "dem-resolution"])
+    _child_crate(tmp_path, "exp_b", ["benchmarking", "dem_resolution"])
     with pytest.raises(ConfigurationError) as exc:
         _distinct_child_categories(tmp_path)
     msg = str(exc.value)
     assert "exp_b" in msg
-    assert "benchmarking" in msg and "dem-resolution" in msg
+    assert "benchmarking" in msg and "dem_resolution" in msg
 
 
 def test_composed_child_raises_in_the_figure_harvest_too(tmp_path):
@@ -80,7 +80,7 @@ def test_composed_child_raises_in_the_figure_harvest_too(tmp_path):
     from hhemt.bundle.combined_snakefile_generator import _harvest_per_experiment_rule_specs
     from hhemt.exceptions import ConfigurationError
 
-    _child_crate(tmp_path, "exp_c", ["benchmarking", "dem-resolution"])
+    _child_crate(tmp_path, "exp_c", ["benchmarking", "dem_resolution"])
     with pytest.raises(ConfigurationError) as exc:
         _harvest_per_experiment_rule_specs(tmp_path)
     assert "exp_c" in str(exc.value)

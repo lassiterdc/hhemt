@@ -5,14 +5,14 @@ from pathlib import Path
 import pytest
 
 import tests.utils_for_testing as tst_ut
+from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV
 
 pytestmark = [
     pytest.mark.requires_snakemake_subprocess,
     pytest.mark.skipif(
         tst_ut.compile_toolchain_unavailable() and not tst_ut.require_compile_tier(),
         reason=(
-            "TRITON-SWMM/SWMM compile toolchain (cmake + mpic++) absent; this "
-            "module compiles at run time via analysis.run(). Runs under the "
+            "TRITON-SWMM/SWMM compile toolchain (cmake + mpic++) absent. Runs under the "
             "hhemt conda env; HHEMT_REQUIRE_COMPILE_TIER=1 turns absence into a "
             "hard failure."
         ),
@@ -147,7 +147,7 @@ def test_reprocess_render_report_rule_carries_reprocess_flag(synth_sensitivity_a
     )
 
 
-def test_phase3_master_snakefile_emits_per_target_setup_rules(
+def test_master_snakefile_emits_per_target_setup_rules(
     synth_sensitivity_analysis,
 ):
     """Phase 3: master Snakefile emits one `rule setup_target_{N}` per unique system target.
@@ -280,6 +280,7 @@ def test_snakemake_sensitivity_workflow_dry_run(
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
     """
     Test Snakemake sensitivity analysis workflow execution.
@@ -324,6 +325,7 @@ def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis):
     """Regression (reprocess-rebuild-divergence-fix).
 
@@ -474,6 +476,7 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_experiment_consolidation_tolerates_incomplete_analysis(synth_sensitivity_analysis):
     """Regression (sensitivity-consolidation-tolerate-incomplete).
 
@@ -638,6 +641,7 @@ def test_synth_sensitivity_report_inlined_passes_run_entry_validation():
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_run_and_render_report(synth_sensitivity_analysis_cached):
     """Sensitivity run -> master render. Asserts master report exists; no per-member report (R13)."""
     from pathlib import Path
@@ -689,6 +693,7 @@ def test_run_and_render_report(synth_sensitivity_analysis_cached):
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_render_report_idempotent(synth_sensitivity_analysis_cached):
     """Sensitivity render_report() is idempotent (R11)."""
     import time
@@ -708,6 +713,7 @@ def test_render_report_idempotent(synth_sensitivity_analysis_cached):
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_synth_render_report_interactive_zip(synth_sensitivity_analysis_cached, tmp_path):
     # ZIP-fallback path: render_report(format="zip") writes
     # `analysis_report.zip` containing `report.html` + per-figure
@@ -734,6 +740,7 @@ def test_synth_render_report_interactive_zip(synth_sensitivity_analysis_cached, 
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_plot_sources_attribution(synth_sensitivity_analysis_cached):
     """R15: 'Sources:' bullet block appears in master HTML report."""
     from pathlib import Path
@@ -751,6 +758,7 @@ def test_plot_sources_attribution(synth_sensitivity_analysis_cached):
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_no_html_content_in_svg_file_references(synth_sensitivity_analysis_cached, tmp_path):
     # Rendered report.html must not reference any .svg file whose content is
     # not valid SVG XML. See test_synth_04 mirror for the failure-mode rationale.
@@ -889,7 +897,7 @@ def test_bare_name_analysis_config_column_emits_deprecation_warning(monkeypatch,
     # downstream *_cached consumers (e.g. test_synth_07's failing_synth_sensitivity_analysis
     # -> _first_scenario_in_member StopIteration). Redirect the analysis tree to tmp_path so the
     # construction (which is all this test exercises) cannot touch the shared cache.
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     with pytest.warns(DeprecationWarning, match=r"Bare-name analysis-config column"):
         _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(start_from_scratch=True)
 
@@ -940,6 +948,7 @@ def test_build_unique_system_targets_skips_purge_in_runner_subprocess(
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analysis):
     """Behavioral regression (reprocess-render-report-snakefile-selection, R4).
 
@@ -1045,6 +1054,7 @@ def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analy
     "HHEMT_ENABLE_PROVENANCE_AUDIT=1 to enable the audit AND run this test.",
 )
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_renderer_provenance_audit_passes_for_all_sensitivity_renderers(synth_sensitivity_analysis_cached):
     """Sensitivity-tier audit-passes guard — exercises sensitivity_benchmarking
     (Plotly branch), the rebased per-member per-sim renderers, and errors_and_warnings /
@@ -1103,8 +1113,8 @@ from hhemt.report_renderers._reporting_sets import (  # noqa: E402
 @pytest.mark.parametrize(
     "active_set, expected_template_count",
     [
-        pytest.param(get_reporting_set("dem-resolution"), 4, id="registry"),
-        pytest.param(compose_reporting_sets(("dem-resolution", "compute-sensitivity")), 5, id="composed"),
+        pytest.param(get_reporting_set("dem_resolution"), 4, id="registry"),
+        pytest.param(compose_reporting_sets(("dem_resolution", "compute_sensitivity")), 5, id="composed"),
     ],
 )
 def test_dem_resolution_set_emits_one_eda_rule_per_registry_template(
@@ -1186,13 +1196,13 @@ def test_compute_sensitivity_set_still_emits_its_single_eda_rule(
     from hhemt.report_renderers._reporting_sets import get_reporting_set
 
     analysis = synth_sensitivity_analysis
-    analysis._active_reporting_set = get_reporting_set("compute-sensitivity")
+    analysis._active_reporting_set = get_reporting_set("compute_sensitivity")
 
     content = analysis.sensitivity._workflow_builder.generate_master_snakefile_content(
         which="both", compression_level=5
     )
 
-    templates = _eda_templates_for("compute-sensitivity")
+    templates = _eda_templates_for("compute_sensitivity")
     assert len(templates) == 1, "compute-sensitivity must carry exactly one EDA template (15c, folded)"
     (tmpl,) = templates
     assert f"rule {tmpl.rule_name}:" in content

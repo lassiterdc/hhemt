@@ -47,64 +47,45 @@ def resolve_hpc_system_config(
 
     Non-mutating: reads the deployment config, never edits a tracked file.
 
-    Precedence (highest first):
-      1. explicit ``override`` (``hhemt run-experiment --hpc-system-config``, or the
-         second positional argument of ``container_validation.py``).
-      2. the bundle's declared ``hpc_system_config[cluster]`` — deployment-config-relative,
-         resolved against ``$HHEMT_DEPLOYMENT_CONFIG`` (or, absent that, the bundle's
-         grandparent, i.e. ``{deployment_config}/experiments/{slug} ->
-         {deployment_config}``). Consulted ONLY
-         when a ``bundle`` is supplied and declares this cluster.
-      3. ``$HHEMT_HPC_SYSTEM_CONFIG``.
-      4. ``$HHEMT_DEPLOYMENT_CONFIG/hpc/hpc_system_config_{cluster}.yaml``.
+    Two sources, highest first, and nothing else:
+      1. explicit ``override`` (the ``--hpc-system-config`` CLI argument).
+      2. the bundle's declared ``hpc_system_config[cluster]``: absolute, or relative to the
+         bundle directory itself (the folder holding ``experiment.yaml``), so the entry
+         means the file beside the descriptor wherever the bundle sits, and nothing above
+         it is searched. With no ``bundle_dir``, a relative entry resolves against the
+         working directory.
 
-    With ``bundle=None`` the resolution is steps 1, 3 and 4 alone.
-    ``scripts/experiments/container_validation.py``'s ``build_case`` calls this function
-    that way, with no bundle, so a change to any of those three steps changes that
-    script's resolution too.
+    With neither, this raises ``ConfigurationError`` naming both. Environment variables are
+    deliberately NOT consulted: an HPC config chosen by the shell rather than by the command
+    line or the experiment descriptor is not recorded anywhere the run's record can see.
     """
     if override:
         path = Path(override).expanduser()
     elif bundle is not None and cluster in bundle.hpc_system_config:
-        rel = bundle.hpc_system_config[cluster]
-        declared = Path(rel).expanduser()
+        declared = Path(bundle.hpc_system_config[cluster]).expanduser()
         if declared.is_absolute():
             path = declared
         else:
-            deployment_config = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
-            if deployment_config:
-                deployment_config_root = Path(deployment_config).expanduser()
-            elif bundle_dir is not None:
-                # {deployment_config}/experiments/{slug} -> {deployment_config}
-                deployment_config_root = Path(bundle_dir).expanduser().resolve().parent.parent
-            else:
-                deployment_config_root = Path.cwd()
-            path = deployment_config_root / rel
-    elif os.environ.get("HHEMT_HPC_SYSTEM_CONFIG"):
-        path = Path(os.environ["HHEMT_HPC_SYSTEM_CONFIG"]).expanduser()
+            # Relative to the bundle directory itself (never a parent of it); the working
+            # directory only when the caller gives no bundle_dir.
+            root = Path(bundle_dir).expanduser().resolve() if bundle_dir is not None else Path.cwd()
+            path = root / declared
     else:
-        deployment_config = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
-        if not deployment_config:
-            raise ConfigurationError(
-                field="hpc_system_config",
-                message=(
-                    f"No hpc_system_config source for cluster {cluster!r}: the bundle declares "
-                    f"none and no fallback is set. Declare hpc_system_config[{cluster!r}] in "
-                    "experiment.yaml, set $HHEMT_DEPLOYMENT_CONFIG to your compute-visible "
-                    "deployment-config checkout, set $HHEMT_HPC_SYSTEM_CONFIG, or pass "
-                    "--hpc-system-config."
-                ),
-                config_path=None,
-            )
-        path = Path(deployment_config).expanduser() / "hpc" / f"hpc_system_config_{cluster}.yaml"
+        raise ConfigurationError(
+            field="hpc_system_config",
+            message=(
+                f"No hpc_system_config source for cluster {cluster!r}: pass --hpc-system-config, "
+                f"or declare hpc_system_config[{cluster!r}] in experiment.yaml."
+            ),
+            config_path=None,
+        )
     if not path.is_file():
         raise ConfigurationError(
             field="hpc_system_config",
             message=(
-                f"No hpc_system_config for cluster {cluster!r} at {path}. On the cluster, set "
-                "$HHEMT_DEPLOYMENT_CONFIG to your compute-visible deployment-config checkout and "
-                "`git pull` it, then reconstruct the per-cluster config (fill default_account). "
-                "Or set $HHEMT_HPC_SYSTEM_CONFIG, or pass --hpc-system-config."
+                f"No hpc_system_config for cluster {cluster!r} at {path}. Reconstruct the per-cluster "
+                "config there (fill default_account), or point --hpc-system-config or "
+                f"hpc_system_config[{cluster!r}] in experiment.yaml at an existing one."
             ),
             config_path=path,
         )
@@ -147,10 +128,11 @@ def expand_config_vars(cfg_path: str | Path, *, dest_dir: str | Path | None = No
     """Expand ``${VAR}`` env references in a config file, materialize a resolved copy, return its path.
 
     The toolkit config loader applies ``expanduser`` but NEVER ``expandvars`` — a
-    ``${DATA_DIR}``-style placeholder reaches the preflight path-existence check
-    (``validation.py::_validate_system_paths``) verbatim and fails
-    ``"Path does not exist for DEM_fullres: ${DATA_DIR}/dem.tif"``. So expand the
-    placeholders against ``os.environ`` here, before ``Toolkit.from_configs``.
+    ``${DATA_DIR}``-style placeholder reaches the config-load path-existence check
+    (``config/base.py::cfgBaseModel._check_paths_exist``, which ``Toolkit.from_configs``
+    reaches through ``load_system_config`` before any preflight runs) verbatim, and the
+    load raises ``ConfigurationError`` wrapping ``ValueError(f"File does not exist: {p}")``. So expand
+    the placeholders against ``os.environ`` here, before ``Toolkit.from_configs``.
 
     Materialization: the resolved copy is written to ``$SCRATCH_DIR/resolved_configs/``
     (a SHARED filesystem, so ``batch_job`` Snakemake rules dispatched to OTHER compute
@@ -327,9 +309,12 @@ def build_case_from_bundle(
 
     # Expand ${VAR} placeholders (${DATA_DIR}/${SCRATCH_DIR}/${PACKAGE_DIR}/${HHEMT_*})
     # in the two bundle-relative configs before from_configs — the loader does expanduser
-    # but not expandvars, so an unexpanded placeholder fails preflight path-existence.
-    # The hpc config path is already an absolute, env-resolved path (resolve_hpc_system_config),
-    # and its contents are operator-filled real values, so it is passed through unmodified.
+    # but not expandvars, so an unexpanded placeholder fails the config-load path-existence
+    # check (cfgBaseModel._check_paths_exist) with a ConfigurationError, before any preflight.
+    # The hpc config path is passed through unmodified: resolve_hpc_system_config took it from
+    # the --hpc-system-config override or from the descriptor's hpc_system_config[cluster]
+    # entry and returned it absolute, and its contents are operator-filled real values, so no
+    # ${VAR} expansion is applied to it.
     return Toolkit.from_configs(
         system_config=expand_config_vars(bundle_dir / bundle.system_config),
         analysis_config=expand_config_vars(bundle_dir / bundle.analysis_config),

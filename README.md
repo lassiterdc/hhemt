@@ -17,7 +17,7 @@ AMD GPUs).
 
 * PyPI: https://pypi.org/project/hhemt/
 * Documentation: https://hhemt.readthedocs.io
-* License: [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)
+* License: [GNU Affero General Public License v3.0 or later](https://www.gnu.org/licenses/agpl-3.0.html) (AGPL-3.0-or-later). Release 0.1.0, on PyPI and Zenodo, was published under the PolyForm Noncommercial License 1.0.0.
 
 <!-- hhemt:maturity-disclosure -->
 > **On this release.** hhemt is released in the mechanical sense. It is tagged,

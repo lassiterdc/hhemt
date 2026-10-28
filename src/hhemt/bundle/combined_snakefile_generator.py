@@ -1,26 +1,34 @@
-"""Combined-bundle regeneration-scoped Snakefile generator (PIP-1 Phase 5).
+"""Combined-bundle regeneration-scoped Snakefile generator.
 
-Emits the combined cross-experiment report as a FIRST-CLASS Snakemake ``--report``
-(matching single-bundle report chrome/nav/CSS), reusing the module-level
-``_emit_plot_rule`` / ``_emit_rule_all`` / ``RuleEmissionContext`` / ``RuleSpec``
-primitives — the same single-source ``report()``-emission the bundle and static
-generators use. Modeled on ``static_snakefile_generator.py`` (a dedicated sibling
-that reuses the shared primitives rather than branching the single-analysis
-generator, which is coupled to cfg_analysis/cfg_system/status-flags a combined
-bundle does not have).
+A combined bundle joins several completed experiment bundles into one
+cross-experiment report, and that report should look and navigate like a
+single-bundle report: the same chrome, sidebar and CSS, produced by Snakemake
+``--report``. The single-analysis generator cannot be reused for it, because it is
+coupled to cfg_analysis, cfg_system and status flags that a combined bundle does
+not carry. This module is a dedicated sibling generator, arranged like
+``static_snakefile_generator.py``: it reuses the module-level ``_emit_plot_rule`` /
+``_emit_rule_all`` / ``RuleEmissionContext`` / ``RuleSpec`` primitives, so the
+``report()`` emission is the same code the bundle and static generators run.
 
-Scope: exactly the ``combined`` ReportingSet's two cross-experiment renderers
-(``cross_experiment_compatibility`` -> "Cross-Experiment Compatibility",
-``cross_experiment_intercomparison`` -> "Cross-Experiment Results"), both fixed
-(no wildcards). The figures are PRE-RENDERED at emit/regen time by
-``_combine._render_combined_report``'s direct-invoke loop (they are NEW and do not
-pre-exist), so the plot-rule shells are INERT under the ``--touch`` + ``--report``
-render path — the same dead-shell contract the bundle-regen plot rules carry (their
-figures are pre-rendered/bundled too). This generator's sole job is to give
-``snakemake --report`` the ``report()`` annotations + ``report:`` workflow-description
-directive. Static backend is fixed to "plotly": the two combined renderers emit
-``.html`` unconditionally (HTML-string ``emit_plot_with_sources`` branch), and their
-``_OUTPUT_EXT_BY_RENDERER`` entries are ``.html`` for both backends.
+It emits two populations of rules: one per figure template of the ``combined``
+reporting set (the cross-experiment renderers, all fixed, with no wildcards), and
+one per composed per-experiment page, which stacks the primary child bundle's figure
+(the TRITON-SWMM arm when the experiment has one) above its pure-TRITON counterpart
+when one exists (``_harvest_per_experiment_rule_specs``).
+
+Every figure and page is already on disk by the time the report is rendered:
+``_combine._render_combined_report`` direct-renders the cross-experiment figures,
+and the harvest writes the composed pages while it builds their rules. The plot-rule
+shells therefore never run under the ``--touch`` + ``--report`` render path, the
+same as the bundle-regeneration plot rules: the Snakefile this module writes exists to
+give ``snakemake --report`` the ``report()`` annotations and the ``report:``
+workflow-description directive, not to produce figures. The render itself is driven by
+``render_combined_report_via_snakemake``, which stages the report artifacts, writes the
+Snakefile, runs ``snakemake --touch`` and then ``snakemake --report`` per format, and
+applies the post-render surgery. The static backend is fixed to "plotly" because a
+combined bundle has no cfg_analysis to read it from, and every combined renderer's
+output extension is ``.html`` under both backends, so the fixed value changes no
+output path.
 """
 
 from __future__ import annotations
@@ -39,9 +47,10 @@ from hhemt.workflow import (
     _output_ext_for,
 )
 
-# The combined renderers emit HTML tables unconditionally; a combined bundle has no
-# cfg_analysis, so static_backend is fixed. Both _OUTPUT_EXT_BY_RENDERER entries are
-# .html, so this resolves .html for both figures.
+# Every combined-set renderer emits HTML unconditionally, and _OUTPUT_EXT_BY_RENDERER
+# resolves .html for each of them under both backends. A combined bundle has no
+# cfg_analysis to read static_backend from, so it is fixed here, and the fixed value
+# changes no output path.
 _COMBINED_STATIC_BACKEND = "plotly"
 _COMBINED_NAVBAR_TEXT = "Combined cross-experiment report"
 
@@ -56,10 +65,23 @@ Overview
 --------
 
 This report combines multiple completed experiment bundles into one
-cross-experiment comparison. Browse the **Cross-Experiment Compatibility**
-sidebar category for the metadata-compatibility summary across the combined
-experiments, and the **Cross-Experiment Results** category for the
-clean-vs-resume intercomparison of key-result summaries.
+cross-experiment comparison. The sidebar holds four cross-experiment sections:
+
+- **Combine Provenance & Compatibility**: the metadata-compatibility summary
+  across the combined experiments.
+- **Cross-Experiment Results**: the clean-vs-resume intercomparison of
+  key-result summaries, as a table and as maps.
+- **Cross-Experiment Errors and Warnings**: each experiment's validation
+  checks, side by side.
+- **Cross-Experiment Disk Utilization**: each experiment's disk use, side by
+  side.
+
+Below them, the combined experiments' own figures are grouped by kind, under
+the section each figure has in a single-experiment report (for example
+System Information); a figure that no section claims is listed under Other.
+Inside those sections, each combined experiment's figures appear under entries
+whose names start with that experiment's name, with that experiment's model
+runs shown together on one page.
 
 Each combined experiment retains its own intact render bundle under
 ``child_crates/``; run the per-experiment report from there for
@@ -76,8 +98,9 @@ def _combined_preamble() -> str:
 
 def _load_source_paths(sidecar_path: Path) -> list[str]:
     """Read source_paths_relative from a plot manifest sidecar (mirrors
-    bundle.snakefile_generator._load_source_paths). The two figures + their manifests
-    are written by the direct-invoke render before this generator runs."""
+    bundle.snakefile_generator._load_source_paths). Each combined-set figure and its
+    manifest are written by the direct-invoke render (_combine._render_combined_report)
+    before this generator runs; an absent sidecar yields no source paths."""
     import json
 
     if not sidecar_path.exists():
@@ -87,7 +110,7 @@ def _load_source_paths(sidecar_path: Path) -> list[str]:
 
 
 def _harvest_combined_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...]:
-    """One RuleSpec per combined-set figure template (both fixed / no wildcards).
+    """One RuleSpec per combined-set figure template; every such template is fixed, with no wildcards.
 
     source_paths is harvested from the figure's manifest sidecar (the read-model the
     renderer declared), threaded into the caption's Sources block. No status-flag
@@ -124,15 +147,17 @@ def _child_experiment_ids(bundle_root: Path) -> list[str]:
     return sorted(p.name for p in crates.iterdir() if p.is_dir())
 
 
-#: Model tokens stripped to collapse two single-model bundles of one experiment into one
-#: base-experiment category (F1 Option C). tritonswmm is checked FIRST (it is the longer token).
+#: Model tokens stripped to collapse two single-model bundles of one experiment onto one base
+#: experiment, whose figures the harvest then pairs on one composed page. Matching is by suffix
+#: and neither token is a suffix of the other, so the order of this tuple does not change which
+#: token an eid matches.
 _MODEL_TOKENS: tuple[str, ...] = ("_tritonswmm", "_triton")
 
 
 def _base_experiment(eid: str) -> str:
     """The experiment id with its trailing model token stripped, so `synth_cc_clean_triton`
-    and `synth_cc_clean_tritonswmm` both collapse to `synth_cc_clean` (one report section
-    carrying BOTH model arms, F1)."""
+    and `synth_cc_clean_tritonswmm` both collapse to `synth_cc_clean`, the key under which the
+    harvest pairs the two model arms of one experiment on one composed page."""
     for _tok in _MODEL_TOKENS:
         if eid.endswith(_tok):
             return eid[: -len(_tok)]
@@ -141,25 +166,26 @@ def _base_experiment(eid: str) -> str:
 
 def _model_of(eid: str) -> str:
     """The model arm a child bundle carries ('triton' / 'tritonswmm'), from its eid suffix;
-    '' when the eid carries no model token. Emitted in each harvested figure's labels so a
-    reader (and the data-viz .model-pair layout) can distinguish the two arms."""
+    '' when the eid carries no model token. The harvest uses it twice: to key each base
+    experiment's children by arm, and to pass the primary child's arm to
+    _compose_model_pair_page as ``primary_model``, the top section's model -- "tritonswmm",
+    "triton" for a TRITON-only base, or "" when the primary child's eid carries no model token."""
     for _tok in _MODEL_TOKENS:
         if eid.endswith(_tok):
             return _tok[1:]
     return ""
 
 
-#: data-viz R5-1's stacked both-models CSS, INLINED into each composed page's <head> because the
-#: report.css --report-stylesheet reaches only the report CHROME, never a report()'d figure's inner
-#: (data-URI iframe) document (F1 round-6, FQ2). Consumed VERBATIM from the R5-1 spec; the sole
-#: reconciliation delta is the .model-arm-frame rule (R5-1 assumed inlined figures/tables — hhemt
-#: embeds each arm as a full self-contained plotly doc via <iframe srcdoc>, which needs an explicit
-#: height). var(--uva-*) references resolve from the :root{} block _extract_root_css_vars pulls out
-#: of the staged report.css (brand_theme stipulation: brand colors flow from brand_theme). The
+#: The stacked both-models CSS, INLINED into each composed page's <head> because the report.css
+#: --report-stylesheet reaches only the report CHROME, never a report()'d figure's inner (data-URI
+#: iframe) document, so a stylesheet rule would leave the composed page unstyled. The
+#: .model-arm-frame rule exists because each arm is a full self-contained plotly document embedded
+#: via <iframe srcdoc>, and an iframe needs an explicit height or it renders at the browser default.
+#: var(--uva-*) references resolve from the :root{} block _extract_root_css_vars pulls out of the
+#: staged report.css, so brand colors come from the brand_theme config like the chrome's. The
 #: fallbacks are NEUTRAL non-brand values so no UVA hex is hardcoded here.
 _MODEL_STACK_CSS = """
 .model-pair-page{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:1rem;}
-.model-pair-heading{color:var(--uva-blue,#1a1a1a);font-size:1.15rem;margin:0 0 .5rem;}
 .model-stack{display:flex;flex-direction:column;margin:1.5rem 0;}
 .model-stack>.model-section{width:100%;padding:1rem 0;}
 .model-stack>.model-section[data-model="tritonswmm"]{order:0;}
@@ -178,7 +204,7 @@ border:1px dashed var(--uva-medium-gray,#cccccc);
 border-radius:4px;padding:.75rem 1rem;font-style:italic;}
 """
 
-#: Iter-13 defect 2. The arm frame used to be sized ONCE, from its own `onload` handler, as
+#: Why the arm frame is re-measured. It used to be sized ONCE, from its own `onload` handler, as
 #: `scrollHeight + 24`. That single measurement is taken when the inner document's `load`
 #: event fires -- which is BEFORE any content that builds asynchronously after load exists in
 #: the DOM. The reproduction-guide tables are exactly that: three Tabulator instances that
@@ -199,7 +225,8 @@ border-radius:4px;padding:.75rem 1rem;font-style:italic;}
 #: (2) The 2px epsilon and the pass cap bound a REAL feedback loop, not a hypothetical one:
 #:     growing the frame re-resolves any `vh`-sized element inside it, which changes
 #:     scrollHeight, which fires the observer again. Simulated against a fake DOM whose
-#:     scrollHeight depends on frame height: the bounded case (post-`min(70vh, 640px)`)
+#:     scrollHeight depends on frame height: the bounded case (the `min(70vh, 640px)` table
+#:     height report_renderers/metadata.py sets)
 #:     settles in 2 writes, and an UNBOUNDED bare `70vh` settles in 11 -- because a `vh`
 #:     fraction below 1 is a contraction, so the series converges on its own and the epsilon
 #:     stops it. The pass cap therefore never engages for either, and is a backstop only for
@@ -235,9 +262,10 @@ _MODEL_STACK_JS = """
 
 def _extract_root_css_vars(bundle_root: Path) -> str:
     """The staged report.css :root{...} custom-property block, so a composed figure page's inlined
-    R5-1 CSS resolves its var(--uva-*) references from the SAME brand_theme the report chrome uses
-    (brand_theme stipulation). Graceful-absent: '' when report.css is not yet staged (e.g. under the
-    CR4 monkeypatched test path), where _MODEL_STACK_CSS's neutral non-brand fallbacks apply."""
+    _MODEL_STACK_CSS resolves its var(--uva-*) references from the SAME brand_theme config the report
+    chrome uses. Graceful-absent: '' when report.css is not yet staged (e.g. when the byte-determinism
+    test tests/test_combine_bundle.py::test_combined_emit_deterministic stubs out the render), where
+    _MODEL_STACK_CSS's neutral non-brand fallbacks apply."""
     import re as _re
 
     css = bundle_root / "report" / "report.css"
@@ -255,16 +283,21 @@ def _compose_model_pair_page(
     root_css_vars: str = "",
     member_labels: dict[str, str] | None = None,
     event_labels: dict[str, str] | None = None,
+    *,
+    primary_model: str = "tritonswmm",
 ) -> str:
-    """Compose ONE self-contained page STACKING the TRITON-SWMM figure (top) and its pure-TRITON
-    counterpart (below, when present) as a data-viz .model-stack / .model-section[data-model] column
-    (F1 round-6: hhemt VMS 5.2 structure + data-viz R5-1 CSS, reconciled). Each arm is a full
+    """Compose ONE self-contained page STACKING the primary child's figure (top) and its pure-TRITON
+    counterpart (below, when present) as a .model-stack / .model-section[data-model] column styled by
+    _MODEL_STACK_CSS. The top section's data-model is the keyword-only ``primary_model`` (default
+    "tritonswmm"); the harvest passes the primary child's arm, which is "triton" for a TRITON-only
+    base and "" for a base whose children carry no model token. Each arm is a full
     self-contained plotly document embedded via an isolated <iframe srcdoc> (EMPIRICALLY VERIFIED:
     snakemake --report base64-passes the composed page verbatim and the report app renders it in an
     <iframe src=data-uri>, so nested srcdoc iframes are proper opaque-origin docs — no id collision,
-    no double-plotly-bundle, no figure-surgery). R5-1's CSS is INLINED here because report.css
+    no double-plotly-bundle, no figure-surgery). _MODEL_STACK_CSS is INLINED here because report.css
     (--report-stylesheet) styles the report chrome only and never reaches a figure's inner document.
-    tri_html is None for a coupled-only (SWMM-specific) figure -> only the tritonswmm section renders.
+    tri_html is None when there is no pure-TRITON counterpart (a coupled-only SWMM-specific figure, or
+    a base with no TRITON-SWMM child to pair against) -> only the top section renders.
     The inner iframes carry an onload auto-grow (srcdoc inherits the composed page's opaque origin, so
     the DOM read succeeds in practice) with a try/catch fallback to the CSS 900px height."""
     import html as _html
@@ -273,12 +306,12 @@ def _compose_model_pair_page(
         return (
             f'<div class="model-section" data-model="{_html.escape(model, quote=True)}">'
             f'<iframe class="model-arm-frame" loading="lazy" '
-            f'title="{_html.escape(base_eid)} {_html.escape(plot_id)} ({_html.escape(model)})" '
+            f'title="{_html.escape(base_eid)} {_html.escape(plot_id)} ({_html.escape(model or "model not recorded")})" '
             'onload="__fitArmFrame(this)" '
             f'srcdoc="{_html.escape(inner, quote=True)}"></iframe></div>'
         )
 
-    body = _section("tritonswmm", ts_html)
+    body = _section(primary_model, ts_html)
     if tri_html is not None:
         body += _section("triton", tri_html)
     return (
@@ -291,10 +324,11 @@ def _compose_model_pair_page(
         # the quotes and braces the fitter needs.
         f"<script>{_MODEL_STACK_JS}</script></head>"
         '<body class="model-pair-page">'
-        # Iter-10 K: the `<h2 class="model-pair-heading">` that stood here carried the SAME
+        # No visible heading. The `<h2 class="model-pair-heading">` that stood here carried the SAME
         # `{base_eid} — {humanize_plot_id(...)}` string as the <title> above, and the report
-        # chrome ALREADY renders the result's own name (report_plot_ids._DISPLAY_LABELS) and
-        # its experiment category directly above the iframe this page is embedded in. So the
+        # chrome ALREADY identifies the result: its `figure` label column carries
+        # humanize_plot_id(...) (set in the harvest's labels below), and its subcategory
+        # names the experiment. So the
         # reader saw `synth_cc_clean — Run metadata` twice in a row, which is exactly the
         # duplication the user reported: 'there are redundant headers. ## synth_cc_clean —
         # Run metadata appears twice in a row, and then TRITON-SWMM appears twice as well'.
@@ -310,7 +344,7 @@ def _compose_model_pair_page(
         # This is the same defect class as the 'exact code that produced this' SHA caption
         # repaired in 7eeecca and the page-title question settled in f1ccc9f: a string that
         # is correct at its own emission site and redundant-or-false once the surrounding
-        # context also supplies it. Worth checking other renderers for the same shape.
+        # context also supplies it.
         f'<div class="model-stack" data-plot="{_html.escape(plot_id, quote=True)}" '
         f'data-config="{_html.escape(base_eid, quote=True)}">{body}</div>'
         "</body></html>"
@@ -318,23 +352,26 @@ def _compose_model_pair_page(
 
 
 def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...]:
-    """ONE composed report() page per (base-experiment, plot_id): the TRITON-SWMM figure on top,
-    its pure-TRITON counterpart stacked BELOW on the SAME page (F1 within-page co-location, round-6;
-    supersedes the round-3 base-experiment-CATEGORY collapse). The composed page carries the figure's
-    ORIGINAL category (NO extra base-experiment sidebar entry -> minimal navigation). The pure-TRITON
-    arm's figures already exist SWMM-free in the *_triton child bundle, so co-location needs no
-    figure-surgery. Coupled-only figures (SWMM-specific, no pure-TRITON counterpart) render the
-    tritonswmm section alone. Composed pages are written under paired_figures/ (OUTSIDE the crate-
-    hashed child_crates/; CR4-safe -- the whole harvest runs under the CR4-monkeypatched
-    _render_combined_report). R5-1's .model-stack CSS is inlined per page (FQ2); its var(--uva-*)
-    resolves from the staged report.css :root{} (brand_theme stipulation)."""
-    # S4: one member_id -> derived-config-label map for every label this harvest emits --
-    # the paired-page <title>/<h2> and the sidebar `labels.figure` facet. Merged across
+    """ONE composed report() page per (base-experiment, plot_id): the primary child's figure on top
+    (the TRITON-SWMM arm when the base has one), its pure-TRITON counterpart stacked BELOW on the SAME
+    page, so the two model arms are compared without leaving the page. The composed page carries the
+    figure's ORIGINAL category, so pairing adds no base-experiment CATEGORY; the base experiment
+    appears one level down instead, composed into the subcategory label (`{base} — {child
+    subcategory}`, or `{base}` alone) in the report_kwargs below. The pure-TRITON arm's figures
+    already exist SWMM-free in the *_triton child bundle, so co-location needs no figure-surgery.
+    Figures with no pure-TRITON counterpart (SWMM-specific ones) render the top section alone.
+    Composed pages are written under paired_figures/, OUTSIDE the crate-hashed child_crates/,
+    so they leave the combined crate's bytes unchanged; the byte-determinism test
+    (tests/test_combine_bundle.py::test_combined_emit_deterministic) stubs out
+    _render_combined_report, under which this harvest runs. _MODEL_STACK_CSS is inlined per page;
+    its var(--uva-*) resolves from the staged report.css :root{} block, i.e. the brand_theme config."""
+    # One member_id -> derived-config-label map for every label this harvest emits --
+    # the paired-page <title> and the sidebar `labels.figure` facet. Merged across
     # child crates because the combined bundle has no top-level scenario_status.csv.
     # Built ONCE here rather than per figure: the harvest emits one page per
     # (base-experiment, plot_id) pair and re-reading per page would re-parse the same
     # CSVs for every figure.
-    from ..report_plot_ids import event_labels_from_status, member_labels_from_status
+    from ..report_plot_ids import event_sidebar_labels_from_status, member_labels_from_status
 
     _member_labels: dict[str, str] = {}
     _event_labels: dict[str, str] = {}
@@ -342,7 +379,7 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
     if _crates_dir.exists():
         for _c in sorted(p for p in _crates_dir.iterdir() if p.is_dir()):
             _member_labels.update(member_labels_from_status(_c))
-            _event_labels.update(event_labels_from_status(_c))
+            _event_labels.update(event_sidebar_labels_from_status(_c))
     import json as _json
     import re as _re
 
@@ -363,12 +400,13 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
         template-claimed figures first then defensively-globbed leftovers."""
         child = bundle_root / "child_crates" / eid
         cfg = _yaml.safe_load((child / "cfg_analysis.yaml").read_text())
-        # S19: the shared helper carries the sentinel AND the membership check, and it
+        # resolve_reporting_set_names carries both the absent-selection rule (no
+        # selection resolves to "default") AND the registered-name check, and it
         # accepts the LIST this raw dict now holds -- a bundle's cfg_analysis.yaml is
         # dumped from the validated model, so it carries a list even when the source
-        # config was written with a bare string. Hand-inlining the sentinel here drops
-        # the membership check, which is the divergence the shared helper exists to
-        # prevent.
+        # config was written with a bare string. Hand-inlining the absent-selection
+        # rule here drops the registered-name check, which is the divergence the shared
+        # helper exists to prevent.
         _names = resolve_reporting_set_names(
             (cfg.get("report") or {}).get("reporting_set"),
             is_sensitivity=bool(cfg.get("toggle_sensitivity_analysis")),
@@ -414,8 +452,8 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                 # surface it in the combined report (config/eda.py::_RETIRED_EDA_FIGURE_STEMS).
                 continue
             if fpath.stem in _PENDING_EDA_FIGURE_STEMS:
-                # A NOT-YET-DESIGNED /eda-spinup stub (eda/_sensitivity_figures.py::
-                # _pending_figure): a ~10 MB inlined-Plotly page carrying a title and no
+                # A NOT-YET-DESIGNED placeholder figure, written by
+                # eda/_sensitivity_figures.py::_pending_figure: a ~10 MB inlined-Plotly page carrying a title and no
                 # panels. Distinct from the retired case above -- these stems are LIVE
                 # opt-ins via eda.enabled_plots and must NOT be added to _EDA_DROPS, which
                 # would strip them at config load. Suppress at the COMBINE guard only.
@@ -463,15 +501,23 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
             cf = counterpart.get(plot_id)
             tri_html = cf[4].read_text(encoding="utf-8", errors="replace") if cf is not None else None
             page_html = _compose_model_pair_page(
-                base, plot_id, ts_html, tri_html, root_css_vars, _member_labels, _event_labels
+                base,
+                plot_id,
+                ts_html,
+                tri_html,
+                root_css_vars,
+                _member_labels,
+                _event_labels,
+                primary_model=_model_of(primary_eid),
             )
             (paired_dir / _re.sub(r"[^A-Za-z0-9_.]", "_", base)).mkdir(parents=True, exist_ok=True)
             # Per-base SUBDIRECTORY, so the page's filename STEM is exactly the plot id: the
-            # Snakemake figure-card name derives from that stem, and the ADR-2 humanizer's
-            # curated _RENDERER_KIND_LABELS table only fires when the stem's leading segment IS
-            # the renderer kind. A flat "{base}__{plot_id}" stem makes the humanizer read the
-            # base eid as the renderer kind and silently drops the curated label. The base is
-            # not lost: it is the directory here and report_kwargs["subcategory"] below.
+            # Snakemake figure-card name derives from that stem, and humanize_plot_id looks the
+            # stem's leading "__"-segment up in report_plot_ids._RENDERER_KIND_LABELS, so the
+            # curated label is used only when that segment IS the renderer kind. A flat
+            # "{base}__{plot_id}" stem makes the humanizer read the base eid as the renderer
+            # kind and silently drops the curated label. The base is not lost: it is the
+            # directory here and report_kwargs["subcategory"] below.
             page_rel = (
                 f"paired_figures/{_re.sub(r'[^A-Za-z0-9_.]', '_', base)}"
                 f"/{_re.sub(r'[^A-Za-z0-9_.]', '_', plot_id)}.html"
@@ -495,14 +541,9 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                     report_kwargs={
                         "caption": "report/captions/_harvested.rst",
                         "category": category,  # the figure's ORIGINAL category (NO base-experiment category)
-                        # Driver: the user's combined-report navigation directive, quoted in the
-                        # session sidequest `# Sidequest 0 —
-                        # combined-report-loses-child-navigation-and-collapses-figures`. It carries
-                        # NO [Qn] ledger tag -- it is a sidequest-scoped directive, not a Part-10
-                        # ruling -- so it is cited by name rather than by tag. Verbatim: "the
-                        # categories are benchmarking, byte for byte comparison, and compute config
-                        # EDA which are wiped out by the combine it seems", and "preserve the same
-                        # exact structure of the individual reports as nearly as possible".
+                        # Requirement: the combined report preserves each child report's own
+                        # navigation structure as nearly as the engine allows, including the
+                        # child's subcategory grouping, which an earlier version lost.
                         #
                         # The child's OWN subcategory is composed with the experiment id
                         # rather than discarded. `_figures_of` already harvests it (it is the third
@@ -541,7 +582,7 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                         #    facet because their names and facets are independently authored;
                         #    this path derives both from one function."
                         #
-                        # Iter-11 items 5 and 9 (ONE defect, two symptoms). The former
+                        # ONE defect behind two navigation symptoms. The former
                         # `experiment` facet was DEGENERATE at this level and that is what
                         # dead-ended the navigation: Snakemake builds a facet table whose
                         # COLUMNS are the label keys, and `experiment` restated the
@@ -550,10 +591,11 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                         # figure list belongs -- which is why Key Results dead-ended before the
                         # benchmarking figures and Per Simulation Results inserted a redundant
                         # experiment level. The replacement facets are read off the plot id,
-                        # which the ADR-2 grammar already encodes: per-sim figures vary in
-                        # member_id and event_id, benchmarking figures vary in the descriptor.
+                        # whose grammar (report_plot_ids.canonical_plot_id) already encodes
+                        # them: per-sim figures vary in the `member.` and `evt.` segments,
+                        # benchmarking figures vary in the descriptor segment.
                         #
-                        # Iter-13. TWO claims that stood here are RETIRED because measurement
+                        # TWO claims that stood here are RETIRED because measurement
                         # falsified them; they are named rather than deleted so the next
                         # reader does not re-derive them.
                         #
@@ -619,7 +661,11 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                                     models=(
                                         "TRITON-SWMM + TRITON"
                                         if tri_html is not None
-                                        else ("TRITON-SWMM only" if ts_eid else "TRITON only")
+                                        else (
+                                            "TRITON-SWMM only"
+                                            if ts_eid
+                                            else ("TRITON only" if tri_eid else "model not recorded")
+                                        )
                                     ),
                                 ),
                             }
@@ -633,19 +679,23 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
 
 
 def _plot_id_facets(plot_id: str, *, models: str = "") -> dict[str, str]:
-    """Split an ADR-2 plot id into the facets that PARTITION a harvested figure set.
+    """Split a canonical plot id into the facets that PARTITION a harvested figure set.
 
     Grammar (`report_plot_ids.py`): ``{renderer_kind}[__{descriptor}][__member.{member_id}]
     [__evt.{event_id}]``, "__" between segments and "." within one. This reads the two
-    prefixed segments and treats any remaining segment as the descriptor.
+    prefixed segments and files every other segment under a single ``variant`` facet; when an
+    id carries more than one such segment, each overwrites the last and only the final one is
+    kept.
 
     Why the parse lives HERE and not in `report_plot_ids.py`, which owns the grammar:
     that module is `layout_relevant` and its `non_breaking_allowlist` entry is scoped by
     `layout_signature` -- a content hash of the file as it stands. ANY edit to it, additive
     or not, changes the hash and re-fires CI Check B, which then demands a LAYOUT_VERSION
     bump plus a migration plus two golden fixtures for a change that alters no on-disk
-    figure filename. `canonical_plot_id` remains the sole MINTER; this is a read-only
-    consumer, and a grammar change would surface here as blank facets rather than silently.
+    figure filename. `canonical_plot_id` remains the sole MINTER and this is a read-only
+    consumer. A grammar change is therefore NOT detected here: a new prefixed segment is
+    filed under ``variant`` like a descriptor, and only an empty segment value trips the
+    guard below.
 
     Returns ONLY the facets that carry a value, so the key set is heterogeneous across
     results by design. Snakemake performs no key-consistency check on `labels`
@@ -682,8 +732,8 @@ def _plot_id_facets(plot_id: str, *, models: str = "") -> dict[str, str]:
 
 def _distinct_child_categories(bundle_root: Path) -> list[str]:
     """Ordered distinct figure categories the composed per-experiment pages use (each child figure's
-    ORIGINAL report category), excluding the cross-experiment bookends. Round-6: replaces the base-
-    experiment-category collapse in the combined sidebar order (line 371)."""
+    ORIGINAL report category), excluding the combined set's own cross-experiment categories. These
+    are what the composed pages carry, so they are what the combined sidebar order must rank."""
     import yaml as _yaml
 
     from hhemt.config.report import resolve_reporting_set_names
@@ -694,7 +744,7 @@ def _distinct_child_categories(bundle_root: Path) -> list[str]:
     seen: list[str] = []
     for eid in _child_experiment_ids(bundle_root):
         cfg = _yaml.safe_load((bundle_root / "child_crates" / eid / "cfg_analysis.yaml").read_text())
-        # S19: see the twin in _figures_of. Same helper, same multi-member refusal --
+        # See the twin in _figures_of. Same helper, same multi-member refusal --
         # this enumeration reads ONE set's declared categories, so a partial read would
         # silently drop a member set's sidebar categories from the combined report.
         _names = resolve_reporting_set_names(
@@ -713,12 +763,16 @@ def _distinct_child_categories(bundle_root: Path) -> list[str]:
                 config_path=bundle_root / "child_crates" / eid / "cfg_analysis.yaml",
             )
         active_set = get_reporting_set(_names[0])
-        # Only categories the set's rule-spec TEMPLATES actually declare can reach a composed
-        # page. category_order is the sidebar VOCABULARY and is deliberately non-exhaustive in
-        # both directions (tests/test_reporting_set_cosourcing.py): it also carries chrome-only
-        # entries no figure ever bears -- notably "Simulation Health (placeholder)", a reserved
-        # EMPTY slot _react_surgery step 5 injects and explicitly SUPPRESSES under bundle_mode.
-        # Ordering such an entry re-introduces the literal via the step-4 ORDER comparator (F2).
+        # Only categories that one of the set's rule-spec TEMPLATES declares can reach a
+        # composed page: _figures_of takes each page's category from the template that
+        # claimed its figure, and files an unclaimed leftover under "Other". category_order
+        # is the set's sidebar ORDER, not an inventory of its figures, and a set may order a
+        # category none of its templates declares ("Key Results" in the default set is one).
+        # Deliberately NOT the whole category_order: an ordered name with no page adds no
+        # sidebar entry, because the comparator _react_surgery installs only ranks
+        # categories that exist, but the name is still written into that comparator's ORDER
+        # literal in the rendered HTML. The filter keeps the combined order, and that
+        # literal, to categories a composed page actually carries.
         declared = {
             (tmpl.report_kwargs or {}).get("category", "Other")
             for sel in active_set.renderer_selection
@@ -809,16 +863,18 @@ def render_combined_report_via_snakemake(bundle_root: Path, *, formats: tuple[st
     """Stage artifacts + write the combined Snakefile + `snakemake --touch` the
     pre-rendered figures + `snakemake --report` (+ React surgery) per format.
 
-    Mirrors Bundle.regenerate_report's touch->report->surgery sequence. The two
-    figures already exist on disk (direct-rendered by _render_combined_report before
-    this call); --touch marks them up-to-date so --report does not try to re-run their
+    Mirrors Bundle.regenerate_report's touch->report->surgery sequence. The
+    cross-experiment figures already exist on disk (direct-rendered by
+    _render_combined_report before this call); the paired per-experiment pages are
+    written during this call, by the harvest that write_combined_snakefile triggers.
+    --touch then marks all of them up-to-date so --report does not try to re-run their
     (inert) plot rules.
     """
     bundle_root = Path(bundle_root).resolve()
     stage_combined_report_artifacts(bundle_root)
     _, _expected_figures = write_combined_snakefile(bundle_root)
 
-    # Preflight (FQ2): a combined bundle is portability-scrubbed and carries NO root
+    # Preflight: a combined bundle is portability-scrubbed and carries NO root
     # cfg_system.yaml / cfg_analysis.yaml — only a single-analysis bundle does. The
     # normal path never needs them (figures are direct-rendered by
     # _render_combined_report and --touch marks them current, so no plot-rule shell
@@ -881,18 +937,14 @@ def render_combined_report_via_snakemake(bundle_root: Path, *, formats: tuple[st
         apply_post_process_surgery_to_zip,
     )
 
-    # Dynamic per-experiment order: splice the sorted child experiment ids between the
-    # cross-experiment results and the aggregate errors-and-warnings bookend, so each
-    # {eid} top-level category is ordered (unknown categories otherwise sort last in
-    # _react_surgery). Derived from child_crates/ on disk so regenerate_report() with no
-    # re-merge recomputes it identically.
-    _fixed = list(get_reporting_set("combined").category_order)  # [..Compat, ..Results, Errors and Warnings]
-    _eids = _distinct_child_categories(bundle_root)  # round-6: composed pages carry the figure's original category
-    if "Errors and Warnings" in _fixed:
-        _i = _fixed.index("Errors and Warnings")
-        category_order = _fixed[:_i] + _eids + _fixed[_i:]
-    else:
-        category_order = _fixed + _eids
+    # Sidebar order: the combined set's fixed cross-experiment categories, then the child
+    # figure categories the composed pages carry, so every harvested category is ranked
+    # (an unranked category sorts last, alphabetically, under _react_surgery's comparator).
+    # Derived from child_crates/ on disk so regenerate_report() with no re-merge recomputes
+    # it identically.
+    _fixed = list(get_reporting_set("combined").category_order)  # the fixed cross-experiment categories
+    _eids = _distinct_child_categories(bundle_root)  # child FIGURE categories, not experiment ids
+    category_order = _fixed + _eids
     for fmt in formats:
         output_path = bundle_root / f"analysis_report.{fmt}"
         cmd = [
@@ -920,14 +972,14 @@ def render_combined_report_via_snakemake(bundle_root: Path, *, formats: tuple[st
                 f"combined snakemake --report ({fmt}) failed (exit {proc.returncode}). "
                 f"See {logs_dir / f'combined_report_{fmt}.log'}"
             )
-        # S4: the combined bundle has NO top-level scenario_status.csv -- its per-sim
+        # The combined bundle has NO top-level scenario_status.csv -- its per-sim
         # data lives under child_crates/. Reading the root would yield {} and leave the
         # combined report's card names unresolved while the per-arm reports resolve,
-        # which is a P5 divergence between two views of the same figure. Merge across
+        # so two views of the same figure would name it differently. Merge across
         # the children instead. member_ids are unique per child by construction, and a
         # collision would mean two children ran the same member, in which case
         # either label is correct.
-        from ..report_plot_ids import event_labels_from_status, member_labels_from_status
+        from ..report_plot_ids import event_sidebar_labels_from_status, member_labels_from_status
 
         _member_labels: dict[str, str] = {}
         _event_labels: dict[str, str] = {}
@@ -935,27 +987,24 @@ def render_combined_report_via_snakemake(bundle_root: Path, *, formats: tuple[st
         if _crates.exists():
             for _child in sorted(p for p in _crates.iterdir() if p.is_dir()):
                 _member_labels.update(member_labels_from_status(_child))
-                _event_labels.update(event_labels_from_status(_child))
-        try:
-            if fmt == "html":
-                output_path.write_text(
-                    apply_post_process_surgery(
-                        output_path.read_text(),
-                        bundle_mode=True,
-                        navbar_text=_COMBINED_NAVBAR_TEXT,
-                        category_order=category_order,
-                        member_labels=_member_labels,
-                        event_labels=_event_labels,
-                    )
-                )
-            else:
-                apply_post_process_surgery_to_zip(
-                    output_path,
+                _event_labels.update(event_sidebar_labels_from_status(_child))
+        if fmt == "html":
+            output_path.write_text(
+                apply_post_process_surgery(
+                    output_path.read_text(),
                     bundle_mode=True,
                     navbar_text=_COMBINED_NAVBAR_TEXT,
                     category_order=category_order,
                     member_labels=_member_labels,
                     event_labels=_event_labels,
                 )
-        except Exception:
-            pass
+            )
+        else:
+            apply_post_process_surgery_to_zip(
+                output_path,
+                bundle_mode=True,
+                navbar_text=_COMBINED_NAVBAR_TEXT,
+                category_order=category_order,
+                member_labels=_member_labels,
+                event_labels=_event_labels,
+            )

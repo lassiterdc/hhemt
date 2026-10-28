@@ -1,8 +1,12 @@
-"""Render-path category-order resolution, shared by the two report-rendering twins.
+"""Render-path category-order resolution for the analysis and bundle re-render paths.
 
-Extracted from `TRITONSWMM_analysis.render_report` and
-`TRITONSWMM_sensitivity_analysis.render_report`, where it existed as two
-byte-identical blocks before this module. It lives HERE rather than in either
+Its callers are `TRITONSWMM_analysis.render_report`,
+`TRITONSWMM_sensitivity_analysis.render_report` and `Bundle.regenerate_report`,
+which passes a `SimpleNamespace` carrying the bundle's `cfg_analysis`. The combined
+report does not use it: `bundle/combined_snakefile_generator.py` builds its own order
+from the `combined` reporting set plus the child figure categories. It was
+extracted from the first two -- the report-rendering twins -- where it existed as
+two byte-identical blocks. It lives HERE rather than in either
 twin because the two already form an import cycle -- `sensitivity_analysis`
 imports `hhemt.analysis` at module level and `analysis` imports
 `TRITONSWMM_sensitivity_analysis` back -- so a shared definition in either one
@@ -10,9 +14,10 @@ would convert a working lazy cycle into a hard one.
 
 It is also deliberately NOT sited in `report_renderers/_react_surgery.py`, which
 carries its own `_DEFAULT_CATEGORY_ORDER`. That constant is SHORTER than the
-registry's `default` set (6 entries against 8; it omits "Workflow performance"
-and "Metadata") and must not be reused as this fallback, or every degraded
-render would silently drop two sidebar categories.
+registry's `default` set (5 entries against 7; it omits "Workflow performance"
+and "Metadata") and must not be reused as this fallback: the surgery's comparator
+ranks a name absent from the order last, so every degraded render would silently
+move those two sidebar categories to the alphabetical tail.
 """
 
 from __future__ import annotations
@@ -28,14 +33,17 @@ def resolve_render_path_category_order(analysis) -> list[str]:
     exist. When it does not, resolve from config alone -- no CSV cross-validation
     is available at render time.
 
-    Fails SOFT on a USER config error (SE F-I-3): the render path bypasses
+    Fails SOFT on a USER config error: the render path bypasses
     `validate_active_reporting_set`, so a stale, unknown or incompatible
     `reporting_set` would otherwise surface as an opaque Snakemake rule failure.
     Degrade to the registry's "default" order plus one warning instead.
 
-    The caught tuple is NARROW by design (S19). An `AttributeError` here can only
-    be an hhemt defect -- the only source on this path is `cfg.reporting_set`
-    against something that is not a `report_config` -- and degrading to the wrong
+    The caught tuple is NARROW by design. An `AttributeError` here can only be an
+    hhemt defect: its sources are this function's own reads of
+    `analysis.cfg_analysis.report` and `analysis.cfg_analysis.toggle_sensitivity_analysis`
+    on a wrongly shaped argument, and `cfg.reporting_set` inside
+    `resolve_active_reporting_set` against something that is not a `report_config`
+    -- and degrading to the wrong
     sidebar while the report renders and looks complete is the worst outcome for a
     defect. `ReportingSetCompositionError` is caught because it is user-origin: it
     means the config named an incompatible pair of sets.

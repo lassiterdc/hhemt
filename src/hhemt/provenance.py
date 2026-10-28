@@ -378,7 +378,9 @@ def read_stage_provenance_history(analysis_dir: Path) -> dict[str, list[dict]]:
     return dict(out)
 
 
-def collect_plot_stamps(analysis_dir: Path) -> tuple[set[tuple[str, str]], int]:
+def collect_plot_stamps(
+    analysis_dir: Path, *, report_rule_stems: frozenset[str] = frozenset()
+) -> tuple[set[tuple[str, str]], int]:
     """Distinct (sha, dirty) keys across every figure sidecar, and the sidecar count.
 
     Reads ALL sidecars rather than one, because uniform-within-a-render is a measured
@@ -388,18 +390,37 @@ def collect_plot_stamps(analysis_dir: Path) -> tuple[set[tuple[str, str]], int]:
     than by re-rendering the report). An unreadable or unstamped sidecar contributes no
     key and is counted, so `keys == set()` with `n > 0` means "figures present, none
     stamped" -- absent, which the caller treats as never-equal.
+
+    A sidecar under `constants.UNREGENERABLE_ANALYSIS_SUBTREES` (which includes
+    `plots/eda/`) is skipped and not counted UNLESS its figure is one the analysis's
+    active reporting set writes through a plot rule, as named by `report_rule_stems`
+    (from `utils.report_rule_figure_stems`). The forced figure re-render spares exactly
+    the same figures (`utils.select_regenerable_figures` takes the same argument), so a
+    stale figure the check counts is one that re-render deletes and a report rule
+    rebuilds, and a skipped one, such as a figure only `analysis.eda()` writes, is one
+    the re-render could never clear, where counting it would refuse every later render.
+    Empty `report_rule_stems` (the default, which the bundle-side checks pass) skips
+    every sidecar under those subtrees.
     """
     import json
     from pathlib import Path as _Path
 
-    from hhemt.utils import figure_exists_for  # lazy: matches this module's import style
+    from hhemt.constants import UNREGENERABLE_ANALYSIS_SUBTREES
+    from hhemt.utils import figure_exists_for, is_report_rule_figure  # lazy: matches this module's import style
 
     keys: set[tuple[str, str]] = set()
     n = 0
-    plots = _Path(analysis_dir) / "plots"
+    root = _Path(analysis_dir)
+    plots = root / "plots"
     if not plots.exists():
         return keys, 0
     for sidecar in sorted(plots.rglob("*.manifest.json")):
+        # Matched as `rel == p or rel.startswith(p + "/")`, the expression
+        # select_regenerable_figures uses, so `plots/eda_summary/` is NOT skipped.
+        rel = sidecar.relative_to(root).as_posix()
+        if any(rel == p or rel.startswith(p + "/") for p in UNREGENERABLE_ANALYSIS_SUBTREES):
+            if not is_report_rule_figure(rel.removesuffix(".manifest.json"), report_rule_stems):
+                continue
         # An ORPHAN sidecar -- one whose figure is gone -- is not evidence about the
         # figures on disk, and this function's whole subject is the figures on disk.
         # Skipped ABOVE the counter deliberately: counted-but-excluded would make the
@@ -420,7 +441,9 @@ def collect_plot_stamps(analysis_dir: Path) -> tuple[set[tuple[str, str]], int]:
     return keys, n
 
 
-def assert_plots_match_running_build(analysis_dir: Path, *, declare_stale_plots: bool = False):
+def assert_plots_match_running_build(
+    analysis_dir: Path, *, declare_stale_plots: bool = False, report_rule_stems: frozenset[str] = frozenset()
+):
     """Refuse a render whose figures were not produced by the build now running.
 
     The report-side operand is `producing_stamp()` computed IN-PROCESS, never a
@@ -429,7 +452,7 @@ def assert_plots_match_running_build(analysis_dir: Path, *, declare_stale_plots:
     first render for want of a prior stamp, and would depend on a writer that fails
     non-fatally. Equality on the (sha, dirty) tuple, never an ordering.
     """
-    keys, n = collect_plot_stamps(analysis_dir)
+    keys, n = collect_plot_stamps(analysis_dir, report_rule_stems=report_rule_stems)
     running = producing_stamp()
     mine = (str(running.get("hhemt_sha") or "").strip(), str(running.get("hhemt_dirty") or "unknown"))
     if len(keys) > 1:

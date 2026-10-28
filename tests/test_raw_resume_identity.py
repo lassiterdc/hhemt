@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from hhemt.eda.raw_resume_identity import (
+from hhemt.eda.raw_byte_identity import (
     build_binary_timestep_figure,
     compare_triton_raw_timeseries,
     first_divergent_timestep,
@@ -27,10 +27,10 @@ def _write_bin_raster(path, arr: np.ndarray) -> None:
     np.concatenate([[float(y), float(x)], arr.ravel()]).astype(np.float64).tofile(path)
 
 
-def test_b4b_clean_identity_reason_distinguishes_no_clean_subs_from_raw_cleared(tmp_path, monkeypatch):
+def test_raw_byte_identity_reason_distinguishes_no_clean_subs_from_raw_cleared(tmp_path, monkeypatch):
     """A RESUME master (no n_resumes==0 subs) must NOT report 'raw cleared or absent'.
 
-    check_raw_b4b computes b4b_clean_identity over clean (n_resumes==0) subs; a resume
+    check_raw_byte_identity computes raw_byte_identity over clean (n_resumes==0) subs; a resume
     master has none, so `clean` is empty and id_ref is None. The degraded_reason for that
     case must name the real cause (no clean subs in this master), NOT falsely claim the raw
     was cleared — the raw is present (a real raw-bin dir), the master simply carries only
@@ -42,7 +42,7 @@ def test_b4b_clean_identity_reason_distinguishes_no_clean_subs_from_raw_cleared(
     import xarray as xr
 
     import hhemt.analysis_validation as av
-    import hhemt.eda.raw_resume_identity as rri
+    import hhemt.eda.raw_byte_identity as rri
     import hhemt.report_renderers._figure_emission as fe
 
     # A real, NON-empty raw bin dir — raw is genuinely PRESENT.
@@ -67,9 +67,9 @@ def test_b4b_clean_identity_reason_distinguishes_no_clean_subs_from_raw_cleared(
         TRITON_reporting_timestep_s=60.0,
         resume_interruption_schedule=None,
     )
-    rri.check_raw_b4b(master, cfg_analysis=cfg, eda_cfg=cfg)
+    rri.check_raw_byte_identity(master, cfg_analysis=cfg, eda_cfg=cfg)
 
-    z = xr.open_zarr(tmp_path / "eda" / "b4b_clean_identity.zarr")
+    z = xr.open_zarr(tmp_path / "eda" / "raw_byte_identity.zarr")
     reason = z.attrs.get("degraded_reason", "")
     # Post-F4 redesign: b4b is computed per-hardware-family for BOTH clean (n_resumes==0) and
     # resume (n_resumes>0) masters. A resume master with PRESENT raw therefore computes b4b over
@@ -139,7 +139,7 @@ def test_b4b_n_resumes_reads_the_producers_column(column, value, expected):
 
     import pandas as pd
 
-    import hhemt.eda.raw_resume_identity as rri
+    import hhemt.eda.raw_byte_identity as rri
 
     df = pd.DataFrame({column: [value], "n_resumes": [expected]})
     master = types.SimpleNamespace(df_status=df)
@@ -156,7 +156,7 @@ def test_compare_variable_exact_object_dtype_no_raise():
     import xarray as xr
 
     from hhemt.eda.cross_sim_identity import compare_variable_exact
-    from hhemt.eda.raw_resume_identity import _ds_all_identical
+    from hhemt.eda.raw_byte_identity import _ds_all_identical
 
     a = xr.DataArray(np.array(["JUNCTION", "OUTFALL"], dtype=object), dims=("node_id",))
     assert compare_variable_exact(a, a.copy())["identical"] is True
@@ -186,7 +186,7 @@ def test_read_sub_resume_context_cache_split(tmp_path):
     pointer, which may point OUTSIDE the sub dir (cache-vs-scratch split), not a sibling glob."""
     import yaml
 
-    from hhemt.eda.raw_resume_identity import read_sub_resume_context
+    from hhemt.eda.raw_byte_identity import read_sub_resume_context
 
     member_id, iloc = "member_gpu_0_r1", 0
     master_root = tmp_path / "cache" / "synth_cc_resume"  # SEPARATE tree from the sub dir
@@ -230,7 +230,7 @@ def test_resume_boundaries_from_schedule_unit_conversion():
 def test_read_sub_resume_context_returns_schedule(tmp_path):
     import yaml
 
-    from hhemt.eda.raw_resume_identity import read_sub_resume_context
+    from hhemt.eda.raw_byte_identity import read_sub_resume_context
 
     member_id, iloc = "member_gpu_0_r1", 0
     sub_dir = tmp_path / "members" / member_id
@@ -300,7 +300,7 @@ def test_b4b_family_key_collapses_every_gpu_hardware_to_one_family():
     'GPU results do not vary across hardware' unfalsifiable — divergence could not appear
     because nothing was compared across the split. This asserts the collapse directly.
     """
-    from hhemt.eda.raw_resume_identity import _b4b_family_key
+    from hhemt.eda.raw_byte_identity import _b4b_family_key
 
     a6000 = _N3Sub(_N3Cfg("gpu", n_gpus=1, partition="gpu-a6000"))
     a100 = _N3Sub(_N3Cfg("gpu", n_gpus=1, partition="gpu-a100-80"))
@@ -319,7 +319,7 @@ def test_b4b_family_key_keeps_cpu_separate_from_gpu():
     (returning 'gpu' unconditionally, or merging CPU in), this assertion fails while the
     test above still passes.
     """
-    from hhemt.eda.raw_resume_identity import _b4b_family_key
+    from hhemt.eda.raw_byte_identity import _b4b_family_key
 
     serial = _N3Sub(_N3Cfg("serial", n_mpi_procs=1, n_omp_threads=1))
     mpi = _N3Sub(_N3Cfg("mpi", n_mpi_procs=8, n_omp_threads=1))
@@ -352,7 +352,7 @@ def test_b4b_ref_key_is_deterministic_under_a_device_count_tie():
     its own sake — arrival order is a glob order in production, so a rule that resolved on
     it would move the starred row between renders of identical data.
     """
-    from hhemt.eda.raw_resume_identity import _b4b_ref_key
+    from hhemt.eda.raw_byte_identity import _b4b_ref_key
 
     a6000 = ("z_gpu_0_r1", _N3Sub(_N3Cfg("gpu", n_gpus=1, partition="gpu-a6000")))
     a100 = ("a_gpu_1_r1", _N3Sub(_N3Cfg("gpu", n_gpus=1, partition="gpu-a100-80")))
@@ -373,7 +373,7 @@ def test_b4b_ref_key_prefers_fewer_devices_before_any_tiebreak():
     If the tiebreak terms had been ordered ahead of the device count, this fails while the
     tie test above still passes.
     """
-    from hhemt.eda.raw_resume_identity import _b4b_ref_key
+    from hhemt.eda.raw_byte_identity import _b4b_ref_key
 
     one = ("z_one", _N3Sub(_N3Cfg("gpu", n_gpus=1, partition="gpu-a6000")))
     three = ("a_three", _N3Sub(_N3Cfg("gpu", n_gpus=3, partition="gpu-a100-80")))
@@ -414,7 +414,7 @@ def test_collapse_replicates_folds_worst_case_across_replicates():
     shares a coordinate set, so it exercises the fold's aggregation and nothing else, and
     it passes under both the base-coords fold and the intersection fold.
     """
-    from hhemt.eda.raw_resume_identity import _collapse_replicates
+    from hhemt.eda.raw_byte_identity import _collapse_replicates
 
     ts = [0.0, 10.0, 20.0]
     per_config = {
@@ -447,7 +447,7 @@ def test_collapse_replicates_does_not_manufacture_divergence_at_a_base_only_time
     This is the VIOLATING input of the two-arm differential: against the base-coords fold it
     fails on the `False` at t=30. The satisfying arm is the shared-coordinate test above.
     """
-    from hhemt.eda.raw_resume_identity import _collapse_replicates
+    from hhemt.eda.raw_byte_identity import _collapse_replicates
 
     per_config = {
         # r1 reached t=30; r2 stopped at t=20.
@@ -466,7 +466,7 @@ def test_collapse_replicates_does_not_manufacture_divergence_at_a_base_only_time
 
 def _b4b_ds(per_config, meta):
     """Build the real b4b Dataset through the shipped collapse + dataset builders."""
-    from hhemt.eda.raw_resume_identity import _b4b_dataset, _collapse_replicates
+    from hhemt.eda.raw_byte_identity import _b4b_dataset, _collapse_replicates
 
     pc, mt, n_rep = _collapse_replicates(per_config, meta)
     return _b4b_dataset(

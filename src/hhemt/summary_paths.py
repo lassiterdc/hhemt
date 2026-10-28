@@ -149,10 +149,9 @@ def scenario_summaries_present(analysis, event_id: str, enabled_models: list[str
                         "Summary artifact present but of the WRONG KIND, so this scenario "
                         "is being skipped as incomplete: %s exists but is not a %s. "
                         "target_processed_output_type is %r, which expects a %s. This is "
-                        "the signature of an analysis written by a past 'nc' run on a "
-                        "gridded TRITON configuration; no re-run regenerates it, because "
-                        "the completion check is log-based and the configuration is now "
-                        "refused at preflight.",
+                        "the signature of an analysis written by an earlier toolkit's 'nc' "
+                        "run on a gridded TRITON configuration; no re-run regenerates it, "
+                        "because the completion check is log-based.",
                         candidate,
                         "directory (zarr store)" if out_type == "zarr" else "file",
                         out_type,

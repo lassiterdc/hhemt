@@ -72,8 +72,8 @@ def _use_fake(monkeypatch, *, documented: bool = True) -> None:
     """Point the gate at a single fake module.
 
     Patches the `public_modules` FUNCTION rather than a module-level constant:
-    the documented surface is derived from docs/reference/api.md's `:::`
-    directives, so there is no tuple to patch.
+    the documented surface is derived from the `:::` directives on
+    docs/reference/api.md and its `api-*.md` pages, so there is no tuple to patch.
     """
     monkeypatch.setitem(sys.modules, "fakepkg", _make_fake_module("fakepkg", documented=documented))
     monkeypatch.setattr(cac, "public_modules", lambda *a, **k: ("fakepkg",))
@@ -98,9 +98,82 @@ def test_public_modules_matches_the_live_api_reference():
     removed: a tuple declaring 6 modules while the page declared 8.
     """
     live = cac.public_modules()
-    page_text = cac.API_REFERENCE_PAGE.read_text(encoding="utf-8")
-    declared = [ln.split(":::", 1)[1].strip() for ln in page_text.splitlines() if ln.startswith(":::")]
+    hub = cac.API_REFERENCE_PAGE
+    pages = [hub, *sorted(hub.parent.glob(f"{hub.stem}-*.md"))]
+    declared = [
+        ln.split(":::", 1)[1].strip()
+        for page in pages
+        for ln in page.read_text(encoding="utf-8").splitlines()
+        if ln.startswith(":::")
+    ]
     assert list(live) == declared
+
+
+def test_public_modules_unions_the_hub_and_its_pages_in_page_order(tmp_path):
+    (tmp_path / "api.md").write_text("# API\n\nSee the pages.\n", encoding="utf-8")
+    (tmp_path / "api-b.md").write_text("::: pkg.b\n\n::: pkg.b2\n", encoding="utf-8")
+    (tmp_path / "api-a.md").write_text("::: pkg.a\n", encoding="utf-8")
+    assert cac.public_modules(tmp_path / "api.md") == ("pkg.a", "pkg.b", "pkg.b2")
+
+
+def test_public_modules_raises_naming_a_page_that_declares_no_directive(tmp_path):
+    (tmp_path / "api.md").write_text("::: pkg\n", encoding="utf-8")
+    (tmp_path / "api-empty.md").write_text("# Emptied\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="api-empty.md"):
+        cac.public_modules(tmp_path / "api.md")
+
+
+def test_public_modules_raises_when_a_module_is_declared_on_two_pages(tmp_path):
+    (tmp_path / "api.md").write_text("::: pkg.dup\n", encoding="utf-8")
+    (tmp_path / "api-x.md").write_text("::: pkg.dup\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="pkg.dup"):
+        cac.public_modules(tmp_path / "api.md")
+
+
+def test_public_modules_raises_when_a_hub_alone_declares_nothing(tmp_path):
+    (tmp_path / "api.md").write_text("# API\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        cac.public_modules(tmp_path / "api.md")
+
+
+def test_dropping_a_live_directive_reddens_the_published_surface_baseline(tmp_path):
+    """Must-fail control: the audited surface shrinking is loud somewhere, never silent.
+
+    Copies the live hub and pages; the copy's population gives no baseline finding, and the copy
+    with one directive removed from a page that keeps another gives at least one REMOVED finding.
+    """
+    scripts = str(_SCRIPT.parent)
+    sys.path.insert(0, scripts)
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "check_published_surface", scripts + "/check_published_surface.py"
+        )
+        cps = importlib.util.module_from_spec(spec)
+        sys.modules["check_published_surface"] = cps
+        spec.loader.exec_module(cps)
+        import check_docs_content as cdc
+    finally:
+        sys.path.remove(scripts)
+
+    hub = cac.API_REFERENCE_PAGE
+    for page in [hub, *sorted(hub.parent.glob(f"{hub.stem}-*.md"))]:
+        (tmp_path / page.name).write_text(page.read_text(encoding="utf-8"), encoding="utf-8")
+    copy_hub = tmp_path / hub.name
+
+    def population():
+        return {q for q, _f, _l, _d in cdc.rendered_docstrings(cac.SRC_ROOT, copy_hub)}
+
+    assert cps.baseline_findings(population(), cps.BASELINE) == []
+    for page in [copy_hub, *sorted(tmp_path.glob(f"{hub.stem}-*.md"))]:
+        lines = page.read_text(encoding="utf-8").splitlines()
+        idx = [i for i, ln in enumerate(lines) if ln.startswith(":::")]
+        if len(idx) >= 2:
+            del lines[idx[-1]]
+            page.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            break
+    else:
+        raise AssertionError("no live page keeps two directives to drop one from")
+    assert any("REMOVED" in f for f in cps.baseline_findings(population(), cps.BASELINE))
 
 
 def test_public_modules_raises_when_page_declares_no_directives(tmp_path):

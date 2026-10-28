@@ -2,12 +2,11 @@
 
 ## Prerequisites
 
---8<-- "prerequisites-base.md"
+--8<-- "platform-support.md"
+
+- A working install. See [Installation](../how-to/installation.md).
 - The [Quickstart](quickstart.md) completed. This tutorial runs the Norfolk-Irene
   case study, and the fully-worked path runs locally with no HPC.
-
-!!! warning
-    The full multi-config sweep (serial → OpenMP → MPI → hybrid → GPU under both execution modes) needs an HPC allocation and hours of compute and is not runnable in CI. This tutorial is authored-and-code-checked; run the pieces your hardware supports.
 
 !!! tip
     Run `analysis.test()` first. It runs a strict `_test/` subset (setup → run → process → consolidate → report) as a fast smoke before committing full compute. The setup step checks that the solver is already compiled rather than compiling it.
@@ -28,13 +27,13 @@ norfolk.analysis.render_report()                # renders the analysis report
 
 Here is what each step does:
 
-- **`NorfolkIreneExperiment.load()`** downloads the Norfolk case-study data once (anonymously, with no HydroShare account needed), builds the system and analysis objects, and hands you back an experiment whose `.analysis` is the orchestrator and whose `.system` holds the DEM/compilation state.
+- **`NorfolkIreneExperiment.load()`** downloads the Norfolk case-study data once ([Quickstart step 2](quickstart.md#2-get-the-norfolk-example-data) says how), builds the system and analysis objects, and hands you back an experiment whose `.analysis` is the orchestrator and whose `.system` holds the DEM/compilation state.
 - **`norfolk.system.compile_TRITON_SWMM()`** clones and builds the coupled solver the first time it is called on a machine and skips the build afterwards. Every later step checks for that build and never performs it; [Compile the solver](../how-to/compiling-the-solver.md) covers the cluster form and when a rebuild is due.
 - **`norfolk.analysis.test()`** is the optional smoke test. It runs a strict, least-demanding `_test/` subset of the analysis end-to-end (setup → run → process → consolidate → report) under `{analysis_dir}/_test/`, so you find an uncompiled solver or a missing input in minutes instead of hours into the real run.
-- **`norfolk.analysis.run(from_scratch=False, execution_mode="local")`** does the real work. `from_scratch=False` resumes any completed work rather than rebuilding, and `execution_mode="local"` forces a local run (no SLURM) using a thread pool sized to your machine.
+- **`norfolk.analysis.run(from_scratch=False, execution_mode="local")`** does the real work. `from_scratch=False` resumes any completed work rather than rebuilding, and `execution_mode="local"` forces a local run (no SLURM) using a thread pool sized to your machine. `execution_mode="auto"`, which the [Quickstart](quickstart.md) passes, instead picks the locus from the analysis config's `multi_sim_run_method`: local for `local`, SLURM for `batch_job` or `1_job_many_srun_tasks`.
 - **`norfolk.analysis.render_report()`** assembles the self-contained report from the completed outputs.
 
-Outputs land in the analysis directory (under your configured system directory), with per-scenario results beneath `sims/{event_id}/`. `render_report()` writes `analysis_report.zip` there by default. Unzip it and open `report.html` in a browser. Pass `render_report(format="html")` if you would rather get a single self-contained `analysis_report.html` (larger, but no unzip step).
+Outputs land in the analysis directory (under your configured system directory), with per-scenario results beneath `sims/{event_id}/`. [The interactive analysis report](../reference/example-report.md#producing-a-report) says which file `render_report()` writes there and how to open it.
 
 ## Scaling up: changing the compute configuration
 
@@ -60,7 +59,10 @@ Two orthogonal axes control how a run executes: the per-sim compute config (`run
 
 To run the ensemble on a cluster, configure a cluster profile first (see the [HPC-profile setup guide](../how-to/hpc-profile-setup.md)), then set `multi_sim_run_method` and pass `--hpc-system-config` / `hpc_system_config=`. Rather than re-running each compute config by hand, let the toolkit do the sweep for you: the benchmarking sensitivity analysis (`benchmarking_uva_minimal.xlsx`, shipped in `test_data/norfolk_coastal_flooding/`) automates the compute-config sweep as a single analysis.
 
-A GPU partition needs a GPU build, and the Python call from the worked path builds only the CPU backend. Before the first cluster run, compile with the command-line form on [Compile the solver](../how-to/compiling-the-solver.md#on-a-cluster), once per GPU partition you will submit to.
+!!! warning
+    The full multi-config sweep (serial → OpenMP → MPI → hybrid → GPU under both execution modes) needs an HPC allocation and hours of compute, so the project's continuous integration (CI) runs do not execute it. This tutorial is authored-and-code-checked; run the pieces your hardware supports.
+
+Before the first cluster run, read [Compile the solver: On a cluster](../how-to/compiling-the-solver.md#on-a-cluster), which says what a GPU partition needs that the worked path's Python call does not build.
 
 ## Comparison of compute configurations
 

@@ -175,7 +175,7 @@ def _emitted_rule_names(content: str) -> list[str]:
     """Every rule name in generated Snakefile text.
 
     The character class is established from the REGISTRY, not from the three names
-    an author happens to be looking at: `plot_b4b_clean_identity` carries a digit,
+    an author happens to be looking at: `plot_raw_byte_identity` carries a digit,
     so `[a-z_]+` drops it from BOTH sides of A1a's comparison and passes green on a
     composition that dropped the b4b family entirely. Anchored at both ends so it
     cannot match the word "rule" inside a docstring or a shell string.
@@ -285,7 +285,7 @@ def test_composed_master_byte_identical(synth_sensitivity_analysis):
     """
     from hhemt.report_renderers._reporting_sets import compose_reporting_sets
 
-    members = ("dem-resolution", "compute-sensitivity")
+    members = ("dem_resolution", "compute_sensitivity")
     composed = compose_reporting_sets(members)
     analysis = synth_sensitivity_analysis
     analysis._active_reporting_set = composed

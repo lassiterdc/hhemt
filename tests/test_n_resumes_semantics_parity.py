@@ -43,7 +43,7 @@ _TABLE: dict[str, tuple[str, str | None]] = {
     "src/hhemt/config/report.py": ("incidental mention", None),
     "src/hhemt/eda/_config_diff.py": ("reads-as-attempts", None),
     "src/hhemt/eda/compute_sensitivity.py": ("reads-as-attempts", None),
-    "src/hhemt/eda/raw_resume_identity.py": ("reads-as-attempts", None),
+    "src/hhemt/eda/raw_byte_identity.py": ("reads-as-attempts", None),
     "src/hhemt/figure_panels.py": ("incidental mention", None),
     "src/hhemt/log.py": ("reads-as-attempts", None),
     "src/hhemt/process_simulation.py": ("reads-as-attempts", None),
@@ -52,7 +52,7 @@ _TABLE: dict[str, tuple[str, str | None]] = {
     "src/hhemt/report_renderers/cross_experiment_compatibility.py": ("reads-as-attempts", None),
     "src/hhemt/report_renderers/cross_experiment_intercomparison_maps.py": ("reads-as-attempts", None),
     "src/hhemt/report_renderers/scenario_status_appendix.py": ("reads-as-attempts", None),
-    "src/hhemt/report_templates/captions/b4b_clean_identity.rst": ("asserts-a-predicate", None),
+    "src/hhemt/report_templates/captions/raw_byte_identity.rst": ("asserts-a-predicate", None),
     "src/hhemt/resume_events.py": ("reads-as-attempts", None),
     "src/hhemt/run_simulation.py": ("reads-as-attempts", None),
     "src/hhemt/run_simulation_runner.py": ("reads-as-attempts", None),
@@ -84,6 +84,7 @@ _TABLE: dict[str, tuple[str, str | None]] = {
     "tests/test_n_resumes_reporting.py": ("reads-as-attempts", None),
     "tests/test_n_resumes_semantics_parity.py": ("reads-as-attempts", None),
     "tests/test_raw_resume_identity.py": ("reads-as-attempts", None),
+    "tests/test_synth_07_validation_report.py": ("reads-as-attempts", None),
     "tests/test_resume_event_cause_term.py": ("reads-as-attempts", None),
     "tests/test_resume_event_ledger.py": ("reads-as-attempts", None),
     "tests/test_resume_stepback_from_cut_off_snapshot.py": ("reads-as-attempts", None),
@@ -157,7 +158,7 @@ def test_no_consumer_reads_n_resumes_as_completions():
 def test_the_caption_states_the_predicate_its_renderer_applies():
     """Property: the clean-identity caption states raw-raster presence as its selection rule, not ``n_resumes == 0``.
 
-    Class: the one ``asserts-a-predicate`` row. Its renderer (``eda/raw_resume_identity.py``)
+    Class: the one ``asserts-a-predicate`` row. Its renderer (``eda/raw_byte_identity.py``)
     keeps members by raw-raster presence and carries ``n_resumes`` only as metadata, so a caption
     describing the panel as the ``n_resumes == 0`` members is false of its own figure as soon as
     a resumed member is re-run clean.
@@ -175,11 +176,11 @@ def test_the_caption_states_the_predicate_its_renderer_applies():
     """
     import re
 
-    caption = (_REPO / "src/hhemt/report_templates/captions/b4b_clean_identity.rst").read_text()
+    caption = (_REPO / "src/hhemt/report_templates/captions/raw_byte_identity.rst").read_text()
     assert not re.search(r"n_resumes\W*==\W*0", caption)
     sentences = re.split(r"(?<=[.;])\s+", caption.split("\n", 1)[1])
     assert any(
         re.search(r"\bselect", s, re.IGNORECASE) and re.search(r"\braw\W+(?:\w+\W+)?rasters?\b", s, re.IGNORECASE)
         for s in sentences
     )
-    assert _TABLE["src/hhemt/report_templates/captions/b4b_clean_identity.rst"][0] == "asserts-a-predicate"
+    assert _TABLE["src/hhemt/report_templates/captions/raw_byte_identity.rst"][0] == "asserts-a-predicate"

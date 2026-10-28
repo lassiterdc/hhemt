@@ -276,20 +276,39 @@ def test_reprex_check_reaches_bundle_reprex_with_both_loaded_configs(tmp_path, s
     rcfg = tmp_path / "reprex.yaml"
     rcfg.write_text("x: 1\n")
     hpc = tmp_path / "hpc.yaml"
-    env_hpc = tmp_path / "env_hpc.yaml"
-    monkeypatch.delenv("HHEMT_HPC_SYSTEM_CONFIG", raising=False)
 
     base = ["reprex", "check", "--bundle", str(bundle), "--reprex-config", str(rcfg)]
     result = runner.invoke(app, [*base, "--hpc-system-config", str(hpc)])
     assert result.exit_code == 0, result.output
     assert "REPREX-RESULT" in result.output
 
-    monkeypatch.setenv("HHEMT_HPC_SYSTEM_CONFIG", str(env_hpc))
-    result = runner.invoke(app, base)
-    assert result.exit_code == 0, result.output
+    assert stub_check["hpc_paths"] == [hpc]
+    assert stub_check["reprex"] == [(("REPREX-CONFIG", rcfg), "HPC-PROFILE")]
 
-    assert stub_check["hpc_paths"] == [hpc, env_hpc]
-    assert stub_check["reprex"] == [(("REPREX-CONFIG", rcfg), "HPC-PROFILE")] * 2
+
+def test_reprex_check_ignores_the_environment_and_refuses_naming_the_option(tmp_path, stub_check, monkeypatch):
+    """Property: `reprex check` takes the HPC settings file from `--hpc-system-config` and nowhere else.
+
+    Class: `reprex check` with no `--hpc-system-config` while `$HHEMT_HPC_SYSTEM_CONFIG` names an
+    existing file. Why it is required: a profile picked up silently from the shell is one the
+    command line does not show, so two people running the same command can check against
+    different clusters. What kills it: any environment fallback, or a refusal that does not name
+    the option or that sends the user to the variable. A second correct implementation under
+    which it still passes: rejecting the missing option at the typer layer as a required option,
+    since only the exit code, the named option and the absence of a call are asserted.
+    """
+    bundle = tmp_path / "rb"
+    bundle.mkdir()
+    rcfg = tmp_path / "reprex.yaml"
+    rcfg.write_text("x: 1\n")
+    env_hpc = tmp_path / "env_hpc.yaml"
+    env_hpc.write_text("x: 1\n")
+    monkeypatch.setenv("HHEMT_HPC_SYSTEM_CONFIG", str(env_hpc))
+    result = runner.invoke(app, ["reprex", "check", "--bundle", str(bundle), "--reprex-config", str(rcfg)])
+    assert result.exit_code == 2, result.output
+    assert "--hpc-system-config" in result.output, result.output
+    assert "HHEMT_HPC_SYSTEM_CONFIG" not in result.output, result.output
+    assert stub_check["reprex"] == []
 
 
 def test_reprex_check_without_any_hpc_profile_is_refused_by_name(tmp_path, stub_check, monkeypatch):
@@ -305,7 +324,6 @@ def test_reprex_check_without_any_hpc_profile_is_refused_by_name(tmp_path, stub_
     bundle.mkdir()
     rcfg = tmp_path / "reprex.yaml"
     rcfg.write_text("x: 1\n")
-    monkeypatch.delenv("HHEMT_HPC_SYSTEM_CONFIG", raising=False)
     result = runner.invoke(app, ["reprex", "check", "--bundle", str(bundle), "--reprex-config", str(rcfg)])
     assert result.exit_code == 2
     assert "--hpc-system-config" in result.output, result.output
@@ -332,7 +350,6 @@ def test_reprex_check_exit_code_reports_whether_the_bundle_fits(tmp_path, stub_c
     rcfg = tmp_path / "reprex.yaml"
     rcfg.write_text("x: 1\n")
     hpc = tmp_path / "hpc.yaml"
-    monkeypatch.delenv("HHEMT_HPC_SYSTEM_CONFIG", raising=False)
     result = runner.invoke(
         app, ["reprex", "check", "--bundle", str(bundle), "--reprex-config", str(rcfg), "--hpc-system-config", str(hpc)]
     )

@@ -1147,7 +1147,7 @@ def _resolve_family_baselines(df: pd.DataFrame, *, t_col: str, indep_col: str, g
     Implements the HARDWARE axis: CPU configs anchor on the serial-CPU run, and each GPU
     hardware token anchors on ITS OWN minimum-device run.
 
-    ``_config_diff`` and ``raw_resume_identity`` both implement the DEVICE-CLASS axis; the
+    ``_config_diff`` and ``raw_byte_identity`` both implement the DEVICE-CLASS axis; the
     divergence is the user's 2026-08-21 ruling, not drift. Collapsing GPU tokens HERE would
     anchor an a6000 run against an a100-80
     baseline and report a cross-hardware performance RATIO dressed as a scaling

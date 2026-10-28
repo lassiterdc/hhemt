@@ -85,8 +85,11 @@ def _generated_cfg_text(tmp_path: Path, monkeypatch) -> str:
                 toggle_use_constant_mannings=True,
                 constant_mannings=0.03,
                 triton_swmm_configuration_template=template,
+                TRITONSWMM_software_directory=None,
+                TRITONSWMM_branch_key=None,
             ),
             sys_paths=SimpleNamespace(dem_processed=work / "dem.asc", mannings_processed=work / "n.asc"),
+            log=SimpleNamespace(triton_head_sha=SimpleNamespace(get=lambda: None)),
         ),
         _analysis=SimpleNamespace(
             cfg_analysis=SimpleNamespace(
@@ -99,6 +102,7 @@ def _generated_cfg_text(tmp_path: Path, monkeypatch) -> str:
                 swmm_snapshot_disable=False,
                 swmm_snapshot_keep_all=False,
                 swmm_node_rim_from_dem=False,
+                one_coupled_inflow_node_per_dem_cell=False,
                 execution_environment="native",
             )
         ),

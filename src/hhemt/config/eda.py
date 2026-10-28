@@ -22,7 +22,10 @@ from hhemt.config.base import cfgBaseModel
 #: _figures_of). A RENAMED kind keeps rendering under its new stem; a DROPPED kind has no
 #: within-master replacement (F8: the clean-vs-resume result lives on the hhemt-combine
 #: cross_experiment_intercomparison surface). Add an entry when an EDA figure is retired.
-_EDA_RENAMES: dict[str, str] = {"eda_cross_sim_identity": "config_diff_maps"}
+_EDA_RENAMES: dict[str, str] = {
+    "eda_cross_sim_identity": "config_diff_maps",
+    "b4b_clean_identity": "raw_byte_identity",
+}
 _EDA_DROPS: frozenset[str] = frozenset({"b4b_clean_vs_resume"})
 #: Every retired FIGURE stem (rename originals + drops). The combine catch-all guard skips
 #: any plots/eda/{stem}.html whose stem is in this set so a no-wipe re-render never surfaces
@@ -37,12 +40,14 @@ class eda_config(cfgBaseModel):
     @model_validator(mode="before")
     @classmethod
     def _rewrite_legacy_eda_plot_kind(cls, data):
-        """One-cycle config-format compat: the config-diff EDA plot was renamed
-        eda_cross_sim_identity -> config_diff_maps (the on-disk figure stem +
-        _EDA_RENDERERS key). A pre-rename cfg_analysis.yaml (or a baked render
-        bundle) still carries enabled_plots: [eda_cross_sim_identity]. Rewrite
-        the legacy key to config_diff_maps with an actionable DeprecationWarning
-        so Bundle.eda() renders instead of raising the render_eda_plots
+        """One-cycle config-format compat for retired EDA plot kinds in enabled_plots.
+
+        A kind that is a key of _EDA_RENAMES was renamed, and is rewritten to the kind
+        it maps to (the on-disk figure stem + _EDA_RENDERERS key); a kind in _EDA_DROPS
+        has no within-master replacement, and is removed. A pre-rename
+        cfg_analysis.yaml (or a baked render bundle) can still carry a retired kind.
+        Rewriting it with an actionable DeprecationWarning, which names each rename
+        it applied, lets Bundle.eda() render instead of raising the render_eda_plots
         "unknown EDA plot kind" ValueError. Pure string rewrite on the raw dict
         (no _EDA_RENDERERS import) so no config->plotting dependency edge.
         Mirrors config/report.py::_rewrite_legacy_mode_key (Gotcha-45).
@@ -57,9 +62,10 @@ class eda_config(cfgBaseModel):
                 data = {**data, "enabled_plots": rewritten}
                 renamed = sorted({p for p in present_retired if p in _EDA_RENAMES})
                 dropped = sorted({p for p in present_retired if p in _EDA_DROPS})
+                applied = ", ".join(f"{p} -> {_EDA_RENAMES[p]}" for p in renamed)
                 warnings.warn(
                     "eda.enabled_plots carried retired EDA figure kind(s): "
-                    f"renamed {renamed} (eda_cross_sim_identity -> config_diff_maps); "
+                    f"renamed [{applied}]; "
                     f"dropped {dropped} (F8: no within-master replacement — the clean-vs-"
                     "resume result lives on the hhemt-combine cross_experiment_intercomparison "
                     "surface). The legacy keys are rewritten this cycle and will be rejected "
@@ -87,7 +93,7 @@ class eda_config(cfgBaseModel):
             "sensitivity_datatree.zarr). The dem-resolution family is the other "
             "shipped selection: dem_resolution_cost_error, dem_resolution_diff_maps, "
             "dem_resolution_error_ecdf, dem_resolution_coupling_table -- pair it with "
-            "report.reporting_set='dem-resolution' and a system.target_dem_resolution "
+            "report.reporting_set='dem_resolution' and a system.target_dem_resolution "
             "sweep. The two families are mutually exclusive per experiment: "
             "config_diff_maps requires a UNIFORM grid across members and raises "
             "a named ProcessingError on a mixed-resolution master. Membership is "

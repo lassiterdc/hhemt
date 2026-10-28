@@ -57,16 +57,19 @@ to a finished report.
 
 ## What it is for
 
-Three classes of study, from one codebase:
+Every analysis is one of two kinds, set by one switch in its configuration:
 
-- **Model comparison.** Run the same event through TRITON, SWMM, and the coupled
-  TRITON-SWMM, and measure what the two-way coupling changes.
-- **Ensemble flood studies.** Many events in parallel, consolidated into
+- **Event ensembles.** Many weather events in parallel, consolidated into
   hierarchical zarr stores with CF-1.13 metadata, ready for analysis across the
   whole population.
-- **Sensitivity analysis and benchmarking.** A parameter table turns each row into
-  a scenario, so you can vary the hydraulic model, roughness, grid resolution, or
-  the compute configuration itself.
+- **Sensitivity analyses.** A parameter table turns each row into a
+  [member](reference/glossary.md#member), a separate analysis, so
+  you can vary the hydraulic model, roughness, grid resolution, or the compute
+  configuration itself. Benchmarking is the sensitivity analysis whose axis is the
+  compute configuration.
+
+Either kind can run the same event through TRITON, SWMM, and the coupled
+TRITON-SWMM, so you can measure what the two-way coupling changes.
 
 [Capabilities](explanation/capabilities.md) covers each in depth, and
 [Limitations](explanation/limitations.md) is candid about where the toolkit stops.
@@ -75,7 +78,7 @@ Three classes of study, from one codebase:
 
 If you use hhemt in published work, cite it:
 
-```text
+``` { .text .copy }
 Lassiter, D. (2026). H&H Ensemble Modeling Toolkit (hhemt) (Version 0.1.0)
 [Computer software]. https://doi.org/10.5281/zenodo.21359152
 ```
@@ -110,5 +113,3 @@ machine-readable form, and GitHub renders it as a "Cite this repository" button.
   from configuring a run to publishing a dataset.
 - **[Reference](reference/index.md)**: the API surface, the config schema, and what
   the toolkit produces.
-- **[Explanation](explanation/index.md)**: why the design is what it is, and what it
-  can and cannot do.

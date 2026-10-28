@@ -70,8 +70,8 @@ def render_eda_plots(
         # _harvest_sources skip-with-warning precedent, Gotcha 50).
         backing_stem = _RENDERER_BACKING_ARTIFACT.get(kind, kind)
         artifact = root / "eda" / f"{backing_stem}.zarr"
-        # The b4b kinds are ALWAYS enumerated by the b4b ReportingSet (workflow.py /
-        # bundle snakefile_generator emit one report() target per template), and their
+        # The compute_config_byte_identity kinds are ALWAYS enumerated by the compute_config_byte_identity ReportingSet
+        # (workflow.py / bundle snakefile_generator emit one report() target per template), and their
         # renderer emits an honest-degradation panel on absent/degraded data, so they must
         # NOT be absence-skipped here — a skip yields "marked for report but does not exist".
         # Non-b4b conditional members keep the skip (a skipped calc member wrote no zarr).
@@ -363,7 +363,7 @@ def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_bound
         #
         # A stable sort on the is_reference key ONLY -- not a reversal, which would also
         # invert the non-reference ordering. Reference SELECTION is untouched: which config
-        # is the reference is decided upstream by eda/raw_resume_identity.py's
+        # is the reference is decided upstream by eda/raw_byte_identity.py's
         # `min(members, key=_b4b_ref_key)` per family (the EW-4 work), and this reorders
         # display only. `rows` is the single source for the y-labels, `ident` and `mrows`
         # alike, so one reorder propagates consistently to all three heatmaps.
@@ -550,7 +550,7 @@ def _render_b4b(
     show_boundaries: bool,
 ) -> Path:
     """Shared b4b render: reads eda/{stem}.zarr (written by
-    raw_resume_identity.check_raw_b4b) and emits a heatmap y=compute_config, x=timestep_min,
+    raw_byte_identity.check_raw_byte_identity) and emits a heatmap y=compute_config, x=timestep_min,
     z=all-raw-types-identical (AND-reduced over raw_output_type), or an explicit R10
     honest-degradation panel when the artifact's `degraded` attr is set. Declares its own
     eda/{stem}.zarr as the source (raw dirs fail _validate_source_path; the producer owns
@@ -561,7 +561,7 @@ def _render_b4b(
     plot_id = canonical_plot_id(stem)  # pass-through == stem
     artifact = root / "eda" / f"{plot_id}.zarr"
     output_path = root / "plots" / "eda" / f"{plot_id}.html"
-    # Absent-artifact guard (Gate-6 honest-degradation). check_raw_b4b writes this zarr on
+    # Absent-artifact guard (Gate-6 honest-degradation). check_raw_byte_identity writes this zarr on
     # every analysis.eda() run, so an absent artifact means the b4b calc member did not run
     # before this render (a bundle emitted before eda(), or a bundle-carriage gap where the
     # figure was not harvested). Emit the honest-degradation placeholder rather than letting
@@ -571,6 +571,24 @@ def _render_b4b(
         ds = None
         degraded = True
         reason = "raw byte-for-byte backing artifact absent (the b4b calc member did not run before this render)"
+        # A bundle emitted before this figure's stem was renamed carries its backing artifact
+        # under the predecessor's name, which this renderer no longer reads. The reason above
+        # is false there, because the calc member did run, so name the real cause instead.
+        # Deliberately keyed on the rename map's predecessors of THIS stem and NOT on
+        # config.eda._RETIRED_EDA_FIGURE_STEMS: that set also holds eda_cross_sim_identity,
+        # whose zarr is the live backing artifact of config_diff_maps on every master that
+        # ran eda(), so a whole-set test would blame the rename for an artifact merely absent.
+        from hhemt.config.eda import _EDA_RENAMES
+
+        predecessors = [
+            old for old, new in _EDA_RENAMES.items() if new == plot_id and (root / "eda" / f"{old}.zarr").exists()
+        ]
+        if predecessors:
+            reason = (
+                f"this bundle predates the renaming of {predecessors[0]} to {plot_id} and carries its "
+                "backing artifact under the old name; re-emit the bundle from its source analysis "
+                "with the current toolkit"
+            )
         da = None
     else:
         ds = xr.open_zarr(artifact, consolidated=False)
@@ -606,13 +624,13 @@ def _render_b4b(
     )
 
 
-def _render_b4b_clean_identity(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
+def _render_raw_byte_identity(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
     """Cross-hardware results comparison (b4b), reused per-family over each master's
-    own subs (serves both the clean and resume masters). Reads eda/b4b_clean_identity.zarr;
+    own subs (serves both the clean and resume masters). Reads eda/raw_byte_identity.zarr;
     R10 honest-degradation panel when raw outputs were cleared."""
     return _render_b4b(
         root,
-        stem="b4b_clean_identity",
+        stem="raw_byte_identity",
         title=("Per-timestep water-level byte-for-byte comparison vs the hardware-category reference"),
         baseline_caption=(
             "Alternate configurations are compared against their hardware category's "
@@ -657,10 +675,10 @@ def _fig_to_html(fig: go.Figure, *, plotly_js_mode: str) -> str:
 #: renderer-kind -> renderer function. Keys are the eda_-PREFIXED plot-IDs the calc
 #: members mint (compute_sensitivity.py:463,553,637); canonical_plot_id is a
 #: pass-through, so those keys ARE the on-disk eda/{key}.zarr stems. Do not unprefix.
-#: EDA kinds that are ALWAYS enumerated by their ReportingSet (the b4b family) and whose
+#: EDA kinds that are ALWAYS enumerated by their ReportingSet (the compute_config_byte_identity family) and whose
 #: renderer emits an honest-degradation panel on absent/degraded backing data. render_eda_plots
 #: MUST NOT absence-skip these, or an enumerated report() target goes unproduced (WorkflowError).
-_ALWAYS_EMIT_KINDS = frozenset({"b4b_clean_identity"})
+_ALWAYS_EMIT_KINDS = frozenset({"raw_byte_identity"})
 
 _EDA_RENDERERS = {
     "config_diff_maps": _render_config_diff_maps,
@@ -671,7 +689,7 @@ _EDA_RENDERERS = {
     "dem_resolution_diff_maps": _render_dem_resolution_diff_maps,
     "dem_resolution_error_ecdf": _render_dem_resolution_error_ecdf,
     "dem_resolution_coupling_table": _render_dem_resolution_coupling_table,
-    "b4b_clean_identity": _render_b4b_clean_identity,
+    "raw_byte_identity": _render_raw_byte_identity,
 }
 
 #: renderer-kind -> the on-disk eda/{stem}.zarr the kind's CALC member actually writes.
