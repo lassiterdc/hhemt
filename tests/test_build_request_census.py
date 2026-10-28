@@ -24,7 +24,7 @@ How it decides, in five rules.
    its body) to a file under ``tests/`` or the ``hhemt`` package, each walked once. The walk
    crosses into ``hhemt`` because a run is reached there through entry points named by none of
    the three attributes: ``hhemt run-experiment`` reaches ``tk.run(`` only inside
-   ``hhemt.experiment_bundle.run_experiment``.
+   ``hhemt.experiment_definition.run_experiment``.
 3. Covered. A node is covered when it carries the ``compile_tier`` marker, which
    ``tests/conftest.py::pytest_collection_modifyitems`` derives from ``tritonswmm_cpu_compiled``
    in the fixture closure. That derivation is read, not restated here.
@@ -211,7 +211,7 @@ _EXCUSES: tuple[_Excuse, ...] = (
     _Excuse(
         _STUBBED,
         "tests/test_cli_10_experiment_verbs.py",
-        'monkeypatch.setattr(eb, "build_case_from_bundle", _fake_build)',
+        'monkeypatch.setattr(eb, "build_case_from_definition", _fake_build)',
         (
             "tests/test_cli_10_experiment_verbs.py::test_test_analysis_calls_analysis_test_and_exits_on_its_outcome[all-ok]",
             "tests/test_cli_10_experiment_verbs.py::test_test_analysis_calls_analysis_test_and_exits_on_its_outcome[one-fails]",
@@ -220,7 +220,7 @@ _EXCUSES: tuple[_Excuse, ...] = (
     _Excuse(
         _STUBBED,
         "tests/test_cli_11_experiment_verb_output.py",
-        'monkeypatch.setattr(eb, "build_case_from_bundle", _fake_build)',
+        'monkeypatch.setattr(eb, "build_case_from_definition", _fake_build)',
         (
             "tests/test_cli_11_experiment_verb_output.py::test_printed_directory_is_the_one_returned[test-analysis-test-root]",
             "tests/test_cli_11_experiment_verb_output.py::test_printed_directory_survives_wrapping_and_emoji_codes[test-analysis-longer-than-80-columns]",
@@ -237,23 +237,23 @@ _EXCUSES: tuple[_Excuse, ...] = (
     ),
     _Excuse(
         _REFUSES,
-        "tests/test_experiment_bundle_runner.py",
+        "tests/test_experiment_definition_runner.py",
         'pytest.fail("gate should refuse before build")',
-        ("tests/test_experiment_bundle_runner.py::test_run_experiment_non_tty_refuses_override",),
+        ("tests/test_experiment_definition_runner.py::test_run_experiment_non_tty_refuses_override",),
     ),
     _Excuse(
         _STUBBED,
-        "tests/test_experiment_bundle_runner.py",
-        'monkeypatch.setattr(eb, "build_case_from_bundle", lambda *a, **k: _FakeTk())',
+        "tests/test_experiment_definition_runner.py",
+        'monkeypatch.setattr(eb, "build_case_from_definition", lambda *a, **k: _FakeTk())',
         (
-            "tests/test_experiment_bundle_runner.py::test_run_experiment_assume_yes_proceeds",
-            "tests/test_experiment_bundle_runner.py::test_run_experiment_wait_autodetect[None-False-12345-True]",
-            "tests/test_experiment_bundle_runner.py::test_run_experiment_wait_autodetect[None-False-None-False]",
-            "tests/test_experiment_bundle_runner.py::test_run_experiment_wait_autodetect[None-True-12345-False]",
-            "tests/test_experiment_bundle_runner.py::test_run_experiment_wait_autodetect[True-False-None-True]",
-            "tests/test_experiment_bundle_runner.py::test_run_experiment_wait_autodetect[False-False-12345-False]",
-            "tests/test_experiment_bundle_runner.py::test_run_experiment_threads_override_force_rerun_to_tk_run",
-            "tests/test_experiment_bundle_runner.py::test_run_experiment_forwards_mode_to_tk_run",
+            "tests/test_experiment_definition_runner.py::test_run_experiment_assume_yes_proceeds",
+            "tests/test_experiment_definition_runner.py::test_run_experiment_wait_autodetect[None-False-12345-True]",
+            "tests/test_experiment_definition_runner.py::test_run_experiment_wait_autodetect[None-False-None-False]",
+            "tests/test_experiment_definition_runner.py::test_run_experiment_wait_autodetect[None-True-12345-False]",
+            "tests/test_experiment_definition_runner.py::test_run_experiment_wait_autodetect[True-False-None-True]",
+            "tests/test_experiment_definition_runner.py::test_run_experiment_wait_autodetect[False-False-12345-False]",
+            "tests/test_experiment_definition_runner.py::test_run_experiment_threads_override_force_rerun_to_tk_run",
+            "tests/test_experiment_definition_runner.py::test_run_experiment_forwards_mode_to_tk_run",
         ),
     ),
     _Excuse(

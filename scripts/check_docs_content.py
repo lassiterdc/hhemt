@@ -108,7 +108,7 @@ FENCE = re.compile(r"^\s*(?:```|~~~)")
 # exactly as body text is. Both measured instances are of that shape:
 #   docs/how-to/synthetic-compute-sensitivity-experiment.md:57
 #       `# Scaffold: validate + build matrix + write the matrix CSV ...`
-#   docs/how-to/running-an-experiment-bundle.md:32
+#   docs/how-to/running-an-experiment-definition.md:32
 #       `uva: hpc/... # estate-relative (resolved against ... or the estate root)`
 # A fence-skipping word ban reports 3 of 4 `scaffold` sites and 1 of 3 `estate`
 # occurrences while reading as complete, which is the failure mode this comment
@@ -841,7 +841,7 @@ import yaml  # noqa: E402
 #     and all seven were published and unscanned.
 #   * It applied `__all__` to a module's OWN members. `mkdocstrings` applies
 #     `filters` to those and consults `__all__` only for IMPORTED names, so four
-#     `analysis.py` classes rendered unscanned while `experiment_bundle.py`'s
+#     `analysis.py` classes rendered unscanned while `experiment_definition.py`'s
 #     imported `ExperimentConfig` was scanned and rendered nowhere.
 #   * It keyed members by their ORIGIN module. The page keys them by the module
 #     the API pages declare them through, so 52 of 173 names -- every re-exported

@@ -158,33 +158,33 @@ def test_find_by_sha256_scans_manifests(tmp_path):
     assert find_by_sha256(tmp_path, "0" * 64) is None
 
 
-def test_build_sifs_experiment_id_is_the_bundle_directory_name(tmp_path, monkeypatch):
+def test_build_sifs_experiment_id_is_the_definition_directory_name(tmp_path, monkeypatch):
     import inspect
 
     from hhemt import cli
-    from hhemt.experiment_bundle import bundle_experiment_id, load_bundle
+    from hhemt.experiment_definition import experiment_definition_id, load_experiment_definition
 
-    bundle_dir = tmp_path / "my_experiment"
-    bundle_dir.mkdir()
-    (bundle_dir / "experiment.yaml").write_text(
+    definition_dir = tmp_path / "my_experiment"
+    definition_dir.mkdir()
+    (definition_dir / "experiment.yaml").write_text(
         "description: minimal\n"
         "system_config: configs/system.yaml\n"
         "analysis_config: configs/analysis.yaml\n"
         "toolkit_pin:\n  version: '0.1.0'\n"
     )
-    bundle = load_bundle(bundle_dir)
+    definition = load_experiment_definition(definition_dir)
     # Premise: the descriptor carries NO id field (extra='forbid'); reading one is the defect.
-    assert not hasattr(bundle, "experiment_id")
+    assert not hasattr(definition, "experiment_id")
     # Derivation: the containing directory's name, robust to a trailing slash and a relative '.'.
-    assert bundle_experiment_id(bundle_dir) == "my_experiment"
-    assert bundle_experiment_id(str(bundle_dir) + "/") == "my_experiment"
-    monkeypatch.chdir(bundle_dir)
-    assert bundle_experiment_id(".") == "my_experiment"
+    assert experiment_definition_id(definition_dir) == "my_experiment"
+    assert experiment_definition_id(str(definition_dir) + "/") == "my_experiment"
+    monkeypatch.chdir(definition_dir)
+    assert experiment_definition_id(".") == "my_experiment"
     # Binding: the CLI's --experiment arm constructs ExperimentInputs from that derivation, never
     # from a descriptor attribute (a source assertion — the arm needs loadable configs to run).
     src = inspect.getsource(cli.build_sifs_command)
-    assert "ExperimentInputs(bundle_experiment_id(exp_dir)" in src
-    assert "bundle.experiment_id" not in src
+    assert "ExperimentInputs(experiment_definition_id(exp_dir)" in src
+    assert "definition.experiment_id" not in src
 
 
 _HPC_BASE = "hpc_name: t\ndefault_account: a\npartitions:\n  p:\n    max_runtime: 60\n    cpus_per_node: 4\n"

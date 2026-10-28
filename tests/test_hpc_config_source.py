@@ -3,7 +3,7 @@
 The HPC config is chosen on the command line, never by a shell variable: a config picked up
 from the environment is not visible in the command that ran, so two people running the same
 command can end up on different clusters. These tests pin that for the two places that read
-it outside the bundle runner — the DOI emit/verify driver under ``scripts/experiments/`` and
+it outside the experiment-definition runner — the DOI emit/verify driver under ``scripts/experiments/`` and
 ``TRITON_SWMM_experiment._resolve_hpc_system_config``, which ``hhemt ingest`` reaches through
 ``from_doi``. Nothing here fetches a deposit, builds an image or runs a stage body; every arm
 calls the resolver or the argument parser directly.

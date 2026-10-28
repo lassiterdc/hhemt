@@ -280,14 +280,14 @@ def test_undocumented_symbols_sees_classmethods_and_properties(monkeypatch):
 #: ``__all__`` and were therefore read as declaring nothing.
 RULE_GAINED_QUALNAMES = frozenset(
     {
-        "hhemt.experiment_bundle.OverrideReport",
-        "hhemt.experiment_bundle.build_case_from_bundle",
-        "hhemt.experiment_bundle.expand_config_vars",
-        "hhemt.experiment_bundle.format_override_gate",
-        "hhemt.experiment_bundle.load_bundle",
-        "hhemt.experiment_bundle.resolve_hpc_system_config",
-        "hhemt.experiment_bundle.resolve_overrides",
-        "hhemt.experiment_bundle.run_experiment",
+        "hhemt.experiment_definition.OverrideReport",
+        "hhemt.experiment_definition.build_case_from_definition",
+        "hhemt.experiment_definition.expand_config_vars",
+        "hhemt.experiment_definition.format_override_gate",
+        "hhemt.experiment_definition.load_experiment_definition",
+        "hhemt.experiment_definition.resolve_hpc_system_config",
+        "hhemt.experiment_definition.resolve_overrides",
+        "hhemt.experiment_definition.run_experiment",
         "hhemt.synthetic_experiment.assert_coupling_nodes_distinct",
         "hhemt.synthetic_experiment.build_experiment_matrix",
         "hhemt.synthetic_experiment.dem_resolution_matrix_rows",
@@ -327,10 +327,10 @@ def test_the_rule_does_not_admit_imported_names():
     """
     expected = cac.expected_qualnames()
     for leaked in (
-        "hhemt.experiment_bundle.Path",
-        "hhemt.experiment_bundle.dataclass",
+        "hhemt.experiment_definition.Path",
+        "hhemt.experiment_definition.dataclass",
         "hhemt.synthetic_experiment.Path",
-        "hhemt.experiment_bundle.ConfigurationError",
+        "hhemt.experiment_definition.ConfigurationError",
     ):
         assert leaked not in expected, f"{leaked} is an imported name and must not be expected"
 

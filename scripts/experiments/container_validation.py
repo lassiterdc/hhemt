@@ -21,7 +21,7 @@ Run as ``python scripts/experiments/container_validation.py {cluster} {path to t
 cluster's hpc_system_config YAML}``; the script puts the repo root on ``sys.path`` itself, so
 ``tests/`` is importable however it is invoked. The
 real per-cluster deployment config (SIF path + account + partitions) comes ONLY from argv[2]:
-it is passed to ``hhemt.experiment_bundle.resolve_hpc_system_config`` as the override, and the
+it is passed to ``hhemt.experiment_definition.resolve_hpc_system_config`` as the override, and the
 resolver reads no environment variable, so a run without argv[2] exits naming it. NO
 git-tracked file is edited per run; the in-tree ``test_data/.../hpc_system_config_*.yaml``
 are copy-me templates the operator fills in once per cluster and passes as argv[2].
@@ -109,7 +109,7 @@ def build_case(
 
     The real deployment ``hpc_system_config`` (ContainerSpec SIF path + partition→hardware
     + account) is the file named by ``hpc_system_config_yaml`` (argv[2] when run as a script),
-    passed to ``hhemt.experiment_bundle.resolve_hpc_system_config`` as its override; with no
+    passed to ``hhemt.experiment_definition.resolve_hpc_system_config`` as its override; with no
     override the resolver raises, because it reads no environment variable. NO git-tracked
     file is edited per run. The SLURM account is the resolved config's ``default_account``,
     which the workflow reads from that file; a fail-fast rejects an unset or placeholder
@@ -119,7 +119,7 @@ def build_case(
         raise ValueError(f"cluster must be one of {sorted(_CLUSTER)}; got {cluster!r}")
     c = _CLUSTER[cluster]
     from hhemt.config.loaders import load_hpc_system_config
-    from hhemt.experiment_bundle import resolve_hpc_system_config
+    from hhemt.experiment_definition import resolve_hpc_system_config
 
     cfg_path = resolve_hpc_system_config(cluster, override=hpc_system_config_yaml)
     cfg_hpc = load_hpc_system_config(cfg_path)

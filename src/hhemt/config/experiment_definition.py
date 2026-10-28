@@ -1,6 +1,6 @@
-"""Pydantic model for the per-experiment bundle descriptor (`experiment.yaml`).
+"""Pydantic model for the experiment-definition descriptor (`experiment.yaml`).
 
-An experiment bundle is a self-describing directory in the private deployment
+An experiment definition is a self-describing directory in the private deployment
 estate. Its descriptor declares: the experiment's identity, the input datasets it
 needs (including datasets too large to git-track and not yet DOI-deposited), the
 per-cluster destinations those inputs must reach, the container that executes it,
@@ -33,7 +33,7 @@ class DatasetRef(BaseModel):
       ``/home/{user}/...`` value is meaningless to a third party AND trips the
       zero-user-info blocklist scan.
     - ``deposit`` declares the bytes are in-scope for the PUBLISH payload. Without
-      it, a descriptor that scrubs ``local_path`` produces a bundle that passes the
+      it, a descriptor that scrubs ``local_path`` produces an experiment definition that passes the
       zero-user-info gate and cannot be reproduced from.
 
     The ``doi``/``pid``/``host``/``sha256`` quartet mirrors ``CaseManifest``'s
@@ -43,7 +43,7 @@ class DatasetRef(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(description="Stable key for this input within the bundle.")
+    name: str = Field(description="Stable key for this input within the experiment definition.")
     local_path: str | None = Field(
         default=None,
         description=(
@@ -146,12 +146,12 @@ class ExperimentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     description: str = Field(description="One-line description.")
-    system_config: str = Field(description="Bundle-relative path to the system config YAML.")
-    analysis_config: str = Field(description="Bundle-relative path to the analysis config YAML.")
+    system_config: str = Field(description="Path to the system config YAML, relative to the definition directory.")
+    analysis_config: str = Field(description="Path to the analysis config YAML, relative to the definition directory.")
     hpc_system_config: dict[str, str] = Field(
         default_factory=dict,
         description=(
-            "Cluster-name -> hpc_system_config path: absolute, or relative to the bundle directory, "
+            "Cluster-name -> hpc_system_config path: absolute, or relative to the experiment definition directory, "
             "the directory holding experiment.yaml."
         ),
     )
@@ -167,6 +167,6 @@ class ExperimentConfig(BaseModel):
         if undepositable:
             raise ValueError(
                 f"inputs {undepositable!r} are neither deposited nor DOI-resolvable — "
-                "a third party could not obtain them, so the bundle is not reproducible."
+                "a third party could not obtain them, so the experiment definition is not reproducible."
             )
         return self

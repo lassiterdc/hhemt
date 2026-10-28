@@ -18,7 +18,7 @@ import yaml
 from typer.testing import CliRunner
 
 import hhemt.cli as cli
-import hhemt.experiment_bundle as eb
+import hhemt.experiment_definition as eb
 from hhemt.cli import app
 from hhemt.exceptions import ConfigurationError
 
@@ -57,7 +57,7 @@ def fake_case(monkeypatch, tmp_path: Path):
         raise ConfigurationError(field="override_in_flight", message="live SLURM jobs in flight")
 
     analysis = SimpleNamespace(analysis_paths=SimpleNamespace(analysis_dir=analysis_dir), delete=_delete)
-    monkeypatch.setattr(eb, "build_case_from_bundle", lambda *a, **k: SimpleNamespace(analysis=analysis))
+    monkeypatch.setattr(eb, "build_case_from_definition", lambda *a, **k: SimpleNamespace(analysis=analysis))
     monkeypatch.setattr(cli, "_print_delete_dry_run_summary", lambda _analysis: None)
     return delete_calls, analysis_dir, analysis
 

@@ -1,8 +1,8 @@
-"""Descriptor-driven experiment-bundle runner.
+"""Descriptor-driven experiment-definition runner.
 
-An experiment bundle is a directory whose ``experiment.yaml`` names the system config,
+An experiment definition is a directory whose ``experiment.yaml`` names the system config,
 the analysis config, and a per-cluster ``hpc_system_config``. This module turns one
-bundle into a run: load and validate the descriptor, refuse any CLI argument that would
+definition into a run: load and validate the descriptor, refuse any CLI argument that would
 silently override it, build the analysis, and run it.
 
 It follows the same split as the ``synthetic_experiment.py`` +
@@ -22,7 +22,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from hhemt.config.experiment_bundle import ExperimentConfig
+from hhemt.config.experiment_definition import ExperimentConfig
 from hhemt.exceptions import ConfigurationError
 from hhemt.orchestration import RunMode
 
@@ -40,8 +40,8 @@ def resolve_hpc_system_config(
     cluster: str,
     *,
     override: str | Path | None = None,
-    bundle: ExperimentConfig | None = None,
-    bundle_dir: str | Path | None = None,
+    definition: ExperimentConfig | None = None,
+    definition_dir: str | Path | None = None,
 ) -> Path:
     """Resolve the operator's REAL ``hpc_system_config`` path for ``cluster``.
 
@@ -49,10 +49,10 @@ def resolve_hpc_system_config(
 
     Two sources, highest first, and nothing else:
       1. explicit ``override`` (the ``--hpc-system-config`` CLI argument).
-      2. the bundle's declared ``hpc_system_config[cluster]``: absolute, or relative to the
-         bundle directory itself (the folder holding ``experiment.yaml``), so the entry
-         means the file beside the descriptor wherever the bundle sits, and nothing above
-         it is searched. With no ``bundle_dir``, a relative entry resolves against the
+      2. the experiment definition's declared ``hpc_system_config[cluster]``: absolute, or relative to the
+         definition directory itself (the folder holding ``experiment.yaml``), so the entry
+         means the file beside the descriptor wherever the experiment definition sits, and nothing above
+         it is searched. With no ``definition_dir``, a relative entry resolves against the
          working directory.
 
     With neither, this raises ``ConfigurationError`` naming both. Environment variables are
@@ -61,14 +61,14 @@ def resolve_hpc_system_config(
     """
     if override:
         path = Path(override).expanduser()
-    elif bundle is not None and cluster in bundle.hpc_system_config:
-        declared = Path(bundle.hpc_system_config[cluster]).expanduser()
+    elif definition is not None and cluster in definition.hpc_system_config:
+        declared = Path(definition.hpc_system_config[cluster]).expanduser()
         if declared.is_absolute():
             path = declared
         else:
-            # Relative to the bundle directory itself (never a parent of it); the working
-            # directory only when the caller gives no bundle_dir.
-            root = Path(bundle_dir).expanduser().resolve() if bundle_dir is not None else Path.cwd()
+            # Relative to the experiment definition directory itself (never a parent of it); the working
+            # directory only when the caller gives no definition_dir.
+            root = Path(definition_dir).expanduser().resolve() if definition_dir is not None else Path.cwd()
             path = root / declared
     else:
         raise ConfigurationError(
@@ -92,26 +92,26 @@ def resolve_hpc_system_config(
     return path.resolve()
 
 
-def bundle_experiment_id(bundle_dir: str | Path) -> str:
-    """The experiment's identity is the bundle directory's NAME (by convention: an experiment
+def experiment_definition_id(definition_dir: str | Path) -> str:
+    """The experiment's identity is the experiment definition directory's NAME (by convention: an experiment
     descriptor carries no id field — `ExperimentConfig` is `extra="forbid"` — and the directory
     that holds `experiment.yaml` is what names it). Resolved first so a trailing slash or a
     relative `.` still yields the real directory name."""
-    return Path(bundle_dir).resolve().name
+    return Path(definition_dir).resolve().name
 
 
-def load_bundle(bundle_dir: str | Path) -> ExperimentConfig:
-    """Load and validate `{bundle_dir}/experiment.yaml`.
+def load_experiment_definition(definition_dir: str | Path) -> ExperimentConfig:
+    """Load and validate `{definition_dir}/experiment.yaml`.
 
     Raises ConfigurationError (CLI exit 2) on absence or schema violation.
     """
     import yaml
 
-    manifest = Path(bundle_dir) / "experiment.yaml"
+    manifest = Path(definition_dir) / "experiment.yaml"
     if not manifest.is_file():
         raise ConfigurationError(
             field="experiment.yaml",
-            message=f"No experiment.yaml in bundle directory {bundle_dir}.",
+            message=f"No experiment.yaml in definition directory {definition_dir}.",
             config_path=manifest,
         )
     try:
@@ -170,7 +170,7 @@ def expand_config_vars(cfg_path: str | Path, *, dest_dir: str | Path | None = No
     return resolved
 
 
-def resolve_overrides(bundle: ExperimentConfig, cli_args: dict[str, object]) -> list[OverrideReport]:
+def resolve_overrides(definition: ExperimentConfig, cli_args: dict[str, object]) -> list[OverrideReport]:
     """Return every field where a CLI argument differs from the descriptor.
 
     An empty list means the CLI adds nothing the descriptor does not already say —
@@ -186,7 +186,7 @@ def resolve_overrides(bundle: ExperimentConfig, cli_args: dict[str, object]) -> 
     cluster = cli_args.get("cluster")
     cli_hpc = cli_args.get("hpc_system_config_yaml")
     if cli_hpc is not None and cluster is not None:
-        declared = bundle.hpc_system_config.get(str(cluster))
+        declared = definition.hpc_system_config.get(str(cluster))
         if declared is not None and str(declared) != str(cli_hpc):
             reports.append(
                 OverrideReport(
@@ -258,17 +258,17 @@ def _confirm_override_gate(reports: list[OverrideReport], *, assume_yes: bool) -
         )
 
 
-def build_case_from_bundle(
-    bundle: ExperimentConfig,
-    bundle_dir: str | Path,
+def build_case_from_definition(
+    definition: ExperimentConfig,
+    definition_dir: str | Path,
     cluster: str,
     *,
     hpc_system_config_yaml: str | Path | None = None,
 ):
-    """Construct the analysis for `bundle` on `cluster`.
+    """Construct the analysis for `definition` on `cluster`.
 
     Generalizes ``container_validation.py::build_case`` with NO hardcoded cluster map:
-    ``bundle.hpc_system_config[cluster]`` names the per-cluster ``hpc_system_config``
+    ``definition.hpc_system_config[cluster]`` names the per-cluster ``hpc_system_config``
     file, not a module-level dict. That resolved file is handed whole to
     ``Toolkit.from_configs``; this function itself reads only its ``default_account``
     and ``container`` fields, for the two guards below.
@@ -276,14 +276,16 @@ def build_case_from_bundle(
     Carries the same two fail-fast guards as that script, raising ``ConfigurationError``
     where the script raises ``ValueError``: a ``default_account`` that is unset or still a
     ``{your-...}`` placeholder raises; a missing or placeholder ``container.sif_root``
-    raises when the bundle declares a container (the script checks it unconditionally). Config
+    raises when the experiment definition declares a container (the script checks it unconditionally). Config
     resolution is NON-MUTATING — it reads the deployment config, never edits a tracked file.
     """
     from hhemt.config.loaders import load_hpc_system_config
     from hhemt.toolkit import Toolkit
 
-    bundle_dir = Path(bundle_dir)
-    cfg_path = resolve_hpc_system_config(cluster, override=hpc_system_config_yaml, bundle=bundle, bundle_dir=bundle_dir)
+    definition_dir = Path(definition_dir)
+    cfg_path = resolve_hpc_system_config(
+        cluster, override=hpc_system_config_yaml, definition=definition, definition_dir=definition_dir
+    )
     cfg_hpc = load_hpc_system_config(cfg_path)
 
     account = cfg_hpc.default_account or ""
@@ -296,19 +298,19 @@ def build_case_from_bundle(
             ),
             config_path=cfg_path,
         )
-    if bundle.container is not None:
+    if definition.container is not None:
         if cfg_hpc.container is None or "{your-" in (cfg_hpc.container.sif_root or ""):
             raise ConfigurationError(
                 field="container.sif_root",
                 message=(
                     f"{cfg_path}: container.sif_root is missing or still a placeholder, but the "
-                    "bundle declares a container. Set it to the directory `hhemt build-sifs` writes into."
+                    "definition declares a container. Set it to the directory `hhemt build-sifs` writes into."
                 ),
                 config_path=cfg_path,
             )
 
     # Expand ${VAR} placeholders (${DATA_DIR}/${SCRATCH_DIR}/${PACKAGE_DIR}/${HHEMT_*})
-    # in the two bundle-relative configs before from_configs — the loader does expanduser
+    # in the two definition-relative configs before from_configs — the loader does expanduser
     # but not expandvars, so an unexpanded placeholder fails the config-load path-existence
     # check (cfgBaseModel._check_paths_exist) with a ConfigurationError, before any preflight.
     # The hpc config path is passed through unmodified: resolve_hpc_system_config took it from
@@ -316,14 +318,14 @@ def build_case_from_bundle(
     # entry and returned it absolute, and its contents are operator-filled real values, so no
     # ${VAR} expansion is applied to it.
     return Toolkit.from_configs(
-        system_config=expand_config_vars(bundle_dir / bundle.system_config),
-        analysis_config=expand_config_vars(bundle_dir / bundle.analysis_config),
+        system_config=expand_config_vars(definition_dir / definition.system_config),
+        analysis_config=expand_config_vars(definition_dir / definition.analysis_config),
         hpc_system_config=cfg_path,
     )
 
 
 def run_experiment(
-    bundle_dir: str | Path,
+    definition_dir: str | Path,
     cluster: str,
     *,
     dry_run: bool = False,
@@ -345,14 +347,14 @@ def run_experiment(
     the CLI refuses an unknown value at parse time and ``Toolkit.run`` refuses one at the
     reduction site, so no third check lives here.
 
-    override_force_rerun: per-invocation override of the bundle analysis config's
+    override_force_rerun: per-invocation override of the experiment definition's analysis config's
     ``force_rerun`` (``"all"``, ``"none"``, or a subject dict), threaded untouched into
     ``Toolkit.run``. None, the default, reads the config field. This is the honest route to
     re-running completed scenarios without a wipe; it is a knob, not a mode.
 
     debug: the run's debug flag, threaded untouched into ``Toolkit.run``. Named here rather
     than left to ``**cli_overrides`` because it is a run argument, not a config override, and
-    ``resolve_overrides`` would otherwise compare it against the bundle's configs. Today it does
+    ``resolve_overrides`` would otherwise compare it against the experiment definition's configs. Today it does
     one thing: a coupled clean start asks the solver to keep the previous run's snapshot files.
 
     The override gate: if `resolve_overrides` returns a non-empty
@@ -361,19 +363,19 @@ def run_experiment(
     source — silently preferring the CLI is how a bare `run_mode=gpu` ran a CUDA-only
     build in CPU mode.
     """
-    bundle_dir = Path(bundle_dir)
-    bundle = load_bundle(bundle_dir)
+    definition_dir = Path(definition_dir)
+    definition = load_experiment_definition(definition_dir)
 
     cli_args: dict[str, object] = {
         "cluster": cluster,
         "hpc_system_config_yaml": hpc_system_config_yaml,
         **cli_overrides,
     }
-    reports = resolve_overrides(bundle, cli_args)
+    reports = resolve_overrides(definition, cli_args)
     if reports:
         _confirm_override_gate(reports, assume_yes=assume_yes)
 
-    tk = build_case_from_bundle(bundle, bundle_dir, cluster, hpc_system_config_yaml=hpc_system_config_yaml)
+    tk = build_case_from_definition(definition, definition_dir, cluster, hpc_system_config_yaml=hpc_system_config_yaml)
     # Resolve the batch_job wait contract. A batch_job run launches a DETACHED tmux
     # orchestrator whose tmux-server lifetime is bounded by the node it runs on.
     # Inside an sbatch allocation ($SLURM_JOB_ID set) the tmux dies when the allocation

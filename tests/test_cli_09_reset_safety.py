@@ -8,7 +8,7 @@ passed. A `reset` that skipped the prompt, or that hard-coded the override, woul
 mid-run with every cluster-resolution test still green, because those tests stub `delete`.
 
 Nothing here builds an analysis, reaches Snakemake, compiles or simulates: `reset`'s case
-builder is replaced at its module seam (`hhemt.experiment_bundle.build_case_from_bundle`,
+builder is replaced at its module seam (`hhemt.experiment_definition.build_case_from_definition`,
 imported inside the verb body) by a recorder whose `delete` records its keyword arguments and
 removes a real temporary directory, so a deletion that should not happen is observable on disk.
 """
@@ -23,7 +23,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-import hhemt.experiment_bundle as eb
+import hhemt.experiment_definition as eb
 from hhemt.cli import app
 from hhemt.exceptions import ConfigurationError
 
@@ -31,9 +31,9 @@ runner = CliRunner()
 
 
 @pytest.fixture
-def bundle(tmp_path: Path) -> Path:
-    """A schema-valid bundle declaring one cluster, so `--cluster` may be omitted."""
-    root = tmp_path / "bundle"
+def definition(tmp_path: Path) -> Path:
+    """A schema-valid definition declaring one cluster, so `--cluster` may be omitted."""
+    root = tmp_path / "definition"
     root.mkdir()
     descriptor = {
         "description": "reset-safety fixture",
@@ -64,11 +64,11 @@ def fake_case(monkeypatch, tmp_path: Path):
             raise ConfigurationError(field="override_in_flight", message="live SLURM jobs in flight")
         shutil.rmtree(analysis_dir)
 
-    def _build(bundle, bundle_dir, cluster, **kwargs):
+    def _build(definition, definition_dir, cluster, **kwargs):
         analysis = SimpleNamespace(analysis_paths=SimpleNamespace(analysis_dir=analysis_dir), delete=_delete)
         return SimpleNamespace(analysis=analysis)
 
-    monkeypatch.setattr(eb, "build_case_from_bundle", _build)
+    monkeypatch.setattr(eb, "build_case_from_definition", _build)
     return delete_calls, analysis_dir
 
 
@@ -80,7 +80,7 @@ def fake_case(monkeypatch, tmp_path: Path):
     ],
 )
 def test_reset_forwards_the_in_flight_guard(
-    bundle, fake_case, extra, expect_override, expect_exit, expect_tree_survives
+    definition, fake_case, extra, expect_override, expect_exit, expect_tree_survives
 ):
     """Property: `reset` hands `delete` exactly the in-flight override the user typed.
 
@@ -96,7 +96,7 @@ def test_reset_forwards_the_in_flight_guard(
     """
     delete_calls, analysis_dir = fake_case
 
-    result = runner.invoke(app, ["reset", "--experiment", str(bundle), "--yes", *extra])
+    result = runner.invoke(app, ["reset", "--experiment", str(definition), "--yes", *extra])
 
     assert result.exit_code == expect_exit, result.output
     assert analysis_dir.exists() is expect_tree_survives
@@ -113,7 +113,7 @@ def test_reset_forwards_the_in_flight_guard(
     ],
 )
 def test_reset_without_yes_deletes_only_after_confirmation(
-    bundle, fake_case, answer, expect_exit, expect_delete_called
+    definition, fake_case, answer, expect_exit, expect_delete_called
 ):
     """Property: without `--yes`, `reset` deletes nothing unless the user answers yes.
 
@@ -127,7 +127,7 @@ def test_reset_without_yes_deletes_only_after_confirmation(
     """
     delete_calls, analysis_dir = fake_case
 
-    result = runner.invoke(app, ["reset", "--experiment", str(bundle), "--override-in-flight"], input=answer)
+    result = runner.invoke(app, ["reset", "--experiment", str(definition), "--override-in-flight"], input=answer)
 
     if expect_delete_called:
         assert result.exit_code == expect_exit, result.output

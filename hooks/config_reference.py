@@ -249,7 +249,7 @@ ENTRY_CONFIGS = (
     "hhemt.config.analysis:analysis_config",
     "hhemt.config.hpc_system:hpc_system_config",
     "hhemt.config.sif_build:sif_build_config",
-    "hhemt.config.experiment_bundle:ExperimentConfig",
+    "hhemt.config.experiment_definition:ExperimentConfig",
     "hhemt.config.reprex_config:reprex_config",
 )
 
@@ -364,7 +364,7 @@ def _nested_section(already: tuple[type, ...]) -> str:
 
 def _render() -> str:
     from hhemt.config.analysis import analysis_config
-    from hhemt.config.experiment_bundle import ExperimentConfig
+    from hhemt.config.experiment_definition import ExperimentConfig
     from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
     from hhemt.config.reprex_config import reprex_config
     from hhemt.config.sif_build import sif_build_config
@@ -434,7 +434,7 @@ def _render() -> str:
         "",
         "## Experiment descriptor",
         "",
-        "The `experiment.yaml` at the root of an experiment bundle: it names the configs",
+        "The `experiment.yaml` at the root of an experiment definition: it names the configs",
         "the run uses, the datasets it consumes, and the toolkit release it is pinned to,",
         "so a third party can obtain everything the run needed.",
         "",

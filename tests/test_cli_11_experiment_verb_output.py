@@ -9,9 +9,9 @@ dropped -- a rule token such as `[run_tritonswmm]`, or a directory named `[draft
 from the output with no error. Both leave the verb exiting 0 with the wrong text on screen.
 
 Nothing here builds an analysis, reaches Snakemake, compiles or simulates: the experiment
-build is replaced at `hhemt.experiment_bundle.build_case_from_bundle`, which every
+build is replaced at `hhemt.experiment_definition.build_case_from_definition`, which every
 `--experiment` verb reaches through `hhemt.cli.build_experiment_analysis`, by a stub whose
-facades return fixed values. The bundle's `experiment.yaml` is real, so the shared cluster
+facades return fixed values. The experiment definition's `experiment.yaml` is real, so the shared cluster
 resolver runs for real.
 """
 
@@ -24,7 +24,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-import hhemt.experiment_bundle as eb
+import hhemt.experiment_definition as eb
 from hhemt.cli import app
 from hhemt.orchestration import PhaseStatus, WorkflowStatus
 
@@ -38,8 +38,8 @@ _RULE_TOKEN_ITEM = "evt-3 [run_tritonswmm]"
 
 @pytest.fixture
 def experiment(tmp_path):
-    """A schema-valid experiment bundle declaring ONE cluster, so `--cluster` may be omitted."""
-    root = tmp_path / "bundle"
+    """A schema-valid experiment definition declaring ONE cluster, so `--cluster` may be omitted."""
+    root = tmp_path / "definition"
     root.mkdir()
     descriptor = {
         "description": "verb-output fixture",
@@ -77,7 +77,7 @@ def _status() -> WorkflowStatus:
 def stub_build(monkeypatch):
     """Replace the experiment build with an analysis whose facades return fixed values."""
 
-    def _fake_build(bundle, bundle_dir, cluster, **kwargs):
+    def _fake_build(definition, definition_dir, cluster, **kwargs):
         analysis = SimpleNamespace(
             cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=False),
             get_workflow_status=_status,
@@ -89,7 +89,7 @@ def stub_build(monkeypatch):
         )
         return SimpleNamespace(analysis=analysis)
 
-    monkeypatch.setattr(eb, "build_case_from_bundle", _fake_build)
+    monkeypatch.setattr(eb, "build_case_from_definition", _fake_build)
 
 
 def test_status_prints_the_status_report_not_a_field_dump(experiment, stub_build):
@@ -153,7 +153,7 @@ def stub_build_at(monkeypatch):
     """Like `stub_build`, but the returned directories sit under a root the test chooses."""
     chosen: dict = {}
 
-    def _fake_build(bundle, bundle_dir, cluster, **kwargs):
+    def _fake_build(definition, definition_dir, cluster, **kwargs):
         root = chosen["root"]
         analysis = SimpleNamespace(
             cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=False),
@@ -165,7 +165,7 @@ def stub_build_at(monkeypatch):
         )
         return SimpleNamespace(analysis=analysis)
 
-    monkeypatch.setattr(eb, "build_case_from_bundle", _fake_build)
+    monkeypatch.setattr(eb, "build_case_from_definition", _fake_build)
     return chosen
 
 

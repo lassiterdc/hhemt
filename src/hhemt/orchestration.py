@@ -1,6 +1,6 @@
 """Shared vocabulary for launching a TRITON-SWMM workflow and reporting on it.
 
-The ``hhemt run-experiment`` CLI, the ``Toolkit`` facade and the experiment-bundle
+The ``hhemt run-experiment`` CLI, the ``Toolkit`` facade and the experiment-definition
 runner accept the same run modes, and ``TRITONSWMM_analysis.run()`` and the
 ``Toolkit`` hand back the same result and status objects. ``run()`` itself takes a
 ``from_scratch`` flag rather than a mode and expands it with ``translate_mode``.
@@ -35,7 +35,7 @@ class RunMode(StrEnum):
 
     ONE declaration read by every layer that accepts a ``mode``: the ``hhemt run-experiment``
     ``--mode`` option (Typer renders the members as the choice set and refuses anything else
-    at parse time), ``experiment_bundle.run_experiment``, ``Toolkit.run`` (whose
+    at parse time), ``experiment_definition.run_experiment``, ``Toolkit.run`` (whose
     ``RunMode(mode)`` call is the runtime guard for a notebook caller passing the bare word),
     ``WorkflowStatus.recommended_mode`` and ``translate_mode``. Members are ``str``, so
     ``mode == "fresh"``, dict lookup by the bare string, f-strings and JSON all keep working.

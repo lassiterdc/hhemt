@@ -17,7 +17,7 @@ class ExperimentInputs:
     cfg_system: object
     cfg_analysis: object
     cfg_hpc_target: object
-    toolkit_pin_sha: str | None  # ExperimentBundle.toolkit_pin resolved to a sha, or None for raw triplets
+    toolkit_pin_sha: str | None  # ExperimentConfig.toolkit_pin resolved to a sha, or None for raw triplets
 
 
 @dataclass

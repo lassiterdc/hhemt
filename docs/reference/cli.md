@@ -22,7 +22,7 @@ Pass it as `--hpc-system-config`. See
 | Command | What it does |
 |---|---|
 | `run` | Execute the workflow from a system + analysis config. The main entry point. `--dry-run` validates and prints the plan without executing. In native mode the solver must already be compiled; see [Compile the solver](../how-to/compiling-the-solver.md). In container mode, `--build-sifs` builds any missing image inside this run's driver before submitting; alongside it, `--sif-build-config` names the build venue and resources, `--force-sif-rebuild` rebuilds the planned identities even when present, and `--no-wait` builds and verifies without submitting the experiment. Those three do nothing on their own. See [Building container images](../how-to/building-container-images.md). Resume is the default mode, so an interrupted run picks up where it stopped without any flag; `--from-scratch` clears the run's artifacts and starts fresh, and `--overwrite` re-runs every simulation without clearing anything (shorthand for `--override-force-rerun all`). `--status` prints the workflow's status report and exits without running anything. |
-| `run-experiment` | Run a self-describing experiment bundle: a directory whose `experiment.yaml` names its own configs, inputs, and toolkit pin. See [Running an experiment bundle](../how-to/running-an-experiment-bundle.md). |
+| `run-experiment` | Run a self-describing experiment definition: a directory whose `experiment.yaml` names its own configs, inputs, and toolkit pin. See [Running an experiment definition](../how-to/running-an-experiment-definition.md). |
 | `reprocess` | Re-run the downstream stages (process → consolidate → render) against simulation outputs that already exist, without re-running the simulations. This is the command for "the results are fine but the report is wrong". |
 
 **A run refuses to submit while another orchestration driver may still be alive.**
@@ -42,7 +42,7 @@ way and exposes no override.
 
 | Command | What it does |
 |---|---|
-| `status` | Print an experiment's status report: how far its workflow has got, phase by phase, and which simulations failed. `hhemt status --experiment {bundle dir}`, with `--cluster` optional when the bundle declares one cluster. Reads logs and outputs; submits nothing and changes nothing. |
+| `status` | Print an experiment's status report: how far its workflow has got, phase by phase, and which simulations failed. `hhemt status --experiment {definition dir}`, with `--cluster` optional when the experiment definition declares one cluster. Reads logs and outputs; submits nothing and changes nothing. |
 | `eda` | Run the in-process EDA loop (calc → plots → notebook). Always writes the seeded notebook; the `eda_report/eda_report.html` export is best-effort and is skipped with a warning when the notebook cannot be executed (no `python3` kernel, a cell error, a timeout). The notebook is the source of truth. |
 | `bundle` | Emit a portable render bundle so you can iterate on report renderers locally instead of on the cluster. Not a workflow rule, so it has no toolkit walltime: runtime scales with the number of files the figures declared (a fully-declared zarr store contributes every chunk file; a metadata-only store contributes only its metadata documents). Prefer a login-node `tmux` session over an `sbatch` with a guessed time limit. |
 | `report-from-bundle` | Render a report from an existing bundle. |
@@ -53,8 +53,8 @@ way and exposes no override.
 
 | Command | What it does |
 |---|---|
-| `publish` | Deposit an experiment's outputs to a DOI-minting repository: `hhemt publish --experiment {bundle dir} --target {zenodo or hydroshare}`. By default the deposit is the analysis-directory set (consolidated results, provenance record and the two configs); `--reprex-bundle` deposits the round-trippable reprex bundle instead, and only that form accepts `--exclude-config` and `--container-def`. The dataset license is read from the analysis config. |
-| `reprex` | Two subcommands. `reprex emit --experiment {bundle dir}` writes the experiment's reprex bundle and prints the directory it wrote. `reprex check --bundle {reprex bundle dir} --reprex-config {file} --hpc-system-config {file}` checks whether a reprex bundle can run on your cluster and prints what to amend; your cluster's HPC settings come from `--hpc-system-config`, which is required. `reprex check` exits 0 when the bundle fits your cluster, 1 when it does not, and 2 or above when the check could not run. |
+| `publish` | Deposit an experiment's outputs to a DOI-minting repository: `hhemt publish --experiment {definition dir} --target {zenodo or hydroshare}`. By default the deposit is the analysis-directory set (consolidated results, provenance record and the two configs); `--reprex-bundle` deposits the round-trippable reprex bundle instead, and only that form accepts `--exclude-config` and `--container-def`. The dataset license is read from the analysis config. |
+| `reprex` | Two subcommands. `reprex emit --experiment {definition dir}` writes the experiment's reprex bundle and prints the directory it wrote. `reprex check --bundle {reprex bundle dir} --reprex-config {file} --hpc-system-config {file}` checks whether a reprex bundle can run on your cluster and prints what to amend; your cluster's HPC settings come from `--hpc-system-config`, which is required. `reprex check` exits 0 when the bundle fits your cluster, 1 when it does not, and 2 or above when the check could not run. |
 | `ingest` | Fetch a published reprex bundle by DOI or PID, reconstitute it, and print the runnable configs. The consume half of the DOI round-trip. |
 | `build-sifs` | Build every Apptainer SIF an experiment's matrix requires, addressed by identity (toolkit commit, TRITON pin, family recipe, base image); `--dry-run` prints the identity table without building. |
 
@@ -73,7 +73,7 @@ safe to inspect first: each has a listing mode before it has a deleting mode.
 | Command | What it does |
 |---|---|
 | `delete` | Delete an entire analysis tree by dispatching per-scenario Snakemake delete jobs. **Not `rm -rf`-equivalent**: it refuses by default while any simulation is in flight. Use `--dry-run` first. |
-| `reset` | Delete an experiment's whole analysis tree so its next run starts from nothing: `hhemt reset --experiment {bundle dir} --yes`, with `--cluster` optional when the bundle declares one cluster and required when it declares none or several. It runs the same distributed delete as `delete`, so it refuses while simulations are in flight. Without `--yes` it asks for confirmation. `--dry-run` prints the same per-scenario disk preview as `delete --dry-run` and deletes nothing. A reset is a command and never a config field. |
+| `reset` | Delete an experiment's whole analysis tree so its next run starts from nothing: `hhemt reset --experiment {definition dir} --yes`, with `--cluster` optional when the experiment definition declares one cluster and required when it declares none or several. It runs the same distributed delete as `delete`, so it refuses while simulations are in flight. Without `--yes` it asks for confirmation. `--dry-run` prints the same per-scenario disk preview as `delete --dry-run` and deletes nothing. A reset is a command and never a config field. |
 | `cleanup-orphans` | List or delete member directories orphaned by an edit to the sensitivity spreadsheet. |
 | `cleanup-stale-metadata` | List or delete orphaned `.snakemake/metadata/` records left by past rule-output renames. |
 | `cleanup-orphan-delete-sentinels` | Clear known-dead orphan delete sentinels left by killed delete workers. |
@@ -84,7 +84,7 @@ safe to inspect first: each has a listing mode before it has a deleting mode.
 | Command | What it does |
 |---|---|
 | `synth-experiment` | Load-smoke a synthetic compute-config experiment: validate the config and build the partition-as-axis matrix. `--dry-run` writes nothing. See [Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md). |
-| `test` | Run a test campaign against a chosen SUBJECT. Two subjects: `toolkit`, the toolkit's own pytest suite run as a scheduler array (see the subsection below), and `analysis`, one end-to-end smoke run of YOUR experiment on its own cluster: `hhemt test analysis --experiment {bundle dir}`, with `--cluster` optional when the bundle declares one cluster. `test analysis` submits real work, exits `3` when any representative reports failure, and takes no further subcommand. |
+| `test` | Run a test campaign against a chosen SUBJECT. Two subjects: `toolkit`, the toolkit's own pytest suite run as a scheduler array (see the subsection below), and `analysis`, one end-to-end smoke run of YOUR experiment on its own cluster: `hhemt test analysis --experiment {definition dir}`, with `--cluster` optional when the experiment definition declares one cluster. `test analysis` submits real work, exits `3` when any representative reports failure, and takes no further subcommand. |
 
 ### `hhemt test toolkit`
 
