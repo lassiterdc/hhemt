@@ -1482,13 +1482,20 @@ def reset_command(
         "-y",
         help="Skip the interactive confirmation prompt (use for scripted invocation).",
     ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print what would be deleted (count of scenarios / members + disk size estimate) "
+        "without deleting anything.",
+    ),
 ):
     """Delete an experiment's whole analysis tree, so its next run starts from nothing.
 
     Reset is a command and never a config field, so no experiment config can request it. It
     finds the experiment the way `run-experiment` does, from the bundle directory and its
     cluster, and then runs the same distributed delete as `hhemt delete`, which refuses while
-    simulations are still in flight. Without `--yes` it asks for confirmation first.
+    simulations are still in flight. Without `--yes` it asks for confirmation first. With
+    `--dry-run` it prints the same preview as `hhemt delete --dry-run` and deletes nothing.
 
     Example:
 
@@ -1508,6 +1515,11 @@ def reset_command(
         analysis = tk.analysis
         analysis_dir = analysis.analysis_paths.analysis_dir
         console.print(f"Reset targets cluster {resolved!r}: deletes {analysis_dir}")
+
+        if dry_run:
+            _print_delete_dry_run_summary(analysis)
+            console.print("[yellow]Dry-run only — no deletion performed.[/yellow]")
+            raise typer.Exit(0)
 
         if not yes:
             response = input("Proceed with reset? Type 'y' or 'yes' to confirm: ").strip().lower()
