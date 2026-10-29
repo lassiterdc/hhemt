@@ -85,7 +85,7 @@ def test_parse_resume_timestep_is_invariant_under_non_utf8_bytes(tmp_path, posit
     implementation: `read_bytes().decode("utf-8", errors="replace")` or `errors="ignore"` passes
     too, so the test does not pin the keyword.
     """
-    from hhemt.eda.raw_resume_identity import parse_resume_timestep
+    from hhemt.eda.raw_byte_identity import parse_resume_timestep
 
     clean = tmp_path / "clean.log"
     clean.write_bytes(mechanism_body)
@@ -108,7 +108,7 @@ def test_parse_resume_timestep_log_without_marker_stays_none_with_bad_bytes(tmp_
     problem as a resume boundary. Second correct implementation: any decoder that maps the bad
     bytes to a non-digit still returns None.
     """
-    from hhemt.eda.raw_resume_identity import parse_resume_timestep
+    from hhemt.eda.raw_byte_identity import parse_resume_timestep
 
     log = tmp_path / "nomarker.log"
     log.write_bytes(_POSITIONS["bad_line_before_body"](_CKPT + _ENDS))
@@ -133,6 +133,12 @@ def _analysis_stub(*, df, simlog_dir):
             simlog_directory=simlog_dir,
         ),
         df_status=df,
+        # The model log's NAME is derived from the event's stable identity, so a stub that
+        # reaches the resolver must carry the weather-index projection the production method
+        # provides (`df_sims.loc[iloc, weather_event_indices]`). Without it the log write below
+        # raises AttributeError. Only the INDEXERS are supplied here; the filename grammar stays
+        # in `run_simulation`, so a stub cannot become a second expression of it.
+        _retrieve_weather_indexer_using_integer_index=lambda event_iloc: {"event": int(event_iloc)},
     )
 
 

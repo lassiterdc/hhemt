@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -65,11 +67,20 @@ def _make_repo(
     return tmp_path
 
 
-def _run(repo: Path, *args: str) -> subprocess.CompletedProcess:
+def _run(repo: Path, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     target = repo / "scripts" / "check_layout_version.py"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(SCRIPT.read_text())
-    return subprocess.run([sys.executable, str(target), *args], cwd=repo, capture_output=True, text=True)
+    return subprocess.run(
+        [sys.executable, str(target), *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        # Merged rather than replaced: the child needs the ambient environment (PATH, and the
+        # interpreter's own vars) as well as the ref pair under test. A test that passed
+        # `env=` alone would exercise a stripped environment instead of the venue.
+        env={**os.environ, **(env or {})},
+    )
 
 
 def _tracked_diff_vs_head(repo: Path) -> str:
@@ -765,13 +776,23 @@ def test_check_b_accepts_both_tag_forms(tmp_path: Path) -> None:
 
 
 def test_layout_version_registrations_supply_the_range_predicate() -> None:
-    """The wiring half of the venue split, over BOTH entry points. A pre-push registration
-    WITHOUT `--range` reads the working tree -- for check-b an unreachable disarm that refuses
-    every legitimate migration commit, for check-a a version/module/fixture read that both
-    false-blocks on a pending bump and false-passes on an uncommitted module. A pre-commit
-    registration WITH it would stop grading the pending change. Every check-layout-version hook
-    previously carried no `stages:` key at all and ran everywhere by pre-commit's all-stages
-    default, which is how the venue was reached without anyone choosing it.
+    """THE VENUE-WIRING ARM, RE-ANCHORED by the check-b venue move (chunk 2b.2).
+
+    WHAT CHANGED, and why the previous anchor is not merely reworded. This arm used to require
+    EVERY check-layout-version check at BOTH venues, pre-commit carrying no `--range` and
+    pre-push carrying it. `check-b`'s obligation has MOVED to pre-push alone: a pre-commit
+    obligation is graded at the moment a commit is CREATED, and a commit later replayed by
+    rebase, cherry-pick or a plain merge is never created again on this machine, so its content
+    was never graded -- measured 2026-10-28, an instance landed ungated by exactly that route.
+    Keeping the old both-venues requirement would now assert the defect, so the invariant
+    SPLITS: `check-a` still needs both venues, and `check-b` must appear at exactly ONE, at
+    pre-push, with `--range` and with NO literal base ref.
+
+    WHY THE NEW ANCHOR DISCRIMINATES ON BEHAVIOUR RATHER THAN ON WORDING. Every assertion below
+    is over the parsed YAML as DATA -- stage sets and entry tokens -- and each names a state
+    that changes what runs and where: re-adding `check-b` at pre-commit flips one, dropping
+    `--range` flips another, and reinstating a literal base ref flips a third. None of them
+    reads prose.
 
     The filter is `check_layout_version.py check-` and not `check-b`: scoping this arm to the
     hook that was just repaired is how the same defect survives one function over."""
@@ -780,26 +801,61 @@ def test_layout_version_registrations_supply_the_range_predicate() -> None:
         h for repo in cfg["repos"] for h in repo["hooks"] if "check_layout_version.py check-" in h.get("entry", "")
     ]
     assert hooks, "no check_layout_version registration found at all"
-    by_check: dict[str, dict[str, dict]] = {}
+
+    def _check_name(hook: dict) -> str:
+        return hook["entry"].split("check_layout_version.py ")[1].split()[0]
+
     for hook in hooks:
         stages = hook.get("stages")
         assert stages is not None, f"{hook['id']} carries no explicit stages: it runs at every stage"
         assert len(stages) == 1, f"{hook['id']} declares {stages}; one registration serves exactly one venue"
-        check = hook["entry"].split("check_layout_version.py ")[1].split()[0]
-        assert stages[0] not in by_check.get(check, {}), f"{check} has two registrations at {stages[0]}"
-        by_check.setdefault(check, {})[stages[0]] = hook
-    for check, venues in sorted(by_check.items()):
-        assert set(venues) == {"pre-commit", "pre-push"}, f"{check} is registered at {sorted(venues)}, not both venues"
-        pre_commit, pre_push = venues["pre-commit"], venues["pre-push"]
-        assert "--range" not in pre_commit["entry"], f"{pre_commit['id']} runs at pre-commit with the range predicate"
-        assert "--range" in pre_push["entry"], f"{pre_push['id']} runs at pre-push without the range predicate"
-        assert pre_commit["entry"].split()[-1] == "HEAD", (
-            f"{pre_commit['id']} bases on {pre_commit['entry'].split()[-1]!r}; the pre-commit venue grades the "
-            "change being committed, and a wider base flags the previous commit's files"
-        )
-        assert pre_push["entry"].split()[-1] == "HEAD~1", (
-            f"{pre_push['id']} bases on {pre_push['entry'].split()[-1]!r}; the pre-push venue grades the commit range"
-        )
+
+    by_check: dict[str, dict[str, dict]] = {}
+    for hook in hooks:
+        check, venue = _check_name(hook), hook["stages"][0]
+        assert venue not in by_check.setdefault(check, {}), f"{check} has two registrations at {venue}"
+        by_check[check][venue] = hook
+    assert set(by_check) == {"check-a", "check-b"}, f"unexpected checks wired: {sorted(by_check)}"
+
+    # CHECK A keeps BOTH venues: this chunk moves check-b's obligation and nothing else.
+    a = by_check["check-a"]
+    assert set(a) == {"pre-commit", "pre-push"}, f"check-a is registered at {sorted(a)}, not both venues"
+    assert "--range" not in a["pre-commit"]["entry"], (
+        f"{a['pre-commit']['id']} runs at pre-commit with the range predicate"
+    )
+    assert "--range" in a["pre-push"]["entry"], f"{a['pre-push']['id']} runs at pre-push without the range predicate"
+    assert a["pre-commit"]["entry"].split()[-1] == "HEAD", (
+        f"{a['pre-commit']['id']} bases on {a['pre-commit']['entry'].split()[-1]!r}; the pre-commit venue grades "
+        "the change being committed, and a wider base flags the previous commit's files"
+    )
+    assert a["pre-push"]["entry"].split()[-1] == "HEAD~1", (
+        f"{a['pre-push']['id']} bases on {a['pre-push']['entry'].split()[-1]!r}; the pre-push check-a arm grades "
+        "the pushed commit range"
+    )
+
+    # CHECK B is PRE-PUSH ONLY. Done-when 1, stated as data.
+    b = by_check["check-b"]
+    assert set(b) == {"pre-push"}, (
+        f"check-b is registered at {sorted(b)}; its obligation moved to pre-push because a pre-commit "
+        "obligation is graded when a commit is CREATED and a replayed commit never is"
+    )
+    b_hook = b["pre-push"]
+    assert _check_name(b_hook) == "check-b"
+    assert "--range" in b_hook["entry"], f"{b_hook['id']} runs the range venue without --range"
+    # NO LITERAL BASE -- done-when 7. The ref pair arrives through the environment, and a
+    # literal `HEAD~1` in `entry` would silently override it and restore "one commit of N".
+    assert "HEAD~1" not in b_hook["entry"], (
+        f"{b_hook['id']} pins a literal base in its entry ({b_hook['entry']!r}); the population must come "
+        "from PRE_COMMIT_FROM_REF/PRE_COMMIT_TO_REF"
+    )
+    # And no pre-commit registration names check-b at all -- the move's whole point.
+    pre_commit_b = [
+        h
+        for repo in cfg["repos"]
+        for h in repo["hooks"]
+        if "pre-commit" in (h.get("stages") or []) and "check_layout_version.py check-b" in h.get("entry", "")
+    ]
+    assert not pre_commit_b, f"check-b still runs at pre-commit via {[h['id'] for h in pre_commit_b]}"
 
     # DECLARING a stage does not INSTALL it. `default_install_hook_types` defaults to
     # ['pre-commit'], so without it `pre-commit install` -- the command docs/contributing.md
@@ -947,3 +1003,609 @@ def test_check_b_honours_an_omitting_append_after_a_signature_row(tmp_path: Path
     )
     out = _run(repo, "check-b", "main")
     assert out.returncode == 0, out.stdout + out.stderr
+
+
+# --- `--stamp`: the non-breaking re-declaration as a command -----------------
+# The layout gate forces every edit to a layout-relevant module to be re-declared
+# non-breaking with a hand-copied 64-character digest. `--stamp` makes that copy a
+# command. Four properties are each silent if wrong, so each gets its own arm:
+#   1. the appended row must PARSE, RESOLVE through the loader, and carry `--why`;
+#   2. a missing/empty `--why` must refuse rather than write, because a mapping row with
+#      no non-empty justification is refused by `_load_allowlist` at load -- which takes
+#      check-b AND check-c offline install-wide until a human edits the YAML by hand;
+#   3. the edit must be TEXTUAL, because the manifest is 4,400+ lines carrying 232
+#      `justification:` blocks plus a header comment and a `yaml` round-trip destroys them;
+#   4. it must APPEND and never mutate a pre-existing row in place, because an in-place
+#      `layout_signature` rewrite leaves that row's justification describing an earlier
+#      change -- the gate passes while the audit trail silently lies.
+
+# Deliberately NOT the digest of the content `--stamp` will hash. When the old and new
+# digests coincide, "the old row's signature is unchanged" is indistinguishable from "the
+# old row was mutated to the same value", and every arm below asserts the INEQUALITY before
+# it asserts the equality for exactly that reason.
+_STAMP_EARLIER_SIGNATURE = "60a51f748ab5fa1150fdfc5639de2ad00d96e367574820fea00d1219f1d8a0e4"
+
+# A manifest with the three things a `yaml.safe_dump` implementation would destroy: a
+# header comment, a FOUR-LINE `justification:` block scalar, and a pre-existing row for the
+# same path `--stamp` is asked to stamp (which is what makes append-vs-mutate observable).
+_STAMP_MANIFEST = (
+    "# Sentinel list for scripts/check_layout_version.py check-b.\n"
+    "# A change to any path below WITHOUT a LAYOUT_VERSION bump fails CI.\n"
+    "layout_relevant:\n"
+    "  paths:\n"
+    "    - src/foo.py\n"
+    "  globs: []\n"
+    "non_breaking_allowlist:\n"
+    "  - path: src/foo.py\n"
+    f"    layout_signature: {_STAMP_EARLIER_SIGNATURE}\n"
+    "    justification: >-\n"
+    "      EARLIER CHANGE. This row names a change that already landed, and its\n"
+    "      justification spans four folded lines on purpose: a yaml.safe_dump\n"
+    "      round-trip reflows it onto one, and the gate must leave it exactly as\n"
+    "      written.\n"
+)
+
+_STAMP_CHANGED_CONTENT = "# changed\n"
+
+
+def _make_stamp_repo(
+    tmp_path: Path,
+    *,
+    manifest: str = _STAMP_MANIFEST,
+    files: dict[str, str] | None = None,
+) -> Path:
+    """A repo-shaped fixture for `--stamp`, with NO git.
+
+    `--stamp` is pure file-in/file-out -- no solver, no network, no git -- so the fixture
+    needs none either. `_run` still copies the checker into `<repo>/scripts/`, and
+    `REPO_ROOT = Path(__file__).resolve().parent.parent` then resolves to this repo, which
+    is what makes the fixture manifest THE manifest the command reads.
+    """
+    for rel, content in (files if files is not None else {"src/foo.py": _STAMP_CHANGED_CONTENT}).items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+    (tmp_path / "_layout_relevant_files.yaml").write_text(manifest)
+    return tmp_path
+
+
+def _stamp_manifest_text(repo: Path) -> str:
+    return (repo / "_layout_relevant_files.yaml").read_text()
+
+
+def _rows_for(parsed: dict, rel: str) -> list[dict]:
+    return [row for row in (parsed.get("non_breaking_allowlist") or []) if row.get("path") == rel]
+
+
+def test_stamp_appends_a_row_that_parses_resolves_and_carries_the_why(tmp_path: Path) -> None:
+    """Done-when 1. RED pre-fix, measured: `--stamp` does not exist, so argparse rejects
+    `src/foo.py` as an invalid `cmd` choice and the process exits 2 having written nothing.
+
+    Three assertions, and the third is the one that makes the other two mean something: a
+    row can parse and still be UNUSABLE by the gate, so the row is fed through the real
+    `_load_allowlist` and must RESOLVE to the digest that was written. `--why` carries a
+    colon and a `#` to prove the folded block scalar needs no escaping -- a quoted-scalar
+    implementation would have to escape them and a broken one would misparse."""
+    repo = _make_stamp_repo(tmp_path)
+    why = "NON-BREAKING. Comment-only edit: no on-disk change; see #123 for context."
+    out = _run(repo, "--stamp", "src/foo.py", "--why", why)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+    parsed = yaml.safe_load(_stamp_manifest_text(repo))
+    expected_sig = hashlib.sha256((repo / "src" / "foo.py").read_bytes()).hexdigest()
+    last = parsed["non_breaking_allowlist"][-1]
+    assert last["path"] == "src/foo.py"
+    assert last["layout_signature"] == expected_sig
+    assert last["justification"] == why
+
+    # RESOLVES through the loader the gate actually uses -- this is what "useful row" means.
+    module = _load_check_module()
+    resolved = module._load_allowlist(parsed)
+    assert resolved["src/foo.py"].layout_signature == expected_sig
+
+
+def test_stamp_refuses_without_a_why_and_writes_nothing(tmp_path: Path) -> None:
+    """Done-when 2. The measured consequence, stated because it is why this is a refusal
+    rather than a defaulted justification: `_load_allowlist` refuses a mapping row with no
+    non-empty `justification` BEFORE any signature logic runs, so a signature-only append
+    takes check-b and check-c offline AT LOAD, install-wide, until a human edits the YAML.
+
+    Asserting the refusal's own marker as well as the exit code is deliberate: pre-fix,
+    an unknown `--stamp` also exits non-zero (argparse, code 2), so an exit-code assertion
+    alone would pass on the defect this arm exists to catch. The empty and
+    whitespace-only forms are the same refusal for the same reason and are asserted
+    through the same marker."""
+    repo = _make_stamp_repo(tmp_path)
+    before = _stamp_manifest_text(repo)
+
+    absent = _run(repo, "--stamp", "src/foo.py")
+    assert absent.returncode != 0
+    assert "non-empty --why justification" in absent.stderr, absent.stderr
+    assert _stamp_manifest_text(repo) == before, "a refused stamp must write nothing"
+
+    for empty in ("", "   \n\t "):
+        blank = _run(repo, "--stamp", "src/foo.py", "--why", empty)
+        assert blank.returncode != 0, repr(empty)
+        assert "non-empty --why justification" in blank.stderr, blank.stderr
+        assert _stamp_manifest_text(repo) == before, f"a refused stamp must write nothing ({empty!r})"
+
+
+def test_stamp_edits_textually_preserving_comments_and_block_scalars(tmp_path: Path) -> None:
+    """Done-when 3. THE ARM THAT CATCHES A `yaml.safe_dump` IMPLEMENTATION.
+
+    `startswith(before)` is the whole claim in one expression and it is exactly right given
+    append-at-EOF: every byte the command did not add is byte-identical, so the header
+    comment cannot be dropped and the four-line block scalar cannot be reflowed. The
+    explicit re-assertions of the comment and the block scalar follow it so a failure names
+    WHICH of the two a round-trip destroyed instead of only that the prefix moved."""
+    repo = _make_stamp_repo(tmp_path)
+    before = _stamp_manifest_text(repo)
+
+    out = _run(repo, "--stamp", "src/foo.py", "--why", "NON-BREAKING. Second change.")
+    assert out.returncode == 0, out.stdout + out.stderr
+    after = _stamp_manifest_text(repo)
+
+    assert after.startswith(before), "everything before the appended row must be byte-identical"
+    assert "# Sentinel list for scripts/check_layout_version.py check-b.\n" in after
+    assert "# A change to any path below WITHOUT a LAYOUT_VERSION bump fails CI.\n" in after
+    assert (
+        "      EARLIER CHANGE. This row names a change that already landed, and its\n"
+        "      justification spans four folded lines on purpose: a yaml.safe_dump\n"
+        "      round-trip reflows it onto one, and the gate must leave it exactly as\n"
+        "      written.\n"
+    ) in after, "a yaml round-trip would have reflowed this block scalar onto one line"
+
+
+def test_stamp_appends_rather_than_mutating_the_existing_row(tmp_path: Path) -> None:
+    """Done-when 4. THE ARM THAT DISTINGUISHES APPEND FROM MUTATE, which is a distinct
+    failure from "does not append at all": a builder can append correctly and still rewrite
+    the older row's digest, and that failure is SILENT -- the gate passes, because the
+    newest row carries a matching digest, while the older row's justification now describes
+    a change its signature no longer covers.
+
+    Two structures do the discriminating, and neither is sufficient alone. The ROW COUNT
+    (2, not 1) fails a pure in-place mutation. The DIGEST INEQUALITY assertion before the
+    equality assertions fails a mutation that also appends. The text-level assertions then
+    pin the pre-existing row's two fields BYTE-identically rather than by parsed value, so a
+    reformatted-but-equal rewrite is caught too."""
+    repo = _make_stamp_repo(tmp_path)
+    before = _stamp_manifest_text(repo)
+    earlier_justification = (
+        "EARLIER CHANGE. This row names a change that already landed, and its "
+        "justification spans four folded lines on purpose: a yaml.safe_dump "
+        "round-trip reflows it onto one, and the gate must leave it exactly as written."
+    )
+
+    out = _run(repo, "--stamp", "src/foo.py", "--why", "NON-BREAKING. The second change to this path.")
+    assert out.returncode == 0, out.stdout + out.stderr
+    after = _stamp_manifest_text(repo)
+    parsed = yaml.safe_load(after)
+
+    rows = _rows_for(parsed, "src/foo.py")
+    assert len(rows) == 2, f"expected an APPENDED row beside the pre-existing one, got {len(rows)} row(s)"
+
+    new_sig = hashlib.sha256((repo / "src" / "foo.py").read_bytes()).hexdigest()
+    # NON-VACUITY: if these were equal, "the old digest is unchanged" could not be told
+    # apart from "the old row was mutated to the new value".
+    assert new_sig != _STAMP_EARLIER_SIGNATURE, "fixture degenerate: earlier and current digests coincide"
+
+    assert rows[0]["layout_signature"] == _STAMP_EARLIER_SIGNATURE
+    assert rows[0]["justification"] == earlier_justification
+    assert rows[1]["layout_signature"] == new_sig
+
+    # BYTE-identical, not merely value-identical: the pre-existing row's two fields keep the
+    # exact text they had, which `before` still contains verbatim.
+    assert after.startswith(before)
+    assert f"    layout_signature: {_STAMP_EARLIER_SIGNATURE}\n" in after
+
+
+def test_stamp_clears_the_check_b_failure_it_is_the_remedy_for(tmp_path: Path) -> None:
+    """The integration arm, and the one the developer feels: check-b FAILS, `--stamp` runs,
+    check-b PASSES. A unit arm that only parsed the row would not prove the row is the
+    remedy; this one proves the whole chain through the gate itself.
+
+    The manifest must be a BLOCK sequence (the key with an empty value, as every real
+    manifest has it) rather than the `[]` flow form `_make_repo` defaults to, because
+    `--stamp` appends a block item and refuses to write text that would not parse."""
+    repo = _make_repo(
+        tmp_path,
+        layout_version_at_head=4,
+        layout_version_at_main=4,
+        extra_files_at_main={"src/foo.py": "# initial\n"},
+        extra_files_at_head={"src/foo.py": _STAMP_CHANGED_CONTENT},
+        sentinel_yaml=("layout_relevant:\n  paths:\n    - src/foo.py\n  globs: []\nnon_breaking_allowlist:\n"),
+    )
+
+    before = _run(repo, "check-b", "main")
+    assert before.returncode == 1, before.stdout + before.stderr
+    assert "src/foo.py" in before.stderr
+
+    stamped = _run(repo, "--stamp", "src/foo.py", "--why", "NON-BREAKING. Comment-only; no on-disk change.")
+    assert stamped.returncode == 0, stamped.stdout + stamped.stderr
+
+    after = _run(repo, "check-b", "main")
+    assert after.returncode == 0, after.stdout + after.stderr
+    assert "no layout-relevant changes" in after.stdout
+
+
+def test_stamp_records_a_multiline_why_verbatim(tmp_path: Path) -> None:
+    """Reviewer finding F1, arm of the coder's own.
+
+    A FOLDED block scalar (`>-`) turns every newline into a space and every blank line into
+    one newline, so `--why $'A\\nB'` was recorded as `A B`: a DIFFERENT string from the one
+    supplied, silently, and still non-empty, so `_load_allowlist` accepts it and nothing
+    downstream reports the loss. The justification is the whole audit trail a human reads
+    when adjudicating a change-scoped exemption, so a bullet list run together into one line
+    destroys exactly what the row exists to carry.
+
+    Four inputs, because they fail under a folded scalar in three DIFFERENT ways and a
+    single-line arm cannot see any of them: a plain two-liner folds to `A B`; a BLANK line
+    folds to a newline rather than a paragraph break (`A\\n\\nB` would come back `A\\nB`);
+    a bullet list loses its structure entirely; and a trailing-space line exercises the
+    renderer's deliberate lack of `.rstrip()`. The last one is a control that would pass
+    vacuously under a renderer that rstripped, so it is asserted rather than omitted.
+    """
+    cases = [
+        "NON-BREAKING. Line one.\nLine two of the same paragraph.",
+        "NON-BREAKING. Paragraph one.\n\nParagraph two after a blank line.",
+        "NON-BREAKING.\n- no on-disk name, path or group moves\n- the signature re-fires on the next change",
+        "NON-BREAKING. Trailing spaces are content   \nand this line follows it",
+    ]
+    for i, why in enumerate(cases):
+        repo = _make_stamp_repo(tmp_path / f"case{i}")
+        out = _run(repo, "--stamp", "src/foo.py", "--why", why)
+        assert out.returncode == 0, out.stdout + out.stderr
+        recorded = yaml.safe_load(_stamp_manifest_text(repo))["non_breaking_allowlist"][-1]["justification"]
+        assert recorded == why, f"case {i}: the recorded justification is not the text supplied"
+
+
+def test_stamp_refuses_to_stamp_the_manifest_itself(tmp_path: Path) -> None:
+    """Reviewer finding F2, arm of the coder's own.
+
+    `--stamp` records `sha256(target)` and then APPENDS to the manifest. When the target IS
+    the manifest, the append mutates the very file whose digest was just taken, so the row
+    is stale the instant it is written: the command prints `stamped ...`, exits 0, and
+    `check-b` stays red on exactly the path it was asked to fix.
+
+    The repair is a REFUSAL rather than an append-then-re-hash, and the ground is arithmetic
+    rather than convenience: the row carries the digest of a document that CONTAINS that
+    digest, so a correct row would need `S == sha256(document containing S)` -- a fixed point
+    of sha256 over a structure holding its own output, which cannot be found. That is why a
+    second pass cannot pay the staleness down; measured before this fix, a first run recorded
+    `6a487c62...` against an actual `72787b6e...` and a second recorded `72787b6e...` against
+    an actual `4863555c...`, exit 0 both times.
+
+    The CONTROL half is the must-pass arm: an ordinary target still stamps, so the refusal is
+    scoped to the self-target rather than being a blanket refusal that would make this test
+    green for the wrong reason. The repeat arm pins the non-convergence claim itself.
+    """
+    repo = _make_stamp_repo(tmp_path)
+    before = _stamp_manifest_text(repo)
+
+    for attempt, why in enumerate(("NON-BREAKING. The manifest itself.", "NON-BREAKING. Trying again."), start=1):
+        out = _run(repo, "--stamp", "_layout_relevant_files.yaml", "--why", why)
+        assert out.returncode != 0, f"attempt {attempt}: a self-stamp must be refused"
+        assert "refuses to stamp" in out.stderr, out.stderr
+        assert _stamp_manifest_text(repo) == before, f"attempt {attempt}: a refused stamp must write nothing"
+
+    # CONTROL — the same command against an ordinary target still succeeds, so the arm above
+    # is evidence about the self-target and not about a broken command.
+    control = _run(repo, "--stamp", "src/foo.py", "--why", "NON-BREAKING. Control arm.")
+    assert control.returncode == 0, control.stdout + control.stderr
+    assert _stamp_manifest_text(repo) != before
+
+
+# --- Chunk 2b.2: the venue move, the D151 gate, and the range closure --------
+# `check-b`'s obligation moved from pre-commit to pre-push. Three things had to land
+# together, and each has an arm below:
+#   * the venue itself (done-when 1/4/7) -- asserted as DATA from the YAML, because a test
+#     that observed a real push could not exist and "we observed a push" is not a test;
+#   * the D151 gate (done-when 2) -- at the range venue the exemption arm must read the blob
+#     at the GRADED COMMIT, never the worktree;
+#   * the range closure (done-when 5/6) -- a PER-COMMIT WALK, so one bump cannot disarm the
+#     scan of any other commit in the pushed range.
+
+
+def _make_history_repo(
+    tmp_path: Path,
+    specs: list[dict],
+    *,
+    sentinel_yaml: str | None = None,
+    branch_after: int | None = None,
+) -> tuple[Path, list[str]]:
+    """A LINEAR fixture repo with ONE COMMIT PER SPEC, oldest first; returns (root, shas).
+
+    Each spec is `{"version": int, "files": {relpath: content}}`. Sibling builder rather than a
+    parameter on `_make_linear_repo`, which drives the single-commit disarm arms and would have
+    to grow a second meaning. The shas are returned because the multi-commit arms assert
+    WHICH commit was flagged, and `HEAD~2` arithmetic in an assertion is how a fixture silently
+    stops testing what it says.
+
+    `branch_after=N` commits the first N specs on `main` and the rest on `feature`, which is
+    what lets an arm tell "grade one commit (HEAD~1..HEAD)" from "grade the whole branch
+    (main..HEAD)". On a fixture where every commit sits on `main` those two populations are the
+    SAME and the arm cannot discriminate -- measured, that is exactly how the first version of
+    the population-default arm passed against the defect it was written for.
+    """
+    (tmp_path / "src" / "hhemt" / "version_migration" / "versions").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "fixtures" / "legacy_layouts").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "_layout_relevant_files.yaml").write_text(
+        sentinel_yaml or "layout_relevant:\n  paths:\n    - src/foo.py\n  globs: []\nnon_breaking_allowlist:\n"
+    )
+    constants = tmp_path / "src" / "hhemt" / "version_migration" / "constants.py"
+    git = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    shas: list[str] = []
+    for i, spec in enumerate(specs):
+        if branch_after is not None and i == branch_after:
+            subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=tmp_path, check=True)
+        constants.write_text(f"LAYOUT_VERSION: int = {spec['version']}\n")
+        for rel, content in spec.get("files", {}).items():
+            p = tmp_path / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content)
+        subprocess.run([*git, "add", "."], cwd=tmp_path, check=True)
+        # `--allow-empty` so a spec that intentionally changes nothing (a version hold, or a
+        # commit whose only content is already in place) still produces the commit the range
+        # arithmetic in the caller depends on. The sibling `_make_linear_repo` does the same.
+        subprocess.run([*git, "commit", "--allow-empty", "-qm", f"c{i}"], cwd=tmp_path, check=True)
+        shas.append(
+            subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True, text=True, check=True
+            ).stdout.strip()
+        )
+    return tmp_path, shas
+
+
+def _load_check_module_at(repo: Path):
+    """Load the checker THE FIXTURE CARRIES, so `REPO_ROOT` resolves to the fixture.
+
+    `_load_check_module` above loads from the real repo, which is right for arms about the real
+    sentinel and wrong for an arm that must monkeypatch a function and then drive `check_b`
+    against a `tmp_path` repo.
+    """
+    target = repo / "scripts" / "check_layout_version.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(SCRIPT.read_text())
+    name = f"check_layout_version_fixture_{abs(hash(str(repo)))}"
+    spec = importlib.util.spec_from_file_location(name, target)
+    module = importlib.util.module_from_spec(spec)
+    # Register before exec: `from __future__ import annotations` makes the dataclass resolve
+    # `sys.modules[cls.__module__]`, and None there raises AttributeError at class definition.
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_check_b_range_satisfies_the_allowlist_from_the_graded_commit_not_the_worktree(tmp_path: Path) -> None:
+    """Done-when 2 — THE D151 GATE.
+
+    At the range venue the change-scoped exemption arm must resolve the file's content from the
+    GRADED COMMIT, never from the worktree. The worktree at pre-push is neither HEAD nor the
+    developer's tree (`stash = not all_files and not files` is not keyed on stage, so unstaged
+    edits are reverted for the hook's duration while staged-uncommitted ones survive, and a
+    root-commit push stashes nothing), so a worktree read there compares a signature against
+    content nobody is pushing.
+
+    THE INSTRUMENT IS A MONKEYPATCH THAT RAISES, not an assertion about which function was
+    called: a call-count would pass on a call that was made and ignored. The CONTROL arm runs
+    the SAME patch through the pending-change venue and REQUIRES the raise, which is what proves
+    the patch is live -- without it, the range arm would "hold" on a function that was never
+    reachable in either venue. The property varied between the two arms is the VENUE; the
+    fixture, the patch and the allowlist row are identical.
+    """
+    content_at_head = "# v1\n"
+    sentinel = (
+        "layout_relevant:\n  paths:\n    - src/foo.py\n  globs: []\nnon_breaking_allowlist:\n"
+        "  - path: src/foo.py\n    justification: baseline\n"
+        f'    layout_signature: "{hashlib.sha256(content_at_head.encode()).hexdigest()}"\n'
+    )
+    repo, _ = _make_history_repo(
+        tmp_path,
+        [
+            {"version": 4, "files": {"src/foo.py": "# v0\n"}},
+            {"version": 4, "files": {"src/foo.py": content_at_head}},
+        ],
+        sentinel_yaml=sentinel,
+    )
+    module = _load_check_module_at(repo)
+
+    def _explode(_path):
+        raise AssertionError("the WORKTREE hash was read at the range venue (D151)")
+
+    original = module._file_content_hash
+    module._file_content_hash = _explode
+    try:
+        # The exemption signature matches the content AT HEAD, so the range venue must exempt
+        # the change by reading the committed blob.
+        assert module.check_b("HEAD~1", range_mode=True, to_ref="HEAD") == 0
+
+        # CONTROL: the same patch, the pending-change venue. It MUST explode, which is what
+        # makes the arm above evidence rather than a vacuous pass.
+        raised = False
+        try:
+            module.check_b("HEAD~1", range_mode=False)
+        except AssertionError as exc:
+            raised = "D151" in str(exc)
+        assert raised, "the control arm did not exercise the worktree read; the patch is not live"
+    finally:
+        module._file_content_hash = original
+
+
+def test_check_b_range_grades_every_commit_in_the_pushed_range(tmp_path: Path) -> None:
+    """Done-when 5 — THE POPULATION.
+
+    A multi-commit range in which only the MIDDLE commit bumps. Every commit must be graded.
+
+    RED pre-fix, measured against the `HEAD` blob of the checker: the single range-wide arm
+    compared the range's two ENDPOINTS, saw a difference, printed `bumped; check-a covers this`
+    and returned 0 BEFORE the file scan -- so both failing commits rode through. That is why a
+    population half alone is not a closure.
+
+    The middle commit is ALSO asserted to be reported as covered, so a walk that simply skipped
+    bumped commits and graded nothing else could not pass this arm.
+    """
+    repo, shas = _make_history_repo(
+        tmp_path,
+        [
+            {"version": 4, "files": {"src/foo.py": "# v0\n"}},  # base
+            {"version": 4, "files": {"src/foo.py": "# v1\n"}},  # touches, no bump -> FAIL
+            {"version": 5, "files": {}},  # BUMP -> covered
+            {"version": 5, "files": {"src/foo.py": "# v3\n"}},  # touches, no bump -> FAIL
+        ],
+    )
+    out = _run(repo, "check-b", "--range", "HEAD~3", "--to", "HEAD")
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "src/foo.py" in out.stderr
+    # BOTH failing commits, by short sha -- one failure would mean the walk stopped early.
+    assert shas[1][:9] in out.stderr, out.stderr
+    assert shas[3][:9] in out.stderr, out.stderr
+    assert out.stderr.count("src/foo.py") == 2, out.stderr
+    # And the bump was SEEN, and did not disarm either scan.
+    assert "check-a covers this" in out.stdout, out.stdout
+
+
+def test_check_b_range_per_commit_bump_does_not_disarm_an_earlier_commit(tmp_path: Path) -> None:
+    """Done-when 6 — THE PER-COMMIT WALK'S DISCRIMINATION.
+
+    A three-commit graded range whose FIRST commit touches a layout-relevant path with no
+    allowlist row, and whose THIRD commits a bump. The FIRST must be reported, and the bump must
+    not be permitted to disarm it.
+
+    RED pre-fix: the range arm returned PASS at the first bump it saw, because the bump was read
+    from the range ENDPOINT rather than from the commit being graded. This arm is the one that
+    distinguishes a walk from an endpoint comparison; the population arm above would still pass
+    under a walk that graded only the first and last commits.
+    """
+    repo, shas = _make_history_repo(
+        tmp_path,
+        [
+            {"version": 4, "files": {"src/foo.py": "# v0\n"}},  # base (not graded)
+            {"version": 4, "files": {"src/foo.py": "# v1\n"}},  # FIRST graded: touches, no bump
+            {"version": 4, "files": {"src/unrelated.py": "# noise\n"}},  # middle: ungoverned change
+            {"version": 5, "files": {}},  # THIRD graded: the bump
+        ],
+    )
+    out = _run(repo, "check-b", "--range", "HEAD~3", "--to", "HEAD")
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert shas[1][:9] in out.stderr, f"the FIRST graded commit was not reported: {out.stderr}"
+    assert "check-a covers this" in out.stdout, "the bump was not reached, so it was not tested against"
+
+
+def test_check_b_range_population_defaults_to_one_commit_and_reads_the_env_pair(tmp_path: Path) -> None:
+    """Done-when 7 — THE SAFE DEFAULT, and the population coming from the environment.
+
+    THE FIXTURE BRANCHES ON PURPOSE, and the first version of this arm did not. It must be able
+    to tell "grade one commit (HEAD~1..HEAD)" from "grade the whole branch (main..HEAD)": when
+    every commit sits on `main` those are the SAME population and both the correct default and
+    the refuted wide-base default return the same verdict. Measured -- on a single-branch
+    fixture this arm passed against the defect, so `branch_after` exists.
+
+    RED pre-fix, measured against the `HEAD` blob: with the ref pair unset and no positional
+    base, the old code fell back to `main`, graded `main..HEAD`, found the governed change one
+    commit back, and returned 1. The safe default returns 0 because it grades only HEAD.
+
+    Three arms: the DEFAULT (one commit, no crash), the ENV PAIR (honoured, and reaching the
+    failing commit), and a MUST-FIRE CONTROL naming the wide base explicitly, which must
+    reproduce the failure -- so a default that "passed" on a fixture that could not fail is
+    excluded.
+    """
+    repo, shas = _make_history_repo(
+        tmp_path,
+        [
+            {"version": 4, "files": {"src/foo.py": "# v0\n"}},  # c0 on main
+            {"version": 4, "files": {"src/foo.py": "# v1\n"}},  # c1 on feature: governed, no bump
+            {"version": 4, "files": {"src/unrelated.py": "# noise\n"}},  # c2 = HEAD: ungoverned
+        ],
+        branch_after=1,
+    )
+    on_branch = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert on_branch == "feature", (
+        f"the fixture is on {on_branch!r}, not 'feature'; with every commit on main the wide-base "
+        "control proves nothing"
+    )
+    # Explicitly BLANK rather than merely absent: an ambient ref pair in the outer environment
+    # would otherwise silently become the population under test.
+    unset = {"PRE_COMMIT_FROM_REF": "", "PRE_COMMIT_TO_REF": ""}
+    default_run = _run(repo, "check-b", "--range", env=unset)
+    assert "Traceback" not in default_run.stderr, default_run.stderr
+    assert default_run.returncode == 0, (
+        "the unset default must grade ONE commit (HEAD~1..HEAD, the ungoverned one) and pass; "
+        + default_run.stdout
+        + default_run.stderr
+    )
+
+    # MUST-FIRE CONTROL: the wide base the default avoids must actually FAIL on this fixture.
+    wide = _run(repo, "check-b", "--range", "main", env=unset)
+    assert wide.returncode == 1, "the wide base returned PASS, so this fixture cannot discriminate"
+    assert shas[1][:9] in wide.stderr, wide.stderr
+
+    env_run = _run(repo, "check-b", "--range", env={"PRE_COMMIT_FROM_REF": "HEAD~2", "PRE_COMMIT_TO_REF": "HEAD"})
+    assert env_run.returncode == 1, "the env-supplied population did not reach the failing commit"
+    assert shas[1][:9] in env_run.stderr, env_run.stderr
+
+
+def test_check_b_range_treats_a_null_from_ref_as_absent_history_not_a_misconfiguration(tmp_path: Path) -> None:
+    """The NEW-BRANCH PUSH, which the population half made reachable for the first time.
+
+    Before this chunk the pre-push entry carried a literal `HEAD~1`, which resolves on any
+    branch. Now the population comes from `PRE_COMMIT_FROM_REF`, and pre-commit's sentinel for
+    "the remote has no such ref yet" is forty zeroes. `git rev-parse --verify 0000.../40`
+    SUCCEEDS (git accepts the null object id) and the `^{commit}` probe then fails, so the
+    ordinary two-probe sequence classifies a null ref as EXISTS-NOT-COMMIT and REFUSES the push
+    with `misconfigured invocation` -- blocking a legitimate first push of a branch, on the one
+    check whose obligation is to grade what leaves the machine.
+
+    Two arms: the null ref must reach a VERDICT rather than the refusal (here: nothing graded,
+    because the range collapses), and the CONTROL asserts the refusal is still live for a
+    genuinely non-commit object -- so the fix cannot have been "delete the refusal".
+    """
+    repo, _ = _make_history_repo(
+        tmp_path,
+        [
+            {"version": 4, "files": {"src/foo.py": "# v0\n"}},
+            {"version": 4, "files": {"src/foo.py": "# v1\n"}},
+        ],
+    )
+    null = "0" * 40
+    out = _run(repo, "check-b", "--range", null)
+    assert "misconfigured invocation" not in out.stderr, (
+        "a null FROM ref was treated as a misconfiguration, which refuses a new-branch push"
+    )
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "no in-repo predecessor" in out.stdout or "no layout-relevant changes" in out.stdout, out.stdout
+
+    # CONTROL: the non-commit refusal must still fire for an object that really is not a commit.
+    empty_tree = subprocess.run(
+        ["git", "hash-object", "-t", "tree", "-w", "/dev/null"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    control = _run(repo, "check-b", "--range", empty_tree)
+    assert control.returncode == 1, control.stdout + control.stderr
+    assert "does not name a commit" in control.stderr, control.stderr
+
+
+def test_check_b_range_still_reports_the_slug_arm(tmp_path: Path) -> None:
+    """Done-when 3, second arm. The move changes the VENUE and not the predicate, so both arms
+    `check-b` reported before the move must still be reachable at the range venue. The file arm
+    is covered by the existing range tests; this is the slug arm, which a per-commit refactor
+    could easily have dropped while every file-scan arm stayed green."""
+    main_scenario = "def compute_event_id_slug(year, event_type, event_id):\n    return f'year.{year}'\n"
+    head_scenario = "def compute_event_id_slug(year, event_type, event_id):\n    return f'y{year}'\n"
+    repo, _ = _make_history_repo(
+        tmp_path,
+        [
+            {"version": 4, "files": {"src/hhemt/scenario.py": main_scenario}},
+            {"version": 4, "files": {"src/hhemt/scenario.py": head_scenario}},
+        ],
+        sentinel_yaml="layout_relevant:\n  paths: []\n  globs: []\nnon_breaking_allowlist:\n",
+    )
+    out = _run(repo, "check-b", "--range", "HEAD~1")
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "compute_event_id_slug" in out.stderr
+    assert "drift" in out.stderr

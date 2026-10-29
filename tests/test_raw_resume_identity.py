@@ -183,7 +183,14 @@ def test_compare_variable_exact_object_dtype_no_raise():
 
 def test_read_sub_resume_context_cache_split(tmp_path):
     """FD1+FD3: the resume log root + reporting interval come from the sub's {member_id}.yaml master
-    pointer, which may point OUTSIDE the sub dir (cache-vs-scratch split), not a sibling glob."""
+    pointer, which may point OUTSIDE the sub dir (cache-vs-scratch split), not a sibling glob.
+
+    The seeded filename is written as a LITERAL rather than produced through
+    ``run_simulation.model_logfile_for``, so this pin stays independent of the producer it
+    agrees with: the reader must reach the SAME name from the yaml alone. That name carries the
+    event's stable identity slug (``evt-{event_id}``), minted from the events CSV the yaml
+    points at -- the row's weather indexers, never its position.
+    """
     import yaml
 
     from hhemt.eda.raw_byte_identity import read_sub_resume_context
@@ -192,8 +199,123 @@ def test_read_sub_resume_context_cache_split(tmp_path):
     master_root = tmp_path / "cache" / "synth_cc_resume"  # SEPARATE tree from the sub dir
     logdir = master_root / "logs" / "sims"
     logdir.mkdir(parents=True)
-    (logdir / f"model_tritonswmm_{member_id}_evt{iloc}.log").write_text(
+    events_csv = master_root / "weather_events.csv"
+    events_csv.write_text("event\n0\n1\n", encoding="utf-8")
+    (logdir / f"model_tritonswmm_{member_id}_evt-event.{iloc}.log").write_text(
         "[..] SWMM exchange history replayed to t=3000 s (11435 steps); resuming live segment\n"
+    )
+    sub_dir = tmp_path / "scratch" / "members" / member_id
+    sub_dir.mkdir(parents=True)
+    (sub_dir / f"{member_id}.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "analysis_id": member_id,
+                "is_experiment_member": True,
+                "TRITON_reporting_timestep_s": 600.0,
+                "experiment_cfg_yaml": str(master_root / "analysis_config.yaml"),
+                "weather_events_to_simulate": str(events_csv),
+                "weather_event_indices": ["event"],
+            }
+        )
+    )
+
+    log, interval, schedule = read_sub_resume_context(sub_dir, member_id, iloc)
+    assert interval == 600.0
+    assert log is not None and log.exists()
+    assert log.name == f"model_tritonswmm_{member_id}_evt-event.{iloc}.log"
+    assert parse_resume_timestep(log) == 3000.0
+    assert schedule is None  # no resume_interruption_schedule key in this fixture
+    # missing yaml -> (None, None, None), never raises
+    assert read_sub_resume_context(tmp_path / "nope", member_id, iloc) == (None, None, None)
+
+
+def test_identity_named_log_wins_over_an_ordinal_named_one_and_resolution_ignores_cwd(tmp_path, monkeypatch):
+    """THE ATTRIBUTION PRECEDENCE, and the cwd-independence that makes it decidable.
+
+    Both filenames exist on disk and the two records carry DIFFERENT resume times, so which one
+    answered is observable rather than inferred from a name. The cfg points at the events CSV
+    RELATIVELY -- the live shape: `weather_events_to_simulate` is a `Path` field with no
+    validator that absolutizes it, and both checked-in bundle fixtures
+    (`tests/fixtures/bundles/{multi_sim,sensitivity_master}/cfg_analysis.yaml`) carry a relative
+    value.
+
+    Two properties, each with its own failure mode:
+    * an identity-keyed record OUTRANKS a position-keyed one. A reader that resolved
+      root-major (or that offered the ordinal name second) would answer with the ordinal
+      record's 600 s and attribute one event's evidence to another -- the attribution Decision 5
+      ranks first.
+    * the answer does not depend on the process working directory. The second half re-asks from
+      a DIFFERENT cwd; a reader that let pandas resolve the relative path against cwd would give
+      a third answer (None) there.
+    """
+    import yaml
+
+    from hhemt.eda.raw_byte_identity import read_sub_resume_context
+
+    member_id, iloc = "member_gpu_0_r1", 0
+    master_root = tmp_path / "cache" / "both_names"
+    logdir = master_root / "logs" / "sims"
+    logdir.mkdir(parents=True)
+    (logdir / f"model_tritonswmm_{member_id}_evt-event.0.log").write_text(
+        "[..] SWMM exchange history replayed to t=3000 s (11435 steps); resuming live segment\n"
+    )
+    (logdir / f"model_tritonswmm_{member_id}_evt0.log").write_text(
+        "[..] SWMM exchange history replayed to t=600 s (3 steps); resuming live segment\n"
+    )
+    sub_dir = tmp_path / "scratch" / "members" / member_id
+    sub_dir.mkdir(parents=True)
+    (sub_dir / "weather_events.csv").write_text("event\n0\n1\n", encoding="utf-8")
+    (sub_dir / f"{member_id}.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "analysis_id": member_id,
+                "is_experiment_member": True,
+                "TRITON_reporting_timestep_s": 600.0,
+                "experiment_cfg_yaml": str(master_root / "analysis_config.yaml"),
+                # RELATIVE on purpose: neither pydantic nor any validator absolutizes it.
+                "weather_events_to_simulate": "weather_events.csv",
+                "weather_event_indices": ["event"],
+            }
+        )
+    )
+
+    log, _interval, _schedule = read_sub_resume_context(sub_dir, member_id, iloc)
+    assert log is not None
+    assert log.name == f"model_tritonswmm_{member_id}_evt-event.0.log"
+    assert parse_resume_timestep(log) == 3000.0, "the IDENTITY record must answer, not the ordinal one"
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    assert read_sub_resume_context(sub_dir, member_id, iloc) == (log, 600.0, None)
+
+    # THE ACCEPTED COST, asserted so it is a decision rather than a surprise: the identity IS
+    # knowable here, and with only the ordinal record on disk the answer is None. Returning the
+    # ordinal record instead would be the misattribution this precedence exists to prevent, so
+    # the arm loses its vlines rather than the figure gaining another event's annotation.
+    log.unlink()
+    assert read_sub_resume_context(sub_dir, member_id, iloc) == (None, 600.0, None)
+
+
+def test_read_sub_resume_context_reads_an_ordinal_named_log_only_when_identity_is_unknowable(tmp_path):
+    """The ordinal candidate is BOUND to "the cfg cannot yield an identity", and nothing wider.
+
+    This reader serves arms that COMPLETED BEFORE the model-log relocation, whose logs are named
+    on the CSV row ordinal. A yaml written before the event-identity convention carries no
+    ``weather_events_to_simulate`` pointer, so the slug cannot be minted and the reader must fall
+    back to the ordinal name rather than lose the arm's resume vlines. Measured as a fallback:
+    the current-convention candidate is absent and the legacy one resolves.
+    """
+    import yaml
+
+    from hhemt.eda.raw_byte_identity import read_sub_resume_context
+
+    member_id, iloc = "member_gpu_0_r1", 0
+    master_root = tmp_path / "cache" / "legacy_arm"
+    logdir = master_root / "logs" / "sims"
+    logdir.mkdir(parents=True)
+    (logdir / f"model_tritonswmm_{member_id}_evt{iloc}.log").write_text(
+        "[..] SWMM exchange history replayed to t=600 s (3 steps); resuming live segment\n"
     )
     sub_dir = tmp_path / "scratch" / "members" / member_id
     sub_dir.mkdir(parents=True)
@@ -208,13 +330,9 @@ def test_read_sub_resume_context_cache_split(tmp_path):
         )
     )
 
-    log, interval, schedule = read_sub_resume_context(sub_dir, member_id, iloc)
-    assert interval == 600.0
+    log, _interval, _schedule = read_sub_resume_context(sub_dir, member_id, iloc)
     assert log is not None and log.exists()
-    assert parse_resume_timestep(log) == 3000.0
-    assert schedule is None  # no resume_interruption_schedule key in this fixture
-    # missing yaml -> (None, None, None), never raises
-    assert read_sub_resume_context(tmp_path / "nope", member_id, iloc) == (None, None, None)
+    assert log.name == f"model_tritonswmm_{member_id}_evt{iloc}.log"
 
 
 def test_resume_boundaries_from_schedule_unit_conversion():

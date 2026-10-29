@@ -25,8 +25,15 @@ from typing import TYPE_CHECKING, Literal
 import pandas as pd
 
 from hhemt.config.hpc_system import resolve_container_spec, system_directory_bind
+from hhemt.exceptions import ConfigurationError
 from hhemt.resource_management import _parse_slurm_allocated_gpus
-from hhemt.scenario import TRITONSWMM_scenario
+from hhemt.scenario import TRITONSWMM_scenario, compute_event_id_slug
+from hhemt.swmm_markers import (
+    CONTAINER_SWMM_SOURCE_ROOT,
+    SWMM_COMPLETION_MARKER,
+    SWMM_ERROR_MARKER,
+    producer_check,
+)
 from hhemt.utils import read_text_file_as_list_of_strings
 
 if TYPE_CHECKING:
@@ -35,15 +42,52 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-#: EPA SWMM's end-of-run line prefix, printed by the engine's ``main()`` after the run returns,
-#: whether or not the analysis succeeded. Read by ``model_run_completed``'s raw-marker fallback.
-#: A named constant so the marker-parity test can compare it against the solver source at the
-#: pinned commit; a renamed engine line would otherwise leave every SWMM run reading incomplete.
-SWMM_COMPLETION_MARKER = "EPA SWMM completed"
+# ``SWMM_COMPLETION_MARKER`` and ``SWMM_ERROR_MARKER`` are IMPORTED above, not declared here:
+# ``hhemt.swmm_markers`` is their ONE home, and this import keeps
+# ``run_simulation.SWMM_COMPLETION_MARKER`` resolving for every caller that reads them
+# through this module. Do not re-declare the literals below -- a second copy is the drift
+# this consolidation removed.
 
-#: The clause EPA SWMM appends to that same line when the run had errors. Its presence turns
-#: an apparently completed SWMM run into a failed one; see ``model_run_completed``.
-SWMM_ERROR_MARKER = "There are errors."
+
+#: Source roots whose producer drift has already been reported. The CHECK is memoised (one
+#: ``stat`` per call after the first, via ``swmm_markers.producer_check``) but the WARNING is
+#: emitted once per process per root: a drifted producer is a standing fact about third-party
+#: source, not a per-run event, and a resumed campaign would otherwise repeat it per event.
+_SWMM_PRODUCER_WARNED: set[str] = set()
+
+
+def _warn_if_swmm_producer_drifted(
+    source_root: Path | str = CONTAINER_SWMM_SOURCE_ROOT,
+) -> tuple[str, ...] | None:
+    """Warn once per process when the SWMM source behind a run no longer prints a literal this
+    toolkit's completion verdict reads.
+
+    Called from ``model_run_completed``'s ``model_type == "swmm"`` arm -- the ONE
+    standalone-SWMM verdict site -- so the check reaches the program whose log is being read.
+    ``hhemt.swmm_markers.producer_check`` memoises the file read, so all but the first call
+    cost one ``stat``.
+
+    Returns ``None`` when no source tree was retained, ``()`` when both literals are present,
+    and the missing literals otherwise. Returning the verdict rather than only logging it is
+    what lets a test assert this without capturing log records.
+    """
+    missing = producer_check(source_root)
+    if not missing:
+        return missing
+    key = os.fspath(source_root)
+    if key in _SWMM_PRODUCER_WARNED:
+        return missing
+    _SWMM_PRODUCER_WARNED.add(key)
+    logger.warning(
+        "model_run_completed: the standalone SWMM source tree at %s does not print %s, which "
+        "this toolkit reads to decide a `swmm` run completed. Every such run will read "
+        "INCOMPLETE until the literal and the configured SWMM tag agree again. This is drift "
+        "in third-party source, not a simulation failure (see hhemt.swmm_markers).",
+        source_root,
+        " and ".join(repr(marker) for marker in missing),
+    )
+    return missing
+
 
 # In-SIF default binary NAMES, used when a ContainerSpec does not pin an explicit
 # `exe_in_sif` entry for the model: prepare_simulation_command builds the in-SIF path as
@@ -53,6 +97,59 @@ _DEFAULT_EXE_NAME = {
     "tritonswmm": "triton.exe",
     "swmm": "runswmm",
 }
+
+
+def model_logfile_name(
+    model_type: Literal["triton", "tritonswmm", "swmm"],
+    event_id: str,
+    analysis_id: str = "",
+) -> str:
+    """The ONE expression of this convention's FILENAME grammar.
+
+    ``model_{model_type}[_{analysis_id}]evt-{event_id}.log``, where ``event_id`` is the
+    STABLE slug minted by ``scenario.compute_event_id_slug`` -- the same ``evt-{event_id}``
+    segment ``constants.py``'s flag-name GRAMMAR block mints for the ``_status/`` flags.
+
+    Split out of ``model_logfile_for`` for callers that hold NO analysis object:
+    ``eda/raw_byte_identity.read_sub_resume_context`` resolves a completed arm's log from
+    plain directories and a member yaml, so it cannot call ``model_logfile_for`` -- and
+    re-typing this string there is exactly the hand-built-duplicate drift the parent
+    function's docstring records. One expression of the grammar, shared by producer and
+    reader, is what makes that drift impossible rather than merely unlikely.
+    """
+    _prefix = f"{analysis_id}_" if analysis_id else ""
+    return f"model_{model_type}_{_prefix}evt-{event_id}.log"
+
+
+def _event_id_for(analysis, event_iloc: int) -> str:
+    """The event's STABLE identity slug for one row of ``analysis.df_sims``.
+
+    Path-only, following the published pattern in ``summary_paths.py`` (see
+    ``analysis_summaries_complete``): projects the row onto
+    ``cfg_analysis.weather_event_indices`` through the analysis's own projection helper and
+    mints the slug with ``compute_event_id_slug``. No ``TRITONSWMM_scenario`` is
+    instantiated, so the resolver still mutates nothing.
+
+    An ``event_iloc`` ABSENT from ``df_sims`` raises ``ConfigurationError`` naming that iloc
+    rather than leaking the pandas ``KeyError`` the projection raises. No caller in the
+    current population passes an out-of-range iloc, so this is a LEGIBILITY requirement on a
+    latent failure rather than a new guard: a bare ``KeyError`` raised inside a path resolver
+    names neither the row nor the caller that asked for it.
+    """
+    try:
+        indexer = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
+    except KeyError as exc:
+        raise ConfigurationError(
+            field="analysis.weather_events_to_simulate",
+            message=(
+                f"event_iloc {event_iloc!r} is not a row of this analysis's df_sims, so no "
+                "stable event id can be resolved for the model-log name. The model log is "
+                "keyed on the event's identity rather than on its row position, which means "
+                "a position with no event has no name."
+            ),
+            fix_hint="Pass an event_iloc taken from analysis.df_sims.index.",
+        ) from exc
+    return compute_event_id_slug(indexer)
 
 
 def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "tritonswmm", "swmm"]) -> Path:
@@ -78,6 +175,13 @@ def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "
     ``processed/`` / ``swmm/`` / ``out_swmm/``). This is what lets a read-only validator
     resolve the path without mutating the tree.
 
+    .. warning::
+       It DOES need one projection off ``analysis`` -- ``df_sims`` /
+       ``_retrieve_weather_indexer_using_integer_index`` (see ``_event_id_for``) -- because
+       the name is derived from the event's identity. A duck-typed analysis stub must carry
+       that projection; the stub supplies the weather INDEXERS, and this module remains the
+       only place the filename grammar is written.
+
     CAUTION -- the file this resolves to is opened ``"w"`` on EVERY runner exec
     (``run_simulation_runner.py``), so it retains ONLY the LAST exec of up to
     ``hpc_restart_times_simulate`` + 1 attempts. It is NOT a per-exec history. Callers
@@ -86,17 +190,27 @@ def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "
     the ``Resuming ... from hotstart`` notice go to the RUNNER's stderr, not here; the
     file carries only the model subprocess's own stdout/stderr.
 
-    Naming convention (empirically ``model_tritonswmm_member_gpu_0_r1_evt0.log`` on
-    synth_cc_resume -- note the segment is the full ``analysis_id``, NOT ``member{N}``):
+    NAMING CONVENTION -- keyed on the event's STABLE IDENTITY, never on its row position
+    (empirically ``model_tritonswmm_member_gpu_0_r1_evt-event.2019-09-06.log`` on a synth
+    resume arm -- note the segment is the full ``analysis_id``, NOT ``member{N}``):
     - Sensitivity member:
-      ``{master_analysis_dir}/logs/sims/model_{model_type}_{analysis_id}_evt{event_iloc}.log``
+      ``{master_analysis_dir}/logs/sims/model_{model_type}_{analysis_id}_evt-{event_id}.log``
     - Regular analysis:
-      ``{simlog_directory}/model_{model_type}_evt{event_iloc}.log``
+      ``{simlog_directory}/model_{model_type}_evt-{event_id}.log``
+
+    ``event_id`` is ``compute_event_id_slug`` of the row's weather indexers -- the same
+    ``evt-{event_id}`` segment the ``_status/`` completion flags carry (``constants.py``'s
+    flag-name GRAMMAR block), and the same key a scenario directory uses. THE ROW ORDINAL
+    USED TO BE THE KEY, and that made three durable record families change hands between
+    events on any insert / delete / reorder of the events CSV: this log, its
+    ``_walltime`` ledger and its ``_resume_events`` ledger, both DERIVED from this file's
+    stem and therefore re-keyed by the same expression. A record now follows its EVENT
+    rather than its slot, and no identity marker has to be written into any of the three.
     """
     log_dir = analysis.analysis_paths.simlog_directory
     analysis_id = ""
     if getattr(analysis.cfg_analysis, "is_experiment_member", False):
-        analysis_id = str(analysis.cfg_analysis.analysis_id) + "_"
+        analysis_id = str(analysis.cfg_analysis.analysis_id)
         # Derive the MASTER analysis dir STRUCTURALLY, from this sub's own analysis_dir.
         # A sub's dir is always `{master_analysis_dir}/members/{analysis_id}` (single
         # writer: TRITONSWMM_sensitivity_analysis, whose __init__ sets `members_dir` and
@@ -123,7 +237,7 @@ def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "
         # is eda/raw_byte_identity.py, which reads historical completed arms and gates
         # nothing.
         log_dir = analysis.analysis_paths.analysis_dir.parent.parent / "logs" / "sims"
-    return log_dir / f"model_{model_type}_{analysis_id}evt{event_iloc}.log"
+    return log_dir / model_logfile_name(model_type, _event_id_for(analysis, event_iloc), analysis_id)
 
 
 def read_walltime_ledger_total_s(model_logfile: Path) -> float | None:
@@ -432,9 +546,10 @@ class TRITONSWMM_run:
         run-log completion marker AND ``out_triton/performance.txt``. The prior claim that
         non-``tritonswmm`` types are "unaffected (always True)" was ALREADY false when the
         swmm and triton arms landed, so it is removed rather than amended. The triton
-        arm's second conjunct exists because its run log is keyed on ``event_iloc`` while
-        the scenario is keyed on a stable slug -- see the in-body comment for the full
-        mechanism and for the reclaim-allowlist obligation it creates.
+        arm's second conjunct pairs the run log's marker with THIS scenario's own
+        ``out_triton/performance.txt`` -- see the in-body comment for what it still
+        discriminates now that the log is keyed on the same stable event identity the
+        scenario is, and for the reclaim-allowlist obligation it creates.
         """
         if model_type == "swmm":
             # A standalone SWMM run's own artifact, and BOTH conjuncts are load-bearing.
@@ -463,25 +578,36 @@ class TRITONSWMM_run:
                 return False
             if "Simulation ends" not in _log.read_text(errors="replace"):
                 return False
-            # SECOND conjunct, and it is about IDENTITY, not about completion.
+            # SECOND conjunct, and it is about ARTIFACT EVIDENCE, not about completion.
             #
-            # `_log` is `{simlog_dir}/model_triton_evt{event_iloc}.log` -- keyed on the CSV
-            # ROW ORDINAL -- while this scenario's directory and its sibling
-            # `log_{model_type}.json` are keyed on the STABLE event slug. Any non-append
-            # edit to `weather_events_to_simulate` (a row removal, a reorder, an insert)
-            # renumbers every ordinal at or after the edit, so a NEWLY ADDED event lands on
-            # the last ordinal and inherits whatever marker the previous occupant left
-            # there. `performance.txt` is written by TRITON into THIS scenario's own
-            # `out_triton/`, so it is absent for a scenario that has never run and the
-            # inherited marker cannot certify it.
+            # `_log` is `{simlog_dir}/model_triton_evt-{event_id}.log` -- keyed on the
+            # event's STABLE IDENTITY, the SAME key as this scenario's directory and its
+            # sibling `log_{model_type}.json`. That is deliberate and it is what retired
+            # the cross-event hazard this conjunct was originally written for: an insert,
+            # removal or reorder in `weather_events_to_simulate` renumbers CSV row
+            # POSITIONS but cannot move an identity, so a marker left by one event can no
+            # longer be inherited by another. Nothing in the name needs an identity marker
+            # written into the file to say whose it is.
+            #
+            # What the conjunct still discriminates is therefore a marker and an ARTIFACT
+            # that disagree about the same event: the log carries `Simulation ends` while
+            # THIS scenario's `out_triton/performance.txt` is absent. That happens when a
+            # marker survived without the outputs it describes -- a file-level reclaim
+            # added under `out_triton/`, a failed rank-0 write (TRITON's `ofstream` is
+            # unchecked, so a full disk or a bad path prints `Simulation ends` anyway), or
+            # an `output_folder` / `scen_paths.out_triton` disagreement that routes the
+            # log and the artifacts into two different trees.
             #
             # BOTH conjuncts are load-bearing and neither replaces the other. The marker
             # goes False when a LATER exec crashed -- run_simulation_runner opens this log
             # "w" on every exec, so a crashed exec's log carries no marker -- which is the
             # stale-cached-True case this arm was originally added for. The artifact goes
-            # False when the marker belongs to a DIFFERENT event. Dropping the marker in
-            # favour of the artifact alone would REGRESS the first case, because
-            # `performance.txt` persists from the earlier success.
+            # False when the marker and this scenario's own outputs disagree. Dropping the
+            # marker in favour of the artifact alone would REGRESS the first case, because
+            # `performance.txt` persists from the earlier success. KEEPING the artifact
+            # conjunct is not a legacy remainder: the name now carries identity, and this
+            # is a cheap second statement that is still true whenever it is reached.
+            # Removing it would be a WEAKENED assertion, so it is not removed.
             #
             # This ANSWERS the standing objection recorded in the divergence-check comment
             # below, which declined to actuate the identical check for two reasons. Reason
@@ -490,11 +616,11 @@ class TRITONSWMM_run:
             # this gate is reached from the `if completed:` branch AND from the fallback, so
             # it closes exactly the coverage gap that comment named. Reason (2) -- that
             # gating on an artifact "inverts the toolkit's log-based-truth principle" -- does
-            # not reach this conjunct: the log being consulted is keyed on `event_iloc` and
-            # is therefore NOT this scenario's own log, so log-based truth is not what the
-            # marker alone establishes. The principle is intact; the marker's PROVENANCE is
-            # the thing in doubt. That comment's block is narrowed to `tritonswmm`, so the two
-            # no longer contradict each other.
+            # not reach this conjunct: the conjunct does not doubt the log's VERDICT, it
+            # cross-checks the log against the artifact of the same event, and a
+            # disagreement between two of one event's own records is a fact the toolkit
+            # should act on rather than a principle it should defer to. That comment's
+            # block is narrowed to `tritonswmm`, so the two no longer contradict each other.
             #
             # `out_triton/performance.txt` is hereby a LIVE COMPLETION PREDICATE, not an
             # output, and MUST NEVER be added to a reclaim allowlist. Why that survives the
@@ -505,15 +631,13 @@ class TRITONSWMM_run:
             if not _perf.exists():
                 logger.warning(
                     "model_run_completed: the %s log at %s carries the completion marker "
-                    "but this scenario's %s is absent. The log is keyed on event_iloc "
-                    "while the scenario is keyed on its stable slug, so the marker most "
-                    "likely belongs to a DIFFERENT event that previously occupied this row "
-                    "position. Reporting NOT complete so the simulation runs. If this "
-                    "fires for EVERY completed sim it is not a stale marker: suspect an "
-                    "output_folder / scen_paths.out_triton disagreement, a file-level "
-                    "reclaim added under out_triton/, or a failed rank-0 write (TRITON's "
-                    "ofstream is unchecked, so a full disk or a bad path prints "
-                    "Simulation ends anyway).",
+                    "but this scenario's %s is absent. Both are keyed on the SAME stable "
+                    "event identity, so this is not another event's marker: the marker "
+                    "survived without the outputs it describes. Reporting NOT complete so "
+                    "the simulation runs. Suspect an output_folder / scen_paths.out_triton "
+                    "disagreement, a file-level reclaim added under out_triton/, or a "
+                    "failed rank-0 write (TRITON's ofstream is unchecked, so a full disk or "
+                    "a bad path prints Simulation ends anyway).",
                     model_type,
                     _log,
                     _perf,
@@ -590,6 +714,16 @@ class TRITONSWMM_run:
             # was always present in the captured output; the predicate stopped short
             # of it. WARNINGS are NOT failures (main.c:93 is a separate branch), so
             # only the errors clause disqualifies.
+            #
+            # Every line number in the comment above is a claim about THIRD-PARTY source,
+            # selected by `SWMM_tag_key`, and nothing else in this repository compared it
+            # against the program that was actually built. `_warn_if_swmm_producer_drifted`
+            # reads the source tree the image retains and warns when a literal has moved, so
+            # the silent failure -- every standalone SWMM run reading INCOMPLETE -- acquires a
+            # named cause. It deliberately does NOT change `success`: item 1b.3 asks for a
+            # warning, because a drifted marker is upstream's to fix and refusing here would
+            # fail runs whose log an operator can still read.
+            _warn_if_swmm_producer_drifted()
             success = SWMM_COMPLETION_MARKER in log_content and SWMM_ERROR_MARKER not in log_content
 
         # Divergence check — WARN, but deliberately NOT load-bearing. TRITONSWMM ONLY.
@@ -620,16 +754,21 @@ class TRITONSWMM_run:
         # `simulation_completed` returns at the `if completed:` branch above and never
         # reaches here, so coverage here is partial by construction, whereas
         # `_coupled_swmm_report_finalized` is reached from BOTH paths. Reason (2) -- that
-        # gating on an artifact inverts log-based truth -- is answered at the gate: the log
-        # it would otherwise trust is keyed on `event_iloc` and is not this scenario's own.
+        # gating on an artifact inverts log-based truth -- is answered at the gate: the
+        # conjunct does not doubt the log's VERDICT, it cross-checks the log against the
+        # artifact of the SAME event, and a disagreement between two of one event's own
+        # records is actionable rather than a principle to defer to.
         #
         # The prior claim that "the durable fix is that model logs now live INSIDE
         # analysis_dir (model_logfile_for), so the wipe that removes the outputs removes the
-        # marker too" is WITHDRAWN as incomplete. It closes the WIPE-SURVIVAL route only. It
-        # does not close SLOT REUSE: the log name carries `event_iloc`, so any non-append
-        # edit to `weather_events_to_simulate` renumbers the ordinals and a newly added
-        # event inherits a marker no wipe ever touched. That route is closed by the artifact
-        # conjunct in `_coupled_swmm_report_finalized`, not by where the log lives.
+        # marker too" is WITHDRAWN as incomplete. It closes the WIPE-SURVIVAL route only.
+        # SLOT REUSE is closed SEPARATELY, and it is closed in the NAME: this log, its
+        # `_walltime` ledger and its `_resume_events` ledger were once all keyed on the CSV
+        # ROW ORDINAL, so any non-append edit to `weather_events_to_simulate` renumbered
+        # the ordinals and a newly added event inherited records no wipe ever touched. The
+        # name now carries the event's stable identity slug (`evt-{event_id}`, the same key
+        # the scenario directory and the `_status/` flags use), so a position cannot be
+        # reused by a different event at all, and both ledgers derive from that one name.
         if model_type == "tritonswmm" and success:
             perf_file = self.performance_file(model_type=model_type)
             if not perf_file.exists():

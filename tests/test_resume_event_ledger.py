@@ -235,9 +235,14 @@ def _marker_family():
     tag names, ``SWMM_tag_key``). Not established: a standalone SWMM built at a non-default
     ``SWMM_tag_key``, at ``SWMM_tag_key=None`` (the moving branch tip), or from a tag moved
     upstream after the recorded measurement.
+
+    The two constants' canonical home is ``hhemt.swmm_markers``, so those rows name THAT module:
+    a pin should point at where a literal lives, not at a module that merely re-exports it.
+    Whether the standalone program still prints them is what
+    ``tests/test_swmm_marker_producer_check.py`` checks, against the clone itself.
     """
     from hhemt import analysis_validation as av
-    from hhemt import run_simulation as rs
+    from hhemt import swmm_markers as sm
 
     return [
         ("resume_events.SNAPSHOT_MARKER", re_mod.SNAPSHOT_MARKER),
@@ -249,8 +254,8 @@ def _marker_family():
         ("analysis_validation._TRITON_COMPLETION_MARKER", av._TRITON_COMPLETION_MARKER),
         ("analysis_validation._TRITON_CHECKPOINT_READ_MARKER", av._TRITON_CHECKPOINT_READ_MARKER),
         ("analysis_validation._TRITON_CHECKPOINT_ATTEMPT_MARKER", av._TRITON_CHECKPOINT_ATTEMPT_MARKER),
-        ("run_simulation.SWMM_COMPLETION_MARKER", rs.SWMM_COMPLETION_MARKER),
-        ("run_simulation.SWMM_ERROR_MARKER", rs.SWMM_ERROR_MARKER),
+        ("swmm_markers.SWMM_COMPLETION_MARKER", sm.SWMM_COMPLETION_MARKER),
+        ("swmm_markers.SWMM_ERROR_MARKER", sm.SWMM_ERROR_MARKER),
     ]
 
 

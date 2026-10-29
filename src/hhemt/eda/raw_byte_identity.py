@@ -261,12 +261,13 @@ def read_sub_resume_context(
     cfg lives in the platformdirs CACHE tree, so a scratch-arm log glob matches nothing. The sub
     yaml carries the authoritative ``experiment_cfg_yaml`` pointer, ``TRITON_reporting_timestep_s``,
     AND ``resume_interruption_schedule``, so ONE read resolves the resume-marker log path (log dir
-    + the ``model_logfile_for`` filename ``model_tritonswmm_{member_id}_evt{event_iloc}.log``), the
-    reporting interval that sets the ``timestep_min`` axis / vline scale (a wrong interval
-    mis-scales both), and the K REQUESTED resume-boundary indices (the durable, K-complete,
-    model-agnostic vline source -- the surviving cfg set is NOT one; see
-    ``resume_boundaries_from_schedule``). Tolerant: missing yaml / key / log -> that element is
-    None (no vline / caller falls back), never raising.
+    + the FILENAME, taken from ``run_simulation.model_logfile_name`` so this reader cannot
+    re-type the grammar — see ``_model_log_candidates`` for the event-identity form and the
+    legacy ordinal candidate), the reporting interval that sets the ``timestep_min`` axis /
+    vline scale (a wrong interval mis-scales both), and the K REQUESTED resume-boundary
+    indices (the durable, K-complete, model-agnostic vline source -- the surviving cfg set is
+    NOT one; see ``resume_boundaries_from_schedule``). Tolerant: missing yaml / key / log ->
+    that element is None (no vline / caller falls back), never raising.
     """
     sub_yaml = analysis_dir / f"{member_id}.yaml"
     try:
@@ -285,8 +286,10 @@ def read_sub_resume_context(
     # sub dir (`{master_analysis_dir}/members/member_{member_id}` -> .parent.parent). The
     # `experiment_cfg_yaml` pointer is retained ONLY as a legacy fallback, because this
     # function reads arms that COMPLETED before the relocation and whose logs are still at
-    # the config-adjacent path. New-location-first, legacy-second: on a post-fix arm the
-    # first candidate exists and the legacy path is never consulted.
+    # the config-adjacent path. The new location is tried before the legacy one -- but the
+    # FILENAME form is decided first and the location only breaks a tie within a form (see
+    # the ordering note below `master`): an identity-keyed record outranks a position-keyed
+    # one wherever either sits.
     #
     # A fallback is correct HERE and wrong in model_logfile_for. This reader is tolerant by
     # contract (missing log -> None -> the figure simply loses its resume vlines) and gates
@@ -304,12 +307,90 @@ def read_sub_resume_context(
     # DELETION CRITERION: once none of those four trees survives on disk, or every one has
     # been re-run under a post-513d5e1 toolkit, the first candidate is total -- drop the
     # `if master:` branch, this comment, and the now-unused `master` read above.
-    _filename = f"model_tritonswmm_{member_id}_evt{event_iloc}.log"
-    _candidates = [Path(analysis_dir).parent.parent / "logs" / "sims" / _filename]
+    #
+    # NAMES ARE OUTER AND ROOTS ARE INNER, so an IDENTITY-keyed record is preferred wherever it
+    # lives over a POSITION-keyed one: the filename form decides first, the location only breaks
+    # a tie within a form. That is a correction of the first cut, which searched root-major and
+    # therefore let an ordinal-named record in the newer location outrank an identity-named one
+    # in the older -- the attribution Decision 5's priority (1) forbids, since the two names do
+    # not carry equal information.
+    _roots = [Path(analysis_dir).parent.parent / "logs" / "sims"]
     if master:
-        _candidates.append(Path(master).parent / "logs" / "sims" / _filename)
+        _roots.append(Path(master).parent / "logs" / "sims")
+    _names = _model_log_candidates(cfg, member_id, event_iloc, base_dir=Path(analysis_dir))
+    _candidates = [root / name for name in _names for root in _roots]
     log_path = next((c for c in _candidates if c.exists()), None)
     return log_path, reporting_interval_s, schedule
+
+
+def _model_log_candidates(cfg: dict, member_id: str, event_iloc: int, *, base_dir: Path) -> list[str]:
+    """The ONE filename this member's coupled model log may carry, given what the cfg can know.
+
+    The name is taken from ``run_simulation.model_logfile_name`` -- the producer's own grammar
+    -- with the event's STABLE slug projected from the config's events CSV
+    (``_event_id_from_cfg``). This function used to spell the name itself, which is the
+    hand-built-duplicate class ``model_logfile_for``'s docstring records; the grammar now has
+    one home and this reader imports it.
+
+    THE ORDINAL FALLBACK IS BOUND TO THE CASE WHERE THE IDENTITY IS NOT KNOWABLE, and that
+    binding is the whole of the argument, not a tolerance. When ``event_id`` resolves, this
+    returns the identity name and NOTHING ELSE: offering the ordinal name as a second candidate
+    would let a position-keyed record answer for an event whose identity says the record is not
+    its own, which is exactly the attribution Decision 5 ranks FIRST and ranks ABOVE the
+    figure-completeness priorities it trades against. The ordinal name is returned only when the
+    cfg cannot yield an identity at all -- no ``weather_events_to_simulate`` pointer, an
+    unreadable CSV, or an ordinal past the end -- because there the alternative is not "a better
+    name" but "no vlines", and a pre-relocation arm's only record IS ordinal-named.
+
+    The accepted cost, stated so it is not discovered later: an arm whose cfg DOES resolve an
+    identity but whose on-disk log is ordinal-named (every pre-change tree) now reads None and
+    loses its resume vlines. That is the direction Decision 5 chose: lose a figure annotation
+    rather than attribute one event's record to another.
+    """
+    from hhemt.run_simulation import model_logfile_name
+
+    event_id = _event_id_from_cfg(cfg, event_iloc, base_dir=base_dir)
+    if event_id is not None:
+        return [model_logfile_name("tritonswmm", event_id, member_id)]
+    return [f"model_tritonswmm_{member_id}_evt{event_iloc}.log"]
+
+
+def _event_id_from_cfg(cfg: dict, event_iloc: int, *, base_dir: Path) -> str | None:
+    """The stable event slug for one row of the config's events CSV, or None.
+
+    Reproduces ``TRITONSWMM_analysis``'s own projection without constructing one: the analysis
+    reads ``df_sims = pd.read_csv(weather_events_to_simulate)`` projected onto
+    ``weather_event_indices`` and takes ``.loc[event_iloc, weather_event_indices]``; the same
+    two steps here yield the same indexer dict, and ``compute_event_id_slug`` is the producer's
+    own mint.
+
+    A RELATIVE ``weather_events_to_simulate`` IS RESOLVED AGAINST ``base_dir`` -- the member's
+    own directory, where the yaml this cfg was read from lives -- and never against the process
+    working directory. Neither the pydantic field nor any validator absolutizes it, so production
+    inherits pandas' cwd-relative read; this reader STATES a base instead of inheriting a
+    variable, because the same tree must not answer with one event's record or another depending
+    on where the process happened to start. The stated base is the only one the yaml can name.
+
+    Tolerant by contract: a config written before these fields existed, an unreadable CSV, or an
+    ordinal past the end returns None, which is the caller's signal that the identity is NOT
+    knowable rather than an error.
+    """
+    from hhemt.scenario import compute_event_id_slug
+
+    csv_path = cfg.get("weather_events_to_simulate")
+    indices = cfg.get("weather_event_indices")
+    if not csv_path or not indices:
+        return None
+    resolved = Path(csv_path)
+    if not resolved.is_absolute():
+        resolved = Path(base_dir) / resolved
+    try:
+        import pandas as pd
+
+        row = pd.read_csv(resolved).loc[event_iloc, list(indices)]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return compute_event_id_slug(row.to_dict())
 
 
 def build_binary_timestep_figure(

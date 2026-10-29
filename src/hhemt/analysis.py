@@ -32,7 +32,7 @@ import pandas as pd
 import yaml
 
 from hhemt import constants as cnst
-from hhemt import du_sentinels
+from hhemt import du_sentinels, resume_events
 from hhemt import orchestrator_sentinels as _osent
 from hhemt.config.analysis import ClearRawValue, ForceRerunValue, analysis_config
 from hhemt.config.hpc_system import resolve_gpu_target
@@ -418,6 +418,7 @@ class TRITONSWMM_analysis:
         is_main_orchestrator: bool = True,
         hpc_system_config_yaml: Path | None = None,
         case_manifest_yaml: Path | None = None,
+        skip_layout_state: bool = False,
     ) -> None:
         """
         Initialize a TRITON-SWMM analysis orchestrator.
@@ -459,11 +460,27 @@ class TRITONSWMM_analysis:
             (so the RO-Crate root ``name`` resolves from the real manifest instead of
             the analysis_id stand-in). A load/parse failure degrades gracefully to
             None (default: None).
+        skip_layout_state : bool, optional
+            If True, THIS construction materialises no layout state: the per-analysis
+            ``sims/`` directory is not created here. It does NOT reach the system tree --
+            this class receives an already-constructed ``TRITONSWMM_system`` and never
+            builds one, so a ``_version.json`` stamp is governed only by the
+            ``skip_layout_state`` passed to that system's OWN construction. A caller that
+            passes this flag here and expects a clean system tree gets a stamped one.
+            Reserved for a caller that declares it will not mutate the tree it is
+            inspecting -- the migration dry run passes ``self.dry_run``, which
+            ``runner._construct_context`` sets True exactly on the planning path
+            (``dry_run=not apply``). Distinct from ``skip_log_update``, which governs the
+            shared ``system_log.json`` and ``log.json`` writes and is unchanged by this
+            flag (default: False).
         """
         self._system = system
         self.analysis_config_yaml = analysis_config_yaml
         cfg_analysis = load_analysis_config(analysis_config_yaml)
         self.cfg_analysis = cfg_analysis
+        # Read by the simulation_directory mkdir below; separate from skip_log_update,
+        # which governs the log writes and nothing else.
+        self._skip_layout_state = skip_layout_state
         # Settable CaseManifest accessor. Populated from the
         # case_manifest_yaml constructor arg (case.yaml) when provided-and-loadable, so the
         # RO-Crate root `name` resolves from the real manifest (provenance._resolve_case_manifest)
@@ -526,7 +543,11 @@ class TRITONSWMM_analysis:
         # __init__ mkdir's sims/<sim_id>/...). _update_log is now a thin refresh,
         # so create the directory explicitly here to
         # preserve the construction-time contract relied on by callers/tests.
-        self.analysis_paths.simulation_directory.mkdir(parents=True, exist_ok=True)
+        # Gated by skip_layout_state: a caller that declares it will not mutate the tree
+        # it is inspecting must not create this directory, which is the sibling of the
+        # _version.json stamp the same flag suppresses on the system.
+        if not self._skip_layout_state:
+            self.analysis_paths.simulation_directory.mkdir(parents=True, exist_ok=True)
 
         # Read at CONSTRUCTION, deliberately: audit_renderer_io wraps only
         # module.render(...), so a construction-time read incurs no declared-source
@@ -5407,14 +5428,21 @@ class TRITONSWMM_analysis:
             # granularity, exactly the stale-evidence skip that motivated the
             # model_logfile_for fix: model_run_completed's raw-marker fallback would find a
             # prior campaign's "Simulation ends" and skip the sim this method just cleared
-            # the outputs for. Remove the log and its _walltime ledger sibling together --
-            # a ledger surviving its log would double-count into wall_clock_ledger_s on the
-            # re-run. Best-effort: a missing file is the normal case on a first restart.
+            # the outputs for. Remove the log AND BOTH of its sibling ledgers in one set --
+            # `_walltime` (a ledger surviving its log would double-count into
+            # wall_clock_ledger_s on the re-run) and `_resume_events` (the append-only resume
+            # record; surviving its log, it would be read as the RE-RUN's resume evidence, the
+            # same stale-evidence class one record family over). Each ledger path comes from
+            # its owner: the `_walltime` derivation is spelled here as the runner spells it,
+            # and `_resume_events` is resolved through `resume_events.ledger_path_for` so the
+            # wipe cannot drift from the reader. All three derive from the log's STEM, so the
+            # event-identity re-key moves them together. Best-effort: a missing file is the
+            # normal case on a first restart.
             _simlogs = self.analysis_paths.simlog_directory
             _log_targets: list[Path] = []
             for _log in _simlogs.glob(f"model_*_member_{member}_evt*.log"):
                 _ledger = _simlogs / "_walltime" / f"{_log.stem}.jsonl"
-                _log_targets += [_log, _ledger]
+                _log_targets += [_log, _ledger, resume_events.ledger_path_for(_log)]
             # These bytes ARE DU-counted (`logs/sims` is an analysis-scope own dir). ONE
             # accounting call for the whole set, at the ANALYSIS scope that owns
             # `logs/`; the member sentinel is unaffected because the logs are not under it.

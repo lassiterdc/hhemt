@@ -23,6 +23,7 @@ from hhemt.exceptions import CompilationError, ConfigurationError, ProcessingErr
 from hhemt.log import TRITONSWMM_system_log
 from hhemt.paths import SysPaths
 from hhemt.plot_system import TRITONSWMM_system_plotting
+from hhemt.swmm_markers import MAIN_C_RELATIVE_PATH, SWMM_MARKERS
 
 
 def _refuse_compile_in_undeclared_test_venue(entry_point: str) -> None:
@@ -156,6 +157,51 @@ CUDA_ARCH_MAP: dict[str, tuple[str, str]] = {
 }
 
 
+def _emit_swmm_marker_check_lines() -> list[str]:
+    """Shell lines that verify the cloned SWMM source prints the literals the verdict reads.
+
+    The toolkit decides a standalone SWMM run by two literal strings in the engine's log, and
+    both are printed by third-party source cloned at ``SWMM_tag_key``. This emits a
+    ``grep -qF`` per literal (``hhemt.swmm_markers.SWMM_MARKERS`` -- interpolated from the
+    module, NEVER retyped here) whose failure branch echoes a ``WARNING:`` naming the missing
+    literal.
+
+    THREE PROPERTIES ARE LOAD-BEARING, each because the obvious alternative is wrong:
+
+    - **Non-failing.** The generated script opens with ``set -e``, so a bare ``grep`` that
+      finds nothing would abort the compile. ``if ! grep ...; then echo ...; fi`` makes the
+      failure branch the only effect. A drifted marker is upstream's to fix and the item asks
+      for a warning, not a refusal.
+    - **Emitted OUTSIDE the clone branch.** A clone that already exists at a different tag
+      never re-runs the clone, and that is exactly the clone whose source decides the verdict.
+      Emitting this inside the ``if`` would check only freshly cloned trees.
+    - **Reads the script's own ``${SWMM_SOURCE_DIR}``**. The same variable the clone wrote to,
+      so the check cannot drift from where the source actually landed.
+
+    The ``[ -f "$_swmm_main_c" ]`` guard mirrors ``hhemt.swmm_markers.producer_check``'s
+    ``None``: an absent ``main.c`` means there is no producer to be wrong about, and grepping a
+    missing path would only add stderr noise to the compile log the operator reads.
+    """
+    suffix = "the toolkit reads that literal to decide a standalone SWMM run completed."
+    lines = [
+        "# Verify the SWMM source prints the two log literals the toolkit's completion verdict",
+        "# reads. Emitted OUTSIDE the clone branch so a pre-existing clone is checked too, and",
+        "# non-failing because `set -e` is on and a drifted marker is a warning, not a failure.",
+        f'_swmm_main_c="${{SWMM_SOURCE_DIR}}/{MAIN_C_RELATIVE_PATH}"',
+        'if [ -f "$_swmm_main_c" ]; then',
+    ]
+    for marker in SWMM_MARKERS:
+        lines.extend(
+            [
+                f"""  if ! grep -qF -- '{marker}' "$_swmm_main_c"; then""",
+                f"""    echo "WARNING: SWMM source $_swmm_main_c does not print '{marker}'; {suffix}" >&2""",
+                "  fi",
+            ]
+        )
+    lines.append("fi")
+    return lines
+
+
 class TRITONSWMM_system:
     def __init__(
         self,
@@ -166,6 +212,7 @@ class TRITONSWMM_system:
         additional_modules: str | None = None,
         execution_container_mode: bool = False,
         skip_log_update: bool = False,
+        skip_layout_state: bool = False,
     ) -> None:
         self.system_config_yaml = system_config_yaml
         self.cfg_system = load_system_config(system_config_yaml)
@@ -203,6 +250,16 @@ class TRITONSWMM_system:
         # _sync_compilation_log_field persists nothing, while the properties still derive
         # their verdicts freshly from the build trees.
         self._skip_log_update = skip_log_update
+
+        # LAYOUT-STATE GATE. Deliberately NOT folded into skip_log_update: that flag is
+        # named for one artifact and justified by one failure (the shared-log create race
+        # described above), while this one suppresses the two artifacts a read-only caller
+        # must not materialise -- the _version.json stamp at the end of __init__ and, on
+        # TRITONSWMM_analysis, the simulation_directory mkdir. Stretching the log flag to
+        # cover a version stamp would make its name describe the wrong thing about two of
+        # the three artifacts it would then govern. Default False keeps every existing
+        # constructing caller byte-identical.
+        self._skip_layout_state = skip_layout_state
 
         system_dir = self.cfg_system.system_directory
         tritonswmm_dir = self.cfg_system.TRITONSWMM_software_directory
@@ -293,11 +350,15 @@ class TRITONSWMM_system:
         self._sync_compilation_status_on_init()
 
         # Stamp _version.json at LAYOUT_VERSION at construction (eager - system
-        # dir is materialized synchronously by __init__).
-        from hhemt.version_migration import LAYOUT_VERSION
-        from hhemt.version_migration.state import stamp_new_target
+        # dir is materialized synchronously by __init__). Gated by skip_layout_state so a
+        # caller that must not materialise layout state -- the migration dry run -- leaves
+        # no _version.json behind; the default still stamps, which the compile rung and the
+        # migration ladder both read.
+        if not self._skip_layout_state:
+            from hhemt.version_migration import LAYOUT_VERSION
+            from hhemt.version_migration.state import stamp_new_target
 
-        stamp_new_target(self.cfg_system.system_directory, LAYOUT_VERSION, mode="construction")
+            stamp_new_target(self.cfg_system.system_directory, LAYOUT_VERSION, mode="construction")
 
     @property
     def analysis(self) -> "TRITONSWMM_analysis":
@@ -2149,6 +2210,12 @@ class TRITONSWMM_system:
                 ]
             )
             bash_script_lines.append("")
+
+        # The producer check is emitted AFTER and OUTSIDE the clone branch above, deliberately:
+        # a clone that already exists at a different tag never re-runs that branch, and it is
+        # exactly that clone whose source decides the toolkit's completion verdict.
+        bash_script_lines.extend(_emit_swmm_marker_check_lines())
+        bash_script_lines.append("")
 
         # Build SWMM
         # Load HPC modules FIRST -- parity with _compile_backend_locked and

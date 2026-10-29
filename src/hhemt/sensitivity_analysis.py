@@ -2498,6 +2498,7 @@ class TRITONSWMM_sensitivity_analysis:
         """
         import pydantic
 
+        from hhemt.config.loaders import load_system_config
         from hhemt.config.system import system_config
         from hhemt.system import TRITONSWMM_system
 
@@ -2565,7 +2566,15 @@ class TRITONSWMM_sensitivity_analysis:
                         message=(f"member_id={member_id_str}: system_config_yaml does not exist at {yaml_path}."),
                         config_path=sensitivity_csv,
                     )
-                cfg = TRITONSWMM_system(yaml_path).cfg_system
+                # READ the config; do NOT construct a system from it. Construction authors
+                # two on-disk artifacts into the config's OWN system_directory --
+                # system_log.json and a LAYOUT_VERSION stamp in _version.json -- and the
+                # stamp is emitted unconditionally, so passing skip_log_update=True would
+                # still mutate every row's directory. The parse is what the constructor's
+                # own config step performs, so all three arms of this builder yield one
+                # type; the constructor's TRITONSWMM_software_directory-is-None refusal is
+                # re-performed at the per-target construction below.
+                cfg = load_system_config(yaml_path)
             else:
                 cfg = self._system.cfg_system
 

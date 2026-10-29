@@ -111,20 +111,28 @@ class MigrationContext:
                 "cfg_paths required to build expected slugs; pass "
                 "--analysis-config and --system-config to the migrate CLI"
             )
-        # Observer, not a writer: the analysis below is already skip_log_update=True, so
-        # this module's read-only intent is recorded in its own code. The migration DOES
-        # write layout state elsewhere — _version.json via the constructor's
-        # stamp_new_target, and scenario_status.csv on the apply path — but those are
-        # different artifacts from system_log.json, and the stamp is ungated by this flag
-        # anyway, so passing it here changes only the shared-log write.
+        # Observer, not a writer, and on a dry run that is now true of LAYOUT STATE as
+        # well as of the shared log. Both constructions below pass skip_log_update=True
+        # (the shared system_log.json / log.json writes) AND skip_layout_state=self.dry_run
+        # (the two artifacts a plan must not materialise: the _version.json stamp the
+        # constructors emit, and the analysis's simulation_directory). The two axes are
+        # separate flags on purpose -- skip_log_update is named for one artifact and
+        # justified by one failure, and it does NOT gate the stamp. On the APPLY path
+        # self.dry_run is False, so skip_layout_state falls back to its default and a real
+        # migration materialises layout state and writes scenario_status.csv by design.
+        # NOTE ON THE POLARITY: runner._construct_context passes dry_run=not apply, so
+        # self.dry_run is True exactly when this context will NOT mutate the tree. The flag
+        # is therefore driven by self.dry_run and not by its negation.
         system = TRITONSWMM_system(
             system_config_yaml=self.cfg_paths["system"],
             skip_log_update=True,
+            skip_layout_state=self.dry_run,
         )
         analysis = TRITONSWMM_analysis(
             system=system,
             analysis_config_yaml=self.cfg_paths["analysis"],
             skip_log_update=True,
+            skip_layout_state=self.dry_run,
         )
         slugs: set[str] = set()
         for iloc in analysis.df_sims.index:

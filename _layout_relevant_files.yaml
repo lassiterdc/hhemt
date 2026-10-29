@@ -620,7 +620,7 @@ non_breaking_allowlist:
       apply_provenance_core, whose future edits could be layout-bearing, so any content
       drift re-fires Check B rather than inheriting a path-permanent pass.
     layout_signature: "18a7d3bf876819bae2f47e5b3111ad8b8bfa69f7b38a11a97ea48f3ff222ca09"
-  - path: src/hhemt/config/experiment_bundle.py
+  - path: src/hhemt/config/experiment_definition.py
     justification: >
       Input-schema module only (the estate's experiment.yaml descriptor). Adds no
       on-disk analysis-tree layout and no consolidated-output field; nothing under
@@ -1126,7 +1126,7 @@ non_breaking_allowlist:
       that content was examined. No claim of non-breaking is made here. Any later
       drift re-fires Check B and must be adjudicated on its own merits then.
     layout_signature: "ecdf650c5560f0f42226447b9db04a82dfc8cdc71cff71ea9e36e70b65373aaa"
-  - path: src/hhemt/config/experiment_bundle.py
+  - path: src/hhemt/config/experiment_definition.py
     justification: >-
       BASELINE ONLY, NOT A REVIEW. Appended by the check-b fail-open repair to
       convert this path from permanently exempt to change-scoped. The signature
@@ -1557,7 +1557,7 @@ non_breaking_allowlist:
       SIF quest (2026-09, ADR-21): new sif_build_config (build venue + resources; never identity).
       INPUT-config schema only.
     layout_signature: 933e3c4fc12669957badce9037ba0bf8bedc74573f3567acabccb22a4d7363f5
-  - path: src/hhemt/config/experiment_bundle.py
+  - path: src/hhemt/config/experiment_definition.py
     justification: >-
       SIF quest (2026-09, ADR-21): ContainerRef retires def_recipe (recipes are toolkit package
       data selected by the derived family) and refuses a descriptor still carrying it. INPUT-config
@@ -2117,7 +2117,7 @@ non_breaking_allowlist:
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
     layout_signature: "271f4a3fdead57dbd094ba7ec432c59222034d5ec686ff1805c1cd0d7b0e13b5"
-  - path: src/hhemt/config/experiment_bundle.py
+  - path: src/hhemt/config/experiment_definition.py
     justification: >-
       D127 CONFIG-REFERENCE POPULATION. `ExperimentConfig.toolkit_pin` moves from a bare
       `toolkit_pin: ToolkitPin` declaration to a `Field(description=...)` form so the
@@ -4106,7 +4106,7 @@ non_breaking_allowlist:
       keeps supported, and carries a NetCDF FILE at the '.nc' path, so no completed state moves.
       KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
       change-scoped row does, and the next edit is adjudicated on its own merits.
-  - path: src/hhemt/config/experiment_bundle.py
+  - path: src/hhemt/config/experiment_definition.py
     layout_signature: "6343438ce86fec5c11a190046d85e7cc05771c4dc469ffa4a7c5ea656e379bdc"
     justification: >-
       NON-BREAKING. Package 2d, chunk 2d.3 (item I83, ruling D-114): the description string of
@@ -4303,9 +4303,15 @@ non_breaking_allowlist:
       this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next
       change to this path.
   - path: src/hhemt/sensitivity_analysis.py
-    layout_signature: 60a51f748ab5fa1150fdfc5639de2ad00d96e367574820fea00d1219f1d8a0e4
+    layout_signature: 747032fb2829a940386eeb9ba62de92f757654816dcfa05f547af3eab9c7e7fe
     justification: >-
       NON-BREAKING. Re-signed for the merge of develop 355f08d9 into docs-and-experiment-system.
+      RE-STAMPED a second time for a read-site elimination: the yaml_specified arm of
+      _build_unique_system_targets now READS its per-member system config through
+      load_system_config instead of constructing a TRITONSWMM_system and keeping only .cfg_system
+      off it, so the read site is eliminated; the two artifacts that construction authored are
+      still written by the per-target construction at ~:2657, so no name, path, version or group
+      moves.
       The resolution takes each conflict hunk's code from one side (the merge chunk's AST
       code-invariance gate), so it adds no persisted key, file name, zarr group or _version.json
       field beyond what each side already carries. The layout_signature is the file's sha256 at

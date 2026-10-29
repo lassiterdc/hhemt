@@ -149,6 +149,12 @@ def _sim(tmp_path: Path, cfg_text: str, steps=(4, 5), *, failed_replay: bool = F
         cfg_hpc_system=None,
         analysis_paths=SimpleNamespace(simlog_directory=tmp_path / "logs" / "sims"),
         _system=_System(),
+        # The model log's NAME is derived from the event's stable identity, so a stub that
+        # reaches `run_simulation.model_logfile_for` (through `prepare_simulation_command`)
+        # must carry the weather-index projection the production method provides. Only the
+        # INDEXERS are supplied here -- the filename grammar stays in `run_simulation`, so a
+        # stub can never become a second expression of the convention.
+        _retrieve_weather_indexer_using_integer_index=lambda event_iloc: {"event": int(event_iloc)},
     )
     scen = SimpleNamespace(
         event_iloc=0,

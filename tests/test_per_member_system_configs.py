@@ -43,6 +43,47 @@ def _touch(path: Path) -> Path:
     return path
 
 
+def _write_row_system_yaml(tmp_path: Path, dst: Path, *, target_dem_resolution: float) -> Path:
+    """Write a schema-valid per-row system config, every root under ``tmp_path``.
+
+    A per-row ``system_config_yaml`` is PARSED FOR REAL: the yaml arm of
+    ``_build_unique_system_targets`` reads the row's file rather than constructing a system
+    from it, so a placeholder with no content raises ``ValueError: YAML config ...
+    parsed to None`` before the dedup logic under test is reached. ``target_dem_resolution`` is
+    the dedup key's first element, so each row's value is what the caller's ``yaml_to_attrs``
+    table already declares.
+
+    The four existence-validated inputs are empty placeholders -- nothing here reads them --
+    and ``TRITONSWMM_software_directory`` is ``toolkit_owned_output``, so its absence on disk
+    is not checked and no build directory has to exist.
+    """
+    for rel in ("row_wshed.shp", "row_dem.tif", "row_template.cfg", "row_swmm/hydraulics.inp"):
+        fp = tmp_path / rel
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        if not fp.exists():
+            fp.write_bytes(b"")
+    cfg = {
+        "crs": {"horizontal_epsg": 3857, "vertical_epsg": 5703},
+        "system_directory": str(tmp_path / f"system_{dst.stem}"),
+        "watershed_gis_polygon": str(tmp_path / "row_wshed.shp"),
+        "DEM_fullres": str(tmp_path / "row_dem.tif"),
+        "TRITONSWMM_software_directory": str(tmp_path / "software"),
+        "TRITONSWMM_git_URL": "https://example.invalid/triton.git",
+        "triton_swmm_configuration_template": str(tmp_path / "row_template.cfg"),
+        "SWMM_hydraulics": str(tmp_path / "row_swmm" / "hydraulics.inp"),
+        "toggle_use_swmm_for_hydrology": False,
+        "toggle_use_constant_mannings": True,
+        "constant_mannings": 0.03,
+        "toggle_triton_model": False,
+        "toggle_tritonswmm_model": True,
+        "toggle_swmm_model": False,
+        "target_dem_resolution": target_dem_resolution,
+    }
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(yaml.safe_dump(cfg, sort_keys=False))
+    return dst
+
+
 def _make_stub_system(target_dem_resolution: float, gpu_hardware, gpu_compilation_backend, system_config_yaml: Path):
     """Build a stub TRITONSWMM_system with just the attrs the dedup logic reads."""
     _fields = {
@@ -136,8 +177,10 @@ def test_build_unique_system_targets_dedups_by_compile_tuple(monkeypatch, tmp_pa
     yaml_a = (tmp_path / "system_A.yaml").resolve()
     yaml_b = (tmp_path / "system_B.yaml").resolve()
     yaml_c = (tmp_path / "system_C.yaml").resolve()
-    for p in (yaml_a, yaml_b, yaml_c):
-        p.touch()
+    # A schema-valid document per row, not a placeholder: the yaml arm parses each row's file
+    # for real, and each row's target_dem_resolution is the value yaml_to_attrs declares.
+    for p, _dem in ((yaml_a, 10.0), (yaml_b, 10.0), (yaml_c, 5.0)):
+        _write_row_system_yaml(tmp_path, p, target_dem_resolution=_dem)
 
     yaml_to_attrs = {
         yaml_a: (10.0, None, None),
@@ -172,8 +215,12 @@ def test_build_unique_system_targets_falls_back_to_master_on_null(monkeypatch, t
     """A null cell uses the master system's YAML and participates in dedup."""
     master_yaml = (tmp_path / "master_cfg_system.yaml").resolve()
     yaml_d = (tmp_path / "system_D.yaml").resolve()
-    for p in (master_yaml, yaml_d):
-        p.touch()
+    # Both are schema-valid documents rather than placeholders. The master's file is never
+    # PARSED on this path (the master arm reads the stubbed ``self._system.cfg_system``), but
+    # writing it as a real config keeps the two fixtures from looking like two different kinds
+    # of thing to a reader.
+    _write_row_system_yaml(tmp_path, master_yaml, target_dem_resolution=10.0)
+    _write_row_system_yaml(tmp_path, yaml_d, target_dem_resolution=10.0)
 
     yaml_to_attrs = {
         master_yaml: (10.0, None, None),

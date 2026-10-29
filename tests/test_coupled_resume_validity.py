@@ -136,6 +136,23 @@ _SHA_PRE_SCATTER = "b3820a448f304b3f732f4b6fac5564adf86ac333"  # replay absent, 
 _SHA_POST_ALL = "9db367ddc79f86c7f708686d1dd805dc992fb0a4"  # replay + scatter both absent (Arm B)
 
 
+def _weather_indexer(event_iloc):
+    """Stand-in for ``_retrieve_weather_indexer_using_integer_index`` on a duck-typed analysis.
+
+    The production method projects the row at ``event_iloc`` of ``df_sims`` onto
+    ``cfg_analysis.weather_event_indices``. A stub has neither an events CSV nor a ``df_sims``
+    frame, so this returns a one-column indexer whose slug is a pure function of the ordinal --
+    which is all the resolver needs to mint a name. The STUB supplies weather INDEXERS; the
+    filename grammar stays in ``run_simulation``, so a stub can never become a second
+    expression of it.
+
+    Every stub that reaches ``model_logfile_for`` -- directly, through ``_write_real_log`` or
+    through any check that resolves the model log -- must carry this projection, because the
+    name is derived from the event's identity rather than from its row position.
+    """
+    return {"event": int(event_iloc)}
+
+
 def _analysis_stub(*, coupled=True, sensitivity=False, df=None, simlog_dir=None):
     return SimpleNamespace(
         _system=SimpleNamespace(
@@ -148,6 +165,7 @@ def _analysis_stub(*, coupled=True, sensitivity=False, df=None, simlog_dir=None)
             simlog_directory=simlog_dir,
         ),
         df_status=df,
+        _retrieve_weather_indexer_using_integer_index=_weather_indexer,
     )
 
 
@@ -419,6 +437,7 @@ def test_postfix_sensitivity_master_resolves_per_sub(monkeypatch, tmp_path):
             simlog_directory=tmp_path / "unused",
             analysis_dir=master_dir / "members" / "member_0",
         ),
+        _retrieve_weather_indexer_using_integer_index=_weather_indexer,
     )
     master = _analysis_stub(
         sensitivity=True,
@@ -428,7 +447,7 @@ def test_postfix_sensitivity_master_resolves_per_sub(monkeypatch, tmp_path):
     master.sensitivity = SimpleNamespace(members={"member_0": sub})
     master.cfg_analysis.toggle_sensitivity_analysis = True
     _write_real_log(sub, 0, _CKPT + _ENDS)  # resumed, complete, no replay marker -> WARN
-    assert (master_dir / "logs" / "sims" / "model_tritonswmm_member_0_evt0.log").exists()
+    assert (master_dir / "logs" / "sims" / "model_tritonswmm_member_0_evt-event.0.log").exists()
     _write_dead_path_decoy(scen, _CKPT + _REPLAY + _ENDS)  # inverse verdict
     res = check_coupled_resume_validity(master)
     assert res.passed is False
@@ -449,10 +468,13 @@ def test_model_logfile_method_delegates_to_free_function():
     a = SimpleNamespace(
         analysis_paths=SimpleNamespace(simlog_directory=_P("/x/logs/sims")),
         cfg_analysis=SimpleNamespace(is_experiment_member=False),
+        _retrieve_weather_indexer_using_integer_index=_weather_indexer,
     )
     run = SimpleNamespace(_analysis=a, _scenario=SimpleNamespace(event_iloc=7))
     assert TRITONSWMM_run._analysis_level_model_logfile(run, "tritonswmm") == model_logfile_for(a, 7, "tritonswmm")
-    assert model_logfile_for(a, 7, "tritonswmm").name == "model_tritonswmm_evt7.log"
+    # Still a NAME assertion, against the event-identity form: the pin discriminates on the
+    # convention, not on the wording around it.
+    assert model_logfile_for(a, 7, "tritonswmm").name == "model_tritonswmm_evt-event.7.log"
 
 
 def test_sub_model_log_lives_under_experiment_dir_not_config_dir(tmp_path):
@@ -480,9 +502,10 @@ def test_sub_model_log_lives_under_experiment_dir_not_config_dir(tmp_path):
             simlog_directory=master_dir / "members" / "member_gpu_2_r1" / "logs" / "sims",
             analysis_dir=master_dir / "members" / "member_gpu_2_r1",
         ),
+        _retrieve_weather_indexer_using_integer_index=_weather_indexer,
     )
     p = model_logfile_for(sub, 0, "triton")
-    assert p == master_dir / "logs" / "sims" / "model_triton_member_gpu_2_r1_evt0.log"
+    assert p == master_dir / "logs" / "sims" / "model_triton_member_gpu_2_r1_evt-event.0.log"
     assert config_dir not in p.parents, "model log must not be anchored to the config dir"
 
 

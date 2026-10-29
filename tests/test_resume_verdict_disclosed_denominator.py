@@ -122,6 +122,11 @@ def _analysis(tmp_path):
     return SimpleNamespace(
         analysis_paths=SimpleNamespace(simlog_directory=tmp_path / "logs" / "sims"),
         cfg_analysis=SimpleNamespace(is_experiment_member=False, toggle_sensitivity_analysis=False),
+        # `resume_events.ledger_path_for` is fed by `model_logfile_for`, whose NAME is derived
+        # from the event's stable identity -- so this stub must carry the weather-index
+        # projection the production analysis provides. Only the INDEXERS are supplied; the
+        # filename grammar stays in `run_simulation`.
+        _retrieve_weather_indexer_using_integer_index=lambda event_iloc: {"event": int(event_iloc)},
     )
 
 
@@ -137,7 +142,15 @@ def _status(n_resumes):
 
 
 def _write_ledger(tmp_path, rows):
-    ledger = re_mod.ledger_path_for(tmp_path / "logs" / "sims" / "model_tritonswmm_evt0.log")
+    """Seed the ledger at the name the PRODUCER writes, spelled as a LITERAL.
+
+    The model log is keyed on the event's stable identity (`evt-{event_id}`), not on the CSV
+    row position, so the ledger sibling carries that stem. The literal is written rather than
+    produced through `model_logfile_for` so this fixture stays independent of the function it
+    feeds, and the `event.0` segment is what the stubs' weather-index projection renders for
+    `event_iloc=0`.
+    """
+    ledger = re_mod.ledger_path_for(tmp_path / "logs" / "sims" / "model_tritonswmm_evt-event.0.log")
     re_mod.append_resume_events(ledger, rows, attempt=len(rows))
 
 
@@ -217,6 +230,7 @@ def test_a_members_failing_row_reaches_the_granular_table_with_its_member_tag(tm
     member = SimpleNamespace(
         analysis_paths=SimpleNamespace(simlog_directory=tmp_path / "logs" / "sims"),
         cfg_analysis=SimpleNamespace(is_experiment_member=False, toggle_sensitivity_analysis=False),
+        _retrieve_weather_indexer_using_integer_index=lambda event_iloc: {"event": int(event_iloc)},
     )
     master = SimpleNamespace(
         cfg_analysis=SimpleNamespace(is_experiment_member=False, toggle_sensitivity_analysis=True),

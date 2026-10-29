@@ -589,12 +589,17 @@ def audit_resume_evidence(rows: list[dict], *, n_resumes: int) -> dict:
     is returned and named in the summary. A picker step-back row is a ``snapshot`` row: it
     is a completed resume and raises nothing.
 
-    THE TWO OPERANDS ARE ALSO KEYED DIFFERENTLY. The ledger is keyed by the event's
-    position (the model-log stem ``model_{m}_evt{event_iloc}``) while ``n_resumes`` is keyed
-    by the scenario. After a multi-sim rerun that adds or removes events, a position can
-    hold another event's rows, so this audit's verdict is valid only while event positions
-    are unchanged since the rows were written. That positional-key defect is not repaired
-    here.
+    THE TWO OPERANDS ARE NOW KEYED THE SAME WAY, and that is a repaired premise rather than
+    an inherited one. The ledger path derives from the model log's STEM
+    (``run_simulation.model_logfile_for`` -> ``ledger_path_for``), and that stem is keyed on
+    the event's STABLE identity slug -- ``model_{m}_evt-{event_id}``, the same key the
+    scenario directory and the ``_status/`` completion flags carry -- so both operands name
+    the EVENT. A multi-sim rerun that inserts, removes or reorders rows in
+    ``weather_events_to_simulate`` can therefore no longer move one event's rows onto
+    another, and this audit owes no positional-key qualifier: a row it reads belongs to the
+    event whose name it was found under. This module needed NO logic edit for that change
+    because it reads the stem the producer hands it, which is the point of deriving both
+    ledgers from one expression.
 
     Deliberately NOT a raise and NOT a verdict the caller must act on. There are two
     production callers: the runner (``run_simulation_runner.py``), finishing a simulation

@@ -95,35 +95,56 @@ repos:
         always_run: true
         stages: [pre-push]
       - id: check-layout-version-b
-        name: check layout-relevant files trigger LAYOUT_VERSION bump
-        entry: uv run --locked python scripts/check_layout_version.py check-b HEAD
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-commit]
-      # THE VENUE SPLIT, and it is not cosmetic. check-b's disarm is a PENDING-CHANGE
-      # predicate: `_layout_version_at_head()` reads the WORKTREE and
-      # `_layout_version_at("HEAD")` reads the COMMIT, so on a clean tree they are equal
-      # by construction and the disarm is structurally unreachable. Before this split neither
-      # check-layout-version hook carried a `stages:` key, so both ran at every stage by
-      # pre-commit's all-stages default -- check-b reached pre-push with a permanently-inert
-      # disarm and refused exactly the push it exists to permit (a bump pushed as the most
-      # recent commit). `--range` supplies the range-based bump predicate the checker's
-      # own SCOPE comment says a range venue must bring: it grades the COMMIT RANGE
-      # base..HEAD on every arm, so the worktree is not read at all.
-      #
-      # That matters because pre-push is NOT a clean-tree venue. `pre_commit/commands/run.py`
-      # computes `stash = not all_files and not files`, which is not keyed on stage, so a
-      # branch update reverts UNSTAGED edits for the hook's duration while STAGED-uncommitted
-      # ones survive, and a push whose first unpushed ancestor is a root commit stashes
-      # nothing. Reading the worktree here is unsound in both directions, not merely dirty.
-      - id: check-layout-version-b-range
         name: check pushed layout-relevant files trigger LAYOUT_VERSION bump
-        entry: uv run --locked python scripts/check_layout_version.py check-b --range HEAD~1
+        entry: uv run --locked python scripts/check_layout_version.py check-b --range
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-push]
+      # CHECK B RUNS AT PRE-PUSH ONLY, and the venue is the whole of this block's subject.
+      #
+      # WHAT WAS WRONG WITH PRE-COMMIT. A pre-commit obligation is graded at the moment a
+      # commit is CREATED. A commit later replayed by rebase, cherry-pick, or a plain merge
+      # is never created again on this machine, so its content is never graded -- measured
+      # on 2026-10-28, an instance landed ungated by exactly that route. Pre-push is the last
+      # venue on the machine that sees a branch LEAVING, so it is the only one that can grade
+      # the commits actually being pushed. That is the move; the predicate is unchanged.
+      #
+      # THE POPULATION. `PRE_COMMIT_FROM_REF`/`PRE_COMMIT_TO_REF` are exported by pre-commit
+      # to pre-push hooks and name the pushed range. The ENTRY DELIBERATELY CARRIES NO REF:
+      # the checker reads both from the environment itself and defaults them to the safe
+      # one-commit population (`HEAD~1`..`HEAD`) when they are unset, so a manual
+      # `pre-commit run --hook-stage pre-push` outside a push still grades one commit rather
+      # than crashing or grading a wider range. Reading the environment in the CHILD is what
+      # makes this correct without depending on whether pre-commit shell-expands `entry`:
+      # environment inheritance holds under either exec model, and a literal `$PRE_COMMIT_FROM_REF`
+      # in `entry` would be correct under only one of them.
+      #
+      # WHY NOT A WIDER BASE. Grading `merge-base(main, HEAD)..HEAD` is W-B2 and is REFUTED:
+      # measured at this repository's state (`main` at LAYOUT_VERSION 16 against HEAD 26) it
+      # returns PASS before its scan, while `check-a --range main` blocks every push. A wider
+      # base is not the mechanism and must not be reintroduced as one.
+      #
+      # THE PREDICATE, which is why the move could not be landed alone. `check-b`'s range arm
+      # used to disarm the WHOLE graded range when `head_v != base_v`, so one bump anywhere
+      # in a wide range printed `bumped; check-a covers this` and returned 0 BEFORE the file
+      # scan -- a population half with no predicate. The checker now walks the range ONE
+      # COMMIT AT A TIME and grades each commit's own diff, so a bump in commit 2 cannot
+      # disarm the scan of commit 3.
+      #
+      # AND THE WORKTREE READ IS GATED, which is why the move and the gate had to ship
+      # together. The change-scoped exemption arm used to compare the allowlist signature
+      # against `_file_content_hash(REPO_ROOT / rel)`, an uncontrolled WORKTREE read. At
+      # pre-push the worktree is neither HEAD nor the developer's tree: `pre_commit/commands/run.py`
+      # computes `stash = not all_files and not files`, which is not keyed on stage, so a
+      # branch update reverts UNSTAGED edits for the hook's duration while STAGED-uncommitted
+      # ones survive, and a push whose first unpushed ancestor is a root commit stashes
+      # nothing. The range venue therefore reads `git show {commit}:{rel}` -- the blob AT THE
+      # GRADED COMMIT -- and never touches the worktree. Moving the venue without that gate
+      # would have converted a recorded latent defect (D151) into a live one.
+      #
+      # check-layout-version-a KEEPS its pre-commit registration. It is not the obligation
+      # this block moves, and `check-a`'s range arm already grades the pushed bump at pre-push.
 
       # LIVE-PIN REGISTRATION GUARD (scripts/check_live_pin_registered.py)
       # Refuses a commit whose TRITON_PIN is not recorded ABSENT -- via the EXPLICIT
@@ -142,10 +163,10 @@ repos:
       # from REPO_ROOT and read_text()s them). The venue-split comment above this block
       # establishes that pre-push is not a clean-tree venue -- `stash = not all_files and
       # not files` reverts unstaged edits while staged-uncommitted ones survive -- so a
-      # worktree read there is unsound in both directions. This is the same reason
-      # check-layout-version-b carries `stages: [pre-commit]` and its pre-push counterpart
-      # is a separate `--range` hook. No `--range` mode exists on this guard, so there is
-      # no sound pre-push arm to wire and none is wired.
+      # worktree read there is unsound in both directions. check-layout-version-b has since
+      # MOVED to pre-push, and it could only do so because its range venue reads the blob at
+      # the graded commit instead of the worktree -- this guard has no such read mode, so no
+      # sound pre-push arm exists for it and none is wired.
       #
       # Deliberately NOT a pytest target: a test can be deselected by a marker expression
       # and a compile-tier test can be skipped by venue, and this invariant must be neither.

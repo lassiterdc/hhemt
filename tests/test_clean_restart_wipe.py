@@ -41,11 +41,28 @@ def test_clean_restart_wipe_removes_only_named_subs_and_delegates_flag_delete(tm
     # The sub's ANALYSIS-LEVEL model runtime logs live under the MASTER's logs/sims/, not
     # under the sub dir — model_logfile_for routes every sim of a sweep to one directory.
     # Seed both subs so the wipe's scoping is observable: member_1's log must go, member_2's stays.
+    #
+    # The names are LITERALS, never produced through `model_logfile_for`, so this pin stays
+    # independent of the function it pins: a change to the naming convention must be made in
+    # two places on purpose rather than one place by accident. `evt-event.0` is the
+    # event-IDENTITY segment (the slug), which is why the wipe's `evt*` glob still matches it.
+    #
+    # BOTH ledgers are seeded beside each log, because the wipe removes three files per log:
+    # the log, its `_walltime` ledger and its `_resume_events` ledger. A ledger surviving its
+    # log is read as the RE-RUN's evidence -- double-counted wall time for one, another
+    # campaign's resume rows for the other -- which is the same stale-evidence class the log
+    # removal exists to prevent, one record family over.
     simlogs = analysis_dir / "logs" / "sims"
     (simlogs / "_walltime").mkdir(parents=True)
+    (simlogs / "_resume_events").mkdir(parents=True)
     for _sa in ("1", "2"):
-        (simlogs / f"model_tritonswmm_member_{_sa}_evt0.log").write_text("Simulation ends\n", encoding="utf-8")
-        (simlogs / "_walltime" / f"model_tritonswmm_member_{_sa}_evt0.jsonl").write_text("{}\n", encoding="utf-8")
+        (simlogs / f"model_tritonswmm_member_{_sa}_evt-event.0.log").write_text("Simulation ends\n", encoding="utf-8")
+        (simlogs / "_walltime" / f"model_tritonswmm_member_{_sa}_evt-event.0.jsonl").write_text(
+            "{}\n", encoding="utf-8"
+        )
+        (simlogs / "_resume_events" / f"model_tritonswmm_member_{_sa}_evt-event.0.jsonl").write_text(
+            "{}\n", encoding="utf-8"
+        )
 
     recorded: list = []
 
@@ -91,25 +108,31 @@ def test_clean_restart_wipe_removes_only_named_subs_and_delegates_flag_delete(tm
         "the setup-generated per-sub config must survive the wipe byte-intact"
     )
 
-    # The named sub's analysis-level model log and its _walltime ledger sibling are gone.
+    # The named sub's analysis-level model log and BOTH of its ledger siblings are gone.
     # Leaving the log behind would reproduce, at member granularity, the stale-evidence skip that
     # motivated the model_logfile_for relocation: model_run_completed's raw-marker fallback
     # would find this "Simulation ends" and skip the sim whose outputs were just cleared.
-    # Leaving the ledger behind would double-count into wall_clock_ledger_s on the re-run.
-    assert not (simlogs / "model_tritonswmm_member_1_evt0.log").exists(), (
+    # Leaving the walltime ledger behind would double-count into wall_clock_ledger_s on the
+    # re-run; leaving the resume-events ledger behind would hand the re-run a prior campaign's
+    # resume rows as its own evidence.
+    assert not (simlogs / "model_tritonswmm_member_1_evt-event.0.log").exists(), (
         "the named sub's model log must be removed, else the re-run skips on stale evidence"
     )
-    assert not (simlogs / "_walltime" / "model_tritonswmm_member_1_evt0.jsonl").exists(), (
+    assert not (simlogs / "_walltime" / "model_tritonswmm_member_1_evt-event.0.jsonl").exists(), (
         "the walltime ledger must go with its log, else the re-run double-counts"
     )
+    assert not (simlogs / "_resume_events" / "model_tritonswmm_member_1_evt-event.0.jsonl").exists(), (
+        "the resume-events ledger must go with its log, else the re-run reads foreign resume evidence"
+    )
 
-    # The good sub (member_2) is wholly untouched — including its log and ledger, which share
-    # the master's one logs/sims/ directory with member_1's. This is what pins the SCOPING:
-    # a glob that dropped the member token would take every sub's log in the sweep.
+    # The good sub (member_2) is wholly untouched — including its log and both ledgers, which
+    # share the master's one logs/sims/ directory with member_1's. This is what pins the
+    # SCOPING: a glob that dropped the member token would take every sub's log in the sweep.
     assert (analysis_dir / "members" / "member_2" / "out_tritonswmm" / "swmm_replay.bin").exists()
     assert (analysis_dir / "members" / "member_2" / "member_2.yaml").exists()
-    assert (simlogs / "model_tritonswmm_member_2_evt0.log").exists(), "the good sub's log must survive"
-    assert (simlogs / "_walltime" / "model_tritonswmm_member_2_evt0.jsonl").exists()
+    assert (simlogs / "model_tritonswmm_member_2_evt-event.0.log").exists(), "the good sub's log must survive"
+    assert (simlogs / "_walltime" / "model_tritonswmm_member_2_evt-event.0.jsonl").exists()
+    assert (simlogs / "_resume_events" / "model_tritonswmm_member_2_evt-event.0.jsonl").exists()
 
     # Per-member flag deletion was delegated exactly once with a scope="member" spec naming member_1.
     assert len(recorded) == 1
