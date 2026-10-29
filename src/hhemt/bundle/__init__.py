@@ -182,12 +182,21 @@ class Bundle:
 
         _bundle_sha = manifest.get("toolkit_git_sha")
         _reader_sha = _get_toolkit_git_sha(strict=False)
-        if (
-            looks_like_sha(_bundle_sha)
+        # An UNRESOLVABLE reader is a MISMATCH, not a silent pass. The guard used to
+        # require BOTH sides to look like a sha before warning, and an unresolvable reader
+        # resolves to the sentinel "unknown", which `looks_like_sha` rejects -- so the
+        # guard fell silent exactly when the reader could say least about itself, and a
+        # bundle naming one commit opened under a toolkit naming none with nothing in the
+        # output recording it. The manifest side keeps its `looks_like_sha` gate, which is
+        # what keeps the in-repo fixtures' literal "fixture" sentinel silent -- and, with no
+        # key at all, what keeps the prefix test below from calling startswith(None).
+        _bundle_is_sha = looks_like_sha(_bundle_sha)
+        _agrees = (
+            _bundle_is_sha
             and looks_like_sha(_reader_sha)
-            and not _reader_sha.startswith(_bundle_sha)
-            and not _bundle_sha.startswith(_reader_sha)
-        ):
+            and (_reader_sha.startswith(_bundle_sha) or _bundle_sha.startswith(_reader_sha))
+        )
+        if _bundle_is_sha and not _agrees:
             warnings.warn(
                 f"Bundle {root} was produced by hhemt {_bundle_sha}, but the toolkit "
                 f"reading it is {_reader_sha}. A re-render may differ from the bundled "

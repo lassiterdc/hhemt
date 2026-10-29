@@ -1828,15 +1828,53 @@ class RunningIdentity:
     dirty: bool
 
 
-def _toolkit_root() -> Path:
-    """The toolkit ROOT, from the installed package's own location -- a filesystem fact.
+def _toolkit_root() -> Path | None:
+    """The toolkit ROOT, proven by the layout markers around the installed package.
+
+    Returns None when the markers do not hold, and None IS the answer rather than a
+    fallback. This function used to answer ``_toolkit_source_dir().resolve().parents[2]``
+    -- a DEPTH assumption that any package laid three levels below ANY git repository
+    satisfies. A vendored copy, a package unpacked into a monorepo, or a wheel dropped
+    inside a project tree therefore inherited THAT repository's HEAD as the toolkit's
+    identity, and ``running_identity`` reported shape ``"checkout"`` for a tree that is
+    not this toolkit's, which disables the ``hhemt_sha`` gate on whatever repository the
+    package happens to be nested in.
+
+    The markers are the ones ``hhemt.suite.resolved_tree()`` tests for, widened by the one
+    a foreign tree cannot supply by copying a package in: the package sits at
+    ``{root}/src/hhemt``, and ``{root}/pyproject.toml`` NAMES this project. All three hold
+    in a source checkout, in a ``git archive`` staging tree, and in the SIF
+    (``/opt/hhemt-src``), which are the three shapes ``running_identity`` classifies.
 
     NEVER ``git rev-parse --show-toplevel``: that honours ``GIT_DIR`` and would classify a
-    ``.git``-less archive as a checkout of whatever repository the environment names (measured:
-    a host clone's sha reported from inside an image)."""
+    ``.git``-less archive as a checkout of whatever repository the environment names
+    (measured: a host clone's sha reported from inside an image)."""
+    import tomllib
+
     from hhemt.bundle._emit import _toolkit_source_dir
 
-    return _toolkit_source_dir().resolve().parents[2]
+    bundle_dir = _toolkit_source_dir().resolve()
+    package_dir = bundle_dir.parent
+    src_dir = package_dir.parent
+    if src_dir.name != "src":
+        return None
+    if package_dir.name != "hhemt" or not (package_dir / "__init__.py").is_file():
+        return None
+    root = src_dir.parent
+    pyproject = root / "pyproject.toml"
+    if not pyproject.is_file():
+        return None
+    try:
+        declared = tomllib.loads(pyproject.read_text())
+    except (OSError, ValueError):
+        # An unreadable or malformed pyproject is an ABSENT marker, not an error: the
+        # question this function answers is "is this tree provably the toolkit's", and a
+        # file it cannot read proves nothing either way.
+        return None
+    project = declared.get("project")
+    if not isinstance(project, dict) or project.get("name") != "hhemt":
+        return None
+    return root
 
 
 def running_identity() -> RunningIdentity:
@@ -1864,6 +1902,19 @@ def running_identity() -> RunningIdentity:
     from hhemt.sif.pins import is_full_sha
 
     root = _toolkit_root()
+    if root is None:
+        # The ABSENT arm, and it is refused rather than degraded: with no proven root there
+        # is no HHEMT_SHA to read, no .git to interrogate and no SIF to label, so every
+        # shape test below would be a test against an arbitrary directory.
+        raise ConfigurationError(
+            field="hhemt_sha",
+            message=(
+                "the running toolkit has no resolvable root: the installed package is not laid out as "
+                "{root}/src/hhemt under a pyproject.toml naming this project — a wheel install, a bare "
+                "copy, or a package placed inside another repository. `pip install -e` a clone at "
+                "analysis_config.hhemt_sha, or run inside the SIF"
+            ),
+        )
     stamp_path = root / "HHEMT_SHA"
     stamp = stamp_path.read_text().strip() if stamp_path.is_file() else None
     git_dir = root / ".git"
