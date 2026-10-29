@@ -164,6 +164,9 @@ def main():
             args.system_config,
             gpu_hardware=gpu_hardware,
             gpu_compilation_backend=gpu_compilation_backend,
+            # OBSERVER: same shape as run_simulation_runner — prepare reads compile
+            # state and must not rewrite the shared system_log.json (change 1028-1828).
+            skip_log_update=True,
         )
 
         logger.info(f"Loading analysis configuration from {args.analysis_config}")

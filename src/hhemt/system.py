@@ -165,6 +165,7 @@ class TRITONSWMM_system:
         gpu_compilation_backend: Literal["HIP", "CUDA"] | None = None,
         additional_modules: str | None = None,
         execution_container_mode: bool = False,
+        skip_log_update: bool = False,
     ) -> None:
         self.system_config_yaml = system_config_yaml
         self.cfg_system = load_system_config(system_config_yaml)
@@ -190,6 +191,18 @@ class TRITONSWMM_system:
         # True only at the compile-driving construction sites in container mode; the
         # render/status-only sites keep the False default (byte-identical native).
         self._execution_container_mode = execution_container_mode
+        # OBSERVER MODE. Mirrors TRITONSWMM_analysis.skip_log_update (analysis.py:416),
+        # which the sim/prepare/process runners already pass: a process that only READS
+        # compile state must not author a write to the SHARED system_log.json. Under ~30
+        # concurrent runners the create-capable open in log.write() intermittently raised
+        # FileNotFoundError on WekaFS (14 of 822 SLURM logs on the four 4a3r2 synth_cc
+        # arms), because every writer's atomic temp+os.replace manufactures the rename
+        # window the server answers ENOENT inside. Gating the write is the root-cause
+        # shape; retrying the open is refused by developer ruling [Q167].
+        # In this mode construction neither creates nor writes the document and
+        # _sync_compilation_log_field persists nothing, while the properties still derive
+        # their verdicts freshly from the build trees.
+        self._skip_log_update = skip_log_update
 
         system_dir = self.cfg_system.system_directory
         tritonswmm_dir = self.cfg_system.TRITONSWMM_software_directory
@@ -263,7 +276,12 @@ class TRITONSWMM_system:
             self.log = TRITONSWMM_system_log.from_json(log_path)
         except FileNotFoundError:
             self.log = TRITONSWMM_system_log(logfile=log_path)
-            self.log.write()
+            # Observer mode creates nothing: a fresh default log is held in memory and
+            # every later write goes through _sync_compilation_log_field, which this mode
+            # gates. Writing here is the measured failure site (see __init__'s
+            # skip_log_update note).
+            if not self._skip_log_update:
+                self.log.write()
 
         self._analysis: TRITONSWMM_analysis | None = None
         self.plot = TRITONSWMM_system_plotting(self)
@@ -600,6 +618,12 @@ class TRITONSWMM_system:
         properties at EVERY construction, so this fires on reconstruction, not only
         after a compile.
         """
+        # OBSERVER MODE persists NOTHING, including the False->None restore below. The
+        # restore is itself a write, and this mode exists because a runner's write to the
+        # shared document is the measured failure. The value a caller reads back is
+        # unaffected: every property returns its freshly derived verdict regardless.
+        if self._skip_log_update:
+            return
         if not derived_from_resolvable_input:
             # RESTORE, don't just abstain. Returning early leaves a STALE value — and on
             # the four synth_cc arms that stale value is a False this very helper wrote on
