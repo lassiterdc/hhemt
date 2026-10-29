@@ -21,7 +21,7 @@ Pass it as `--hpc-system-config`. See
 
 **An interactive session belongs on a tutorial, and only there.** A page that drives `analysis.run()`, `analysis.reprocess()` or `analysis.render_report()` from Python is a tutorial page, and it names that session as its form.
 
-**New prose adds no verb count and no verb list.** `hhemt --help` is the enumeration. Where a page already carries verb tables — `docs/reference/cli.md` carries six, 27 command rows over 23 top-level verbs, and names 35 distinct flags — those tables ARE its subject and are not this rule's object; the rule binds what is added, and an addition that re-counts or re-lists the surface is the second copy that goes stale.
+**New prose adds no verb count and no verb list.** `hhemt --help` is the enumeration. Where a page already carries verb tables (`docs/reference/cli.md` carries six, 27 command rows over 23 top-level verbs, and names 35 distinct flags), those tables ARE its subject and are not this rule's object; the rule binds what is added, and an addition that re-counts or re-lists the surface is the second copy that goes stale.
 
 The worked example of that form is the dry run in [Config filling § 6](../how-to/config-filling.md): `hhemt run --system-config my_system.yaml --analysis-config my_analysis.yaml --dry-run`.
 
