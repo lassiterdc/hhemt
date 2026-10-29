@@ -824,17 +824,16 @@ def _collect_stage_stamps(analysis) -> dict[str, dict | None]:
 
     # consolidate / processing: the consolidated tree root carries the version-stamp scalar
     # fast-path, and the per-event coordinate underneath it is the processing stage's
-    # own capture. Resolved by existence over both tree names rather than by branching
-    # on toggle_sensitivity_analysis -- a sensitivity master ships the sensitivity tree
-    # and no regular one, and keying on the config would misreport a partially-built
-    # tree as uncaptured.
-    from hhemt.utils import ROOT_TREE_NAMES
+    # own capture. Resolved by existence through the canonical root-store resolver rather than
+    # by branching on toggle_sensitivity_analysis -- a sensitivity master ships its own root
+    # store and no regular one, and keying on the config would misreport a partially-built
+    # tree as uncaptured. Only the one pick is read: on a root carrying two stores the resolver
+    # names the live one, and reading the other would report a stale build's stamp.
+    from hhemt.utils import resolve_experiment_tree
 
-    for name in ROOT_TREE_NAMES:
-        got = _from_tree_attrs(adir / name)
-        if got:
-            out["processing"] = got
-            break
+    got = _from_tree_attrs(resolve_experiment_tree(adir))
+    if got:
+        out["processing"] = got
 
     # `consolidate` reads its OWN carrier, never `processing`'s. Order: the full-triple
     # carrier `consolidate_manifest.json` (hhemt_sha / hhemt_version / hhemt_dirty), then

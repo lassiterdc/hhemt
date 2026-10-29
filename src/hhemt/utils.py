@@ -104,17 +104,29 @@ def resolve_experiment_tree(root: str | Path, *, arm: bool | str | None = None) 
     unified name is returned rather than None, so a caller's own absent-tree branch keeps
     its `.exists()` shape and reports against the canonical name instead of a retired one.
 
-    ``arm`` is the OPTIONAL supplied arm and it changes the answer on exactly ONE subset:
-    the two-store ``(experiment, analysis)`` pair, where the two routes disagree about
-    which store is current and the name order alone cannot say. Absent it the body is
-    byte-identical to its prior form, including the warning. Accepts BOTH vocabularies in
-    use -- ``True``/``False`` and ``"sensitivity"``/``"regular"`` -- and RAISES on anything
-    else, because a silent mismatch between them would compare ``False != "regular"`` and
-    report a corroborated call as uncorroborated.
+    ``arm`` is the OPTIONAL supplied arm. It changes the answer on the two-store
+    ``(experiment, analysis)`` pair, where the two routes disagree about which store is
+    current and the name order alone cannot say, and a REGULAR arm also returns
+    ``analysis_datatree.zarr`` whenever it exists, ahead of any other store beside it.
+    Accepts BOTH vocabularies
+    in use -- ``True``/``False`` and ``"sensitivity"``/``"regular"`` -- and RAISES on
+    anything else, because a silent mismatch between them would compare ``False !=
+    "regular"`` and report a corroborated call as uncorroborated.
+
+    When NO arm is supplied the arm is DISCOVERED from the root itself, in this order: the
+    root's own ``cfg_analysis.yaml`` (``arm_from_config_dir``), then the presence of a
+    ``members/`` directory, which only a sensitivity master carries (the same structural
+    signal ``classify_analysis_arm`` uses). A root with neither stays arm-unknown and gets
+    the regular answer, as it always has. Discovery runs for every store subset: a root
+    whose config names the regular arm returns ``analysis_datatree.zarr`` ahead of a
+    retired store beside it, and a root with neither a config nor ``members/`` resolves as
+    it did before.
     """
     root = Path(root)
     if arm is None:
-        _arm: bool | None = None
+        _arm: bool | None = arm_from_config_dir(root)
+        if _arm is None and (root / "members").is_dir():
+            _arm = True
     elif isinstance(arm, bool):
         _arm = arm
     elif arm in ("sensitivity", "regular"):
@@ -155,6 +167,11 @@ def resolve_experiment_tree(root: str | Path, *, arm: bool | str | None = None) 
             RuntimeWarning,
             stacklevel=2,
         )
+        return root / REGULAR_TREE_NAME
+    if _arm is False and (root / REGULAR_TREE_NAME).exists():
+        # A root whose arm is KNOWN to be regular (supplied, or named by its own config) is a
+        # regular analysis, whose producer writes this store; any other store beside it is a
+        # snapshot or residue. The name order below would rank a third name ahead of it.
         return root / REGULAR_TREE_NAME
     for name in ROOT_TREE_NAMES:
         cand = root / name

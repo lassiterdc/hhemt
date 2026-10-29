@@ -482,7 +482,45 @@ unpaired_allowlist:
       the rename, so the exemption expires on the next change to this renderer.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: 8bdf78a84dc9828610db395f8d7952bb610d72bb8a6a60321b2553161bc78072
+    renderer_sha256: c30c77987e93e3e630e474d4a294252b8fd0ab9ea9fa568ffed63c63bc5941f5
+    justification_2026_10_28_root_store_resolver: >-
+      The renderer now takes its consolidated-store pick from the shared root-store resolver
+      instead of its own name walk. Caption RE-READ IN FULL (23 lines: the three displayed
+      sections, Provenance summary, Data availability and Reproduction guide, plus the
+      Sources block) against the diff. The diff of this renderer against HEAD is TWO hunks,
+      both inside `_resolve_consolidated_tree`: its docstring and its body, where the arm
+      branch and the name walk are replaced by one call to the shared resolver. Verified:
+      outside that function no line of the module moved, and the function's callers are
+      unchanged (`render()`, the data-dictionary projection and the source declaration).
+      WHAT THE BEHAVIOUR CHANGE IS. On a root carrying both the experiment store and the
+      retired analysis store, with no `cfg_analysis.yaml`, the function used to return the
+      experiment store; the shared resolver returns the analysis store on a regular analysis
+      (the producer's live one) and the experiment store when a `members/` directory marks a
+      sensitivity master. Measured over 42 (store subset, config, `members/`) cases, that one
+      case is the only one whose answer changed.
+      WHY THE CAPTION IS UNAFFECTED. The caption describes what the page shows, not which of
+      two stores the renderer reads: the one sentence that reaches the store is the
+      Provenance-summary bullet's "the consolidated outputs with their CF variable
+      dictionary", which names the dictionary's presence, and `grep -n -i -E
+      "resolv|datatree|store|tree"` over the caption matches no store name. The interpolated
+      Sources block renders whatever store path the renderer declares, so it stays true. This
+      is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after
+      the edit, so the exemption expires on the next change to this renderer.
+    justification_2026_10_28: >-
+      The renderer's change is a docstring rewrite of the consolidated-store resolver. Caption RE-READ IN
+      FULL (23 lines: the three displayed sections, Provenance summary, Data availability and
+      Reproduction guide, plus the Sources block) against the diff. The diff of this renderer
+      against HEAD is ONE hunk, 18 insertions and 4 deletions, and it lies inside the
+      docstring of `_resolve_consolidated_tree`. Verified: the module's syntax tree with every
+      docstring blanked is IDENTICAL before and after, and the same comparison reports a
+      difference when a return statement of that function is altered, so no executable line
+      moved, `source_paths` is unchanged and the interpolated Sources block renders as before.
+      WHY THE CAPTION IS UNAFFECTED. The caption describes what the page shows, not how the
+      consolidated store is located: `grep -n -i -E "resolv|datatree|store|tree"` over the
+      caption returns no line. The docstring change states which store that helper resolves
+      and in which order, which no caption sentence asserts. This is a PAIRING discharge on a
+      re-read, not a formatting exemption. Digest recorded after the edit, so the exemption
+      expires on the next change to this renderer.
     justification_2026_10_01: >-
       WP-3C.2 (the provenance half). Caption RE-READ IN FULL against the diff. The change is
       ONE hunk in this renderer, in the same `parts.append` of the same `<p class='note'>`

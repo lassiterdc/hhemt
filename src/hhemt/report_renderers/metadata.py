@@ -552,10 +552,20 @@ _DECLARED_TREE_PATH_ATTRS = ("sensitivity_datatree_zarr", "analysis_datatree_zar
 def _resolve_consolidated_tree(analysis_dir: Path, analysis: TRITONSWMM_analysis | None) -> Path | None:
     """Locate the consolidated DataTree store, by existence, HPC- and bundle-alike.
 
-    Prefers the paths the analysis declares; falls back to the two canonical
-    filenames directly under ``analysis_dir`` so a reconstituted bundle (whose
-    ``analysis_paths`` may be repointed) still resolves. Existence-resolved over
-    the sensitivity-master name FIRST, mirroring ``_combine_merge._resolve_root_tree``.
+    Returns the first EXISTING candidate, or None when none exists.
+    Candidates, in this order:
+
+    1. the paths the analysis declares on ``analysis_paths``, looked up by the names in
+       ``_DECLARED_TREE_PATH_ATTRS`` (the sensitivity-master attribute first);
+    2. the store ``hhemt.utils.resolve_experiment_tree`` picks under ``analysis_dir``, with the
+       analysis' own ``toggle_sensitivity_analysis`` as the arm when an analysis is given and
+       otherwise the arm that resolver discovers from the root.
+
+    Relation to ``_combine_merge._resolve_root_tree``: both take their pick from the same
+    ``resolve_experiment_tree`` call, so on a bundle root they resolve to the same store. They
+    differ in two ways only: this function tries the paths an ``analysis`` object declares
+    first, and it returns None when no store exists where that one raises
+    ``FileNotFoundError``.
     """
     candidates: list[Path] = []
     paths = getattr(analysis, "analysis_paths", None) if analysis is not None else None
@@ -563,28 +573,15 @@ def _resolve_consolidated_tree(analysis_dir: Path, analysis: TRITONSWMM_analysis
         declared = getattr(paths, attr, None) if paths is not None else None
         if declared is not None:
             candidates.append(Path(declared))
-    from hhemt.utils import ROOT_TREE_NAMES
+    from hhemt.utils import resolve_experiment_tree
 
-    if analysis is None:
-        # NO ANALYSIS OBJECT: the declared-attribute loop above contributed nothing, so what
-        # follows would be a pure name walk -- which returns the MIGRATION-TIME store on a
-        # regular two-store root. Recover the ARM from the root's own cfg_analysis.yaml,
-        # which a BUNDLE always ships and which a producer writes at eda(), publish() and
-        # (once `### D132` applies) either consolidation writer.
-        # GUARDED ON `analysis is None`, NOT on `paths is None`: the latter is a SUPERSET
-        # that also catches an analysis object exposing no analysis_paths, and on that state
-        # a supplied arm exists and must win -- consulting the tree there would invert the
-        # clause's supplied-before-discovered order.
-        # arm_from_config_dir returns None when no config is present, and the walk below is
-        # then reached unchanged.
-        from hhemt.utils import EXPERIMENT_TREE_NAME, REGULAR_TREE_NAME, arm_from_config_dir
-
-        _arm = arm_from_config_dir(analysis_dir)
-        if _arm is True:
-            candidates.append(analysis_dir / EXPERIMENT_TREE_NAME)
-        elif _arm is False:
-            candidates.append(analysis_dir / REGULAR_TREE_NAME)
-    candidates.extend(analysis_dir / name for name in ROOT_TREE_NAMES)
+    # The remaining candidate is the canonical resolver's pick under analysis_dir. A supplied arm
+    # (the analysis' own toggle) wins over a discovered one, because the resolver reads the arm
+    # only to separate a regular root from a sensitivity master that both carry two stores.
+    # With no analysis object the resolver discovers the arm from the root's cfg_analysis.yaml
+    # and then from a members/ directory.
+    _supplied = getattr(getattr(analysis, "cfg_analysis", None), "toggle_sensitivity_analysis", None)
+    candidates.append(resolve_experiment_tree(analysis_dir, arm=_supplied if isinstance(_supplied, bool) else None))
     return next((c for c in candidates if c.exists()), None)
 
 
