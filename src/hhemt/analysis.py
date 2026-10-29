@@ -3371,6 +3371,21 @@ class TRITONSWMM_analysis:
             _fingerprints = self.sensitivity.find_orphan_input_fingerprints()
             _has_orphans = bool(_dirs or _flags or _groups or _fingerprints)
             if _has_orphans and not cleanup_orphans:
+                # The printed remedy has to RUN as pasted, which means naming every option
+                # `cleanup-orphans` declares as REQUIRED and only those: `--system-config`
+                # and `--analysis-config` are required, while `--hpc-system-config` is
+                # optional, so it is emitted only when this analysis was actually built
+                # from one. Emitting it unconditionally would print
+                # "--hpc-system-config None" for every analysis without an HPC config,
+                # which exits at typer's parser instead of rebuilding the analysis that
+                # raised. The three attributes are the constructor arguments of this very
+                # analysis (`analysis.py`, `system.py`), so the command reconstructs the
+                # same analysis the CLI builds at `cli.py`'s `cleanup-orphans` body.
+                _hpc_system_config_arg = (
+                    f"--hpc-system-config {self.hpc_system_config_yaml} "
+                    if self.hpc_system_config_yaml is not None
+                    else ""
+                )
                 raise _CfgErr(
                     field="cleanup_orphans",
                     message=(
@@ -3378,10 +3393,13 @@ class TRITONSWMM_analysis:
                         "absent from the current sensitivity CSV: "
                         f"{len(_dirs)} member dir(s), "
                         f"{len(_flags)} _status flag(s), "
-                        f"{len(_groups)} datatree group(s). "
+                        f"{len(_groups)} datatree group(s), "
                         f"{len(_fingerprints)} input-fingerprint(s). "
                         "Re-invoke analysis.run(cleanup_orphans=True) to delete them, "
-                        "or run `triton-swmm cleanup-orphans --apply --force` from the CLI."
+                        f"or run `hhemt cleanup-orphans --system-config {self._system.system_config_yaml} "
+                        f"--analysis-config {self.analysis_config_yaml} "
+                        f"{_hpc_system_config_arg}"
+                        "--apply --force` from the CLI."
                     ),
                     config_path=str(self.analysis_config_yaml),
                 )
