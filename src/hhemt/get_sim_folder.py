@@ -72,7 +72,7 @@ def main():
         from hhemt.scenario import TRITONSWMM_scenario
         from hhemt.system import TRITONSWMM_system
 
-        system = TRITONSWMM_system(args.system_config)
+        system = TRITONSWMM_system(args.system_config, skip_log_update=True)
         analysis = TRITONSWMM_analysis(
             analysis_config_yaml=args.analysis_config,
             system=system,

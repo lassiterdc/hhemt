@@ -111,7 +111,16 @@ class MigrationContext:
                 "cfg_paths required to build expected slugs; pass "
                 "--analysis-config and --system-config to the migrate CLI"
             )
-        system = TRITONSWMM_system(system_config_yaml=self.cfg_paths["system"])
+        # Observer, not a writer: the analysis below is already skip_log_update=True, so
+        # this module's read-only intent is recorded in its own code. The migration DOES
+        # write layout state elsewhere — _version.json via the constructor's
+        # stamp_new_target, and scenario_status.csv on the apply path — but those are
+        # different artifacts from system_log.json, and the stamp is ungated by this flag
+        # anyway, so passing it here changes only the shared-log write.
+        system = TRITONSWMM_system(
+            system_config_yaml=self.cfg_paths["system"],
+            skip_log_update=True,
+        )
         analysis = TRITONSWMM_analysis(
             system=system,
             analysis_config_yaml=self.cfg_paths["analysis"],
@@ -900,7 +909,10 @@ class MigrationContext:
                 "cfg_paths required for regenerate_scenario_status_csv; pass "
                 "--analysis-config and --system-config to the migrate CLI"
             )
-        system = TRITONSWMM_system(system_config_yaml=self.cfg_paths["system"])
+        system = TRITONSWMM_system(
+            system_config_yaml=self.cfg_paths["system"],
+            skip_log_update=True,
+        )
         analysis = TRITONSWMM_analysis(
             system=system,
             analysis_config_yaml=self.cfg_paths["analysis"],

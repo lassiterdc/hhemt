@@ -59,12 +59,23 @@ def main():
         from hhemt.analysis import TRITONSWMM_analysis
         from hhemt.system import TRITONSWMM_system
 
-        system = TRITONSWMM_system(args.system_config)
+        system = TRITONSWMM_system(
+            args.system_config,
+            # OBSERVER: rendering reads completed outputs and writes no log field, so this
+            # subprocess must not author the SHARED system_log.json write that a default
+            # construction performs (change 1028-2152, same shape as 1028-1828).
+            skip_log_update=True,
+        )
         analysis = TRITONSWMM_analysis(
             args.analysis_config,
             system,
             hpc_system_config_yaml=args.hpc_system_config,
             is_main_orchestrator=False,
+            # OBSERVER, and the reason this is not cosmetic: a sensitivity-master render
+            # materializes every member analysis, each of which forwards this flag, so
+            # leaving it False authors one master plus N member analysis-log writes from a
+            # job that only reads (change 1028-2152).
+            skip_log_update=True,
         )
 
         if analysis.cfg_analysis.toggle_sensitivity_analysis:

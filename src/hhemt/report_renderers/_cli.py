@@ -67,7 +67,7 @@ def main() -> None:
 
     # TRITONSWMM_system and TRITONSWMM_analysis take YAML Paths and load internally
     # (system.py:25-27, analysis.py:108-109) — pass Paths, not pre-loaded models.
-    system = TRITONSWMM_system(args.system_config)
+    system = TRITONSWMM_system(args.system_config, skip_log_update=True)
     analysis = TRITONSWMM_analysis(
         args.analysis_config,
         system,

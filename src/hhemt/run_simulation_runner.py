@@ -481,6 +481,11 @@ def main():
             gpu_hardware=gpu_hardware,
             gpu_compilation_backend=gpu_compilation_backend,
             additional_modules=additional_modules,
+            # OBSERVER: this process only reads compile state. Writing the SHARED
+            # system_log.json here is the measured `log write (open failed)` failure
+            # under ~30 concurrent runners on WekaFS (change 1028-1828); the analysis
+            # construction below already passes the same flag for the same reason.
+            skip_log_update=True,
         )
 
         logger.info(f"Loading analysis configuration from {args.analysis_config}")
