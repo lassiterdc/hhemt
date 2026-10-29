@@ -20,8 +20,10 @@ shape, so live-API field drift cannot silently break CI.
 
 from __future__ import annotations
 
+import getpass
 import json
 import os
+import sys
 import tempfile
 import warnings
 import zipfile
@@ -217,11 +219,71 @@ def _deposit_set(analysis, consolidated_zarr_relpath: str) -> list[Path]:
     return [p for p in parts if p.exists()]
 
 
+def _stdin_is_interactive() -> bool:
+    """True when a person can answer a prompt on this process's stdin.
+
+    A prompt is only a question when someone is there to answer it. Asking unconditionally
+    turns an unattended deposit into a hang: a SLURM step or a CI job blocks on a read that
+    never returns, and the refusal an operator could act on becomes a stuck allocation with
+    no message. So the interactive path is gated on the terminal, and everything else keeps
+    the refusal.
+    """
+    try:
+        return bool(sys.stdin) and sys.stdin.isatty()
+    except (AttributeError, ValueError):  # a closed stream, or one with no isatty()
+        return False
+
+
+def _credential_is_secret(name: str) -> bool:
+    """True when ``name``'s value must not be echoed to the terminal."""
+    return any(word in name.upper() for word in ("TOKEN", "PASSWORD", "SECRET", "KEY"))
+
+
+def _credential_label(name: str) -> str:
+    """A prompt label for the credential variable ``name`` (``HHEMT_ZENODO_TOKEN`` -> ``Zenodo token``)."""
+    words = name.removeprefix("HHEMT_").split("_")
+    return " ".join([words[0].capitalize(), *(word.lower() for word in words[1:])]) if words else name
+
+
+def _prompt_credential(name: str) -> str:
+    """Ask the operator for one credential and return it. NOTHING is stored or cached.
+
+    Deliberately NOT persisted, and the omission is the requirement: a prompt-obtained
+    credential written to disk outlives the process that needed it, is swept into backups and
+    shared-home snapshots, and turns one interactive answer into a standing secret that
+    nobody owns and nobody rotates. The value exists as this call's return value and nowhere
+    else, so a caller that needs it twice is asked twice. A secret-shaped name (a token, a
+    password, a secret) is read with the echo off; a username is echoed so a typo is visible.
+    """
+    label = _credential_label(name)
+    if _credential_is_secret(name):
+        return getpass.getpass(f"{label} (input hidden): ")
+    return input(f"{label}: ")
+
+
 def _require_env(name: str, target: str) -> str:
+    """The credential ``name``: its environment variable when set, else an interactive prompt.
+
+    The environment variable stays the first source, so an unattended run keeps working by
+    exporting it. When it is absent and a person is present, ask rather than refuse; when it
+    is absent and stdin is not a terminal, refuse as before and name both routes, because a
+    prompt nobody can answer is a hang rather than a question.
+    """
     val = os.environ.get(name)
-    if not val:
-        raise PublishError(target=target, doi=None, status=f"missing required credential env var {name}")
-    return val
+    if val:
+        return val
+    if _stdin_is_interactive():
+        prompted = _prompt_credential(name)
+        if prompted:
+            return prompted
+    raise PublishError(
+        target=target,
+        doi=None,
+        status=(
+            f"missing required credential {name}: export it, or run interactively and answer the prompt "
+            "(nothing is stored, so it is asked for again next time)"
+        ),
+    )
 
 
 def _check(resp, *, target: str, doi: str | None, step: str):
