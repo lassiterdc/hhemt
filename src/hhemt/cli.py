@@ -776,9 +776,11 @@ def reprocess_command(
     simulation outputs without re-running sims.
 
     Builds a scope-limited Snakefile at ``{analysis_dir}/Snakefile.reprocess``
-    and runs it against a separate ``.snakemake_reprocess/`` working dir so
-    the reprocess driver can coexist with a live simulation driver. Runs
-    the submission-sentinel reconciliation guard before submission.
+    and runs it in the analysis directory itself, with ``--nolock``, so the
+    reprocess driver can coexist with a live simulation driver; it is refused
+    only when the ``_status/_orchestrator/`` liveness gate finds a live
+    orchestration driver for the same analysis. Runs the submission-sentinel
+    reconciliation guard before submission.
 
     Examples:
 
