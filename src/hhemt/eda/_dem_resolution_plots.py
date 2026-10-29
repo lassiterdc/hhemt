@@ -73,7 +73,7 @@ _DATASHADER_THRESHOLD_FIELD = "report.per_sim.interactive.datashader_threshold_c
 
 
 def dem_resolution_source_paths(root: Path) -> list[Path]:
-    """The bundle-carriage declaration (Gotcha 49 / the master-rooted stipulation).
+    """The bundle-carriage declaration (Gotcha 49 / the primary-rooted stipulation).
 
     Mirrors config_diff_source_paths' shape: the consolidated tree is the data, and it
     is always bundle-carried, so Bundle.eda(plots_only=True) re-renders locally.
@@ -306,7 +306,7 @@ def build_dem_resolution_cost_error_figure(root: Path) -> go.Figure:
     measured 0. It uses a DISTINCT open marker + a "reference ({finest} m, finest)" legend entry
     + the caption, and is EXCLUDED from any fitted trend line. (The old on-plot "reference (error
     = 0 by definition)" arrow annotation was removed as redundant per user iterate-3; D3's literal
-    "carries the annotation" clause is synced in the phase-3 doc + flagged for the master.)
+    "carries the annotation" clause is synced in the phase-3 doc + flagged for the primary.)
 
     MANDATORY (the substrate's companion-presentation rule): the y is a single scalar per
     resolution -- structurally the bare-percentile presentation the rule prohibits. The
@@ -328,8 +328,8 @@ def build_dem_resolution_cost_error_figure(root: Path) -> go.Figure:
     from hhemt.report_renderers.sensitivity_benchmarking import _adaptive_time_unit
 
     # horizontal_epsg for the kernel's Guard-1 CRS fill. Canonical source is
-    # cfg_system.crs.horizontal_epsg; at a sensitivity-MASTER root the system config
-    # sits one level up as system_config.yaml (the master root carries no cfg_system.yaml,
+    # cfg_system.crs.horizontal_epsg; at a sensitivity-PRIMARY root the system config
+    # sits one level up as system_config.yaml (the primary root carries no cfg_system.yaml,
     # so load_eda_context does not apply here). [DRAFT: EPSG-source is a /design-figure
     # confirm point -- see the figure-family EPSG note.]
     # `metadata`: this reads ONE scalar (crs.horizontal_epsg) off a live analysis tree's
@@ -496,7 +496,7 @@ def build_dem_resolution_cost_error_figure(root: Path) -> go.Figure:
     # + the caption; the old on-plot "reference (error = 0 by definition)" arrow annotation was
     # removed as redundant (user, iterate-3). D3's INTENT (finest unmistakably the reference, not a
     # measured 0) is preserved by those three; the D3-literal "carries the annotation" clause is
-    # synced in the phase-3 doc and flagged for the master reconciliation.
+    # synced in the phase-3 doc and flagged for the primary reconciliation.
     # Explicit shape, NOT add_hline(row=, col=). With a table subplot in the figure, add_hline's
     # row/col path walks every subplot looking for axes and raises on the table row, which has
     # none. `xref="x domain"` spans row 1's x-axis; `yref="y"` pins it to row 1's y = 0.
@@ -1121,8 +1121,8 @@ def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | 
     from hhemt.eda._dem_resolution import regrid_to_fine
 
     # horizontal_epsg for the regrid kernel's Guard-1 CRS fill. Canonical source is
-    # cfg_system.crs.horizontal_epsg; at a sensitivity-MASTER root the system config sits
-    # one level up as system_config.yaml (the master root carries no cfg_system.yaml).
+    # cfg_system.crs.horizontal_epsg; at a sensitivity-PRIMARY root the system config sits
+    # one level up as system_config.yaml (the primary root carries no cfg_system.yaml).
     # `metadata` -- see the sibling call in the cost/error figure for the reason.
     cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config, existence="metadata")
     epsg = cfg_system.crs.horizontal_epsg

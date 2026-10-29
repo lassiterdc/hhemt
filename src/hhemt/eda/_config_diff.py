@@ -1,6 +1,6 @@
 """Config-diff-maps EDA figure (redesign of the cross-sim-identity plot).
 
-Answers two questions for a compute-config sensitivity master:
+Answers two questions for a compute-config sensitivity primary:
   1. Which compute-configuration GROUPS produce byte-identical flood results?
   2. For each group that differs from the serial-CPU baseline, what is the SIGNED
      spatial difference (per DEM cell + per SWMM conduit) vs serial CPU?
@@ -413,8 +413,8 @@ def _load_subs(root: Path, *, event_iloc: int = 0) -> dict[str, dict]:
         if g.count("/") != 1 or not g.startswith("/member_"):
             continue
         node = dt[g]
-        # Model-aware node resolution: coupled masters store max_wlevel_m under
-        # tritonswmm/triton; a pure-TRITON master stores it under triton_only/triton
+        # Model-aware node resolution: coupled primaries store max_wlevel_m under
+        # tritonswmm/triton; a pure-TRITON primary stores it under triton_only/triton
         # (processing_analysis.py NODE_PATHS). The SWMM link (flow) tier is coupled-only —
         # absent for pure-TRITON, so it loads as None and the flow panel/columns are dropped
         # downstream (F10: rest of the figure + tables still render).
@@ -461,7 +461,7 @@ def _group_by_identity(subs: dict[str, dict], root: Path) -> list[dict]:
                 f"config_diff_maps requires a UNIFORM grid across members; got "
                 f"max_wlevel_m shapes {shapes}. This figure subtracts members "
                 f"cell-wise and clusters them by byte-identity, both of which assume "
-                f"one grid. A mixed-resolution master needs the dem-resolution "
+                f"one grid. A mixed-resolution primary needs the dem-resolution "
                 f"reporting set (which regrids), not config_diff_maps -- set "
                 f"report.reporting_set='dem_resolution' and "
                 f"eda.enabled_plots accordingly."
@@ -513,7 +513,7 @@ def _symmetric_diff_range(arrays: list, *, floor: float, percentile: float = 99.
     """One SHARED symmetric half-range across every supplied diff array, quantised UP.
 
     The fixed physically-anchored bands this replaces are wider than the data on a typical
-    master, so every diff panel renders uniform white. A percentile rather than a max,
+    primary, so every diff panel renders uniform white. A percentile rather than a max,
     because a single boundary cell otherwise re-widens the band to the state being fixed;
     SHARED across panels rather than per-panel, because per-panel auto-scale destroys
     within-figure comparability, which is a worse defect than the one being fixed.
@@ -847,7 +847,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
                 "loaded."
             ),
             remedy=(
-                "The figure populates once master consolidation has completed (or, for a "
+                "The figure populates once primary consolidation has completed (or, for a "
                 "render bundle, once the consolidated tree is carried into the bundle)."
             ),
         )
@@ -857,7 +857,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             headline="Config-diff maps unavailable (no comparable members)",
             observed=("The consolidated tree carries no member with a TRITON node, so there is nothing to compare."),
             remedy=(
-                "The figure populates once the master carries members whose processed "
+                "The figure populates once the primary carries members whose processed "
                 "outputs include the TRITON depth tier."
             ),
         )
@@ -871,18 +871,18 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         return _config_diff_absent_panel(
             headline="Config-diff maps not applicable (single compute configuration)",
             observed=(
-                f"This master carries exactly one member (<code>{_only}</code>), so no "
+                f"This primary carries exactly one member (<code>{_only}</code>), so no "
                 "second compute configuration exists to difference against a reference and the "
                 "comparison is mathematically undefined."
             ),
             remedy=(
                 "This is what a one-simulation smoke run looks like. The figure populates "
-                "automatically once the master carries two or more members spanning "
+                "automatically once the primary carries two or more members spanning "
                 "distinct compute configurations."
             ),
         )
 
-    # F10: a pure-TRITON master carries no SWMM link tier, so every sub's "flow" is None.
+    # F10: a pure-TRITON primary carries no SWMM link tier, so every sub's "flow" is None.
     # Retain the 2-column layout but skip the col-2 conduit half (traces + table column +
     # ranges + _links) and annotate it "N/A (no coupled SWMM)". Depth (col-1) renders fully.
     has_flow = any(s["flow"] is not None for s in subs.values())
@@ -981,7 +981,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     map_rows = 1 + 2 * len(diff_groups)  # serial + per-group (diff, pct)
     total_rows = 1 + map_rows
     # Iteration 4 (FQ7): applicability decides the GRID, not the CONTENT. On a pure-TRITON
-    # master (has_flow False) the conduit column is not allocated a subplot spec at all --
+    # primary (has_flow False) the conduit column is not allocated a subplot spec at all --
     # previously it was allocated and filled with an "N/A" placeholder, which occupies
     # layout for a comparison that does not exist and reads as a missing result.
     _ncols = 2 if has_flow else 1
@@ -1153,7 +1153,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     #      knowledge doc), because the co-located comparison is a cross-arm small-multiple where a
     #      shared scale is the correct proportional-ink reading. The sequential serial-reference
     #      maps (DIFFERENT colorscales) are exempt and keep their own per-arm auto-scale.
-    # Iteration 4 (FQ6): the FIXED bands above are wider than the data on this master, so
+    # Iteration 4 (FQ6): the FIXED bands above are wider than the data on this primary, so
     # every diff panel rendered uniform white. Replace the constant with a SHARED
     # percentile-clipped symmetric range, quantised UP to a ladder -- the same instrument
     # Panel A uses for its depth cap (_DEPTH_CAP_STEP_M), which is what preserves cross-arm
@@ -1572,7 +1572,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # caption ~25% past the drawn content -- and RETURNS the bottom margin it needs, which
     # replaces the hardcoded B_MARGIN. The old `y=-0.02` was a fraction of plot_h, so the
     # caption sank further below the axes as config groups were added while b=140 stayed
-    # fixed: it fit on small masters and clipped on large ones.
+    # fixed: it fit on small primaries and clipped on large ones.
     # DECLARE THE WIDTH BEFORE WRAPPING. `add_figure_caption` stamps the figure's content
     # width at caption time so a later resize is detectable; captioning first and sizing at
     # the `update_layout` below stamps `fig_content_w_px=None`, which the invariant reads --

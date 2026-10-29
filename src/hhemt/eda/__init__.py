@@ -4,7 +4,7 @@ EDA-supporting data-prep functions live here, one module per EDA family. Each
 returns an ``EdaResult`` (a ``CheckResult`` verdict + a manifest-sidecar'd derived
 artifact under ``{analysis_dir}/eda/``). The first member is the cross-sim
 byte-for-byte identity verification (peak flood depth + conduit flow/ratios across
-sims sharing an event iloc on a sensitivity master).
+sims sharing an event iloc on a sensitivity primary).
 
 These functions are NOT methods on
 ``processing_analysis.TRITONSWMM_analysis_post_processing`` (no coupling of EDA

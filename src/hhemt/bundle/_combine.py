@@ -69,7 +69,7 @@ _CHILD_CRATES_SUBDIR = "child_crates"
 _COMBINED_ROCRATE_FILENAME = "ro-crate-metadata.json"
 _COMBINED_COMPAT_FILENAME = "combined_compatibility.json"
 # Provenance Run Crate profile — the combined tier is a base RO-Crate 1.2 +
-# Provenance-Run-Crate (NOT Workflow-Run-Crate; A8 / master D3 / ADR-9 flip-condition).
+# Provenance-Run-Crate (NOT Workflow-Run-Crate; A8 / primary D3 / ADR-9 flip-condition).
 _COMBINED_CONFORMS_TO = (
     {"@id": "https://w3id.org/ro/crate/1.2"},
     {"@id": "https://w3id.org/ro/wfrun/provenance/0.5"},
@@ -94,7 +94,7 @@ def combine_bundle(
     Provenance-Run-Crate over the N intact child crates.
 
     Both single-analysis bundles (which ship ``analysis_datatree.zarr`` at their
-    root) and sensitivity-master bundles (``sensitivity_datatree.zarr``) are
+    root) and sensitivity-primary bundles (``sensitivity_datatree.zarr``) are
     accepted; the root tree is resolved by existence.
 
     Parameters
@@ -318,7 +318,7 @@ def _write_combined_rocrate(output_path: Path, child_crates: list[str]) -> None:
 def _write_combined_compatibility(output_path: Path, report: CompatibilityReport) -> None:
     """Persist the CompatibilityReport as a deterministic JSON read-model.
 
-    Mirrors the single-analysis validation_report.json pattern (master (c)): the
+    Mirrors the single-analysis validation_report.json pattern (primary (c)): the
     Phase-4 combined renderer REFERENCES this read-model rather than recomputing the
     compatibility check.
     """
@@ -349,10 +349,10 @@ _COMBINED_INTERCOMPARISON_FILENAME = "combined_intercomparison.json"
 #: eda.cross_sim_identity.TRACKED_VARS): peak flood depth + peak conduit flow. Each var
 #: maps to a TUPLE of candidate child node-paths tried in order — the coupled tier
 #: (tritonswmm/*) first, the pure-TRITON tier (triton_only/triton) as fallback — because a
-#: pure-TRITON master stores max_wlevel_m under triton_only/triton, NOT tritonswmm/triton
+#: pure-TRITON primary stores max_wlevel_m under triton_only/triton, NOT tritonswmm/triton
 #: (processing_analysis.py NODE_PATHS). max_flow_cms is coupled-only (no SWMM link tier on a
-#: pure-TRITON master), so its candidate tuple has the single coupled path and is simply
-#: absent — and correctly skipped — for a pure-TRITON master.
+#: pure-TRITON primary), so its candidate tuple has the single coupled path and is simply
+#: absent — and correctly skipped — for a pure-TRITON primary.
 _INTERCOMPARISON_VARS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("tritonswmm/triton", "triton_only/triton"), "max_wlevel_m"),
     (("tritonswmm/swmm_link",), "max_flow_cms"),
@@ -362,7 +362,7 @@ _INTERCOMPARISON_VARS: tuple[tuple[tuple[str, ...], str], ...] = (
 def _bundle_role_from_status(root: Path) -> str:
     """clean iff every bundled scenario_status.csv ``n_resumes`` == 0; resume iff any > 0.
 
-    Combine-first: each experiment bundle is a single-arm master (one all-clean sweep, one
+    Combine-first: each experiment bundle is a single-arm primary (one all-clean sweep, one
     all-resume sweep). scenario_status.csv is bundled by ``_emit._copy_supporting_files``.
     Mirrors ``eda.compute_sensitivity``'s ``n_resumes`` clean/resume classifier convention.
     """
@@ -482,16 +482,16 @@ def _write_combined_intercomparison(output_path: Path, roots: list[Path]) -> Non
     ``combined_intercomparison.json`` (the read-model the ``cross_experiment_intercomparison``
     renderer projects).
 
-    Combine-first (the SOLE clean-vs-resume vehicle): the two bundles are single-arm masters —
+    Combine-first (the SOLE clean-vs-resume vehicle): the two bundles are single-arm primaries —
     one all-clean (``n_resumes==0``), one all-resume (``n_resumes>0``). Classify each bundle
     from its bundled ``scenario_status.csv``, pair each compute-config present in BOTH (keyed on
     the run_mode/n_mpi/n_omp/n_gpus/n_nodes/partition identity), and compare each key-result
     summary (``max_wlevel_m`` + ``max_flow_cms``) per event via ``compare_variable_exact`` (the
     Phase-1 compliant kernel: ``xr.align`` exact + transpose + dtype gate + ``equal_nan``; the
-    master Assumption establishes consolidation is value-preserving, so reading the consolidated
+    primary Assumption establishes consolidation is value-preserving, so reading the consolidated
     tree here is stipulation-compliant). Records ``{config, variable, event_iloc, identical,
     max_abs_diff}``. Read-only over the child bundles; deterministic ordering. Does NOT read any
-    ``eda_resume_sensitivity.verdict.json`` (a single-arm master skips that member and writes no
+    ``eda_resume_sensitivity.verdict.json`` (a single-arm primary skips that member and writes no
     verdict). Writes an EMPTY-but-honest ``pairs`` list when the two bundles share no
     compute-config, a bundle carries no consolidated tree, or the pair is not clean+resume.
     """

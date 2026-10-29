@@ -3,7 +3,7 @@
 Verifies that key results — peak flood depth (``max_wlevel_m``) and conduit
 flow / over-full-flow / over-full-depth (``max_flow_cms`` /
 ``max_over_full_flow`` / ``max_over_full_depth``) — are bit-identical across all
-sims sharing an event iloc on a SENSITIVITY MASTER (members that vary only
+sims sharing an event iloc on a SENSITIVITY PRIMARY (members that vary only
 compute config must produce identical physics). On the strict path
 (``within_family=True``) the reference is anchored PER HARDWARE FAMILY
 (``raw_byte_identity._b4b_family_key``: cpu / gpu): within each family it is the
@@ -329,7 +329,7 @@ def _summary_paths(analysis: TRITONSWMM_analysis) -> list[Path]:
     this glob can produce: that gate admits a directory under four clauses (a ``.zarr``
     suffix, or a ``.zattrs`` / ``.zgroup`` / ``.zarray`` marker), and a summary directory is
     always named ``*.zarr``, so the marker clauses are unreachable here. That understates
-    it: on a real master ``.zgroup`` is ABSENT from the summary stores, so the SUFFIX clause
+    it: on a real primary ``.zgroup`` is ABSENT from the summary stores, so the SUFFIX clause
     is the only one of the gate's four this data satisfies -- a predicate mirroring the gate
     more "faithfully" by testing markers instead of the suffix would declare NOTHING.
     Anything wider (``exists()``) would hand the gate a plain directory it refuses; anything
@@ -337,14 +337,14 @@ def _summary_paths(analysis: TRITONSWMM_analysis) -> list[Path]:
     emit raise on empty sources.
 
     Returns the sub's WHOLE summary tier, which is a superset of the modes any single
-    member reads -- measured on a real master at 2.50x (20 declared, 8 read, 4 subs),
+    member reads -- measured on a real primary at 2.50x (20 declared, 8 read, 4 subs),
     scoped to ``members/`` only. A sibling ``subanalyses/sa_*`` tree exists on that
-    master and is RETIRED VOCABULARY (workflow.py:597 matches ``/subanalyses/`` as
+    primary and is RETIRED VOCABULARY (workflow.py:597 matches ``/subanalyses/`` as
     retired; version_migration/context.py:90 calls it a legacy tree against the
     current ``members/member_*``); it MIRRORS the live tree, so counting both doubles
     every figure while leaving the ratio at 2.50x -- which is why a reviewer checking
     the ratio alone finds nothing. Constancy in event count is NOT established: that
-    master carries a single ``event_index.0``. That over-declaration is
+    primary carries a single ``event_index.0``. That over-declaration is
     deliberate and is the safe direction for CORRECTNESS: the bundle harvest skips a
     declared-but-absent source with a warning (ADR-6 D3), while an UNDER-declaration is the
     defect this helper exists to remove. It is not free, and the cost is not in the record:
@@ -538,7 +538,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
     """ADR-4: verify cross-sim reproducibility and EMIT a characterized-divergence verdict.
 
     Returns a skipped ``EdaResult`` on a non-sensitivity analysis. On a sensitivity
-    master, compares each enabled ``(event_iloc, mode, variable)`` across
+    primary, compares each enabled ``(event_iloc, mode, variable)`` across
     members against ITS OWN HARDWARE FAMILY's reference (serial-CPU for the cpu
     family, 1-GPU for the gpu family; smallest present compute config, then
     lexicographic ``member_id``, as deterministic fallbacks),
@@ -960,7 +960,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
 # §8.7 conjunct (A) — the CROSS-ARM comparison instrument.
 #
 # `check_cross_sim_identity` above is an INTRA-ARM instrument: it compares MEMBERS of one
-# sensitivity master against a reference MEMBER of that same master. Conjunct (A) asks a
+# sensitivity primary against a reference MEMBER of that same primary. Conjunct (A) asks a
 # different question — arm-A member {suffix} against arm-B member {suffix} — so it needs its
 # own entry point rather than a flag on that one. Everything below is parameterised over
 # CALLER-SUPPLIED arm roots and layouts and hardcodes NO §8.7 path template, because the
@@ -1026,9 +1026,9 @@ def read_arm_pin(arm_root: Path, layout: str) -> tuple[str | None, dict]:
     1. A ``.zattrs`` read. The store is **zarr v3**: attributes live in ``zarr.json`` under
        the ``attributes`` key, and a ``.zattrs`` read raises ``FileNotFoundError`` — which
        MUST NOT be mistaken for an absent stamp. This reads ``zarr.json``.
-    2. A MASTER-ONLY read. Measured: the archive clean arm carries 31 stamped stores (1
-       master ``sensitivity_datatree.zarr`` + 30 per-sub) while the live resume arm carries
-       30 per-member stores and NO master store at all, so a master-only read returns a
+    2. A PRIMARY-ONLY read. Measured: the archive clean arm carries 31 stamped stores (1
+       primary ``sensitivity_datatree.zarr`` + 30 per-sub) while the live resume arm carries
+       30 per-member stores and NO primary store at all, so a primary-only read returns a
        false ABSENT on every live arm. **The per-member store is the one location uniform
        across eras**, and it is the only one read here.
     3. A WHOLE-TREE ``grep`` for the literal. Measured on the shape's DECOY 2:

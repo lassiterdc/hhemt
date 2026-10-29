@@ -403,7 +403,7 @@ def emit_bundle(
     # member-{N}/, and it keys on the path's FIRST part being "sensitivity", which an
     # eda/ root never is. If a future derived/ reshape nests per-member artifacts under
     # this root, that branch becomes reachable here and would re-root paths that were
-    # relativized against the master -- re-check it then.
+    # relativized against the primary -- re-check it then.
     #
     # Keys are NAMESPACED because an eda/ sidecar's stem equals its plots/eda/ figure
     # stem, so a plain dict merge would clobber one with the other. The map is written to
@@ -502,10 +502,10 @@ def _harvest_sources(
     not fatal. Renderers are allowed to declare an expected source unconditionally,
     even when it is legitimately absent — e.g. ``disk_utilization`` declares
     ``_status/_du.json`` and renders a "re-run processing to populate" placeholder
-    when the sentinel is missing (a normal state for a sensitivity master, whose
+    when the sentinel is missing (a normal state for a sensitivity primary, whose
     consolidate path does not write the analysis-scope DU sentinel). Hard-raising
     on such a source made ``bundle_report_data()`` crash on every sensitivity
-    master. The skip keeps the emit side consistent with the declare side; the
+    primary. The skip keeps the emit side consistent with the declare side; the
     warning preserves auditability (a source that vanished after render shows up
     here rather than failing silently)."""
     # A declared source that is absent stays NON-FATAL (see above), but the evidence must
@@ -535,7 +535,7 @@ def _harvest_sources(
                     f"Bundle harvest: declared source {rel} does not exist on disk; "
                     f"skipping it (ADR-6 D3 permits renderers to declare an expected "
                     f"source unconditionally even when absent, e.g. _status/_du.json "
-                    f"on a sensitivity master). If this source was expected to be "
+                    f"on a sensitivity primary). If this source was expected to be "
                     f"present, it may have been removed after render_report().",
                     stacklevel=2,
                 )
@@ -1307,7 +1307,7 @@ def _emit_sif_manifests(analysis: TRITONSWMM_analysis) -> list[dict]:
 
 
 def _matrix_required_partitions(cfg_analysis, cfg_hpc) -> set[str]:
-    """Distinct partition NAMES the analysis matrix requires: the master ensemble partition
+    """Distinct partition NAMES the analysis matrix requires: the primary ensemble partition
     plus, for a sensitivity analysis, every distinct per-row ``hpc.partition`` /
     ``analysis.hpc_ensemble_partition`` value in the setup table (CSV or XLSX — when an
     XLSX is given it is the source of truth). Takes CONFIGS, not an analysis, so ``hhemt.sif.plan``
@@ -1316,9 +1316,9 @@ def _matrix_required_partitions(cfg_analysis, cfg_hpc) -> set[str]:
     if cfg_hpc is None:
         return set()
     partitions: set[str] = set()
-    _master = cfg_analysis.hpc_ensemble_partition
-    if _master:
-        partitions.add(str(_master))
+    _primary = cfg_analysis.hpc_ensemble_partition
+    if _primary:
+        partitions.add(str(_primary))
     if getattr(cfg_analysis, "toggle_sensitivity_analysis", False):
         _ref = cfg_analysis.sensitivity_analysis
         if _ref and Path(_ref).is_file():

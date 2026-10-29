@@ -33,7 +33,7 @@ _DEFAULT_RANK_SWEEP: tuple[int, ...] = (2, 4, 8)
 _CLEAN_WALLTIME_MIN: int = 30  # generous single-allocation walltime for the clean sweep
 
 #: The two model arms of the compute-config experiment, as (arm_token, system-toggle overlay).
-#: The arms run as SIBLING sensitivity masters, never as one multi-model master:
+#: The arms run as SIBLING sensitivity primaries, never as one multi-model primary:
 #: workflow.py::generate_master_snakefile_content raises
 #: ValueError("Sensitivity analysis does not support multi-model execution") on >1
 #: enabled model and threads a scalar model_type into every per-member_id flag name.

@@ -327,7 +327,7 @@ class InteractiveBackendConfig(cfgBaseModel):
     enabled: bool = Field(
         True,
         description=(
-            "Master switch. When False, renderers emit static PNG via the "
+            "Primary switch. When False, renderers emit static PNG via the "
             "matplotlib branch of emit_plot_with_sources (legacy behavior). "
             "When True (default), renderers with an HTML emit-path emit HTML "
             "via the str branch of emit_plot_with_sources. Set False to fall "

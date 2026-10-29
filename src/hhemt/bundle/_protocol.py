@@ -3,7 +3,7 @@
 
 Both ``TRITONSWMM_analysis`` and ``TRITONSWMM_sensitivity_analysis``
 expose this surface (``sensitivity_analysis.py`` delegates the
-attributes to its wrapped master analysis). ``emit_bundle`` reads only
+attributes to its wrapped primary analysis). ``emit_bundle`` reads only
 these attributes — no class-specific code paths.
 """
 

@@ -222,7 +222,7 @@ _EXCLUDABLE_CATALOG: dict[str, ExcludableInput] = {
         ),
     ),
     "experiment_cfg_yaml": ExcludableInput(
-        description="Master analysis config the per-analysis configs derive from.",
+        description="Primary analysis config the per-analysis configs derive from.",
         reproducibility_cost="Tiny; excluding it buys no space.",
     ),
     "static_plot_configs": ExcludableInput(

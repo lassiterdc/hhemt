@@ -1,7 +1,7 @@
 """Cross-experiment merge layer (PIP-1, Phase 2).
 
 Assembles N input bundles' ROOT consolidated tree (``analysis_datatree.zarr``
-for a single analysis, ``sensitivity_datatree.zarr`` for a sensitivity master)
+for a single analysis, ``sensitivity_datatree.zarr`` for a sensitivity primary)
 into one cross-experiment DataTree — one child node per experiment — carrying
 per-experiment identity (the experiment id) on a COORDINATE, never on
 tree.attrs (a later consolidation concat uses combine_attrs="drop_conflicts",
@@ -23,7 +23,7 @@ from xarray import DataTree
 from hhemt.utils import ROOT_TREE_NAMES, resolve_experiment_tree
 
 # A bundle ships exactly ONE root consolidated tree: a single-analysis bundle
-# ships analysis_datatree.zarr; a sensitivity-MASTER bundle ships
+# ships analysis_datatree.zarr; a sensitivity-PRIMARY bundle ships
 # sensitivity_datatree.zarr (its per-sub trees live under
 # members/member_N/analysis_datatree.zarr and are NOT the combine unit).
 CONSOLIDATED_TREE_NAME = "analysis_datatree.zarr"
@@ -48,7 +48,7 @@ def _resolve_root_tree(bundle_root: Path) -> Path:
     """Resolve the bundle's ROOT consolidated tree store by existence.
 
     A single-analysis bundle ships ``analysis_datatree.zarr``; a sensitivity
-    MASTER bundle ships ``sensitivity_datatree.zarr`` at its root (its per-sub
+    PRIMARY bundle ships ``sensitivity_datatree.zarr`` at its root (its per-sub
     trees under ``members/member_N/analysis_datatree.zarr`` are NOT the combine
     unit). The "ships exactly one root tree" existence gate is preserved: a
     bundle carrying neither raises (mirrors the prior single-name behavior; the
@@ -70,11 +70,11 @@ def _resolve_root_tree(bundle_root: Path) -> Path:
 
 def _open_experiment_tree(bundle_root: Path) -> DataTree:
     """Open one bundle's ROOT consolidated tree lazily (single-analysis or
-    sensitivity-master), resolved by ``_resolve_root_tree``.
+    sensitivity-primary), resolved by ``_resolve_root_tree``.
 
     Uses the project-standard open (xr.open_datatree(..., engine='zarr',
     chunks='auto', consolidated=False)) per the DataTree-primary stipulation for
-    the single-analysis tree. A sensitivity-MASTER tree's root ``parameters`` node
+    the single-analysis tree. A sensitivity-PRIMARY tree's root ``parameters`` node
     carries object-dtype (string) columns (compute-config labels, member_ids) that
     ``chunks='auto'`` cannot size-estimate ("Can not use auto rechunking with
     object dtype"); it is opened with the store's NATIVE chunks (``chunks={}``)

@@ -972,7 +972,7 @@ class analysis_config(cfgBaseModel):
             "(concatenated along event_iloc). Default False (summaries only) — enable to "
             "unblock over-time clean-vs-resume difference figures. The TRITON gridded "
             "timeseries is NOT consolidated: it is ~83x larger per scenario by payload "
-            "(6.6 MB vs 0.08 MB measured), would inflate a 28-scenario master tree 7.9x, "
+            "(6.6 MB vs 0.08 MB measured), would inflate a 28-scenario primary tree 7.9x, "
             "and is GB-scale per scenario on a production fine grid. It is excluded on "
             "COST, not for lack of a consumer — the clean-vs-resume over-time figure does "
             "read wlevel_m from the per-scenario gridded store, via a documented "
@@ -1270,7 +1270,7 @@ class analysis_config(cfgBaseModel):
             "prepare_simulation_command returns None on model_run_completed), so a "
             "processing failure re-runs only the processing pass. Applies to "
             "multi_sim_run_method='batch_job' and '1_job_many_srun_tasks'; REFUSED on a "
-            "sensitivity analysis (the sensitivity-master generator raises "
+            "sensitivity analysis (the sensitivity-primary generator raises "
             "ConfigurationError) until its member rules carry the same branch."
         ),
         json_schema_extra=field_meta(

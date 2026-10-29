@@ -4403,3 +4403,59 @@ non_breaking_allowlist:
       NON-BREAKING. Comment-only correction of the false claim that the create-capable
       open cannot produce ENOENT (change 1028-2100). No code, no on-disk shape, no
       serialization change; the file's AST is byte-identical before and after.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 2116ab0bfa80b8fc594941a6301d9850f6d8fbf98e541adfa2a0bb54493b79af
+    justification: >-
+      NON-BREAKING. Vocabulary rename in this package's own written scope: the words "master" and
+      "Primary"/"MASTER" in comments, docstrings and prose become "primary"/"Primary"/"PRIMARY", and
+      file-local identifiers are renamed to match. NO ON-DISK SHAPE CHANGES: every artifact name the
+      diff touches is byte-identical on both sides (the ````.flag```` names, ````experiment_datatree.zarr````,
+      ``analysis_datatree.zarr``, ``sensitivity_datatree.zarr``, the ``_status/`` paths and the ``_du.json``
+      files all read the same before and after); the only changed lines that MENTION an artifact are
+      prose around an unchanged name. Verified structurally: with every string constant, every
+      identifier, attribute, keyword-argument name, import name and function/class name blanked,
+      this file's syntax tree is identical to its parent blob's, so nothing but names and prose
+      moved. The layout_signature is this file's sha256 at this write and must equal it as
+      committed. KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/eda.py
+    layout_signature: 6f66d52741d18e6e56df759923349c75b5dce01c89055f8373a43cc8ecdd628c
+    justification: >-
+      NON-BREAKING. Vocabulary rename in this package's own written scope: the words "master" and
+      "Primary"/"MASTER" in comments, docstrings and prose become "primary"/"Primary"/"PRIMARY", and
+      file-local identifiers are renamed to match. NO ON-DISK SHAPE CHANGES: every artifact name the
+      diff touches is byte-identical on both sides (the ````.flag```` names, ````experiment_datatree.zarr````,
+      ``analysis_datatree.zarr``, ``sensitivity_datatree.zarr``, the ``_status/`` paths and the ``_du.json``
+      files all read the same before and after); the only changed lines that MENTION an artifact are
+      prose around an unchanged name. Verified structurally: with every string constant, every
+      identifier, attribute, keyword-argument name, import name and function/class name blanked,
+      this file's syntax tree is identical to its parent blob's, so nothing but names and prose
+      moved. The layout_signature is this file's sha256 at this write and must equal it as
+      committed. KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/report.py
+    layout_signature: 2cddeb0984f2b4a120a7e14ead3e878d49f8c0c3da8697f2eeac727f754bb45f
+    justification: >-
+      NON-BREAKING. Vocabulary rename in this package's own written scope: the words "master" and
+      "Primary"/"MASTER" in comments, docstrings and prose become "primary"/"Primary"/"PRIMARY", and
+      file-local identifiers are renamed to match. NO ON-DISK SHAPE CHANGES: every artifact name the
+      diff touches is byte-identical on both sides (the ````.flag```` names, ````experiment_datatree.zarr````,
+      ``analysis_datatree.zarr``, ``sensitivity_datatree.zarr``, the ``_status/`` paths and the ``_du.json``
+      files all read the same before and after); the only changed lines that MENTION an artifact are
+      prose around an unchanged name. Verified structurally: with every string constant, every
+      identifier, attribute, keyword-argument name, import name and function/class name blanked,
+      this file's syntax tree is identical to its parent blob's, so nothing but names and prose
+      moved. The layout_signature is this file's sha256 at this write and must equal it as
+      committed. KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: cd9e89a14a521407b611825d287703919b8f6f695f6f2e96dc6b7355d0a8cb09
+    justification: >-
+      NON-BREAKING. Vocabulary rename in this package's own written scope: the words "master" and
+      "Primary"/"MASTER" in comments, docstrings and prose become "primary"/"Primary"/"PRIMARY", and
+      file-local identifiers are renamed to match. NO ON-DISK SHAPE CHANGES: every artifact name the
+      diff touches is byte-identical on both sides (the ````.flag```` names, ````experiment_datatree.zarr````,
+      ``analysis_datatree.zarr``, ``sensitivity_datatree.zarr``, the ``_status/`` paths and the ``_du.json``
+      files all read the same before and after); the only changed lines that MENTION an artifact are
+      prose around an unchanged name. Verified structurally: with every string constant, every
+      identifier, attribute, keyword-argument name, import name and function/class name blanked,
+      this file's syntax tree is identical to its parent blob's, so nothing but names and prose
+      moved. The layout_signature is this file's sha256 at this write and must equal it as
+      committed. KNOWN EXPIRY: this row expires on the next change to this path.

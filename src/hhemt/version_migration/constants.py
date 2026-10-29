@@ -7,7 +7,7 @@ fixtures.
 
 `MINIMUM_SUPPORTED_VERSION` is the floor below which `migrate` refuses to
 run. Raised manually on major toolkit releases per the resolved decision
-in the master plan.
+in the primary plan.
 """
 
 from __future__ import annotations

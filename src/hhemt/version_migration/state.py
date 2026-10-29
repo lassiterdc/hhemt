@@ -267,24 +267,24 @@ def infer_layout_version(target_dir: Path) -> int | None:
         return st.layout_version if st else None
     if _has_legacy_iloc_prefix(target_dir):
         return 0
-    # A nested per-member tier's version is not unknown: its master's record states it,
+    # A nested per-member tier's version is not unknown: its primary's record states it,
     # and the two are written by the same run. PRECEDENCE IS THREE-TIER and this rung is
     # the third tier, which is why it sits HERE and not higher: (1) the target's own
     # record wins outright -- rung 1 above; (2) positive legacy-content evidence found in
     # the target itself beats a stamp inherited from elsewhere -- the rung directly above,
     # which is why this block sits BELOW it; (3) an inherited stamp beats a
     # version-discriminating content heuristic, which is what makes a CF-1.13 member
-    # resolve to its master's version instead of refusing. Measured when this block was
-    # placed above the legacy rung: a member carrying iloc-prefixed sims under a master
+    # resolve to its primary's version instead of refusing. Measured when this block was
+    # placed above the legacy rung: a member carrying iloc-prefixed sims under a primary
     # stamped 22 inferred 22 and planned ZERO of the 22 migrations its own contents prove
     # are needed -- a total silent skip, the same failure the rung below records.
     # The container names are inlined to match `_has_legacy_iloc_prefix` above, which
     # already hardcodes the same pair.
     tier = target_dir.parent
     if tier.name in ("members", "subanalyses"):
-        master = read_version_file(tier.parent)
-        if master is not None:
-            return master.layout_version
+        primary = read_version_file(tier.parent)
+        if primary is not None:
+            return primary.layout_version
     if (target_dir / "experiment_datatree.zarr").exists():
         # A store under the unified name is post-V0021 by construction, so the
         # flat-summary branch below must NOT claim it as layout 1. Measured: without

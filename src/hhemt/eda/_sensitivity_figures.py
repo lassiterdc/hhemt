@@ -13,9 +13,9 @@ figure content. ``sensitivity_source_paths`` declares BOTH the ``{plot_id}.zarr`
 ``{plot_id}.verdict.json`` (SOURCE-DECLARATION contract: the bundle file set is EXACTLY the
 union of manifest-declared source_paths -- the ``bundle file set is computed from manifest
 harvest`` stipulation), so a render bundle carries the verdict as a general robustness backstop.
-Combine-first note: the per-arm ``eda_resume_sensitivity`` figure is a general OPT-IN per-master
-capability (removed from the default ``enabled_plots``) that renders only for a single master
-carrying BOTH a clean and a resume arm; on a single-arm master it SKIPS and writes no
+Combine-first note: the per-arm ``eda_resume_sensitivity`` figure is a general OPT-IN per-primary
+capability (removed from the default ``enabled_plots``) that renders only for a single primary
+carrying BOTH a clean and a resume arm; on a single-arm primary it SKIPS and writes no
 verdict/zarr. The combine-level clean-vs-resume comparison (``cross_experiment_intercomparison``)
 does NOT read this member's verdict -- it derives its data CROSS-BUNDLE from the two bundles'
 paired per-config key-result summaries via ``compare_variable_exact`` (see
