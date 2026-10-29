@@ -101,9 +101,10 @@ only. `hhemt combine`'s own help says so, and the
 
 Each input experiment is preserved intact under `combined/child_crates/{experiment_id}/`.
 A child is a complete single-analysis bundle, so `hhemt report-from-bundle` renders
-one once the local toolkit build matches the build that produced the child's figures.
-On any other build that command refuses with a `StalePlotsError`, and the override is
-Python-only: `Bundle.from_directory(child).regenerate_report(declare_stale_plots=True)`.
+one once every figure's recorded build stamp matches the running build. It refuses with
+a `StalePlotsError` otherwise, and also when the figures carry no stamp at all or
+disagree with each other, and the override is Python-only:
+`Bundle.from_directory(child).regenerate_report(declare_stale_plots=True)`.
 A child's EDA surface is the per-experiment one, reached through the Python API
 (`Bundle.from_directory(child).eda()`), which carries no build guard. A combined
 bundle has no aggregate EDA surface.
