@@ -119,6 +119,7 @@ nav:
   - Installation: how-to/installation.md
   - Tutorials:
       - tutorials/index.md
+      - Benchmarking study: tutorials/benchmarking-study.md
       - Quickstart: tutorials/quickstart.md
       - Norfolk end-to-end: tutorials/norfolk-end-to-end.md
   - How-To Guides:

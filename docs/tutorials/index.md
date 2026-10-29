@@ -8,6 +8,19 @@ bottom and it is expected to succeed on your own machine. If you want to
 accomplish one specific task instead, start from the
 [How-To Guides](../how-to/index.md).
 
+## The headline: a benchmarking study
+
+[Run a benchmarking study](benchmarking-study.md) is the study the toolkit was
+designed to run: one model, many compute configurations, and one report that says
+which configuration to use on your hardware. It carries four example setups,
+from two members on your own machine to the same study repeated on a second
+cluster, and each setup is reproducible on its own.
+
+Start there if you already have a working install and want to know what your
+cluster can do with the model you care about.
+
+## The walkthroughs
+
 - [Quickstart](quickstart.md): clone, create the environment, and run a
   coupled simulation from an interactive Python session, serial and dispatched
   locally on your own machine.
@@ -15,5 +28,7 @@ accomplish one specific task instead, start from the
   VA coastal-flooding case study: setup, smoke test, a local serial run,
   varying the compute configuration, and a rendered report.
 
-Start with the Quickstart. The Norfolk walkthrough assumes you have completed
-it and have a working environment.
+If you have never run the toolkit, do the Quickstart first. It takes a fresh
+clone to a finished report and gives you the environment every benchmarking
+setup assumes. The Norfolk walkthrough assumes the Quickstart is complete and
+varies the same run one axis at a time.
