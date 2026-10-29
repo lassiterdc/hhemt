@@ -9,9 +9,11 @@ accomplish one specific task instead, start from the
 [How-To Guides](../how-to/index.md).
 
 - [Quickstart](quickstart.md): clone, create the environment, and run a
-  coupled simulation from an interactive Python session.
+  coupled simulation from an interactive Python session, serial and dispatched
+  locally on your own machine.
 - [Norfolk end-to-end](norfolk-end-to-end.md): the full path on the Norfolk,
-  VA coastal-flooding case study: setup, smoke test, run, and rendered report.
+  VA coastal-flooding case study: setup, smoke test, a local serial run,
+  varying the compute configuration, and a rendered report.
 
 Start with the Quickstart. The Norfolk walkthrough assumes you have completed
 it and have a working environment.
