@@ -283,7 +283,15 @@ def main():
                         return 1
 
         logger.info(f"Loading system configuration from {args.system_config}")
-        system = TRITONSWMM_system(args.system_config)
+        system = TRITONSWMM_system(
+            args.system_config,
+            # OBSERVER: this rung only reads compile state, and its one log write is the
+            # PER-MODEL `model_log.write()` below. Writing the SHARED system_log.json at
+            # construction is the measured `log write (open failed)` failure under ~30
+            # concurrent runners on WekaFS (change 1028-1828); the analysis construction
+            # on the next lines passes the same flag for the same reason (1028-2152).
+            skip_log_update=True,
+        )
 
         logger.info(f"Loading analysis configuration from {args.analysis_config}")
         analysis = TRITONSWMM_analysis(
