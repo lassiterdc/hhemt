@@ -4066,6 +4066,31 @@ class TRITONSWMM_analysis:
                 target.append(str(scen.log.logfile.parent))
         return failed, pending
 
+    def _container_solver_detail(self) -> str:
+        """The container-mode stand-in for the compile line: name the image that carries the solver.
+
+        In container mode the setup rules skip both compiles because the SIF carries the
+        binary, so a "compiled" label would report a step that never ran. Naming the image
+        instead reports the thing that is actually true. Never raises, on either an identity
+        that cannot be derived or a container-mode config that declares no container block
+        (preflight REPORTS the missing block rather than making it impossible, and nothing
+        validates before a status read): a status property that raises on a partial config is
+        worse than one that names where it looked.
+        """
+        from hhemt.config.hpc_system import resolve_container_spec
+
+        cspec = resolve_container_spec(self.cfg_hpc_system)
+        try:
+            from hhemt.sif.identity import resolve_sif
+
+            partition = self.cfg_analysis.hpc_ensemble_partition
+            sif = resolve_sif(cspec.sif_root, self._sif_identity_for(partition))
+        except Exception:  # noqa: BLE001 -- status must tolerate an underivable identity
+            root = getattr(cspec, "sif_root", None)
+            where = f"under {root}" if root else "named by this cluster's container settings"
+            return f"✓ solver in the container image {where} (no in-workflow compile)"
+        return f"✓ solver in the container image {sif.name} (no in-workflow compile)"
+
     def get_workflow_status(self) -> "WorkflowStatus":
         """Generate workflow status report.
 
@@ -4119,15 +4144,17 @@ class TRITONSWMM_analysis:
         # is an OPEN developer policy choice and is deliberately left byte-unchanged here.
         if self.cfg_analysis.execution_environment == "container":
             compiled = True
+            compiled_detail = self._container_solver_detail()
         else:
             compiled = system_log.compilation_tritonswmm_cpu_successful.get()
+            compiled_detail = f"{'✓' if compiled else '✗'} TRITON-SWMM compiled"
 
         setup_complete = dem_done and mannings_done and compiled
         setup_progress = 1.0 if setup_complete else 0.5 if (dem_done or compiled) else 0.0
         setup_details = {
             "dem": f"{'✓' if dem_done else '✗'} DEM processed",
             "mannings": f"{'✓' if mannings_done else '✗'} Manning's processed",
-            "compiled": f"{'✓' if compiled else '✗'} TRITON-SWMM compiled",
+            "compiled": compiled_detail,
         }
 
         setup_phase = PhaseStatus(
