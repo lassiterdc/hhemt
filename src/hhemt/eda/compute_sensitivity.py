@@ -538,7 +538,7 @@ def check_rank_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_cf
         passed=passed,
         summary=summary,
         details=details,
-        # SELF-REPORTED from the path actually taken (analysis_validation.py:55-71):
+        # SELF-REPORTED from the path actually taken (`analysis_validation.py::CheckResult`):
         # this check compares the FLAT per-scenario summaries via _compare_pair, whose
         # max_wlevel_m is stored float32 while the SWMM-side variables are float64, so
         # float32 eps is the coarsest floor across the variables actually compared.
@@ -646,7 +646,7 @@ def check_resume_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_
         passed=passed,
         summary=summary,
         details=details,
-        # SELF-REPORTED from the path actually taken (analysis_validation.py:55-71):
+        # SELF-REPORTED from the path actually taken (`analysis_validation.py::CheckResult`):
         # this check compares the FLAT per-scenario summaries via _compare_pair, whose
         # max_wlevel_m is stored float32 while the SWMM-side variables are float64, so
         # float32 eps is the coarsest floor across the variables actually compared.
@@ -750,7 +750,7 @@ def check_cross_hardware_magnitude(primary: TRITONSWMM_analysis, *, cfg_analysis
         passed=True,
         summary=summary,
         details=details,
-        # SELF-REPORTED from the path actually taken (analysis_validation.py:55-71):
+        # SELF-REPORTED from the path actually taken (`analysis_validation.py::CheckResult`):
         # this check compares the FLAT per-scenario summaries via _compare_pair, whose
         # max_wlevel_m is stored float32 while the SWMM-side variables are float64, so
         # float32 eps is the coarsest floor across the variables actually compared.

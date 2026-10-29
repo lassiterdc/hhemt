@@ -242,9 +242,10 @@ def assert_coupling_nodes_distinct(
     retains the inflow assignment of only the most downstream node per cell. Fewer
     retained in-line nodes than MPI ranks => a node-free top rank => coupling-collective
     deadlock (see the ``_N_COUPLING_NODES`` definition in ``swmm_template``, whose
-    comment block cites triton.h:2363-2404). A deadlock is a HANG, not
-    an error -- the worst failure shape on HPC -- so this converts it into a plan-time
-    constraint on the coarsest rung.
+    comment block states that every rank must own at least one coupling node or it never
+    enters the TRITON-SWMM ``ENSIFY_COMM_WORLD`` coupling collective, so every rank
+    blocks forever). A deadlock is a HANG, not an error -- the worst failure shape on
+    HPC -- so this converts it into a plan-time constraint on the coarsest rung.
 
     Raises ProcessingError naming the offending rung and the colliding node pair.
     """
@@ -260,7 +261,7 @@ def assert_coupling_nodes_distinct(
     col = _centerline_col(params)
     mrs = _node_matrix_rows(params)
     # Reconstruct the in-line chain names + row_from_bottom exactly as ``_nodes`` does
-    # (swmm_template.py:241-242): J1..J(n-1) then ``collector`` (southernmost).
+    # (`swmm_template.py::_nodes`): J1..J(n-1) then ``collector`` (southernmost).
     names = [f"J{i + 1}" for i in range(len(mrs) - 1)] + ["collector"]
     inline_nodes = [(names[i], col, params.n_rows - 1 - mrs[i]) for i in range(len(mrs))]
 
