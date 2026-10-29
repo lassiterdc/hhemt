@@ -3,7 +3,15 @@ include HISTORY.md
 include LICENSE
 include README.md
 
+# The test tree ships so a reader can run the suite from an unpacked sdist. The BINARY
+# fixtures do not: the layout-migration fixtures are stored as real zarr stores and are
+# 5288 archive members of a 7358-member sdist (71.8%), which no downstream consumer of the
+# package needs and every mirror pays for. Excluded rather than pruned, because the
+# non-zarr fixtures beside them (the cached configs, the status flags, the per-sim logs)
+# still ship.
 recursive-include tests *
+recursive-exclude tests/fixtures/legacy_layouts *.zarr/**
+recursive-exclude tests *.nc
 recursive-exclude * __pycache__
 recursive-exclude * *.py[co]
 
