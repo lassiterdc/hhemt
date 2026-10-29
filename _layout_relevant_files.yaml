@@ -4397,3 +4397,9 @@ non_breaking_allowlist:
       so no key, file name, zarr group or _version.json field the file writes or reads changes. The
       layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN
       EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/log.py
+    layout_signature: 245fa2f8de7fd53c25a8058406ea1d49e6839035ebd82d1b0effc90ae45bc55f
+    justification: >-
+      NON-BREAKING. Comment-only correction of the false claim that the create-capable
+      open cannot produce ENOENT (change 1028-2100). No code, no on-disk shape, no
+      serialization change; the file's AST is byte-identical before and after.

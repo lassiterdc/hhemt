@@ -317,15 +317,20 @@ class TRITONSWMM_log(BaseModel):
             with resolve_filelock(str(lock_path), timeout=30):
                 # ONE name resolution. O_RDWR|O_CREAT asks the filesystem for the
                 # name's inode and creates it if -- and only if -- it is genuinely absent.
-                # A stale NEGATIVE lookup (this deployment has been measured answering
-                # inconsistently about a name inside another node's rename window) cannot
-                # produce ENOENT here: the create-capable open reaches the server, which
-                # returns the existing inode. The former read_bytes()-then-O_EXCL pair
-                # disagreed about one name from two syscalls and refused at the second;
-                # both refusal sites are deleted by this shape, not hardened. The lock
-                # (measured to EXCLUDE across nodes on WekaFS /scratch)
-                # brackets open, read, merge and the replace below in one critical
-                # section, so the inode read here is the inode the replace supersedes.
+                # It can still fail: this open is the only site that raises "log write
+                # (open failed)", and that handler has been observed to fire under
+                # concurrent writers on WekaFS, so a stale NEGATIVE lookup for a name
+                # inside another node's rename window is reachable here. The raise below
+                # is a live path, not a defensive leftover; an earlier version of this
+                # block asserted it could not happen, and that does not hold on this
+                # deployment. The remedy on record is to gate the write at the callers
+                # rather than retry the open (OBSERVER MODE in system.py). The former
+                # read_bytes()-then-O_EXCL pair disagreed about one name from two syscalls
+                # and refused at the second; both refusal sites are deleted by this shape,
+                # not hardened. The lock (measured to EXCLUDE across nodes on WekaFS
+                # /scratch) brackets open, read, merge and the replace below in one
+                # critical section, so the inode read here is the inode the replace
+                # supersedes.
                 try:
                     _fd = os.open(self.logfile, os.O_RDWR | os.O_CREAT, 0o644)
                 except OSError as exc:
