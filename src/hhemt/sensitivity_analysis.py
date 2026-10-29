@@ -591,6 +591,20 @@ class TRITONSWMM_sensitivity_analysis:
             },
             mode=mode,
         )
+
+        # Stamp _version.json at LAYOUT_VERSION on first materialization, the same lazy
+        # stamp the five sibling execution entries make (Analysis.run, .submit_workflow,
+        # .reprocess and .static_plots, and System.__init__ for the system tree; this
+        # facade's own reprocess() is the sixth and already has it). A master built here
+        # carries outputs, and a later run() on a tree with no _version.json raises
+        # LayoutVersionError, so the stamp belongs on every entry that can materialize
+        # one. AFTER the cross-node preflight (a REFUSED submit must not touch disk) and
+        # BEFORE the force-rerun pre-delete below, the order reprocess() uses. Idempotent.
+        from hhemt.version_migration import LAYOUT_VERSION
+        from hhemt.version_migration.state import stamp_new_target
+
+        stamp_new_target(self.experiment.analysis_paths.analysis_dir, LAYOUT_VERSION)
+
         if overrides is None:
             from .orchestration import RunOverrides
 

@@ -4459,3 +4459,16 @@ non_breaking_allowlist:
       this file's syntax tree is identical to its parent blob's, so nothing but names and prose
       moved. The layout_signature is this file's sha256 at this write and must equal it as
       committed. KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 61b75e4e37cec9df699388c965cc94d7be24c70acbeed19ce963e9bedb3a866c
+    justification: >-
+      NON-BREAKING. The sensitivity facade's direct `submit_workflow` gains the lazy
+      `_version.json` stamp its sibling execution entries already make, after the cross-node
+      preflight and before the force-rerun pre-delete. NO ON-DISK SHAPE CHANGE: the call writes
+      the file the toolkit already writes at `LAYOUT_VERSION` for every other entry, through the
+      same `stamp_new_target` helper and to the same path; a tree that already carries a stamp is
+      untouched (the helper is idempotent), and no key, group or file NAME changes. What changes
+      is that a master this entry builds now CARRIES a layout version where it previously carried
+      none -- which is what makes it readable by `run()` rather than unreadable. The
+      layout_signature is this file's sha256 at this write and must equal it as committed. KNOWN
+      EXPIRY: this row expires on the next change to this path.
