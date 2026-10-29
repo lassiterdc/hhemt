@@ -257,7 +257,13 @@ def _crate_license_finding(analysis, staging: Path) -> str | None:
     would work by depending on an upstream implementation detail that is not a guarantee,
     and resolving `about` costs nothing to be independent of it.
     """
-    from hhemt.metadata import _SPDX_LICENSE_TABLE
+    from hhemt.metadata import (
+        _SPDX_LICENSE_TABLE,
+        UnrecognizedCrateLicense,
+        as_license_record,
+        read_crate_license,
+        resolve_dataset_license,
+    )
 
     crate = Path(staging) / "ro-crate-metadata.json"
     if not crate.exists():
@@ -277,40 +283,82 @@ def _crate_license_finding(analysis, staging: Path) -> str | None:
     lic = root.get("license")
     uri = lic.get("@id") if isinstance(lic, dict) else lic
     cfg_license = analysis.cfg_analysis.dataset_license
+    # getattr, not a bare read: this is handed config-like objects that may predate the
+    # details-file field (test doubles built from a SimpleNamespace), and a currency check
+    # must not become an AttributeError on such an object.
+    cfg_license_file = getattr(analysis.cfg_analysis, "dataset_license_file", None)
     # An unlicensed config with an unlicensed crate is the normal state of an analysis that
     # has not chosen a license (one is required only to publish), so it is not a finding.
     # Reporting it would put the same line in the manifest of every unpublished bundle.
-    if uri is None and cfg_license is None:
+    if uri is None and cfg_license is None and cfg_license_file is None:
         return None
+    # The config side is rendered once, in the words of whichever field declares it: the two
+    # fields are alternate sources of one license, so a message naming only dataset_license
+    # would tell a details-file user to clear a field they never set.
+    _cfg_plain = (
+        "no license set"
+        if cfg_license is None and cfg_license_file is None
+        else (
+            f"{cfg_license!r} ({_SPDX_LICENSE_TABLE[cfg_license]['uri']!r})"
+            if cfg_license is not None
+            else f"{str(cfg_license_file)!r} (dataset_license_file)"
+        )
+    )
     if uri is None:
         return (
-            f"the crate root declares no license, but analysis_config.dataset_license is "
-            f"{cfg_license!r}; the crate predates the config. To write that license into the "
+            f"the crate root declares no license, but analysis_config declares "
+            f"{_cfg_plain}; the crate predates the config. To write that license into the "
             f"crate, re-emit it with reprocess(start_with='consolidate', regenerate_existing=True) "
             f"before depositing. A plain reprocess does NOT re-emit it -- regenerate_existing "
             f"defaults to False, which deletes no consolidated zarr, so consolidation "
-            f"early-returns. Clearing analysis_config.dataset_license instead makes the bundle "
+            f"early-returns. Clearing the analysis config's license instead makes the bundle "
             f"agree without a rebuild, but an analysis with no license cannot be published."
         )
-    # A config with no license against a licensed crate is the same staleness as a mismatch,
-    # and None has no table entry, so it is compared as an expected URI of None.
-    expected_uri = _SPDX_LICENSE_TABLE[cfg_license]["uri"] if cfg_license is not None else None
-    if uri != expected_uri:
+    # Compared BY RECORD, through the same recognition rule the publish read-back uses, so
+    # the bundle's verdict and publish's verdict cannot disagree about what a crate says. A
+    # crate license this toolkit cannot name RAISES out of that rule instead of resolving to
+    # a record, and that is not the same fact as a crate that declares none -- the flag
+    # below carries the distinction across the record comparison, because both sides
+    # normalize to None whenever the config also declares nothing and would then compare
+    # equal. The flag is what keeps such a crate REPORTED as a finding rather than silently
+    # shipped, and it reaches the `keep == ""` branch below, which exists for a license with
+    # no id and no name to offer as a config value.
+    unrecognized_crate_license = False
+    try:
+        crate_declared = read_crate_license(graph)
+    except UnrecognizedCrateLicense:
+        crate_declared = None
+        unrecognized_crate_license = True
+    crate_record = as_license_record(crate_declared)
+    cfg_record = as_license_record(
+        resolve_dataset_license(dataset_license=cfg_license, dataset_license_file=cfg_license_file)
+    )
+    if unrecognized_crate_license or cfg_record != crate_record:
         # Two remedies, the no-rebuild one first, as the publish refusal states them: keeping the
         # crate's license needs only the config line set back, while changing it needs a
-        # re-consolidation. A crate license outside the table has no id to set, so it is named
-        # by its URI and only the re-consolidation route is offered.
-        crate_spdx = next((spdx for spdx, meta in _SPDX_LICENSE_TABLE.items() if meta["uri"] == uri), None)
-        cfg_state = "no license set" if cfg_license is None else f"{cfg_license!r} ({expected_uri!r})"
-        keep = (
-            f"To keep the crate's license, set analysis_config.dataset_license to {crate_spdx!r}; no "
-            f"re-consolidation is needed. "
-            if crate_spdx is not None
-            else ""
-        )
+        # re-consolidation. Which config field can express the crate's license follows the
+        # crate's FORM -- an SPDX id goes in dataset_license, while a details-file license can
+        # only be restored by pointing dataset_license_file at a file declaring the same terms.
+        if isinstance(crate_declared, str):
+            keep = (
+                f"To keep the crate's license, set analysis_config.dataset_license to {crate_declared!r}; no "
+                f"re-consolidation is needed. "
+            )
+        elif crate_declared is not None:
+            keep = (
+                "To keep the crate's license, set analysis_config.dataset_license_file to a details "
+                f"file declaring name {crate_declared.name!r}"
+                + (f" and link {crate_declared.link!r}" if crate_declared.link is not None else "")
+                + "; no re-consolidation is needed. "
+            )
+        else:
+            # A crate license outside both the table and its own entities has no id and no
+            # name to set, so it is named by its URI and only the re-consolidation route is
+            # offered.
+            keep = ""
         return (
-            f"crate root license {uri!r} disagrees with analysis_config.dataset_license "
-            f"({cfg_state}); the crate predates the config. {keep}To change the license, re-emit "
+            f"crate root license {uri!r} disagrees with analysis_config "
+            f"({_cfg_plain}); the crate predates the config. {keep}To change the license, re-emit "
             f"the crate with reprocess(start_with='consolidate', regenerate_existing=True) before "
             f"depositing. A plain reprocess does NOT re-emit it -- regenerate_existing defaults to "
             f"False, which deletes no consolidated zarr, so consolidation early-returns."

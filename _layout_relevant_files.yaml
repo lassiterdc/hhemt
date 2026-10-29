@@ -4472,3 +4472,27 @@ non_breaking_allowlist:
       none -- which is what makes it readable by `run()` rather than unreadable. The
       layout_signature is this file's sha256 at this write and must equal it as committed. KNOWN
       EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: de1a863bbd8b340a89b5d13c251f7f695eb14a76fed0cda4e8b351081084ff55
+    justification: >-
+      NON-BREAKING. Adds the optional `dataset_license_file` field plus an at-most-one-of-two
+      model validator, and extends `dataset_license`'s description to name its sibling. The new
+      field is a CONFIG READING of a user-authored file, not a new on-disk artifact the toolkit
+      writes: no path, group or filename under {analysis_dir} or {system_dir} changes, no key is
+      added to any consolidated store, and an existing analysis needs no migration — a config
+      without the field validates exactly as before (default None). The layout-relevance HERE is
+      the `src/hhemt/config/**/*.py` glob, which captures every config edit regardless of whether
+      it touches on-disk state, so this is the glob's false-positive class. The layout_signature
+      is this file's sha256 at this write and must equal it as committed. KNOWN EXPIRY: this row
+      expires on the next change to this path.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: b85c44c11160dad63bd4769e81ae7d2ad51ab60b8757dcfdae83a9fa0b35ed8e
+    justification: >-
+      NON-BREAKING. Widens the two `publish` / `publish_reprex_bundle` facades' annotation-only
+      `override_dataset_license` type hint from two SPDX ids to the seven the config field
+      accepts. Type hints are not evaluated at runtime under `from __future__ import
+      annotations` and no executable line moves: no path, group, filename, key or store shape
+      changes, and an existing analysis needs no migration. This path is claimed on the
+      ALLOWLIST rather than by a glob because it is explicitly listed in `layout_relevant.paths`.
+      The layout_signature is this file's sha256 at this write and must equal it as committed.
+      KNOWN EXPIRY: this row expires on the next change to this path.

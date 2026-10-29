@@ -40,6 +40,7 @@ from hhemt.metadata import (
     canonical_jsonld,
     canonical_jsonld_from_doc,
     partition_core_vs_sidecar,
+    resolve_dataset_license,
 )
 
 
@@ -909,9 +910,17 @@ def emit_provenance(
         toolkit_git_sha=_toolkit_git_sha(),
         code_repository=code_repository,
         cfg_case=cfg_case,
-        # Passed as-is, never through str(): an unlicensed analysis carries None, and str(None)
-        # is the text "None", which the license table does not contain (KeyError at consolidation).
-        dataset_license=analysis.cfg_analysis.dataset_license,
+        # Resolved from BOTH license sources, never through str(): an unlicensed analysis
+        # carries None, and str(None) is the text "None", which the license table does not
+        # contain (KeyError at consolidation). An SPDX id resolves to itself, so a table
+        # member's crate is byte-identical to before the details-file form existed; a
+        # details file resolves to a record the crate writes as its own CreativeWork entity.
+        # getattr rather than a bare read because this is handed config-like objects that
+        # may predate the details-file field (test doubles built from a SimpleNamespace).
+        dataset_license=resolve_dataset_license(
+            dataset_license=analysis.cfg_analysis.dataset_license,
+            dataset_license_file=getattr(analysis.cfg_analysis, "dataset_license_file", None),
+        ),
         sif_spec=sif_spec,
         consolidated_zarr_relpath=consolidated_zarr_relpath,
         input_parts=input_parts,

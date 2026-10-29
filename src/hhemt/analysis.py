@@ -1272,7 +1272,10 @@ class TRITONSWMM_analysis:
         self,
         target: "Literal['hydroshare', 'zenodo']",
         *,
-        override_dataset_license: "Literal['CC0-1.0', 'CC-BY-NC-4.0'] | None" = None,
+        override_dataset_license: (
+            "Literal['CC0-1.0', 'CC-BY-4.0', 'CC-BY-SA-4.0', 'CC-BY-NC-4.0', "
+            "'CC-BY-NC-SA-4.0', 'CC-BY-ND-4.0', 'CC-BY-NC-ND-4.0'] | None"
+        ) = None,
         software_doi: "str | None" = None,
     ) -> dict:
         """Deposit this analysis to a DOI-minting repository.
@@ -1281,11 +1284,12 @@ class TRITONSWMM_analysis:
         bundle_report_data()/transfer_results(). Requires the analysis to have consolidated
         (ro-crate-metadata.json + analysis_datatree.zarr present); the license is read from
         the emitted crate sidecar. Publishing never re-stamps that archived license. Before
-        anything is deposited, publish compares analysis_config.dataset_license against the
-        crate license and raises PublishError when they differ; that check runs before any
-        override is read. Re-emit the crate with
+        anything is deposited, publish compares the license the config declares — from
+        dataset_license, or from the details file dataset_license_file names — against the
+        crate license, by record, and raises PublishError when they differ; that check runs
+        before any override is read. Re-emit the crate with
         reprocess(start_with='consolidate', regenerate_existing=True), then publish again.
-        override_dataset_license, when given, is a second assertion of the license you
+        override_dataset_license, when given, is a second assertion of the SPDX license you
         expect, compared against the crate only after the config check has passed; a
         mismatch raises PublishError. Returns {"target","data_doi","software_doi","record_url"};
         for target='hydroshare' data_doi is None and the dict also carries "manual_step".
@@ -1304,7 +1308,10 @@ class TRITONSWMM_analysis:
         target: "Literal['hydroshare', 'zenodo']",
         *,
         exclude_config: "Path | None" = None,
-        override_dataset_license: "Literal['CC0-1.0', 'CC-BY-NC-4.0'] | None" = None,
+        override_dataset_license: (
+            "Literal['CC0-1.0', 'CC-BY-4.0', 'CC-BY-SA-4.0', 'CC-BY-NC-4.0', "
+            "'CC-BY-NC-SA-4.0', 'CC-BY-ND-4.0', 'CC-BY-NC-ND-4.0'] | None"
+        ) = None,
         software_doi: "str | None" = None,
         container_defs: "list[Path] | None" = None,
     ) -> dict:

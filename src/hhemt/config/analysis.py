@@ -348,6 +348,8 @@ class analysis_config(cfgBaseModel):
             "RO-Crate root Dataset.license when the outputs are consolidated and read back at "
             "publish time, so choosing it after consolidating means re-running "
             "reprocess(start_with='consolidate', regenerate_existing=True) before publishing. "
+            "Mutually exclusive with dataset_license_file, which supplies a license that is not "
+            "one of the seven ids here: set at most one of the two. "
             "'NonCommercial' is broader than 'education only' and does not turn on who the user is."
         ),
         json_schema_extra=field_meta(
@@ -371,6 +373,43 @@ class analysis_config(cfgBaseModel):
             }
         ),
     )
+    dataset_license_file: Path | None = Field(
+        default=None,
+        description=(
+            "Path to a YAML license-details file, for a dataset license that is NOT one of the "
+            "seven SPDX ids dataset_license accepts. The file is one YAML mapping carrying a "
+            "required 'name' (the license's human title) and an optional 'link' (the address "
+            "its owner publishes it at); no other key is read. Mutually exclusive with "
+            "dataset_license: set at most one of the two, and neither is required at load "
+            "because only publishing needs a license. Like dataset_license, the value is "
+            "written into the RO-Crate root Dataset.license when the outputs are consolidated, "
+            "so choosing it after consolidating means re-running "
+            "reprocess(start_with='consolidate', regenerate_existing=True) before publishing. "
+            "Because the terms live in the file rather than in this config, a deposit's license "
+            "is reproducible only if the file is carried alongside it -- the bundle does carry it."
+        ),
+        json_schema_extra=field_meta(),
+    )
+
+    @model_validator(mode="after")
+    def _at_most_one_dataset_license_source(self):
+        """Refuse a config that declares its dataset license two ways.
+
+        Two sources would make the crate, the published sidecar and the rights lists
+        disagree about one dataset's terms with no rule saying which wins, and whichever
+        one lost would be invisible in the deposit. Neither field is required: an analysis
+        that never publishes carries neither, which is why this is a mutual exclusion and
+        not a requiredness rule (D-106).
+        """
+        if self.dataset_license is not None and self.dataset_license_file is not None:
+            raise ValueError(
+                "dataset_license and dataset_license_file are both set. They are two ways of "
+                "declaring the SAME dataset license and a deposit can carry only one: clear "
+                "whichever does not describe the license, or clear both if this analysis will "
+                "not be published."
+            )
+        return self
+
     # COMPUTE CONFIG
     run_mode: Literal["serial", "openmp", "mpi", "hybrid", "gpu"] = Field(
         ...,
