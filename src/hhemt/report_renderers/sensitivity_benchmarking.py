@@ -42,7 +42,7 @@ import math
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
@@ -54,10 +54,11 @@ from plotly.subplots import make_subplots
 
 from hhemt.exceptions import ProcessingError
 from hhemt.figure_caption import add_figure_caption, content_width_px
+from hhemt.hardware_labels import hardware_label
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
 from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
 from hhemt.swmm_output_parser import parse_total_elapsed
-from hhemt.utils import EXPERIMENT_TREE_NAME
+from hhemt.utils import EXPERIMENT_TREE_NAME, parse_triton_log_file
 
 # COLOUR IS THE DECOMPOSITION AXIS. Hardware is carried by the COLUMN FACET and by
 # nothing else; colour and marker symbol are LOCKED one-to-one and both key the
@@ -651,6 +652,14 @@ def render(
         raise ValueError("report_cfg.sensitivity must be set for benchmarking rendering")
 
     sensitivity = analysis.sensitivity
+    # THE REFUSAL GATE. A multi-hardware master carrying a member whose hardware cannot be
+    # resolved cannot be drawn without either inventing a token or pooling two genuinely
+    # different devices into one column, and BOTH failure modes are silent — a pooled
+    # member reads as an ordinary column and no log line says otherwise. Raises before a
+    # single row is collected, so a refused master fails at the door rather than after the
+    # collection work. The identities themselves reach the column key in `2a.3`; this call
+    # is the resolution order's third state, which is this chunk's.
+    _require_identifiable_hardware(_resolve_hardware_identities(analysis))
     df_setup = sensitivity.df_setup_with_system_overlays.copy()
 
     df_setup = _ensure_n_devices_column(df_setup, independent_var)
@@ -1126,6 +1135,191 @@ def _resolve_global_baseline(df: pd.DataFrame, *, t_col: str, indep_col: str) ->
     if t_baseline <= 0:
         return None
     return t_baseline
+
+
+# ---------------------------------------------------------------------------
+# The CPU hardware identity — the resolution order `2a.2` lands and `2a.3` consumes.
+# ---------------------------------------------------------------------------
+#: The per-simulation TRITON run header, relative to a member's analysis directory. The
+#: solver writes it, so it is evidence of what RAN rather than of what was requested.
+_MEMBER_LOG_GLOB = "sims/*/out_tritonswmm/log.out"
+
+
+@dataclass(frozen=True)
+class HardwareIdentity:
+    """One member's hardware token, with BOTH sources kept because they can disagree.
+
+    ``token`` is what a column keys on. ``source`` says which rule produced it, so a reader
+    can tell an operator's assertion from a measurement. ``declared`` and ``derived`` are
+    the RAW normalised strings, retained rather than collapsed: the disagreement rule
+    requires both to be reportable, and a disagreement is a real signal (a wrong partition
+    requested, or a heterogeneous allocation) rather than a defect to suppress.
+    """
+
+    token: str | None
+    declared: str | None
+    derived: str | None
+    source: Literal["declared", "derived", "none"]
+
+    @property
+    def disagreement(self) -> bool:
+        """True when both sources exist and name different hardware."""
+        return self.declared is not None and self.derived is not None and self.declared != self.derived
+
+
+class HardwareIdentityRefused(RuntimeError):
+    """A multi-hardware master carries a member whose hardware could not be established.
+
+    Raised instead of assigning such a member to a bucket: a bucket is a COLUMN, so an
+    unidentifiable member silently pooled into `cpu` restores the single-column collapse
+    this package exists to remove, with no exception and no log line.
+    """
+
+
+def _declared_hardware(sub) -> str | None:
+    """The member's DECLARED CPU token, or None when its partition declares none.
+
+    Read from the HPC config's per-partition spec, never from the member's system config:
+    `hardware` was added to `PartitionSpec`, and a member reaches it through
+    ``sub.cfg_hpc_system.partitions[partition]``.
+
+    THE ATTRIBUTE PATH IS NOT ``sub.cfg_system``. Real members keep their system config
+    behind ``_system`` (``eda/cross_sim_identity._resolution_key`` documents the same trap
+    at length), and a tolerant read of the wrong attribute returns None for EVERY member —
+    which collapses the axis to one column with nothing raised. The guard below is on the
+    HPC config, whose absence is a legitimate state (no ``--hpc-system-config``), so it
+    returns None there rather than raising.
+    """
+    hpc = getattr(sub, "cfg_hpc_system", None)
+    if hpc is None:
+        return None
+    partition = getattr(getattr(sub, "cfg_analysis", None), "hpc_ensemble_partition", None)
+    spec = getattr(hpc, "partitions", {}).get(partition) if partition is not None else None
+    raw = getattr(spec, "hardware", None) if spec is not None else None
+    if raw is None:
+        return None
+    token = hardware_label(str(raw))
+    return token or None
+
+
+def _derived_hardware(sub) -> str | None:
+    """The CPU name from this member's TRITON run headers, normalised, or None.
+
+    PER-SIMULATION provenance, which is the point: `/proc/cpuinfo` on whichever host
+    renders the report is a different machine from the one that ran, so the fabricated
+    fallback would be cheap and wrong. `parse_triton_log_file` already extracts the
+    header's ``CPU :`` line, so this consumes that parser rather than re-reading the text.
+
+    A member with NO run header resolves to None and is NOT defaulted: the raw tier is
+    what ``clear_raw`` may purge, so an absent header is a real state the caller must see
+    and the refusal below is where it surfaces. A member whose simulations report MORE
+    THAN ONE distinct CPU name resolves to None as well, because picking one would invent
+    a token for a heterogeneous allocation; the disagreement machinery reports the pair
+    when a declaration exists, and this is the same signal without one.
+    """
+    root = getattr(getattr(sub, "analysis_paths", None), "analysis_dir", None)
+    if root is None:
+        return None
+    names = set()
+    for log_path in sorted(Path(root).glob(_MEMBER_LOG_GLOB)):
+        parsed = parse_triton_log_file(log_path)
+        raw = parsed.get("cpu") if isinstance(parsed, dict) else None
+        if raw:
+            token = hardware_label(str(raw))
+            if token:
+                names.add(token)
+    return names.pop() if len(names) == 1 else None
+
+
+def _resolve_member_hardware(sub) -> HardwareIdentity:
+    """Apply the resolution order to ONE member: declared, else derived, else none."""
+    declared = _declared_hardware(sub)
+    derived = _derived_hardware(sub)
+    if declared is not None:
+        # THE DISAGREEMENT RULE, and it is a RECORD rather than a detection: the DECLARED value
+        # carries the column, and BOTH values are emitted so the pair reaches a human surface. A
+        # field held on the record and read by nothing is not the rule — it is the detection half
+        # with the reporting half missing, which is indistinguishable from no rule at all.
+        #
+        # Deliberately NOT fatal: an operator's wrong partition request must not take the figure
+        # down, and the disagreement is itself a signal (a wrong partition requested, or a
+        # heterogeneous allocation). Deliberately NOT silent in either direction either: picking
+        # one value and saying nothing is the class of defect this run carries twice already.
+        if derived is not None and derived != declared:
+            warnings.warn(
+                f"hardware identity disagreement on one member: the partition declares "
+                f"{declared!r} and the solver's own run header reports {derived!r}. The DECLARED "
+                f"value carries the column; both values are recorded here because the pair is a "
+                f"signal (a wrong partition requested, or a heterogeneous allocation), not a "
+                f"detail to reconcile.",
+                stacklevel=2,
+            )
+        return HardwareIdentity(token=declared, declared=declared, derived=derived, source="declared")
+    if derived is not None:
+        return HardwareIdentity(token=derived, declared=None, derived=derived, source="derived")
+    return HardwareIdentity(token=None, declared=None, derived=None, source="none")
+
+
+def _resolve_hardware_identities(analysis) -> dict[str, HardwareIdentity]:
+    """``{member_id: HardwareIdentity}`` for a sensitivity master, or ``{}`` for a plain analysis."""
+    sensitivity = getattr(analysis, "sensitivity", None)
+    members = getattr(sensitivity, "members", None) if sensitivity is not None else None
+    if not members:
+        return {}
+    return {str(member_id): _resolve_member_hardware(sub) for member_id, sub in members.items()}
+
+
+def _require_identifiable_hardware(identities: dict[str, HardwareIdentity]) -> None:
+    """REFUSE to render a master that carries a member whose hardware could not be established.
+
+    THE RULE IS TOTAL: any unresolved member refuses, whatever the resolved population looks like.
+    That is stricter than "refuse only a MULTI-hardware master", and the strictness is deliberate
+    and was earned by measurement rather than chosen for symmetry.
+
+    The looser form I first shipped exempted every master whose resolved members spanned "at most
+    one token", on the ground that *"every member resolves to the same token, so a member with no
+    identity belongs to that same column by elimination"*. **That premise is unavailable in two of
+    the three populations the exemption was covering**, and the review measured both:
+
+    * **ZERO resolved.** The set is empty, `len(...) <= 1` holds, and the axis collapses to one
+      `cpu` column with nothing raised and nothing logged — the defect this package removes,
+      restored. The population is routine rather than exotic: `clear_raw` legitimately purges the
+      raw tier the derived name comes from, so a CPU master rendered after clearing raw and
+      declaring no `hardware` is exactly this state.
+    * **ONE resolved beside unresolved members.** One token is one datum, not evidence that the
+      master is single-hardware; the unresolved members could be different silicon, and pooling
+      them is the silent merge again.
+
+    So the elimination argument only ever held where NOTHING was unresolved, in which case this
+    function is already a no-op. **The shape's sentence "a single-hardware master keeps today's
+    behaviour unchanged" is therefore satisfied vacuously and not by an exemption**: a master whose
+    members all resolve to one token has no unresolved member, refuses nowhere, and renders exactly
+    as before. What is given up is the case the shape names as the accepted cost of the whole
+    design — "after `clear_raw`, a CPU master with no declared values becomes unrenderable, and that
+    is a loud failure in place of a wrong figure".
+
+    THE ALTERNATIVE I DID NOT TAKE, stated so the choice is contestable: continue, and let an
+    unresolved member take a column on the strength of a single resolved token. It is defensible on
+    the ground that one token cannot be confused with another. I rejected it because the failure it
+    permits is silent and the failure it avoids is loud, and this package exists to stop trading
+    those two the wrong way round.
+    """
+    unresolved = sorted(member for member, ident in identities.items() if ident.token is None)
+    if not unresolved:
+        return
+    resolved_tokens = {ident.token for ident in identities.values() if ident.token is not None}
+    raise HardwareIdentityRefused(
+        "cannot render a sensitivity master: "
+        f"{len(unresolved)} of {len(identities)} member(s) have no hardware identity"
+        + (
+            " and NONE of the members resolved, so no column can hold them without merging different devices"
+            if not resolved_tokens
+            else f", and no column can hold them without merging two different devices — resolved "
+            f"tokens are {sorted(resolved_tokens)}"
+        )
+        + f". Unidentifiable members: {unresolved}. Each needs a declared `hardware` on its "
+        "partition, or a retained TRITON run header that `clear_raw` did not purge."
+    )
 
 
 def _hardware_family(gv: str) -> str:

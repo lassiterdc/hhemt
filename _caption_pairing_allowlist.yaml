@@ -53,7 +53,20 @@
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
-    renderer_sha256: a3feeb11e59567d5ee530081fbe0f604e2a9c3755b05580d756c884115c46ce7
+    renderer_sha256: a49beeb8fb8fa515255e59f74a04c4b81b8871eaa0a25df76ec2ee57c21b5465
+    justification_2026_10_30: >-
+      Re-read 2026-10-30. The renderer gained CPU-era hardware identity resolution: a
+      declared `hardware` token wins, a configuration declaring none takes the CPU name the
+      solver writes into its own run header, a master where nothing resolves now REFUSES
+      rather than collapsing to one column, and a declared-versus-derived disagreement keeps
+      the column and reaches the errors-and-warnings surface. NONE of that is a claim the
+      caption makes: it names the independent variable, the dependent variable and its
+      aggregation, the SWMM-only routing, the per-report axis auto-scaling, and the sources.
+      Re-read in full and every one of those still holds, so the caption is unchanged and the
+      digest is re-recorded. THIS WILL NOT HOLD FOR THE NEXT TWO CHUNKS: 2a.3 changes the
+      column key to the hardware token and 2a.4 adds one facet group per DEM resolution, and
+      both change what the figure shows. When either lands the right response is to EDIT the
+      caption, not to re-record this digest a third time.
     justification_2026_10_18: >-
       Re-read 2026-10-18. The reporting-system change altered one docstring word only
       (raw_resume_identity -> raw_byte_identity, the module's current name); with docstrings
