@@ -983,7 +983,8 @@ class analysis_config(cfgBaseModel):
             "else (no tag, no branch, no short sha). REQUIRED, no default ([Q331]): every process that "
             "constructs an analysis — the driver, the simulation runner, the in-image processing runner, "
             "the consolidator — compares it to the running toolkit's own identity (validation."
-            "running_identity) before doing anything else and refuses on a mismatch (exit 2).",
+            "running_identity) before writing anything into the analysis tree, and refuses on a mismatch "
+            "(exit 2), so a refused construction leaves no directory behind.",
             json_schema_extra=field_meta(),
         ),
     ]

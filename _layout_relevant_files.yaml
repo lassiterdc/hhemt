@@ -4496,3 +4496,17 @@ non_breaking_allowlist:
       ALLOWLIST rather than by a glob because it is explicitly listed in `layout_relevant.paths`.
       The layout_signature is this file's sha256 at this write and must equal it as committed.
       KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 133995422f458198880b4621e19d57763820eec8911170de7d8b26926beba9a5
+    justification: >-
+      NON-BREAKING, DESCRIPTION-ONLY. Corrects the published `hhemt_sha` field description:
+      "compares it ... before doing anything else" becomes "compares it ... before writing
+      anything into the analysis tree, and refuses on a mismatch (exit 2), so a refused
+      construction leaves no directory behind". The claim was false while the identity gate
+      ran after the constructor's `sims/` mkdir; `6b.2` moves the gate above that write,
+      which is what makes the corrected sentence true. No path, group, filename, key or
+      store shape changes and no on-disk state is touched, so no migration is owed; the
+      layout relevance here is the `src/hhemt/config/**/*.py` glob, which captures every
+      config edit regardless of on-disk effect. The layout_signature is this file's sha256
+      at this write and must equal it as committed. KNOWN EXPIRY: this row expires on the
+      next change to this path.

@@ -520,42 +520,17 @@ class TRITONSWMM_analysis:
             analysis_paths_kwargs["sensitivity_datatree_zarr"] = analysis_dir / "experiment_datatree.zarr"
 
         self.analysis_paths = AnalysisPaths(**analysis_paths_kwargs)
-        # Ensure the per-analysis simulation directory exists at construction time.
-        # Previously this was created incidentally during __init__ by the heavy
-        # _update_log()'s per-scenario TRITONSWMM_scenario construction (whose
-        # __init__ mkdir's sims/<sim_id>/...). _update_log is now a thin refresh,
-        # so create the directory explicitly here to
-        # preserve the construction-time contract relied on by callers/tests.
-        self.analysis_paths.simulation_directory.mkdir(parents=True, exist_ok=True)
-
-        # Read at CONSTRUCTION, deliberately: audit_renderer_io wraps only
-        # module.render(...), so a construction-time read incurs no declared-source
-        # obligation at any renderer. _retrieve_weather_indexer_using_integer_index
-        # re-projects to weather_event_indices and is NOT widened, so
-        # compute_event_id_slug and every sims/{event_id}/ path are unaffected.
-        self.df_sims = self._project_events_table(
-            pd.read_csv(self.cfg_analysis.weather_events_to_simulate),
-            self.cfg_analysis.weather_event_indices,
-            self.cfg_analysis.weather_event_label_column,
-        )
-        self._sim_run_objects: dict = {}
-        self._sim_run_processing_objects: dict = {}
-        self.backend = "gpu" if self.cfg_analysis.run_mode == "gpu" else "cpu"
-
-        self.in_slurm = "SLURM_JOB_ID" in os.environ.copy() or (
-            cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks"
-        )
-        self._execution_strategy = self._select_execution_strategy()
-        # Rule shells invoke a bare "python", resolved by the conda-env activation the shell
-        # prefix emits. No config field names a bespoke interpreter (analysis_config's former
-        # python_path was retired and has no hpc_system_config equivalent); one can be added
-        # back if a cluster needs it.
-        self._python_executable = "python"
         # Running identity: this process runs the hhemt commit the config names, or it
-        # stops HERE — before the workflow builder (whose container branch derives the SIF
-        # identity) and before any I/O. Every process that constructs an analysis (the driver,
-        # the sim runner, the in-image process runner, the consolidator, the plot CLI) passes
-        # through this line. A dirty checkout is an unspecified version, so it is refused too.
+        # stops HERE — before this constructor WRITES anything (above the sims/ mkdir
+        # below), above the events read, and before the workflow builder whose container
+        # branch derives the SIF identity. Every process that constructs an analysis (the
+        # driver, the sim runner, the in-image process runner, the consolidator, the plot
+        # CLI) passes through this line. A dirty checkout is an unspecified version, so it
+        # is refused too.
+        # WHY IT SITS HERE AND NOT WITH THE OTHER POST-CONSTRUCTION BINDINGS: a gate placed
+        # after the first mkdir has already created part of an analysis tree under a
+        # refused identity, and the hhemt_sha field description tells the user a refused
+        # construction touches nothing.
         _running = running_identity()
         if _running.sha != self.cfg_analysis.hhemt_sha:
             raise ConfigurationError(
@@ -602,6 +577,37 @@ class TRITONSWMM_analysis:
                     ),
                     config_path=str(analysis_config_yaml),
                 )
+        # Ensure the per-analysis simulation directory exists at construction time.
+        # Previously this was created incidentally during __init__ by the heavy
+        # _update_log()'s per-scenario TRITONSWMM_scenario construction (whose
+        # __init__ mkdir's sims/<sim_id>/...). _update_log is now a thin refresh,
+        # so create the directory explicitly here to
+        # preserve the construction-time contract relied on by callers/tests.
+        self.analysis_paths.simulation_directory.mkdir(parents=True, exist_ok=True)
+
+        # Read at CONSTRUCTION, deliberately: audit_renderer_io wraps only
+        # module.render(...), so a construction-time read incurs no declared-source
+        # obligation at any renderer. _retrieve_weather_indexer_using_integer_index
+        # re-projects to weather_event_indices and is NOT widened, so
+        # compute_event_id_slug and every sims/{event_id}/ path are unaffected.
+        self.df_sims = self._project_events_table(
+            pd.read_csv(self.cfg_analysis.weather_events_to_simulate),
+            self.cfg_analysis.weather_event_indices,
+            self.cfg_analysis.weather_event_label_column,
+        )
+        self._sim_run_objects: dict = {}
+        self._sim_run_processing_objects: dict = {}
+        self.backend = "gpu" if self.cfg_analysis.run_mode == "gpu" else "cpu"
+
+        self.in_slurm = "SLURM_JOB_ID" in os.environ.copy() or (
+            cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks"
+        )
+        self._execution_strategy = self._select_execution_strategy()
+        # Rule shells invoke a bare "python", resolved by the conda-env activation the shell
+        # prefix emits. No config field names a bespoke interpreter (analysis_config's former
+        # python_path was retired and has no hpc_system_config equivalent); one can be added
+        # back if a cluster needs it.
+        self._python_executable = "python"
         self._workflow_builder = SnakemakeWorkflowBuilder(self)
         self.process = TRITONSWMM_analysis_post_processing(self)
         # `nsims` counts SCENARIOS (events, times members on a sensitivity primary), not
