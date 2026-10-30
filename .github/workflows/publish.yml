@@ -21,6 +21,83 @@ jobs:
         run: python -m pip install build
       - name: Build wheel and sdist
         run: python -m build
+      # PRE-PUBLISH CONTRACT SMOKE -- the identity outcome this release declares.
+      # The declared outcome (Decision 2 of the wheel-shape diagnosis): a BUILT WHEEL
+      # INSTALLS BUT IS REFUSED AT CONSTRUCTION, because a wheel is not a run shape.
+      # The refusal is running_identity()'s ABSENT arm in src/hhemt/validation.py: a wheel
+      # installs to site-packages/hhemt, so _toolkit_root() finds no {root}/src/hhemt
+      # layout, and with no proven root there is no HHEMT_SHA to read, no .git to
+      # interrogate and no SIF label -- every shape test below the root check would be a
+      # test against an arbitrary directory. The smoke therefore asserts that the
+      # INSTALLED ARTIFACT refuses with that field and message; an artifact that resolved
+      # an identity instead is the regression this gate exists to catch.
+      #
+      # WHY A FRESH VENV RATHER THAN THIS JOB'S INTERPRETER: the job's interpreter has no
+      # hhemt INSTALLED, and the repository is src-layout -- the package lives at src/hhemt
+      # and there is no hhemt/ at the root -- so importing from the job's working directory
+      # raises ModuleNotFoundError instead of reading the source tree. The venv is therefore
+      # what makes an installed distribution present at all. It is also what separates the
+      # ARTIFACT from the tree: whatever the checkout happens to contain, this step measures
+      # the wheel and nothing else.
+      #
+      # WHY IT SITS BEFORE THE UPLOAD: `Upload distribution artifacts` is
+      # actions/upload-artifact -- it stages a workflow artifact and publishes nothing to an
+      # index -- so this is not about publication order. It is about which object the gate
+      # examines. That step is what both publish jobs download, so a check placed after it
+      # would be vetting evidence the consumers already hold while the artifact's own
+      # admission went unexamined. Position decides WHAT is gated, not WHETHER the release
+      # is blocked: both publish jobs carry `needs: [build]`, so a smoke failing anywhere in
+      # this job stops them either way.
+      #
+      # WHY THE ASSERTION IS running_identity() AND NOT A FULL CONSTRUCTOR CALL: the
+      # constructor needs a TRITONSWMM_system whose model data the wheel does not ship,
+      # so a constructor-based gate would fail on missing model data rather than on
+      # identity -- a gate that cannot distinguish its own subject, and one that would
+      # break on any data-layout change. running_identity() IS the identity gate the
+      # constructor reaches first (analysis.py, above its sims/ mkdir), so asserting it
+      # asserts the same refusal at the same site with no data dependency.
+      - name: Set up Python for the identity smoke
+        uses: actions/setup-python@v6
+        with:
+          # Pinned INSIDE pyproject's requires-python (">= 3.11, < 3.13"). The build
+          # job's own "3.x" resolves to the newest release, which is OUTSIDE that range,
+          # so a smoke running there would measure a wheel this project does not support.
+          python-version: "3.11"
+      - name: Smoke - a built wheel installs and refuses an unresolvable identity
+        run: |
+          set -euo pipefail
+          WHEEL=$(ls dist/*.whl)
+          SMOKE_ROOT=$(mktemp -d)
+          python -m venv "$SMOKE_ROOT/venv"
+          SMOKE_PY="$SMOKE_ROOT/venv/bin/python"
+          "$SMOKE_PY" -m pip install --quiet --upgrade pip
+          "$SMOKE_PY" -m pip install --quiet "$WHEEL"
+          "$SMOKE_PY" - <<'PY'
+          import sys
+
+          from hhemt.exceptions import ConfigurationError
+          from hhemt.validation import running_identity
+
+          DECLARED = "the running toolkit has no resolvable root"
+          try:
+              running_identity()
+          except ConfigurationError as exc:
+              if exc.field != "hhemt_sha" or DECLARED not in str(exc):
+                  print(
+                      "SMOKE FAIL: refused on field "
+                      f"{exc.field!r} with a message this release does not declare:\n{exc}"
+                  )
+                  sys.exit(1)
+              print("SMOKE PASS: a built wheel is refused at construction, as this release declares.")
+              print(str(exc))
+              sys.exit(0)
+
+          # Shape-neutral on purpose: this same body is the negative control's assertion,
+          # where the distribution is an EDITABLE CHECKOUT rather than a wheel, so naming
+          # a wheel here would describe the wrong artifact in the one run that reads it.
+          print("SMOKE FAIL: the identity RESOLVED for the installed distribution; the declared refusal did not fire.")
+          sys.exit(1)
+          PY
       - name: Upload distribution artifacts
         uses: actions/upload-artifact@v5
         with:
