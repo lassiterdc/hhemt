@@ -15,6 +15,8 @@ from hhemt.cli import app
 runner = CliRunner()
 
 
+# R2 exclusion: retained, not converted — every run-reaching call in this test is a literal `--dry-run` or
+# `--help` invocation, so no analysis tree is consumed and no completed-tree fixture applies.
 def test_test_analysis_help_states_that_it_submits_work_and_its_failure_code():
     """Property: `test analysis --help` says it submits real work, names its failure exit, and
     shows no subcommand slot in its usage line.

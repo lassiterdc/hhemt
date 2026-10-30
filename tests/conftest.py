@@ -18,6 +18,8 @@ from pathlib import Path
 import pytest
 
 import tests.fixtures.test_case_catalog as cases
+from hhemt.cache import builder_provenance, finish_build, marker_state, warn_unsatisfied
+from hhemt.cache import keys as cache_keys
 from hhemt.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV
 from tests.fixtures._compile_guard import arm_compile_guard
 from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV
@@ -170,6 +172,248 @@ def pytest_report_header(config):
     return model_version_lines()
 
 
+# ---------- Run-time cache disclosure (honest-run reporting) ----------
+# A cached run and a cleared run produce the same green, and nothing in the suite's own
+# output says which one ran. These helpers collect what only a LIVE pytest session can
+# observe -- whether each heavy fixture adopted a cached tree or built one, which compiled
+# build dirs were reused, whether the TRITON checkout was borrowed, and which cache roots
+# this session rewrote -- and hand it to the chunk runner, which folds it into the run
+# record that `hhemt.suite.aggregate` renders as the run's disclosure block. Nothing here
+# decides a verdict: every function is best-effort and reports `None` rather than guessing
+# when a fact is undecidable, because a disclosure that invented a value would be worse
+# than one that says it could not tell.
+#
+# WHY THIS HOOK AND NOT A FIXTURE: the facts are session-scoped (which fixtures ran, when
+# the session started, what the cache looks like at its end) and the two `*_completed`
+# fixtures are outside this write set. The marker's own mtime answers adopted-vs-built
+# without either fixture being edited to say so.
+#
+#: The five session-scoped ACTUATOR fixtures the disclosure reports, with whether each HAS
+#: an adoption path. The two `*_completed` fixtures gate on `marker_state` and reuse the
+#: slug-cache tree when its marker is current, so a marker written BEFORE this session began
+#: is what adoption looks like. The three `rendered_*` fixtures pass `start_from_scratch=True`
+#: under a private runs_root, so they never consult a marker and completion there is a build;
+#: that is recorded as a property of the fixture rather than inferred from a missing file,
+#: because "wrote no marker" and "has no adoptable tree" are different facts and only one of
+#: them is evidence.
+_HEAVY_ACTUATOR_FIXTURES = {
+    "synthetic_multisim_completed": {"analysis": "synth_multi_sim", "adopts": True},
+    "synthetic_sensitivity_completed": {"analysis": "synth_sensitivity", "adopts": True},
+    "rendered_synth_multi_sim": {"analysis": None, "adopts": False},
+    "rendered_synth_sensitivity": {"analysis": None, "adopts": False},
+    "rendered_synth_sensitivity_triton_only": {"analysis": None, "adopts": False},
+}
+
+#: How many compiled builds T2 is expected to hold (coupled, TRITON-only, standalone SWMM).
+#: Reported beside the measured count so a run holding two of three is legible as a partial
+#: tier rather than as a machine that only ever had two.
+_EXPECTED_COMPILED_BUILD_DIRS = 3
+
+
+def _path_written_since(path, started_at):
+    """True when ``path`` was written at or after ``started_at``; ``None`` when undecidable."""
+    if started_at is None:
+        return None
+    try:
+        return path.stat().st_mtime >= started_at
+    except OSError:
+        return None
+
+
+def _children_written_since(root, started_at, *, exclude=()):
+    """True when any immediate child of ``root`` was written at or after ``started_at``.
+
+    IMMEDIATE children rather than a recursive walk: both cache roots hold trees of
+    thousands of simulation outputs, and the question is "did this session regenerate
+    anything here", which the entry's own mtime answers.
+    """
+    if started_at is None:
+        return None
+    excluded = set(exclude)
+    try:
+        return any(entry.stat().st_mtime >= started_at for entry in Path(root).iterdir() if entry.name not in excluded)
+    except OSError:
+        return None
+
+
+def _analysis_marker_facts(slug_root, analysis):
+    """The marker facts for one synthetic analysis tree, or ``None`` when it has none.
+
+    The glob is depth-bounded to the layout the builder writes -- ``{slug}/{analysis}/
+    {analysis}/_status/_fixture_complete.json`` -- rather than an ``rglob`` over the tree,
+    and the first readable marker wins: a tree holds at most one completion marker, and a
+    second one would be a layout change the consumer should see fail rather than average.
+    """
+    from hhemt.cache.markers import FIXTURE_MARKER_REL, marker_facts
+
+    root = Path(slug_root) / analysis
+    if not root.is_dir():
+        return None
+    for marker in sorted(root.glob(f"*/{FIXTURE_MARKER_REL}")):
+        facts = marker_facts(marker.parents[1])
+        if facts is not None:
+            return facts
+    return None
+
+
+def _heavy_fixture_entries(*, slug_root, started_at, exercised):
+    """One adopted-vs-built row per heavy actuator fixture, keyed by FIXTURE name.
+
+    A fixture that did not run this session reports ``not-exercised`` even when a tree for
+    it sits in the cache, and that distinction is load-bearing: a marker from an earlier
+    session is not evidence about this run, and counting it would let a chunk that ran none
+    of the heavy tier report an adopted tree.
+    """
+    entries = {}
+    for name, spec in _HEAVY_ACTUATOR_FIXTURES.items():
+        facts = _analysis_marker_facts(slug_root, spec["analysis"]) if spec["analysis"] else None
+        if name not in exercised:
+            state = "not-exercised"
+        elif facts is None:
+            # No adoptable tree was found. For a fixture WITH an adoption path that is
+            # `undetermined` rather than `built`: it may have built a tree this scan could
+            # not locate, and reporting a build nothing evidences is the failure this whole
+            # block exists to prevent, not a harmless default.
+            state = "built" if not spec["adopts"] else "undetermined"
+        else:
+            if started_at is None:
+                state = "undetermined"
+            else:
+                state = "built" if facts["written_at"] >= started_at else "adopted"
+        entries[name] = {
+            "state": state,
+            "has_adoption_path": spec["adopts"],
+            "analysis": spec["analysis"],
+            "tier0_key": None if facts is None else facts["tier0_key"],
+            "marker_written_at": None if facts is None else facts["written_at"],
+            # The verdict that DECIDED an adoption, re-measured now rather than copied from
+            # the record: the tree was handed out because the marker read `complete` then,
+            # and the question a reader of the disclosure is asking is whether the payload
+            # that verdict rested on is still there.
+            "integrity_verdict": (
+                None
+                if facts is None or state != "adopted"
+                else ("complete" if facts["payload_present"] else "unsatisfied")
+            ),
+        }
+    return entries
+
+
+def _compiled_build_dirs(software_root, started_at):
+    """The compiled builds under T2, each marked reused when its log predates the session.
+
+    ``compilation.log`` is the build's own completion record, so a log written before this
+    session began is a build this session did not pay for. A run with no logs at all reports
+    zero present, which is a fact about the tier rather than a failure of this scan.
+    """
+    software_root = Path(software_root)
+    logs = sorted(software_root.glob("*/build_*/compilation.log")) + sorted(
+        software_root.glob("build_*/compilation.log")
+    )
+    dirs = []
+    for log in logs:
+        newer = _path_written_since(log, started_at)
+        dirs.append({"build_dir": log.parent.name, "reused": None if newer is None else (not newer)})
+    return {
+        "expected": _EXPECTED_COMPILED_BUILD_DIRS,
+        "present": len(dirs),
+        "reused": None if started_at is None else sum(1 for d in dirs if d["reused"]),
+        "dirs": dirs,
+    }
+
+
+def _triton_clone_state(software_root):
+    """Whether the T3 TRITON checkout is a borrower, or why the question is unanswerable.
+
+    ``is_borrowing`` is the fixtures' own predicate and is deliberately NOT
+    ``borrower_is_healthy``: health is a pin gate that a standalone clone also satisfies, and
+    reporting it here would answer a question the disclosure does not ask.
+    """
+    from tests.fixtures._triton_source_cache import is_borrowing
+
+    tree = Path(software_root) / "triton"
+    if not tree.is_dir():
+        return {"borrowed": None, "tree": str(tree), "reason": "no T3 checkout under this tier address"}
+    return {"borrowed": is_borrowing(tree), "tree": str(tree)}
+
+
+def _roots_rebuilt(*, slug_root, software_root, builds, started_at):
+    """Which of the four cache roots this session wrote into, or ``None`` when undecidable.
+
+    THE PROXY, stated because it is the one place this block reasons about a different run:
+    ``hhemt cache clear`` leaves no durable record of what it removed, so "the roots a clear
+    removed" cannot be read after the fact. What CAN be read is which roots this session had
+    to write, and that is the signature a cleared run leaves -- a tier still holding last
+    week's builds is not a cleared tier. The two predicates are not identical: a root removed
+    and rebuilt from a source that existed elsewhere reads the same as one that was never
+    removed, and T3 behind its flag is exactly that case.
+    """
+    if started_at is None:
+        return {"T0": None, "T1": None, "T2": None, "T3": None}
+    from hhemt.cache import paths as cache_paths
+
+    return {
+        # T0 is shared across every checkout on the machine, so a foreign checkout's
+        # regeneration also lands here; the disclosure names the root, not the author.
+        "T0": _children_written_since(cache_paths.synthetic_models_root(), started_at),
+        "T1": _children_written_since(slug_root, started_at, exclude={"_software"}),
+        "T2": None if builds["reused"] is None else (builds["reused"] < builds["present"]),
+        "T3": _path_written_since(Path(software_root) / "triton", started_at),
+    }
+
+
+def _cache_disclosure(session):
+    """The session's run-time cache facts, as the dict the chunk runner persists."""
+    from hhemt.cache import paths as cache_paths
+
+    started_at = getattr(session, "_hhemt_suite_session_started_at", None)
+    exercised = set(getattr(session, "_hhemt_suite_fixtures_ok", set()))
+    address = cache_paths.tier_address_for(_REPO_ROOT)
+    slug_root = cache_paths.slug_runs_root(address)
+    software_root = cache_paths.software_root(address)
+    builds = _compiled_build_dirs(software_root, started_at)
+    return {
+        "session_started_at": started_at,
+        "tier_address": address,
+        "heavy_fixtures_exercised": sorted(exercised & set(_HEAVY_ACTUATOR_FIXTURES)),
+        "adopted_vs_built": _heavy_fixture_entries(slug_root=slug_root, started_at=started_at, exercised=exercised),
+        "build_dirs": builds,
+        "triton_clone": _triton_clone_state(software_root),
+        "roots_rebuilt": _roots_rebuilt(
+            slug_root=slug_root, software_root=software_root, builds=builds, started_at=started_at
+        ),
+    }
+
+
+def _write_cache_disclosure_sidecar(session):
+    """Write the session's cache facts to the path the chunk runner handed over, if any.
+
+    Silent when the variable is unset: an ad-hoc local session has no run record to feed, and
+    writing a file nobody named would put a disclosure artifact where no consumer looks.
+    An exception here WARNS rather than raising for the same reason the reaper's sweep does:
+    an instrument may not decide the verdict of the run it instruments.
+    """
+    from hhemt.cache.markers import CACHE_DISCLOSURE_ENV
+
+    out = os.environ.get(CACHE_DISCLOSURE_ENV)
+    if not out:
+        return
+    import json
+    import warnings
+
+    try:
+        payload = _cache_disclosure(session)
+    except Exception as exc:  # noqa: BLE001 - a reporting hook may not fail the suite
+        warnings.warn(f"cache disclosure sidecar skipped: {type(exc).__name__}: {exc}", stacklevel=1)
+        return
+    try:
+        path = Path(out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError as exc:
+        warnings.warn(f"cache disclosure sidecar unwritable at {out}: {exc}", stacklevel=1)
+
+
 # Periodic TTL+liveness backstop for the synthetic_test_runs cache.
 # WHY THIS HOOK, AND WHY THESE GUARDS (the first four bullets are the hook's four
 # guards, each load-bearing; the last two describe the sweep itself):
@@ -203,6 +447,12 @@ def pytest_sessionfinish(session, exitstatus):
 
     if hasattr(session.config, "workerinput"):
         return  # xdist worker; the controller performs the single sweep
+    # BEFORE THE REAPER'S EARLY RETURNS. `hhemt.suite._runner` sets
+    # HHEMT_DISABLE_RUN_DIR_REAPER=1 for every chunk, so a disclosure write placed below
+    # that guard would be skipped under the one caller that reads it -- and a run whose
+    # disclosure is silently absent is exactly the unreadable green this block exists to
+    # remove. The two concerns are unrelated and only share this hook's body.
+    _write_cache_disclosure_sidecar(session)
     if int(exitstatus) in {2, 3, 4}:
         return
     if os.environ.get("HHEMT_DISABLE_RUN_DIR_REAPER") == "1" or os.environ.get("CI"):
@@ -380,7 +630,10 @@ def synthetic_multisim_builder(tmp_path, monkeypatch):
     # Isolate this start_from_scratch=True wipe under tmp_path so it cannot
     # fast_rmtree the shared synth_multi_sim session cache.
     monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
-    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=True)
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(
+        start_from_scratch=True,
+        skip_run=True,
+    )
     return case.analysis._workflow_builder
 
 
@@ -528,14 +781,20 @@ def synth_sensitivity_mixed_prefixed_columns():
 # hours across three cluster runs, and ten tests reported as FAILED for a precondition
 # their own fixture had not met.
 #
-# The arms are named by `_marker_state`'s result. `absent` (no readable marker) and
+# The arms are named by `marker_state`'s result. `absent` (no readable marker) and
 # `stale` (a marker written by different builder sources or a different toolkit sha)
 # both rebuild; `unsatisfied` (a current marker whose payload is missing) warns, then
-# rebuilds (ARM 3, `_warn_unsatisfied`); `complete` hands the tree out. ARM 0,
-# `_finish_build`, ends every rebuild and is what makes the others terminate: it
+# rebuilds (ARM 3, `warn_unsatisfied`); `complete` hands the tree out. ARM 0,
+# `finish_build`, ends every rebuild and is what makes the others terminate: it
 # raises if the payload is still missing, so a rebuild ends in a marker that holds
 # or in an error, never in another rebuild.
-_FIXTURE_MARKER_REL = "_status/_fixture_complete.json"
+#
+# The state machine itself lives in `hhemt.cache.markers`, because the toolkit must be able
+# to describe its own cache without importing this test tree -- which is exactly what the
+# `hhemt cache status` verb does. What stays HERE is the one input only the test tree can
+# supply: WHICH files decide what a cached tree must contain, and which tree's commit is
+# stamped as having built it.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 _BUILDER_SOURCES = (
     Path(__file__).resolve(),
@@ -544,109 +803,31 @@ _BUILDER_SOURCES = (
 )
 
 
-def _builder_provenance() -> dict:
-    """Identity of the code that builds a tree, plus the toolkit sha when readable.
+def _tier1_provenance(case, analysis_dir, *, report_configs=()):
+    """The tier-1 identity a completed-tree fixture stamps and compares.
 
-    Provenance is what makes a marker refusable rather than merely present. The toolkit
-    already applies the same idea to figures -- `StalePlotsError: figures built at X,
-    report rendering at Y` -- and that check is what catches a tree built by a different
-    toolkit than the one now reading it.
+    Assembled here because the terms come from two parties and neither can derive the
+    other's: this file owns WHICH files decide the tree's contents (``_BUILDER_SOURCES``) and
+    which report configs the fixture hands to ``run()``, while the built CASE owns the tier-0
+    key, the solver terms, the environment and the case parameters -- see
+    ``retrieve_synth_TRITON_SWMM_test_case.key_terms``.
 
-    The digest covers ``_BUILDER_SOURCES``, which includes THIS file's own bytes. So
-    any edit to this conftest, a comment-only edit included, reads every cached marker
-    as ``stale``, and the ``synthetic_*_completed`` fixtures re-run their workflow on
-    the next session.
+    ``payload_digest`` is deliberately absent: :func:`finish_build` MEASURES it at stamp time,
+    after its own postcondition has passed, because a digest taken before the build would
+    record the absence of the payload it is meant to attest.
     """
-    import subprocess
-
-    digest = hashlib.sha256()
-    for src in _BUILDER_SOURCES:
-        try:
-            digest.update(src.read_bytes())
-        except OSError:
-            digest.update(b"<unreadable>")
-    sha = ""
-    with contextlib.suppress(Exception):
-        sha = subprocess.run(
-            ["git", "-C", str(Path(__file__).resolve().parents[1]), "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    return {"builder_digest": digest.hexdigest(), "toolkit_sha": sha}
-
-
-def _unmet_payload(analysis_dir: Path, payload: tuple[str, ...]) -> list[str]:
-    return [rel for rel in payload if not (analysis_dir / rel).exists()]
-
-
-def _marker_state(analysis_dir: Path, payload: tuple[str, ...]) -> str:
-    """absent | stale | unsatisfied | complete."""
-    import json
-
-    marker = analysis_dir / _FIXTURE_MARKER_REL
-    if not marker.is_file():
-        return "absent"
-    try:
-        record = json.loads(marker.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return "absent"
-    if record.get("provenance") != _builder_provenance():
-        return "stale"
-    if _unmet_payload(analysis_dir, payload):
-        return "unsatisfied"
-    return "complete"
-
-
-def _finish_build(analysis_dir: Path, payload: tuple[str, ...], fixture_name: str) -> None:
-    """ARM 0 -- verify the builder's own postcondition, RAISE if it failed, else mark.
-
-    Raising is deliberate and is what routes the failure correctly. A tree that cannot be
-    built is a LOST PRECONDITION, not a failing test: raising here leaves this fixture out
-    of the chunk's `session_fixtures_ok`, which the suite aggregator classifies VOID
-    ("expected session fixture(s) did not complete setup") instead of reporting the
-    downstream consumers as FAILED. Returning quietly is what produced ten tests blamed
-    for a fixture's failure.
-
-    The marker is written LAST and only here, so it can never attest a build that did not
-    reach this point.
-    """
-    import json
-
-    missing = _unmet_payload(analysis_dir, payload)
-    if missing:
-        raise RuntimeError(
-            f"{fixture_name}: build finished but its postcondition is UNMET -- missing "
-            f"{missing} under {analysis_dir}. The tree is INCOMPLETE and must not be "
-            "marked complete; consumers of this fixture would otherwise read it as done. "
-            "This is a builder failure, not a test failure."
-        )
-    marker = analysis_dir / _FIXTURE_MARKER_REL
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(
-        json.dumps(
-            {"provenance": _builder_provenance(), "payload": list(payload)},
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
+    present = tuple(Path(path) for path in report_configs if Path(path).exists())
+    return builder_provenance(
+        _BUILDER_SOURCES,
+        repo_root=_REPO_ROOT,
+        configs_digest=cache_keys.builder_digest(present) if present else "",
+        **case.key_terms(),
     )
 
 
-def _warn_unsatisfied(analysis_dir: Path, payload: tuple[str, ...], fixture_name: str) -> None:
-    """ARM 3 -- a marker that was earned once and no longer holds. Never silent."""
-    import warnings
-
-    warnings.warn(
-        f"{fixture_name}: completion marker present but its payload is UNSATISFIED "
-        f"(missing {_unmet_payload(analysis_dir, payload)} under {analysis_dir}). A prior "
-        "build wrote a marker it no longer earns, or the tree was damaged after it was "
-        "written. Rebuilding. This arm is deliberately UNBOUNDED -- it terminates through "
-        "the postcondition raise, at the cost of the failing stage, because the workflow "
-        "resumes from its own per-stage flags rather than rebuilding the tree.",
-        stacklevel=2,
-    )
+def _live_payload_digest(analysis_dir, payload):
+    """The ``(size, sha256)`` measurement the marker's payload arm is compared against."""
+    return cache_keys.payload_digest(analysis_dir, payload)
 
 
 @pytest.fixture(scope="session")
@@ -663,7 +844,7 @@ def synthetic_multisim_completed(tritonswmm_cpu_compiled, triton_only_cpu_compil
     them. Session-scoped: the first invocation in a pytest session runs the
     synth multisim through ``analysis.run(from_scratch=False, ...)`` unless
     this fixture's own completion marker is current AND that marker's payload is
-    present on disk (see ``_marker_state``); subsequent invocations reuse the
+    present on disk (see ``marker_state``); subsequent invocations reuse the
     materialized analysis from the test-case cache.
 
     Before handing the tree out it clears ``locks/`` and ``incomplete/`` under
@@ -699,22 +880,22 @@ def synthetic_multisim_completed(tritonswmm_cpu_compiled, triton_only_cpu_compil
     # Ensure the analysis is in a "post-consolidate" state: run() once unless
     # this fixture's completion marker is current and its payload is present.
     payload = ("analysis_datatree.zarr", "_status/e_consolidate_complete.flag")
-    state = _marker_state(analysis_dir, payload)
+    report_config = _Path(__file__).resolve().parents[1] / "configs" / "reports" / "synth_multisim_report_config.yaml"
+    provenance = _tier1_provenance(case, analysis_dir, report_configs=(report_config,))
+    state = marker_state(
+        analysis_dir,
+        payload,
+        provenance=provenance,
+        payload_digest=_live_payload_digest(analysis_dir, payload),
+    )
     if state == "unsatisfied":
-        _warn_unsatisfied(analysis_dir, payload, "synthetic_multisim_completed")
+        warn_unsatisfied(analysis_dir, payload, "synthetic_multisim_completed")
     if state != "complete":
-        report_config = (
-            _Path(__file__).resolve().parents[0].parent
-            / "tests"
-            / "configs"
-            / "reports"
-            / "synth_multisim_report_config.yaml"
-        )
         analysis.run(
             from_scratch=False,
             report_config=report_config if report_config.exists() else None,
         )
-        _finish_build(analysis_dir, payload, "synthetic_multisim_completed")
+        finish_build(analysis_dir, payload, "synthetic_multisim_completed", provenance=provenance)
 
     return analysis
 
@@ -728,7 +909,7 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
     pytest session runs the synth sensitivity master through
     ``sensitivity.submit_workflow(mode="local")`` unless this fixture's own
     completion marker is current AND that marker's payload is present on disk
-    (see ``_marker_state``); subsequent invocations reuse the materialized
+    (see ``marker_state``); subsequent invocations reuse the materialized
     analysis from the test-case cache.
 
     Returns the ``TRITONSWMM_sensitivity_analysis`` object (master analysis
@@ -768,9 +949,15 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
     # run the master sensitivity workflow once locally to materialize the
     # per-member flags, the master flag and the experiment_datatree.zarr.
     payload = ("experiment_datatree.zarr", "_status/f_consolidate_experiment_complete.flag")
-    state = _marker_state(analysis_dir, payload)
+    provenance = _tier1_provenance(case, analysis_dir)
+    state = marker_state(
+        analysis_dir,
+        payload,
+        provenance=provenance,
+        payload_digest=_live_payload_digest(analysis_dir, payload),
+    )
     if state == "unsatisfied":
-        _warn_unsatisfied(analysis_dir, payload, "synthetic_sensitivity_completed")
+        warn_unsatisfied(analysis_dir, payload, "synthetic_sensitivity_completed")
     if state != "complete":
         # Stamp the master's layout version before the direct facade call below writes into it.
         # Stamping here keeps this fixture correct whether or not that facade stamps the master itself;
@@ -782,7 +969,7 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
 
         stamp_new_target(analysis_dir, LAYOUT_VERSION)
         sensitivity.submit_workflow(mode="local")
-        _finish_build(analysis_dir, payload, "synthetic_sensitivity_completed")
+        finish_build(analysis_dir, payload, "synthetic_sensitivity_completed", provenance=provenance)
 
     return sensitivity
 

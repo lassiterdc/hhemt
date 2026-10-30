@@ -45,6 +45,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -410,6 +411,13 @@ def _logreport_emit(out, payload):  # noqa: D103 - internal writer
 
 
 def pytest_sessionstart(session):  # noqa: D103 - pytest hook
+    # SESSION START, recorded on the session object rather than in a file, because its one
+    # consumer runs in the same process: the repo-root conftest's session-finish hook stamps
+    # it into the cache disclosure, where it is what separates a tree this session BUILT from
+    # one it ADOPTED (a marker older than this instant was already there). Set before the
+    # env-var return below, since a chunk that records no durable report log still owes the
+    # disclosure its start time.
+    session._hhemt_suite_session_started_at = time.time()
     # The header exists so that "no failure records" is unambiguous. Without it, an
     # all-green chunk and a chunk whose writer never loaded produce the same empty file.
     out = os.environ.get(LOGREPORT_ENV)
@@ -705,6 +713,89 @@ def _file_durations(run_dir: Path) -> dict[str, float]:
     return out
 
 
+def _compile_precondition(args: argparse.Namespace, node_ids: list[str], marks: dict[str, list[str]]) -> dict:
+    """Refuse a compile-bearing plan unless BOTH compile conjuncts hold; record the pair.
+
+    THE HAZARD. A session with the toolchain absent and ``HHEMT_REQUIRE_COMPILE_TIER``
+    unset does not fail on the compile tier -- it SKIPS it, and reports green with an
+    ``N skipped`` line nothing downstream reads. A run therefore green while
+    structurally unable to compile, indistinguishable in its own output from one that
+    built the tier. The plan is where that is caught, because it is the only site that
+    knows what the run was ASKED to cover.
+
+    TWO CONJUNCTS, and neither implies the other. CAPABILITY is
+    ``venue_is_permitted()``: with no permitted venue every compile inside a pytest
+    session refuses, so a compile-bearing plan cannot be honoured at all. ANTI-SILENCE
+    is ``compile_tier_required()``: without it a compile-tier skip is quiet, so a plan
+    that proceeds would produce the green above. Capability without anti-silence gives
+    the silent skip; anti-silence without capability gives a loud red at the first
+    compile instead of a refusal here. Both are reported by name, because a caller
+    told only "refused" cannot tell which export to set.
+
+    POSITION, and why it is not earlier. "Compile-bearing" means a run was asked to
+    cover at least one ``compile_tier``-marked node, and that is decidable only from
+    the collection marks -- which are produced after ``warm`` by this function's own
+    ordering. Hoisting the check above the warm would require either a second
+    collection pass or refusing plans that are not compile-bearing, so the refusal
+    lands here and pays one warm. That cost is real but bounded, and in the
+    no-venue case the warm itself already refuses loudly at the compile guard.
+
+    A plan may DECLARE itself non-compile-bearing. That is a positive statement by the
+    caller, recorded as such; it is deliberately not inferred from an empty mark set,
+    because "covered no compile nodes" and "chose not to cover them" are different
+    facts and only the second is a decision.
+    """
+    from hhemt._compile_venue import compile_tier_required, venue_is_permitted
+
+    compile_tier_nodes = sorted(n for n in node_ids if "compile_tier" in (marks.get(n) or ()))
+    compile_bearing = bool(compile_tier_nodes)
+    venue_permitted = venue_is_permitted()
+    tier_required = compile_tier_required()
+    declared_non_compile_bearing = bool(getattr(args, "declare_non_compile_bearing", False))
+
+    missing: list[str] = []
+    if compile_bearing and not declared_non_compile_bearing:
+        if not venue_permitted:
+            missing.append(
+                "capability -- no permitted compile venue: export HHEMT_COMPILE_VENUE "
+                "to a value this project permits to build and execute (see "
+                "hhemt._compile_venue.PERMITTED_VENUES)"
+            )
+        if not tier_required:
+            missing.append(
+                "anti-silence -- HHEMT_REQUIRE_COMPILE_TIER is not 1, so a compile-tier "
+                "skip would be a quiet `N skipped` rather than a failure"
+            )
+    if missing:
+        raise SystemExit(
+            f"refusing to plan: this plan covers {len(compile_tier_nodes)} compile-bearing "
+            "node(s) and is missing "
+            + ("both compile conjuncts" if len(missing) == 2 else "a compile conjunct")
+            + ":\n  - "
+            + "\n  - ".join(missing)
+            + "\nNothing was dispatched and no run id was minted. Either supply the missing "
+            "conjunct(s), or declare the plan non-compile-bearing with "
+            "--declare-non-compile-bearing if covering the compile tier is genuinely not "
+            "intended."
+        )
+
+    return {
+        "compile_bearing": compile_bearing,
+        "compile_tier_node_count": len(compile_tier_nodes),
+        # THE POPULATION, not only its size. The disclosure splits these nodes into
+        # built / adopted / skipped / errored, and that split is computable after the fact
+        # only from the IDs: the manifest's `signals` map carries `slow` as its one
+        # corroborating mark and deliberately drops `compile_tier`, so a reader holding the
+        # manifest can recover the COUNT but never WHICH nodes it ranged over.
+        "compile_tier_nodes": compile_tier_nodes,
+        "declared_non_compile_bearing": declared_non_compile_bearing,
+        # The resolved pair, by the names the disclosure and the ledger read.
+        "compile_venue_permitted": venue_permitted,
+        "compile_tier_required": tier_required,
+        "satisfied": (not compile_bearing) or declared_non_compile_bearing or (venue_permitted and tier_required),
+    }
+
+
 def plan(args: argparse.Namespace) -> int:
     repo = Path(args.toolkit).resolve()
     sha, dirty = _sha_and_dirty(repo)
@@ -762,6 +853,7 @@ def plan(args: argparse.Namespace) -> int:
         )
 
     node_ids, closures, marks, declared_complement = collect(repo, args.python)
+    compile_precondition = _compile_precondition(args, node_ids, marks)
     # LAZY, and load-bearing. This module is loaded as a pytest PLUGIN in the child
     # (`-p _runner`), and a plugin module is imported BEFORE the toolkit's repo-root
     # conftest runs its `sys.path.insert(0, _SRC)` -- measured. A module-level
@@ -784,6 +876,14 @@ def plan(args: argparse.Namespace) -> int:
         tree_isolation_per_chunk=bool(args.isolate_trees_per_chunk),
     )
     manifest["warm"] = warm_provenance
+    manifest["compile_precondition"] = compile_precondition
+    # The ADDRESS the run's caches live under, recorded at plan time because it is the one
+    # moment this process holds the checkout root. A disclosure without it reads as a claim
+    # about whatever machine the reader happens to be on; `warm` is a property of ONE address
+    # (src/hhemt/cache/paths.py), so a hash comparison across addresses compares nothing.
+    from hhemt.cache.paths import tier_address_for
+
+    manifest["tier_address"] = tier_address_for(repo)
     _partition.write_manifest(manifest, run_dir)
 
     n = manifest["chunk_count"]
@@ -1195,6 +1295,16 @@ def run_chunk(args: argparse.Namespace) -> int:
     # whole point: every other sidecar here is a `pytest_sessionfinish` artifact and is
     # simply absent when the chunk is cancelled or hits walltime.
     env[LOGREPORT_ENV] = str(run_dir / f"chunk-{cid:02d}.reports.jsonl")
+    # The cache facts this chunk's pytest session can see and nothing afterwards can
+    # reconstruct: whether each heavy fixture adopted or built its tree, which compiled
+    # builds predate the session, whether the TRITON checkout is a borrower, and which cache
+    # roots the session wrote. Handed over as a PATH because the inventory is produced at the
+    # session's END, by tests/conftest.py's session-finish hook, and read back into the chunk
+    # status below -- an aggregator running days later has none of these facts.
+    from hhemt.cache.markers import CACHE_DISCLOSURE_ENV
+
+    cache_disclosure_path = run_dir / f"chunk-{cid:02d}.cache.json"
+    env[CACHE_DISCLOSURE_ENV] = str(cache_disclosure_path)
     # Latent, NOT the measured cause. pytest_sessionfinish in tests/conftest.py runs a run-dir reaper against
     # the SHARED slug cache at every session end, and each chunk is a controller rather
     # than an xdist worker, so an early-finishing chunk sweeps while siblings still run.
@@ -1287,6 +1397,12 @@ def run_chunk(args: argparse.Namespace) -> int:
         # resolution -- which is the correct outcome and needs a legible reason.
         pytest_res = "PLUGIN-DID-NOT-LOAD: no resolution written by -p _runner"
     fixtures_ok = json.loads(fix_path.read_text(encoding="utf-8")) if fix_path.exists() else []
+    # ABSENT IS NOT EMPTY. A chunk whose session wrote no disclosure (an old checkout, a
+    # session killed before its finish hook) records None, and the aggregator renders that
+    # as "the session reported nothing" rather than as a run that adopted nothing.
+    cache_disclosure = (
+        json.loads(cache_disclosure_path.read_text(encoding="utf-8")) if cache_disclosure_path.exists() else None
+    )
     _reach = json.loads(reach_path.read_text(encoding="utf-8")) if reach_path.exists() else {}
     observed_trees = _reach.get("observed", []) if isinstance(_reach, dict) else _reach
     written_trees = _reach.get("written", []) if isinstance(_reach, dict) else []
@@ -1303,6 +1419,7 @@ def run_chunk(args: argparse.Namespace) -> int:
         "dirty_end": dirty_end,
         "resolved_hhemt": {"pytest": pytest_res, "sibling": sibling},
         "session_fixtures_ok": fixtures_ok,
+        "cache_disclosure": cache_disclosure,
         "observed_trees": observed_trees,
         "reach_entries": reach_entries,
         "written_trees": written_trees,
@@ -1368,6 +1485,13 @@ def build_parser() -> argparse.ArgumentParser:
         "NOTE: the FIRST run using this is not red-set-comparable "
         "to an earlier one -- isolation flips the *_completed session fixtures from adopt to "
         "REBUILD, so a new red needs a second isolated run before it is a regression.",
+    )
+    p.add_argument(
+        "--declare-non-compile-bearing",
+        action="store_true",
+        help="assert that covering the compile tier is NOT intended; without this a plan "
+        "covering any compile_tier-marked node is refused unless BOTH compile conjuncts "
+        "hold (a permitted HHEMT_COMPILE_VENUE and HHEMT_REQUIRE_COMPILE_TIER=1)",
     )
     p.add_argument("--warm-target", default="tests/test_synth_00_compile_models.py")
     p.add_argument("--allow-dirty", action="store_true")

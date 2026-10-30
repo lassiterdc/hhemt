@@ -13,9 +13,11 @@ member root carries scope="member", and that omission is deliberate: the member
 label is written by the D6 fold in `consolidate_workflow.py` as a side-effect of
 the per-member consolidate RULE, while this fixture's readiness payload is
 `("experiment_datatree.zarr", "_status/f_consolidate_experiment_complete.flag")`.
-The gate is `_marker_state` (conftest.py:517-533), which requires a PROVENANCE
-match on the builder digest + toolkit sha BEFORE it ever consults `_unmet_payload`
--- so the payload is not the gate, and every commit makes the marker stale. What
+The gate is `marker_state` (src/hhemt/cache/markers.py:122), which requires a
+PROVENANCE match on the builder digest + toolkit_src_digest (a SHA-256 over every
+*.py file under src/hhemt/ in the working tree) BEFORE it ever consults
+`unmet_payload` -- so the payload is not the gate, and an edit to a .py file under
+src/hhemt/ is what moves it, while a commit alone does not. What
 makes a mislabelled member survive is what happens NEXT: a stale marker only
 re-drives `submit_workflow(mode="local")`, whose per-member rules are satisfied by
 their own `e_consolidate_member-*` flags and no-op. So a tree the fixture re-drives

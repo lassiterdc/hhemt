@@ -72,6 +72,10 @@ def _no_filesystem_preflight(monkeypatch):
     monkeypatch.setattr("hhemt.version_migration.state.stamp_new_target", lambda *_a, **_k: None)
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     submit_workflow=_stop,
+# Covers parametrize ids: True, False.
 @pytest.mark.parametrize("dry_run", [True, False])
 def test_sensitivity_submit_applies_force_rerun_once(dry_run):
     """Property: a sensitivity submit through the analysis facade runs the pre-delete ONCE.
@@ -101,6 +105,10 @@ def test_sensitivity_submit_applies_force_rerun_once(dry_run):
     assert calls == [("all", dry_run)]
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     submit_workflow=_stop,
+# Covers parametrize ids: True, False.
 @pytest.mark.parametrize("dry_run", [True, False])
 def test_plain_submit_still_applies_force_rerun(dry_run):
     """Differently-positioned satisfying input: a non-sensitivity submit applies it once.
@@ -117,6 +125,9 @@ def test_plain_submit_still_applies_force_rerun(dry_run):
     assert calls == [("all", dry_run)]
 
 
+# R2 exclusion: retained, not converted — the dry run is signalled by a Python keyword argument
+# (`dry_run=True` on the direct `submit_workflow` call), not a CLI `--dry-run`/`--help` flag, and the
+# submission is stubbed, so no analysis tree is consumed and no completed-tree fixture applies.
 def test_direct_sensitivity_submit_still_applies_force_rerun():
     """Differently-positioned satisfying input: the sensitivity facade called directly.
 

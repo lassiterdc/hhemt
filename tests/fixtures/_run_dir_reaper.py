@@ -41,8 +41,8 @@ from pathlib import Path
 from filelock import Timeout
 
 from hhemt._filelock_compat import resolve_filelock
+from hhemt.cache.paths import canonical_root, synthetic_runs_root, tier_address_for
 from hhemt.utils import fast_rmtree
-from tests.fixtures._triton_source_cache import canonical_root, checkout_slug, synthetic_runs_root
 
 # Forward-compat seam (per_worker_isolation_for_test_artifact_dir_to_enable_pytest_xdist):
 # if run dirs later nest as {slug}/{worker}, change ONLY these two symbols.
@@ -194,7 +194,7 @@ def collect_live_signals(repo_root: Path, *, runs_root: Path, candidate_slugs: f
     # bound that makes fail-safe safe to state: only the new address mints it, so a
     # legacy `main` or a worktree-basename tier is unaffected and stays reclaimable.
     # The prefix literal is stated here and in
-    # tests/fixtures/_triton_source_cache.py::checkout_slug, which mints it.
+    # src/hhemt/cache/paths.py::tier_address, which mints it.
     #
     # SUPERSEDED TIERS ARE NOT LIVE. A breadcrumb names a checkout, and a checkout outlives
     # a change of address scheme, so the existence test alone keeps every old-scheme tier
@@ -217,7 +217,7 @@ def collect_live_signals(repo_root: Path, *, runs_root: Path, candidate_slugs: f
         if not (recorded and Path(recorded).is_dir()):
             continue
         origin = Path(recorded)
-        if checkout_slug(origin) == slug or not _checkout_mints_digest_address(origin):
+        if tier_address_for(origin) == slug or not _checkout_mints_digest_address(origin):
             live_path.add(slug)
 
     return LiveSignals(

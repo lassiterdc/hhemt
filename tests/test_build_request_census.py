@@ -6,7 +6,7 @@ that has built once, the build is already in the cache, so a test that forgot to
 stays green there and fails only on a fresh checkout. Nothing else in the suite reds on that
 omission, so this module does.
 
-How it decides, in five rules.
+How it decides, in seven rules.
 
 1. Collection, not execution. A child pytest process collects the whole ``tests/`` tree with
    ``HHEMT_FORBID_COMPILE=1`` and runs nothing, so no fixture is set up and nothing compiles. The
@@ -15,8 +15,9 @@ How it decides, in five rules.
    records. For each collected item the child reads the function OBJECT (a class method
    included) and ``item.fixturenames``, never ``--setup-plan`` text, which cannot see a class
    method and misparses a node line whose parametrize id contains ``]``.
-2. Run-reaching. A node reaches a run when its call graph holds an attribute call ``.run(``,
-   ``.submit_workflow(`` or ``.test(`` whose receiver is not the ``subprocess`` module, or a
+2. Run-reaching. A node reaches a run when its call graph holds a call to an attribute named in
+   ``_RUN_ATTRS`` — ``.run(``, ``.submit_workflow(``, ``.test(``, ``.reprocess(`` or
+   ``.submit_reprocess_workflow(`` — whose receiver is not the ``subprocess`` module, or a
    command-line invocation of a command whose callback reaches one: ``invoke(app, [...])`` in
    process, or a child ``hhemt`` or ``python -m hhemt`` call. The call graph is the node's own
    function, the function of every fixture in its closure, and every function or method they
@@ -35,13 +36,38 @@ How it decides, in five rules.
 5. What fails. A run-reaching node that is neither covered nor excused, and a table entry that is
    STALE (its node no longer collects, no longer reaches a run, or is now covered), so the table
    shrinks with the suite instead of rotting.
+6. Tree-emptiness, the rung above the run itself. Every run-reaching node is classified from the
+   SOURCE of its own function and of every in-scope function its fixture closure reaches, as
+   ``override-isolated`` (a case factory called with a literal ``start_from_scratch=True``, or a
+   per-test clone helper), ``cache-backed`` (a factory called with a literal
+   ``start_from_scratch=False``, with ``share_scratch_root=True``, with a non-literal
+   ``start_from_scratch``, or with no ``start_from_scratch`` argument at all — the builder's
+   default reads the shared cache), or ``empty-tree`` (no case factory anywhere in the closure
+   supplies a tree; a factory is a ``retrieve_*`` callable defined in the fixtures' case modules,
+   because those modules also hold helpers that supply none). The class is read from CALL SITES,
+   never from a fixture's name, and a mixed closure takes its highest class. This dimension is
+   what a later package converts, so a false
+   ``empty-tree`` member costs an edit to a file that already reads the cache: every
+   ``empty-tree`` entry therefore carries the fixture names in its closure, so a tree supplied by
+   an unrecognized factory is visible as a name rather than silently absent.
+7. The counts are a machine artifact, not a printed line. Every rung carries its ``unit`` beside
+   its ``count`` and its site list, at ``.pytest_cache/build_request_census.json`` (gitignored)
+   or at the path ``$HHEMT_BUILD_REQUEST_CENSUS_ARTIFACT`` names. A count published without its
+   unit is not a measurement: the re-derive population is measured in SITES, while the triage it
+   pays for is measured in NODES.
 
 Not established: the walk is static. It does not see a run reached by dynamic dispatch
 (``getattr(obj, name)()``, a callable passed as an argument), a run reached through a call that
 resolves outside ``tests/`` and ``hhemt``, a CLI call whose command name no literal, fixture
 value or parametrize value spells out, an argv sliced or rebuilt from another (``argv = argv[:-1]``,
 which the walk reads as a binding carrying no flag, so the call is never excused), or a
-``compile_tier`` mark applied by hand to a test that does not compile.
+``compile_tier`` mark applied by hand to a test that does not compile. The tree dimension is
+static in the same way: a tree supplied by a call that does not resolve statically, by a factory
+in a file this module does not recognize, or one a test builds inline by constructing an analysis
+object directly instead of through a case factory, reads as ``empty-tree``. Each such entry carries
+its fixture names so the member is reviewable rather than merely unknown; and the direct-construction
+shape is dormant rather than hypothetical — five modules in ``tests/`` construct an analysis inline,
+but the one of them that reaches a run is cache-backed, so no ``empty-tree`` member has this cause.
 A ``--dry-run`` or ``--help`` flag excuses a command-line call only when every binding of the argv
 name, every ``return`` or ``yield`` of an argv helper, and every return path of an argv fixture
 carries it; a parametrize id supplies one value, so its flags are certain.
@@ -66,10 +92,33 @@ _TESTS_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _TESTS_DIR.parent
 
 # The attribute names that start a workflow, and the literal arguments that make a call a no-op.
-_RUN_ATTRS = frozenset({"run", "submit_workflow", "test"})
+_RUN_ATTRS = frozenset({"reprocess", "run", "submit_reprocess_workflow", "submit_workflow", "test"})
+# The subset whose call sites are the re-derive population: they rebuild a processed tree.
+_RE_DERIVE_ATTRS = frozenset({"reprocess", "submit_reprocess_workflow"})
 _DRY_FLAG = "--dry-run"
 _HELP_FLAG = "--help"
 _FLAGS = frozenset({_DRY_FLAG, _HELP_FLAG})
+
+# Tree-emptiness classes, ASCENDING: a closure holding two of them answers with the last one.
+_TREE_EMPTY = "empty-tree"
+_TREE_CACHE_BACKED = "cache-backed"
+_TREE_OVERRIDE_ISOLATED = "override-isolated"
+_TREE_CLASSES = (_TREE_EMPTY, _TREE_CACHE_BACKED, _TREE_OVERRIDE_ISOLATED)
+_TREE_RANK = {name: rank for rank, name in enumerate(_TREE_CLASSES)}
+
+# Files whose callables construct or retrieve an analysis tree. A call into one of these is what
+# makes a closure "supplies a tree" at all; the class then comes from its own literal arguments.
+_CASE_FACTORY_MODULES = frozenset({"test_case_builder.py", "test_case_catalog.py"})
+# Those two modules also hold helpers that supply no tree, so the callable's own name must match:
+# every factory is named `retrieve_*`, and nothing else in either module is one.
+_CASE_FACTORY_PREFIX = "retrieve_"
+# Per-test clone helpers: they copy a cached tree into a private root rather than share it.
+_CLONE_FACTORY_NAMES = frozenset({"clone_analysis_to_tmp", "prepare_clone_dir", "construct_analysis_from_paths"})
+
+# The machine artifact: gitignored under .pytest_cache/, overridable for a consumer that wants it
+# elsewhere. A census run must leave no tracked-tree dirt.
+_ARTIFACT_ENV = "HHEMT_BUILD_REQUEST_CENSUS_ARTIFACT"
+_ARTIFACT_DEFAULT = _REPO_ROOT / ".pytest_cache" / "build_request_census.json"
 
 _STUBBED = "stubbed"
 _REFUSES = "refuses before running"
@@ -258,6 +307,30 @@ _EXCUSES: tuple[_Excuse, ...] = (
     ),
     _Excuse(
         _STUBBED,
+        "tests/test_reprocess_delete_r8.py",
+        "analysis._workflow_builder.submit_reprocess_delete_workflow = _fake",
+        (
+            "tests/test_reprocess_delete_r8.py::test_nonsensitivity_explicit_local_execution_mode_is_not_overridden",
+            "tests/test_reprocess_delete_r8.py::test_nonsensitivity_failed_scoped_delete_raises_instead_of_consolidating_stale",
+        ),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_reprocess_rebuild_invalidation.py",
+        '"submit_reprocess_delete_workflow",',
+        (
+            "tests/test_reprocess_rebuild_invalidation.py::test_reprocess_regenerate_slurm_route_clears_flags_and_logs",
+            "tests/test_reprocess_rebuild_invalidation.py::test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity",
+        ),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_reprocess_rebuild_invalidation.py",
+        '"submit_reprocess_workflow",',
+        ("tests/test_reprocess_rebuild_invalidation.py::test_reprocess_consolidate_inprocess_preserves_processed",),
+    ),
+    _Excuse(
+        _STUBBED,
         "tests/test_sensitivity_force_rerun_applied_once.py",
         "submit_workflow=_stop,",
         (
@@ -334,6 +407,7 @@ class _Site:
     text: str  # the source line, stripped
     dry: bool
     help: bool
+    attr: str | None = None  # the attribute name an "attr" site called; None for a "cli" site
 
 
 @dataclass
@@ -414,6 +488,8 @@ class _CallGraph:
         self._return_tokens_cache: dict[object, tuple[list[str], set[str], frozenset[str]]] = {}
         self._command_sites: dict[int, list[_Site]] = {}
         self._app_cache: dict[int, object] = {}
+        self._reach_functions: dict[object, frozenset] = {}
+        self._tree_cache: dict[object, tuple[str, str | None]] = {}
 
     # -- source access ------------------------------------------------------------------------
 
@@ -701,7 +777,7 @@ class _CallGraph:
                         kw.arg == "dry_run" and isinstance(kw.value, ast.Constant) and kw.value.value is True
                         for kw in call.keywords
                     )
-                    facts.sites.append(_Site("attr", where, text, dry, False))
+                    facts.sites.append(_Site("attr", where, text, dry, False, callee.attr))
                     continue
             if self._cli_call(call, ctx, facts, where, text):
                 continue
@@ -810,10 +886,109 @@ class _CallGraph:
             sites.append(_Site("cli", pend.where, pend.text, _DRY_FLAG in flags, _HELP_FLAG in flags))
         return sites
 
+    # -- the tree-emptiness dimension ---------------------------------------------------------
+
+    def _defining_file(self, obj) -> str | None:
+        """The basename of the file ``obj`` is defined in, or None when it has no readable source."""
+        if isinstance(obj, type):
+            try:
+                return Path(inspect.getfile(obj)).name
+            except (TypeError, OSError):
+                return None
+        code = getattr(obj, "__code__", None)
+        return Path(code.co_filename).name if code is not None else None
+
+    @staticmethod
+    def _literal_bool(call: ast.Call, name: str) -> bool | None:
+        """The boolean ``call`` passes for keyword ``name`` as a literal, or None when it passes none."""
+        for keyword in call.keywords:
+            value = keyword.value
+            if keyword.arg == name and isinstance(value, ast.Constant) and isinstance(value.value, bool):
+                return value.value
+        return None
+
+    def _reachable_functions(self, root) -> frozenset:
+        """Every in-scope function reachable from ``root``, ``root`` included, each followed once."""
+        if root in self._reach_functions:
+            return self._reach_functions[root]
+        seen = {root}
+        queue = [root]
+        while queue:
+            for callee in self.facts(queue.pop()).callees:
+                if callee not in seen:
+                    seen.add(callee)
+                    queue.append(callee)
+        self._reach_functions[root] = frozenset(seen)
+        return self._reach_functions[root]
+
+    def _call_tree_class(self, call: ast.Call, ctx: _Context, path: str) -> tuple[str, str | None] | None:
+        """The tree class ONE call supplies, or None when the call names no case factory.
+
+        ``share_scratch_root=True`` is tested before ``start_from_scratch=True`` because it is the
+        builder's own precedence: a build that opts back into the shared root is cache-backed even
+        though it also wipes. A literal False, a non-literal argument and an absent argument all
+        read the shared cache, since the builder's default is False.
+
+        The factory test is the resolved callable's own ``__name__`` prefix, not its module alone:
+        those two modules also hold helpers that supply no tree, and treating a helper as a factory
+        would report a cache-backed closure where there is none.
+        """
+        callee = call.func
+        name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
+        evidence = f"{self._where(path, call.lineno)} {self._line(path, call.lineno)}"
+        if name in _CLONE_FACTORY_NAMES:
+            return _TREE_OVERRIDE_ISOLATED, evidence
+        target = self.resolve(callee, ctx)
+        resolved_name = getattr(target, "__name__", name)
+        if self._defining_file(target) not in _CASE_FACTORY_MODULES:
+            return None
+        if not resolved_name.startswith(_CASE_FACTORY_PREFIX):
+            return None
+        if self._literal_bool(call, "share_scratch_root") is True:
+            return _TREE_CACHE_BACKED, evidence
+        if self._literal_bool(call, "start_from_scratch") is True:
+            return _TREE_OVERRIDE_ISOLATED, evidence
+        return _TREE_CACHE_BACKED, evidence
+
+    def _function_tree_class(self, func) -> tuple[str, str | None]:
+        """The highest tree class ``func``'s OWN body supplies, with the evidence that decided it."""
+        if func in self._tree_cache:
+            return self._tree_cache[func]
+        self._tree_cache[func] = (_TREE_EMPTY, None)
+        best: tuple[str, str | None] = (_TREE_EMPTY, None)
+        ctx = self._context(func)
+        if ctx is not None:
+            path = func.__code__.co_filename
+            for call in (node for node in ast.walk(ctx.node) if isinstance(node, ast.Call)):
+                found = self._call_tree_class(call, ctx, path)
+                if found is not None and _TREE_RANK[found[0]] > _TREE_RANK[best[0]]:
+                    best = found
+        self._tree_cache[func] = best
+        return best
+
+    def tree_class_of(self, roots) -> tuple[str, str | None]:
+        """The highest tree class across everything ``roots`` reach, with the evidence for it.
+
+        Candidates are ordered by (root index, file, first line) before the maximum is taken, so a
+        tie between two equal-ranked functions resolves deterministically and toward the node's OWN
+        function: the artifact's evidence string must not vary between two runs over one tree.
+        """
+        best: tuple[str, str | None] = (_TREE_EMPTY, None)
+        candidates = [
+            (index, func.__code__.co_filename, func.__code__.co_firstlineno, func)
+            for index, root in enumerate(roots)
+            for func in self._reachable_functions(root)
+        ]
+        for _, _, _, func in sorted(candidates, key=lambda candidate: candidate[:3]):
+            found = self._function_tree_class(func)
+            if _TREE_RANK[found[0]] > _TREE_RANK[best[0]]:
+                best = found
+        return best
+
     # -- one collected item -------------------------------------------------------------------
 
     def describe(self, item) -> dict:
-        """One collected item as plain data: its node id, whether it is covered or skipped, its run sites."""
+        """One collected item as plain data: its node id, coverage, run sites and tree class."""
         func = getattr(item, "function", None)
         roots = []
         extra: dict[str, list[str]] = {}
@@ -845,12 +1020,19 @@ class _CallGraph:
         for root in roots:
             sites.extend(self.finalize(self.reach(root), extra, extra_flags))
         unique = {(s.kind, s.where): s for s in sites}
-        return {
+        tree, evidence = self.tree_class_of(roots) if unique else (None, None)
+        described = {
             "id": item.nodeid,
             "covered": item.get_closest_marker("compile_tier") is not None,
             "skip": any(mark.name == "skip" for mark in item.iter_markers()),
             "sites": [vars(s) for s in unique.values()],
+            "tree": tree,
+            "tree_evidence": evidence,
+            "completed_fixture": next((name for name in item.fixturenames if _is_completed_fixture(name)), None),
         }
+        if tree == _TREE_EMPTY:
+            described["fixtures"] = sorted(item.fixturenames)
+        return described
 
 
 class _Recorder:
@@ -910,6 +1092,116 @@ def _all_sites_are_noops(node: dict) -> bool:
     return all(site["dry"] or site["help"] for site in node["sites"])
 
 
+def _is_completed_fixture(name: str) -> bool:
+    """True when ``name`` is a fixture supplying an already-completed synthetic analysis tree.
+
+    ``synthetic_multisim_completed`` and ``synthetic_sensitivity_completed`` are the session trees,
+    and so are their ``_isolated`` clones, so one rule recognises both arms of the closure.
+    """
+    return name.startswith("synthetic_") and "_completed" in name
+
+
+def _artifact_path() -> Path:
+    """Where the machine artifact goes: the env override when set, else the gitignored pytest cache."""
+    override = os.environ.get(_ARTIFACT_ENV)
+    return Path(override) if override else _ARTIFACT_DEFAULT
+
+
+def _unique_sites(nodes: list[dict]) -> list[dict]:
+    """Every distinct run site across ``nodes``, keyed by kind and location, in a stable order.
+
+    A fixture's site appears in the closure of every node consuming it, so counting closures
+    would multiply one call by its consumers; the population is deduplicated here.
+    """
+    unique = {(site["kind"], site["where"]): site for node in nodes for site in node["sites"]}
+    return [unique[key] for key in sorted(unique)]
+
+
+def _disposition(node: dict, table: dict[str, _Excuse]) -> str:
+    """How one run-reaching node is accounted for: coverage, an auto-excuse, a table row, or nothing."""
+    if node["covered"]:
+        return "covered"
+    if node["skip"] or _all_sites_are_noops(node):
+        return "auto-excused"
+    return "table-excused" if node["id"] in table else "undispositioned"
+
+
+def _rung_artifact(nodes: list[dict]) -> dict:
+    """The ladder's rung 1 — every distinct ATTRIBUTE site, the files holding one, and the node count.
+
+    The ladder row this block is published beside is "any actuator attribute, any receiver", so the
+    population is attribute call sites. The walk also records command-line invocations, which reach a
+    run only through a command whose callback does; those are the other site kind and counting them
+    here would publish a population no ladder row defines, incomparable with the figure beside it.
+    They stay in each node's own ``sites``, every site carrying its ``kind``.
+    """
+    sites = [site for site in _unique_sites(nodes) if site["kind"] == "attr"]
+    files = sorted({site["where"].rsplit(":", 1)[0] for site in sites})
+    attr_nodes = [{"id": n["id"]} for n in nodes if any(s["kind"] == "attr" for s in n["sites"])]
+    return {
+        "unit": "sites",
+        "count": len(sites),
+        "file_count": len(files),
+        "node_count": len(attr_nodes),
+        "nodes": attr_nodes,
+        "files": files,
+        "sites": sites,
+    }
+
+
+def _re_derive_artifact(nodes: list[dict], table: dict[str, _Excuse]) -> dict:
+    """The re-derive population, and the triage delta the attribute widening creates.
+
+    ``count``/``count_live`` are SITES, the unit the shape's figures use. ``delta`` is NODES,
+    because a node is the unit a person adjudicates: one table row covers a whole node.
+    """
+    sites = [site for site in _unique_sites(nodes) if site["attr"] in _RE_DERIVE_ATTRS]
+    live = [site for site in sites if not (site["dry"] or site["help"])]
+    delta = [n for n in nodes if n["sites"] and all(s["attr"] in _RE_DERIVE_ATTRS for s in n["sites"])]
+    return {
+        "unit": "sites",
+        "count": len(sites),
+        "count_live": len(live),
+        "live_predicate": "not (a literal dry_run=True, or a --help call)",
+        "node_count": len([n for n in nodes if any(s["attr"] in _RE_DERIVE_ATTRS for s in n["sites"])]),
+        "nodes": [
+            {"id": n["id"], "completed_fixture": n["completed_fixture"], "disposition": _disposition(n, table)}
+            for n in nodes
+            if any(s["attr"] in _RE_DERIVE_ATTRS for s in n["sites"])
+        ],
+        "sites": sites,
+        "delta": {
+            "unit": "nodes",
+            "count": len(delta),
+            "undispositioned": len([n for n in delta if _disposition(n, table) == "undispositioned"]),
+            "nodes": [{"id": n["id"], "disposition": _disposition(n, table)} for n in delta],
+        },
+    }
+
+
+def _empty_tree_artifact(nodes: list[dict], table: dict[str, _Excuse]) -> dict:
+    """The nodes whose closure supplies no analysis tree, each carrying its four excuse terms.
+
+    ``count_actionable`` is the subset carrying NONE of them; every other member is already
+    covered, skip-marked, a literal no-op, or in the excuse table, and so needs no conversion.
+    """
+    entries = [
+        {
+            "id": node["id"],
+            "covered": node["covered"],
+            "skip": node["skip"],
+            "noop": _all_sites_are_noops(node),
+            "table_excused": node["id"] in table,
+            "sites": node["sites"],
+            "fixtures": node.get("fixtures", []),
+        }
+        for node in nodes
+        if node["tree"] == _TREE_EMPTY
+    ]
+    actionable = [e for e in entries if not (e["covered"] or e["skip"] or e["noop"] or e["table_excused"])]
+    return {"unit": "nodes", "count": len(entries), "count_actionable": len(actionable), "nodes": entries}
+
+
 def test_every_run_reaching_test_requests_the_build(tmp_path, capsys):
     """Property: a test whose call graph reaches a workflow run requests the build, or is excused.
 
@@ -924,6 +1216,7 @@ def test_every_run_reaching_test_requests_the_build(tmp_path, capsys):
     """
     report = _collect_in_child(tmp_path / "census.json")
     nodes = {node["id"]: node for node in report["nodes"]}
+    assert _RE_DERIVE_ATTRS <= _RUN_ATTRS, "the re-derive attributes must be run-reaching attributes"
     bad_categories = [e.category for e in _EXCUSES if e.category not in _CATEGORIES]
     assert not bad_categories, f"excuse-table categories outside {sorted(_CATEGORIES)}: {bad_categories}"
     lost_quotes = [
@@ -947,13 +1240,56 @@ def test_every_run_reaching_test_requests_the_build(tmp_path, capsys):
         elif node["covered"]:
             stale.append(f"{node_id}: is now covered by the compile_tier marker")
 
+    artifact = {
+        "schema": 1,
+        "run_attributes": sorted(_RUN_ATTRS),
+        "re_derive_attributes": sorted(_RE_DERIVE_ATTRS),
+        "collected": len(nodes),
+        "run_reaching": len(reaching),
+        "rung_1": _rung_artifact(reaching),
+        "re_derive": _re_derive_artifact(reaching, table),
+        "empty_tree": _empty_tree_artifact(reaching, table),
+        "tree_classes": {name: len([n for n in reaching if n["tree"] == name]) for name in _TREE_CLASSES},
+        "tree_nodes": [
+            {
+                "id": n["id"],
+                "tree": n["tree"],
+                "completed_fixture": n["completed_fixture"],
+                "evidence": n["tree_evidence"],
+            }
+            for n in reaching
+        ],
+    }
+    artifact_path = _artifact_path()
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(json.dumps(artifact, indent=1), encoding="utf-8")
+
     with capsys.disabled():
         print(
             f"\nbuild-request census: collected={len(nodes)} run_reaching={len(reaching)} "
             f"covered={len(reaching) - len(uncovered)} auto_excused={len(auto_excused)} "
             f"table_excused={len([n for n in uncovered if n['id'] in table and n not in auto_excused])} "
-            f"table_size={len(table)} unexcused={len(unexcused)} stale={len(stale)}"
+            f"table_size={len(table)} unexcused={len(unexcused)} stale={len(stale)} "
+            f"rung_1={artifact['rung_1']['count']}sites/{artifact['rung_1']['file_count']}files "
+            f"re_derive={artifact['re_derive']['count']}/{artifact['re_derive']['count_live']}live "
+            f"empty_tree={artifact['empty_tree']['count']}/{artifact['empty_tree']['count_actionable']}actionable "
+            f"tree_classes={artifact['tree_classes']} artifact={artifact_path}"
         )
+
+    missing = [key for key in ("rung_1", "re_derive", "empty_tree") if key not in artifact]
+    assert not missing, f"the census artifact carries no {missing} block(s)"
+    assert artifact["rung_1"]["count"] == len(artifact["rung_1"]["sites"])
+    assert artifact["re_derive"]["count"] == len(artifact["re_derive"]["sites"])
+    assert artifact["re_derive"]["count_live"] <= artifact["re_derive"]["count"]
+    assert artifact["empty_tree"]["count"] == len(artifact["empty_tree"]["nodes"])
+    assert sum(artifact["tree_classes"].values()) == len(reaching), (
+        "a run-reaching node was classified outside the tree dimension"
+    )
+    assert len(artifact["tree_nodes"]) == len(reaching)
+    undelta = [n["id"] for n in artifact["re_derive"]["delta"]["nodes"] if n["disposition"] == "undispositioned"]
+    assert artifact["re_derive"]["delta"]["undispositioned"] == 0, (
+        "nodes that reach a run only through the re-derive attributes and carry no excuse:\n  " + "\n  ".join(undelta)
+    )
 
     def describe(node: dict) -> str:
         """One failing node with the run sites that make it run-reaching."""

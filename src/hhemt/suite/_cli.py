@@ -107,6 +107,41 @@ def _triage(
     raise typer.Exit(code=main(_argv(triage=True, toolkit=toolkit, runs_root=runs_root, from_run=from_run or None)))
 
 
+@toolkit_app.command("owed")
+def _owed(
+    toolkit: str = typer.Option(..., "--toolkit"),
+    runs_root: str = typer.Option(..., "--runs-root"),
+    interval_hours: float = typer.Option(24.0, "--interval-hours"),
+    now: str = typer.Option("", "--now"),
+) -> None:
+    """Ask the ledger whether a full suite run is OWED for --toolkit. Exits 1 when one is.
+
+    THIS VERB REFUSES RATHER THAN RECORDS, and the exit convention is `aggregate`'s: 0 means
+    the obligation is satisfied, 1 means it is not. Nothing here is a licence to skip a run --
+    the only way to a 0 is a `scope=union` GREEN recorded against the live HEAD and the live
+    working tree, inside the interval, from a session that held both compile conjuncts and left
+    no conformance site silent. A `scope=array` green, however green, exits 1 and prints the
+    complement it did not cover.
+
+    --now exists for the interval test and for nothing else; production callers omit it.
+    """
+    from hhemt.suite.policy import owed
+
+    verdict = owed(toolkit=toolkit, runs_root=runs_root, interval_hours=interval_hours, now=now or None)
+    # ASSERTION-FIRST: the verdict word leads, as on `aggregate`'s line, so a reader cannot see
+    # the reason without seeing what it is a reason for.
+    console_line = f"owed={'YES' if verdict['owed'] else 'NO'} run_id={verdict['run_id'] or 'none'}"
+    if verdict["complement"] is not None:
+        console_line += f" complement={len(verdict['complement'])}"
+    if verdict["missing_conjuncts"]:
+        console_line += f" missing_conjuncts={','.join(verdict['missing_conjuncts'])}"
+    typer.echo(console_line)
+    typer.echo(f"reason: {verdict['reason']}")
+    for node in verdict["complement"] or []:
+        typer.echo(f"  uncovered: {node}")
+    raise typer.Exit(code=1 if verdict["owed"] else 0)
+
+
 # No `help=` here, so `--help` renders the callback's docstring, which states what the command
 # submits and how it exits; a `help=` string would replace it. `subcommand_metavar=""` drops the
 # `COMMAND [ARGS]...` a callback-only group otherwise advertises; `no_args_is_help` is unaffected.

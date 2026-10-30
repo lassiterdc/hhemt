@@ -34,8 +34,9 @@ import re
 import sys
 from pathlib import Path
 
-import platformdirs
 import pytest
+
+from hhemt.cache import paths as cache_paths
 
 sys.path.insert(0, str(Path(__file__).parent))
 from fixtures.test_case_catalog import Local_TestCases  # noqa: E402
@@ -128,7 +129,7 @@ def _normalize_volatile(text: str) -> str:
     # golden stays host-portable and fails only on a second WORKTREE, which is
     # diagnosable — where the rejected alternative fails by silently deleting a token
     # nobody notices is gone.
-    _hhemt_cache = platformdirs.user_cache_dir("hhemt")
+    _hhemt_cache = str(cache_paths.cache_root())
     text = text.replace(_hhemt_cache, "{HHEMT_CACHE}")
     text = re.sub(r"(\{HHEMT_CACHE\}/synthetic_test_runs)/[^/'\"\s]+", r"\1/{SLUG}", text)
     text = re.sub(r"(\{HHEMT_CACHE\}/synthetic_test_models)/[^/'\"\s]+", r"\1/{MODEL_KEY}", text)
@@ -593,7 +594,7 @@ def test_synth_root_mask_collapses_cache_root_and_worktree_slug() -> None:
     are different defects and a suite whose arms all have exactly one varying segment
     can only detect the first.
     """
-    cache = platformdirs.user_cache_dir("hhemt")
+    cache = str(cache_paths.cache_root())
     for arm, text, must_go, must_stay in (
         (
             "runs/off-worktree",

@@ -59,6 +59,9 @@ def run_calls(monkeypatch):
     return calls
 
 
+# R2 exclusion: retained, not converted — every run-reaching call in this test is a literal `--dry-run` or
+# `--help` invocation, so no analysis tree is consumed and no completed-tree fixture applies.
+# Covers parametrize ids: plain-dry-run-resumes, explicit-resume, from-scratch.
 @pytest.mark.parametrize(
     ("flags", "from_scratch", "contradiction"),
     [

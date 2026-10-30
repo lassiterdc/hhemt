@@ -48,6 +48,10 @@ pytestmark = [
 # present summary to delete.
 
 
+# R3 exclusion: retained, not converted — the reprocess call IS the behaviour under test.
+# Property: the reprocess generators exclude a c_run-present/summary-absent sub from the per-member
+# consolidate enumeration and the per-sim plot targets, and an unscoped reprocess over that
+# divergent tree fails fast rather than publishing a partial datatree.
 @pytest.mark.slow
 def test_report_target_predicate_excludes_summary_absent_sub(
     synth_sensitivity_analysis,

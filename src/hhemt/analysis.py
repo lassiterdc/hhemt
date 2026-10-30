@@ -5464,10 +5464,11 @@ class TRITONSWMM_analysis:
         WHY THIS EXISTS. `provenance.assert_plots_match_running_build` asserts that every
         figure sidecar carries the running build's sha, and NOTHING in the toolkit
         maintained that invariant: `collect_plot_stamps` had exactly one consumer -- the
-        guard that raises. The fixture layer DOES detect the sha move
-        (`tests/conftest.py::_builder_provenance` embeds `toolkit_sha` and `_marker_state`
+        guard that raises. The fixture layer DOES detect the toolkit-source move
+        (`hhemt.cache.keys.builder_provenance` stamps `toolkit_src_digest` -- a SHA-256 over
+        the working-tree bytes of `src/hhemt/` -- and `hhemt.cache.markers.marker_state`
         returns "stale"), but its remedy is `run(from_scratch=False)`, a RESUME -- and the
-        toolkit sha is not a Snakemake rerun trigger, so every plot rule whose output
+        toolkit source digest is not a Snakemake rerun trigger, so every plot rule whose output
         already exists is skipped and the sidecars keep the old sha through a rebuild that
         reports success. Measured 2026-08-25 on the laptop fixture cache: both completion
         markers carried `toolkit_sha=20176303ebb1` while 10/10 `synth_multi_sim` sidecars

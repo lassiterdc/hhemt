@@ -7,8 +7,8 @@ written when the master Snakefile is generated
 input of that member's rules. Uses the synthetic-test-model tier. Every build pins its
 runs root under `tmp_path` except the one in `test_empty_independent_vars_degenerate_case`,
 a `start_from_scratch=True` build with no pin, which `retrieve_synth_TRITON_SWMM_test_case`
-sends to a private temporary root. The compiled software stays under
-`platformdirs.user_cache_dir("hhemt")` in every case.
+sends to a private temporary root. The compiled software stays under the toolkit's shared
+user cache root (`hhemt.cache.paths.cache_root()`) in every case.
 """
 
 from __future__ import annotations

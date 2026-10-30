@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pytest
 
+from hhemt._compile_venue import compile_tier_required
 from hhemt.analysis import TRITONSWMM_analysis
 
 if TYPE_CHECKING:
@@ -65,8 +66,15 @@ def require_compile_tier() -> bool:
     (the conda recipe and the future toolchain-bearing CI job) sets the var, so
     in that one environment a skip of the coupled-compile tier becomes a loud
     failure instead of a silently-passing ``N skipped``.
+
+    A DELEGATION, not a reader. ``hhemt._compile_venue.compile_tier_required`` owns
+    the read, so this helper and the suite runner that refuses a compile-bearing
+    plan resolve the same value from the same place. Two readers would be free to
+    drift on the spelling of the arming value, and a runner that accepted a
+    compile-bearing plan while this helper skipped the tier would produce a green
+    run whose output never says it could not compile.
     """
-    return os.environ.get("HHEMT_REQUIRE_COMPILE_TIER") == "1"
+    return compile_tier_required()
 
 
 def provenance_audit_enabled() -> bool:

@@ -375,6 +375,10 @@ def test_status_prints_the_built_analysis_workflow_status(experiment, stub_build
     assert state["clusters"] == ["uva"]
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "build_case_from_definition", _fake_build)
+# Covers parametrize ids: all-ok, one-fails.
 @pytest.mark.parametrize(("successes", "code"), [((True, True), 0), ((True, False), 3)], ids=["all-ok", "one-fails"])
 def test_test_analysis_calls_analysis_test_and_exits_on_its_outcome(experiment, stub_build, successes, code):
     """Property: `test analysis` calls `analysis.test()` and exits 0 only when every member succeeded.
@@ -400,6 +404,9 @@ def test_test_analysis_calls_analysis_test_and_exits_on_its_outcome(experiment, 
     assert result.exit_code == code, result.output
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)
 def test_run_status_prints_the_status_report_verbatim(tmp_path, monkeypatch):
     """Property: `hhemt run --status` shows the status report, with every failed item verbatim.
 

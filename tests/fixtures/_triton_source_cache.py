@@ -33,16 +33,14 @@ WHY A CANONICAL STORE, AND WHY THIS SHAPE (every element is load-bearing):
 
 from __future__ import annotations
 
-import hashlib
 import os
 import subprocess
 import warnings
 from pathlib import Path
 
-import platformdirs
-
 import hhemt.utils as ut
 from hhemt._filelock_compat import resolve_filelock
+from hhemt.cache import paths as cache_paths
 
 #: THE TRITON SOURCE IDENTITY FOR THE SYNTHETIC-TEST TIER, AND IT IS A PAIR.
 #: A COMMIT ALONE IS NOT AN IDENTITY, measured rather than cautionary: 3a832f7d
@@ -175,11 +173,11 @@ def synthetic_runs_root() -> Path:
     reaper either sweeps a path nothing uses or deletes a tree a live consumer is
     still writing to.
     """
-    return Path(platformdirs.user_cache_dir("hhemt")) / "synthetic_test_runs"
+    return cache_paths.synthetic_runs_root()
 
 
 def slug_runs_root(slug: str) -> Path:
-    return synthetic_runs_root() / slug
+    return cache_paths.slug_runs_root(slug)
 
 
 def checkout_slug(cwd: Path) -> str:
@@ -191,7 +189,10 @@ def checkout_slug(cwd: Path) -> str:
     call this function, so the two cannot drift apart.
 
     `cwd` must already be canonical: `Path.cwd().resolve()`, which is also what the
-    `.origin` breadcrumb records. This function does not resolve it again.
+    `.origin` breadcrumb records. It is then resolved to the CHECKOUT ROOT it belongs to
+    before the address is minted, because `pytest tests/` does not change directory: a
+    working-directory derivation gives one checkout two addresses, each cold for the other,
+    and the status verb then reports a machine that looks cold while its trees sit on disk.
 
     TWO ARMS.
       * Under `.claude/worktrees/{name}/` the address is `{name}`, so the reaper's
@@ -217,19 +218,13 @@ def checkout_slug(cwd: Path) -> str:
     `.origin` keys on it. The hyphen keeps every digest address distinct from the
     previous escaped form, which always continued `path_s`.
     """
-    parts = cwd.parts
-    if ".claude" in parts:
-        i = parts.index(".claude")
-        if i + 1 < len(parts) and parts[i + 1] == "worktrees" and i + 2 < len(parts):
-            return parts[i + 2]
-    digest = hashlib.sha256(str(cwd).encode("utf-8", "surrogateescape")).hexdigest()
-    return "path-" + digest[:16]
+    return cache_paths.tier_address_for(cwd)
 
 
 def canonical_root() -> Path:
     """The shared object store. Deliberately a SIBLING of synthetic_test_runs/,
     never nested inside it, so the run-dir reaper cannot target it."""
-    return Path(platformdirs.user_cache_dir("hhemt")) / "_triton_canonical" / "triton"
+    return cache_paths.canonical_root()
 
 
 def _rev_parse(tree: Path, ref: str) -> str | None:

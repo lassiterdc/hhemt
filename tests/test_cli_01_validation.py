@@ -19,6 +19,9 @@ runner = CliRunner()
 # ═══════════════════════════════════════════════════════════════════════
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_from_scratch_and_resume_mutually_exclusive(tmp_path):
     """Test --from-scratch and --resume are mutually exclusive."""
     # Create minimal valid config files for validation
@@ -45,6 +48,9 @@ def test_from_scratch_and_resume_mutually_exclusive(tmp_path):
     assert "--from-scratch" in result.output.lower()
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_event_ilocs_and_range_mutually_exclusive(tmp_path):
     """Test --event-ilocs and --event-range are mutually exclusive."""
     system_config = tmp_path / "system.yaml"
@@ -72,6 +78,9 @@ def test_event_ilocs_and_range_mutually_exclusive(tmp_path):
     assert "--event-ilocs/--event-range" in result.output
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_verbose_and_quiet_mutually_exclusive(tmp_path):
     """Test --verbose and --quiet are mutually exclusive."""
     system_config = tmp_path / "system.yaml"
@@ -107,6 +116,9 @@ def test_verbose_and_quiet_mutually_exclusive(tmp_path):
 # ═══════════════════════════════════════════════════════════════════════
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_system_config_is_required(tmp_path):
     """Test --system-config is required when not using list actions."""
     analysis_config = tmp_path / "analysis.yaml"
@@ -125,6 +137,9 @@ def test_system_config_is_required(tmp_path):
     assert "--system-config is required" in result.output
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_analysis_config_is_required(tmp_path):
     """Test --analysis-config is required when not using list actions."""
     system_config = tmp_path / "system.yaml"
@@ -148,6 +163,9 @@ def test_analysis_config_is_required(tmp_path):
 # ═══════════════════════════════════════════════════════════════════════
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_invalid_model_value(tmp_path):
     """Test invalid --model value is rejected."""
     system_config = tmp_path / "system.yaml"
@@ -172,6 +190,9 @@ def test_invalid_model_value(tmp_path):
     assert "Invalid model" in result.output
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_invalid_which_value(tmp_path):
     """Test invalid --which value is rejected."""
     system_config = tmp_path / "system.yaml"
@@ -196,6 +217,9 @@ def test_invalid_which_value(tmp_path):
     assert "Invalid which" in result.output
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_invalid_redownload_value(tmp_path):
     """Test invalid --redownload value is rejected."""
     system_config = tmp_path / "system.yaml"
@@ -220,6 +244,9 @@ def test_invalid_redownload_value(tmp_path):
     assert "Invalid redownload" in result.output
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_invalid_log_level_value(tmp_path):
     """Test invalid --log-level value is rejected."""
     system_config = tmp_path / "system.yaml"
@@ -249,6 +276,9 @@ def test_invalid_log_level_value(tmp_path):
 # ═══════════════════════════════════════════════════════════════════════
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_invalid_walltime_format_missing_leading_zero(tmp_path):
     """Test walltime format validation rejects missing leading zeros."""
     system_config = tmp_path / "system.yaml"
@@ -274,6 +304,9 @@ def test_invalid_walltime_format_missing_leading_zero(tmp_path):
     assert "HH:MM:SS" in result.output
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_invalid_walltime_format_wrong_separator(tmp_path):
     """Test walltime format validation rejects wrong separator."""
     system_config = tmp_path / "system.yaml"
@@ -298,6 +331,9 @@ def test_invalid_walltime_format_wrong_separator(tmp_path):
     assert "Invalid walltime format" in result.output
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_valid_walltime_format(tmp_path):
     """Test valid walltime format passes validation."""
     system_config = tmp_path / "system.yaml"
@@ -327,6 +363,9 @@ def test_valid_walltime_format(tmp_path):
 # ═══════════════════════════════════════════════════════════════════════
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_valid_model_values(tmp_path):
     """Test all valid --model values pass validation."""
     system_config = tmp_path / "system.yaml"
@@ -352,6 +391,9 @@ def test_valid_model_values(tmp_path):
         assert "Invalid model" not in result.output
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_valid_which_values(tmp_path):
     """Test all valid --which values pass validation."""
     system_config = tmp_path / "system.yaml"
@@ -377,6 +419,9 @@ def test_valid_which_values(tmp_path):
         assert "Invalid which" not in result.output
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_valid_redownload_values(tmp_path):
     """Test all valid --redownload values pass validation."""
     system_config = tmp_path / "system.yaml"
@@ -402,6 +447,9 @@ def test_valid_redownload_values(tmp_path):
         assert "Invalid redownload" not in result.output
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_valid_log_level_values(tmp_path):
     """Test all valid --log-level values pass validation."""
     system_config = tmp_path / "system.yaml"

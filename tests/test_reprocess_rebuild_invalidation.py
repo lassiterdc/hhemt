@@ -74,6 +74,9 @@ def _seed_scenario_processing_log(scen: TRITONSWMM_scenario) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+# R3 exclusion: retained, not converted — the reprocess call IS the behaviour under test.
+# Property: the sensitivity SLURM-offload delete route removes every sub's d_process_* flags AND
+# clears each scenario's per-model processing_log.outputs.
 def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(synth_sensitivity_analysis, monkeypatch):
     """Sensitivity ``reprocess(start_with='process', regenerate_existing=True)``
     on the SLURM-offload route deletes every sub's ``d_process_*`` flags AND
@@ -276,6 +279,9 @@ def test_reprocess_generator_emits_rebuild_after_invalidation(synth_sensitivity_
 # ---------------------------------------------------------------------------
 
 
+# R3 exclusion: retained, not converted — the reprocess call IS the behaviour under test.
+# Property: the non-sensitivity SLURM-offload route clears each scenario's per-model
+# processing_log.outputs, and execution_mode="auto" is what keeps that route genuinely taken.
 def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(
     synth_multi_sim_analysis, monkeypatch, ack_node_local_configs
 ):
@@ -339,6 +345,9 @@ def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(
 # ---------------------------------------------------------------------------
 
 
+# R3 exclusion: retained, not converted — the reprocess call IS the behaviour under test.
+# Property: a consolidate-stage in-process reprocess PRESERVES each sub's per-scenario processed/,
+# which is the rebuild source only a process-stage reprocess may delete.
 def test_reprocess_consolidate_inprocess_preserves_processed(synth_sensitivity_analysis, monkeypatch):
     """A CONSOLIDATE-stage in-process ``reprocess(regenerate_existing=True)`` must
     PRESERVE each sub's per-scenario ``processed/`` — that directory is the

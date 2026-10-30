@@ -116,6 +116,9 @@ def test_format_override_gate_names_both_values():
 # ---- non-TTY + non-empty override + assume_yes=False => REFUSE ----
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     pytest.fail("gate should refuse before build")
 def test_run_experiment_non_tty_refuses_override(tmp_path, monkeypatch):
     definition_dir = _write_definition_dir(tmp_path, hpc={"uva": "hpc/uva.yaml"})
 
@@ -136,6 +139,9 @@ def test_run_experiment_non_tty_refuses_override(tmp_path, monkeypatch):
 # ---- assume_yes=True proceeds past the gate ----
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "build_case_from_definition", lambda *a, **k: _FakeTk())
 def test_run_experiment_assume_yes_proceeds(tmp_path, monkeypatch):
     definition_dir = _write_definition_dir(tmp_path, hpc={"uva": "hpc/uva.yaml"})
     sentinel = object()
@@ -346,6 +352,11 @@ def test_build_case_from_definition_expands_config_vars(tmp_path, monkeypatch):
 # ---- batch_job wait auto-detect from $SLURM_JOB_ID ----
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "build_case_from_definition", lambda *a, **k: _FakeTk())
+# Covers parametrize ids: None-False-12345-True, None-False-None-False, None-True-12345-False,
+# Covers parametrize ids: True-False-None-True, False-False-12345-False.
 @pytest.mark.parametrize(
     "wait_arg, dry_run, slurm_job_id, expected_wait",
     [
@@ -384,6 +395,9 @@ def test_run_experiment_wait_autodetect(tmp_path, monkeypatch, wait_arg, dry_run
 # ---- what run_experiment forwards to tk.run: override_force_rerun and mode ----
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "build_case_from_definition", lambda *a, **k: _FakeTk())
 def test_run_experiment_threads_override_force_rerun_to_tk_run(tmp_path, monkeypatch):
     """RED pre-fix: `run_experiment` had no `override_force_rerun` keyword, and `**cli_overrides`
     swallowed it silently, so nothing reached `tk.run` (KeyError at the capture, not TypeError).
@@ -411,6 +425,9 @@ def test_run_experiment_threads_override_force_rerun_to_tk_run(tmp_path, monkeyp
     assert captured["override_force_rerun"] is None
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "build_case_from_definition", lambda *a, **k: _FakeTk())
 def test_run_experiment_forwards_mode_to_tk_run(tmp_path, monkeypatch):
     """Regression pin, green in both states: the mode value arrives at tk.run untouched
     (a StrEnum member compares equal to the bare word), and the default is resume."""

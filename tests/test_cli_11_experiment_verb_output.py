@@ -115,6 +115,9 @@ def test_status_prints_the_status_report_not_a_field_dump(experiment, stub_build
     assert _RULE_TOKEN_ITEM in result.output, f"failed item not shown verbatim:\n{result.output}"
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "build_case_from_definition", _fake_build)
 @pytest.mark.parametrize(
     ("argv_tail", "expected"),
     [
@@ -169,6 +172,10 @@ def stub_build_at(monkeypatch):
     return chosen
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "build_case_from_definition", _fake_build)
+# Covers parametrize ids: test-analysis-longer-than-80-columns, test-analysis-colon-word-component.
 @pytest.mark.parametrize("root", [_LONG_DIR, _COLON_DIR], ids=["longer-than-80-columns", "colon-word-component"])
 @pytest.mark.parametrize(
     ("argv_tail", "leaf"),

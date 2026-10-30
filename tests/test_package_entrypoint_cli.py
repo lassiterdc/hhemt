@@ -75,6 +75,8 @@ def test_the_zero_argument_invocation_reaches_the_cli_help():
     assert "Usage" in combined, combined
 
 
+# R2 exclusion: retained, not converted — every run-reaching call in this test is a literal `--dry-run` or
+# `--help` invocation, so no analysis tree is consumed and no completed-tree fixture applies.
 @pytest.mark.parametrize("args", [("--help",), ("run", "--help")])
 def test_subcommands_reach_the_app(args):
     """The funnel holds for nested commands too, not only the bare root."""

@@ -369,6 +369,9 @@ class TestSubmitWorkflowIntegration:
         ):
             yield
 
+    # R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+    # completed-tree fixture applies. Evidence:
+    #     patch.object(builder, "run_snakemake_local", return_value={"success": True}),
     @patch.object(SnakemakeWorkflowBuilder, "_submit_single_job_workflow")
     def test_submit_workflow_passes_wait_parameter(self, mock_submit_single, mock_analysis):
         """Test that submit_workflow passes wait_for_completion to _submit_single_job_workflow."""
@@ -399,6 +402,9 @@ class TestSubmitWorkflowIntegration:
             call_kwargs = mock_submit_single.call_args[1]
             assert call_kwargs["wait_for_completion"] is True
 
+    # R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+    # completed-tree fixture applies. Evidence:
+    #     patch.object(builder, "run_snakemake_local", return_value={"success": True}),
     @patch.object(SnakemakeWorkflowBuilder, "_submit_single_job_workflow")
     def test_submit_workflow_default_no_wait(self, mock_submit_single, mock_analysis):
         """Test that submit_workflow defaults to wait_for_completion=False."""

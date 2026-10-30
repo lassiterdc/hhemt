@@ -29,16 +29,16 @@ import re
 import sys
 from pathlib import Path
 
-import platformdirs
 import pytest
 
+from hhemt.cache import paths as cache_paths
 from tests.fixtures._triton_source_cache import synthetic_runs_root
 
 _GOLDEN_DIR = Path(__file__).parent / "fixtures" / "reporting_sets_byte_identity"
 _CAPTURE = os.environ.get("CAPTURE_REPORTING_SET_GOLDENS") == "1"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SYNTH_RUNS_ROOT = synthetic_runs_root()
-_SYNTH_MODELS_ROOT = Path(platformdirs.user_cache_dir("hhemt")) / "synthetic_test_models"
+_SYNTH_MODELS_ROOT = cache_paths.synthetic_models_root()
 # The synth fixtures' runs_root is nested under pytest's tmp base (the fixtures set
 # `HHEMT_TEST_RUNS_ROOT_OVERRIDE` from `tmp_path` / `tmp_path_factory.mktemp`), so the
 # goldens bake `{basetemp}/{nodeid-slug}/...`. Only the basetemp PREFIX is volatile; the

@@ -92,6 +92,9 @@ def _pydantic_validation_error() -> pydantic.ValidationError:
     raise AssertionError("model_validate accepted a non-int; the probe is broken")
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "run_experiment", fn)
 def test_mode_invalid_value_is_a_usage_error(definition_dir, monkeypatch):
     """VIOLATING arm. RED pre-fix: `--mode bogus` was forwarded and the verb exited 0."""
     captured: dict = {}
@@ -102,6 +105,9 @@ def test_mode_invalid_value_is_a_usage_error(definition_dir, monkeypatch):
     assert captured == {}, "the parser must refuse before the body runs"
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "run_experiment", fn)
 def test_mode_overwrite_is_refused(definition_dir, monkeypatch):
     """VIOLATING arm for the retired word. RED pre-fix: `overwrite` was accepted (exit 0)."""
     captured: dict = {}
@@ -111,6 +117,10 @@ def test_mode_overwrite_is_refused(definition_dir, monkeypatch):
     assert captured == {}
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "run_experiment", fn)
+# Covers parametrize ids: fresh, resume.
 @pytest.mark.parametrize("mode", ["fresh", "resume"])
 def test_mode_valid_values_reach_run_experiment(definition_dir, monkeypatch, mode):
     """SATISFYING arm, green in both states: the value arrives at the seam (as a StrEnum
@@ -123,6 +133,9 @@ def test_mode_valid_values_reach_run_experiment(definition_dir, monkeypatch, mod
     assert isinstance(captured["mode"], str)
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "run_experiment", fn)
 def test_mode_default_is_resume(definition_dir, monkeypatch):
     """SATISFYING arm, green in both states: omitting --mode resumes."""
     captured: dict = {}
@@ -132,6 +145,8 @@ def test_mode_default_is_resume(definition_dir, monkeypatch):
     assert captured["mode"] == "resume"
 
 
+# R2 exclusion: retained, not converted — every run-reaching call in this test is a literal `--dry-run` or
+# `--help` invocation, so no analysis tree is consumed and no completed-tree fixture applies.
 def test_help_renders_mode_choice_set():
     """Rendering pin (one-state property): Typer renders the enum as the choice set.
 
@@ -145,6 +160,9 @@ def test_help_renders_mode_choice_set():
     assert "--override-force-rerun" in result.output
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     tk = Toolkit(SimpleNamespace(analysis=SimpleNamespace(run=_spy)))
 def test_toolkit_run_refuses_unknown_mode():
     """The library boundary. RED pre-fix on the violating arm: `Toolkit.run(mode="bogus")`
     reached `analysis.run` with `from_scratch=False` (a silent resume).
@@ -175,6 +193,9 @@ def test_toolkit_run_refuses_unknown_mode():
     assert calls[-1]["from_scratch"] is False
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "run_experiment", fn)
 def test_failure_result_exits_3_and_prints_no_green(definition_dir, monkeypatch):
     """RED pre-fix: exit 1 with `run-experiment complete (success=False)` on stdout.
 
@@ -188,6 +209,9 @@ def test_failure_result_exits_3_and_prints_no_green(definition_dir, monkeypatch)
     assert "Snakemake failed." in result.stderr
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "run_experiment", fn)
 def test_partial_failure_result_names_failed_rules(definition_dir, monkeypatch):
     """RED pre-fix: no per-rule line existed and the verb exited 1."""
     failures = [{"rule_token": "run_triton_evt-0", "reason": "walltime kill"}]
@@ -200,6 +224,8 @@ def test_partial_failure_result_names_failed_rules(definition_dir, monkeypatch):
     assert "run_triton_evt-0" in result.stderr
 
 
+# R2 exclusion: retained, not converted — every run-reaching call in this test is a literal `--dry-run` or
+# `--help` invocation, so no analysis tree is consumed and no completed-tree fixture applies.
 def test_dry_run_failure_result_is_not_reported_ok(definition_dir, monkeypatch):
     """Contract pin for the reporter's ORDERING (`success` before the dry-run arm).
 
@@ -215,6 +241,9 @@ def test_dry_run_failure_result_is_not_reported_ok(definition_dir, monkeypatch):
     assert "planned cleanly" not in result.stdout
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "run_experiment", fn)
 def test_reporter_prints_producer_text_literally(definition_dir, monkeypatch):
     """Producer text is data, not markup. RED pre-fix (and RED against an unescaped reporter):
     a message carrying `[/job]` raised MarkupError inside the print, the catch-all re-raised
@@ -234,6 +263,8 @@ def test_reporter_prints_producer_text_literally(definition_dir, monkeypatch):
     assert "[run_triton_evt-0] (walltime [kill])" in result.stderr
 
 
+# R2 exclusion: retained, not converted — every run-reaching call in this test is a literal `--dry-run` or
+# `--help` invocation, so no analysis tree is consumed and no completed-tree fixture applies.
 def test_dry_run_success_exits_0(definition_dir, monkeypatch):
     """SATISFYING arm, green in both states."""
     _patch_seam(monkeypatch, _returning(WorkflowResult(success=True, mode="local", message="plan ok")))
@@ -242,6 +273,9 @@ def test_dry_run_success_exits_0(definition_dir, monkeypatch):
     assert "failed" not in result.stderr
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "run_experiment", fn)
 def test_success_result_prints_detail_lines(definition_dir, monkeypatch):
     """The reporter owns the detail lines on run-experiment too. RED pre-fix: the verb
     never printed the job id."""
@@ -254,6 +288,9 @@ def test_success_result_prints_detail_lines(definition_dir, monkeypatch):
     assert "12.5" in result.stdout
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "run_experiment", fn)
 def test_run_and_run_experiment_share_the_result_reporter(definition_dir, tmp_path, monkeypatch):
     """The ONE node that pins decision 6's "cannot diverge": both verbs route their result
     through `hhemt.cli_utils.report_workflow_result`. Built on a RECORDING SPY returning 0
@@ -320,6 +357,9 @@ def test_run_and_run_experiment_share_the_result_reporter(definition_dir, tmp_pa
     assert seen[1][2] is exp_result
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "run_experiment", fn)
 def test_override_force_rerun_reaches_run_experiment(definition_dir, monkeypatch):
     """RED pre-fix: Typer refused the unknown option (exit 2). The shared callback parses
     the JSON form, so a dict (not the string) arrives at the seam."""
@@ -361,6 +401,12 @@ def test_every_map_row_has_an_instance_in_this_module():
         assert any(issubclass(c, key) for c in covered), f"EXIT_CODE_MAP row {name} has no instance here"
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "run_experiment", fn)
+# Covers parametrize ids: CLIValidationError, ConfigurationError, WorkflowPlanningError, WorkflowError,
+# Covers parametrize ids: CompilationError, SimulationError, ProcessingError, pydantic.ValidationError,
+# Covers parametrize ids: RuntimeError.
 @pytest.mark.parametrize(("name", "exc"), _MAPPED_INSTANCES, ids=[n for n, _ in _MAPPED_INSTANCES])
 def test_exception_class_maps_to_documented_code(definition_dir, monkeypatch, name, exc):
     """The expected code is READ FROM THE MAP, so the node discriminates on the verb's
@@ -375,6 +421,9 @@ def test_exception_class_maps_to_documented_code(definition_dir, monkeypatch, na
     assert result.exit_code != 1
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "run_experiment", fn)
 def test_schema_invalid_config_exits_2(definition_dir, monkeypatch):
     """The MAP ENTRY, discriminated by a BARE pydantic ValidationError through the seam
     (a wrapped ConfigurationError would exit 2 through the existing row and pass without
@@ -388,6 +437,9 @@ def test_schema_invalid_config_exits_2(definition_dir, monkeypatch):
     assert "input_type=str" in result.stderr
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "run_experiment", fn)
 def test_exit_1_is_not_a_run_experiment_code(definition_dir, monkeypatch):
     """Exit 1 is retired: click reserves it for an escaped exception, and the published
     tables classify by failure class. RED pre-fix: success=False exited 1."""

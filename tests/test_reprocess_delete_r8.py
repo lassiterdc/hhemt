@@ -461,6 +461,9 @@ def _stub_reprocess_submissions(analysis, calls, *, success):
     analysis._workflow_builder.submit_reprocess_workflow = lambda *a, **k: {"success": True}
 
 
+# R3 exclusion: retained, not converted — the reprocess call IS the behaviour under test.
+# Property: a caller-supplied execution_mode="local" keeps the scoped delete off the SLURM route
+# even when the config says batch_job, so the caller wins over the config.
 def test_nonsensitivity_explicit_local_execution_mode_is_not_overridden(synth_multi_sim_analysis):
     """execution_mode='local' must keep the scoped delete off the SLURM route.
 
@@ -487,6 +490,9 @@ def test_nonsensitivity_explicit_local_execution_mode_is_not_overridden(synth_mu
     )
 
 
+# R3 exclusion: retained, not converted — the reprocess call IS the behaviour under test.
+# Property: a scoped delete reporting failure RAISES instead of falling through, so reprocess never
+# consolidates against a tree it believes is gone and never re-publishes a stale zarr.
 def test_nonsensitivity_failed_scoped_delete_raises_instead_of_consolidating_stale(
     synth_multi_sim_analysis,
     ack_node_local_configs,

@@ -402,6 +402,360 @@ def classify_solver_setup(node_ids: list[str], signals: dict[str, list[str]]) ->
     return signalled, unsignalled
 
 
+# --------------------------------------------------------------------------
+# The run's DISCLOSURE — what a green did not exercise
+# --------------------------------------------------------------------------
+# A cached run and a cleared run report the same GREEN, so the verdict alone cannot say
+# which of them ran. The disclosure block is that statement: nine keys, each naming one
+# thing a green run may have skipped. It is assembled from ARTIFACTS ONLY -- the manifest
+# for the run's address and compile conjuncts, each chunk's session inventory for what the
+# cache actually did, and the junit buckets for what was excluded -- because the operator's
+# account of a run is the one input a later reader cannot check.
+
+#: The nine keys, EXACT and CLOSED. The DoD counts them, so a tenth key added for
+#: convenience fails the count and a dropped key leaves its loss unstated; both directions
+#: are the same defect wearing different signs.
+DISCLOSURE_KEYS = (
+    "adopted_vs_built",
+    "build_dirs_reused",
+    "tier0_key",
+    "preprocessing_skipped",
+    "triton_clone_borrowed",
+    "excluded_nodes",
+    "scope",
+    "tier_address",
+    "compile_tier_outcome",
+)
+
+#: The vocabulary `adopted_vs_built` states may take. `undetermined` is FIRST-CLASS rather
+#: than an apology: it is what a session reports when it ran a fixture whose adoptable tree
+#: it could not locate, and collapsing it into `built` would report a build nothing
+#: evidences -- the failure mode this block exists to remove, not a harmless default.
+DISCLOSURE_FIXTURE_STATES = ("built", "adopted", "undetermined", "not-exercised")
+
+#: Carried inside the compile block's own text, where a reader meets the number it
+#: qualifies. A fresh worktree has no compiled tier to adopt -- T2 is per-worktree and
+#: deliberately non-relocatable -- so "built this session" is what a clean checkout ALWAYS
+#: says. A reader who takes that line for a signal reads the same value on every new
+#: worktree as evidence of a rebuild, and the loss is invisible in the reassuring direction.
+FRESH_WORKTREE_COMPILE_NOTE = (
+    'Every fresh worktree reports "built this session" for the compile tier. T2 is '
+    "per-worktree and deliberately non-relocatable, so a new worktree has nothing to "
+    "adopt. That is the design, not a signal about the run."
+)
+
+
+def _merge_cache_disclosures(sidecars: list[dict]) -> dict:
+    """Fold the per-chunk session inventories into one view of the run's cache behaviour.
+
+    WORST-FIRST, and the direction is the point rather than a preference. A fixture is
+    ADOPTED if ANY chunk adopted it, because the question is whether a cached tree stood in
+    for a build SOMEWHERE in this run; a majority vote would let one adopting chunk hide
+    behind the others, and `undetermined` outranks `built` for the same reason -- one chunk
+    that could not tell is a fact about the run.
+    """
+    state_rank = {state: i for i, state in enumerate(("adopted", "undetermined", "built", "not-exercised"))}
+    entries: dict[str, dict] = {}
+    observed: dict[str, list[str]] = defaultdict(list)
+    for sidecar in sidecars:
+        for name, entry in (sidecar.get("adopted_vs_built") or {}).items():
+            observed[name].append(entry.get("state"))
+            current = entries.get(name)
+            if current is None or state_rank.get(entry.get("state"), 99) < state_rank.get(current.get("state"), 99):
+                entries[name] = entry
+
+    # Build dirs: union by name. `reused` takes the FALSE where any chunk watched a build
+    # appear during its own session, because "this build predates the run" is a claim about
+    # the run and one chunk's observation refutes it for all of them.
+    builds: dict[str, dict] = {}
+    for sidecar in sidecars:
+        for row in (sidecar.get("build_dirs") or {}).get("dirs") or []:
+            name = row.get("build_dir")
+            if name is None:
+                continue
+            prior = builds.get(name)
+            if prior is None:
+                builds[name] = dict(row)
+            elif prior.get("reused") is not False and row.get("reused") is False:
+                prior["reused"] = False
+    build_rows = [builds[name] for name in sorted(builds)]
+
+    roots: dict[str, bool | None] = {"T0": None, "T1": None, "T2": None, "T3": None}
+    for sidecar in sidecars:
+        for root, value in (sidecar.get("roots_rebuilt") or {}).items():
+            if value is True:
+                roots[root] = True
+            elif value is False and roots.get(root) is None:
+                roots[root] = False
+
+    borrowed = None
+    for sidecar in sidecars:
+        value = (sidecar.get("triton_clone") or {}).get("borrowed")
+        if value is True:
+            borrowed = True
+        elif value is False and borrowed is None:
+            borrowed = False
+
+    expected = [((s.get("build_dirs") or {}).get("expected")) for s in sidecars]
+    expected = max([e for e in expected if isinstance(e, int)], default=None)
+    clone_tree = next(((s.get("triton_clone") or {}).get("tree") for s in sidecars if s.get("triton_clone")), None)
+    return {
+        "entries": entries,
+        "states_observed": {name: sorted(set(values)) for name, values in observed.items()},
+        "build_dirs": {
+            "expected": expected,
+            "present": len(build_rows),
+            "reused": (
+                None
+                if not sidecars or any(row.get("reused") is None for row in build_rows)
+                else sum(1 for row in build_rows if row.get("reused"))
+            ),
+            "dirs": build_rows,
+        },
+        "triton_clone": {"borrowed": borrowed, "tree": clone_tree},
+        "roots_rebuilt": roots,
+        "tier_address": next((s.get("tier_address") for s in sidecars if s.get("tier_address")), None),
+        "sessions": len(sidecars),
+    }
+
+
+def build_disclosure(
+    manifest: dict,
+    *,
+    scope: str,
+    passed: list[str],
+    uneval: list[str],
+    structural: list[str],
+    incidental: list[str],
+    absent_list: list[str],
+    declared_not_attempted: list[str],
+    merged: dict,
+) -> dict:
+    """The nine-key disclosure block for one run, every value read from an artifact.
+
+    A NULL MEANS "NOT RECORDED" AND IS NEVER ZERO. A run whose chunks wrote no session
+    inventory, or whose manifest predates the compile record, reports `None` where those
+    artifacts would have filled a value. Writing 0 there would state that the run adopted
+    nothing and reused nothing -- which is exactly what a CLEARED run states -- and the two
+    would then be indistinguishable in the one record a reader consults.
+    """
+    compile_ids = sorted((manifest.get("compile_precondition") or {}).get("compile_tier_nodes") or [])
+    compile_recorded = "compile_tier_nodes" in (manifest.get("compile_precondition") or {})
+    compile_set = set(compile_ids)
+    pre = manifest.get("compile_precondition") or {}
+
+    def _count(bucket: list[str]) -> int | None:
+        """Compile-tier members of one outcome bucket, or ``None`` when the plan recorded none."""
+        return None if not compile_recorded else len(compile_set & set(bucket))
+
+    skipped = _count(structural + incidental)
+    errored = _count(uneval)
+    never_ran = _count(absent_list)
+    accounted = set(passed) | set(uneval) | set(structural) | set(incidental) | set(absent_list)
+    unaccounted = None if not compile_recorded else len(compile_set - accounted)
+
+    build_rows = merged["build_dirs"]
+    presented = build_rows["present"]
+    reused = build_rows["reused"]
+    passing_compile = len(compile_set & set(passed))
+    if not compile_recorded or reused is None:
+        built = adopted = None
+        split_basis = "not recorded: the run's chunk sessions wrote no cache inventory"
+    elif presented and reused >= presented:
+        built, adopted = 0, passing_compile
+        split_basis = (
+            f"all {presented} compiled build(s) predate the session, so the compile tier was "
+            "adopted from cache rather than built"
+        )
+    elif presented and reused == 0:
+        built, adopted = passing_compile, 0
+        split_basis = f"none of the {presented} compiled build(s) predate the session, so the compile tier was built"
+    else:
+        # MIXED, and the split is DECLINED rather than apportioned. Attributing a passing
+        # compile-tier node to a particular build dir needs a node -> build-dir mapping the
+        # session inventory does not carry (it records `compilation.log` mtimes, which say
+        # WHEN a build happened and nothing about WHICH node consumed it), so any non-zero
+        # apportionment here would be invented. A definite zero is worse than `None`: the same
+        # record's `build_dirs_reused.dirs[].reused` would refute it two keys later, and R9's
+        # cleared-run predicate and the `owed` verb both read this field.
+        built = adopted = None
+        split_basis = (
+            f"DECLINED on a MIXED compile tier: {reused} of {presented} compiled build(s) "
+            "predate the session, so the run stood on cached builds for part of the tier and "
+            "built the rest; a per-node split needs a node -> build-dir mapping the session "
+            "inventory does not record"
+        )
+
+    excluded = sorted(set(structural) | set(incidental) | set(declared_not_attempted))
+    entries = merged["entries"]
+    adopted_trees = [
+        {
+            "fixture": name,
+            "analysis": entry.get("analysis"),
+            "tier0_key": entry.get("tier0_key"),
+            "integrity_verdict": entry.get("integrity_verdict"),
+        }
+        for name, entry in sorted(entries.items())
+        if entry.get("state") == "adopted"
+    ]
+    tier0_by_fixture = {
+        name: entry.get("tier0_key") for name, entry in sorted(entries.items()) if entry.get("tier0_key")
+    }
+    return {
+        # 1. Each heavy session workflow, adopted or built, per fixture. `recorded` says
+        #    whether any chunk session reported an inventory at all: a run whose sessions
+        #    predate the inventory (or a run dir assembled by hand) has no adopted-vs-built
+        #    population, and an empty mapping would otherwise read as "no fixture adopted"
+        #    -- which is a claim, not an absence.
+        "adopted_vs_built": {
+            "recorded": merged["sessions"] > 0,
+            "sessions": merged["sessions"],
+            "fixtures": len(entries),
+            "entries": {
+                name: {
+                    "state": entry.get("state"),
+                    "has_adoption_path": entry.get("has_adoption_path"),
+                    "analysis": entry.get("analysis"),
+                    "integrity_verdict": entry.get("integrity_verdict"),
+                    "states_observed": merged["states_observed"].get(name, []),
+                }
+                for name, entry in sorted(entries.items())
+            },
+        },
+        # 2. The compiled builds this run did not pay for.
+        "build_dirs_reused": build_rows,
+        # 3. The tier-0 key that was LIVE -- a value, never a boolean, because it is the field
+        #    a reader compares against the tier-1 key's composition term to confirm agreement.
+        "tier0_key": {
+            "by_fixture": tier0_by_fixture,
+            "distinct": sorted(set(tier0_by_fixture.values())),
+        },
+        # 4. The preprocessing pass each adopted tree skipped, with the verdict that decided it.
+        "preprocessing_skipped": {"trees": len(adopted_trees), "detail": adopted_trees},
+        # 5. Whether the TRITON checkout is a borrower rather than a standalone clone.
+        "triton_clone_borrowed": merged["triton_clone"],
+        # 6. Every node outside the selected tier. The three cells are NAMED because unioning
+        #    them silently would report one population under three different predicates.
+        "excluded_nodes": {
+            "count": len(excluded),
+            "population": "structurally_excluded + incidental_skips + declared_not_attempted",
+            "nodes": excluded,
+        },
+        # 7. The scope, without which a reader cannot tell which complement applied.
+        "scope": scope,
+        # 8. The address the run's caches live under, so a disclosure is never read as a claim
+        #    about a different machine.
+        "tier_address": manifest.get("tier_address") or merged.get("tier_address"),
+        # 9. The compile tier's outcome beside the resolved conjunct pair. `collected` is
+        #    derived from the manifest's marks and `declared_count` is the plan's own record of
+        #    it; they sit side by side so a plan whose precondition ran over a different
+        #    collection is visible rather than averaged away.
+        "compile_tier_outcome": {
+            "collected": None if not compile_recorded else len(compile_ids),
+            "declared_count": pre.get("compile_tier_node_count"),
+            "built": built,
+            "adopted_from_cache": adopted,
+            "skipped": skipped,
+            "errored": errored,
+            "never_ran": never_ran,
+            "unaccounted": unaccounted,
+            "compile_bearing": pre.get("compile_bearing"),
+            "declared_non_compile_bearing": pre.get("declared_non_compile_bearing"),
+            "compile_venue_permitted": pre.get("compile_venue_permitted"),
+            "compile_tier_required": pre.get("compile_tier_required"),
+            "split_basis": split_basis,
+            "fresh_worktree_note": FRESH_WORKTREE_COMPILE_NOTE,
+        },
+    }
+
+
+def assert_disclosure_schema(disclosure: dict, *, roots_rebuilt: dict | None = None) -> list[str]:
+    """Check a disclosure block against its own contract; return every violation found.
+
+    THE UNCONDITIONAL ARMS bind on every run: nine keys exactly, five adopted-vs-built
+    entries, and states drawn from the stated vocabulary. Everything else is conditional on
+    the run being a CLEARED one, because those predicates state what a clear guarantees and
+    a cached run guarantees none of them.
+
+    HOW "CLEARED" IS DECIDED, with the proxy named rather than hidden: `hhemt cache clear`
+    writes no durable record of what it removed, so the REMOVED set cannot be read after the
+    fact. What can be read is which roots the session had to WRITE, and a tier still holding
+    last week's builds is not a cleared tier. The identification is one-directional: a root
+    removed and rebuilt from a source that survived elsewhere reads like a root that was
+    never removed.
+
+    WHAT THIS DOES NOT DECIDE: the T3 member is conditioned on `--include-source-clone`,
+    which is an argument of the clear invocation and survives nowhere. This checks T0, T1
+    and T2 and reports the T3 conjunct as undecidable here rather than passing it silently.
+    """
+    violations: list[str] = []
+    missing = [key for key in DISCLOSURE_KEYS if key not in disclosure]
+    extra = sorted(set(disclosure) - set(DISCLOSURE_KEYS))
+    if missing:
+        violations.append(f"disclosure is missing key(s) {missing}")
+    if extra:
+        violations.append(f"disclosure carries key(s) outside the nine: {extra}")
+
+    entries = (disclosure.get("adopted_vs_built") or {}).get("entries") or {}
+    # NOT RECORDED IS NOT A VIOLATION, and the distinction is the same one the block's nulls
+    # carry: a run whose chunk sessions wrote no inventory states that fact in `recorded`, and
+    # reporting its empty population as a five-entry shortfall would report an OLD run as a
+    # broken one -- and would then redden every pre-existing run dir the aggregator is asked
+    # to read, which is how a true finding gets learned as noise.
+    if not (disclosure.get("adopted_vs_built") or {}).get("recorded"):
+        return violations
+    if len(entries) != 5:
+        violations.append(f"adopted_vs_built carries {len(entries)} entries, expected 5")
+    outside = {
+        name: entry.get("state")
+        for name, entry in entries.items()
+        if entry.get("state") not in DISCLOSURE_FIXTURE_STATES
+    }
+    if outside:
+        violations.append(f"adopted_vs_built state(s) outside the vocabulary: {outside}")
+
+    # THE IDENTIFICATION IS AN OPERAND, NOT A SILENT GATE. Reading "T0 and T1 both rebuilt" as
+    # the DEFINITION of a cleared run and then returning when it is false left R9's own T0/T1
+    # clause unexamined: a predicate whose operand is the test it performs cannot fail. The
+    # three states are distinguished here, and the middle one is REPORTED:
+    #   * either operand unresolved (None) -- nothing decided, so the R9 clauses were NOT
+    #     EVALUATED, and a record that silently passes them reads as a cleared run that passed;
+    #   * the two disagree -- also not evaluated, and the disagreement itself is the news,
+    #     though T0 is machine-shared, so a foreign checkout's regeneration can produce it
+    #     without this run having been cleared;
+    #   * both false -- the run rebuilt neither root and makes no cleared-run claim, so the
+    #     clauses do not apply and there is nothing to say.
+    roots = roots_rebuilt or {}
+    t0, t1 = roots.get("T0"), roots.get("T1")
+    if t0 is not True or t1 is not True:
+        if t0 is None or t1 is None:
+            violations.append(
+                "cleared-run predicates NOT EVALUATED: roots_rebuilt reports T0="
+                f"{t0!r} and T1={t1!r}, so whether this run was cleared is unresolved and the "
+                "adopted/compile clauses were not applied"
+            )
+        elif t0 is not t1:
+            violations.append(
+                "cleared-run predicates NOT EVALUATED: roots_rebuilt reports "
+                f"T0={t0!r} and T1={t1!r}, which disagree, so the run is neither a confirmed "
+                "cleared run nor a confirmed cached one (T0 is machine-shared: a foreign "
+                "checkout's regeneration produces this shape)"
+            )
+        return violations
+
+    adopted = sorted(name for name, entry in entries.items() if entry.get("state") == "adopted")
+    if adopted:
+        violations.append(f"cleared run reports ADOPTED for {adopted}; a cleared run has nothing to adopt")
+    outcome = disclosure.get("compile_tier_outcome") or {}
+    if outcome.get("skipped") not in (0, None):
+        violations.append(f"cleared run reports {outcome.get('skipped')} SKIPPED compile-tier node(s)")
+    if outcome.get("errored") not in (0, None):
+        violations.append(f"cleared run reports {outcome.get('errored')} ERRORED compile-tier node(s)")
+    if outcome.get("compile_venue_permitted") and roots.get("T2") is not True:
+        violations.append("the compile venue was permitted and T2 was not rebuilt on a cleared run")
+    return violations
+
+
 def aggregate(run_dir: Path, scope: str = "array") -> dict:
     # Reads `manifest.json`, every `chunk-NN.status.json` and every `chunk-NN.junit.xml`
     # under `run_dir`, and returns the run's result dict: the verdict, the problems and
@@ -972,8 +1326,33 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     # mechanism than the one this file already uses for it, and it would read as a failure
     # to anyone who has only ever seen two tokens.
     verdict = "GREEN" if not problems else "NOT-GREEN"
+    # THE DISCLOSURE AND ITS OWN ASSERTION. Built here rather than in `main()` because every
+    # input is a local of this function; asserted here rather than left to a reader because a
+    # schema claim nothing evaluates is prose. A violation is an ADVISORY and never a
+    # problem: an inadmissible disclosure record is a defect in the REPORT of a run, and
+    # reddening the run's verdict for it would make the reporting layer decide what it reports.
+    _sidecars = [
+        status["cache_disclosure"]
+        for status in statuses.values()
+        if isinstance(status, dict) and isinstance(status.get("cache_disclosure"), dict)
+    ]
+    _merged = _merge_cache_disclosures(_sidecars)
+    disclosure = build_disclosure(
+        manifest,
+        scope=scope,
+        passed=passed,
+        uneval=uneval,
+        structural=structural,
+        incidental=incidental,
+        absent_list=absent,
+        declared_not_attempted=declared_not_attempted,
+        merged=_merged,
+    )
+    for _violation in assert_disclosure_schema(disclosure, roots_rebuilt=_merged["roots_rebuilt"]):
+        advisories.append(f"[disclosure] {_violation}")
     return {
         "scope": scope,
+        "disclosure": disclosure,
         "verdict_line": (
             f"verdict={verdict} scope={scope} run_id={manifest['run_id']} "
             f"covered={len(passed)} structurally_excluded={len(structural)} "
@@ -1178,8 +1557,15 @@ def render_summary_md(result: dict) -> str:
             "",
             "## Advisories — reported, not verdict-bearing",
             "",
-            "These did NOT affect the verdict. Each of the four kinds below states how to read it:",
+            "These did NOT affect the verdict. Each of the five kinds below states how to read it:",
             "",
+            "- `[disclosure]` — the run's own disclosure block failed one of its schema "
+            "predicates: a run whose rebuilt roots identify it as CLEARED reports an adopted "
+            "tree, a skipped or errored compile-tier node, or a permitted compile venue whose "
+            "build tier was not rebuilt; or the block carries a key set or an adopted-vs-built "
+            "population outside its contract. The verdict is unaffected by construction — a "
+            "defect in the RECORD of a run is not a defect in the run — but the block it "
+            "printed cannot be read as a complete statement of what the run exercised.",
             "- `[classifier-self-check]` — the slug-entry classifier reporting on itself.",
             "- `[shared-by-design-write]` — chunks wrote an entry shared across chunks by "
             "construction, and no two chunks' recorded writes name the same file except "
@@ -1534,6 +1920,30 @@ def main(argv: list[str] | None = None) -> int:
     (run_dir / f"{stem}.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (run_dir / f"{stem}.md").write_text(render_summary_md(result), encoding="utf-8")
 
+    # THE LEDGER LINE, written after the summary files rather than beside the verdict, because
+    # `_blocking` above can still flip a GREEN to NOT-GREEN: a record written before those flips
+    # would carry the verdict the run had before its provenance was checked, which is exactly
+    # the record `owed` would then discharge on. Nothing below this block changes the verdict.
+    #
+    # SKIPPED FOR A NON-SUITE SCOPE. `triage` and `complement` runs make no suite-level claim,
+    # and a `scope=array|union` domain is what keeps the ledger's population homogeneous; a
+    # triage line in it would be a record `owed` reads as a failed suite run.
+    #
+    # AN UNWRITTEN LEDGER IS PRINTED AND IS NEVER VERDICT-BEARING, on the same ground the
+    # disclosure assertion above states: a defect in the REPORT of a run must not redden the
+    # run. The line names the failure so it is visible rather than indistinguishable from a
+    # ledger appended by a writer that silently did nothing.
+    from hhemt.suite import policy as _policy
+
+    if result["scope"] in _policy.LEDGERED_SCOPES:
+        try:
+            _policy.append_ledger_entry(run_dir.parent, _policy.ledger_entry(run_dir, result))
+            ledger_line = f"ledger={_policy.ledger_path(run_dir.parent)}"
+        except OSError as _exc:
+            ledger_line = f"ledger=UNWRITTEN ({type(_exc).__name__}: {_exc})"
+    else:
+        ledger_line = f"ledger=skipped (scope={result['scope']} makes no suite-level claim)"
+
     # The scope token is emitted on the SAME line as the verdict, always. A bare
     # GREEN is unprintable by construction: there is no format string that produces
     # one, because verdict_line is built with scope= adjacent to verdict=.
@@ -1548,6 +1958,7 @@ def main(argv: list[str] | None = None) -> int:
     for a in result.get("advisories") or []:
         print(f"  advisory: {a}")
     print(f"summary={run_dir / (stem + '.md')}")
+    print(ledger_line)
     if result["verdict"] == "GREEN" or args.allow_not_green:
         return 0
     return 1

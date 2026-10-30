@@ -21,6 +21,7 @@ Example:
     system = test_case.system
 """
 
+import dataclasses
 import os
 import tempfile
 from pathlib import Path
@@ -31,12 +32,14 @@ import yaml
 
 import hhemt.utils as ut
 from hhemt.analysis import TRITONSWMM_analysis
+from hhemt.cache import keys as cache_keys
+from hhemt.cache import markers as cache_markers
 from hhemt.config.analysis import analysis_config
 
 # Import from production package
 from hhemt.experiments import TRITON_SWMM_experiment
 from hhemt.system import TRITONSWMM_system
-from tests.fixtures import worktree_slug
+from tests.fixtures import _triton_source_cache, worktree_slug
 from tests.fixtures._triton_source_cache import (
     TRITON_GIT_URL,
     TRITON_PIN,
@@ -312,9 +315,28 @@ class retrieve_synth_TRITON_SWMM_test_case:
         runs_root_override: Path | None = None,
         share_scratch_root: bool = False,
     ):
-        self.artifacts = get_or_build_synthetic_case(params)
+        # `source_raster=None` is passed EXPLICITLY rather than omitted. No case in this
+        # tree supplies an external raster -- every catalog entry is a `retrieve_synth_*`,
+        # and this is the sole non-smoke caller -- so the tier-0 term it feeds is inert
+        # here. Spelling it out is what makes the routing visible at the one site a reader
+        # checks, instead of leaving "no raster" looking like "nobody thought about it".
+        self.artifacts = get_or_build_synthetic_case(params, source_raster=None)
         self.analysis_name = analysis_name
         self._hpc_system_config_yaml = hpc_system_config_yaml
+
+        # The case-side cache-key terms, retained so `key_terms()` can serve them AFTER
+        # construction. Retaining is not duplication: these are the values the caller handed
+        # over, and the alternative -- re-reading them out of the written YAML -- is a second
+        # derivation that can drift from what was written.
+        #
+        # The reporting timestep is NOT a constructor parameter on this class the way it is on
+        # the config-driven variant: a synthetic case carries it on ``params``, and the
+        # written config takes ``params.reporting_timestep_s``. Storing one copy of the fact
+        # it actually uses keeps the digest honest about this builder's own surface.
+        self._n_events = n_events
+        self._params = params
+        self._additional_system_configs = dict(additional_system_configs or {})
+        self._additional_analysis_configs = dict(additional_analysis_configs or {})
 
         # Per-worktree rooting (Phase 1, synth-test-isolation-and-runtime):
         # nest runs_root under the current worktree's slug so concurrent pytest
@@ -431,6 +453,12 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # False against the other sha); post-canonical that costs ~61 MB, not a
         # full clone, which is the same argument master Risk X3 makes.
         _effective_pin = (additional_system_configs or {}).get("TRITONSWMM_branch_key", TRITON_PIN)
+        # Retained beside the local so `key_terms()` can stamp the pin a CALLER provisioned
+        # rather than the module default. The distinction is the whole reason the tier-1 key
+        # carries two pin terms: this one moves when a caller overrides, the digest of
+        # `_triton_source_cache.py` moves when the declaration module is edited, and one
+        # caller overriding is invisible to the other.
+        self._effective_pin = _effective_pin
         # PROVISION THE CONFIGURED TREE, never a fixed `_software/triton`.
         # `_write_configs` applies `additional_system_configs` LAST
         # (`system_cfg.update(kwargs["additional_system_configs"])`, :501), so a
@@ -447,6 +475,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # not serialize them: job 18864835 measured two nodes acquiring one
         # resolve_filelock lock on this GPFS home at t+0.00s each.
         _effective_software_dir = (additional_system_configs or {}).get("TRITONSWMM_software_directory")
+        self._effective_software_dir = _effective_software_dir
         provision_borrower(
             Path(_effective_software_dir) if _effective_software_dir is not None else self._software_root / "triton",
             pin=_effective_pin,
@@ -489,8 +518,69 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # -- and the DEM write is atomic (mkstemp + Path.replace), so concurrent cached
         # constructions on one cold root are last-writer-wins on a whole file. The
         # skip_run gate is honoured exactly as on the wiping branch.
+        #
+        # THE TIER-0 REGENERATION. The idempotent skip is only correct while the tier-0
+        # artifacts the tree was processed from are the SAME ones it would be processed from
+        # now. A tier-0 change re-mints that cache directory, so the marker left by the
+        # previous build records a different `tier0_key` -- and without this branch the skip
+        # would keep the stale derived rasters while the marker reported the tree current.
+        # The trigger is a TIER-0 MISMATCH SPECIFICALLY, never `stale` in general: every
+        # builder-sources edit invalidates a marker, and regenerating the DEM for those would
+        # be the same cost defect the toolkit-source digest term exists to remove one
+        # directory up.
+        #
+        # An ABSENT marker is not a mismatch. A first construction on a fresh tree has no
+        # recorded key, and treating that as a mismatch would pay a full DEM regeneration on
+        # every first build.
         if not start_from_scratch and not skip_run:
-            self.system.process_system_level_inputs(verbose=False)
+            _analysis_dir = self.system_directory / self.analysis_name
+            _recorded_tier0_key = cache_markers.recorded_tier0_key(_analysis_dir)
+            _live_tier0_key = self.artifacts.cache_dir.name
+            _tier0_moved = _recorded_tier0_key is not None and _recorded_tier0_key != _live_tier0_key
+            self.system.process_system_level_inputs(overwrite_outputs_if_already_created=_tier0_moved, verbose=False)
+
+    def key_terms(self) -> dict[str, object]:
+        """The case-side terms of the tier-1 identity: what only THIS builder knows.
+
+        The tier-1 key is composed by the fixture that stamps the marker, and five of its
+        nine terms are properties of the CASE rather than of the checkout: the tier-0 key the
+        artifacts live under, the solver declaration and provisioned pin, the solver
+        environment, and the parameters the tree is built for. Serving them from here keeps
+        one derivation: the marker site asks this builder rather than reconstructing the same
+        facts from the written YAML, which is a second source free to drift.
+
+        CALL AFTER CONSTRUCTION. ``kokkos-backend`` is read from the constructed system's
+        ``gpu_compilation_backend``, and is ``OPENMP`` when that attribute is unset -- which
+        is EVERY case this builder constructs, because ``TRITONSWMM_system(self.system_yaml)``
+        passes only the config path. The attribute is CONSTRUCTOR-INJECTED and never read from
+        system config (``system.py``'s own comment says so); the value a run actually compiles
+        with is resolved later, from ``cfg_hpc`` and the partition, by
+        ``config.hpc_system.resolve_gpu_target`` at the GPU-compile construction sites. So this
+        term records the toolchain the FIXTURE built against, not the one the run will compile
+        with, and a tree whose GPU axis is expressed through ``hpc_system_config_yaml``
+        contributes nothing to it.
+
+        ``additional_analysis_configs`` is deliberately NOT among these terms -- it is an
+        ADDRESSING concern, per the tier-1 key's own statement, so a per-call analysis overlay
+        changes where a tree is looked up and not what it is.
+        """
+        backend = getattr(self.system, "gpu_compilation_backend", None)
+        kokkos_backend = "CUDA" if backend == "CUDA" else ("HIP" if backend == "HIP" else "OPENMP")
+        return {
+            "tier0_key": self.artifacts.cache_dir.name,
+            "solver_identity": cache_keys.file_identity(Path(_triton_source_cache.__file__).resolve()),
+            "effective_pin": cache_keys.effective_pin_digest(self._effective_pin, self._effective_software_dir),
+            "environment_digest": cache_keys.environment_digest("solver", values={"kokkos-backend": kokkos_backend}),
+            "case_params_digest": cache_keys.case_params_digest(
+                n_events=self._n_events,
+                # This builder exposes no reporting-length knob; its equivalent fact is the
+                # timestep it writes into the analysis config, taken from ``params`` below.
+                n_reporting_tsteps_per_sim=None,
+                triton_reporting_timestep_s=float(self._params.reporting_timestep_s),
+                params=dataclasses.asdict(self._params),
+                additional_system_configs=self._additional_system_configs,
+            ),
+        }
 
     def _write_configs(self, **kwargs):
         events_csv = self.system_directory / "weather_events_to_simulate.csv"

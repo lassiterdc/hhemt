@@ -94,6 +94,12 @@ _STATES = {
 }
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(eb, "run_experiment", _fake)
+# Covers parametrize ids: run-experiment-one-declared-no-flag, run-experiment-two-declared-no-flag,
+# Covers parametrize ids: run-experiment-zero-declared-no-flag, run-experiment-two-declared-flag-names-one,
+# Covers parametrize ids: run-experiment-control-one-declared-matching-flag.
 @pytest.mark.parametrize("state", list(_STATES))
 @pytest.mark.parametrize("verb", list(_VERBS))
 def test_experiment_verbs_resolve_the_cluster_one_way(verb, state, monkeypatch, tmp_path):

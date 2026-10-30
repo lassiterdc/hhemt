@@ -57,6 +57,9 @@ def run_calls(monkeypatch):
     return calls
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)
 def test_from_scratch_alone_selects_fresh_and_the_guard_still_refuses_both(run_calls, tmp_path):
     """Property: `--from-scratch` alone reaches run() fresh; `--from-scratch --resume` is refused.
 

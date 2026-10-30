@@ -67,6 +67,9 @@ def config_args(tmp_path):
     return ["run", "--system-config", str(system_config), "--analysis-config", str(analysis_config)]
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)
 def test_overwrite_forwards_a_different_run_argument_than_resume(run_calls, config_args):
     """Property: `--overwrite` changes what run() is asked to do, compared with the default resume.
 
@@ -90,6 +93,9 @@ def test_overwrite_forwards_a_different_run_argument_than_resume(run_calls, conf
     assert overwrite_kwargs["from_scratch"] is False, "--overwrite must never select the wipe"
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)
 def test_overwrite_forwards_force_rerun_all(run_calls, config_args):
     """Property: `--overwrite` reaches run() as `override_force_rerun="all"`.
 
@@ -107,6 +113,9 @@ def test_overwrite_forwards_force_rerun_all(run_calls, config_args):
     assert [c["override_force_rerun"] for c in run_calls] == ["all", "all"]
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)
 def test_overwrite_contradicted_by_another_force_rerun_value_is_refused(run_calls, config_args):
     """Property: `--overwrite` beside a DIFFERENT `--override-force-rerun` value is refused.
 

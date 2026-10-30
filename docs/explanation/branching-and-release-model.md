@@ -26,6 +26,44 @@ The tag is also why the two documentation versions differ. `latest` tracks
 `develop` and shows unreleased content; `stable` tracks the newest tag and is
 what a visitor arriving without a version in the URL should see.
 
+### The release gate runs on a cleared cache, in a compiling venue
+
+**Both halves are conditions of the gate, not conveniences of running it.** A
+cached run reuses analysis trees and compiled builds, so its greens say that the
+cached artifacts satisfied the tests — not that this commit's sources build and
+pass. It is a real suite result, and it is a weaker claim than "all tests green",
+which is what the gate means. So the caches are cleared before the gate runs:
+
+```bash
+hhemt cache clear --apply
+```
+
+Run it on the machine that will run the gate, immediately before submitting, and
+read the listing the bare `hhemt cache clear` prints first: `--apply` deletes the
+model-artifact and analysis-tree tiers always, and the compiled-build tier only
+where a compile venue is permitted (see the next paragraph) — without a permitted
+venue it leaves `_software` in place and exits 2 rather than leaving a tier this
+machine cannot rebuild.
+
+**The venue declaration is the other half**, on the same ground the array relies
+on: a session that cannot compile skips the compile tier rather than failing it,
+and a skip is not a pass. The compile-bearing tier is only exercised where the
+project is told it is running on a toolchain venue:
+
+```bash
+export HHEMT_COMPILE_VENUE=toolchain
+export HHEMT_REQUIRE_COMPILE_TIER=1
+```
+
+The second export is what turns a compile-tier skip into a failure. Neither
+implies the other: with the venue declared and the requirement unset a run is
+green while structurally unable to compile, and with the requirement set and no
+venue declared every compile refuses loudly. The release gate needs both, and a
+run that recorded neither is not a gate result — see
+[`hhemt test toolkit`](../reference/cli.md#hhemt-test-toolkit) for how a run
+records the pair it ran under.
+
+
 ## Tests carrying a structural gate
 
 A small set of tests declares a `skipif` on `on_scheduler_node()` (`tests/utils_for_testing.py`),

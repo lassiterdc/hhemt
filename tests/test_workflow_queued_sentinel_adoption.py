@@ -190,6 +190,9 @@ def test_liveness_names_the_prior_driver_uuid_from_the_log_set_with_no_caller_ca
     assert prior in name_arg and current in name_arg, name_arg
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(type(builder), "_submit_tmux_workflow", _fake_submit)
 def test_multisim_batch_job_call_site_passes_the_adopted_token_count(builder, monkeypatch):
     """PRE-FIX FAILURE: the multisim batch_job call site passed no
     adopted_token_count, so the parameter defaulted to 0 and the suppression arm
@@ -247,6 +250,9 @@ def sens_builder(tmp_path):
     return SensitivityAnalysisWorkflowBuilder(sa)
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(SnakemakeWorkflowBuilder, "_submit_tmux_workflow", _fake_submit)
 def test_sensitivity_batch_job_call_site_passes_the_adopted_token_count(sens_builder, monkeypatch):
     """Same contract as the multisim site, and a SEPARATE test because the
     producer differs: the sensitivity alive set comes from

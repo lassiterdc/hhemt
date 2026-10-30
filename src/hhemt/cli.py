@@ -3067,5 +3067,142 @@ def report_from_bundle_command(
     console.print(f"[green]Report rendered:[/green] {rendered}")
 
 
+# `hhemt cache {verb}`. The subject seam is `hhemt.cache`: the four on-disk roots the
+# synthetic test tier reuses live in `src/hhemt/cache/paths.py`, so this app reports on them
+# without importing the test tree. `status` is read-only BY CONSTRUCTION -- it creates no
+# root -- because a verb that materialized a root while reporting on it would manufacture
+# the state it is describing.
+cache_app = typer.Typer(
+    help="Report the on-disk caches the synthetic test tier reuses, and the tier address they are keyed on.",
+    no_args_is_help=True,
+)
+app.add_typer(cache_app, name="cache")
+
+
+@cache_app.command(name="status")
+def cache_status_command() -> None:
+    """Print each cache root with its presence, and the tier address this checkout resolves to.
+
+    The address is derived from the CHECKOUT the working directory belongs to rather than
+    from the directory itself, so running from a subdirectory of a checkout reports the
+    same tier as running from its root. Without that, this verb reports a machine as cold
+    while the checkout's trees sit on disk -- and it is the verb the cache's own evidence
+    claims are read against.
+
+    Read-only: no root is created, so an absent root stays absent and the report says so.
+    """
+    # Function-local import so `hhemt run` and every other verb keep `platformdirs` and this
+    # package off their import path; the cost of a second import here is a dict hit.
+    from hhemt.cache import paths as cache_paths
+
+    cwd = Path.cwd()
+    address = cache_paths.tier_address_for(cwd)
+    root = cache_paths.checkout_root(cwd)
+
+    table = Table(title="hhemt cache status")
+    table.add_column("root", no_wrap=True)
+    table.add_column("path", overflow="fold")
+    table.add_column("state", no_wrap=True)
+    for label, path in (
+        ("T0 model artifacts", cache_paths.synthetic_models_root()),
+        ("T1 analysis trees", cache_paths.synthetic_runs_root()),
+        ("T2 compiled builds", cache_paths.software_root(address)),
+        ("T3 source checkout", cache_paths.canonical_root()),
+    ):
+        table.add_row(label, str(path), "present" if path.exists() else "absent")
+    console.print(table)
+    console.print(f"tier_address: {address}", markup=False, soft_wrap=True)
+    root_text = str(root) if root is not None else "(not inside a git checkout)"
+    console.print(f"checkout_root: {root_text}", markup=False, soft_wrap=True)
+
+
+@cache_app.command(name="clear")
+def cache_clear_command(
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="actually remove the in-scope roots; without it the verb only lists what it would remove",
+    ),
+    include_compile_tier: bool = typer.Option(
+        False,
+        "--include-compile-tier",
+        help="remove the compiled-build tier even where no compile venue is permitted",
+    ),
+    include_source_clone: bool = typer.Option(
+        False,
+        "--include-source-clone",
+        help="also remove the shared TRITON source checkout (restoring it re-downloads)",
+    ),
+) -> None:
+    """List the cache roots a clear would remove, and remove them with ``--apply``.
+
+    DESTRUCTIVE ONLY WITH ``--apply``. The bare invocation lists every root with its
+    scope and its liveness state and removes nothing, so an operator can see what the
+    flags would do before anything is deleted.
+
+    THE COMPILED-BUILD TIER IS GATED ON THE COMPILE VENUE. With no permitted venue this
+    machine cannot rebuild a compiled solver, so clearing that tier would leave it
+    missing until someone runs on a machine that can. ``--apply`` therefore removes T0
+    and T1, leaves ``_software`` in place, prints the gate notice, and exits 2.
+    ``--include-compile-tier`` is the operator's explicit override and takes T2 too.
+
+    The split matters more than it looks: a wholesale refusal would leave the two cheap
+    tiers unclearable on exactly the machines where clearing them is safe, and the only
+    route back to them would be the override that also destroys T2.
+
+    Exit codes follow the toolkit's published table: 0 when the listing ran or the clear
+    completed with every in-scope tier removed, 2 when the compile gate left T2 in place
+    (a configuration precondition, the same class ``ConfigurationError`` maps to).
+    """
+    # Function-local import, matching `cache status` above: this package pulls
+    # `filelock` and `hhemt.utils`, which no other verb's import path should pay for.
+    from hhemt.cache.clear import TIER_LABELS, apply_clear, plan_clear
+
+    plan = plan_clear(
+        include_compile_tier=include_compile_tier,
+        include_source_clone=include_source_clone,
+    )
+
+    table = Table(title="hhemt cache clear" + ("" if apply else " (dry run)"))
+    table.add_column("tier", no_wrap=True)
+    table.add_column("path", overflow="fold")
+    table.add_column("action", no_wrap=True)
+    table.add_column("why", overflow="fold")
+    for decision in plan.decisions:
+        if decision.live:
+            action = "skip (in use)"
+            why = "held lock(s): " + ", ".join(decision.live)
+        elif decision.removes:
+            action = "remove"
+            why = decision.note
+        else:
+            action = "keep"
+            why = decision.note
+        table.add_row(f"{decision.tier} {TIER_LABELS[decision.tier]}", str(decision.path), action, why)
+    console.print(table)
+    console.print(f"tier_address: {plan.address}", markup=False, soft_wrap=True)
+
+    if not apply:
+        if plan.refused:
+            # The notice carries no Rich markup of its own; `markup=False` keeps any
+            # bracket in the operator-facing text literal rather than parsing it away.
+            console_err.print(plan.refusal, markup=False, soft_wrap=True, style="bold red")
+        console.print(
+            "dry run: nothing was removed. Pass --apply to remove the tiers marked `remove`.",
+            markup=False,
+        )
+        return
+
+    removed = apply_clear(plan)
+    if not removed:
+        console.print("nothing to remove: every in-scope root is already absent.")
+    for tier, reclaimed in removed:
+        console.print(f"removed {tier} {TIER_LABELS[tier]}: {reclaimed} bytes", markup=False)
+
+    if plan.refused:
+        console_err.print(plan.refusal, markup=False, soft_wrap=True, style="bold red")
+        raise typer.Exit(code=2)
+
+
 if __name__ == "__main__":
     app()

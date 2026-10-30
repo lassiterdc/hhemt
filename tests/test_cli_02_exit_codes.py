@@ -22,6 +22,9 @@ runner = CliRunner()
 # ═══════════════════════════════════════════════════════════════════════
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_exit_code_2_cli_validation_error_mutually_exclusive(tmp_path):
     """Test CLIValidationError (mutually exclusive flags) exits with code 2."""
     system_config = tmp_path / "system.yaml"
@@ -45,6 +48,9 @@ def test_exit_code_2_cli_validation_error_mutually_exclusive(tmp_path):
     assert "Argument Error" in result.output
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_exit_code_2_cli_validation_error_invalid_enum(tmp_path):
     """Test CLIValidationError (invalid enum value) exits with code 2."""
     system_config = tmp_path / "system.yaml"
@@ -68,6 +74,9 @@ def test_exit_code_2_cli_validation_error_invalid_enum(tmp_path):
     assert "Argument Error" in result.output or "Invalid model" in result.output
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     "/nonexistent/system.yaml",
 def test_exit_code_2_configuration_error_nonexistent_file():
     """Test ConfigurationError (nonexistent file) exits with code 2."""
     result = runner.invoke(

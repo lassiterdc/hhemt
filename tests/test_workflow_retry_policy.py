@@ -325,6 +325,9 @@ def _r1d_waited_single_job_result(tmp_path, script_lines: list[str], logs: dict[
 _R1D_UNFINISHED_PLOT_Y = "Error in rule plot_y:\n    jobid: 2\n\n"
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     patch.object(SnakemakeWorkflowBuilder, "_submit_single_job_workflow", return_value=submitted),
 def test_waited_single_job_run_is_swept(tmp_path):
     """Property: a waited single-job run is swept from the file its script's directives name.
 
@@ -344,6 +347,10 @@ def test_waited_single_job_run_is_swept(tmp_path):
     assert "plot_y" in [r.get("rule_token") for r in result["partial_failures"]]
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     patch.object(SnakemakeWorkflowBuilder, "_submit_single_job_workflow", return_value=submitted),
+# Covers parametrize ids: i-two-timestamps, ii-user-error-line, iii-short-spelling, iv-long-prefix.
 @pytest.mark.parametrize(
     "script_lines",
     [

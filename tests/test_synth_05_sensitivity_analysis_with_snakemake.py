@@ -326,6 +326,10 @@ def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
 
 @pytest.mark.slow
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+# R3 exclusion: retained, not converted — the reprocess call IS the behaviour under test.
+# Property: reprocess(start_with="process") self-heals a summary deleted under a surviving
+# d_process flag at the default regenerate_existing=False, leaves healthy flag mtimes untouched,
+# and emits zero process_member_* rules on the second pass.
 def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis):
     """Regression (reprocess-rebuild-divergence-fix).
 
@@ -947,6 +951,10 @@ def test_build_unique_system_targets_skips_purge_in_runner_subprocess(
     assert generated_dir not in called, f"fast_rmtree was called on _generated/ in runner-subprocess mode: {called}"
 
 
+# R3 exclusion: retained, not converted — the reprocess call IS the behaviour under test.
+# Property: reprocess(start_with="render") over a partial-completion suite reads
+# Snakefile.reprocess, whose report targets are filtered to completed subs, so snakemake --report
+# never enumerates a deleted figure.
 @pytest.mark.slow
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analysis):

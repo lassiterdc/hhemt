@@ -79,6 +79,9 @@ def config_args(tmp_path):
     return ["run", "--system-config", str(system_config), "--analysis-config", str(analysis_config)]
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)
 def test_control_resume_off_route_reaches_the_fresh_branch(run_calls, config_args):
     """Control for the route this file uses, not a property of the code under review.
 
@@ -96,6 +99,9 @@ def test_control_resume_off_route_reaches_the_fresh_branch(run_calls, config_arg
     assert run_calls[0]["from_scratch"] is True
 
 
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)
 def test_overwrite_never_cancels_from_scratch(run_calls, config_args):
     """Property: if run() is called under `--from-scratch`, it is called with `from_scratch=True`.
 
