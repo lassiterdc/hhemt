@@ -192,15 +192,16 @@ class FacetConfig:
 #: speedup S(N) and efficiency E_s(N) are defined against device count and nothing else.
 _SCALING_AXIS_VAR = "n_devices"
 
-#: Rows whose per-column y-axes share ONE ruler, linked to column 1. See the linking
-#: block in `_apply_plotly_axis_groups`. All four rows are linked: rows 1-2 so the
-#: absolute wall-clock and cost panels can be read across hardware, and rows 3-4 per the
-#: standing D3 ruling, which permits a shared ruler on the scaling panels because a
-#: comparable AXIS is not a claim -- the directive on scaling conclusions binds what the
-#: figure ASSERTS (titles, captions, annotations), not its axis ranges.
+#: EVERY row of every facet block has its per-column y-axes sharing ONE ruler, linked to
+#: column 1 -- see the linking block in `_apply_plotly_axis_groups`, which derives the row
+#: set as ``range(1, 4 * n_facets + 1)``. Rows 1-2 of a block so the absolute wall-clock and
+#: cost panels can be read across hardware, and rows 3-4 per the standing D3 ruling, which
+#: permits a shared ruler on the scaling panels because a comparable AXIS is not a claim --
+#: the directive on scaling conclusions binds what the figure ASSERTS (titles, captions,
+#: annotations), not its axis ranges.
 #:
-#: Scoping the link is a one-line change to this tuple; the reasoning travels with it.
-_Y_LINKED_ROWS: tuple[int, ...] = (1, 2, 3, 4)
+#: This is a statement about which rows a BLOCK links, not a list of row indices: the rows
+#: are a function of the block count, so a literal tuple could only ever describe block 1.
 
 #: The DataFrame column holding the configured independent_var's values. Assigned
 #: exactly once, at `df["indep_value"] = df["sa_id"].map(df_setup[independent_var])`.
@@ -305,7 +306,7 @@ def _apply_matplotlib_axis_groups(ax_wall, ax_cost, ax_speedup, ax_eff, *, top, 
     ax_eff.set_xlabel(bottom.label)
 
 
-def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labels=None) -> None:
+def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labels=None, n_facets: int = 1) -> None:
     """Plotly counterpart of `_apply_matplotlib_axis_groups`.
 
     Axis refs are DERIVED from the figure (`xaxis.plotly_name`), never hardcoded. Every
@@ -376,7 +377,7 @@ def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labe
     #
     # An explicit `range=` OVERRIDES `matches=`; see the note at the empirical-clipped
     # branch below, which is the one place a per-column `range=` is set.
-    for _row in _Y_LINKED_ROWS:
+    for _row in range(1, 4 * n_facets + 1):
         for _ci in range(2, n_hw + 1):
             fig.update_yaxes(matches=_yref(_row, 1), row=_row, col=_ci)
 
@@ -413,9 +414,16 @@ def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labe
         qual = "cpu" if hw_cols[col - 1] == "cpu" else "gpu"
         return AxisGroup.for_var(group.x_col, group.source_var, labels, qualifier=qual).label
 
-    for _ci in range(1, n_hw + 1):
-        fig.update_xaxes(matches=_xref(2, _ci), showticklabels=False, title_text="", row=1, col=_ci)
-        fig.update_xaxes(title_text=_qualified(top, _ci), row=2, col=_ci)
+    # THE PAIRS ARE PER BLOCK (`2a.4`). With facets the four-metric block repeats at rows
+    # 4i+1..4i+4, so a pairing written against fixed rows 1-2 and 3-4 links block 1 and
+    # leaves every later block with four unlinked axes -- each autoranging to its own data,
+    # which is exactly the comparability the faceting exists to deliver, lost silently
+    # because all four axes are individually valid.
+    for _fi in range(n_facets):
+        _base = 4 * _fi
+        for _ci in range(1, n_hw + 1):
+            fig.update_xaxes(matches=_xref(_base + 2, _ci), showticklabels=False, title_text="", row=_base + 1, col=_ci)
+            fig.update_xaxes(title_text=_qualified(top, _ci), row=_base + 2, col=_ci)
         # Ticks at the device counts this column ACTUALLY RAN. The predecessor set
         # `dtick=1`, which fixed the fractional-GPU axis (the GPU columns' [1,3] range
         # autoticked to 1, 1.5, 2, 2.5, 3) but replaced it with a phantom-tick axis: a
@@ -441,8 +449,8 @@ def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labe
         # would answer it silently. See the scope note in `_qualified`'s docstring for
         # why this identity test is not the one that docstring rules out.
         if top.source_var == _SCALING_AXIS_VAR:
-            _tv = _plotted_xs(2, _ci)
-            for _r in (1, 2):
+            _tv = _plotted_xs(_base + 2, _ci)
+            for _r in (_base + 1, _base + 2):
                 if _tv:
                     fig.update_xaxes(tickmode="array", tickvals=_tv, row=_r, col=_ci)
                 else:
@@ -451,20 +459,22 @@ def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labe
     # EVERY input class (including an empty group_value column) and this loop body
     # executes at least once on every plotly render. There is no reachable input for
     # which the bottom pair goes unlinked or unlabelled.
-    for _ci in range(1, n_hw + 1):
-        fig.update_xaxes(matches=_xref(4, _ci), showticklabels=False, title_text="", row=3, col=_ci)
-        fig.update_xaxes(title_text=_qualified(bottom, _ci), row=4, col=_ci)
-        # Ticks at the device counts this column actually ran, ungated: the bottom pair
-        # is hard-keyed to `_SCALING_AXIS_VAR` (see
-        # `bottom = AxisGroup.for_var(_SCALING_AXIS_VAR, ...)`), so there is no
-        # independent_var question to gate on. Same derivation, same both-members rule,
-        # and the same empty-set fallback as the top pair above.
-        _tv = _plotted_xs(4, _ci)
-        for _r in (3, 4):
-            if _tv:
-                fig.update_xaxes(tickmode="array", tickvals=_tv, row=_r, col=_ci)
-            else:
-                fig.update_xaxes(tickmode="linear", dtick=1, row=_r, col=_ci)
+    for _fi in range(n_facets):
+        _base = 4 * _fi
+        for _ci in range(1, n_hw + 1):
+            fig.update_xaxes(matches=_xref(_base + 4, _ci), showticklabels=False, title_text="", row=_base + 3, col=_ci)
+            fig.update_xaxes(title_text=_qualified(bottom, _ci), row=_base + 4, col=_ci)
+            # Ticks at the device counts this column actually ran, ungated: the bottom pair
+            # is hard-keyed to `_SCALING_AXIS_VAR` (see
+            # `bottom = AxisGroup.for_var(_SCALING_AXIS_VAR, ...)`), so there is no
+            # independent_var question to gate on. Same derivation, same both-members rule,
+            # and the same empty-set fallback as the top pair above.
+            _tv = _plotted_xs(_base + 4, _ci)
+            for _r in (_base + 3, _base + 4):
+                if _tv:
+                    fig.update_xaxes(tickmode="array", tickvals=_tv, row=_r, col=_ci)
+                else:
+                    fig.update_xaxes(tickmode="linear", dtick=1, row=_r, col=_ci)
 
 
 # Module-level styling constants moved to `report_cfg.sensitivity` per the
@@ -806,6 +816,7 @@ def render(
     else:
         df["group_value"] = "all"
     hardware_column_by_group = _attach_hardware_columns(df, _hardware_column_by_member)
+    _attach_dem_resolution(df, _resolve_member_dem_resolutions(analysis))
     df["n_mpi_procs"] = df["sa_id"].map(df_setup[_resolve_setup_col(df_setup, "n_mpi_procs") or "n_mpi_procs"])
     # F2: extra config columns for hover customdata (OMP threads, GPUs, Nodes).
     # Use .get() semantics so missing columns degrade gracefully — hovertemplate
@@ -837,6 +848,29 @@ def render(
         speedup_pg, strong_eff_pg, speedup_all, efficiency_all = _compute_scaling_series(
             df, token_by_group=hardware_column_by_group
         )
+        # THE FACET BLOCKS. One per DEM resolution, each with its OWN four scaling series
+        # computed over its own slice. Computing them per slice is not an optimisation: the
+        # anchor is the block's one-device run, and a series computed over the whole frame
+        # would pool two resolutions into one curve before the block filter could separate
+        # them. The flat series above stay the single-block answer, so a master with no
+        # resolution dimension takes the unchanged path.
+        _dem_facets = _dem_resolution_facets(df)
+        _facet_blocks = None
+        if len(_dem_facets) > 1:
+            _facet_blocks = []
+            for _facet in _dem_facets:
+                _facet_df = _facet_frame(df, _facet)
+                _sp, _ef, _sp_all, _ef_all = _compute_scaling_series(_facet_df, token_by_group=hardware_column_by_group)
+                _facet_blocks.append(
+                    _FacetBlock(
+                        label=_facet_label(_facet),
+                        frame=_facet_df,
+                        speedup_per_group=_sp,
+                        strong_eff_per_group=_ef,
+                        speedup_all_rows=_sp_all,
+                        efficiency_all_rows=_ef_all,
+                    )
+                )
         if analysis.cfg_analysis.sensitivity_analysis is not None:
             source_paths.append(Path(analysis.cfg_analysis.sensitivity_analysis))
         # F1: GPU hardware suffix (e.g., "gpu (a6000)"). Phase-4 (4c, D3): gpu_hardware
@@ -891,6 +925,7 @@ def render(
             efficiency_all_rows=efficiency_all,
             speedup_range_mode=speedup_range_mode,
             token_by_group=hardware_column_by_group,
+            facet_blocks=_facet_blocks,
         )
 
     # Publication base typography (parity with the other static-plot renderers);
@@ -1479,6 +1514,116 @@ def _attach_hardware_columns(df: pd.DataFrame, column_by_member: dict[str, str])
     # Built AFTER the split, so it is single-valued by construction and `_column_key` never
     # has to choose between two tokens for one group.
     return {str(_gv): str(_col) for _gv, _col in df.groupby("group_value")["hardware_column"].first().items()}
+
+
+def _resolve_member_dem_resolutions(analysis) -> dict[str, float]:
+    """``{member_id: target DEM resolution}`` for a sensitivity master, or ``{}``.
+
+    THE ATTRIBUTE PATH IS NOT ``sub.cfg_system``. Real members keep their system config
+    behind ``_system``, and ``eda/cross_sim_identity._resolution_key`` records at length why
+    a tolerant read of the wrong path is worse than an exception: it returns ``None`` for
+    every member, so the resolution dimension silently collapses to one facet and a figure
+    that should have one panel block per resolution draws one block. The chain below is
+    therefore the same one that function uses -- a direct ``cfg_system`` first (a stub or a
+    future facade may carry one), then the live ``_system.cfg_system`` -- because two
+    readers of one attribute must not disagree about where it lives.
+
+    ``float()`` is applied for the same reason it is there: one physical resolution is
+    spelled ``1.10`` in a sensitivity CSV row and stored as ``1.1`` in the resolved config,
+    so a string-keyed facet set would invent a rung that is not in the matrix.
+
+    A member whose value is unreadable is simply absent from the map; the attach step turns
+    that into an ``unknown`` facet rather than a guess.
+    """
+    sensitivity = getattr(analysis, "sensitivity", None)
+    members = getattr(sensitivity, "members", None) if sensitivity is not None else None
+    if not members:
+        return {}
+    out: dict[str, float] = {}
+    for member_id, sub in members.items():
+        cfg_system = getattr(sub, "cfg_system", None)
+        if cfg_system is None:
+            cfg_system = getattr(getattr(sub, "_system", None), "cfg_system", None)
+        value = getattr(cfg_system, "target_dem_resolution", None)
+        if value is None:
+            continue
+        try:
+            out[str(member_id)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _attach_dem_resolution(df: pd.DataFrame, resolution_by_member: dict[str, float]) -> None:
+    """Attach ``df["dem_resolution"]``; leave the column ABSENT when nothing resolved.
+
+    Absent rather than all-NaN is deliberate. `_dem_resolution_facets` reads a missing
+    column as "this master has no resolution dimension", which yields ONE facet and the
+    four-row grid this renderer has always drawn; an all-NaN column would reach the same
+    grid but only after passing through the unknown-facet arm, so a master that never had
+    the dimension and a master whose every member failed to read would take the same path
+    for different reasons. The absence is the honest encoding of "not declared".
+    """
+    if not resolution_by_member:
+        return
+    df["dem_resolution"] = df["sa_id"].astype(str).map(resolution_by_member)
+
+
+def _dem_resolution_facets(df: pd.DataFrame) -> list[float | None]:
+    """The DEM-resolution facets present in the frame, NUMERICALLY ordered, unknown last.
+
+    NUMERIC and not lexical, and the shape says so explicitly: the rungs are floats
+    (``0.35``, ``1.1``, ``3.5``), so a string sort would order ``10`` before ``2`` and would
+    also seat ``1.10`` and ``1.1`` in different facets -- one physical resolution split in
+    two, which is the same defect the CSV-vs-config spelling produces everywhere else.
+
+    ``None`` is a REAL facet and sorts last, never first and never merged into a numeric
+    one: rows whose member declared no readable resolution are known equal to nothing, so
+    they are drawn in their own block labelled as unknown rather than pooled with runs at a
+    resolution they may not share. It is appended only when such rows exist, so a complete
+    master carries no empty unknown block.
+    """
+    if "dem_resolution" not in df.columns:
+        return [None]
+    values = df["dem_resolution"]
+    facets: list[float | None] = sorted({float(v) for v in values.dropna().unique()})
+    if bool(values.isna().any()):
+        facets.append(None)
+    return facets or [None]
+
+
+def _facet_frame(df: pd.DataFrame, facet: float | None) -> pd.DataFrame:
+    """The rows belonging to one facet. ``None`` selects the rows with NO resolution."""
+    if "dem_resolution" not in df.columns:
+        return df
+    if facet is None:
+        return df[df["dem_resolution"].isna()]
+    return df[df["dem_resolution"] == facet]
+
+
+def _facet_label(facet: float | None) -> str:
+    """The human label for one facet, carried by that block's subplot titles."""
+    if facet is None:
+        return "resolution unknown"
+    return f"{float(facet):g} m"
+
+
+@dataclass(frozen=True)
+class _FacetBlock:
+    """One DEM-resolution facet's slice of the figure, with ITS OWN scaling series.
+
+    A block carries its own four series because the scaling series must not be pooled across
+    resolutions: the anchor is the block's own one-device run, and a series keyed on a group
+    value alone would collect points from every resolution before the block filter ever
+    ran — two physics drawn as one curve.
+    """
+
+    label: str
+    frame: pd.DataFrame
+    speedup_per_group: dict
+    strong_eff_per_group: dict
+    speedup_all_rows: dict | None
+    efficiency_all_rows: dict | None
 
 
 def _resolve_family_baselines(
@@ -2446,16 +2591,23 @@ def _build_sensitivity_benchmarking_figure(
     speedup_range_mode: str = "full_ideal",
     model_arm: str | None = None,
     token_by_group: dict[str, str] | None = None,
+    facet_blocks: list[_FacetBlock] | None = None,
 ):
     """Plotly MV port (pre-/design-figure): static 4-panel benchmarking figure.
     Wall-clock | Compute-cost | Strong-scaling speedup | Parallel efficiency,
-    stacked rows=4 with cols=_n_hw (one column per HARDWARE TOKEN, CPU tokens included,
-    on all four rows) and TWO explicitly-linked x-axis groups rather than one shared
-    axis: rows 1+2 keyed on ``independent_var``, rows 3+4 on ``n_devices``. One trace per
-    group_by_var value
+    stacked in BLOCKS of four rows -- one block per DEM resolution, ``rows = 4 x n_facets``,
+    blocks ordered by NUMERIC resolution -- with one column per HARDWARE TOKEN (CPU tokens
+    included) inside every block, and TWO explicitly-linked x-axis groups PER BLOCK rather
+    than one shared axis: within a block, rows 1+2 are keyed on ``independent_var`` and rows
+    3+4 on ``n_devices``. One trace per group_by_var value
     per panel, sharing the Okabe-Ito palette (sens_cfg.palette) as Plotly's
     colorway. Informationally congruent with the matplotlib branch — no hover
     refinement, no line-toggle UX, no per-panel zoom/pan customization.
+
+    ``facet_blocks`` is ``None`` for a master with no resolution dimension, and the single
+    block is then synthesized from the flat ``speedup_per_group`` / ``strong_eff_per_group``
+    arguments so exactly one code path draws the figure. A faceted master supplies one block
+    per resolution, each carrying ITS OWN four series — see `_FacetBlock`.
     """
     # Side-effect import: registers `triton_journal` Plotly template.
     from hhemt.report_renderers import _plotly_theme  # noqa: F401
@@ -2482,10 +2634,45 @@ def _build_sensitivity_benchmarking_figure(
         key=lambda c: (str(c).lower().startswith("gpu"), str(c)),
     )
     _n_hw = max(len(_hw_cols), 1)
-    # ONE row-level column key, computed once and read by every per-column filter below.
-    # A per-column `.map(_column_key, ...)` would re-derive the same rule for every column
-    # of every panel, and a re-derivation is where a second copy of a rule appears.
-    _column_of_row = df["group_value"].astype(str).map(lambda g: _column_key(g, token_by_group))
+    # THE FACET BLOCKS, resolved once. A master with no resolution dimension synthesizes
+    # exactly one block from the flat series, so the grid below, the panel loops below and
+    # the axis-group call all run ONE code path whether or not the master is faceted. That
+    # is what keeps a single-facet figure byte-identical while a faceted one is just the
+    # same block repeated: a second path for "faceted" is how the two drift.
+    _blocks = (
+        list(facet_blocks)
+        if facet_blocks
+        else [
+            _FacetBlock(
+                label="",
+                frame=df,
+                speedup_per_group=speedup_per_group,
+                strong_eff_per_group=strong_eff_per_group,
+                speedup_all_rows=speedup_all_rows,
+                efficiency_all_rows=efficiency_all_rows,
+            )
+        ]
+    )
+    _n_facets = len(_blocks)
+    _n_rows = 4 * _n_facets
+    # ONE block is not faceted in any sense a reader can see, so its titles stay the bare
+    # column names. The facet label enters only when there is more than one block, which is
+    # when a reader has to be told which resolution a block belongs to.
+    _titled_with_facet = _n_facets > 1
+    # ROW-MAJOR title list, built per BLOCK rather than per column: block i's first row
+    # carries the names, its next three rows are blank. Built forward like this, the
+    # argument can be read against the grid above it; a comprehension that produced the
+    # names and then padded once would place block 2's names on block 1's second row.
+    _subplot_titles: list[str] = []
+    for _block in _blocks:
+        _row_names = ([f"{f}" for f in _hw_cols] + [""] * _n_hw)[:_n_hw]
+        _subplot_titles.extend(
+            (f"{_name} — {_block.label}" if (_titled_with_facet and _name) else _name) for _name in _row_names
+        )
+        _subplot_titles.extend([""] * (3 * _n_hw))
+    # One four-panel block is 1000 px tall; the figure grows by one block per facet
+    # rather than compressing every block into the same height.
+    _fig_h = 1000 * _n_facets
     # P10: spacing is derived, never hard-coded. Plotly's own default is
     # 0.2/cols; a third of that keeps the per-column y-axis titles clear of the
     # neighbouring panel at the column counts this campaign produces.
@@ -2502,26 +2689,22 @@ def _build_sensitivity_benchmarking_figure(
     # vertical_spacing rises 0.06 -> 0.09 because row 2 now carries its own tick band
     # AND an x-axis title immediately above row 3's hardware subplot titles.
     fig = make_subplots(
-        rows=4,
+        rows=_n_rows,
         cols=_n_hw,
         shared_xaxes=False,
         vertical_spacing=0.09,
         horizontal_spacing=_h_space,
-        specs=[
-            [{} for _ in range(_n_hw)],
-            [{} for _ in range(_n_hw)],
-            [{} for _ in range(_n_hw)],
-            [{} for _ in range(_n_hw)],
-        ],
-        # One title per CELL, row-major, and the grid is now 4 x _n_hw because every
-        # row is faceted. The hardware names belong on ROW 1 (the first _n_hw cells);
-        # every later row is blank. The previous expression predated faceting -- it
-        # emitted 2 titles for the two colspan rows plus _n_hw names plus _n_hw blanks,
-        # which is 2 + 2*_n_hw cells and no longer matches 4*_n_hw, so plotly's
-        # row-major fill pushed the names into rows 1-2 at arbitrary columns.
-        # The slice+pad keeps the count exact even if _hw_cols is empty, where
-        # _n_hw is floored at 1 and the names list is shorter than the row.
-        subplot_titles=(([f"{f}" for f in _hw_cols] + [""] * _n_hw)[:_n_hw] + [""] * (3 * _n_hw)),
+        specs=[[{} for _ in range(_n_hw)] for _ in range(_n_rows)],
+        # One title per CELL, row-major. Every block's FIRST row carries the names and every
+        # later row of the block is blank, so the grid is `4*n_facets` x `_n_hw` rather than
+        # the 4 x _n_hw every earlier version of this expression assumed -- and a title list
+        # built for four rows would silently push the block-2 names into block 1's remaining
+        # rows under plotly's row-major fill, which is the exact failure the previous
+        # expression was rewritten to fix one facet dimension ago.
+        #
+        # THE FACET VALUE RIDES THE TITLE (`2a.4`), because a reader cannot otherwise tell
+        # which resolution a block belongs to.
+        subplot_titles=tuple(_subplot_titles),
     )
     fig.update_layout(
         template="plotly_white",
@@ -2551,7 +2734,12 @@ def _build_sensitivity_benchmarking_figure(
         # i.e. a caption spanning one third of the figure. Declaring the width is what makes
         # the wrap reproducible; it is not a styling choice.
         width=1000,
-        height=1000,
+        # HEIGHT IS DERIVED FROM THE BLOCK COUNT, not left at the four-row constant. A
+        # faceted master would otherwise pack every block's four panels into the same
+        # thousand pixels, halving each panel's height per block added -- and the caption's
+        # bottom margin below is derived from this number, so a stale constant would also
+        # mis-size the caption reserve.
+        height=_fig_h,
     )
 
     # ONE resolution for this whole figure. Hoisted above both consumers -- the
@@ -2560,93 +2748,121 @@ def _build_sensitivity_benchmarking_figure(
     # are literally the same object rather than two agreeing lookups.
     _axis_top, _axis_bottom = resolve_axis_groups(independent_var, sens_cfg)
 
-    # ---- Panels 1 + 2: wallclock + compute-cost -------------------------
-    for row, y_col, panel_id in (
-        (1, "wallclock_disp", "ax_wall_plotly"),
-        (2, "compute_disp", "ax_cost_plotly"),
-    ):
-        # ONE accumulator per ROW, owned here rather than inside the panel: the row is
-        # now several panels and first-occurrence must be computed across all of them.
-        _row_legend_seen: set[str] = set()
+    # ---- Panels 1 + 2: wallclock + compute-cost, per FACET BLOCK -----------
+    # ONE legend accumulator per ROW KIND, owned here rather than inside the panel, and
+    # hoisted ABOVE the facet loop. Per row it must span every column of that row; per
+    # figure it must span every block, because a faceted master repeats the same
+    # decompositions in each block and a per-block accumulator would emit one legend entry
+    # per block -- the duplicate-entry defect the accumulator was introduced to remove,
+    # reappearing at a coarser granularity where it is easier to miss.
+    _legend_seen_by_row: dict[int, set[str]] = {1: set(), 2: set()}
+    for _fi, _block in enumerate(_blocks):
+        _base = 4 * _fi
+        _column_of_block = _block.frame["group_value"].astype(str).map(lambda g: _column_key(g, token_by_group))
+        for _offset, y_col, panel_id in (
+            (1, "wallclock_disp", "ax_wall_plotly"),
+            (2, "compute_disp", "ax_cost_plotly"),
+        ):
+            row = _base + _offset
+            for _ci, _fam in enumerate(_hw_cols, start=1):
+                _df_c = _block.frame[_column_of_block == _fam]
+                if _df_c.empty:
+                    continue
+                _plotly_metric_panel(
+                    fig,
+                    _df_c,
+                    y_col=y_col,
+                    row=row,
+                    col=_ci,
+                    panel_id=f"{panel_id}_{_fam}",
+                    group_by_var=group_by_var,
+                    sens_cfg=sens_cfg,
+                    prov=prov,
+                    show_in_legend=(_offset == 1),
+                    legend_seen=_legend_seen_by_row[_offset],
+                    gpu_legend_suffix=gpu_legend_suffix,
+                    model_arm=model_arm,
+                )
+
+    # ---- Panels 3 + 4: speedup + efficiency, one column per hardware token, per BLOCK --
+    # Groups are DISJOINT across columns, so filtering the per-group dicts partitions the
+    # data with no group drawn twice and no legend entry duplicated. The ideal reference is
+    # emitted per column -- BM-6's "a single reference case in each one to define perfect
+    # scaling" -- but only the FIRST block's column 1 carries the legend entry, so the
+    # legend keeps ONE row for both red lines however many blocks the figure stacks.
+    #
+    # The series are the BLOCK's own (`_FacetBlock`), never the whole-frame ones: an anchor
+    # and a curve are both per-resolution facts, and a whole-frame series filtered into a
+    # block after the fact would still be anchored on a one-device run at another
+    # resolution.
+    _scaling_legend_seen = False
+    for _fi, _block in enumerate(_blocks):
+        _base = 4 * _fi
+        _column_of_block = _block.frame["group_value"].astype(str).map(lambda g: _column_key(g, token_by_group))
         for _ci, _fam in enumerate(_hw_cols, start=1):
-            _df_c = df[_column_of_row == _fam]
+            _df_c = _block.frame[_column_of_block == _fam]
             if _df_c.empty:
                 continue
-            _plotly_metric_panel(
+            _sp_c = {k: v for k, v in _block.speedup_per_group.items() if _column_key(str(k), token_by_group) == _fam}
+            _ef_c = {
+                k: v for k, v in _block.strong_eff_per_group.items() if _column_key(str(k), token_by_group) == _fam
+            }
+            _sp_all_c = {
+                k: v for k, v in (_block.speedup_all_rows or {}).items() if _column_key(str(k), token_by_group) == _fam
+            } or None
+            _ef_all_c = {
+                k: v
+                for k, v in (_block.efficiency_all_rows or {}).items()
+                if _column_key(str(k), token_by_group) == _fam
+            } or None
+            # Same column the scaling panels are keyed on, read from the resolved group
+            # rather than re-typed, so the ideal-reference line's extent cannot outlive a
+            # change to _SCALING_AXIS_VAR.
+            _x_max_c = float(_df_c[_axis_bottom.x_col].max())
+            _plotly_metric_panel_precomputed(
                 fig,
-                _df_c,
-                y_col=y_col,
-                row=row,
+                _sp_c,
+                df_for_groups=_df_c,
+                row=_base + 3,
                 col=_ci,
-                panel_id=f"{panel_id}_{_fam}",
-                group_by_var=group_by_var,
+                panel_id=f"ax_speedup_plotly_c{_ci}",
+                ideal_kind="linear",
+                x_max=_x_max_c,
+                ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
                 sens_cfg=sens_cfg,
                 prov=prov,
-                show_in_legend=(row == 1),
-                legend_seen=_row_legend_seen,
+                show_in_legend=False,
                 gpu_legend_suffix=gpu_legend_suffix,
+                all_rows_per_group=_sp_all_c,
+                ideal_show_in_legend=(_ci == 1 and not _scaling_legend_seen),
                 model_arm=model_arm,
             )
-
-    # ---- Panels 3 + 4: speedup + efficiency, one column per hardware family --
-    # Groups are DISJOINT across families, so filtering the per-group dicts
-    # partitions the data with no group drawn twice and no legend entry
-    # duplicated. The ideal reference is emitted per column -- BM-6's "a single
-    # reference case in each one to define perfect scaling" -- but only column 1
-    # carries the legend entry, so the legend keeps ONE row for both red lines.
-    for _ci, _fam in enumerate(_hw_cols, start=1):
-        _df_c = df[_column_of_row == _fam]
-        if _df_c.empty:
-            continue
-        _sp_c = {k: v for k, v in speedup_per_group.items() if _column_key(str(k), token_by_group) == _fam}
-        _ef_c = {k: v for k, v in strong_eff_per_group.items() if _column_key(str(k), token_by_group) == _fam}
-        _sp_all_c = {
-            k: v for k, v in (speedup_all_rows or {}).items() if _column_key(str(k), token_by_group) == _fam
-        } or None
-        _ef_all_c = {
-            k: v for k, v in (efficiency_all_rows or {}).items() if _column_key(str(k), token_by_group) == _fam
-        } or None
-        # Same column the scaling panels are keyed on, read from the resolved group
-        # rather than re-typed, so the ideal-reference line's extent cannot outlive a
-        # change to _SCALING_AXIS_VAR.
-        _x_max_c = float(_df_c[_axis_bottom.x_col].max())
-        _plotly_metric_panel_precomputed(
-            fig,
-            _sp_c,
-            df_for_groups=_df_c,
-            row=3,
-            col=_ci,
-            panel_id=f"ax_speedup_plotly_c{_ci}",
-            ideal_kind="linear",
-            x_max=_x_max_c,
-            ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
-            sens_cfg=sens_cfg,
-            prov=prov,
-            show_in_legend=False,
-            gpu_legend_suffix=gpu_legend_suffix,
-            all_rows_per_group=_sp_all_c,
-            ideal_show_in_legend=(_ci == 1),
-            model_arm=model_arm,
-        )
-        _plotly_metric_panel_precomputed(
-            fig,
-            _ef_c,
-            df_for_groups=_df_c,
-            row=4,
-            col=_ci,
-            panel_id=f"ax_efficiency_plotly_c{_ci}",
-            ideal_kind="constant",
-            ideal_value=1.0,
-            x_max=_x_max_c,
-            ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
-            sens_cfg=sens_cfg,
-            prov=prov,
-            show_in_legend=False,
-            gpu_legend_suffix=gpu_legend_suffix,
-            all_rows_per_group=_ef_all_c,
-            ideal_show_in_legend=False,
-            model_arm=model_arm,
-        )
+            # Flipped by the EMISSION, not by the loop index: if the first block's column 1
+            # is empty (a token absent at that resolution) this stays False and the next
+            # block that does draw a column 1 carries the legend entry. A flip keyed on
+            # `_ci` after the inner loop would read the LAST column index and could mark the
+            # legend as claimed by a block that never drew it.
+            if _ci == 1:
+                _scaling_legend_seen = True
+            _plotly_metric_panel_precomputed(
+                fig,
+                _ef_c,
+                df_for_groups=_df_c,
+                row=_base + 4,
+                col=_ci,
+                panel_id=f"ax_efficiency_plotly_c{_ci}",
+                ideal_kind="constant",
+                ideal_value=1.0,
+                x_max=_x_max_c,
+                ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
+                sens_cfg=sens_cfg,
+                prov=prov,
+                show_in_legend=False,
+                gpu_legend_suffix=gpu_legend_suffix,
+                all_rows_per_group=_ef_all_c,
+                ideal_show_in_legend=False,
+                model_arm=model_arm,
+            )
     # F-FU-6 / Q1: speedup panel range mode. Default `full_ideal` shows the full
     # ideal line; `empirical_clipped` clips y to the empirical max for better
     # discrimination of low-speedup points (Kelleher Guideline 4) and adds a
@@ -2665,7 +2881,7 @@ def _build_sensitivity_benchmarking_figure(
         if max_empirical is not None and max_empirical > 0:
             # IF YOU REVIVE THIS BRANCH, DROP THIS LOOP. An explicit `range=` OVERRIDES
             # `matches=`, and `_apply_plotly_axis_groups` now links every row's columns
-            # to column 1 (see `_Y_LINKED_ROWS`). Setting a per-column range here would
+            # to column 1. Setting a per-column range here would
             # silently win over that link and restore the per-column rulers the linking
             # exists to remove -- with no error, because both calls are individually
             # valid. The global `max_empirical` computed above is the right VALUE; apply
@@ -2674,7 +2890,8 @@ def _build_sensitivity_benchmarking_figure(
             # `speedup_range_mode`, whose only source is a `getattr` default because
             # `speedup_panel_range_mode` has no Pydantic field anywhere.
             for _ci in range(1, _n_hw + 1):
-                fig.update_yaxes(range=[0, max_empirical * 1.1], row=3, col=_ci)
+                for _fi in range(_n_facets):
+                    fig.update_yaxes(range=[0, max_empirical * 1.1], row=4 * _fi + 3, col=_ci)
             # The ideal-reference line's truncation is communicated via the legend
             # entry "Ideal speedup (S=N)" rather than a corner annotation (v5
             # feedback); the legend entry stays visible at the clipped y-range,
@@ -2689,22 +2906,31 @@ def _build_sensitivity_benchmarking_figure(
     _apply_plotly_axis_groups(
         fig,
         n_hw=_n_hw,
+        n_facets=_n_facets,
         top=_axis_top,
         bottom=_axis_bottom,
         hw_cols=_hw_cols,
         labels=sens_cfg.independent_var_labels,
     )
-    fig.update_yaxes(title_text=f"Wall-clock ({wall_unit})", row=1, col=1)
-    fig.update_yaxes(title_text=f"Compute cost ({cost_unit} × devices)", row=2, col=1)
-    # OE-1: the numerator is the FAMILY baseline (CPU -> serial CPU; each GPU hardware ->
-    # its own 1-GPU run), not the plotted series' own t(1) and not a global serial.
-    # The `family` subscript distinguished baselines ACROSS panels; each column is now
-    # one hardware family, so it distinguishes nothing within a panel. The cross-panel
-    # fact it carried ("S = 1.0 is a different wall-clock on each curve") is stated in
-    # full by the footnote below and is NOT weakened by this relabel -- but do not drop
-    # that footnote in the same pass, because it is now the sole carrier.
-    fig.update_yaxes(title_text="Strong-Scaling Speedup<br>S(N) = t(1) / t(N)", row=3, col=1)
-    fig.update_yaxes(title_text="Strong-Scaling Efficiency<br>E<sub>s</sub>(N) = t(1) / (N · t(N))", row=4, col=1)
+    # ONE y-axis title per BLOCK, on that block's column 1. Rows 5-8 belong to block 2, so
+    # a title pinned to row 3 alone would label the first block and leave every later one
+    # unnamed -- and, worse, would sit on a row that a reader of block 2 reads as the
+    # wall-clock row.
+    for _fi in range(_n_facets):
+        _base = 4 * _fi
+        fig.update_yaxes(title_text=f"Wall-clock ({wall_unit})", row=_base + 1, col=1)
+        fig.update_yaxes(title_text=f"Compute cost ({cost_unit} × devices)", row=_base + 2, col=1)
+        # OE-1: the numerator is the COLUMN baseline (each CPU model -> its own one-device
+        # run; each GPU hardware -> its own 1-GPU run), not the plotted series' own t(1) and
+        # not a global serial. A column is one hardware token, so the former `t_family`
+        # subscript distinguishes nothing within a panel. The cross-panel fact it carried
+        # ("S = 1.0 is a different wall-clock on each curve") is stated in full by the
+        # footnote below and is NOT weakened by this relabel -- but do not drop that
+        # footnote in the same pass, because it is now the sole carrier.
+        fig.update_yaxes(title_text="Strong-Scaling Speedup<br>S(N) = t(1) / t(N)", row=_base + 3, col=1)
+        fig.update_yaxes(
+            title_text="Strong-Scaling Efficiency<br>E<sub>s</sub>(N) = t(1) / (N · t(N))", row=_base + 4, col=1
+        )
     # Adopt hhemt.figure_caption: this annotation predated the module (see the retired
     # v3/v4/v5 b= history in git). `y=-0.10` was a FRACTION of the plot area while the
     # x-axis-title band below it is a fixed pixel height, so the two converge as the
@@ -2724,7 +2950,7 @@ def _build_sensitivity_benchmarking_figure(
     # reference and no data series. A reader who is not told WHY reads that as missing data
     # or, worse, as a series that happens to be flat at zero. This is the disclosure the
     # rule owes: the figure refuses to borrow another column's anchor, and says so.
-    _anchored_columns = {_column_key(str(k), token_by_group) for k in speedup_per_group}
+    _anchored_columns = {_column_key(str(k), token_by_group) for _block in _blocks for k in _block.speedup_per_group}
     _unanchored_columns = sorted(str(c) for c in _hw_cols if str(c) not in _anchored_columns)
     if _unanchored_columns:
         _bench_caption += (
@@ -2732,8 +2958,18 @@ def _build_sensitivity_benchmarking_figure(
             " carries no single-device run, so it has no strong-scaling reference of its own and"
             " none is borrowed from another column."
         )
+    # THE BLOCK STRUCTURE IS STATED, because a faceted figure is the one case where "each
+    # panel" in the report caption stops naming a metric panel: a reader who is not told
+    # that rows 5-8 repeat rows 1-4 at another resolution reads them as four more metrics.
+    if _n_facets > 1:
+        _bench_caption += (
+            f" Panels are grouped into {_n_facets} blocks of four, one per DEM resolution,"
+            f" ordered from finest to coarsest ({_blocks[0].label} first);"
+            " every block carries the same four metrics and the same hardware columns,"
+            " and a column or series absent from a block simply has no run at that resolution."
+        )
     _bench_caption += " Every marker is hollow so overlapping configurations stay readable; every replicate is plotted."
-    _bench_plot_h = 1000 - 30  # height minus top margin; bottom is what we are deriving
+    _bench_plot_h = _fig_h - 30  # height minus top margin; bottom is what we are deriving
     _bench_b_px = add_figure_caption(
         fig,
         _bench_caption,
@@ -2744,8 +2980,11 @@ def _build_sensitivity_benchmarking_figure(
     )
     fig.update_layout(margin=dict(l=90, r=120, t=30, b=_bench_b_px))
     if sens_cfg.show_gridlines:
-        for r in range(1, 5):
-            _cols = range(1, _n_hw + 1) if r >= 3 else range(1, 2)
+        # EVERY row of EVERY block: the gate below distinguishes the scaling rows from the
+        # magnitude rows by their OFFSET within a block (`r >= 3` was that test when there
+        # was one block), so a plain `range(1, 5)` would leave blocks 2..n ungridded.
+        for r in range(1, _n_rows + 1):
+            _cols = range(1, _n_hw + 1) if (r - 1) % 4 + 1 >= 3 else range(1, 2)
             for _c in _cols:
                 fig.update_xaxes(
                     showgrid=True,
@@ -2805,6 +3044,7 @@ def _render_plotly_branch(
     speedup_range_mode: str = "full_ideal",
     model_arm: str | None = None,
     token_by_group: dict[str, str] | None = None,
+    facet_blocks: list[_FacetBlock] | None = None,
 ) -> Path:
     fig, plotly_config = _build_sensitivity_benchmarking_figure(
         df,
@@ -2827,6 +3067,7 @@ def _render_plotly_branch(
         speedup_range_mode=speedup_range_mode,
         model_arm=model_arm,
         token_by_group=token_by_group,
+        facet_blocks=facet_blocks,
     )
     html_text = pio.to_html(
         fig,
