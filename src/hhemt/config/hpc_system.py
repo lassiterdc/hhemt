@@ -153,6 +153,16 @@ class PartitionSpec(BaseModel):
         None,
         description="CPUs physically present per node; bounds how many concurrent tasks one node can hold.",
     )  # node topology
+    hardware: str | None = Field(
+        None,
+        description=(
+            "Names the CPU model this partition's nodes run, such as 'AMD EPYC 9454'. This is the CPU "
+            "counterpart of gpu_hardware on the same hardware axis, and it is the declared token the "
+            "scaling panels column on. Optional, so a profile that declares none still loads."
+        ),
+    )  # CPU token of the `hardware` axis. The axis is per-TOKEN, CPU models included, and the GPU
+    #                                  tokens live on gpu_hardware immediately below; the two are
+    #                                  halves of one axis, never alternatives to each other.
     gpu_hardware: str | None = Field(
         None,
         description="Selects the GPU architecture flags the solver is compiled against, such as a6000 or a100.",

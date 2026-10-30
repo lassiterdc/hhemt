@@ -4409,3 +4409,24 @@ non_breaking_allowlist:
       NON-BREAKING. Comment-only correction of the false claim that the create-capable
       open cannot produce ENOENT (change 1028-2100). No code, no on-disk shape, no
       serialization change; the file's AST is byte-identical before and after.
+  - path: src/hhemt/config/hpc_system.py
+    layout_signature: 9352040777b5d5bea7ad081bdd02896c08cecd4886c27ad8f6dec1117cebec29
+    justification: >-
+      NON-BREAKING, ADDITIVE OPTIONAL FIELD. `PartitionSpec` gains `hardware: str | None`, the CPU
+      token of the hardware axis and the counterpart of the existing `gpu_hardware`; the path is
+      reached by the `src/hhemt/config/**/*.py` glob, which is why check-b sees it at all.
+      MEASURED RATHER THAN ASSERTED, by AST and at runtime with the module's __file__ pinned to the
+      edited tree -- a runtime read that names no tree can silently measure the main checkout
+      instead, and the first attempt here did exactly that and reported the pre-edit count as if it
+      were the post-edit one: field COUNT 12 -> 13 on both instruments; field ORDER inserted at
+      position 11 of 13 with every pre-existing field keeping its relative position; and runtime
+      REQUIRED fields [] -> [].
+      THE REQUIREDNESS CHECK IS THE LOAD-BEARING ONE. Writing the field with an Ellipsis, or with a
+      bare `Field(...)` and no default, would make it required -- and because this model sets
+      `extra="forbid"`, a required field refuses EVERY existing hpc_system_config at load. That is
+      the opposite of what the axis amendment depends on, and it was checked directly rather than
+      inferred from the annotation.
+      NO MIGRATION IS POSSIBLE TO WRITE. A config field is load-time schema, absent from every
+      serialized artifact, so a version migration would have nothing to act on.
+      KNOWN EXPIRY: this row expires on the next change to this path, exactly as every
+      change-scoped row does, and the next edit is adjudicated on its own merits.
