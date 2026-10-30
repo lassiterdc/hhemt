@@ -464,6 +464,16 @@ def _read_persisted_eda_verdicts(analysis: TRITONSWMM_analysis) -> list[CheckRes
     the report's Errors-and-Warnings section surfaces EDA pass/fail families. Absent
     ``eda/`` dir or unreadable files → empty list (the report is unchanged from a
     non-EDA'd analysis).
+
+    THE ROUND TRIP IS OVER THE WHOLE DATACLASS, including the third applicability
+    state and the instrument provenance. A rebuild that names only the leading fields
+    leaves ``applicable``, ``instrument`` and ``detection_floor`` at their defaults, and
+    each default is a CLAIM rather than an absence: ``applicable=True`` turns a
+    persisted "not evidence" into a green row, and ``instrument=None`` erases the
+    detection floor the verdict was measured at. Both renderers consume these fields
+    off the persisted artifact (``errors_and_warnings._partition_applicable``,
+    ``cross_experiment_errors_and_warnings``), so a drop here is invisible until a
+    reader looks at the artifact and the sidebar side by side.
     """
     import json
 
@@ -481,6 +491,17 @@ def _read_persisted_eda_verdicts(analysis: TRITONSWMM_analysis) -> list[CheckRes
                     passed=payload["passed"],
                     summary=payload["summary"],
                     details=payload.get("details", []),
+                    # THE THREE CARRIED FIELDS. One reader dropping them is ONE defect, not
+                    # three, so they are fixed together and `.get` is used with the
+                    # dataclass's OWN defaults rather than the payload's key names being
+                    # required. The distinction is load-bearing and not stylistic: a
+                    # subscription here would raise ``KeyError`` on an artifact written
+                    # before these fields existed, and the ``except`` clause below SWALLOWS
+                    # that — the verdict would silently VANISH from the sidebars instead of
+                    # loading with a default. A wrong value is legible; a disappeared row is not.
+                    applicable=payload.get("applicable", True),
+                    instrument=payload.get("instrument"),
+                    detection_floor=payload.get("detection_floor"),
                 )
             )
         except (OSError, KeyError, ValueError):

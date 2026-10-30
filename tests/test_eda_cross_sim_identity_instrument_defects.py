@@ -1,8 +1,10 @@
-"""Coder tests for package ``1b`` — the two cross-sim identity INSTRUMENT defects.
+"""Coder tests for package ``1b`` — the cross-sim identity instrument's three defects.
 
 The file under test is ``hhemt.eda.cross_sim_identity``, the instrument that answers *did the
-same physics run twice produce the same numbers*. It had two independent ways of reporting a
-reproducibility result it had not measured, and this module pins one test per defect:
+same physics run twice produce the same numbers*, plus the read path
+(``analysis_validation._read_persisted_eda_verdicts``) that carries its verdict to the sidebars. It
+had three independent ways of reporting — or failing to report — a reproducibility result it had not
+measured:
 
 1. **No resolution partition.** Members were partitioned by hardware family alone, so a GPU arm
    carrying 3.5 / 1.10 / 0.35 m members inside ONE family compared across a resolution boundary
@@ -13,9 +15,18 @@ reproducibility result it had not measured, and this module pins one test per de
    compared nothing reported success in wording byte-identical to a measured agreement. The third
    applicability state — ``applicable=False`` — is what distinguishes "not evidence" from
    "evidence that agreed".
+3. **The state did not survive the round trip.** Defect 2's fix is only worth what survives to the
+   reader: the persisted verdict is a ``dataclasses.asdict(CheckResult)``, and the in-tree reader
+   rebuilt the object from a SUBSET of its fields, leaving ``applicable``, ``instrument`` and
+   ``detection_floor`` at their defaults. The artifact then said N/A while the sidebar rendered a
+   green row — the same false green, one hop downstream, and the reason a package that closes it at
+   the writer must also close it at the reader.
 
-A third test pins the gate's OTHER arm, and it exists because a one-sided test cannot tell a
-correct gate from one that is simply stuck: see ``test_a_run_with_a_real_comparison_stays_applicable``.
+Five tests, because two of the three defects need more than one arm: the gate's POSITIVE arm exists
+because a one-sided test cannot tell a correct gate from one that is stuck
+(``test_a_run_with_a_real_comparison_stays_applicable``), and the reader's TOLERANCE arm exists
+because the fix can itself delete rows from older artifacts
+(``test_a_payload_written_before_the_carried_fields_still_loads``).
 
 These tests are the PACKAGE's own. The reviewing seat's modules
 (``tests/test_eda_cross_sim_identity_partition_review.py`` and
@@ -36,9 +47,14 @@ which would make every resolution unreadable and silently collapse the partition
 
 from __future__ import annotations
 
+import dataclasses
+import json
+from pathlib import Path
+
 import numpy as np
 import xarray as xr
 
+from hhemt.analysis_validation import CheckResult, _read_persisted_eda_verdicts
 from hhemt.eda import cross_sim_identity as csi
 
 _DEPTH_MODE = "tritonswmm"
@@ -369,3 +385,133 @@ def test_a_run_with_a_real_comparison_stays_applicable(tmp_path):
         f"applicable={verdict.applicable!r}, summary={verdict.summary!r}"
     )
     assert verdict.passed is True, f"the two members agree exactly, so the verdict must pass: {verdict.summary!r}"
+
+
+def test_the_third_applicability_state_survives_the_persisted_round_trip(tmp_path):
+    """Defect 3 (REGRESSION) — a persisted ``applicable: False`` must be re-read as ``False``.
+
+    Property: over a verdict JSON written as ``dataclasses.asdict(CheckResult)`` with
+    ``applicable=False``, ``instrument="summary_tier"`` and a float ``detection_floor``, the reader
+    returns a ``CheckResult`` carrying all three unchanged — and still carrying the five fields it
+    already read, so the test cannot pass by the reader failing wholesale.
+
+    Class: REGRESSION. Red on the tree before this chunk, where the rebuild named five of the
+    dataclass's fields and left ``applicable``, ``instrument`` and ``detection_floor`` at their
+    defaults. Output pasted in the round file.
+
+    Why it is required, as a consequence a reader can check against the code: each dropped field's
+    DEFAULT is a claim rather than an absence. ``applicable=True`` re-labels a persisted "not
+    evidence" as applicable, and ``errors_and_warnings._partition_applicable`` splits the sidebar on
+    exactly that field — so the artifact says N/A and the rendered row says green. The other two
+    erase the instrument provenance the same dataclass carries to keep a summary-tier pass from
+    rendering identically to a raw-raster one.
+
+    What kills it: rebuilding from the subset — the pre-chunk body — leaves ``applicable`` at
+    ``True`` and reds this test, with the other two assertions red beside it.
+
+    A second correct implementation that still passes: one that constructs the dataclass through
+    ``CheckResult(**{k: payload[k] for k in (...)} )`` over an explicit field list, or one that
+    drops and re-adds fields via ``dataclasses.replace`` — the assertion is over the three values
+    returned, not over how the rebuild spells them.
+    """
+    master = _master(
+        tmp_path,
+        {
+            "gpu_1g_3p5_a": (_Cfg("gpu", n_gpus=1), 3.5, 0.0),
+            "gpu_1g_3p5_b": (_Cfg("gpu", n_gpus=1), 3.5, 0.0),
+        },
+    )
+    eda_dir = Path(master.analysis_paths.analysis_dir) / "eda"
+    eda_dir.mkdir(parents=True, exist_ok=True)
+    floor = float(np.finfo(np.float32).eps)
+    persisted = CheckResult(
+        name="Cross-sim byte-identity",
+        level="aggregate",
+        passed=True,
+        summary="N/A — no (member, mode, variable) tuple was evaluated",
+        details=[],
+        applicable=False,
+        instrument="summary_tier",
+        detection_floor=floor,
+    )
+    (eda_dir / "eda_cross_sim_identity.verdict.json").write_text(json.dumps(dataclasses.asdict(persisted), default=str))
+
+    read = _read_persisted_eda_verdicts(master)
+    assert len(read) == 1, f"the fixture's one verdict must load; got {len(read)}: {read}"
+    got = read[0]
+
+    # CONTROL: the fields the pre-chunk rebuild already carried. Without this the test would pass
+    # against a reader that dropped everything and returned a default-constructed CheckResult.
+    assert got.passed is True and got.summary == persisted.summary, (
+        f"the reader must still carry the leading fields: passed={got.passed!r}, summary={got.summary!r}"
+    )
+
+    assert got.applicable is False, (
+        "a persisted `applicable: False` was re-read as applicable — the sidebar then renders a "
+        f"green row where the artifact records N/A. got applicable={got.applicable!r}"
+    )
+    assert got.instrument == "summary_tier", (
+        f"the instrument provenance was dropped, so the detection floor becomes unreadable: got {got.instrument!r}"
+    )
+    assert got.detection_floor == floor, (
+        f"the detection floor was dropped, erasing what the verdict could see: got {got.detection_floor!r}"
+    )
+
+
+def test_a_payload_written_before_the_carried_fields_still_loads(tmp_path):
+    """Defect 3's tolerance arm (HELD-CHARACTERIZATION) — an older artifact must not VANISH.
+
+    Property: over a verdict JSON carrying only ``name``, ``level``, ``passed``, ``summary`` and
+    ``details`` — the shape a pre-existing artifact has — the reader still returns ONE
+    ``CheckResult``, with the three carried fields at the dataclass's own defaults.
+
+    Class: HELD-CHARACTERIZATION. Green before this chunk and required to stay green; the named
+    mutation that would red it is below.
+
+    Why it is required, as a consequence a reader can check against the code: the reader's
+    ``except (OSError, KeyError, ValueError): continue`` treats a missing key as an UNREADABLE
+    artifact and skips it. So a fix that carried the three fields with SUBSCRIPTION
+    (``payload["applicable"]``) would not merely default them for old artifacts — it would delete
+    the verdict from the sidebars, which is the same silent-drop failure class this package exists
+    to close, arriving through the fix rather than around it.
+
+    What kills it: subscripting any of the three instead of ``.get`` — the read then returns ``[]``
+    and the count assertion fails. ``dataclasses.asdict`` always emits all eight keys, so this is
+    reachable only from artifacts written before the fields existed, which is exactly the
+    population that must keep loading.
+
+    A second correct implementation that still passes: one that validates against a field allowlist
+    and fills the missing entries from ``dataclasses.fields(CheckResult)`` defaults explicitly,
+    rather than relying on the constructor's defaults — the assertion is over the loaded row and its
+    values, not over the mechanism.
+    """
+    master = _master(
+        tmp_path,
+        {
+            "gpu_1g_3p5_a": (_Cfg("gpu", n_gpus=1), 3.5, 0.0),
+            "gpu_1g_3p5_b": (_Cfg("gpu", n_gpus=1), 3.5, 0.0),
+        },
+    )
+    eda_dir = Path(master.analysis_paths.analysis_dir) / "eda"
+    eda_dir.mkdir(parents=True, exist_ok=True)
+    legacy = {
+        "name": "Cross-sim byte-identity",
+        "level": "aggregate",
+        "passed": True,
+        "summary": "All tracked variables bit-identical within every group.",
+        "details": [],
+    }
+    (eda_dir / "eda_cross_sim_identity.verdict.json").write_text(json.dumps(legacy))
+
+    read = _read_persisted_eda_verdicts(master)
+    assert len(read) == 1, (
+        "an artifact written before the carried fields existed must still LOAD; a reader that "
+        "subscripts those keys raises KeyError, the except clause swallows it, and the verdict "
+        f"DISAPPEARS from the sidebars. got {len(read)} row(s): {read}"
+    )
+    got = read[0]
+    assert got.applicable is True, f"the dataclass default for a legacy artifact must apply: got {got.applicable!r}"
+    assert got.instrument is None and got.detection_floor is None, (
+        "absent fields must default to None, not to a fabricated value: "
+        f"got {got.instrument!r} / {got.detection_floor!r}"
+    )
