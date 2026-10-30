@@ -279,11 +279,13 @@ From: nvidia/cuda@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80
     # unproven on the next one, because any line that BEGINS with VERSION can win the `head -1`.
     #
     # THIS FORM'S OWN ASSUMPTION, measured: the address range closes on the next line matching
-    # `)`, and GNU sed does not test the closing regexp against the line that OPENED the range — so
-    # a future one-line `project(... VERSION x)` leaves the range open and can pick up a LATER
-    # VERSION line, yielding a WRONG value rather than none. `set -eu` cannot catch it (the
-    # assignment succeeds) and no runtime gate reads this label, so only the regression test guards
-    # it.
+    # `)`, and GNU sed does not test the closing regexp against the line that OPENED the range. So a
+    # future one-line `project(... VERSION x)` leaves the range open, and the substitution then
+    # matches nothing on the line that opened it: the label comes out EMPTY when the next `)`
+    # arrives before any VERSION-starting line (measured), and takes a LATER VERSION line's value
+    # when one intervenes (measured). `set -eu` cannot catch either (the assignment succeeds) and no
+    # runtime gate reads this label, so only the regression test guards it — and that test's fixture
+    # is the multi-line form, so THIS residual is UNGUARDED.
     _swmm_coupled="$(sed -n '/^[[:space:]]*project(/,/)/{s/^[[:space:]]*VERSION[[:space:]]\{1,\}\([0-9][0-9.]*\).*/\1/p}' /opt/triton/external/swmm/CMakeLists.txt | head -1)"
     _swmm_standalone="$(git -C /opt/swmm-src describe --tags --exact-match HEAD)"
     _mpi="$(/opt/openmpi/bin/ompi_info --version | head -1)"

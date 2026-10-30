@@ -55,6 +55,47 @@ kept beside the target as `*.rejected.*` for forensics); on success it writes th
 `{stem}.manifest.json` (identity, sha256 digest, build host, durations) which is what the
 resolver, preflight, and the bundle emitter read.
 
+## The coupled SWMM version label
+
+One of the values `%post` measures is `org.hhemt.swmm_coupled_version`: which SWMM the coupled
+`tritonswmm` build actually linked against. It is measured rather than requested — the recipe
+reads the `VERSION` keyword inside the `project(...)` declaration of the SWMM source vendored at
+`/opt/triton/external/swmm/CMakeLists.txt`.
+
+Until this fix, the extraction took the FIRST version-shaped token in that file, which is
+`cmake_minimum_required (VERSION 3.13)` — the build tool's own minimum, not the solver's
+version. Every coupled image therefore shipped `org.hhemt.swmm_coupled_version 3.13` while the
+vendored source is `5.2.3`. All four family recipes now scope the match to the `project(...)`
+block, so the label reports the declaration the solver itself calls its version.
+
+Three consequences, each of which catches a reader who assumes a provenance label is enforced:
+
+- **The fix reaches only images built after it.** `%post` writes this label at build time and
+  nothing rewrites it, so every image built before the change still reports `3.13`.
+- **A rebuild of the affected families is owed**, and it is not merely advisable: the recipe
+  text is part of the image IDENTITY (`recipe_sha256` in the tuple above), so an edited recipe
+  makes an existing image of that family FAIL preflight rather than quietly keep matching.
+  When that rebuild happens is a scheduling decision rather than a technical one — deferring it
+  to the next coupled production launch is the default, because nothing this toolkit runs today
+  needs a rebuilt image.
+- **No runtime gate consumes the label.** `container_labels.SWMM_COUPLED_VERSION_LABEL` declares
+  it, and preflight compares four OTHER labels and never this one. So it is provenance a reader
+  may consult, not a contract the toolkit enforces — which is why
+  `tests/test_sif_recipe_swmm_version_extraction.py` is its only durable regression guard.
+
+The extraction's address range closes on the next line matching `)`, and GNU sed does not test the
+closing pattern against the line that opened the range. So a future `project(... VERSION x)`
+written on ONE line would leave the range open, and the substitution then matches nothing on the
+line that opened it: the label comes out EMPTY when the next `)` arrives before any
+VERSION-starting line (measured), and takes a LATER VERSION line's value when one intervenes
+(measured). `set -eu` does not catch either, and neither does anything downstream. That residual
+is unguarded, and the test does not reach it — the test's single fixture carries the multi-line
+form, which is the shape the vendored file has always had.
+
+What the test DOES pin is the original defect: it executes each recipe's own command against a
+fixture whose first version-shaped token is the build tool's minimum, so a regression fails on the
+VALUE rather than on a reformat of the sed line.
+
 ## Provenance and bundles
 
 The bundle carries the resolved images' `.manifest.json` set
