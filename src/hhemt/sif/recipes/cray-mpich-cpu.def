@@ -201,7 +201,21 @@ From: ubuntu@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc709
     _landed_hhemt="$(cat /opt/hhemt-src/HHEMT_SHA)"
     case "$_landed_hhemt" in *Format*) echo "FATAL: HHEMT_SHA not substituted: the staged tree was not produced by git archive"; exit 1;; esac
     [ "$_landed_hhemt" = "{{ HHEMT_SHA }}" ] || { echo "FATAL: staged hhemt is $_landed_hhemt, requested {{ HHEMT_SHA }}"; exit 1; }
-    _swmm_coupled="$(sed -n 's/.*VERSION \([0-9][0-9.]*\).*/\1/p' /opt/triton/external/swmm/CMakeLists.txt | head -1)"
+    # THE COUPLED SWMM VERSION COMES FROM THE `project(...)` BLOCK, never from the first
+    # VERSION-shaped token in the file. That file's first such token is
+    # `cmake_minimum_required (VERSION 3.13)`, so an unanchored match records 3.13 — a CMake
+    # minimum, not a SWMM version — and the label silently claims the wrong solver.
+    #
+    # Deliberately NOT line-anchored (`s/^[[:space:]]*VERSION .../`): correct on today's file and
+    # unproven on the next one, because any line that BEGINS with VERSION can win the `head -1`.
+    #
+    # THIS FORM'S OWN ASSUMPTION, measured: the address range closes on the next line matching
+    # `)`, and GNU sed does not test the closing regexp against the line that OPENED the range — so
+    # a future one-line `project(... VERSION x)` leaves the range open and can pick up a LATER
+    # VERSION line, yielding a WRONG value rather than none. `set -eu` cannot catch it (the
+    # assignment succeeds) and no runtime gate reads this label, so only the regression test guards
+    # it.
+    _swmm_coupled="$(sed -n '/^[[:space:]]*project(/,/)/{s/^[[:space:]]*VERSION[[:space:]]\{1,\}\([0-9][0-9.]*\).*/\1/p}' /opt/triton/external/swmm/CMakeLists.txt | head -1)"
     _swmm_standalone="$(git -C /opt/swmm-src describe --tags --exact-match HEAD)"
     _mpi="$(/opt/mpich/bin/mpichversion | head -1)"
     _hhemt_version="$(/opt/hhemt-src/.venv/bin/python -c 'from importlib.metadata import version; print(version("hhemt"))')"
