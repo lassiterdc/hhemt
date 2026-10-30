@@ -890,6 +890,41 @@ def _max_plausible_job_lifetime_min(cfg_analysis, *, slack_min: int = 30) -> int
     return base + slack_min
 
 
+def _corroborate_not_live(job_id: str) -> str:
+    """Second query for a "not live" squeue verdict — the D1 corroboration.
+
+    ``squeue -j`` reporting no live state is NOT evidence that the job is gone:
+    it is equally what a job whose accounting record has aged out looks like,
+    and what a slow or absent ``squeue`` binary looks like. A caller that
+    reclaims a sentinel, or admits a delete, on the squeue answer alone can
+    therefore discard the record of a job that is still in the scheduler — so
+    every such caller asks this corroborator first.
+
+    One batched ``sacct`` row, ~15 ms. Three answers, and the caller chooses its
+    own behaviour for each: the sites that consume this disagree about
+    ``"unknown"`` on purpose and must not be uniformised here.
+
+    - ``"dead"``    — sacct returned a row in a terminal state
+      (:data:`_SACCT_DEAD_STATES`). The job is gone.
+    - ``"alive"``   — sacct returned a NON-terminal row. Still in the
+      scheduler; never reclaim on this.
+    - ``"unknown"`` — sacct returned no row, or could not answer at all.
+      Deliberately NOT-KNOWN rather than not-running: ``_sacct_states_batched``
+      returns an empty map and never raises on a timeout, a non-zero exit and
+      an absent binary, so "could not ask" and "asked and got nothing" collapse
+      into this single state. Both fail toward a hold, never a reclaim — and a
+      caller that wants a bounded hold supplies its own age tier.
+
+    Deliberately NOT :func:`hhemt.slurm_liveness.job_is_dead_confirmed`: that
+    helper re-probes squeue itself and collapses alive and unknown into one
+    ``False``, which is exactly the distinction the callers above need.
+    """
+    row = _sacct_states_batched([job_id]).get(job_id)
+    if row is None:
+        return "unknown"
+    return "dead" if row[0] in _SACCT_DEAD_STATES else "alive"
+
+
 # Tmux orchestrator-log parse. Snakemake prints one `rule {name}:` block per
 # selected job (4-space `input:/output:/log:/jobid:/reason:/wildcards:/…` lines — `jobid:`
 # precedes `wildcards:`) and, once sbatch returns, `Job {n} has been submitted with SLURM jobid
@@ -2120,6 +2155,43 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         the executor plugin sets (``rule_{job.name}_wildcards_{...}``). Live
         jobs whose ids are not already in ``known_jobids`` are returned.
 
+        A "not live" ``squeue`` answer does not omit a job on its own — it is
+        CORROBORATED first, via :func:`_corroborate_not_live` (the D1 rule).
+        This method's return value IS the delete path's refusal set:
+        :meth:`_pre_delete_guards` merges it into ``alive``, so a single
+        unconfirmed probe that dropped a job would admit ``analysis.delete()``
+        against a live analysis. That is the opposite direction from the
+        sentinel classifier's site, where a dropped verdict UNLINKS a file.
+
+        The three corroboration answers resolve HERE as: ``"dead"`` omits the
+        job (it is gone), while ``"alive"`` and ``"unknown"`` BOTH include it.
+        That differs from :meth:`_classify_live_sentinels`, which holds an
+        ``"unknown"`` only until the candidate's own mtime passes
+        :func:`_max_plausible_job_lifetime_min`, and the difference is
+        deliberate rather than an oversight: that classifier holds per-job
+        sentinel FILES and can age them, while THIS scan discovers candidates
+        by reading the accounting database and has no per-candidate file whose
+        age could bound a hold. No age tier is borrowed here, because the only
+        age tier that exists measures a file this site does not have. What
+        bounds the hold instead is the operator valve — ``override_in_flight``
+        on :meth:`_pre_delete_guards` — and the cost D1 accepts is that a job
+        whose accounting record has aged out blocks a delete until an operator
+        passes that valve.
+
+        The corroboration's cost is counted in ``sacct`` INVOCATIONS, and it is
+        one per not-live candidate rather than one per scan:
+        :func:`_corroborate_not_live` is asked once for each comment-matched row
+        that ``squeue`` reports not live, and its own docstring's "One batched
+        ``sacct`` row, ~15 ms" describes ONE such call — so a delete preflight
+        that finds k not-live comment-matched rows spends k of them
+        sequentially, where a single ``_sacct_states_batched(candidates)`` call
+        could have asked once. Batched rather than per-candidate is REJECTED at
+        this site: re-deriving the corroborator's three-state mapping inline
+        would be a second source for the rule this chunk exists to centralise,
+        and the first query already costs one subprocess launch. Not
+        established: the per-invocation latency on a cluster, so k's practical
+        bound is stated as a count and never as a wall-clock figure.
+
         Empirical tripwire: when this recovery branch was written, the
         assumption that ``sacct -o Comment`` returns the executor's
         ``rule_{job.name}_wildcards_{...}`` string had not been confirmed on
@@ -2128,10 +2200,15 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         elided, this method emits a one-line summary of every invocation
         when sacct returned any rows: how many rows scanned, how many had
         comments matching ``_COMMENT_RULE_PREFIXES``, and how many of those
-        were live. A persistent ``0 prefix-matched`` line in production logs
-        is the signal that the comment-format assumption has drifted and
-        the recovery branch has degenerated to a no-op (which falls back
-        cleanly to the sentinel-only guard — degradation, not incorrectness).
+        were in flight — split, since the D1 corroboration, into those an
+        answer saw running and those HELD on an unconfirmable second query,
+        because a persistent non-zero held count is the observable that every
+        delete on this tree will refuse until an operator passes
+        ``override_in_flight``. A persistent ``0 prefix-matched`` line in
+        production logs is the signal that the comment-format assumption has
+        drifted and the recovery branch has degenerated to a no-op (which falls
+        back cleanly to the sentinel-only guard — degradation, not
+        incorrectness).
 
         Parameters
         ----------
@@ -2169,6 +2246,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         found: list[tuple[str, str]] = []
         rows_scanned = 0
         prefix_matched = 0
+        held_unconfirmed = 0
         if out.returncode == 0:
             for line in out.stdout.splitlines():
                 parts = line.split("|")
@@ -2178,18 +2256,41 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                 jid, _state, comment = parts[0], parts[1], parts[2]
                 if jid in known_jobids:
                     continue
-                if comment.startswith(_COMMENT_RULE_PREFIXES):
-                    prefix_matched += 1
-                    if _slurm_job_is_live(jid):
-                        found.append((f"comment:{comment}", jid))
+                if not comment.startswith(_COMMENT_RULE_PREFIXES):
+                    continue
+                prefix_matched += 1
+                if _slurm_job_is_live(jid):
+                    found.append((f"comment:{comment}", jid))
+                    continue
+                # Not live per squeue. Corroborate before this job can drop out
+                # of the refusal set — only a CONFIRMED death may omit it.
+                verdict = _corroborate_not_live(jid)
+                if verdict == "alive":
+                    # sacct has a non-terminal row: still in the scheduler.
+                    found.append((f"comment:{comment}", jid))
+                    continue
+                if verdict == "unknown":
+                    # The second query could not answer (no row, purged record,
+                    # absent or timed-out sacct). Inclusion is the safe
+                    # direction for a refusal set; see the docstring.
+                    found.append((f"comment:{comment}", jid))
+                    held_unconfirmed += 1
+                # verdict == "dead" — corroborated gone; omit.
         # Empirical-tripwire stderr line — only when sacct returned data, to
         # avoid noise on fresh clusters with no recent user jobs. The line is
         # what confirms or refutes the comment-format assumption the docstring
         # names: a persistent "0 prefix-matched" means the assumption drifted.
+        # The two in-flight components are reported separately because they
+        # mean different things: "confirmed live" is a job squeue or sacct saw
+        # running, while "held on an unconfirmable second query" is the D1
+        # over-block — a persistent non-zero held count says every delete on
+        # this tree will refuse until the operator passes override_in_flight.
         if rows_scanned > 0:
             print(
                 f"[reconcile] sacct-comment recovery: {rows_scanned} rows scanned, "
-                f"{prefix_matched} prefix-matched, {len(found)} live",
+                f"{prefix_matched} prefix-matched, {len(found)} in-flight "
+                f"({len(found) - held_unconfirmed} confirmed live, "
+                f"{held_unconfirmed} held on an unconfirmable second query)",
                 file=sys.stderr,
                 flush=True,
             )
@@ -6769,13 +6870,36 @@ exit $snakemake_status
                         if _free is not None and _free < _floor:
                             _rec = self._write_du_halt_record(free_bytes=_free, floor=_floor)
                             _res = self.analysis.cancel(verbose=verbose, rule_classes=("run_", "simulation_member_"))
+                            # The returned mapping is the ONLY evidence about what was actually
+                            # cancelled. Three states, not two: a key ABSENT means the arm that
+                            # would have populated it was never reached; a key PRESENT and EMPTY
+                            # means the arm ran and its selection found nothing, which does NOT
+                            # establish that no sim remained queued (the selection reads
+                            # _submitted/, blind to PENDING, and coerces an unanswerable squeue to
+                            # an empty set). Only a NON-EMPTY key supports the deliberate-sparing
+                            # sentence, and even then only about the jobs it saw.
+                            _n_cancelled = _res.get("cancelled")
+                            if _n_cancelled is None:
+                                _du_cancel_msg = (
+                                    "This cancel reported NO cancellation of simulation jobs; the queued "
+                                    "and running sims are NOT known to be cancelled."
+                                )
+                            elif _n_cancelled:
+                                _du_cancel_msg = (
+                                    f"Cancelled {len(_n_cancelled)} simulation job(s); PROCESSING jobs left "
+                                    f"running deliberately ([Q212])."
+                                )
+                            else:
+                                _du_cancel_msg = (
+                                    "The cancel arm ran and cancelled NO simulation job; whether any "
+                                    "queued sim remained is not established by this result."
+                                )
                             return {
                                 "completed": False,
                                 "message": (
                                     f"DU guard: {_free / 1e9:.1f} GB free is below the "
-                                    f"{_floor / 1e9:.1f} GB floor. Cancelled "
-                                    f"{len(_res.get('cancelled', []))} simulation job(s); PROCESSING "
-                                    f"jobs left running deliberately ([Q212]). Details: {_rec}."
+                                    f"{_floor / 1e9:.1f} GB floor. {_du_cancel_msg}"
+                                    f" Details: {_rec}."
                                 ),
                             }
 
@@ -7771,16 +7895,44 @@ exit $snakemake_status
         Returns the list of ``(sentinel_stem, job_id)`` tuples for sentinels
         whose recorded SLURM job is still live per the module-level
         :func:`_slurm_job_is_live` helper. When ``reclaim_dead=True`` (the
-        default), sentinels whose recorded job is dead or whose JSON payload
-        is corrupt are unlinked in-place — matching the original behavior of
-        :meth:`_reconcile_inflight_submissions`. Pass ``reclaim_dead=False``
-        from the delete path so the destructive sentinel sweep is owned by
-        the delete workflow itself (not by the preflight guard).
+        default), sentinels whose recorded job is CONFIRMED dead or whose JSON
+        payload is corrupt are unlinked in-place — matching the original
+        behavior of :meth:`_reconcile_inflight_submissions`. Pass
+        ``reclaim_dead=False`` from the delete path so the destructive sentinel
+        sweep is owned by the delete workflow itself (not by the preflight
+        guard).
+
+        A "not live" answer from squeue is CORROBORATED before anything is
+        reclaimed or omitted — see :func:`_corroborate_not_live`, whose three
+        answers are dead / alive / unknown. Only ``"dead"`` resolves a sentinel
+        on the probe's own verdict. ``"alive"`` keeps it unconditionally.
+        ``"unknown"`` — no accounting row, a purged record, an absent or
+        timed-out ``sacct`` — keeps it only until the sentinel's own mtime
+        passes :func:`_max_plausible_job_lifetime_min`, after which it resolves
+        like a confirmed death. That age tier is what bounds the hold, mirroring
+        the third state of :meth:`_classify_stale_via_sacct`. A sentinel
+        carrying NO job id has nothing to probe and nothing to corroborate, and
+        resolves exactly as it did before this corroboration existed.
+
+        The age tier applies on BOTH ``reclaim_dead`` paths, because the
+        unbounded alternative is worse than the miss it would prevent: an
+        aged-out inventory record would otherwise read as live forever and
+        refuse every ``analysis.delete()`` on this tree until an operator
+        passed ``override_in_flight``. ``reclaim_dead`` gates the UNLINK only —
+        never whether the sentinel counts as live.
 
         Extracted from the body of :meth:`_reconcile_inflight_submissions` so
         the delete-path guard can share the classification primitive.
         """
         import json
+
+        if not sentinel_paths:
+            return []
+
+        # Same bound, same helper, same default slack as the sibling mtime
+        # fail-safes (_classify_stale_via_sacct, _orchestrator_liveness_gate):
+        # one definition of "this could not possibly still be running".
+        max_plausible_s = _max_plausible_job_lifetime_min(self.cfg_analysis) * 60
 
         alive: list[tuple[str, str]] = []
         for s in sentinel_paths:
@@ -7805,7 +7957,26 @@ exit $snakemake_status
                 ) from _e
             if jid and _slurm_job_is_live(jid):
                 alive.append((s.stem, jid))
-            elif reclaim_dead:
+                continue
+            if jid:
+                verdict = _corroborate_not_live(jid)
+                if verdict == "alive":
+                    alive.append((s.stem, jid))
+                    continue
+                if verdict == "unknown":
+                    # Hold, but only while the sentinel is young enough that
+                    # the job it names could still be running.
+                    try:
+                        age_s = time.time() - s.stat().st_mtime
+                    except OSError:
+                        age_s = max_plausible_s + 1
+                    if age_s < max_plausible_s:
+                        alive.append((s.stem, jid))
+                        continue
+            # Resolved, on one of three grounds: no job id was recorded (nothing
+            # to probe and nothing to corroborate — the pre-corroboration
+            # behaviour), a corroborated death, or an age-expired unknown.
+            if reclaim_dead:
                 # EXEMPT-DU: status-flag
                 s.unlink(missing_ok=True)  # DEAD/stale → reclaim
         return alive
@@ -8151,13 +8322,22 @@ exit $snakemake_status
                     "NEXT STEPS, in order of preference:\n"
                     "  1. Run hpc/sentinel_ops/report_sentinel_state.py --analysis-dir <dir>. "
                     "It names each sentinel's ORIGIN HOST.\n"
-                    "  2. For an entry reported UNKNOWN: ssh to that origin host (ssh to the "
-                    "cluster load-balances, so retry until `hostname` matches) and re-run "
-                    "there. The probe is host-local; from the origin host it returns a real "
-                    "answer and NO assertion is needed. This is strictly better than step 3 "
-                    "because it produces a measurement instead of a belief.\n"
-                    "  3. Only if that host is unreachable, and only after determining the "
-                    "driver is gone, pass override_live_driver='<driver_id>' "
+                    "  2. Resolve the RECORDED JOB ID from that report (`slurm_jobid`) against SLURM "
+                    "itself: `squeue -j <jobid>` for a live row, then `sacct -X -j <jobid> "
+                    "--format=JobID,State,NodeList` for what ran and where. A terminal State with "
+                    "no live row means the driver is gone: take rung 5.\n"
+                    "  3. No recorded job id? Measure the ORIGIN HOST's class BEFORE choosing a "
+                    "remedy: `scontrol show node <origin host>` and read its `Partitions=` field. "
+                    "A NON-EMPTY `Partitions=` means a COMPUTE node, where cross-node ssh is closed "
+                    "and rung 4 is UNREACHABLE BY CONSTRUCTION; an ABSENT field means a LOGIN "
+                    "node. A hostname pattern cannot settle this: login and compute nodes share "
+                    "one prefix, so the field is the only discriminator.\n"
+                    "  4. LOGIN node only: ssh to that origin host (ssh to the cluster "
+                    "load-balances, so retry until `hostname` matches) and re-run "
+                    "hpc/sentinel_ops/report_sentinel_state.py there. The probe is host-local; "
+                    "from the origin host it returns a real answer and NO assertion is needed.\n"
+                    "  5. Only if rungs 1-4 cannot answer, and only after determining the driver "
+                    "is gone, pass override_live_driver='<driver_id>' "
                     "(CLI: --override-live-driver) naming that exact driver.\n"
                     "An unresolved driver is NOT a dead driver. On 2026-08-31 that inference "
                     "was made twice about a healthy driver holding 1,004 real simulations."
@@ -8193,17 +8373,30 @@ exit $snakemake_status
           ``_max_plausible_job_lifetime_min`` so an unanswerable sentinel can
           never block forever.
 
-        UNKNOWN is produced by (a) a foreign origin ``hostname`` — ``ps -p`` and
-        ``tmux has-session`` are host-local (the tmux socket
-        ``/tmp/tmux-{uid}/default`` is node-local), so cross-host liveness is
-        STRUCTURALLY unknowable, not merely unreliable; (b) a legacy sentinel
+        UNKNOWN is produced by (a) a foreign origin ``hostname``, FOR THE
+        HOST-LOCAL PROBES ONLY — ``ps -p`` and ``tmux has-session`` are host-local
+        (the tmux socket ``/tmp/tmux-{uid}/default`` is node-local), so cross-host
+        liveness is STRUCTURALLY unknowable to them, not merely unreliable. (a) is
+        NOT universal: the two job-id arms are host-agnostic and are tested FIRST,
+        so a record that carries a job id is classified by its machine-wide answer
+        whatever its origin host, and lands in (f) rather than (a) when that answer
+        is not live. Pre-(f) such a record resolved DEAD and never appeared in this
+        enumeration at all; adding (f) is what makes (a)'s scope worth stating.
+        Then (b) a legacy sentinel
         with no recorded ``hostname``, where a negative local probe means "not
         alive HERE", which is not "not alive"; (c) an identity field that has not
         been enriched yet (``tmux_session_name``/``slurm_jobid`` still null
         between ``write_orchestrator_sentinel`` and
         ``enrich_orchestrator_sentinel`` — a SAME-HOST window spanning the whole
         of ``submit_workflow()``); (d) tmux unavailable; (e) an unrecognized
-        mode.
+        mode; (f) a job id that ``squeue`` reported NOT live and that the
+        corroborating second query could NOT confirm — no ``sacct`` row, a purged
+        accounting record, or an absent/timed-out ``sacct``. (f) is NOT a
+        host-local gap: there the sentinel WAS probed from this host and the
+        probe DID answer, and it is :func:`_corroborate_not_live`'s ``"unknown"``
+        that resolves the arm to ``alive = None``. The enumeration is BOUNDED —
+        it quantifies over this method's own parts — so a new arm cause adds a
+        part here rather than leaving the sentence short by one.
 
         The historical two-valued form collapsed EVERY one of those into DEAD,
         reclaiming a live driver's sentinel and proceeding — the exact
@@ -8217,6 +8410,7 @@ exit $snakemake_status
         authored; ``_tmux_session_is_live`` only wraps the existing tmux
         probe in this file's own ``bash -c`` + module-load-prefix idiom.
         """
+        import os
         import subprocess
 
         from hhemt.orchestrator_sentinels import (
@@ -8241,8 +8435,21 @@ exit $snakemake_status
             same_host = origin_host is not None and origin_host == this_host
             # True = evidence-ALIVE, False = evidence-DEAD, None = UNKNOWN.
             alive: bool | None
+            jobid = s.get("slurm_jobid") or ""
+            # The D1 corroboration is owed only where a PROBE ANSWERED "not live".
+            # It is NOT owed where a branch INFERS death from a shared allocation id
+            # (the requeue carve-out below — corroborating it would re-refuse a
+            # genuine SLURM requeue), and not where no query answered at all (an
+            # unanswerable probe is already UNKNOWN and the mtime tier bounds it).
+            owes_corroboration = False
+            # WHY this record is UNKNOWN, decided by the BRANCH that produced it and
+            # never inferred downstream from the record's own fields. It is emitted in
+            # the held listing so the operator is told the cause instead of matching
+            # their record against a prose enumeration. The default covers every
+            # remaining "written but not yet enriched" shape; each branch below
+            # overrides it where the cause is different.
+            unknown_cause = "unenriched"
             if mode == "1_job_many_srun_tasks":
-                jobid = s.get("slurm_jobid") or ""
                 # HOST-AGNOSTIC arm — SLURM is cluster-wide, so this arm is
                 # deliberately checked FIRST and is exempt from the same-host
                 # precondition below. Use the direct liveness primitive — NOT
@@ -8253,10 +8460,79 @@ exit $snakemake_status
                 # driver. _slurm_job_is_live has no _submitted/-path coupling.
                 # A null (not-yet-enriched) jobid is UNKNOWN, never DEAD.
                 alive = _slurm_job_is_live(jobid) if jobid else None
+                # THIS arm has no try/except, while the sibling job-id arm does. That
+                # asymmetry is why the corroboration sits OUTSIDE the dispatch chain
+                # rather than inside either arm's guard: whichever exception posture
+                # an arm has, the corroboration is reached identically.
+                owes_corroboration = alive is False
+            elif jobid and (origin_host is None or not same_host):
+                # SECOND host-agnostic arm, and its GUARD is the whole design.
+                # write_orchestrator_sentinel stamps $SLURM_JOB_ID at write time for
+                # any NON-"local" driver, so a batch_job driver hosted in an sbatch
+                # now records a cluster-resolvable id. Without this arm such a
+                # sentinel fell to the foreign-host branch below — its origin is a
+                # COMPUTE node, so same_host is false on any later resume — and was
+                # held UNKNOWN to the mtime-age cap with tmux_session_name never read.
+                # Measured 2026-09-13 on norfolk_stochastic_multimodel: one such
+                # sentinel blocked a resume for the full 4350-min cap.
+                #
+                # `origin_host is None or not same_host` is NOT tidiness. It keeps this
+                # arm from preempting the `mode == "local"` ps -p arm below, which is
+                # the DOCUMENTED reclaim path for the detached reprocess/static-plots
+                # self-sentinels (:7081 says so; :7083/:7308/:7676/:10943 all write
+                # mode="local"/pid=os.getpid(); the slurm reprocess arm Popens with
+                # start_new_session=True at :7142 and sets remove_self_sentinel=False
+                # at :7156). A same-host pid probe is a DIRECT measurement of that
+                # driver; an enclosing-allocation jobid is only a proxy, so the direct
+                # probe must win wherever it can answer.
+                my_jobid = os.environ.get("SLURM_JOB_ID") or ""
+                if mode in ("batch_job", "tmux") and my_jobid and jobid == my_jobid:
+                    # Written by a PRIOR invocation inside MY OWN allocation. A SLURM
+                    # requeue (JobRequeue=1 on UVA) re-runs the batch script from the
+                    # top and KEEPS the job id, so without this the recorded jobid
+                    # reads ALIVE and the requeue — the RECOVERY path these campaigns
+                    # rely on — would be refused. Restricted to the DETACHED modes: for
+                    # a "local" sentinel the premise "the script runs serially, so that
+                    # driver has already returned" is FALSE, because it may be a live
+                    # detached Popen reprocess started earlier in this same allocation.
+                    alive = False
+                    # DELIBERATELY NOT CORROBORATED. This DEAD verdict is an
+                    # INFERENCE from a shared allocation id, not a probe's "not
+                    # running" answer, so D1's corroboration does not apply to it:
+                    # asking a second query here would re-REFUSE the SLURM requeue
+                    # that this carve-out exists to admit. `owes_corroboration`
+                    # stays False on this branch.
+                else:
+                    try:
+                        alive = _slurm_job_is_live(jobid)
+                    except OSError:
+                        # No squeue on this host. The arm above is
+                        # 1_job_many_srun_tasks-only and therefore SLURM-by-construction;
+                        # this one is not, and _slurm_job_is_live catches only
+                        # TimeoutExpired, so an absent squeue would raise out of a
+                        # classifier whose entire contract is tri-state. UNKNOWN is the
+                        # correct answer and the age fail-safe already bounds it.
+                        alive = None
+                        unknown_cause = "squeue-unavailable"
+                    owes_corroboration = alive is False
             elif origin_host is not None and not same_host:
-                # FOREIGN ORIGIN HOST: the host-local probes cannot answer at all.
+                # FOREIGN ORIGIN HOST: the host-local probes cannot answer HERE.
                 # Do not run them; answer UNKNOWN and let the age fail-safe bound it.
                 alive = None
+                # "Cannot answer HERE" is only a HOST-LOCAL gap when a host-local
+                # probe could answer THERE. This branch guarantees no recorded job id
+                # (a job id would have taken the arm above), so the remaining identity
+                # is a pid or a tmux session name — and which of those is a probe
+                # depends on the MODE, because each mode arm reads its own field.
+                # A record with nothing its own mode can probe has no probe on ANY
+                # host, so sending the operator to the origin host is advice that
+                # cannot resolve it; that record's cause is the unenriched one, which
+                # the same mode arm assigns it the moment it is same-host.
+                _probe_on_origin = (mode == "local" and s.get("pid")) or (
+                    mode in ("tmux", "batch_job") and s.get("tmux_session_name")
+                )
+                if _probe_on_origin:
+                    unknown_cause = "host-local"
             elif mode == "local":
                 pid = s.get("pid")
                 if not pid:
@@ -8269,6 +8545,10 @@ exit $snakemake_status
                     # probe is honored regardless (erring ALIVE is the safe
                     # direction; PID-reuse false-ALIVE is bounded by the age cap).
                     alive = True if probe else (False if same_host else None)
+                    if not probe and not same_host:
+                        # Dead pid here is not dead evidence: the origin is elsewhere
+                        # or unrecorded, so `ps -p` only means "not alive HERE".
+                        unknown_cause = "host-local"
             elif mode in ("tmux", "batch_job"):
                 session = s.get("tmux_session_name")
                 if not session:
@@ -8278,9 +8558,53 @@ exit $snakemake_status
                 else:
                     probe = self._tmux_session_is_live(session)
                     alive = None if probe is None else (True if probe else (False if same_host else None))
+                    if probe is None:
+                        # tmux RAN and could not answer (typically the binary is not on
+                        # PATH on this host). A DIFFERENT cause from a dead session.
+                        unknown_cause = "tmux-unavailable"
+                    elif not probe and not same_host:
+                        unknown_cause = "host-local"
             else:
                 # Unrecognized driver record: do not silently proceed against it.
                 alive = None
+
+            if owes_corroboration:
+                # D1: a "not live" squeue answer is confirmed by a SECOND, separate
+                # query before either host-agnostic arm may reclaim this sentinel.
+                # squeue silence is equally what an aged-out accounting record looks
+                # like, so a bare not-live answer is not evidence of death. Only a
+                # terminal accounting row resolves the sentinel on the probe's own
+                # verdict. The three answers resolve HERE as:
+                #
+                #   "dead"    -> evidence-DEAD; reclaim, exactly as before.
+                #   "alive"   -> evidence-ALIVE; block, and the listing says so with
+                #                a DIRECT measurement rather than an inability to
+                #                answer.
+                #   "unknown" -> UNKNOWN; held, bounded by the gate's EXISTING
+                #                mtime-age fail-safe at the foot of this loop. NO
+                #                second bound is added here — the fail-safe is already
+                #                the single tier for an unanswerable record, and a
+                #                second one would duplicate the fail-safe.
+                try:
+                    verdict = _corroborate_not_live(jobid)
+                except OSError:
+                    # The corroborator's docstring says it never raises, but
+                    # _sacct_states_batched catches only TimeoutExpired and
+                    # FileNotFoundError, so any other OSError would escape a
+                    # classifier whose entire contract is tri-state — and this
+                    # call is the only remaining place IN THIS GATE an OSError
+                    # from the accounting query can land, because the first
+                    # query's probe absorbs its own launch OSErrors and answers
+                    # NOT-KNOWN. Outside this gate the same corroborator is
+                    # called from _recover_inflight_via_comment and from
+                    # _classify_live_sentinels with no such guard.
+                    # Resolve it to the corroborator's own NOT-KNOWN instead.
+                    verdict = "unknown"
+                if verdict == "alive":
+                    alive = True
+                elif verdict == "unknown":
+                    alive = None
+                    unknown_cause = "corroborated-hold"
 
             if alive:
                 live.append(f"{s.get('driver_id')} (mode={mode}, host={origin_host or 'unrecorded'}, liveness=ALIVE)")
@@ -8296,8 +8620,8 @@ exit $snakemake_status
                 if age_s < max_plausible_s:
                     live.append(
                         f"{s.get('driver_id')} (mode={mode}, host={origin_host or 'unrecorded'}, "
-                        f"liveness=UNKNOWN/held {int(age_s // 60)}min < {int(max_plausible_s // 60)}min cap, "
-                        f"sentinel={path})"
+                        f"liveness=UNKNOWN/held ({unknown_cause}) {int(age_s // 60)}min < "
+                        f"{int(max_plausible_s // 60)}min cap, sentinel={path})"
                     )
                     continue
                 reason = "UNKNOWN/age-exceeded"
@@ -8322,17 +8646,37 @@ exit $snakemake_status
                     f"for this analysis exists ({'; '.join(live)}). A {phase_label} coexists "
                     "with queued/running SLURM sim workers but must not run concurrently with a "
                     "live run()/reprocess DRIVER (unarbitrated concurrent consolidate-zarr "
-                    "write). Entries marked liveness=UNKNOWN/held could NOT be probed from "
-                    "this host — the sentinel's origin host differs from this one, its "
-                    "origin host was never recorded (a sentinel predating the hostname "
-                    "field), an identity field has not been enriched yet, or tmux could not "
-                    "be run here (on an Lmod cluster try `module load tmux`). Such entries "
-                    "are held conservatively rather than assumed dead, and are reclaimed "
-                    "automatically once the sentinel exceeds the max plausible driver "
-                    "lifetime shown above. Resolve by: (a) waiting for the driver to finish "
-                    "or for the cap to elapse; (b) re-running from the sentinel's origin "
-                    "host so the probe can answer; or (c) if you have independently "
-                    "confirmed the driver is gone, deleting the named sentinel file."
+                    "write). Entries marked liveness=UNKNOWN/held carry their CAUSE in "
+                    "parentheses. The cause is decided by the gate's own branch, not "
+                    "inferred from host= — a record's origin host does not settle it, "
+                    "because the job-id arms are host-agnostic and are tested first. "
+                    "Resolve by the cause named on the entry:\n"
+                    "  corroborated-hold — squeue answered NOT live for the recorded job "
+                    "id and the corroborating `sacct` query could not confirm it (no "
+                    "accounting row, a purged record, an absent or timed-out `sacct`). "
+                    "The probe DID answer from this host, so re-running elsewhere will not "
+                    "change the answer. Wait: the second query resolves as soon as the "
+                    "accounting record catches up, and a genuinely dead job is then "
+                    "reclaimed automatically.\n"
+                    "  squeue-unavailable — the first query could not run here (no "
+                    "`squeue` on PATH). Run the gate on a host that has SLURM available, "
+                    "or wait for the cap.\n"
+                    "  tmux-unavailable — tmux could not be run here. On an Lmod cluster "
+                    "try `module load tmux` on this host and re-run; otherwise wait for "
+                    "the cap.\n"
+                    "  host-local — a host-local probe (`ps -p` or `tmux has-session`) "
+                    "could not answer because the sentinel's origin differs from this "
+                    "host or its origin was never recorded. Re-run from the origin host so "
+                    "the probe can answer; if host= is `unrecorded` there is no origin "
+                    "host to re-run from.\n"
+                    "  unenriched — the sentinel was written but its identity has not been "
+                    "enriched yet (no pid, no tmux session name, or no recorded job id), "
+                    "or its mode= is unrecognized. These resolve on their own as "
+                    "submit_workflow() proceeds.\n"
+                    "Every cause is bounded by the lifetime cap: the entry is reclaimed "
+                    "automatically once it exceeds the max plausible driver lifetime shown "
+                    "above. For any cause, once you have independently confirmed the "
+                    "driver is gone, deleting the named sentinel file is the direct remedy."
                 ),
             )
         return None

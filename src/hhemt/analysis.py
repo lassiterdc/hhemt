@@ -26,7 +26,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
 import yaml
@@ -6652,7 +6652,14 @@ class TRITONSWMM_analysis:
                     )
             return self._reorder_df_status_columns(df_status_joined)
 
-    def _selective_cancel(self, *, rule_classes: tuple[str, ...], session_name: str, verbose: bool) -> dict:
+    def _selective_cancel(
+        self,
+        *,
+        rule_classes: tuple[str, ...],
+        session_name: str,
+        verbose: bool,
+        driver_already_gone: bool = False,
+    ) -> dict:
         """Step 1b of cancel(): scancel the SIM class — running AND pending — then kill the driver.
 
         _status/_submitted/ is worker-written at process START, so it cannot
@@ -6669,9 +6676,22 @@ class TRITONSWMM_analysis:
         "jobs_were_running", "message", "session_name", "errors" and "cancelled" (the
         (token, jobid) pairs scancelled); unlike cancel()'s other returns it carries no
         "analysis_id".
+
+        A raise from either external call is RECORDED rather than propagated: it lands in
+        "errors", "success" becomes False, "session_canceled" is False when the kill did not
+        run, and "jobs_were_running" is None when the scancel could not answer -- because a
+        scancel that never ran established nothing about the jobs it was given. Neither
+        call's failure is read as evidence about the other.
+
+        The LIVENESS query is a third non-answer source, and it is reported WITHOUT touching
+        "jobs_were_running". `_squeue_live_jobids` returns None when it cannot answer, and on
+        that state part (ii) of the set is ABSTAINED -- the observed sims are not widened
+        against an empty live set, which would report the same cancelled set as an answering
+        query that found nothing live. The withheld tokens are named in "errors" and the same
+        sentence reaches "message"; "jobs_were_running" keeps reporting only what was
+        actually scancelled, because that is a fact this function did establish.
         """
         import json as _json
-        import subprocess  # analysis.py binds subprocess function-locally (module style); keep it so here
 
         from hhemt.workflow import _squeue_live_jobids, parse_tmux_submissions
 
@@ -6701,40 +6721,131 @@ class TRITONSWMM_analysis:
                 _observed.update(parse_tmux_submissions(_lp.read_text(errors="replace")))
             except OSError:
                 continue
-        _live = _squeue_live_jobids(self._workflow_builder._tmux_slurm_run_uuids()) or set()
+        # The liveness query answers THREE states, and the third one is NOT an answer:
+        # `_squeue_live_jobids` returns None when squeue is absent, fails, times out, or when
+        # there is no run uuid to ask about, and its docstring binds every caller to read that
+        # as NOT-KNOWN -- "the caller treats None as NOT-KNOWN (mtime tier governs), never as
+        # 'nothing live'". `or set()` here collapsed the third state onto an ANSWER, so on the
+        # unanswerable path every tmux-log-observed sim was filtered out by `_jid not in _live`
+        # and the whole observed set was dropped: queued sims missed, and the count reported
+        # accurately as zero. ABSTAIN instead -- the widening IS the observed set intersected
+        # with an answer, so with no answer there is no widening to perform -- and report the
+        # abstention below rather than substituting an empty answer for it. The `_submitted/`
+        # matches are untouched either way: workers write those at process START, and they
+        # never depended on this query.
+        _live = _squeue_live_jobids(self._workflow_builder._tmux_slurm_run_uuids())
         _seen = {j for _, j in _matched}
         _skipped_reclaiming = 0
+        # Observed sim tokens the abstention withheld, reported only when the abstention
+        # actually withheld something. With none the selection is IDENTICAL on both states and
+        # nothing was dropped, so asserting an incomplete selection there would be a fresh
+        # non-answer of its own (a "did not complete" for a query that had nothing to
+        # contribute); with at least one, the two outcomes are exactly what must not be
+        # conflated. A token whose sim already COMPLETED is resolved by its flag alone -- no
+        # squeue involved -- so the abstention withheld nothing there and it is not counted.
+        _withheld: list[str] = []
         for _tok, _jid in _observed.items():
-            if not any(_tok.startswith(pfx) for pfx in rule_classes) or _jid in _seen or _jid not in _live:
+            if not any(_tok.startswith(pfx) for pfx in rule_classes) or _jid in _seen:
                 continue
-            if _tok.startswith("run_") and (_status / f"c_{_tok}_complete.flag").exists():
+            _sim_done_with_flag = _tok.startswith("run_") and (_status / f"c_{_tok}_complete.flag").exists()
+            if _live is None:
+                if not _sim_done_with_flag:
+                    _withheld.append(_tok)
+                continue
+            if _jid not in _live:
+                continue
+            if _sim_done_with_flag:
                 _skipped_reclaiming += 1  # sim done; processing (reclaim) in flight
                 continue
             _matched.append((_tok, _jid))
             _seen.add(_jid)
+        # Both calls below are ACTIONS, and a raise from either is a NON-ANSWER: it says
+        # neither that the jobs were cancelled nor that they were not. Each failure is
+        # recorded and reported instead of escaping into workflow.py's broad handler, which
+        # would discard this function's whole mapping -- the counts, the skipped-reclaiming
+        # tally, the driver clause -- and leave the operator a generic message.
+        _errors: list[str] = []
+        if _withheld:
+            # The abstention reaches BOTH report channels, and it is a NON-ANSWER rather than
+            # a failure of the calls below, so it reads differently from them: the cancel ran
+            # and its selection may be incomplete, which is not the same as "cancelled
+            # nothing". `success` follows False because this function's own contract is that
+            # a non-answer is never a completed cancel.
+            _errors.append(
+                f"squeue could not be queried, so {len(_withheld)} SLURM-observed sim token(s) "
+                f"were NOT considered (e.g. {_withheld[0]}); the cancelled set is the "
+                f"_status/_submitted/ selection alone, so any of them still queued is left running"
+            )
+        _scancel_err: str | None = None
         if _matched:
-            subprocess.run(["scancel", *[j for _, j in _matched]], capture_output=True)
-        subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
+            _, _scancel_err = _run_no_raise(
+                ["scancel", *[j for _, j in _matched]],
+                what=f"scancel of {len(_matched)} job(s) matching {list(rule_classes)}",
+                capture_output=True,
+            )
+            if _scancel_err:
+                _errors.append(_scancel_err)
+        _, _kill_err = _run_no_raise(
+            ["tmux", "kill-session", "-t", session_name],
+            what=f"tmux kill-session of '{session_name}'",
+            capture_output=True,
+        )
+        if _kill_err:
+            _errors.append(_kill_err)
         if verbose:
+            # The driver clause is STATE-DEPENDENT, because "driver session killed" is false
+            # when the session was already gone and this print is the only transcript an
+            # operator reads at the console. Deliberately NOT neutralised into a sentence
+            # true of both states: on the ALIVE path the kill really happened and the
+            # operator needs to see it, and a both-states sentence would stop saying so.
+            # A FAILED kill is a third state for the same reason: asserting either outcome
+            # would report something this call did not produce.
+            if _kill_err is not None:
+                _driver_clause = "driver session kill FAILED (recorded in errors)"
+            elif driver_already_gone:
+                _driver_clause = "driver session was ALREADY gone, so this killed no session"
+            else:
+                _driver_clause = "driver session killed AFTER scancel"
+            _scancel_clause = f"; scancel FAILED for {len(_matched)} selected job(s)" if _scancel_err else ""
+            # The console carries the same claim as the mapping (an operator reads the console,
+            # a consumer reads the mapping, and a defect surviving in either channel is the same
+            # defect one reader over), so the widening clause states what ACTUALLY happened:
+            # "tmux-log∩squeue live" is false when the query could not answer.
+            _widening_clause = (
+                "tmux-log∩squeue live"
+                if _live is not None
+                else f"tmux-log NOT widened: squeue could not answer, {len(_withheld)} observed token(s) withheld"
+            )
             print(
                 f"[Cancel] Selective cancel: {len(_matched)} job(s) matching {list(rule_classes)} "
-                f"({len(_seen)} distinct jobids: _submitted/ + tmux-log∩squeue live; "
-                f"{_skipped_reclaiming} skipped as sim-done/reclaiming); driver session killed "
-                f"AFTER scancel; other jobs left running.",
+                f"({len(_seen)} distinct jobids: _submitted/ + {_widening_clause}; "
+                f"{_skipped_reclaiming} skipped as sim-done/reclaiming); {_driver_clause}; "
+                f"other jobs left running{_scancel_clause}.",
                 flush=True,
             )
         return {
-            "success": True,
-            "session_canceled": True,
-            "workers_canceled": bool(_matched),
-            "jobs_were_running": bool(_matched),
+            "success": not _errors,
+            "session_canceled": _kill_err is None,
+            "workers_canceled": bool(_matched) and _scancel_err is None,
+            # None is the contract's "not determined" (see cancel()'s jobs_were_running
+            # docstring): a scancel that could not run established nothing about the jobs it
+            # was handed, so False here would report a determined absence of cancellations.
+            "jobs_were_running": (bool(_matched) if _scancel_err is None else None),
             "message": (
                 f"Cancelled {len(_matched)} job(s) matching {list(rule_classes)}; "
                 f"processing jobs left running; driver session killed."
+                if not _errors
+                else f"Selective cancel did not complete: {'; '.join(_errors)}"
             ),
             "session_name": session_name,
-            "errors": [],
-            "cancelled": _matched,
+            "errors": _errors,
+            # EMPTY when the scancel could not run: this key is documented as "the (token,
+            # jobid) pairs SCANCELLED" and its one consumer (workflow.py:6780) reads a
+            # non-empty list as "Cancelled N simulation job(s)". Handing it the SELECTED
+            # set on the failure path would state a cancellation that never happened --
+            # the same non-answer-as-positive-finding this helper exists to remove, at the
+            # one field the caller actually branches on.
+            "cancelled": _matched if _scancel_err is None else [],
         }
 
     def cancel(
@@ -6759,7 +6870,9 @@ class TRITONSWMM_analysis:
         terminal sessions (close terminal, reopen, reinitialize analysis, call cancel).
 
         **Key features:**
-        - Checks if session is actually running before attempting cancellation
+        - Checks if session is actually running before attempting cancellation, and
+          distinguishes a gone session (the selective arm still cancels its sims) from a
+          probe that could not answer (reported as unknown, never as completion)
         - Default branch: sends SIGINT to the Snakemake process for clean cancellation
         - Waits for Snakemake to finish canceling worker jobs
         - Asks SLURM whether any worker job recorded under the driver's run uuids is
@@ -6788,13 +6901,21 @@ class TRITONSWMM_analysis:
               longer exists. On the full cancel, True only when no step recorded an error
               and no worker job was found still live; when no Snakemake PID can be found
               the session is killed and success is True, with the missing PID recorded in
-              ``errors``. The selective path always returns True.
-            - session_canceled: bool
+              ``errors``. The selective path returns False in three cases, not two: on the
+              UNKNOWN arm below, whenever one of its own external calls raised, and when its
+              liveness query could not answer and the observed-sim widening was abstained
+              from -- all three are non-answers rather than a completed cancel.
+            - session_canceled: bool. On the selective path, False in two cases: the
+              driver's session was already gone, because this call killed nothing; and the
+              kill itself raised, because then it killed nothing either.
             - workers_canceled: bool. On the full cancel, True only when the worker check
               ran and found no live worker job; False when the check could not run. On
               the selective path, True when at least one job was scancelled.
-            - jobs_were_running: bool (False when no session is recorded or it no longer
-              exists; on the selective path, True when at least one job was scancelled)
+            - jobs_were_running: bool | None (False when no session is recorded or it no
+              longer exists; on the selective path, True when at least one job was
+              scancelled; None when EITHER the session probe or the scancel could not
+              answer, because False there would assert a determined absence that neither
+              probe nor scancel established)
             - message: str
             - session_name: str | None
             - analysis_id: str (not on the selective path)
@@ -6844,32 +6965,76 @@ class TRITONSWMM_analysis:
                 "errors": [],
             }
 
-        # Check if session still exists
-        session_check = subprocess.run(
-            ["tmux", "has-session", "-t", session_name],
-            capture_output=True,
-            text=True,
-        )
+        # Step 0b: is the driver's tmux session still there? Three answers, not two -- see
+        # _probe_state. A non-zero return says the SESSION is gone and says nothing about
+        # the sims that session submitted: `_status/_submitted/` is written by the workers
+        # and outlives the driver, and a PENDING sim has not written one yet. GONE therefore
+        # still dispatches the selective arm below; returning "already completed" on it left
+        # the sims running with nothing watching them.
+        _session_state, _session_detail = _probe_state(["tmux", "has-session", "-t", session_name])
 
-        if session_check.returncode != 0:
+        if _session_state == _PROBE_UNKNOWN:
+            # The probe declined to answer, so neither branch below is available: reporting
+            # "already completed" would fabricate an absence, and dispatching the selective
+            # arm would act on a session whose existence was never determined. Report the
+            # non-answer and claim nothing.
             if verbose:
                 print(
-                    f"[Cancel] Tmux session '{session_name}' no longer exists (workflow already completed)",
+                    f"[Cancel] Could not determine whether tmux session '{session_name}' exists ({_session_detail})",
                     flush=True,
                 )
             return {
-                "success": True,
+                "success": False,
                 "session_canceled": False,
                 "workers_canceled": False,
-                "jobs_were_running": False,
+                # NOT False: `False` asserts that nothing was running, and this probe
+                # established nothing. `None` is the contract's "not determined".
+                "jobs_were_running": None,
                 "session_name": session_name,
                 "analysis_id": analysis_id,
-                "message": f"Tmux session '{session_name}' already completed",
-                "errors": [],
+                "message": (
+                    f"Could not determine whether tmux session '{session_name}' is still running "
+                    f"({_session_detail}). Nothing was cancelled, so whether any simulation job is "
+                    f"queued or running is UNKNOWN, not zero."
+                ),
+                "errors": [f"tmux has-session probe could not answer: {_session_detail}"],
             }
 
+        if _session_state == _PROBE_GONE:
+            if verbose:
+                if rule_classes is None:
+                    print(
+                        f"[Cancel] Tmux session '{session_name}' no longer exists (workflow already completed)",
+                        flush=True,
+                    )
+                else:
+                    # The selective arm runs on this path, so "workflow already completed" is
+                    # the one thing this transcript must NOT say: the driver is gone and its
+                    # submitted sims are not, which is precisely why they are about to be
+                    # cancelled. The mapping already reports it that way; the console must
+                    # not contradict it.
+                    print(
+                        f"[Cancel] Tmux session '{session_name}' no longer exists; the sims it "
+                        f"submitted are NOT thereby gone, so the selective cancel still runs",
+                        flush=True,
+                    )
+            if rule_classes is None:
+                # The FULL cancel has nothing left to signal, so a gone session is its
+                # documented no-op arm. The SELECTIVE arm does not stop here -- it reaches
+                # the sim class below, which is why this return is conditional.
+                return {
+                    "success": True,
+                    "session_canceled": False,
+                    "workers_canceled": False,
+                    "jobs_were_running": False,
+                    "session_name": session_name,
+                    "analysis_id": analysis_id,
+                    "message": f"Tmux session '{session_name}' already completed",
+                    "errors": [],
+                }
+
         # Session exists, proceed with cancellation
-        if verbose:
+        if verbose and _session_state == _PROBE_ALIVE:
             print(
                 f"[Cancel] Canceling workflow in tmux session '{session_name}'",
                 flush=True,
@@ -6877,36 +7042,14 @@ class TRITONSWMM_analysis:
 
         errors = []
 
-        # Step 1: Get current Snakemake PID (may have changed since submission)
-        current_pid = self._workflow_builder._get_snakemake_pid_from_tmux(session_name)
-        if current_pid:
-            snakemake_pid = current_pid
-        elif not snakemake_pid:
-            # Could not find PID - try killing session directly
-            if verbose:
-                print(
-                    "[Cancel] WARNING: Could not find Snakemake PID. Killing tmux session directly.",
-                    flush=True,
-                )
-            subprocess.run(
-                ["tmux", "kill-session", "-t", session_name],
-                capture_output=True,
-            )
-            self.log.workflow_canceled.set(True)
-            self.log.workflow_cancellation_time.set(datetime.datetime.now().isoformat())
-
-            return {
-                "success": True,
-                "session_canceled": True,
-                "workers_canceled": False,  # Unknown
-                "jobs_were_running": True,
-                "session_name": session_name,
-                "analysis_id": analysis_id,
-                "message": "Tmux session killed (PID not found - worker cleanup uncertain)",
-                "errors": ["Could not find Snakemake PID for clean cancellation"],
-            }
-
-        # Step 1b: SELECTIVE arm. Step 2's SIGINT reaches Snakemake's
+        # Step 1b: SELECTIVE arm, dispatched BEFORE Step 1's PID resolution below, because
+        # this arm never reads the PID and resolving it first made the arm unreachable on
+        # the path it exists for (the PID-not-found return inside Step 1 kills the session
+        # and cancels no sim). Deliberately NOT reordered back, and deliberately left
+        # labelled 1b rather than renumbered: _selective_cancel's docstring names this site
+        # as "Step 1b of cancel()".
+        #
+        # Step 2's SIGINT reaches Snakemake's
         # cancel_jobs(), which cancels EVERY in-flight job -- sims and processing alike
         # -- and cannot be made selective, so a filtered cancel scancels the chosen
         # jobids itself. That is ONE methodology with two branches, not a parallel path.
@@ -6928,7 +7071,82 @@ class TRITONSWMM_analysis:
             # Step 1b body lives in _selective_cancel: one methodology, two
             # arms — the SIGINT arm below cancels everything; this arm cancels the sim class
             # (pending + running) and leaves post-sim processing alone.
-            return self._selective_cancel(rule_classes=rule_classes, session_name=session_name, verbose=verbose)
+            _selective_result = self._selective_cancel(
+                rule_classes=rule_classes,
+                session_name=session_name,
+                verbose=verbose,
+                driver_already_gone=(_session_state == _PROBE_GONE),
+            )
+            if _session_state == _PROBE_GONE:
+                # _selective_cancel reports "driver session killed", which is untrue on this
+                # path: the session was already gone, so its kill-session was a no-op and the
+                # scancel is the only action that took effect. Keep the scancel facts and
+                # replace the two fields the driver's absence falsifies -- otherwise the
+                # operator is told a session was killed by this call when none existed.
+                if _selective_result.get("errors"):
+                    # The selective arm recorded a failure, so the sentence below must not
+                    # claim its sims "were cancelled": that is the same claim the mapping
+                    # stopped making one level down, and rewriting the message here would
+                    # reinstate it from the outer frame.
+                    _gone_message = (
+                        f"Driver session '{session_name}' was already gone when the cancel ran, so "
+                        f"no session was killed. The selective cancel did NOT complete: "
+                        f"{'; '.join(_selective_result['errors'])}"
+                    )
+                else:
+                    _gone_message = (
+                        f"Driver session '{session_name}' was already gone when the cancel ran, so "
+                        f"no session was killed; "
+                        f"{len(_selective_result.get('cancelled') or ())} simulation job(s) matching "
+                        f"{list(rule_classes)} were cancelled and processing jobs left running."
+                    )
+                _selective_result = {
+                    **_selective_result,
+                    "session_canceled": False,
+                    "message": _gone_message,
+                }
+            return _selective_result
+
+        # Step 1: Get current Snakemake PID (may have changed since submission)
+        current_pid = self._workflow_builder._get_snakemake_pid_from_tmux(session_name)
+        if current_pid:
+            snakemake_pid = current_pid
+        elif not snakemake_pid:
+            # Could not find PID - try killing session directly
+            if verbose:
+                print(
+                    "[Cancel] WARNING: Could not find Snakemake PID. Killing tmux session directly.",
+                    flush=True,
+                )
+            _, _kill_err = _run_no_raise(
+                ["tmux", "kill-session", "-t", session_name],
+                what=f"tmux kill-session of '{session_name}'",
+                capture_output=True,
+            )
+            if _kill_err is not None:
+                # A raise from the kill is a NON-ANSWER about the session: it is no evidence
+                # the session was ended and none that it survived. Both fields below used to
+                # assert the kill happened, so they now report what was determined instead.
+                errors.append(_kill_err)
+                if verbose:
+                    print(f"[Cancel]   ✗ {_kill_err}", flush=True)
+            self.log.workflow_canceled.set(True)
+            self.log.workflow_cancellation_time.set(datetime.datetime.now().isoformat())
+
+            return {
+                "success": _kill_err is None,
+                "session_canceled": _kill_err is None,
+                "workers_canceled": False,  # Unknown
+                "jobs_were_running": True,
+                "session_name": session_name,
+                "analysis_id": analysis_id,
+                "message": (
+                    "Tmux session killed (PID not found - worker cleanup uncertain)"
+                    if _kill_err is None
+                    else f"Could not kill tmux session (PID not found): {_kill_err}"
+                ),
+                "errors": ["Could not find Snakemake PID for clean cancellation", *errors],
+            }
 
         # Step 2: Send SIGINT to Snakemake process
         if verbose:
@@ -6962,22 +7180,37 @@ class TRITONSWMM_analysis:
 
         start_time = time.time()
         process_exited = False
+        # Tracked APART from process_exited, because "ps could not run" and "ps ran and said
+        # the process is gone" are different findings. Collapsing them let the timeout
+        # message below claim a wait that never ran to its end.
+        process_exit_unknown = False
 
         while time.time() - start_time < wait_timeout:
             time.sleep(2)
 
             # Check if process still exists using ps (works across permission boundaries)
-            ps_check = subprocess.run(
+            _ps_check, _ps_err = _run_no_raise(
                 ["ps", "-p", str(snakemake_pid)],
+                what=f"ps -p {snakemake_pid}",
                 capture_output=True,
             )
             elapsed = int(time.time() - start_time)
+            if _ps_err is not None:
+                # A `ps` that will not run answers NOTHING about the process. Reporting
+                # `process_exited` here would turn a cannot-answer into the determined
+                # absence this whole contract exists to remove, so the loop stops with the
+                # state marked unknown and the failure carried into the returned mapping.
+                process_exit_unknown = True
+                errors.append(_ps_err)
+                if verbose:
+                    print(f"[Cancel]   ⚠ {_ps_err}", flush=True)
+                break
             if debug:
                 print(
-                    f"[Cancel]   [debug] ps returncode={ps_check.returncode} at {elapsed}s",
+                    f"[Cancel]   [debug] ps returncode={_ps_check.returncode} at {elapsed}s",
                     flush=True,
                 )
-            if ps_check.returncode != 0:
+            if _ps_check.returncode != 0:
                 process_exited = True
                 if verbose:
                     print(
@@ -6987,14 +7220,23 @@ class TRITONSWMM_analysis:
                 break
 
         if not process_exited:
-            error_msg = f"Snakemake process {snakemake_pid} did not exit within {wait_timeout}s"
-            errors.append(error_msg)
-            if verbose:
-                print(f"[Cancel]   ⚠ {error_msg}", flush=True)
-                print(
-                    "[Cancel]   (Killing tmux session anyway)",
-                    flush=True,
-                )
+            if process_exit_unknown:
+                # The non-answer is already in `errors`; only the operator's next-step line
+                # belongs here, because the timeout entry below would be false.
+                if verbose:
+                    print(
+                        "[Cancel]   (Killing tmux session anyway)",
+                        flush=True,
+                    )
+            else:
+                error_msg = f"Snakemake process {snakemake_pid} did not exit within {wait_timeout}s"
+                errors.append(error_msg)
+                if verbose:
+                    print(f"[Cancel]   ⚠ {error_msg}", flush=True)
+                    print(
+                        "[Cancel]   (Killing tmux session anyway)",
+                        flush=True,
+                    )
 
         # Step 4: count this driver's worker jobs SLURM still shows as live. They are found
         # by the run uuids the driver recorded (`sacct --name`) over the last two days;
@@ -7061,27 +7303,48 @@ class TRITONSWMM_analysis:
             elif verbose:
                 print("[Cancel]   ✓ All worker jobs canceled", flush=True)
 
-        except (subprocess.TimeoutExpired, FileNotFoundError):
+        except Exception as exc:
+            # The arm is GENERAL rather than (TimeoutExpired, FileNotFoundError), and it is
+            # widened rather than wrapped by a second handler: the conclusion is identical
+            # for any raise from these calls -- the workers are UNVERIFIED, never assumed
+            # cancelled -- while the narrow tuple let every other exception escape into
+            # workflow.py's broad handler, which replaced this whole cancel report with a
+            # generic message.
+            #
+            # `unverified_msg` is appended VERBATIM and stays the SOLE entry, because its
+            # exact text is a published contract (tests/test_cancel_worker_check.py asserts
+            # this string is in `errors`). The exception's identity is diagnostic rather
+            # than part of that contract, so it goes to the console, where no consumer
+            # parses it -- appending it to `errors` would edit a published list to carry a
+            # detail nobody reads programmatically.
             workers_verified = False
             errors.append(unverified_msg)
             if verbose:
-                print(f"[Cancel]   ⚠ {unverified_msg}", flush=True)
+                print(f"[Cancel]   ⚠ {unverified_msg} ({type(exc).__name__}: {exc})", flush=True)
 
         # Step 5: Kill tmux session
         if verbose:
             print("[Cancel] Cleaning up tmux session...", flush=True)
 
-        kill_result = subprocess.run(
+        _kill_result, _kill_err = _run_no_raise(
             ["tmux", "kill-session", "-t", session_name],
+            what=f"tmux kill-session of '{session_name}'",
             capture_output=True,
             text=True,
         )
 
-        if kill_result.returncode == 0:
+        if _kill_err is not None:
+            # No stderr to read and no returncode to branch on, so the failure IS the
+            # finding: recorded in `errors`, which is what turns `success` False below.
+            # Claiming "terminated" here would assert a kill that never ran.
+            errors.append(_kill_err)
+            if verbose:
+                print(f"[Cancel]   ✗ {_kill_err}", flush=True)
+        elif _kill_result.returncode == 0:
             if verbose:
                 print("[Cancel]   ✓ Tmux session terminated", flush=True)
         else:
-            error_msg = f"Failed to kill tmux session: {kill_result.stderr.strip()}"
+            error_msg = f"Failed to kill tmux session: {_kill_result.stderr.strip()}"
             errors.append(error_msg)
             if verbose:
                 print(f"[Cancel]   ✗ {error_msg}", flush=True)
@@ -7114,6 +7377,85 @@ class TRITONSWMM_analysis:
 
 
 # %%
+# Driver-reachability probe contract: ALIVE / GONE / UNKNOWN.
+#
+# A yes/no question asked over a bare subprocess has THREE outcomes, and only one of them
+# is a negative answer. Collapsing the third onto either of the others converts "the probe
+# could not answer" into a positive claim -- in `cancel()` that claim is "the workflow
+# already completed" with `jobs_were_running: False`, which is how an unanswerable probe
+# came to report a determined absence. The vocabulary is module-level rather than local to
+# `cancel()` so that a second probe needing the same answer calls this classification
+# instead of minting a copy that drifts against it.
+_PROBE_ALIVE = "alive"
+_PROBE_GONE = "gone"
+_PROBE_UNKNOWN = "unknown"
+
+
+def _probe_state(argv: list[str]) -> tuple[str, str | None]:
+    """Classify a yes/no external probe as ALIVE, GONE or UNKNOWN.
+
+    Returns ``(state, detail)``. ``detail`` is ``None`` for ALIVE and an operator-readable
+    reason otherwise: the exception's type and message for UNKNOWN, the exit status or the
+    command's stderr for GONE.
+
+    A RAISE IS UNKNOWN AND NEVER GONE, and that is the reason the third state exists. An
+    unloaded `tmux` module on an Lmod cluster raises `FileNotFoundError` out of a bare argv
+    instead of returning non-zero, so reading a raise as a negative answer reports an
+    absence that the probe never established -- an operator sees "nothing was running"
+    where the truth is "the question was never answered".
+
+    Deliberately a helper rather than three inline branches: the classification IS the
+    contract, so a second probe that needs the same three states calls this instead of
+    re-deriving which outcome means what.
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True)
+    except Exception as exc:  # UNKNOWN is this contract's third state, not an error to raise
+        return _PROBE_UNKNOWN, f"{type(exc).__name__}: {exc}"
+    if proc.returncode == 0:
+        return _PROBE_ALIVE, None
+    return _PROBE_GONE, (getattr(proc, "stderr", "") or "").strip() or f"exit {proc.returncode}"
+
+
+def _run_no_raise(
+    argv: list[str],
+    *,
+    what: str,
+    **run_kwargs: Any,
+) -> tuple[Any, str | None]:
+    """Run an ACTION whose failure must not escape `cancel()`; return ``(result, error)``.
+
+    ``result`` is the ``subprocess.CompletedProcess`` when the call ran and ``None`` when it
+    raised; ``error`` is ``None`` on success and an operator-readable sentence otherwise.
+    Both are typed ``Any`` deliberately: this module binds ``subprocess`` FUNCTION-LOCALLY
+    (so ``subprocess.CompletedProcess`` is unavailable as a module-scope annotation, and
+    without ``from __future__ import annotations`` a quoted one would not resolve either),
+    and the callers do no more than read ``returncode``/``stderr`` off a non-``None`` result.
+
+    A RAISE IS A NON-ANSWER, NOT A NEGATIVE RESULT, which is why the failure is RETURNED
+    rather than re-raised or swallowed. ``scancel`` and ``tmux kill-session`` are actions: a
+    raise from one is no evidence that the job was cancelled and no evidence that it was not,
+    so a caller reporting either conclusion from it would be inventing one. The same argument
+    governs ``ps``, whose raise says nothing about whether the process exited. Left uncaught,
+    such a raise escaped ``cancel()`` into :mod:`hhemt.workflow`'s broad handler, which
+    replaced this module's own cancel mapping -- job counts, skipped-reclaiming, the driver
+    clause -- with a generic message, so the operator lost the non-answer AND its context.
+
+    ``what`` names the action inside the returned sentence, so the caller's ``errors`` list
+    says WHICH of the cancel's calls could not be asked rather than only what was raised.
+
+    Deliberately NOT ``_probe_state``: that helper classifies a YES/NO question as
+    ALIVE/GONE/UNKNOWN, and an action has no "gone" reading. Routing an action's failure
+    through it would name a state the action never had.
+    """
+    import subprocess
+
+    try:
+        return subprocess.run(argv, **run_kwargs), None
+    except Exception as exc:  # a non-answer is this contract's third state, not an error to raise
+        return None, f"{what} failed ({type(exc).__name__}: {exc})"
 
 
 def _recommendation_ladder(

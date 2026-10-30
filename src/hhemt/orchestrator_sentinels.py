@@ -69,7 +69,48 @@ def write_orchestrator_sentinel(
         # of the key IS the version signal, and it carries strictly more
         # information than a version int would.
         "hostname": socket.gethostname(),
-        "slurm_jobid": slurm_jobid,
+        # SELF-SUFFICIENT AT WRITE TIME, and host-agnostic — the two properties the
+        # `hostname` field above deliberately does NOT have. `enrich_orchestrator_sentinel`
+        # runs only AFTER submit_workflow() returns (analysis.py, sensitivity_analysis.py)
+        # and sits OUTSIDE the try/finally, so a driver killed mid-run never enriches and
+        # leaves a permanently unresolvable record. A driver launched inside an allocation
+        # already knows its job id here, and SLURM is cluster-wide, so this is the one
+        # identifier a LATER resume on a DIFFERENT node can resolve — `tmux has-session`
+        # and `ps -p` cannot, and for a compute-node origin the gate's foreign-host branch
+        # short-circuits above them so `tmux_session_name` is never even read.
+        #
+        # NOT STAMPED ON A "local" SENTINEL, and that exclusion is load-bearing rather
+        # than fastidious. FOUR of the five write sites (workflow.py:7477, :7703, :8069,
+        # :11392) are reprocess/static-plots SELF-sentinels that hardcode
+        # workflow_submission_mode="local" and pid=os.getpid(), and :7476 documents their
+        # reclaim path as the gate's `ps -p {pid}` arm. `_orchestrator_liveness_gate`
+        # does NOT dispatch on mode before identity, and it is not one branch that reads
+        # the job id: identity decides first, and TWO arms read it — the
+        # `1_job_many_srun_tasks` arm, and the arm that fires on any record carrying a
+        # job id whose origin host is foreign or unrecorded. Both are host-agnostic and
+        # are tested ahead of every host-local probe, so a job id written on a record
+        # away from its own host IS examined. The exclusion is still right, for a ground
+        # that does not depend on dispatch order: a `local` sentinel's own reclaim arm is
+        # the `ps -p` probe over its `pid`, so on its own host the recorded job id is
+        # never consulted, while away from its own host a stamped job id would promote
+        # the record to the machine-wide arms and classify a DRIVER by its enclosing
+        # ALLOCATION's liveness — a different subject, and the wrong one. Only :8226
+        # (_acquire_submit_driver_claim) passes a real mode, so this condition confines
+        # the new field to the submit path.
+        #
+        # Additive + OPTIONAL, exactly like `hostname`: unset outside an allocation (a
+        # login-node batch_job driver) -> None -> the gate's existing UNKNOWN bucket,
+        # unchanged. An explicit `slurm_jobid` argument still wins, and
+        # `enrich_orchestrator_sentinel` only overwrites when its own argument is not
+        # None, so a single-job driver's post-submit jobid still replaces this one. No
+        # schema version and no migration: absence of the key IS the version signal, and
+        # `_status/_orchestrator/` is ephemeral run-state, not analysis-tree layout, so no
+        # LAYOUT_VERSION bump is owed.
+        "slurm_jobid": (
+            slurm_jobid
+            if slurm_jobid is not None
+            else (os.environ.get("SLURM_JOB_ID") if workflow_submission_mode != "local" else None)
+        ),
         "tmux_session_name": tmux_session_name,
         "workflow_submission_mode": workflow_submission_mode,
         "submitted_at": datetime.now().isoformat(),

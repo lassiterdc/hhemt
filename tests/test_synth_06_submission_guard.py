@@ -91,7 +91,14 @@ def test_reconcile_fast_path_no_sentinels(synthetic_multisim_builder):
 
 
 def test_recover_inflight_via_comment_parses_sacct(monkeypatch, synthetic_multisim_builder):
-    """The sacct-parsing path returns live + comment-matched jobs and skips malformed lines."""
+    """The sacct-parsing path returns live + comment-matched jobs and skips malformed lines.
+
+    The corroborator's second query is pinned to "dead" for 9002 rather than left
+    to run: left real, it answers NOT-KNOWN here (the fake buffer carries the
+    scan's three-field row, not the probe's four-field one), and NOT-KNOWN resolves
+    to INCLUSION at this site — which would make this parse test an assertion about
+    the corroboration policy instead of about the parse.
+    """
     import subprocess as _sp
 
     sacct_out = (
@@ -109,10 +116,11 @@ def test_recover_inflight_via_comment_parses_sacct(monkeypatch, synthetic_multis
         "hhemt.workflow._slurm_job_is_live",
         lambda jid: jid == "9001",  # only 9001 is live
     )
+    monkeypatch.setattr("hhemt.workflow._corroborate_not_live", lambda jid: "dead")
     b = synthetic_multisim_builder
     found = b._recover_inflight_via_comment(known_jobids=set())
     jids = {jid for _, jid in found}
-    assert jids == {"9001"}  # live + comment-matched; 9002 completed; malformed skipped
+    assert jids == {"9001"}  # live + comment-matched; 9002 corroborated dead; malformed skipped
 
 
 def test_reconcile_returns_sensitivity_sentinel_in_alive_set(monkeypatch, synthetic_multisim_builder):
