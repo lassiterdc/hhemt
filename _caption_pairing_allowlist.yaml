@@ -53,7 +53,21 @@
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
-    renderer_sha256: a49beeb8fb8fa515255e59f74a04c4b81b8871eaa0a25df76ec2ee57c21b5465
+    renderer_sha256: 83645b4ae8385718d20e72d0c1102391c0756ca6f5008c991ce1b89cc4f4e978
+    justification_2026_10_30b: >-
+      Re-read 2026-10-30 after chunk 2a.3, which made the hardware COLUMN a per-token identity
+      and re-keyed the baseline anchor to it. CORRECTING MY OWN EARLIER NOTE: that note said
+      this chunk would change what a column means and would owe a caption EDIT. Measured, the
+      caption never uses the word `column` — zero occurrences on a case-insensitive grep — so
+      it makes no claim about column identity for the change to falsify. Its five claims are
+      the independent variable, the dependent variable and its aggregation, the SWMM-only
+      routing, the per-report axis auto-scaling, and the sources; every one still holds, so
+      the caption is unchanged and the digest is re-recorded. THE EDIT OBLIGATION MOVES TO
+      2a.4, and this note says why rather than repeating the guess: 2a.4 adds one facet group
+      per DEM resolution, and the caption DOES speak about panels ("Each panel's y-axis is
+      fitted to this master's own data"), so a figure with several panel groups makes that
+      sentence incomplete rather than false. Edit the caption there; do not re-record a fourth
+      time.
     justification_2026_10_30: >-
       Re-read 2026-10-30. The renderer gained CPU-era hardware identity resolution: a
       declared `hardware` token wins, a configuration declaring none takes the CPU name the

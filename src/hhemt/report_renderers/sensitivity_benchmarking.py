@@ -78,9 +78,11 @@ from hhemt.utils import EXPERIMENT_TREE_NAME, parse_triton_log_file
 _CANONICAL_GROUP_ORDER = ("serial", "single_cpu", "single-cpu", "cpu", "gpu", "hybrid")
 
 
-#: Hardware FAMILIES, de-aliased -- still the axis for scaling-panel COLUMN layout
-#: (`_hw_cols`) and baseline anchoring (`_resolve_family_baselines`), both keyed on
-#: `_hardware_family`. Hardware's ONLY remaining visual channel is the column.
+#: Hardware FAMILIES, de-aliased. NO LONGER the axis for scaling-panel COLUMN layout or for
+#: baseline anchoring: both are keyed on `_column_key`, which resolves a group to its hardware
+#: TOKEN and falls back to `_hardware_family` only where no token is known. These values are
+#: now a label vocabulary (the alias source and the decomposition fallback), not a partition.
+#: Hardware's ONLY remaining visual channel is the column.
 _CANONICAL_FAMILIES = ("serial", "cpu", "gpu", "hybrid")
 _FAMILY_ALIASES = {"single_cpu": "serial", "single-cpu": "serial"}
 
@@ -657,9 +659,11 @@ def render(
     # different devices into one column, and BOTH failure modes are silent — a pooled
     # member reads as an ordinary column and no log line says otherwise. Raises before a
     # single row is collected, so a refused master fails at the door rather than after the
-    # collection work. The identities themselves reach the column key in `2a.3`; this call
-    # is the resolution order's third state, which is this chunk's.
-    _require_identifiable_hardware(_resolve_hardware_identities(analysis))
+    # collection work. The identities themselves reach the column key below; this call is
+    # the resolution order's third state.
+    _hardware_identities = _resolve_hardware_identities(analysis)
+    _require_identifiable_hardware(_hardware_identities)
+    _hardware_column_by_member = _resolve_member_hardware_columns(analysis, _hardware_identities)
     df_setup = sensitivity.df_setup_with_system_overlays.copy()
 
     df_setup = _ensure_n_devices_column(df_setup, independent_var)
@@ -801,6 +805,7 @@ def render(
                 df.loc[_is_gpu, "group_value"] = "gpu (" + _tokens + ")"
     else:
         df["group_value"] = "all"
+    hardware_column_by_group = _attach_hardware_columns(df, _hardware_column_by_member)
     df["n_mpi_procs"] = df["sa_id"].map(df_setup[_resolve_setup_col(df_setup, "n_mpi_procs") or "n_mpi_procs"])
     # F2: extra config columns for hover customdata (OMP threads, GPUs, Nodes).
     # Use .get() semantics so missing columns degrade gracefully — hovertemplate
@@ -829,7 +834,9 @@ def render(
     # is never promoted to publication (KEEP-no-hybrid invariant).
     use_plotly = False if static_cfg is not None else (static_backend == "plotly")
     if use_plotly:
-        speedup_pg, strong_eff_pg, speedup_all, efficiency_all = _compute_scaling_series(df)
+        speedup_pg, strong_eff_pg, speedup_all, efficiency_all = _compute_scaling_series(
+            df, token_by_group=hardware_column_by_group
+        )
         if analysis.cfg_analysis.sensitivity_analysis is not None:
             source_paths.append(Path(analysis.cfg_analysis.sensitivity_analysis))
         # F1: GPU hardware suffix (e.g., "gpu (a6000)"). Phase-4 (4c, D3): gpu_hardware
@@ -883,6 +890,7 @@ def render(
             speedup_all_rows=speedup_all,
             efficiency_all_rows=efficiency_all,
             speedup_range_mode=speedup_range_mode,
+            token_by_group=hardware_column_by_group,
         )
 
     # Publication base typography (parity with the other static-plot renderers);
@@ -1202,6 +1210,31 @@ def _declared_hardware(sub) -> str | None:
     return token or None
 
 
+def _declared_gpu_hardware(sub) -> str | None:
+    """The member's DECLARED GPU token, or None when its partition runs on CPUs.
+
+    The GPU half of the same axis `_declared_hardware` serves, and it is what makes a
+    GPU member identifiable WITHOUT a solver artifact: `gpu_hardware` is configuration,
+    so it survives `clear_raw` while the run header the CPU path depends on does not.
+    Reading only the CPU half would leave a GPU master's every member derived from a
+    filename in a tier that `clear_raw` legitimately purges, so a cleared GPU arm would
+    fail the refusal gate on evidence it never needed.
+
+    Returns the partition's `gpu_hardware` verbatim rather than normalising it through
+    `hardware_label`: the GPU tokens are short arch strings (`a6000`, `a100`) that
+    `hardware_label` does not map, and the figure's GPU column carries the partition
+    NAME's token anyway, so a second normalisation here would only invent a spelling
+    nothing else uses.
+    """
+    hpc = getattr(sub, "cfg_hpc_system", None)
+    if hpc is None:
+        return None
+    partition = getattr(getattr(sub, "cfg_analysis", None), "hpc_ensemble_partition", None)
+    spec = getattr(hpc, "partitions", {}).get(partition) if partition is not None else None
+    raw = getattr(spec, "gpu_hardware", None) if spec is not None else None
+    return str(raw) if raw else None
+
+
 def _derived_hardware(sub) -> str | None:
     """The CPU name from this member's TRITON run headers, normalised, or None.
 
@@ -1232,7 +1265,19 @@ def _derived_hardware(sub) -> str | None:
 
 
 def _resolve_member_hardware(sub) -> HardwareIdentity:
-    """Apply the resolution order to ONE member: declared, else derived, else none."""
+    """Apply the resolution order to ONE member: GPU token, else declared CPU, else derived CPU.
+
+    THE GPU ARM COMES FIRST and is not a refinement of the CPU order. A GPU compute
+    configuration's hardware IS its accelerator; the node's CPU name that the run header
+    carries names a different piece of silicon on the same board, so feeding it to the
+    column key would file an a6000 run under whatever CPU model hosted it -- and would
+    file two runs of ONE GPU arm under two columns whenever the scheduler landed them on
+    different node generations. The GPU token is configuration, so this arm also needs no
+    retained raw output.
+    """
+    gpu = _declared_gpu_hardware(sub)
+    if gpu is not None:
+        return HardwareIdentity(token=gpu, declared=gpu, derived=None, source="declared")
     declared = _declared_hardware(sub)
     derived = _derived_hardware(sub)
     if declared is not None:
@@ -1323,27 +1368,158 @@ def _require_identifiable_hardware(identities: dict[str, HardwareIdentity]) -> N
 
 
 def _hardware_family(gv: str) -> str:
-    """Implements the HARDWARE axis — every GPU token is its own hardware, every non-GPU
-    group shares the single `cpu` hardware. See the stipulation "the three compute-config
-    axes are run mode, hardware, and device class".
+    """The FALLBACK column key — what a group falls back to when no hardware token is known.
 
-    Promoted from `_resolve_family_baselines`'s nested `_family_of` so the figure
-    builder can partition columns by the SAME rule the baselines anchor on. Two
-    rules would let a group be anchored against one family and drawn in another.
+    This used to BE the hardware axis: every GPU token was its own hardware and every
+    non-GPU group shared the single `cpu` hardware. That sentence is now false and is
+    kept here only as the record of what it was. On a master whose members carry hardware
+    identities, two CPU groups on different silicon are DIFFERENT columns (`_column_key`
+    below), so "every non-GPU group shares the single cpu hardware" no longer describes
+    what the figure draws.
+
+    It survives because a column key must still exist for a frame that carries no
+    identity map at all — the metric helpers and the backend unit tests construct such
+    frames directly, and a non-sensitivity render has no members to resolve. There the
+    old rule is exactly right: with no token to distinguish them, every non-GPU group
+    belongs in the one `cpu` column and every `gpu …`-labelled group keeps its own.
+
+    Do NOT read this as the axis definition; `_column_key` is the axis. A second caller
+    reaching for THIS function to decide a column is the collapse coming back.
     """
     low = gv.lower()
     return gv if low.startswith("gpu") else "cpu"
 
 
-def _resolve_family_baselines(df: pd.DataFrame, *, t_col: str, indep_col: str, group_col: str) -> dict[str, float]:
-    """Return ``{group_value: baseline_wallclock}``, anchored PER HARDWARE FAMILY.
+def _resolve_member_hardware_columns(analysis, identities: dict[str, HardwareIdentity]) -> dict[str, str]:
+    """``{member_id: hardware token}`` — the COLUMN a member's rows are drawn in.
 
-    Implements the HARDWARE axis: CPU configs anchor on the serial-CPU run, and each GPU
-    hardware token anchors on ITS OWN minimum-device run.
+    The token, not the family: two CPU compute configurations on different silicon are
+    two columns, which is the defect this mapping exists to remove. ``identities`` is the
+    already-resolved and already-gated map, so this function does no resolution of its
+    own and raises nothing; a member absent from it keeps no entry and its rows fall back
+    to `_hardware_family` at the call site.
+    """
+    sensitivity = getattr(analysis, "sensitivity", None)
+    members = getattr(sensitivity, "members", None) if sensitivity is not None else None
+    if not members:
+        return {}
+    out: dict[str, str] = {}
+    for member_id in members:
+        token = getattr(identities.get(str(member_id)), "token", None)
+        if token:
+            out[str(member_id)] = str(token)
+    return out
 
-    ``_config_diff`` and ``raw_byte_identity`` both implement the DEVICE-CLASS axis; the
-    divergence is the user's 2026-08-21 ruling, not drift. Collapsing GPU tokens HERE would
-    anchor an a6000 run against an a100-80
+
+def _column_key(gv, token_by_group: dict[str, str] | None) -> str:
+    """The hardware COLUMN one group value is drawn in — the single rule all its readers share.
+
+    The column facet (`_hw_cols`), the per-column row filters, and
+    `_resolve_family_baselines`' anchor partition all call THIS function, because a group
+    anchored on one rule and drawn on another is the defect the package exists to
+    prevent: the anchor would be a within-hardware reference while the panel asserted a
+    cross-hardware one. A second copy of this rule is how they drift apart.
+
+    ``token_by_group`` maps a group value to its token, and it is ``None`` for a frame
+    that carries no identities (see `_hardware_family`). A GPU group is keyed by its LABEL
+    rather than by a token because the label already carries one (`gpu (a6000)`) and it is
+    the string the legend and the partition-name rewrite agree on; substituting
+    `gpu_hardware` there would spell one arm two ways.
+    """
+    key = str(gv)
+    if key.lower().startswith("gpu"):
+        return key
+    if token_by_group:
+        token = token_by_group.get(key)
+        if token:
+            return token
+    return _hardware_family(key)
+
+
+def _attach_hardware_columns(df: pd.DataFrame, column_by_member: dict[str, str]) -> dict[str, str]:
+    """Attach ``df["hardware_column"]``, split multi-token groups, return ``{group_value: column}``.
+
+    A column must be ONE piece of silicon, so ``hardware_column`` is the member's resolved
+    token. A SERIES, though, is a group value — and a group spanning two tokens would
+    collapse back into one series the moment the scaling dicts key on it, the second series
+    silently overwriting the first. So a group carrying more than one token is split into
+    one group value PER token, the same way the GPU rewrite above already splits a
+    multi-GPU ``gpu`` group. After the split every group value maps to exactly one column,
+    which is what lets `_column_key` be a single rule for the facet, the row filters and the
+    baseline anchors alike.
+
+    THE MEASURED CASE, and the whole reason the split exists: on the a6000 arm's CPU
+    sibling 24 members run on one EPYC model and the serial reference runs on a Xeon — one
+    group value, two tokens, two columns. Unsplit, the family rule anchored all 25 on the
+    Xeon serial run and the figure drew the resulting cross-hardware ratio as parallel
+    efficiency.
+
+    Mutates ``df`` in place (``hardware_column`` and, where a split applies, ``group_value``)
+    because the caller's frame is the one row collection just built; nothing outside this
+    call reads the pre-split values.
+    """
+    df["hardware_column"] = df["sa_id"].astype(str).map(column_by_member)
+    # A GPU group keeps its LABEL as its column key. The label already carries the GPU
+    # token (`gpu (a6000)`) and it is the string the legend and the partition-name rewrite
+    # agree on; substituting `gpu_hardware` here would spell one arm two ways.
+    _gpu_rows = df["group_value"].astype(str).str.lower().str.startswith("gpu")
+    df.loc[_gpu_rows, "hardware_column"] = df.loc[_gpu_rows, "group_value"].astype(str)
+    _unkeyed = df["hardware_column"].isna()
+    if bool(_unkeyed.any()):
+        # A row with no member identity: a non-sensitivity render, or a row whose member
+        # the identities map did not cover. The fallback family rule is the column there,
+        # exactly as it was before this chunk.
+        df.loc[_unkeyed, "hardware_column"] = df.loc[_unkeyed, "group_value"].astype(str).map(_hardware_family)
+    _tokens_per_group = df.groupby("group_value")["hardware_column"].nunique()
+    for _shared_gv in _tokens_per_group[_tokens_per_group > 1].index:
+        _mask = df["group_value"].astype(str) == str(_shared_gv)
+        df.loc[_mask, "group_value"] = (
+            df.loc[_mask, "group_value"].astype(str) + " (" + df.loc[_mask, "hardware_column"].astype(str) + ")"
+        )
+    # Built AFTER the split, so it is single-valued by construction and `_column_key` never
+    # has to choose between two tokens for one group.
+    return {str(_gv): str(_col) for _gv, _col in df.groupby("group_value")["hardware_column"].first().items()}
+
+
+def _resolve_family_baselines(
+    df: pd.DataFrame,
+    *,
+    t_col: str,
+    indep_col: str,
+    group_col: str,
+    token_by_group: dict[str, str] | None = None,
+) -> dict[str, float]:
+    """Return ``{group_value: baseline_wallclock}``, anchored PER HARDWARE COLUMN.
+
+    The anchor partition is `_column_key`'s, which is the SAME rule the column facet and
+    the per-column row filters use. That identity is the whole point: a group anchored as
+    one hardware and drawn as another produces a within-hardware reference presented as a
+    cross-hardware ratio, and nothing downstream can see the mismatch.
+
+    A CPU model is its own column now, so two CPU configurations on different silicon no
+    longer share one anchor. Before that, the family was the hardware and every CPU group
+    inherited ONE anchor -- the fastest one-device run in the family -- which on a
+    heterogeneous CPU master is a run on the other CPU model. The figure then divided 24
+    EPYC runs by a Xeon measurement and called the result parallel efficiency.
+
+    THE ANCHOR IS THE ONE-DEVICE RUN, and a column that carries none resolves NO anchor.
+    ``S(N) = t(1) / t(N)`` is a claim about strong scaling from one device, so anchoring
+    at whatever the column's smallest width happens to be would print ``S = 1.0`` at, say,
+    four devices and assert that four devices are the reference. A column with no
+    one-device run is therefore left out of this mapping entirely, and the caller draws no
+    scaling series for it -- a visible absence in place of a fabricated reference. That is
+    the accepted cost of the rule: on such a column the panels show only the ideal
+    reference line.
+
+    Deliberately NOT reusing the global-serial anchor as a substitute for a missing
+    one-device run: that is precisely the cross-hardware borrow this function's whole
+    history is about, and the fallback arm below exists only for a frame where NO column
+    resolves at all.
+
+    Implements the HARDWARE axis; each GPU hardware token anchors on ITS OWN one-device
+    run, and each CPU model on its own. ``_config_diff`` and ``raw_byte_identity`` both
+    implement the DEVICE-CLASS axis; the divergence is the user's 2026-08-21 ruling, not
+    drift. Collapsing GPU tokens HERE would anchor an a6000 run against an a100-80
     baseline and report a cross-hardware performance RATIO dressed as a scaling
     efficiency -- the exact number the paragraph below measures at 1.51 against a true
     0.255. The shape rule: N3's collapse is right for IDENTITY views and wrong for
@@ -1351,16 +1527,16 @@ def _resolve_family_baselines(df: pd.DataFrame, *, t_col: str, indep_col: str, g
     that claim was false from N3 until it was corrected here.
 
     Why this is not a mode on ``_resolve_serial_baseline``: that function returns a SCALAR
-    and feeds a scalar ``anchor=`` parameter, while the per-family answer is a MAPPING --
-    there are three families on a two-GPU master (``cpu``, plus one per GPU token), not two.
+    and feeds a scalar ``anchor=`` parameter, while the per-column answer is a MAPPING --
+    there are three columns on a two-GPU master plus a CPU column, not two.
 
     The global-serial anchor this replaces reports a6000 3-GPU as S = 400.30/265.20 = 1.51,
-    which reads as "this scales"; the per-family anchor gives 67.64/265.20 = 0.255, the
+    which reads as "this scales"; the per-column anchor gives 67.64/265.20 = 0.255, the
     correct within-hardware statement. The in-source objection to a global N=1-minimum
-    anchor does not reach this: a per-family anchor never compares across families, so the
+    anchor does not reach this: a per-column anchor never compares across columns, so the
     "N=1 GPU is faster than serial" failure it names cannot arise.
 
-    Returns ``{}`` when no family resolves, so callers fall back to the serial anchor
+    Returns ``{}`` when no column resolves, so callers fall back to the serial anchor
     rather than silently comparing against an arbitrary group.
     """
     if df.empty or group_col not in df.columns or indep_col not in df.columns:
@@ -1371,7 +1547,7 @@ def _resolve_family_baselines(df: pd.DataFrame, *, t_col: str, indep_col: str, g
 
     fam_members: dict[str, list[str]] = {}
     for gv in groups:
-        fam_members.setdefault(_hardware_family(gv), []).append(gv)
+        fam_members.setdefault(_column_key(gv, token_by_group), []).append(gv)
 
     out: dict[str, float] = {}
     for members in fam_members.values():
@@ -1379,6 +1555,9 @@ def _resolve_family_baselines(df: pd.DataFrame, *, t_col: str, indep_col: str, g
         if sub.empty:
             continue
         min_n = sub[indep_col].min()
+        if float(min_n) != 1.0:
+            # No one-device run in this column: no strong-scaling reference exists here.
+            continue
         ref = sub[sub[indep_col] == min_n]
         if ref.empty:
             continue
@@ -1628,13 +1807,22 @@ def _compute_metric_all_rows_per_group(
 
 def _compute_scaling_series(
     df: pd.DataFrame,
+    *,
+    token_by_group: dict[str, str] | None = None,
 ) -> tuple[dict, dict, dict | None, dict | None]:
     """Compute the four scaling-panel series from the raw per-run frame.
 
     Returns ``(speedup_pg, strong_eff_pg, speedup_all, efficiency_all)``: the
     per-group speedup and strong-efficiency LINE series, then the all-rows
     MARKER series (``None`` when no anchor resolves). All four share one
-    per-family anchor resolved from the RAW frame.
+    per-hardware-column anchor resolved from the RAW frame.
+
+    ``token_by_group`` is the group-value -> hardware-column map the caller derived from
+    the members' resolved identities, and it is threaded straight into
+    `_resolve_family_baselines` so the anchor partition is the SAME rule the column facet
+    and the per-column row filters use. ``None`` means the frame carries no identities
+    (a backend unit fixture, or a non-sensitivity render) and the fallback family rule is
+    the column.
     """
     # Panels 3+4 carry TWO series per group and they answer different questions.
     # The LINE is the per-N envelope over replicate-AVERAGED configs, so a vertex
@@ -1691,6 +1879,7 @@ def _compute_scaling_series(
         t_col="wallclock_s",
         indep_col="n_devices",
         group_col="group_value",
+        token_by_group=token_by_group,
     )
     if family_baselines:
         speedup_pg, strong_eff_pg = {}, {}
@@ -2256,12 +2445,13 @@ def _build_sensitivity_benchmarking_figure(
     efficiency_all_rows: dict | None = None,
     speedup_range_mode: str = "full_ideal",
     model_arm: str | None = None,
+    token_by_group: dict[str, str] | None = None,
 ):
     """Plotly MV port (pre-/design-figure): static 4-panel benchmarking figure.
     Wall-clock | Compute-cost | Strong-scaling speedup | Parallel efficiency,
-    stacked rows=4 with cols=_n_hw (one column per hardware family on the two scaling
-    panels) and TWO explicitly-linked x-axis groups rather than one shared axis: rows
-    1+2 keyed on ``independent_var``, rows 3+4 on ``n_devices``. One trace per
+    stacked rows=4 with cols=_n_hw (one column per HARDWARE TOKEN, CPU tokens included,
+    on all four rows) and TWO explicitly-linked x-axis groups rather than one shared
+    axis: rows 1+2 keyed on ``independent_var``, rows 3+4 on ``n_devices``. One trace per
     group_by_var value
     per panel, sharing the Okabe-Ito palette (sens_cfg.palette) as Plotly's
     colorway. Informationally congruent with the matplotlib branch — no hover
@@ -2270,17 +2460,32 @@ def _build_sensitivity_benchmarking_figure(
     # Side-effect import: registers `triton_journal` Plotly template.
     from hhemt.report_renderers import _plotly_theme  # noqa: F401
 
-    # ALL FOUR panels get one column per hardware family (CPU, then one per GPU
-    # token). The wall-clock and compute-cost rows were previously full width via
+    # ALL FOUR panels get one column per HARDWARE TOKEN (CPU tokens included, then one
+    # per GPU token). The wall-clock and compute-cost rows were previously full width via
     # colspan and drew every group in one axes; faceting them is what lets the legend
     # name the DECOMPOSITION alone, since a full-width row has no column to carry
-    # hardware. Columns are DERIVED from the data, so a family absent from this
-    # master produces no column rather than an empty one (P9).
+    # hardware. Columns are DERIVED from the data, so a token absent from this master
+    # produces no column rather than an empty one (P9).
+    #
+    # THE COLUMN SET IS `_column_key`'s OUTPUT, not a recomputation of the rule. The same
+    # function supplies the per-column row filters below and `_resolve_family_baselines`'
+    # anchor partition, so a group cannot be anchored as one hardware and drawn as
+    # another -- which is the failure that would otherwise be invisible in both places.
     _hw_cols = sorted(
-        {_hardware_family(str(gv)) for gv in df["group_value"].dropna().unique()},
-        key=lambda f: (f != "cpu", f),
+        {_column_key(gv, token_by_group) for gv in df["group_value"].dropna().unique()},
+        # EXPLICIT ORDER, replacing `key=lambda f: (f != "cpu", f)`. That key tested
+        # against the literal `cpu`, which stops being a column name as soon as a CPU
+        # token is the key -- every column would then sort into the "not cpu" tier and the
+        # rule would silently become alphabetical over everything. The tiers are now
+        # named by the PROPERTY the old key was reaching for: CPU columns first, then GPU
+        # columns, alphabetical inside each.
+        key=lambda c: (str(c).lower().startswith("gpu"), str(c)),
     )
     _n_hw = max(len(_hw_cols), 1)
+    # ONE row-level column key, computed once and read by every per-column filter below.
+    # A per-column `.map(_column_key, ...)` would re-derive the same rule for every column
+    # of every panel, and a re-derivation is where a second copy of a rule appears.
+    _column_of_row = df["group_value"].astype(str).map(lambda g: _column_key(g, token_by_group))
     # P10: spacing is derived, never hard-coded. Plotly's own default is
     # 0.2/cols; a third of that keeps the per-column y-axis titles clear of the
     # neighbouring panel at the column counts this campaign produces.
@@ -2364,7 +2569,7 @@ def _build_sensitivity_benchmarking_figure(
         # now several panels and first-occurrence must be computed across all of them.
         _row_legend_seen: set[str] = set()
         for _ci, _fam in enumerate(_hw_cols, start=1):
-            _df_c = df[df["group_value"].astype(str).map(_hardware_family) == _fam]
+            _df_c = df[_column_of_row == _fam]
             if _df_c.empty:
                 continue
             _plotly_metric_panel(
@@ -2390,13 +2595,17 @@ def _build_sensitivity_benchmarking_figure(
     # reference case in each one to define perfect scaling" -- but only column 1
     # carries the legend entry, so the legend keeps ONE row for both red lines.
     for _ci, _fam in enumerate(_hw_cols, start=1):
-        _df_c = df[df["group_value"].astype(str).map(_hardware_family) == _fam]
+        _df_c = df[_column_of_row == _fam]
         if _df_c.empty:
             continue
-        _sp_c = {k: v for k, v in speedup_per_group.items() if _hardware_family(str(k)) == _fam}
-        _ef_c = {k: v for k, v in strong_eff_per_group.items() if _hardware_family(str(k)) == _fam}
-        _sp_all_c = {k: v for k, v in (speedup_all_rows or {}).items() if _hardware_family(str(k)) == _fam} or None
-        _ef_all_c = {k: v for k, v in (efficiency_all_rows or {}).items() if _hardware_family(str(k)) == _fam} or None
+        _sp_c = {k: v for k, v in speedup_per_group.items() if _column_key(str(k), token_by_group) == _fam}
+        _ef_c = {k: v for k, v in strong_eff_per_group.items() if _column_key(str(k), token_by_group) == _fam}
+        _sp_all_c = {
+            k: v for k, v in (speedup_all_rows or {}).items() if _column_key(str(k), token_by_group) == _fam
+        } or None
+        _ef_all_c = {
+            k: v for k, v in (efficiency_all_rows or {}).items() if _column_key(str(k), token_by_group) == _fam
+        } or None
         # Same column the scaling panels are keyed on, read from the resolved group
         # rather than re-typed, so the ideal-reference line's extent cannot outlive a
         # change to _SCALING_AXIS_VAR.
@@ -2504,12 +2713,26 @@ def _build_sensitivity_benchmarking_figure(
     _bench_caption = (
         "The number beside each hybrid point is its OpenMP threads per rank."
         " The x axis is total devices N = ranks x threads/rank, so ranks = N divided by that number."
-        " Speedup and efficiency are measured against each hardware family's own"
-        " minimum-device run (CPU → serial CPU; each GPU → its own 1-GPU run),"
-        " so S = 1.0 denotes a different wall-clock on each curve."
-        " Every marker is hollow so overlapping configurations stay readable;"
-        " every replicate is plotted."
+        " Speedup and efficiency are measured against each hardware column's own single-device"
+        " run: the minimum-device run within a column must be ONE device, so a column never run"
+        " at one device carries no scaling series rather than borrowing another column's."
+        " Each CPU model is measured against its own one-device run and each GPU against its own"
+        " 1-GPU run, so S = 1.0 denotes a different wall-clock on each curve."
     )
+    # THE ABSENCE IS STATED, not left as a blank panel. A column with no one-device run
+    # resolves no anchor (`_resolve_family_baselines`), so the panels draw its ideal
+    # reference and no data series. A reader who is not told WHY reads that as missing data
+    # or, worse, as a series that happens to be flat at zero. This is the disclosure the
+    # rule owes: the figure refuses to borrow another column's anchor, and says so.
+    _anchored_columns = {_column_key(str(k), token_by_group) for k in speedup_per_group}
+    _unanchored_columns = sorted(str(c) for c in _hw_cols if str(c) not in _anchored_columns)
+    if _unanchored_columns:
+        _bench_caption += (
+            f" No scaling series is drawn for {', '.join(_unanchored_columns)}: that column"
+            " carries no single-device run, so it has no strong-scaling reference of its own and"
+            " none is borrowed from another column."
+        )
+    _bench_caption += " Every marker is hollow so overlapping configurations stay readable; every replicate is plotted."
     _bench_plot_h = 1000 - 30  # height minus top margin; bottom is what we are deriving
     _bench_b_px = add_figure_caption(
         fig,
@@ -2581,6 +2804,7 @@ def _render_plotly_branch(
     efficiency_all_rows: dict | None = None,
     speedup_range_mode: str = "full_ideal",
     model_arm: str | None = None,
+    token_by_group: dict[str, str] | None = None,
 ) -> Path:
     fig, plotly_config = _build_sensitivity_benchmarking_figure(
         df,
@@ -2602,6 +2826,7 @@ def _render_plotly_branch(
         efficiency_all_rows=efficiency_all_rows,
         speedup_range_mode=speedup_range_mode,
         model_arm=model_arm,
+        token_by_group=token_by_group,
     )
     html_text = pio.to_html(
         fig,
