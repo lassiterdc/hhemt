@@ -5,17 +5,23 @@ flow / over-full-flow / over-full-depth (``max_flow_cms`` /
 ``max_over_full_flow`` / ``max_over_full_depth``) — are bit-identical across all
 sims sharing an event iloc on a SENSITIVITY MASTER (members that vary only
 compute config must produce identical physics). On the strict path
-(``within_family=True``) the reference is anchored PER HARDWARE FAMILY
-(``raw_byte_identity._b4b_family_key``: cpu / gpu): within each family it is the
-SERIAL-CPU sub whose summaries are present (falling back to the smallest present
-compute config, then lexicographic ``member_id``); verdict passes iff every sub is exactly
-equal to ITS OWN family's reference for every tracked variable. Serial CPU is the CPU
-family's reference because BIT4BIT is a double-precision serial-oracle property —
-anchoring on any other config reports differences from a run rather than from the
-oracle. The family partition exists because BIT4BIT is also a WITHIN-BACKEND property:
-a GPU-vs-serial-CPU float32 summary difference at exactly ``np.finfo(float32).eps`` is
-expected physics, not a reproducibility failure, and asserting equality across the
-boundary raised 24 false FAIL tuples on the Iteration-5 campaign (0 intra-family).
+(``within_family=True``) the reference is anchored PER PARTITION GROUP, and the
+partition is ``(hardware family, DEM resolution)``: the family half is
+``raw_byte_identity._b4b_family_key`` (cpu / gpu), the resolution half is the sub's
+``cfg_system.target_dem_resolution``. Within each group it is the SERIAL-CPU sub whose
+summaries are present (falling back to the smallest present compute config, then
+lexicographic ``member_id``); verdict passes iff every sub is exactly equal to ITS OWN
+group's reference for every tracked variable. Serial CPU is the CPU group's reference
+because BIT4BIT is a double-precision serial-oracle property — anchoring on any other
+config reports differences from a run rather than from the oracle. The family partition
+exists because BIT4BIT is also a WITHIN-BACKEND property: a GPU-vs-serial-CPU float32
+summary difference at exactly ``np.finfo(float32).eps`` is expected physics, not a
+reproducibility failure, and asserting equality across the boundary raised 24 false FAIL
+tuples on the Iteration-5 campaign (0 intra-family). The resolution partition exists for
+the same reason one axis over: different DEM resolutions are different physics, and one
+GPU arm carries 3.5 / 1.10 / 0.35 m inside ONE hardware family, so a family-only
+partition compared across a resolution boundary and reported the resolution difference as
+a reproducibility failure — false FAILs by construction, not by occurrence.
 
 Reads the per-sub FLAT summaries via ``sub.process._retrieve_combined_output(mode)``
 — NOT the consolidated ``analysis_datatree.zarr`` (consolidation CF-stamps,
@@ -27,6 +33,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from collections.abc import Callable, Hashable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -510,27 +517,132 @@ def _family_key(sub) -> str:
     module-level import here re-enters this module before ``compare_variable_exact`` (line 94)
     is defined and raises at package load. ``_b4b_family_key`` itself reaches
     ``_config_diff._gpu_hardware`` by the same local-import idiom.
+
+    This is the FIRST of ``_partition_key``'s two dimensions, and it is deliberately NOT widened
+    to carry the resolution. A family is a property of the BACKEND, and
+    ``_config_diff._hw_family_key`` and ``raw_byte_identity._b4b_family_key`` both read it that
+    way; folding a raster property in here would make three disagreeing definitions of one word.
     """
     from hhemt.eda.raw_byte_identity import _b4b_family_key
 
     return _b4b_family_key(sub)
 
 
-def _references_by_family(ordered_present: list[tuple[str, object]]) -> dict[str, str]:
-    """``{family_key: reference member_id}`` — the ``_ref_rank`` winner WITHIN each hardware family.
+def _resolution_key(sub) -> float | None:
+    """The sub's target DEM resolution — the SECOND dimension of ``_partition_key``.
+
+    Read from the sub's IN-MEMORY ``cfg_system.target_dem_resolution``, never from a per-member
+    resolved YAML: that file does not declare the key, so a YAML read returns ``None`` for every
+    member and silently collapses the partition back to family-only.
+
+    THE ATTRIBUTE PATH IS NOT ``sub.cfg_system``, and getting it wrong fails SILENTLY rather
+    than loudly. ``TRITONSWMM_analysis`` keeps its system config behind ``_system`` — the
+    in-repo readers all go through it (``analysis.py:3658`` reads ``a._system.cfg_system``,
+    ``:3683`` reads ``target_dem_resolution`` off that, and ``eda/compute_sensitivity.py:232-233``
+    reaches it the same way) — so ``getattr(sub, "cfg_system", None)`` is ``None`` on every real
+    member. A None resolution for every member yields ONE group per family, which is exactly the
+    family-only partition this dimension exists to widen, with no exception raised and no line
+    logged. The chain below therefore PREFERS a direct ``cfg_system`` (a stub or a future facade
+    may carry one) and falls back to the live path.
+
+    ``float()`` is load-bearing rather than defensive. One physical resolution is spelled
+    ``1.10`` in a sensitivity CSV row and stored as ``1.1`` in the resolved config, so a string
+    key would seat those two members in DIFFERENT groups and publish a spurious extra group —
+    splitting a group that is physically one. ``None`` (unreadable) is kept distinct from every
+    number rather than coalesced to a sentinel: an unknown resolution is known equal to nothing,
+    so such members form their own group and are never compared against a known-resolution one.
+    """
+    cfg_system = getattr(sub, "cfg_system", None)
+    if cfg_system is None:
+        cfg_system = getattr(getattr(sub, "_system", None), "cfg_system", None)
+    value = getattr(cfg_system, "target_dem_resolution", None)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _partition_key(sub) -> tuple[str, float | None]:
+    """The comparison partition for one sub: ``(hardware family, DEM resolution)``.
+
+    BOTH dimensions are required for a comparison to be defensible: a difference is halt-worthy
+    only when the two members compared share a backend, a resolution AND a solver pin. With
+    either partition dimension missing, the instrument reports a legible magnitude under an
+    illegible attribution — the family-only form compared across 3.5 / 1.10 / 0.35 m inside one
+    GPU group and called the resolution difference a reproducibility failure.
+
+    Returns the KEY only. Emitting one row per group into the verdict's ``details`` is a
+    separate change and is not done here.
+
+    NOT the same partition as ``_PARTITION_VARS`` / ``_partition_signature`` further down. Those
+    name the byte-identity EQUIVALENCE CLASSES published in ``identity_group`` — which members
+    agree with which. This names the partition a COMPARISON may be drawn within. Two members at
+    different resolutions are never compared here, and should they happen to agree byte-for-byte
+    they would share an ``identity_group`` label: that is a fact about the data, not a licence to
+    compare them.
+    """
+    return (_family_key(sub), _resolution_key(sub))
+
+
+def _partition_label(key: Hashable) -> str:
+    """Readable, JSON-safe label for a partition key — ``{family}`` or ``{family}@{resolution}``.
+
+    A group whose resolution could not be read renders as the family ALONE rather than as
+    ``{family}@None``, and that collapse is truthful rather than lossy: with no resolution the
+    group IS the family. It is also what keeps a stub master — whose subs carry no ``cfg_system``
+    at all — publishing the family-only keys it always published.
+
+    ``:g`` is the rendering half of ``_resolution_key``'s numeric normalization: ``1.10`` and
+    ``1.1`` are one key and must therefore produce one label.
+    """
+    if isinstance(key, tuple) and len(key) == 2:
+        family, resolution = key
+        return str(family) if resolution is None else f"{family}@{resolution:g}"
+    return str(key)
+
+
+def _partition_sort_key(key: Hashable) -> tuple:
+    """Total order over partition keys, so label rendering is deterministic.
+
+    ``sorted(ref_by_group.items())`` raises ``TypeError`` on a master that mixes a readable
+    resolution with an unreadable one: Python compares the tuple keys element-wise and ends up
+    comparing a ``float`` against ``None`` — a crash from inside a sort, attributed to the data
+    it was sorting. Unknown sorts last within its family, and the string form (the across-family
+    arm's lone ``"all"`` key) sorts after every pair.
+    """
+    if isinstance(key, tuple) and len(key) == 2:
+        family, resolution = key
+        return (0, str(family), float("inf") if resolution is None else float(resolution))
+    return (1, str(key), 0.0)
+
+
+def _references_by_family(
+    ordered_present: list[tuple[str, object]],
+    *,
+    partition_key: Callable[[object], Hashable] = _family_key,
+) -> dict[Hashable, str]:
+    """``{partition key: reference member_id}`` — the ``_ref_rank`` winner WITHIN each partition.
 
     ``ordered_present`` MUST already be in ``_ref_rank`` order and MUST already be filtered to
-    subs with present summaries; the first sub encountered per family is therefore that
-    family's ``_ref_rank`` winner. Selecting by first-encounter rather than re-sorting is what
-    guarantees the within-family rule can never drift from the global ``_ref_rank`` rule — a
-    second sort key would be a second rule to keep in sync.
+    subs with present summaries; the first sub encountered per partition is therefore that
+    partition's ``_ref_rank`` winner. Selecting by first-encounter rather than re-sorting is
+    what guarantees the within-partition rule can never drift from the global ``_ref_rank``
+    rule — a second sort key would be a second rule to keep in sync.
 
-    Pure (no disk reads), so the family-partition contract is unit-testable with stub subs the
-    same way ``_ref_rank`` already is.
+    ``partition_key`` DEFAULTS TO ``_family_key``, and that default is the hardware-family map,
+    still published as its own disclosure. The COMPARISON passes ``_partition_key``, so it
+    anchors per ``(family, resolution)``. Two calls rather than one because the two maps answer
+    two questions; a reader can see them diverge exactly when one family spans several
+    resolutions.
+
+    Pure (no disk reads), so the partition contract is unit-testable with stub subs the same
+    way ``_ref_rank`` already is.
     """
-    out: dict[str, str] = {}
+    out: dict[Hashable, str] = {}
     for member, sub in ordered_present:
-        out.setdefault(_family_key(sub), member)
+        out.setdefault(partition_key(sub), member)
     return out
 
 
@@ -539,15 +651,15 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
 
     Returns a skipped ``EdaResult`` on a non-sensitivity analysis. On a sensitivity
     master, compares each enabled ``(event_iloc, mode, variable)`` across
-    members against ITS OWN HARDWARE FAMILY's reference (serial-CPU for the cpu
-    family, 1-GPU for the gpu family; smallest present compute config, then
-    lexicographic ``member_id``, as deterministic fallbacks),
+    members against ITS OWN ``(hardware family, DEM resolution)`` group's reference
+    (serial-CPU for the cpu family, 1-GPU for the gpu family; smallest present compute
+    config, then lexicographic ``member_id``, as deterministic fallbacks),
     writes ``{analysis_dir}/eda/<plot_id>.zarr`` (max-abs-diff + identical maps) and
     ``<plot_id>.verdict.json``, and returns an ``EdaResult`` carrying the verdict +
     artifact path.
 
-    ``within_family=True`` (default): each sub is compared against its OWN hardware
-    family's reference and bit-identity is asserted
+    ``within_family=True`` (default): each sub is compared against its OWN partition
+    group's reference and bit-identity is asserted
     (``np.array_equal(equal_nan=True)``); a divergence is a ``CheckResult``
     ``passed=False``. The STRICTNESS is unchanged — only the reference each sub is
     measured against is. A cross-family pair is no longer compared at all, so it can
@@ -621,10 +733,27 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
     # _config_diff._family_reference_group re-references every GPU group to that group, the whole GPU half of the
     # config-diff identity column would render "differs". Do not "simplify" this to skip all
     # references.
-    fam_of: dict[str, str] = (
-        {member: _family_key(sub) for member, sub in subs.items()} if within_family else dict.fromkeys(subs, "all")
+    # THE PARTITION KEY (two dimensions). The family-only key compared a 0.35 m member against a
+    # 3.5 m member inside one GPU group; those are different physics, so the difference it
+    # reported was the resolution rather than a reproducibility failure. `group_of` is what the
+    # loop below indexes and `ref_by_group` is what it compares against, so the two cannot drift.
+    group_of: dict[str, Hashable] = (
+        {member: _partition_key(sub) for member, sub in subs.items()} if within_family else dict.fromkeys(subs, "all")
     )
-    ref_by_family: dict[str, str] = _references_by_family(present) if within_family else {"all": ref_id}
+    ref_by_group: dict[Hashable, str] = (
+        _references_by_family(present, partition_key=_partition_key) if within_family else {"all": ref_id}
+    )
+    # THE FAMILY map is kept and is not a second source for the same fact: it answers a different
+    # question ("which member anchored each BACKEND?") and it is what
+    # `reference_member_id_by_family` has always published. Both maps reach the artifact, so a
+    # reader can see them diverge exactly when one family spans several resolutions.
+    #
+    # On the ACROSS-FAMILY arm both maps are the single `{"all": <ref>}` and that coincidence is
+    # the design rather than redundancy: `within_family=False` exists to measure the cross-boundary
+    # bound against ONE global reference, so there is no partition to disclose and the two questions
+    # have the same answer. Writing both unconditionally keeps a reader from having to branch on
+    # an attribute's PRESENCE, which an absent attr and an empty one would make ambiguous.
+    ref_by_family: dict[Hashable, str] = _references_by_family(present) if within_family else {"all": ref_id}
 
     details: list[dict] = []
     diff_arrays: dict[str, list[xr.DataArray]] = {}
@@ -640,14 +769,15 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
         if not _enabled_modes(sub):
             details.append({"sa_id": member_id, "detail": "summaries absent — skipped"})
             continue
-        # Compare against THIS sub's own family reference. For a non-primary family reference
-        # this resolves to itself (self-compare -> identical / 0.0), which is what keeps its row
-        # in the artifact's member_id coord — see the selection block above.
-        fam_ref_id = ref_by_family[fam_of[member_id]]
-        fam_ref_sub = subs[fam_ref_id]
-        for mode in _enabled_modes(fam_ref_sub):
+        # Compare against THIS sub's own (hardware family, DEM resolution) group reference. For a
+        # non-primary group reference this resolves to itself (self-compare -> identical / 0.0),
+        # which is what keeps its row in the artifact's member_id coord — see the selection block
+        # above.
+        group_ref_id = ref_by_group[group_of[member_id]]
+        group_ref_sub = subs[group_ref_id]
+        for mode in _enabled_modes(group_ref_sub):
             try:
-                ds_ref = fam_ref_sub.process._retrieve_combined_output(mode)
+                ds_ref = group_ref_sub.process._retrieve_combined_output(mode)
                 ds_cmp = sub.process._retrieve_combined_output(mode)
             except (FileNotFoundError, ValueError):
                 continue
@@ -677,7 +807,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
                 details.append(
                     {
                         "sa_id": member_id,
-                        "ref_member_id": fam_ref_id,
+                        "ref_member_id": group_ref_id,
                         "mode": mode,
                         "verdict": NOT_EVALUATED,
                         "detail": (
@@ -700,7 +830,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
                     details.append(
                         {
                             "sa_id": member_id,
-                            "ref_member_id": fam_ref_id,
+                            "ref_member_id": group_ref_id,
                             "mode": mode,
                             "variable": var,
                             "verdict": NOT_EVALUATED,
@@ -726,7 +856,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
                                     # per-family reference a bare member_id is unreadable, because
                                     # two rows can carry the same member_id semantics against
                                     # different baselines.
-                                    "ref_member_id": fam_ref_id,
+                                    "ref_member_id": group_ref_id,
                                     "event_iloc": int(e),
                                     "variable": var,
                                     "detail": (
@@ -779,14 +909,21 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
     artifact_ds = xr.Dataset(ds_vars)
     artifact_ds.attrs["reference_member_id"] = ref_id
 
-    # Per-family reference map (EW-4). `reference_member_id` above remains the PRIMARY reference and
-    # is the ONLY one _config_diff._identity_labels folds back in from `reference_group` — that
-    # contract is deliberately unchanged, because the non-primary family references self-compare
-    # and therefore already carry their own `identity_group` label in the array. This attr is
-    # pure disclosure: it lets a reader of the artifact tell WHICH reference each row was
-    # measured against. JSON-encoded to match raw_byte_identity's
-    # `reference_config_by_family` attr convention.
+    # Reference maps. `reference_member_id` above remains the PRIMARY reference and is the ONLY
+    # one _config_diff._identity_labels folds back in from `reference_group` — that contract is
+    # deliberately unchanged, because the non-primary references self-compare and therefore
+    # already carry their own `identity_group` label in the array.
+    #
+    # TWO maps, because they answer TWO questions. `reference_member_id_by_family` keeps its EW-4
+    # meaning — which member anchored each BACKEND — and is JSON-encoded to match
+    # raw_byte_identity's `reference_config_by_family` attr convention. `reference_member_id_by_group`
+    # is the partition the comparison actually ran under, so it is what lets a reader tell WHICH
+    # reference a row was measured against once one backend spans several DEM resolutions.
+    # Neither is derived from the other and their divergence is exactly the case worth seeing.
     artifact_ds.attrs["reference_member_id_by_family"] = json.dumps(ref_by_family)
+    artifact_ds.attrs["reference_member_id_by_group"] = json.dumps(
+        {_partition_label(group): member for group, member in ref_by_group.items()}
+    )
 
     # ---- Byte-identity PARTITION (full equivalence classes) ----
     # The per-reference verdict above is a one-reference relation: if sub A and sub B each
@@ -866,13 +1003,16 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
             )
 
     if within_family:
-        _ref_desc = ", ".join(f"{fam}->{member}" for fam, member in sorted(ref_by_family.items()))
+        _ref_desc = ", ".join(
+            f"{_partition_label(group)}->{member}"
+            for group, member in sorted(ref_by_group.items(), key=lambda kv: _partition_sort_key(kv[0]))
+        )
         summary = (
-            f"All tracked variables bit-identical within every hardware family across "
-            f"{len(subs) - 1} compared members (per-family refs: {_ref_desc})."
+            f"All tracked variables bit-identical within every (hardware family, DEM resolution) "
+            f"group across {len(subs) - 1} compared members (per-group refs: {_ref_desc})."
             if all_identical
             else f"{len([d for d in details if 'variable' in d])} (member, event, variable) "
-            f"tuple(s) diverged from their OWN family's reference (per-family refs: {_ref_desc})."
+            f"tuple(s) diverged from their OWN group's reference (per-group refs: {_ref_desc})."
         )
         passed = all_identical
     else:
