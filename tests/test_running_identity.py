@@ -73,7 +73,7 @@ def _labels(tree: Path, sha: str, identity: str | None = None) -> Path:
 
 def test_a_image_archive_with_matching_label(tmp_path):
     t = tmp_path / "img"
-    _archive(t, "src", "HHEMT_SHA")
+    _archive(t, "src", "HHEMT_SHA", "pyproject.toml")
     sha = (t / "HHEMT_SHA").read_text().strip()
     assert sha == _head_sha() and sha != UNSUBSTITUTED
     assert _run(t, _labels(t, sha)) == f"OK {sha} image False"
@@ -81,14 +81,14 @@ def test_a_image_archive_with_matching_label(tmp_path):
 
 def test_b_image_label_disagrees(tmp_path):
     t = tmp_path / "img"
-    _archive(t, "src", "HHEMT_SHA")
+    _archive(t, "src", "HHEMT_SHA", "pyproject.toml")
     out = _run(t, _labels(t, "0" * 40))
     assert out.startswith("REFUSED ConfigurationError") and "org.hhemt.hhemt_sha" in out
 
 
 def test_c_image_with_planted_git_refuses(tmp_path):
     t = tmp_path / "img"
-    _archive(t, "src", "HHEMT_SHA")
+    _archive(t, "src", "HHEMT_SHA", "pyproject.toml")
     (t / ".git").mkdir()
     out = _run(t, _labels(t, _head_sha()))
     assert out.startswith("REFUSED") and "carries a git tree" in out
@@ -96,7 +96,7 @@ def test_c_image_with_planted_git_refuses(tmp_path):
 
 def test_d_image_unsubstituted_stamp_refuses(tmp_path):
     t = tmp_path / "img"
-    _archive(t, "src")
+    _archive(t, "src", "pyproject.toml")
     (t / "HHEMT_SHA").write_text(UNSUBSTITUTED + "\n")
     out = _run(t, _labels(t, _head_sha()))
     assert out.startswith("REFUSED") and "not produced by git archive" in out
@@ -138,14 +138,14 @@ def test_g_dirty_checkout_is_flagged(tmp_path):
 
 def test_h_wheel_staged_tree_refuses(tmp_path):
     t = tmp_path / "wheel"
-    _archive(t, "src")
+    _archive(t, "src", "pyproject.toml")
     out = _run(t)
     assert out.startswith("REFUSED") and "has no identity" in out
 
 
 def test_i_git_dir_env_cannot_shadow_an_archive(tmp_path):
     t = tmp_path / "arch"
-    _archive(t, "src", "HHEMT_SHA")
+    _archive(t, "src", "HHEMT_SHA", "pyproject.toml")
     out = _run(t, env={"GIT_DIR": str(REPO / ".git")})
     assert out == f"OK {_head_sha()} archive False"
 
