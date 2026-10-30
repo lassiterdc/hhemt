@@ -21,7 +21,10 @@ tuples on the Iteration-5 campaign (0 intra-family). The resolution partition ex
 the same reason one axis over: different DEM resolutions are different physics, and one
 GPU arm carries 3.5 / 1.10 / 0.35 m inside ONE hardware family, so a family-only
 partition compared across a resolution boundary and reported the resolution difference as
-a reproducibility failure — false FAILs by construction, not by occurrence.
+a reproducibility failure — false FAILs by construction, not by occurrence. Each group is
+disclosed as its own row in the verdict's ``details``, together with the number of tuples that
+were actually evaluated in it, and a run in which nothing was evaluated reports
+``applicable=False`` rather than a bit-identity sentence over zero comparisons.
 
 Reads the per-sub FLAT summaries via ``sub.process._retrieve_combined_output(mode)``
 — NOT the consolidated ``analysis_datatree.zarr`` (consolidation CF-stamps,
@@ -665,6 +668,17 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
     measured against is. A cross-family pair is no longer compared at all, so it can
     neither pass nor fail; ``within_family=False`` is where that pair is measured.
 
+    The strict-path verdict ALSO carries a GROUP TABLE and a RUN-LEVEL APPLICABILITY GATE.
+    ``details`` gets one row per ``(hardware family, DEM resolution)`` pair —
+    ``group_family``, ``group_resolution``, ``members``, ``reference_member_id``,
+    ``evaluated_tuples``, ``not_evaluated_modes`` — and when the summed ``evaluated_tuples``
+    is zero the verdict reports ``applicable=False`` with a summary that makes NO
+    bit-identity claim. ``passed`` is deliberately left alone in that case: it is a
+    conjunction over the tuples that were evaluated, so it is vacuously ``True`` over none,
+    and forcing it ``False`` would assert that a comparison disagreed — a different and
+    stronger claim than that none was made. Read ``applicable`` to decide whether the
+    verdict is evidence at all; read ``passed`` to decide whether the evidence agreed.
+
     ``within_family=False`` (across hardware families, e.g. Frontier-ROCm vs
     UVA-CUDA): ONE global reference (no family partition — partitioning here would
     make this arm measure within-family divergence and label it "across-family").
@@ -763,6 +777,28 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
     # Populated only when within_family is False; ignored on the strict path.
     divergence: dict[str, dict[str, float]] = {}
 
+    # SHAPE §12.5's GROUP TABLE, accumulated during the loop and emitted once after it.
+    #
+    # Seeded from `subs` rather than from `present`, because the table must be TOTAL over the
+    # (family, resolution) pairs the ARM actually carries. A pair every one of whose members lacks
+    # summaries still gets a row that reports 0; seeding from `present` would make exactly that
+    # pair vanish instead, and a MISSING row and a ZERO row are different facts.
+    #
+    # Initialized on both arms. On `within_family=False` every member folds into the single
+    # `"all"` key and the accumulators are never emitted — that arm has no partition to disclose,
+    # which its own `{"all": <ref>}` reference map already says. Computing them regardless keeps
+    # the loop body free of per-path branches for no measurable cost over a handful of members.
+    group_members: dict[Hashable, list[str]] = {}
+    group_modes_seen: dict[Hashable, set[str]] = {}
+    group_modes_evaluated: dict[Hashable, set[str]] = {}
+    group_evaluated: dict[Hashable, int] = {}
+    for _member, _sub in subs.items():
+        _key = group_of[_member]
+        group_members.setdefault(_key, []).append(_member)
+        group_modes_seen.setdefault(_key, set())
+        group_modes_evaluated.setdefault(_key, set())
+        group_evaluated.setdefault(_key, 0)
+
     for member_id, sub in subs.items():
         if member_id == ref_id:
             continue
@@ -773,9 +809,15 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
         # non-primary group reference this resolves to itself (self-compare -> identical / 0.0),
         # which is what keeps its row in the artifact's member_id coord — see the selection block
         # above.
-        group_ref_id = ref_by_group[group_of[member_id]]
+        _group = group_of[member_id]
+        group_ref_id = ref_by_group[_group]
         group_ref_sub = subs[group_ref_id]
         for mode in _enabled_modes(group_ref_sub):
+            # Recorded BEFORE the read attempt, so a mode whose summary exists on the reference
+            # but not on this member still counts as a mode the group could not evaluate. A mode
+            # recorded only on success would silently drop exactly the failures this row exists
+            # to disclose.
+            group_modes_seen[_group].add(mode)
             try:
                 ds_ref = group_ref_sub.process._retrieve_combined_output(mode)
                 ds_cmp = sub.process._retrieve_combined_output(mode)
@@ -840,6 +882,32 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
                         }
                     )
                     continue
+                # ONE EVALUATED TUPLE per (member, mode, variable), counted HERE and not per event,
+                # and — load-bearing — NOT counted when the member's group reference is the member
+                # ITSELF.
+                #
+                # A SELF-COMPARE IS NOT A COMPARISON. It compares an array with itself, so it is
+                # identical and `max_abs_diff` is 0.0 BY CONSTRUCTION: it aggregates no information
+                # about reproducibility, and counting it makes the run-level gate fire on a master
+                # where no two DISTINCT members were ever compared. One member per resolution rung
+                # is a real experiment shape — the `dem_resolution` reporting set produces exactly
+                # it — and on that master every group holds one member, every comparison is a
+                # self-compare, and a count that included them would report the run as applicable
+                # evidence. This is the primary reference's rule ("a self-compare is not a
+                # comparison") applied to EVERY group reference rather than to the primary alone.
+                #
+                # THE COMPARISON ITSELF STILL RUNS for a self-compare, deliberately: the per-cell
+                # diff/identical arrays and `identity_group` depend on that member keeping a row in
+                # the artifact's `sa_id` coord. Only the TUPLE COUNT is excluded, not the work.
+                #
+                # The event loop below is not part of the unit either — shape §12.4 declares the
+                # tuple as (arm, family, resolution, member, mode, variable) and does not name
+                # `event_iloc`, so events are FOLDED: a variable compared over N events is one
+                # tuple, which also keeps the figure comparable across arms carrying different
+                # event counts.
+                if member_id != group_ref_id:
+                    group_evaluated[_group] += 1
+                    group_modes_evaluated[_group].add(mode)
                 for e in ds_ref["event_iloc"].values:
                     da_ref_sel = ds_ref[var].sel(event_iloc=e)
                     res = compare_variable_exact(da_ref_sel, ds_cmp[var].sel(event_iloc=e))
@@ -1003,17 +1071,100 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
             )
 
     if within_family:
+        # THE GROUP TABLE (shape §12.5 (i-a), (i-b), (i-d)): one row per (hardware family, DEM
+        # resolution) pair. It is emitted BEFORE the summary is built so the summary's divergence
+        # count runs over a `details` list whose group rows are already present and provably
+        # excluded by the `"variable" in d` filter.
+        #
+        # TWO KEY CONSTRAINTS ON THE ROW, each consumer-derived and each load-bearing:
+        #   * NO `variable` key. Divergence is counted as `[d for d in details if "variable" in d]`,
+        #     here and in the report renderers, so a group row carrying that key would be counted
+        #     as a PHYSICS DIVERGENCE and would inflate the FAIL count by the number of groups.
+        #   * NOT `member` or `artifact` either. `compare_arms` keys its own detail rows on those
+        #     names, and a row sharing a key is indistinguishable to any reader that filters on it.
+        #
+        # APPENDED rather than prepended. No consumer of THIS check indexes `details` positionally
+        # today, and appending carries zero positional risk for one added later; the table is still
+        # located by key.
+        #
+        # `group` is always a `(family, resolution)` pair on this branch, because `group_of` is
+        # built from `_partition_key` when `within_family` is True.
+        #
+        # A GROUP THAT IS ONLY THE PRIMARY REFERENCE REPORTS `evaluated_tuples == 0` BY
+        # CONSTRUCTION: the primary reference is skipped by the loop above so that the artifact's
+        # `sa_id` coord keeps its membership, and a self-compare is not a comparison. That is why
+        # §12.5 (i-d)'s gate is RUN-level ("every group row reports 0") and not per-group — a
+        # per-group gate would mark a legitimate reference-only group inapplicable.
+        for group in sorted(group_members, key=_partition_sort_key):
+            _family, _resolution = group
+            _seen = set(group_modes_seen[group])
+            if not _seen:
+                # NO MODE WAS RECORDED AS SEEN for this group, and the fallback chain below is what
+                # keeps `not_evaluated_modes` from being EMPTY beside `evaluated_tuples: 0`. Those
+                # two fields describe the same non-event, and `[]` is the reading a skimmer takes as
+                # "every mode was evaluated" — so an empty list here does not merely omit a fact,
+                # it states the opposite one. Two distinct states reach this branch and each names
+                # its own mode set:
+                #
+                #   (1) The group's only comparable member IS the primary reference. The loop above
+                #       skips that member outright, so nothing is seen. The reference's ENABLED
+                #       modes are the set it could have been held to, so those are what was not
+                #       evaluated.
+                #   (2) The group has NO member with present summaries at all — a rung whose only
+                #       member never produced output, which is the routine partially-complete state
+                #       §12.5 (i-b)'s totality clause exists for. There is no reference to seed
+                #       from and no enabled mode to enumerate, so the fallback is the DEFERRED mode
+                #       set the model itself declares (`_MODE_CONFIG`): every mode it can emit is
+                #       one that was not evaluated here. Falling back to the members' `_enabled_modes`
+                #       would return the empty set again — that helper keys on PRESENT summaries,
+                #       which is precisely what this group lacks — so it cannot discharge this.
+                _ref_seed = ref_by_group.get(group)
+                if _ref_seed is not None:
+                    _seen = set(_enabled_modes(subs[_ref_seed]))
+                else:
+                    for _member_id in group_members[group]:
+                        _seen |= set(subs[_member_id].process._MODE_CONFIG)
+            details.append(
+                {
+                    "group_family": _family,
+                    "group_resolution": _resolution,
+                    "members": sorted(group_members[group]),
+                    "reference_member_id": ref_by_group.get(group),
+                    "evaluated_tuples": group_evaluated[group],
+                    "not_evaluated_modes": sorted(_seen - group_modes_evaluated[group]),
+                }
+            )
+
         _ref_desc = ", ".join(
             f"{_partition_label(group)}->{member}"
             for group, member in sorted(ref_by_group.items(), key=lambda kv: _partition_sort_key(kv[0]))
         )
-        summary = (
-            f"All tracked variables bit-identical within every (hardware family, DEM resolution) "
-            f"group across {len(subs) - 1} compared members (per-group refs: {_ref_desc})."
-            if all_identical
-            else f"{len([d for d in details if 'variable' in d])} (member, event, variable) "
-            f"tuple(s) diverged from their OWN group's reference (per-group refs: {_ref_desc})."
-        )
+        # THE RUN-LEVEL APPLICABILITY GATE (§12.5 (i-d)), and the one place this function closes the
+        # false green §12.3 measured: a verdict whose every comparison was NOT-EVALUATED used to
+        # emit "All tracked variables bit-identical ... across 24 compared members" — wording
+        # byte-identical to a measured agreement, over zero comparisons.
+        #
+        # `passed` IS NOT TOUCHED. It is a conjunction over the tuples that were evaluated, and that
+        # conjunction is vacuously true over none; forcing it False would assert "a comparison
+        # disagreed", a different and stronger claim than "no comparison was made", and would also
+        # flip `ValidationReport.overall_passed`, which reads only `passed`. The third state is
+        # `applicable`, which the renderer greys and shows as N/A.
+        if sum(group_evaluated.values()) == 0:
+            summary = (
+                f"N/A — no (member, mode, variable) tuple was evaluated across "
+                f"{len(group_members)} (hardware family, DEM resolution) group(s); "
+                f"0 tuple(s) compared (per-group refs: {_ref_desc})."
+            )
+            applicable = False
+        else:
+            summary = (
+                f"All tracked variables bit-identical within every (hardware family, DEM resolution) "
+                f"group across {len(subs) - 1} compared members (per-group refs: {_ref_desc})."
+                if all_identical
+                else f"{len([d for d in details if 'variable' in d])} (member, event, variable) "
+                f"tuple(s) diverged from their OWN group's reference (per-group refs: {_ref_desc})."
+            )
+            applicable = True
         passed = all_identical
     else:
         # ADR-4 across-family: the disclosed bounds ARE the verdict; passed=True
@@ -1040,10 +1191,18 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
                 f"across {len(subs) - 1} non-reference members (ref member_id={ref_id})."
             )
         passed = True
+        # NOT gated. §12.5 (i-d)'s gate is stated over the strict path's group rows, and this arm's
+        # summary asserts a BOUND rather than bit-identity — when nothing was comparable it says so
+        # in words ("no comparable variables across N non-reference members"). Gating it here would
+        # also be wrong in the other direction: an across-family run that computed bounds over one
+        # variable and could not compare a second has evidence, and `applicable=False` would throw
+        # that evidence away.
+        applicable = True
     verdict = CheckResult(
         name=name,
         level="aggregate",
         passed=passed,
+        applicable=applicable,
         summary=summary,
         details=details,
         # SELF-REPORTED from the path actually taken: this check compares the FLAT
