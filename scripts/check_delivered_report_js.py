@@ -20,13 +20,15 @@ This needs NO browser and NO install: node's `new Function(src)` compiles withou
 executing. Run it against a delivered set before putting that set in front of a reviewer.
 
 Usage:
-    python scripts/check_delivered_report_js.py [--dest DIR] [--quiet]
+    python scripts/check_delivered_report_js.py [--dest DIR] [--report NAME ...] [--quiet]
 
     --dest  directory holding the delivered *.html reports
             (default: $HHEMT_QA_DEST, else ~/Downloads/cc_resume_report_qa)
 
-Exit 0 = every script compiles. Exit 1 = at least one does not. Exit 2 = cannot run
-(no node, no reports) -- deliberately DISTINCT from 1, because "the check could not run"
+Exit 0 = every script compiles, AND at least one script was compiled, AND every selected
+report contributed at least one. Exit 1 = at least one does not compile, or a selected
+report contributed none. Exit 2 = cannot run (no node, no reports, or ZERO scripts
+compiled in total) -- deliberately DISTINCT from 1, because "the check could not run"
 must never be readable as "the check passed" or as "the artifact is broken".
 """
 
@@ -103,7 +105,14 @@ def child_docs(page_html: str) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dest", default=os.environ.get("HHEMT_QA_DEST", ""))
-    ap.add_argument("--quiet", action="store_true", help="print only the summary line")
+    ap.add_argument("--quiet", action="store_true", help="print only the summary lines")
+    ap.add_argument(
+        "--report",
+        action="append",
+        default=None,
+        help="report filename, relative to --dest or absolute; repeatable. Default: the five "
+        "campaign reports this script shipped with.",
+    )
     args = ap.parse_args()
 
     dest = Path(args.dest).expanduser() if args.dest else Path.home() / "Downloads" / "cc_resume_report_qa"
@@ -111,9 +120,11 @@ def main() -> int:
         print("CANNOT RUN: node is not on PATH (needed to compile JS)", file=sys.stderr)
         return 2
 
-    present = [dest / n for n in _REPORTS if (dest / n).exists()]
+    names = args.report if args.report else list(_REPORTS)
+    present = [(Path(n) if os.path.isabs(n) else dest / n) for n in names]
+    present = [p for p in present if p.is_file()]
     if not present:
-        print(f"CANNOT RUN: no delivered reports under {dest}", file=sys.stderr)
+        print(f"CANNOT RUN: none of {names} found under {dest}", file=sys.stderr)
         return 2
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -121,18 +132,38 @@ def main() -> int:
         probe = work / "probe.js"
         probe.write_text(_PROBE)
         manifest = []
+        per_report: dict[str, int] = {str(r): 0 for r in present}
+        n_entries = n_absent = n_decode_failed = n_blank = 0
         for report in present:
             text = report.read_text(encoding="utf-8", errors="replace")
-            for path, page in sorted(decoded_by_path(text).items()):
-                if not page or page.startswith("<<DECODE"):
+            decoded = decoded_by_path(text)
+            n_entries += len(decoded)
+            for path, page in sorted(decoded.items()):
+                if not page:
+                    n_absent += 1
+                    continue
+                if page.startswith("<<DECODE"):
+                    n_decode_failed += 1
                     continue
                 for ki, kid in enumerate(child_docs(page)):
                     for si, src in enumerate(_SCRIPT.findall(kid)):
                         if not src.strip():
+                            n_blank += 1
                             continue
                         f = work / f"{report.stem}__{path.replace('/', '__')}.{ki}.{si}.js"
                         f.write_text(src)
                         manifest.append((report.name, path, f"{ki}.{si}", f))
+                        per_report[str(report)] += 1
+
+        if not manifest:
+            print(
+                "CANNOT RUN: zero scripts compiled — "
+                f"selected={len(present)} result_entries={n_entries} no_payload={n_absent} "
+                f"decode_failed={n_decode_failed} blank_script={n_blank}. "
+                "A green here would mean the check ran on nothing.",
+                file=sys.stderr,
+            )
+            return 2
 
         failed = 0
         for report_name, path, sid, f in manifest:
@@ -142,8 +173,18 @@ def main() -> int:
                 if not args.quiet:
                     print(f"FAIL {report_name} {path} script{sid} :: {r.stderr.strip()}")
 
-    print(f"checked={len(manifest)} failed={failed} reports={len(present)} dest={dest}")
-    return 1 if failed else 0
+    empty = sorted(n for n, c in per_report.items() if c == 0)
+    for name in empty:
+        if not args.quiet:
+            print(f"FAIL {name} :: contributes zero compilable scripts", file=sys.stderr)
+
+    print(f"checked={len(manifest)} failed={failed} empty_reports={len(empty)} reports={len(present)} dest={dest}")
+    print("per_report=" + ",".join(f"{n}:{c}" for n, c in sorted(per_report.items())))
+    print(
+        f"coverage: result_entries={n_entries} no_payload={n_absent} "
+        f"decode_failed={n_decode_failed} blank_script={n_blank}"
+    )
+    return 1 if failed or empty else 0
 
 
 if __name__ == "__main__":
