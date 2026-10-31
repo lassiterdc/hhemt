@@ -3,13 +3,13 @@
 PROBLEM. A resume arm that schedules K deliberate kills needs the analysis field
 ``hpc_consecutive_failure_budget_simulate`` at K+1 or more; the experiment factory
 (``scripts/experiments/synth_compute_config.py``) is the only writer of that arm's persisted
-config, so the value has to travel ``build_resume_from_clean_runtimes`` -> ``resume_case`` ->
-``_build_case`` -> ``additional_analysis_configs``. The coder's tests cover the two ends of that
-chain separately, each with the other end stubbed, so nothing observes the middle hop.
+config, so the value has to travel ``resume_case`` -> ``_build_case`` ->
+``additional_analysis_configs``. The coder's tests stub ``_build_case`` above it and call
+``_build_case`` directly below it, so neither drives the real ``resume_case`` -> ``_build_case`` ->
+materializer path end to end.
 
 VENUE: HPC-free and compile-free. Only ``retrieve_synth_TRITON_SWMM_test_case`` (the case
-materializer) and ``size_resume_walltimes`` (the clean-tree reader) are replaced; every factory
-function above them runs for real.
+materializer) is replaced; every factory function above it runs for real.
 
 THE INVARIANT these tests share: a budget named at the top of the chain reaches the persisted
 config of the RESUME arm and of no other arm; a budget not named reaches no arm, so an unnamed
@@ -31,9 +31,9 @@ _TEMPLATE = _REPO / "test_data" / "norfolk_coastal_flooding" / "template_analysi
 
 
 def _observe(mod, monkeypatch, tmp_path, *, variant="", **named):
-    """Run ``build_resume_from_clean_runtimes`` on ``mod`` and return what each arm persisted.
+    """Run ``clean_case`` and ``resume_case`` on ``mod`` and return what each arm persisted.
 
-    Returns ``{analysis_name: additional_analysis_configs}`` for every case the factory
+    Returns ``{analysis_name: additional_analysis_configs}`` for both arms the factory
     materialized in the call. The materializer is a recorder, so the dict recorded for an arm is
     exactly the text the real materializer would merge into that arm's persisted analysis config.
     """
@@ -45,12 +45,10 @@ def _observe(mod, monkeypatch, tmp_path, *, variant="", **named):
             analysis=SimpleNamespace(), system=SimpleNamespace(cfg_system=SimpleNamespace(system_directory="x"))
         )
 
-    import hhemt.synthetic_experiment as synthetic_experiment
-
     monkeypatch.setattr(mod, "retrieve_synth_TRITON_SWMM_test_case", recorder)
     monkeypatch.setattr(mod, "_GENERATED", tmp_path / "generated")
-    monkeypatch.setattr(synthetic_experiment, "size_resume_walltimes", lambda analysis: {})
-    mod.build_resume_from_clean_runtimes(clean_system_directory=str(tmp_path), variant=variant, **named)
+    mod.clean_case(variant=variant)
+    mod.resume_case(variant=variant, **named)
     return records
 
 
@@ -83,12 +81,14 @@ def _assert_invariant(mod, monkeypatch, tmp_path):
 def test_budget_named_at_the_top_of_the_chain_reaches_only_the_resume_arm(monkeypatch, tmp_path):
     """The real call chain persists the named budget on the resume arm and on no other arm.
 
-    Property: the invariant in the module docstring, observed through the REAL
-    ``build_resume_from_clean_runtimes`` -> ``resume_case`` -> ``_build_case`` chain.
-    Class: every (arm infix, named value) pair the estate's 12 call sites can produce.
-    Why required: the coder's tests stub ``resume_case`` in one test and call ``_build_case``
-    directly in the other, so a ``resume_case`` that drops the value before ``_build_case`` is
-    green under both while the estate's arms keep the default budget of 3 and fail with
+    Property: the invariant in the module docstring, observed through the REAL ``resume_case`` ->
+    ``_build_case`` -> materializer chain beside the ``clean_case`` arm it must not reach.
+    Class: every (arm infix, named value) pair a caller can produce.
+    Why required: the coder's tests observe one hop each — one stubs ``_build_case`` and reads the
+    keywords it received, the other calls ``_build_case`` directly — so neither can see a name or
+    arity drift between ``resume_case``'s call and ``_build_case``'s real signature, because a stub
+    accepts any keyword and a direct call uses whatever name it likes. Only this test binds the two,
+    and a drifted keyword leaves the estate's arms on the default budget of 3, failing with
     ``budget SPENT``.
     What kills it: deleting the ``hpc_consecutive_failure_budget_simulate=`` argument from the
     ``_build_case`` call inside ``resume_case``.
@@ -102,9 +102,10 @@ def test_budget_named_at_the_top_of_the_chain_reaches_only_the_resume_arm(monkey
 def test_resume_case_called_directly_persists_the_named_budget(monkeypatch, tmp_path):
     """``resume_case`` itself persists a named budget and persists nothing when it is unnamed.
 
-    Property: the middle hop alone, with no ``build_resume_from_clean_runtimes`` above it.
-    Class: direct callers of ``resume_case`` (the toolkit's own smoke path and any estate driver
-    that skips the two-pass builder).
+    Property: ``resume_case`` alone, with no other arm in the call.
+    Class: direct callers of ``resume_case`` — the CLI ``resume`` subcommand and the
+    ``intercomparison`` command in ``synth_compute_config.py``, and any estate driver that mints a
+    resume arm without going through ``clean_case``.
     Why required: ``resume_case`` is a public signature that gained a parameter; a parameter that
     is accepted and not used is the silent form of this defect.
     What kills it: the same deletion as the chain test, and also a ``resume_case`` that writes the

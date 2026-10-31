@@ -294,7 +294,6 @@ RULE_GAINED_QUALNAMES = frozenset(
         "hhemt.synthetic_experiment.experiment_matrix_rows",
         "hhemt.synthetic_experiment.generate_synthetic_experiment",
         "hhemt.synthetic_experiment.model_arm_toggles",
-        "hhemt.synthetic_experiment.size_resume_walltimes",
         "hhemt.synthetic_experiment.write_clean_matrix_csv",
         "hhemt.synthetic_experiment.write_resume_matrix_csv",
         "hhemt.synthetic_experiment.write_smoke_matrix_csv",

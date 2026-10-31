@@ -592,9 +592,9 @@ def test_factory_persists_an_explicit_false_and_nothing_when_unset(monkeypatch, 
 
     Class: NEW CAPABILITY. Plausible wrong implementation: the old true-only rule, which drops an
     explicit False so A3 forces replay on the arm that exists to test the snapshot route; red because
-    the persisted configuration carries no key. Reachability: `build_resume_from_clean_runtimes`
-    and `resume_case` call `_build_case` with the caller's value; artifact: the recorded
-    `additional_analysis_configs`. Both-states property: an unset call persists no key (pre-change
+    the persisted configuration carries no key. Reachability: `resume_case` calls `_build_case`
+    with the caller's value; artifact: the recorded `additional_analysis_configs`. Both-states
+    property: an unset call persists no key (pre-change
     behaviour). Invocation isolation: True persists true. Second correct implementation: always
     persisting the key as a string would fail the unset case, so the two-arm test discriminates.
     """

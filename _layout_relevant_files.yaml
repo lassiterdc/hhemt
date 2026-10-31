@@ -4535,3 +4535,15 @@ non_breaking_allowlist:
       needs no migration. The two hunks are disjoint (a textual merge without conflict). The
       layout_signature is this file's sha256 at this write and must equal it as committed.
       KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 10954db38ae1c678fb20c7339ff66237943b6b85f2024939e6a806775e856403
+    justification: |-
+      cross-solver-matrix 1b.3 -- _stamp_triton_provenance additionally stamps triton_producing_commit_date as a PLAIN consolidated-tree root attr beside triton_producing_sha. Kept OUT of metadata._EMBEDDED_PROV_KEYS, so it never enters the Gotcha-63 byte-identity golden fixtures; graceful-absent, so a tree built before this stamp reads unchanged. Same change class as the allowlisted per-target producing-sha attrs. No on-disk filename, zarr group or _version.json change; no LAYOUT_VERSION bump.
+  - path: src/hhemt/report_plot_ids.py
+    layout_signature: 8a52192e738f134b801dec4a31b5029e7f8704ca8f84304feadc7a49b3de4a4a
+    justification: |-
+      cross-solver-matrix 1b.2 (landed edab7db1; stamped here by 1b.3 because the yaml is on 1b.3's write row and Check B reds without it) -- ONE additive _OUTPUT_EXT_BY_RENDERER entry for the new cross_solver_comparison renderer. Provably non-breaking: a new renderer key changes no existing renderer's extension and therefore no existing figure filename; the entry resolves only the new cross-solver figure's own stem.
+  - path: src/hhemt/log.py
+    layout_signature: ae7c838b8c5f441a89c6f877d9997298030344245d718138b6dc9676072dae62
+    justification: |-
+      cross-solver-matrix 1b.3 -- ADDITIVE Optional LogField triton_head_commit_date on TRITONSWMM_system_log (YYYYMMDD committer date of the solver clone HEAD, captured beside triton_head_sha), listed in both hand-maintained name lists. Defaulted unset so every pre-existing system_log.json deserialises unchanged and every consumer treats absence as 'date not captured'. Same change class as this file's allowlisted additive sif_sha256 and per-target producing-sha fields. No on-disk filename, zarr group or _version.json change; no LAYOUT_VERSION bump.

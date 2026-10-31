@@ -55,7 +55,12 @@ from types import SimpleNamespace
 from typing import Literal
 
 from hhemt.bundle._combine_merge import _experiment_id, merge_experiment_trees
-from hhemt.bundle._compatibility import CompatibilityReport, check_bundle_compatibility
+from hhemt.bundle._compatibility import (
+    _CFG_SYSTEM_FILENAME,
+    CompatibilityReport,
+    _load_yaml,
+    check_bundle_compatibility,
+)
 from hhemt.bundle._emit import _get_toolkit_git_sha
 from hhemt.exceptions import ConfigurationError, ProcessingError
 from hhemt.provenance import producing_stamp
@@ -114,8 +119,11 @@ def combine_bundle(
     Raises
     ------
     ConfigurationError
-        If fewer than two bundles are supplied, or if the bundles carry a blocking
-        compatibility divergence (they do not describe the same experiment family).
+        If fewer than two bundles are supplied, if the bundles carry a blocking
+        compatibility divergence (they do not describe the same experiment family), or if
+        bundles sharing one ``TRITONSWMM_branch_key`` carry differing ``triton_producing_sha``
+        or commit-date root attrs (one pin label would cover two builds). The last check has
+        no waiver; ``declare_solver_split`` does not apply to it.
 
     Examples
     --------
@@ -153,6 +161,11 @@ def combine_bundle(
             message=f"Bundles are not combine-compatible (blocking divergences): {blocking}{_hint}",
             config_path=None,
         )
+    # Agreement gate, beside the compatibility gate and before ANY write to the output path: a
+    # disagreement is a property of the input bundles, decidable from their root-tree attrs alone.
+    # Placed here rather than in the read-model writer, which runs after the output directory exists
+    # and the children are copied and would leave a partly written bundle. No waiver flag.
+    _solver_provenance(roots)
     merged = merge_experiment_trees(roots)  # consumed by the emit-time render step
     if output_path is None:
         sha = _get_toolkit_git_sha(strict=False)
@@ -235,6 +248,12 @@ def _emit_combined_bundle(
     _write_combined_rocrate(output_path, child_crates)
     _write_combined_compatibility(output_path, report)
     _write_combined_intercomparison(output_path, roots)
+    # The cross-solver read-model, and with it `distinct_solver_count` -- the count the combined
+    # report's cross-solver figure is gated on, by both the report rules and the direct
+    # render in `_render_combined_report`. Written BEFORE the render step below
+    # so a consumer on the generation path finds it, and left on disk afterwards so
+    # `regenerate_report()` re-renders from it with no re-merge.
+    _write_cross_solver_comparison(output_path, roots)
     _write_combined_bundle_manifest(
         output_path,
         experiment_ids=experiment_ids,
@@ -573,6 +592,315 @@ def _write_combined_intercomparison(output_path: Path, roots: list[Path]) -> Non
     )
 
 
+#: Model arm -> the consolidated-tree PERFORMANCE group that arm writes, keyed exactly as
+#: ``processing_analysis._MODE_TO_TREE_PATH`` writes it. The arm is taken from which group
+#: exists rather than from an analysis-id suffix: the suffix is a naming convention of the analysis
+#: id that may change, while the group path is written by the consolidation itself.
+_PERFORMANCE_GROUP_BY_ARM: dict[str, str] = {
+    "tritonswmm": "tritonswmm/performance",
+    "triton": "triton_only/performance",
+}
+
+
+def _solver_branch_key(root: Path) -> str:
+    """The bundle's pinned solver ref, or ``""`` when it carries none.
+
+    Read from the SAME field the combine's compatibility gate compares
+    (``TRITONSWMM_branch_key`` in the bundled ``cfg_system.yaml``), so the read-model's solver
+    identity cannot disagree with the gate that decided these bundles were compatible.
+
+    The value is a git ref, not the identity token Decision 4 specifies for the estate
+    (``{sha8}_{YYYYMMDD}``, package 2a.1, not yet landed), which the estate will pass as the
+    ``variant`` infix on the analysis NAME: the toolkit passes this ref to ``git checkout`` when it
+    builds a solver. A reader expecting the token here would find a bare sha; see the read-model's
+    ``solver_format`` key, which states which one this writer found rather than leaving the
+    consumer to guess.
+    """
+    sysd = _load_yaml(root / _CFG_SYSTEM_FILENAME)
+    return str(sysd.get("TRITONSWMM_branch_key") or "").strip()
+
+
+#: Root attrs `processing_analysis._stamp_triton_provenance` stamps on the consolidated tree from the
+#: compile-time system log: the solver clone's HEAD sha and its `YYYYMMDD` committer date.
+_ROOT_SHA_ATTR = "triton_producing_sha"
+_ROOT_DATE_ATTR = "triton_producing_commit_date"
+
+
+def _usable_date(raw: object) -> str | None:
+    """``raw`` as a real ``YYYYMMDD`` calendar date, or ``None``.
+
+    A date that is present but not an 8-digit calendar date is treated as NOT captured rather than
+    sorted as text: the figure is to order its series by this value (chunk 1b.4, not yet landed), and a
+    malformed string would take a position set by its characters instead of by when the commit happened.
+    """
+    from datetime import datetime
+
+    text = str(raw or "").strip()
+    if len(text) != 8 or not text.isdigit():
+        return None
+    try:
+        datetime.strptime(text, "%Y%m%d")
+    except ValueError:
+        return None
+    return text
+
+
+def _root_provenance_attrs(root: Path) -> tuple[str | None, str | None]:
+    """``(triton_producing_sha, commit date)`` from one bundle's ROOT consolidated tree, else ``None``s.
+
+    Reads only the root group's attrs, so it works on a store carried metadata-only (attrs are zarr
+    metadata, never chunks) and opens no member. A bundle with no tree, an unreadable root, or an
+    unstamped root yields ``(None, None)``: absence is the normal state for every bundle consolidated
+    before the capture existed, a container-mode bundle (no clone to read) and an intermittent
+    capture miss, and callers treat it as "not captured", never as a value.
+    """
+    import xarray as xr
+
+    from hhemt.utils import resolve_experiment_tree
+
+    store = resolve_experiment_tree(root)
+    if not store.exists():
+        return None, None
+    try:
+        attrs = dict(xr.open_dataset(str(store), engine="zarr", group="/", chunks=None, consolidated=False).attrs)
+    except Exception:  # noqa: BLE001 -- an unreadable root is "not captured", not a combine failure
+        return None, None
+    sha = str(attrs.get(_ROOT_SHA_ATTR) or "").strip() or None
+    return sha, _usable_date(attrs.get(_ROOT_DATE_ATTR))
+
+
+def _solver_provenance(roots: list[Path]) -> dict[str, dict]:
+    """Aggregate each SOLVER's provenance across its bundles; RAISE when one pin names two builds.
+
+    A solver is one ``TRITONSWMM_branch_key``, and one solver is normally two bundles (one per
+    model arm). The commit date belongs to the commit, and both arms built the same commit, so a
+    capture missing from one arm is ABSORBED by the other. A solver is undated only when none of
+    its bundles carries the date.
+
+    Two *present* values that differ -- for the date or for ``triton_producing_sha`` -- mean one pin
+    label covers two builds, and the function raises ``ConfigurationError`` naming both bundles and
+    both values instead of picking one. A value present in one bundle and absent in another is not
+    a disagreement. There is deliberately NO waiver: ``declare_solver_split`` exists because a set
+    of DIFFERENT pins can be a deliberate design, while one pin covering two builds cannot be, and a
+    waiver would publish one series that silently mixes them. Reads root-tree attrs only and writes
+    nothing, so a caller can run it before any output path exists.
+
+    Returns ``{pin: {"date", "label", "triton_producing_sha", "dated_bundles", "undated_bundles"}}``
+    in sorted-pin order. ``label`` is the first 8 characters of the pin, then ``_`` and the date
+    when dated: the form Decision 4 specifies for the estate's ``_identity_token(pin)`` (package
+    2a.1, not yet landed), so a figure label and an experiment-name infix agree once it lands. A
+    display value only; the cell identity stays the pin.
+    """
+    rows: dict[str, list[tuple[str, str | None, str | None]]] = {}
+    for root in roots:
+        pin = _solver_branch_key(root)
+        if not pin:
+            continue
+        sha, date = _root_provenance_attrs(root)
+        rows.setdefault(pin, []).append((root.name, sha, date))
+
+    out: dict[str, dict] = {}
+    problems: list[str] = []
+    for pin, bundles in sorted(rows.items()):
+        agreed: dict[str, str | None] = {}
+        for kind, idx in (("triton_producing_sha", 1), ("commit date", 2)):
+            present = [(name, row[idx]) for row in bundles for name in (row[0],) if row[idx] is not None]
+            values = sorted({v for _, v in present})
+            if len(values) > 1:
+                shown = "; ".join(f"{name}={value!r}" for name, value in present)
+                problems.append(f"solver {pin!r} carries differing {kind} values ({shown})")
+            agreed[kind] = values[0] if values else None
+        date = agreed["commit date"]
+        out[pin] = {
+            "date": date,
+            "label": f"{pin[:8]}_{date}" if date else pin[:8],
+            "triton_producing_sha": agreed["triton_producing_sha"],
+            "dated_bundles": sorted(name for name, _, d in bundles if d is not None),
+            "undated_bundles": sorted(name for name, _, d in bundles if d is None),
+        }
+    if problems:
+        raise ConfigurationError(
+            field="bundle_paths",
+            message=(
+                "Bundles that share one TRITONSWMM_branch_key were built from different solver commits: "
+                + " | ".join(problems)
+                + ". One pin label would cover two builds, so the combine refuses rather than choosing "
+                "one; this check has no waiver (--declare-solver-split does not apply). Re-run the "
+                "disagreeing arm at the intended pin."
+            ),
+            config_path=None,
+        )
+    return out
+
+
+def _solver_order(info: dict[str, dict]) -> list[str]:
+    """Pins in the order the figure is to show them: dated ascending by date, then undated by identity.
+
+    Ground for undated-last: a dated series' position is an age claim, so the dated series stay
+    contiguous from the oldest and no undated series sits among them. Ties on date fall to the pin.
+    """
+    dated = sorted((pin for pin, v in info.items() if v["date"]), key=lambda pin: (info[pin]["date"], pin))
+    undated = sorted(pin for pin, v in info.items() if not v["date"])
+    return dated + undated
+
+
+def _member_wallclock(dt, member_group: str) -> tuple[str, float | None]:
+    """``(model arm, wall-clock seconds)`` for one member node, or ``("", None)``.
+
+    ``Total`` is REDUCED BY MAX over whatever dims survive. The performance summary is already
+    summed over ``timestep_min`` by ``_export_performance_summary``, so a member carrying one
+    simulation has nothing left to reduce and the max is the identity. A member carrying
+    several events would otherwise have their wall-clocks SUMMED, which reports the number of
+    events as cost; max answers "the slowest single simulation at this config", which is the
+    quantity that is comparable across solvers.
+
+    A non-finite result is returned as ``None`` rather than as a number, because zarr's fill
+    value for a float variable is NaN and reporting it as a measurement would be the exact
+    "ran and produced nothing" ambiguity the figure's ``not_run`` marker exists to remove.
+    """
+    import numpy as np
+
+    for arm, rel in _PERFORMANCE_GROUP_BY_ARM.items():
+        try:
+            node = dt[f"{member_group}/{rel}"]
+        except KeyError:
+            continue
+        if "Total" not in node.data_vars:
+            continue
+        values = np.asarray(node["Total"].values, dtype=float).ravel()
+        finite = values[np.isfinite(values)]
+        return arm, (float(finite.max()) if finite.size else None)
+    return "", None
+
+
+def _write_cross_solver_comparison(output_path: Path, roots: list[Path]) -> None:
+    """Derive the cross-SOLVER read-model into ``cross_solver_comparison.json``.
+
+    WHY A COMBINE-TIME READ-MODEL AND NOT A RENDER-TIME SCAN. The figure's question -- did the
+    solver change move the measurement? -- spans bundles, so no single child can answer it and
+    the merge is the only place holding them together. Deriving it here also keeps
+    ``CombinedBundle.regenerate_report()`` cheap: a re-render re-reads this file and re-merges
+    nothing.
+
+    TWO OUTPUTS IN ONE FILE, because they share a lifetime and must never disagree.
+    ``cells`` is the figure's data, one ``(solver, model_arm, config)`` cell each.
+    ``distinct_solver_count`` is the predicate package 1b's Definition of Done turns on (the
+    figure must be inert on a single-solver combine). It is published IN THIS ARTIFACT rather
+    than returned in memory because ``regenerate_report()`` re-invokes the render path with no
+    re-merge, so an in-memory channel would be missing on exactly the re-render path that must
+    also stay inert. The consuming chunk (1b.4, not yet landed) is to skip the
+    ``cross_solver_comparison`` selection when this count is below 2.
+
+    ``distinct_solver_count`` COUNTS DISTINCT BUNDLE SOLVER REFS, not cells, so it is written
+    even when no cell could be derived. A single-solver combine must still produce the file:
+    to a consumer that checks only for the file's presence, an absent file and a count of two
+    are indistinguishable, and the failure would be a vacuously rendered figure rather than a
+    missing one.
+
+    Degradation is per bundle and RECORDED, never silent. A bundle with no solver ref, no
+    consolidated tree, or a metadata-only store contributes its solver to the count and no
+    cells, and the reason lands in ``skipped_bundles`` so a reader of the read-model learns
+    why instead of reading an omission as an absence of simulations. The delivered renderer does
+    not display that key.
+    """
+    from hhemt.eda.cross_sim_identity import config_identity_from_node_attrs
+    from hhemt.report_renderers.cross_solver_comparison import READ_MODEL_FILENAME
+    from hhemt.utils import resolve_experiment_tree
+
+    solvers = [_solver_branch_key(root) for root in roots]
+    # Per-solver date/label, aggregated over each solver's bundles. Raises on a disagreement, so a
+    # direct caller cannot publish a read-model whose solver silently mixes two builds; the combine
+    # entry point has already run this same call before any write (see `combine_bundle`).
+    solver_info = _solver_provenance(roots)
+    distinct = _solver_order(solver_info)
+
+    cells: list[dict] = []
+    skipped: list[dict] = []
+    collapsed: dict[str, list[str]] = {}
+    arms: set[str] = set()
+    configs: set[str] = set()
+
+    for root, solver in zip(roots, solvers, strict=True):
+        if not solver:
+            skipped.append({"bundle": root.name, "reason": "no TRITONSWMM_branch_key in cfg_system.yaml"})
+            continue
+        store = resolve_experiment_tree(root)
+        if not store.exists():
+            skipped.append({"bundle": root.name, "reason": "no consolidated tree"})
+            continue
+        # A store carried SHALLOWLY (zarr metadata documents only) re-opens cleanly and yields
+        # FILL VALUES on every data read rather than raising. `_load_intercomparison_subs` REFUSES
+        # that case because fill values there produce a false "identical" verdict; here a fill
+        # value would produce a false MEASUREMENT, so the bundle is skipped with its reason
+        # recorded instead of contributing a cell.
+        manifest = root / BUNDLE_MANIFEST_FILENAME
+        if manifest.exists():
+            try:
+                shallow = json.loads(manifest.read_text()).get("metadata_only_stores", []) or []
+            except (OSError, ValueError):
+                shallow = []
+            if store.relative_to(root).as_posix() in shallow:
+                skipped.append({"bundle": root.name, "reason": "consolidated tree carried metadata-only"})
+                continue
+
+        import xarray as xr
+
+        dt = xr.open_datatree(str(store), engine="zarr", consolidated=False)
+        for g in sorted(dt.groups):
+            if g.count("/") != 1 or not g.startswith("/member_"):
+                continue
+            arm, seconds = _member_wallclock(dt, g)
+            if not arm:
+                continue
+            cfg_key = config_identity_from_node_attrs(dict(dt[g].attrs))
+            if any(c["solver"] == solver and c["model_arm"] == arm and c["config"] == cfg_key for c in cells):
+                # First (sorted) representative per (solver, arm, config) wins; the discarded
+                # member ids are recorded rather than dropped, mirroring
+                # `_load_intercomparison_subs`, because an undisclosed replicate collapse
+                # under-reports the very spread a comparison exists to show.
+                collapsed.setdefault(f"{solver}|{arm}|{cfg_key}", []).append(g.lstrip("/"))
+                continue
+            arms.add(arm)
+            configs.add(cfg_key)
+            cells.append(
+                {
+                    "solver": solver,
+                    "model_arm": arm,
+                    "config": cfg_key,
+                    "status": "ok" if seconds is not None else "not_run",
+                    "value": seconds,
+                }
+            )
+
+    payload: dict = {
+        "metric": "wallclock_seconds",
+        "metric_label": "Wall-clock (s), max over a member's simulations",
+        # Which identity the `solver` field carries, stated rather than left for a consumer to
+        # infer: this writer emits whatever `TRITONSWMM_branch_key` holds, which is the pinned
+        # git ref and NOT the experiment token Decision 4 specifies for the estate
+        # (`{sha8}_{YYYYMMDD}`, package 2a.1, not yet landed).
+        "solver_format": "pin",
+        # Intended figure order: dated solvers ascending by date, then undated by identity. The
+        # delivered renderer does NOT read `solver_info` or this list's position and re-sorts by
+        # parsing each token; ordering by `solver_info` is chunk 1b.4's change (not yet landed).
+        # The list is written in the intended order so a reader of the file sees that sequence.
+        "solvers": distinct,
+        # Per solver: its commit date (or None when no bundle of that solver carried it), its legend
+        # label, and which bundles did and did not carry the date. The cell identity above stays the
+        # pin for every cell, so no capture state can change a solver's series or `not_run` count.
+        "solver_info": {pin: solver_info[pin] for pin in distinct},
+        "model_arms": sorted(arms),
+        "configs": sorted(configs),
+        "distinct_solver_count": len(distinct),
+        "cells": sorted(cells, key=lambda c: (c["model_arm"], c["config"], c["solver"])),
+    }
+    if skipped:
+        payload["skipped_bundles"] = skipped
+    if collapsed:
+        payload["replicates_collapsed"] = {k: v for k, v in sorted(collapsed.items())}
+    (output_path / READ_MODEL_FILENAME).write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n")
+
+
 def _write_combined_bundle_manifest(
     output_path: Path,
     *,
@@ -736,18 +1064,20 @@ def _render_combined_report(merged, report, output_path: Path, *, formats: tuple
     import importlib
 
     from hhemt.bundle.combined_snakefile_generator import (
+        _active_combined_selections,
         render_combined_report_via_snakemake,
     )
     from hhemt.config.report import DEFAULT_REPORT_CONFIG
-    from hhemt.report_renderers._reporting_sets import get_reporting_set
 
     # Option B: NO child-report regen and NO index.html front door. The per-experiment
     # sidebar sections harvest each child's ALREADY-rendered plots/ figures in place
     # (combined_snakefile_generator._harvest_per_experiment_rule_specs), so the ONE
     # combined --report carries every experiment's content natively.
     ctx = _CombinedRenderContext(analysis_dir=output_path)
-    rset = get_reporting_set("combined")
-    for sel in rset.renderer_selection:
+    # The selections come from the generator's helper rather than the raw registry so a
+    # conditional figure (the cross-solver one) is NOT written to disk when its predicate is
+    # false; the report rules read the same helper, so files and rules cannot disagree.
+    for sel in _active_combined_selections(output_path):
         for tmpl in sel.rule_spec_template:
             module = importlib.import_module(f"hhemt.report_renderers.{tmpl.renderer_module}")
             rel = tmpl.output_path_template.replace("__OUTPUT_EXT__", ".html")

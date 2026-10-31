@@ -1053,6 +1053,25 @@ class TRITONSWMM_system:
         head_sha = head.stdout.strip()
         self.log.triton_head_sha.set(head_sha)
 
+        # The COMMIT DATE of the clone HEAD, captured at the same moment as the sha and from the
+        # same clone, with the expression Decision 4 specifies for the estate's
+        # `_identity_token(pin)` (package 2a.1, not yet landed), so the two agree on form once it
+        # lands: an 8-digit `YYYYMMDD` committer date. It is the date the cross-solver figure is
+        # to order its series by (chunk 1b.4, not yet landed); measured from the clone that built the data
+        # rather than declared by a caller. Best-effort and never raises: a failed query leaves
+        # the field unset, which every reader treats as "date not captured", never as a date.
+        try:
+            _date = subprocess.run(
+                ["git", "-C", str(d), "log", "-1", "--format=%cd", "--date=format:%Y%m%d", "HEAD"],
+                capture_output=True,
+                text=True,
+            )
+            _date_s = _date.stdout.strip()
+            if _date.returncode == 0 and len(_date_s) == 8 and _date_s.isdigit():
+                self.log.triton_head_commit_date.set(_date_s)
+        except OSError:
+            pass
+
         # NO ancestry queries here. This method now records WHAT BUILT THE DATA and nothing
         # about which defects that build carries: `merge-base --is-ancestor` needs both shas in
         # one object DB, and the compile-time clone is not guaranteed to contain a fix sha named

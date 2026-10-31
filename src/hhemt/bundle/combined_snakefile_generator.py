@@ -65,12 +65,15 @@ Overview
 --------
 
 This report combines multiple completed experiment bundles into one
-cross-experiment comparison. The sidebar holds four cross-experiment sections:
+cross-experiment comparison. The sidebar holds five cross-experiment sections:
 
 - **Combine Provenance & Compatibility**: the metadata-compatibility summary
   across the combined experiments.
 - **Cross-Experiment Results**: the clean-vs-resume intercomparison of
   key-result summaries, as a table and as maps.
+- **Cross-Solver Comparison**: the same measurement across solver versions,
+  one series per solver. It appears only when the combined experiments ran two
+  or more distinct solver commits.
 - **Cross-Experiment Errors and Warnings**: each experiment's validation
   checks, side by side.
 - **Cross-Experiment Disk Utilization**: each experiment's disk use, side by
@@ -109,6 +112,68 @@ def _load_source_paths(sidecar_path: Path) -> list[str]:
     return list(data.get("source_paths_relative", []))
 
 
+def _has_multiple_solvers(bundle_root: Path) -> bool:
+    """True iff the combined bundles ran two or more distinct solver commits.
+
+    Reads the ``distinct_solver_count`` the combine step wrote into
+    ``cross_solver_comparison.json``, because that step alone held the bundle list when it
+    counted distinct ``TRITONSWMM_branch_key`` values; this module sees only the merged output
+    and so cannot re-derive the count. An absent read-model, an unparseable one, or one with
+    no integer count is read as NOT multi-solver, so the cross-solver figure goes inert
+    rather than rendering a vacuous single-series panel. The unparseable and no-count cases
+    also warn, because an inert figure that hides a damaged read-model would otherwise look
+    identical to a correct single-solver combine.
+    """
+    import json
+
+    source = bundle_root / "cross_solver_comparison.json"
+    if not source.exists():
+        return False
+    try:
+        count = json.loads(source.read_text(encoding="utf-8")).get("distinct_solver_count")
+    except (OSError, ValueError, AttributeError) as exc:
+        warnings.warn(
+            f"{source} could not be read ({exc}); the cross-solver figure is omitted.",
+            stacklevel=2,
+        )
+        return False
+    if isinstance(count, bool) or not isinstance(count, int):
+        warnings.warn(
+            f"{source} carries no integer distinct_solver_count; the cross-solver figure is omitted.",
+            stacklevel=2,
+        )
+        return False
+    return count >= 2
+
+
+#: ``RendererSelection.predicate_key`` values the COMBINED render path can evaluate, each
+#: taking the bundle root. Deliberately separate from ``workflow.py``'s ``_RENDERER_PREDICATES``:
+#: that registry takes a single analysis's inputs, which a combined bundle does not have.
+_COMBINED_PREDICATES = {"has_multiple_solvers": _has_multiple_solvers}
+
+
+def _active_combined_selections(bundle_root: Path):
+    """The ``combined`` set's renderer selections that apply to this bundle.
+
+    A selection with no ``predicate_key`` always applies. One with a key applies only when
+    that key's predicate is true for ``bundle_root``; a key this path cannot evaluate raises
+    ``KeyError`` naming it, because skipping an unknown key would silently drop a figure and
+    keeping it would silently ignore the gate.
+    """
+    out = []
+    for sel in get_reporting_set("combined").renderer_selection:
+        if sel.predicate_key is not None:
+            if sel.predicate_key not in _COMBINED_PREDICATES:
+                raise KeyError(
+                    f"combined renderer {sel.builder_key!r} is gated on predicate_key "
+                    f"{sel.predicate_key!r}, which the combined render path does not define"
+                )
+            if not _COMBINED_PREDICATES[sel.predicate_key](bundle_root):
+                continue
+        out.append(sel)
+    return tuple(out)
+
+
 def _harvest_combined_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...]:
     """One RuleSpec per combined-set figure template; every such template is fixed, with no wildcards.
 
@@ -116,9 +181,8 @@ def _harvest_combined_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...]:
     renderer declared), threaded into the caption's Sources block. No status-flag
     input; no wildcards; report_kwargs carried verbatim from the registry template.
     """
-    rset = get_reporting_set("combined")
     specs: list[RuleSpec] = []
-    for sel in rset.renderer_selection:
+    for sel in _active_combined_selections(bundle_root):
         for tmpl in sel.rule_spec_template:
             sidecar = bundle_root / tmpl.output_path_template.replace("__OUTPUT_EXT__", ".manifest.json")
             specs.append(

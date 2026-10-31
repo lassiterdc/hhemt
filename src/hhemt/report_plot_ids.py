@@ -84,6 +84,13 @@ _OUTPUT_EXT_BY_RENDERER: dict[str, dict[str, str]] = {
     # cross_experiment renderers above — a key here lets the combined generator's
     # _emit_plot_rule reuse resolve an ext instead of raising KeyError.
     "cross_experiment_disk_utilization": {"matplotlib": ".html", "plotly": ".html"},
+    # Cross-SOLVER comparison: one grouped panel per model arm over the solver versions the
+    # combined bundles carry. Emits HTML unconditionally (the Plotly HTML branch of
+    # emit_plot_with_sources), same as the cross_experiment renderers above. NO
+    # _RENDERER_KIND_LABELS entry is needed beside this one: that map falls back to the
+    # generic humanisation (`_RENDERER_KIND_LABELS.get(kind, ...)`), so the display label
+    # resolves without an edit, while THIS dict is a hard subscript and would raise.
+    "cross_solver_comparison": {"matplotlib": ".html", "plotly": ".html"},
 }
 
 

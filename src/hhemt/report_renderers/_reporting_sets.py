@@ -365,6 +365,31 @@ _TMPL_CROSS_EXPERIMENT_DISK_UTILIZATION = RuleSpecTemplate(
     log_path_template="_logs/plots/cross_experiment_disk_utilization.log",
 )
 
+# Cross-SOLVER comparison. Same two readers as the templates above (the combine-time
+# direct render and the combined generator's report rule). Projects a table keyed on
+# (solver version, model arm, compute-config) into one grouped panel per model arm, with
+# the solver versions as the series, from cross_solver_comparison.json -- the read-model
+# written at combine time beside the merged tree.
+#
+# CONDITIONAL, unlike every template above: the selection carries
+# predicate_key="has_multiple_solvers". A combine over a single solver version has
+# nothing to compare, so the figure and its sidebar category must be ABSENT rather than
+# rendered vacuously as one bar per panel. Not established here: no producer or consumer
+# of that key exists yet on either combined render path -- see the selection's comment.
+_TMPL_CROSS_SOLVER_COMPARISON = RuleSpecTemplate(
+    rule_name="plot_cross_solver_comparison",
+    renderer_module="cross_solver_comparison",
+    output_path_template="plots/cross_experiment/cross_solver_comparison__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/cross_solver_comparison.rst",
+        "category": "Cross-Solver Comparison",
+        "labels": '{"figure": "Cross-solver comparison"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=4000, time_min=10",
+    log_path_template="_logs/plots/cross_solver_comparison.log",
+)
+
 # eda_compute_sensitivity: the in-report EDA adapter for the compute-sensitivity
 # family. Conditional (predicate has_eda_artifact — gated on the master carrying an
 # EDA artifact). Emits the config_diff_maps figure under master-rooted plots/eda/;
@@ -738,6 +763,11 @@ REPORTING_SETS: dict[str, ReportingSet] = {
         category_order=(
             "Combine Provenance & Compatibility",
             "Cross-Experiment Results",
+            # Ranked next to "Cross-Experiment Results" rather than appended last: the two
+            # are the report's only two COMPARISON sections, and a reader looking for "how
+            # do the runs differ" should meet them adjacent. Appending it after the disk
+            # section would file a results comparison behind a resources table.
+            "Cross-Solver Comparison",
             "Cross-Experiment Errors and Warnings",
             "Cross-Experiment Disk Utilization",
         ),
@@ -753,6 +783,33 @@ REPORTING_SETS: dict[str, ReportingSet] = {
             RendererSelection(
                 "cross_experiment_intercomparison_maps",
                 rule_spec_template=(_TMPL_CROSS_EXPERIMENT_INTERCOMPARISON_MAPS,),
+            ),
+            # The one CONDITIONAL selection in this set, and its predicate has no
+            # producer or consumer yet -- stated here rather than left to be discovered
+            # when a single-solver combine renders a vacuous one-bar-per-panel figure:
+            #
+            #   * PRODUCER: nothing computes has_multiple_solvers. The source-side
+            #     registry (_RENDERER_PREDICATES in workflow.py) carries has_independent_vars,
+            #     has_member_event_pairs, has_eda_artifact, has_preserved_raw_outputs and
+            #     has_swmm_link_outputs, and no solver-count key. The value is derivable
+            #     only at combine time, from the distinct TRITONSWMM_branch_key count
+            #     across the bundles being combined.
+            #   * CONSUMER: neither combined render path resolves predicate_key. The
+            #     combine-time direct render (bundle/_combine.py, the `for sel in
+            #     rset.renderer_selection` loop) and the combined generator
+            #     (bundle/combined_snakefile_generator.py, three such loops) all iterate
+            #     rule_spec_template of EVERY selection unconditionally.
+            #
+            # So this selection renders on EVERY combine today, and the inertness DoD 1b
+            # requires is owed by the chunks that own those files: the producer by 1b.3
+            # (bundle/_combine.py, which alone holds the bundles), the consumer by 1b.4
+            # (the combined generator). Registering the key here is what makes those two
+            # edits possible without a second registry change; it does not by itself
+            # change what any dispatcher selects.
+            RendererSelection(
+                "cross_solver_comparison",
+                predicate_key="has_multiple_solvers",
+                rule_spec_template=(_TMPL_CROSS_SOLVER_COMPARISON,),
             ),
             RendererSelection(
                 "cross_experiment_errors_and_warnings",

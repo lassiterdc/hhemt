@@ -12,6 +12,8 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 
+import pandas as pd
+
 # Initialize GDAL (rasterio/rioxarray) BEFORE the synthetic-model chain pulls in
 # swmmio/swmm.toolkit. Importing swmm.toolkit's native lib before GDAL is initialized
 # corrupts GDAL's allocator and aborts the process ("free(): invalid pointer") at the
@@ -20,7 +22,22 @@ from pathlib import Path
 import rioxarray  # noqa: F401  (import-order workaround — see comment above)
 
 from hhemt.bundle._dependency import ExperimentDependency, ExperimentIdentity
+
+# The matrix enumeration lives in ``src`` and is its SINGLE SOURCE (an ``src -> scripts`` import
+# is the direction that module forbids), so composing a SUBSET matrix here means reading its
+# private helpers rather than re-listing their content locally. That is the established route in
+# this toolkit and not an exception invented here: ``src/hhemt/config/synthetic_experiment.py``
+# imports ``_MODEL_ARMS``, ``_configs`` and ``_DEM_FIXED_CONFIG`` from this same module for the
+# same reason. The alternative -- restating the two compute configs and the ten CSV columns in
+# this file -- is a second source that drifts from the sweep the subset is drawn FROM.
 from hhemt.synthetic_experiment import (
+    _CLEAN_WALLTIME_MIN,
+    _COLS,
+    _DEFAULT_RANK_SWEEP,
+    _GPU_CONFIGS,
+    _SERIAL_CONFIGS,
+    _configs,
+    _rows,
     model_arm_toggles,
     write_clean_matrix_csv,
     write_resume_matrix_csv,
@@ -353,12 +370,16 @@ def _build_case(
     return _Case(analysis=case.analysis, system_directory=str(case.system.cfg_system.system_directory))
 
 
-def resume_depends_on(tritonswmm_sha: str = "3a832f7d") -> ExperimentDependency:
+def resume_depends_on(tritonswmm_sha: str) -> ExperimentDependency:
     """The RESUME experiment's first-class dependency on the CLEAN experiment (P2+V3).
 
     This is the unmistakeable, version-controlled declaration the reproducible ``intercomparison``
-    driver reads to verify + resolve the clean bundle. ``tritonswmm_sha`` is the pinned solver
-    (default ``3a832f7d``); ``case_name`` binds once the bundle carries ``case.yaml`` (Phase-5
+    driver reads to verify + resolve the clean bundle. ``tritonswmm_sha`` is the pinned solver and
+    it is REQUIRED rather than defaulted: the retired default (``3a832f7d``) was stale against every
+    pin used after it was written, and a default here declares a dependency on a solver NOBODY
+    named — a wrong-pin arm at a plausible path that passes every structural guard is precisely the
+    failure the pin-keyed comparison exists to make unwritable. ``case_name`` binds once the bundle
+    carries ``case.yaml`` (Phase-5
     ``_emit`` copy) — until then ``read_bundle_identity`` returns ``case_name=None`` and
     ``ExperimentIdentity.matches`` skips it, so the sha+role check still holds. ``compute_config_identity``
     is v1-None (both arms share the SAME 28-config matrix, so it is not a clean/resume discriminator)."""
@@ -511,6 +532,91 @@ def resume_case(
     )
 
 
+#: The two compute configs the cross-solver test runs, taken from the shipped enumeration by
+#: IDENTITY rather than re-listed: the canonical SERIAL row (1 CPU, no device) and the canonical
+#: single-GPU ``gpu-a6000`` row (1 GPU). A solver-version comparison needs one point per compute
+#: KIND, so two rows are the whole matrix; restating either tuple here would let this matrix
+#: silently disagree with the sweep it is a subset of.
+_CROSS_SOLVER_CONFIGS: tuple[tuple, ...] = (_SERIAL_CONFIGS[0], _GPU_CONFIGS[0])
+
+
+def cross_solver_matrix_rows() -> list[dict]:
+    """The cross-solver test's TWO matrix rows: one CPU row, one GPU row, in that order.
+
+    The rows are SLICES of the canonical clean-sweep enumeration rather than freshly expanded ones,
+    and that is what keeps ``member_id`` meaning the same compute config here as it does in the
+    full sweep. ``_rows`` encodes the GLOBAL enumerate index in ``member_id``, so expanding
+    these two configs as their own list would mint ``gpu_1_r1`` for the ONE-device row -- an id the
+    sweep already spends on the TWO-device ``gpu-a6000`` config. Anything joining the two matrixes
+    on ``member_id`` would then compare a one-device run against a two-device one with nothing
+    raising.
+
+    Walltime is the clean sweep's generous single-allocation value: these sims run straight through
+    with no interruption schedule, so a short window would only manufacture a failure the
+    cross-solver comparison would misread as a solver difference.
+    """
+    configs = _configs(_DEFAULT_RANK_SWEEP)
+    canonical_rows = _rows(configs, walltime_min=_CLEAN_WALLTIME_MIN, replicates=1)
+    return [canonical_rows[configs.index(config)] for config in _CROSS_SOLVER_CONFIGS]
+
+
+def write_cross_solver_matrix_csv(path: Path) -> None:
+    """Emit the cross-solver matrix CSV (2 rows: 1 CPU, 1 GPU) consumed by ``cross_solver_case``.
+
+    Same column schema and same pandas serialization as the clean/resume/smoke writers in
+    ``hhemt.synthetic_experiment``, so a row here reads identically to a row of the full sweep.
+    """
+    pd.DataFrame(cross_solver_matrix_rows(), columns=_COLS).to_csv(path, index=False)
+
+
+def cross_solver_case(
+    start_from_scratch: bool = False,
+    system_directory: str | None = None,
+    cell_size_m: float = 3.5,
+    hpc_system_config_yaml: Path | None = None,
+    tritonswmm_branch_key: str | None = None,
+    tritonswmm_git_url: str | None = None,
+    tritonswmm_software_directory: str | None = None,
+    model_arm: str = "tritonswmm",
+    variant: str = "",
+) -> _Case:
+    """Cross-solver experiment: TWO simulations (one CPU row, one GPU row) at ONE solver pin.
+
+    WHY TWO SIMULATIONS AND NOT THE FULL SWEEP. This case exists to compare SOLVER VERSIONS,
+    not compute configs: the cross-solver figure spends one performance point per (solver, model
+    arm), so every extra compute config multiplies the pin x arm cost without adding a
+    solver-version observation. Two rows -- one CPU point, one GPU point -- are the smallest matrix
+    that still exercises both execution paths, and they are the canonical sweep's OWN rows
+    (``cross_solver_matrix_rows``), so the member ids and row contents match that sweep's.
+
+    ``variant`` is an INFIX on the analysis name -- ``synth_cc_cross{variant}_{model_arm}`` -- the
+    exact mechanism ``clean_case``/``resume_case`` use, for their two reasons: the solver identity
+    token (``{sha8}_{YYYYMMDD}``) has to reach the name to keep two same-arm, different-pin trees
+    apart, and composing the name from ``model_arm`` makes a name/arm disagreement unwritable. The
+    ``cross`` token is what distinguishes these trees from the clean/resume masters minted at the
+    same pin, since a cross-solver arm shares its pin, its model arm and its cell size with them.
+
+    NOT a resume arm: ``resume=False``, so no interruption schedule is written and ``analysis.run()``
+    needs no pick-up-where-left-off override.
+    """
+    _GENERATED.mkdir(parents=True, exist_ok=True)
+    csv = _GENERATED / "cross_solver_matrix.csv"
+    write_cross_solver_matrix_csv(csv)
+    return _build_case(
+        analysis_name=f"synth_cc_cross{variant}_{model_arm}",
+        sensitivity_csv=csv,
+        start_from_scratch=start_from_scratch,
+        resume=False,
+        system_directory=system_directory,
+        cell_size_m=cell_size_m,
+        hpc_system_config_yaml=hpc_system_config_yaml,
+        tritonswmm_branch_key=tritonswmm_branch_key,
+        tritonswmm_git_url=tritonswmm_git_url,
+        tritonswmm_software_directory=tritonswmm_software_directory,
+        model_arm=model_arm,
+    )
+
+
 def smoke_case(
     start_from_scratch: bool = True,
     system_directory: str | None = None,
@@ -546,114 +652,6 @@ def smoke_case(
         model_arm="triton",
         resume_interruption_schedule=_SMOKE_SCHEDULE,
         ensemble_partition="standard",
-    )
-
-
-def build_resume_from_clean_runtimes(
-    *,
-    clean_system_directory: str,
-    system_directory: str | None = None,
-    cell_size_m: float = 3.5,
-    hpc_system_config_yaml: Path | None = None,
-    tritonswmm_branch_key: str | None = None,
-    tritonswmm_git_url: str | None = None,
-    tritonswmm_software_directory: str | None = None,
-    model_arm: str = "tritonswmm",
-    variant: str = "",
-    clean_variant: str | None = None,
-    swmm_snapshot_disable: bool | None = None,
-    swmm_snapshot_keep_all: bool = False,
-    hpc_consecutive_failure_budget_simulate: int | None = None,
-) -> _Case:
-    """Two-pass (FQ3): read each completed clean-sweep member_id's full-completion
-    wallclock and size the resume walltimes to force a mid-sim kill (~T/3), then
-    materialize the resume case. Run AFTER the clean sweep has completed.
-
-    Delegates the per-member runtime read to
-    ``hhemt.synthetic_experiment.size_resume_walltimes`` (df_status['perf_Total'];
-    on the clean run this equals SLURM Elapsed because clean is never resumed).
-    ``cell_size_m`` MUST match the clean sweep's for a valid byte-identity compare.
-
-    ``variant`` is forwarded to BOTH the internal ``clean_case`` read AND the returned
-    ``resume_case``, which is a DELIBERATE COUPLING and not an oversight. The internal read exists
-    only to locate the clean arm this resume arm pairs with, so its analysis name MUST be the one
-    the clean arm was actually minted under: a resume arm at ``variant="_ornl"`` whose internal read
-    reconstructed ``synth_cc_clean_{model_arm}`` would point at a directory that does not exist
-    under ``clean_system_directory``. One parameter therefore enforces the invariant that the pair
-    shares an infix, and an asymmetric pair is UNWRITABLE rather than merely discouraged. A future
-    caller genuinely needing asymmetric infixes must add a second parameter and argue for it; do
-    not reach for that to work around a mis-set ``clean_system_directory``.
-
-    ``clean_variant`` IS that second parameter, and this is the argument for it. It defaults to
-    ``None``, which resolves to ``variant`` and reproduces the coupling above EXACTLY -- every
-    existing caller is byte-unaffected, and the asymmetric pair stays unwritable unless a caller
-    names it. The caller that needs it is the b4b re-run's THIRD arm, ``A3``: two resume arms sit at
-    the SAME solver pin and differ only in which resume path they exercise -- ``A2`` takes the
-    full-precision state snapshot, ``A3`` is forced onto the old exchange-replay fallback by
-    ``swmm_snapshot_disable=1`` -- and BOTH are compared against the ONE same-pin clean arm ``A1``,
-    which is minted at ``variant="P"``. So ``A3`` needs the clean infix ``P`` (to locate ``A1``) and
-    a resume infix that is NOT ``P`` (because ``synth_cc_resumeP_tritonswmm`` is already ``A2``, and
-    the docstring above gives the reason that collision is unacceptable: two resume arms sharing one
-    inner analysis name reproduce the wrong-pin-at-a-plausible-path ambiguity one level down). One
-    parameter cannot express that pair, which is exactly the case this parameter is added for.
-
-    WHAT IT DOES NOT LICENSE. It does not make the clean arm optional or the pairing advisory: the
-    internal read is still LIVE against ``clean_system_directory``, so naming a clean infix whose
-    arm is absent or incomplete still raises, which is the stop described below and is deliberately
-    preserved. Do not reach for this parameter to work around a mis-set ``clean_system_directory``
-    either -- that is the same misuse the paragraph above warns about, and it now has a second door.
-
-    WHAT THAT INTERNAL READ IS AND IS NOT, because its name oversells it. ``size_resume_walltimes``
-    is called and its result is DISCARDED — ``resume_case`` accepts ``runtime_min_by_member`` and
-    forwards it nowhere (``_build_case`` has no such parameter, and ``write_resume_matrix_csv`` is
-    called bare). Under Option D the kill is a deterministic checkpoint-count SIGKILL and every row
-    carries the generous clean walltime, so nothing is sized from the clean sweep any more. What
-    SURVIVES is that the read is LIVE: it touches ``clean_analysis.df_status`` and
-    ``dropna(subset=["perf_Total"])``, so it can raise against an incomplete or absent clean tree.
-    That is the real reason ``clean_system_directory`` must name the pair's OWN clean arm — not
-    walltime provenance, which no longer exists.
-    """
-    from hhemt.synthetic_experiment import size_resume_walltimes
-
-    # None resolves to `variant`, so the symmetric pairing above is preserved byte-for-byte for
-    # every caller that does not name an asymmetric pair. An empty STRING is a real, distinct
-    # value here -- it names the un-infixed clean arm `synth_cc_clean_{model_arm}` -- so the
-    # resolution tests `is None` rather than falsiness.
-    clean_infix = variant if clean_variant is None else clean_variant
-    clean = clean_case(
-        system_directory=clean_system_directory,
-        cell_size_m=cell_size_m,
-        hpc_system_config_yaml=hpc_system_config_yaml,
-        tritonswmm_branch_key=tritonswmm_branch_key,
-        tritonswmm_git_url=tritonswmm_git_url,
-        tritonswmm_software_directory=tritonswmm_software_directory,
-        model_arm=model_arm,
-        variant=clean_infix,
-    )
-    runtime_min_by_member = size_resume_walltimes(clean.analysis)
-    return resume_case(
-        system_directory=system_directory,
-        cell_size_m=cell_size_m,
-        runtime_min_by_member=runtime_min_by_member,
-        hpc_system_config_yaml=hpc_system_config_yaml,
-        tritonswmm_branch_key=tritonswmm_branch_key,
-        tritonswmm_git_url=tritonswmm_git_url,
-        tritonswmm_software_directory=tritonswmm_software_directory,
-        model_arm=model_arm,
-        variant=variant,
-        # Forwarded to the RESUME arm only. The clean read above must NEVER carry it: the clean
-        # arm never resumes, so the key would have no effect on its behaviour but WOULD land in
-        # its reconstructed config, and `A1` is the shared comparand for both resume arms.
-        swmm_snapshot_disable=swmm_snapshot_disable,
-        # Forwarded to the RESUME arm only, for the identical reason: the retention prune this
-        # flag disarms runs on the RESUME restore path, so the key is inert on a clean arm and
-        # would still land in the clean arm's reconstructed config and destroy its own
-        # membership-by-literal reading.
-        swmm_snapshot_keep_all=swmm_snapshot_keep_all,
-        # Forwarded to the RESUME arm only. The clean arm never schedules a kill and so never
-        # spends the budget; the key would also land in its reconstructed config, and the clean
-        # arm is the comparand shared by every resume arm (the rule the two flags above follow).
-        hpc_consecutive_failure_budget_simulate=hpc_consecutive_failure_budget_simulate,
     )
 
 

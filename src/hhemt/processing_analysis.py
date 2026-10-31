@@ -974,6 +974,17 @@ def _stamp_triton_provenance(tree: "xr.DataTree", analysis) -> None:
         except Exception:
             pass
 
+    # The clone HEAD's committer date (`YYYYMMDD`), same carrier and same graceful-absent rule
+    # as the sha above, stamped as a PLAIN root attr beside it and, like it, kept out of
+    # `metadata._EMBEDDED_PROV_KEYS`. Independent of the sha: a log carrying a sha and no date
+    # (a toolkit that captured the sha before the date existed) stamps the sha alone.
+    try:
+        _commit_date = _sys_log.triton_head_commit_date.get()
+    except Exception:
+        _commit_date = None
+    if _commit_date is not None:
+        tree.attrs["triton_producing_commit_date"] = str(_commit_date)
+
     # Per-target TRITON and standalone-SWMM provenance, same carrier and same
     # graceful-absent rule as the clone-level sha above: captured at compile time onto the
     # system log by the invocation that ACTUALLY built each target, stamped here as

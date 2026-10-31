@@ -1008,6 +1008,16 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
     # `extra` policy, so pydantic's default `ignore` absorbs them on from_json.
     triton_head_sha: LogField[str] = Field(default_factory=LogField)
 
+    # The committer date (`YYYYMMDD`, 8 digits) of the solver clone's HEAD, captured by the same
+    # compile-time call and onto the same carrier as `triton_head_sha` above, and stamped on the
+    # consolidated-tree root as `triton_producing_commit_date`. ADDITIVE and graceful-absent: a
+    # legacy log, a container run (no clone to read) and a capture that failed all leave it
+    # unset, and every consumer treats absence as "date not captured". The date is NOT tied to
+    # the sha: it is absent whenever the capture did not run on a clone, including a container
+    # run, where `setup_workflow` sets `triton_head_sha` from the SIF label and nothing sets this
+    # field, so the sha is present while the date is absent.
+    triton_head_commit_date: LogField[str] = Field(default_factory=LogField)
+
     # The sha256 of the SIF this analysis RAN, captured at SETUP against
     # the image resolved under `container.sif_root` and carried to consolidation on this same log —
     # the identical cross-job carrier `triton_head_sha` above uses, and for the identical
@@ -1092,6 +1102,7 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
 
     _validate_string_fields = field_validator(
         "triton_head_sha",
+        "triton_head_commit_date",
         # A NEW LogField ON THIS MODEL MUST BE LISTED IN BOTH HAND-MAINTAINED NAME
         # LISTS ON THIS CLASS — this validator AND the serializer below. Omitting it
         # from the serializer raises `Unable to serialize unknown type: LogField` and
@@ -1127,6 +1138,7 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "compilation_swmm_successful",
         "system_datatree_consolidation_complete",
         "triton_head_sha",
+        "triton_head_commit_date",
         "sif_sha256",
         "tritonswmm_producing_sha",
         "triton_only_producing_sha",
