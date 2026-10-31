@@ -83,6 +83,7 @@ safe to inspect first: each has a listing mode before it has a deleting mode.
 
 | Command | What it does |
 |---|---|
+| `cache` | Report the on-disk caches the synthetic test tier reuses, and the tier address they are keyed on. `cache status` prints each root with its presence and the address this checkout resolves to. `cache clear` lists the roots a clear would remove and removes them only with `--apply`; without a permitted compile venue it leaves the compiled-build tier in place and exits 2 rather than deleting a tier this machine cannot rebuild. See [Branching and release](../explanation/branching-and-release-model.md). |
 | `synth-experiment` | Load-smoke a synthetic compute-config experiment: validate the config and build the partition-as-axis matrix. `--dry-run` writes nothing. See [Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md). |
 | `test` | Run a test campaign against a chosen SUBJECT. Two subjects: `toolkit`, the toolkit's own pytest suite run as a scheduler array (see the subsection below), and `analysis`, one end-to-end smoke run of YOUR experiment on its own cluster: `hhemt test analysis --experiment {definition dir}`, with `--cluster` optional when the experiment definition declares one cluster. `test analysis` submits real work, exits `3` when any representative reports failure, and takes no further subcommand. |
 

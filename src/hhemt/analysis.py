@@ -6841,7 +6841,7 @@ class TRITONSWMM_analysis:
             "session_name": session_name,
             "errors": _errors,
             # EMPTY when the scancel could not run: this key is documented as "the (token,
-            # jobid) pairs SCANCELLED" and its one consumer (workflow.py:6780) reads a
+            # jobid) pairs SCANCELLED" and its one consumer (_wait_for_tmux_session_completion) reads a
             # non-empty list as "Cancelled N simulation job(s)". Handing it the SELECTED
             # set on the failure path would state a cancellation that never happened --
             # the same non-answer-as-positive-finding this helper exists to remove, at the

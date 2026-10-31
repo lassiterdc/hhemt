@@ -205,6 +205,16 @@ def test_single_sourced_runs_root_literal():
 
     Uses a filesystem scan, NOT `git grep` — `git grep` skips untracked files, so
     it cannot see a newly created module and would under-report.
+
+    The single DEFINITION no longer lives under `tests/`: the test cache's roots
+    moved into product code, so `synthetic_runs_root()` at
+    `src/hemt/cache/paths.py` is now the one place the name is defined, and it is
+    outside this scan's population. What remains here are the deliberately
+    retained `runs_root_override` branch and the assertion sites that check the
+    path's VALUE — the latter cannot be written without the literal, since
+    comparing a function against its own return value would assert nothing.
+    A new entry in this list is still a conscious act, which is the property the
+    guard exists to protect.
     """
     tests_dir = Path(__file__).resolve().parent
     self_path = Path(__file__).resolve()
@@ -216,11 +226,14 @@ def test_single_sourced_runs_root_literal():
         if p.resolve() != self_path and '"synthetic_test_runs"' in p.read_text()
     )
     assert hits == [
-        "fixtures/_triton_source_cache.py",
         "fixtures/test_case_builder.py",
+        "test_cache_clear.py",
+        "test_cache_substrate.py",
     ], (
-        "expected exactly two sites: the single source in _triton_source_cache.py and "
-        f"the deliberately-retained runs_root_override branch in test_case_builder.py; got {hits}"
+        "expected exactly the three legitimate sites under tests/: the "
+        "deliberately-retained runs_root_override branch in test_case_builder.py, "
+        "and the two modules whose assertions check the path's value against the "
+        f"literal; got {hits}"
     )
 
 

@@ -30,7 +30,7 @@ what a visitor arriving without a version in the URL should see.
 
 **Both halves are conditions of the gate, not conveniences of running it.** A
 cached run reuses analysis trees and compiled builds, so its greens say that the
-cached artifacts satisfied the tests — not that this commit's sources build and
+cached artifacts satisfied the tests rather than that this commit's sources build and
 pass. It is a real suite result, and it is a weaker claim than "all tests green",
 which is what the gate means. So the caches are cleared before the gate runs:
 
@@ -41,7 +41,7 @@ hhemt cache clear --apply
 Run it on the machine that will run the gate, immediately before submitting, and
 read the listing the bare `hhemt cache clear` prints first: `--apply` deletes the
 model-artifact and analysis-tree tiers always, and the compiled-build tier only
-where a compile venue is permitted (see the next paragraph) — without a permitted
+where a compile venue is permitted (see the next paragraph). Without a permitted
 venue it leaves `_software` in place and exits 2 rather than leaving a tier this
 machine cannot rebuild.
 
@@ -59,7 +59,7 @@ The second export is what turns a compile-tier skip into a failure. Neither
 implies the other: with the venue declared and the requirement unset a run is
 green while structurally unable to compile, and with the requirement set and no
 venue declared every compile refuses loudly. The release gate needs both, and a
-run that recorded neither is not a gate result — see
+run that recorded neither is not a gate result. See
 [`hhemt test toolkit`](../reference/cli.md#hhemt-test-toolkit) for how a run
 records the pair it ran under.
 
