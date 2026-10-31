@@ -273,6 +273,8 @@ test_data/norfolk_coastal_flooding/triton/*
 # This block is rewritten automatically, so edits inside it are discarded.
 /.claude/settings.local.json
 /.clinerules
+/.codex/
+/.hermes.md
 /AGENTS.md
 /CLAUDE.md
 # <<< local agent entrypoints <<<
