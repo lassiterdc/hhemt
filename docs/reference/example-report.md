@@ -11,7 +11,7 @@ re-rendering does not re-execute any simulation rule.
 
 ```python
 analysis.render_report()          # multisim
-sensitivity.render_report()       # sensitivity master
+sensitivity.render_report()       # sensitivity primary
 ```
 
 The container is chosen by the `format` argument, which defaults to `"zip"`.

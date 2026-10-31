@@ -114,7 +114,7 @@ record.
 
 ## Publish a sensitivity analysis
 
-A sensitivity analysis deposits its **master** tree the same way:
+A sensitivity analysis deposits its **primary** tree the same way:
 
 ```python
 # The analysis-directory set, with experiment_datatree.zarr as the consolidated zarr

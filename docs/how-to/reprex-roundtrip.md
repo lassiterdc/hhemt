@@ -18,7 +18,7 @@ during `render_report()`, so run it first):
 # Single analysis
 bundle_dir = analysis.reprex_bundle()
 
-# Sensitivity master (the primary reprex surface, because the per-(member_id, column)
+# Sensitivity primary (the main reprex surface, because the per-(member_id, column)
 # problem-pair report is intrinsically a sensitivity concept)
 bundle_dir = sensitivity.reprex_bundle()
 ```

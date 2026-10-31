@@ -25,14 +25,14 @@ report that presents them side by side.
   ```
 
 - Combine operates on **single-analysis** bundles (each ships its consolidated
-  `analysis_datatree.zarr` at the bundle root) **and on sensitivity-master
+  `analysis_datatree.zarr` at the bundle root) **and on sensitivity-primary
   bundles** (each ships `experiment_datatree.zarr` at the bundle root; a bundle
   produced before the store unification ships `analysis_datatree.zarr` or
   `sensitivity_datatree.zarr` and is still accepted). The
   combine step resolves whichever consolidated tree a bundle ships. It records
   the divergences its compatibility check finds in the combined bundle's
   `combined_compatibility.json`, and the cross-experiment report presents, for a
-  clean-vs-resume sensitivity-master pair, a
+  clean-vs-resume sensitivity-primary pair, a
   `cross_experiment_intercomparison` panel derived cross-bundle from the two
   consolidated trees (see *Compatibility gates* below).
 
