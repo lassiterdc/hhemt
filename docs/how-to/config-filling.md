@@ -58,6 +58,18 @@ Set `weather_timeseries`, `weather_events_to_simulate`, and the four
 your NetCDF**. These are not conventions the toolkit imposes; they are how it finds
 your data.
 
+The template ships these names for the Norfolk weather file; replace the values with
+yours:
+
+```yaml
+weather_timeseries: /path/to/events.nc
+weather_events_to_simulate: /path/to/events_to_simulate.csv
+weather_event_indices: [year, event_type, event_id]
+weather_time_series_storm_tide_datavar: waterlevel_m
+weather_time_series_timestep_dimension_name: timestep
+weather_time_series_spatial_mean_rainfall_datavar: mm_per_hr
+```
+
 Set `hhemt_sha` to the full 40-hex commit of hhemt you run; `git rev-parse HEAD` in
 your clone prints it. The template carries a placeholder for it, the field has no
 default, and every process that constructs the analysis refuses to start when the

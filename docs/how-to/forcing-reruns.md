@@ -61,6 +61,14 @@ Either form overrides the config's `force_rerun` field for a single invocation
 without mutating the config. `hhemt run-experiment` and `hhemt reprocess` carry
 the same flag, taking the same values written as JSON.
 
+Written in the analysis config, the two-axis form is:
+
+```yaml
+force_rerun:
+  subject: all
+  stage: process
+```
+
 ## Add scenarios or events to a running sweep
 
 Re-run in the default resume mode. Under the toolkit's graceful-rerun semantics,

@@ -89,6 +89,17 @@ clean-vs-resume `cross_experiment_intercomparison` figure under the "Cross-Exper
 Results" category, projected from the `combined_intercomparison.json` read-model, so a
 local re-render of the combined report picks it up with no re-merge.
 
+The enabled models come from the system config's toggles. Bundles from the same
+experiment agree on them; the paired model arms of one experiment are the one
+divergence the combine admits as a warning rather than a block. A single-model arm
+sets, for example:
+
+```yaml
+toggle_triton_model: false
+toggle_tritonswmm_model: true
+toggle_swmm_model: false
+```
+
 ## Regenerate or inspect the combined report
 
 The combined bundle mirrors a single-analysis bundle, with one asymmetry. The CLI

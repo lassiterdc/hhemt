@@ -14,6 +14,18 @@ These operations do not disturb simulations that are already in flight, but two 
     - Under `batch_job` the driver is a tmux session on the login node you submitted from, and `scancel` on the sim jobs does not end it (Snakemake keeps running and may resubmit the cancelled work). Call `analysis.cancel()` from that node instead; it signals Snakemake, cancels the workers, and ends the session. If you then re-run from that same login node, the dead driver's sentinel under `_status/_orchestrator/` is reclaimed on its own. From another node the re-run cannot probe the session and refuses; only once you have confirmed the driver is gone, pass the `driver_id` the refusal names as `--override-live-driver` on `hhemt run` (see the [CLI reference](../reference/cli.md#running-an-analysis)). A wrong id is refused, not ignored.
     - Under `1_job_many_srun_tasks` the driver is the SLURM job itself, so `scancel JOBID` stops the driver and the simulations together. The sentinel records that job id and is reclaimed from any login node once the job is gone.
 
+When a sentinel's driver cannot be probed, its age limit is `hpc_total_job_duration_min`
+plus 30 minutes, or `hpc_max_wait_for_inflight_min` when `hpc_total_job_duration_min`
+is unset. A `batch_job` run sets these fields, with your own partition names:
+
+```yaml
+multi_sim_run_method: batch_job
+hpc_total_job_duration_min: 4320
+hpc_time_min_per_sim: 480
+hpc_ensemble_partition: your-partition
+hpc_setup_and_analysis_processing_partition: your-partition
+```
+
 ## See also
 - [Config-filling guide](config-filling.md)
 - [HPC-profile setup](hpc-profile-setup.md)

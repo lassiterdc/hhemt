@@ -17,6 +17,14 @@ Start with the one path that is guaranteed to succeed on a laptop: load the Norf
 
 This run is the configuration the Norfolk example ships, unchanged: `run_mode: serial`, which is one process, one thread and no GPU; `multi_sim_run_method: local`, which dispatches the ensemble to a local thread pool with no SLURM; and `local_cpu_cores_for_workflow: 4`, the size of that pool. The analysis is a single simulation of Hurricane Irene. Every section after this one starts from this baseline and changes one axis at a time.
 
+In the analysis config these are:
+
+```yaml
+run_mode: serial
+multi_sim_run_method: local
+local_cpu_cores_for_workflow: 4
+```
+
 ```python
 from hhemt.experiments import NorfolkIreneExperiment
 # hhemt_sha is the 40-hex commit you are running; `git rev-parse HEAD` prints it.

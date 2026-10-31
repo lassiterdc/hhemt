@@ -86,6 +86,14 @@ The reproducer fills two things with *their own* system's values:
    )
    ```
 
+   The same fields written as a `reprex_config.yaml`:
+
+   ```yaml
+   default_account: my-alloc
+   sif_root: /scratch/my-alloc/sifs
+   target_ensemble_partition: gpu-a100
+   ```
+
 2. Their own HPC-system config for the target machine.
 
     --8<-- "hpc-system-config-role.md"

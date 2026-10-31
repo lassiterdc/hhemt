@@ -38,6 +38,14 @@ result = norfolk.analysis.run(from_scratch=False, execution_mode="auto")
 
 The Norfolk example ships its compute configuration, and this tutorial runs it unchanged: `run_mode: serial` (one process, one thread, no GPU), `multi_sim_run_method: local` (the ensemble is dispatched to a local thread pool, with no SLURM), and `local_cpu_cores_for_workflow: 4` (how many cores that pool may use). `execution_mode="auto"` reads `multi_sim_run_method`, so `auto` resolves to a local run here, which is why this tutorial needs no HPC.
 
+Written out, the same compute configuration in the analysis config is:
+
+```yaml
+run_mode: serial
+multi_sim_run_method: local
+local_cpu_cores_for_workflow: 4
+```
+
 What each of these calls does, and why the compile line comes before the first `run()` on every machine, is set out step by step in [the Norfolk tutorial's worked path](norfolk-end-to-end.md#the-worked-path-a-local-serial-run).
 
 For user-authored configs instead of the canned example. Your `analysis.yaml` must

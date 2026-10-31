@@ -50,6 +50,13 @@ once, in the committed experiment config; the runner performs no conversion. Lea
 it unset for a clean sweep. The retired `deterministic_kill_after_n_checkpoints`
 field is no longer accepted.
 
+On the 3.5 m / 24 h grid the three-resume schedule above is written in the analysis
+config as:
+
+```yaml
+resume_interruption_schedule: [36, 72, 108]
+```
+
 ## Set up the experiment
 
 Validate the config and build the partition-as-axis matrix (and, without
