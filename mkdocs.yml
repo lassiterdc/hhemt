@@ -122,6 +122,8 @@ nav:
       - Benchmarking study: tutorials/benchmarking-study.md
       - Quickstart: tutorials/quickstart.md
       - Norfolk end-to-end: tutorials/norfolk-end-to-end.md
+      - Observed events: tutorials/norfolk-observed-events.md
+      - Compute configurations: tutorials/norfolk-compute-config-sweep.md
   - How-To Guides:
       - how-to/index.md
       - HPC-profile setup: how-to/hpc-profile-setup.md
