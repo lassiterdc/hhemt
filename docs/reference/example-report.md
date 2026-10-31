@@ -1,8 +1,8 @@
 # The interactive analysis report
 
 Every completed analysis renders a self-contained `analysis_report.html`. This
-page documents what that report contains and how to open one; it is a reference
-for the artifact, not a live sample.
+page documents what that report contains and how to open one. It is a reference
+for the artifact, and [Example reports](#example-reports) links two finished ones.
 
 ## Producing a report
 
@@ -41,6 +41,21 @@ The `compute_config_byte_identity`, `benchmarking`, `combined`, `compute_sensiti
 `dem_resolution` sets render different selections; each declares its own
 sidebar order.
 
+## Example reports
+
+Two finished reports are committed with the documentation and open from this site. Each
+needs no sibling files, but its figure pages load the Plotly library from a CDN (34 of 40
+pages in the first report below, 7 of 13 in the second), so figures stay blank without a
+network connection.
+
+- [Compute-configuration sweep report](bundles/norfolk-compute-config-sweep-report.html):
+  one storm run under 15 compute configurations, with run time, compute cost, speedup and
+  efficiency for each. The tutorial [Compute configurations](../tutorials/norfolk-compute-config-sweep.md)
+  reads it and states the decision it supports.
+- [Observed events report](bundles/norfolk-observed-events-report.html): an ensemble over
+  six observed storms with all three model families, one page per event. The tutorial
+  [Observed events](../tutorials/norfolk-observed-events.md) shows the config that produced it.
+
 ## Viewing a report you did not generate
 
 A rendered report is portable: it carries its own JavaScript and needs no
@@ -62,5 +77,5 @@ report dropped under `docs/` is embeddable directly:
 </iframe>
 ```
 
-Reports are large: a full analysis report with inlined Plotly figures runs to
+Reports are large: a full analysis report, whose figure pages load the Plotly library from a CDN, runs to
 several megabytes, so weigh the repository cost before committing one.
