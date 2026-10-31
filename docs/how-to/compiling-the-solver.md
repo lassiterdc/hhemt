@@ -17,6 +17,16 @@ and stops with an error when one is missing. It never compiles. The build is you
 to run, once per machine and once per GPU target, and it is cached afterwards: a
 second call skips a backend whose build already succeeded.
 
+The system config fields that decide what gets built and where look like this:
+
+```yaml
+toggle_triton_model: false
+toggle_tritonswmm_model: true
+toggle_swmm_model: false
+TRITONSWMM_software_directory: /path/to/triton
+TRITONSWMM_git_URL: https://code.ornl.gov/hydro/triton.git
+```
+
 In container mode the solver ships inside the image and there is nothing to
 compile; [`hhemt build-sifs`](../reference/cli.md#publishing-and-reproducing) creates
 the images your experiment needs.

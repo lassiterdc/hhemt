@@ -20,8 +20,10 @@ shape, so live-API field drift cannot silently break CI.
 
 from __future__ import annotations
 
+import getpass
 import json
 import os
+import sys
 import tempfile
 import warnings
 import zipfile
@@ -33,7 +35,14 @@ import requests
 import yaml
 
 from hhemt.exceptions import PublishError
-from hhemt.metadata import _SPDX_LICENSE_TABLE
+from hhemt.metadata import (
+    _SPDX_LICENSE_TABLE,
+    LicenseRecord,
+    UnrecognizedCrateLicense,
+    as_license_record,
+    read_crate_license,
+    resolve_dataset_license,
+)
 
 # The data->software relatedIdentifier relationType, held in one constant so that falling
 # back to "IsDerivedFrom", if a target registry's UI hides IsCompiledBy, is a one-token change.
@@ -69,17 +78,34 @@ _ZENODO_RECORD = "{base}/api/records/{recid}"
 _HTTP_TIMEOUT = 60
 
 
-def _read_license_from_sidecar(analysis_dir: Path) -> str:
-    """Return the SPDX id from the root Dataset.license @id in the emitted sidecar."""
+# The one message both refusal arms of `_read_license_from_sidecar` carry: a crate that
+# declares no license and one that declares terms this toolkit cannot name are the same
+# answer to "what license do these results carry", and a caller distinguishes them through
+# `_sidecar_declares_license` instead.
+_NO_SIDECAR_LICENSE = "no recognizable dataset license in ro-crate sidecar"
+
+
+def _read_license_from_sidecar(analysis_dir: Path) -> str | LicenseRecord:
+    """Return the license the emitted sidecar declares: an SPDX id, or a LicenseRecord.
+
+    An SPDX id comes back for a table member, so a table member's read-back is unchanged
+    by the details-file form. A license outside the table comes back as a
+    :class:`~hhemt.metadata.LicenseRecord` built from the crate's OWN CreativeWork
+    entity — the crate names its own terms, which is what makes such a license
+    recognizable without a vocabulary the crate does not ship.
+
+    Raises:
+        PublishError: the root Dataset carries no license, or carries one whose `@id` is
+            neither a table URI nor an entity the crate itself describes.
+    """
     doc = json.loads((Path(analysis_dir) / "ro-crate-metadata.json").read_text())
-    for e in doc.get("@graph", []):
-        if e.get("@id") in ("./", ""):
-            lic = e.get("license")
-            uri = lic.get("@id") if isinstance(lic, dict) else lic
-            for spdx, meta in _SPDX_LICENSE_TABLE.items():
-                if meta["uri"] == uri:
-                    return spdx
-    raise PublishError(target="?", doi=None, status="no recognizable dataset license in ro-crate sidecar")
+    try:
+        declared = read_crate_license(doc.get("@graph", []))
+    except UnrecognizedCrateLicense as exc:
+        raise PublishError(target="?", doi=None, status=_NO_SIDECAR_LICENSE) from exc
+    if declared is None:
+        raise PublishError(target="?", doi=None, status=_NO_SIDECAR_LICENSE)
+    return declared
 
 
 def _sidecar_declares_license(analysis_dir: Path) -> bool:
@@ -116,8 +142,19 @@ def _read_title_from_sidecar(analysis_dir: Path) -> str:
     return "HHEMT analysis dataset"
 
 
-def build_datacite_rightslist(dataset_license_spdx: str) -> list[dict]:
-    """Return the DataCite ``rightsList`` (5-field SPDX entry) for the dataset license."""
+def build_datacite_rightslist(dataset_license_spdx: str | LicenseRecord) -> list[dict]:
+    """Return the DataCite ``rightsList`` entry for the dataset license.
+
+    A table member yields the five-field SPDX entry. A details-file license cannot: it has
+    no SPDX identifier and belongs to no identifier scheme, so it yields the license name
+    and, when its file gives one, the address it is published at. Emitting a
+    ``rightsIdentifier`` for it would assert an SPDX id the license does not have.
+    """
+    if isinstance(dataset_license_spdx, LicenseRecord):
+        entry = {"rights": dataset_license_spdx.name}
+        if dataset_license_spdx.link is not None:
+            entry["rightsUri"] = dataset_license_spdx.link
+        return [entry]
     e = _SPDX_LICENSE_TABLE[dataset_license_spdx]
     return [
         {
@@ -152,21 +189,38 @@ def build_datacite_related(*, software_doi: str | None, paper_doi: str | None = 
     return edges
 
 
-def build_inveniordm_rights(dataset_license_spdx: str) -> list[dict]:
+def build_inveniordm_rights(dataset_license_spdx: str | LicenseRecord) -> list[dict]:
     """InvenioRDM-native ``rights`` (license) entry — NOT the DataCite rightsList.
 
     InvenioRDM keys its license vocabulary on the LOWERCASED SPDX id; the DataCite
     rightsList names (rights/rightsUri/rightsIdentifier/rightsIdentifierScheme/schemeUri)
     are unknown to the InvenioRDM metadata loader and are silently dropped, so the license
-    never lands unless mapped to this shape. Not established: that every SPDX id in
-    ``_SPDX_LICENSE_TABLE`` is in Zenodo's SPDX-derived rights vocabulary. The table now
-    carries seven ids; an earlier revision of this docstring asserted that cc0-1.0 and
-    cc-by-nc-4.0 are in it, and that assertion has not been re-verified (the tests here
-    check only the lower-casing). If an id is NOT in the vocabulary, the custom form
-    ``{"title": {"en": name}, "link": uri}`` validates without a vocabulary lookup
-    (InvenioRDM accepts either ``id`` OR ``title``, never both).
+    never lands unless mapped to this shape.
+
+    Not established: that every SPDX id in ``_SPDX_LICENSE_TABLE`` is in Zenodo's
+    SPDX-derived rights vocabulary. The table carries seven ids; an earlier revision of
+    this docstring asserted that cc0-1.0 and cc-by-nc-4.0 are in it, and that assertion has
+    not been re-verified (the tests here check only the lower-casing).
+
+    A license OUTSIDE the table — a details-file record — is sent in the custom form
+    ``{"title": {"en": name}, "link": uri}``, which validates without a vocabulary lookup
+    (InvenioRDM accepts either ``id`` OR ``title``, never both). The ``link`` is included
+    only when the record carries one. A bare string that is not a table key is treated as
+    a NAME and takes the same custom form, so no input whatsoever is lower-cased into an
+    id the vocabulary does not contain — the silent lower-casing of a free-form name is
+    the behaviour this replaces.
     """
-    return [{"id": dataset_license_spdx.lower()}]
+    if isinstance(dataset_license_spdx, str) and dataset_license_spdx in _SPDX_LICENSE_TABLE:
+        return [{"id": dataset_license_spdx.lower()}]
+    record = (
+        dataset_license_spdx
+        if isinstance(dataset_license_spdx, LicenseRecord)
+        else LicenseRecord(name=dataset_license_spdx)
+    )
+    entry: dict = {"title": {"en": record.name}}
+    if record.link is not None:
+        entry["link"] = record.link
+    return [entry]
 
 
 def build_inveniordm_related(*, software_doi: str | None, paper_doi: str | None = None) -> list[dict]:
@@ -217,11 +271,71 @@ def _deposit_set(analysis, consolidated_zarr_relpath: str) -> list[Path]:
     return [p for p in parts if p.exists()]
 
 
+def _stdin_is_interactive() -> bool:
+    """True when a person can answer a prompt on this process's stdin.
+
+    A prompt is only a question when someone is there to answer it. Asking unconditionally
+    turns an unattended deposit into a hang: a SLURM step or a CI job blocks on a read that
+    never returns, and the refusal an operator could act on becomes a stuck allocation with
+    no message. So the interactive path is gated on the terminal, and everything else keeps
+    the refusal.
+    """
+    try:
+        return bool(sys.stdin) and sys.stdin.isatty()
+    except (AttributeError, ValueError):  # a closed stream, or one with no isatty()
+        return False
+
+
+def _credential_is_secret(name: str) -> bool:
+    """True when ``name``'s value must not be echoed to the terminal."""
+    return any(word in name.upper() for word in ("TOKEN", "PASSWORD", "SECRET", "KEY"))
+
+
+def _credential_label(name: str) -> str:
+    """A prompt label for the credential variable ``name`` (``HHEMT_ZENODO_TOKEN`` -> ``Zenodo token``)."""
+    words = name.removeprefix("HHEMT_").split("_")
+    return " ".join([words[0].capitalize(), *(word.lower() for word in words[1:])]) if words else name
+
+
+def _prompt_credential(name: str) -> str:
+    """Ask the operator for one credential and return it. NOTHING is stored or cached.
+
+    Deliberately NOT persisted, and the omission is the requirement: a prompt-obtained
+    credential written to disk outlives the process that needed it, is swept into backups and
+    shared-home snapshots, and turns one interactive answer into a standing secret that
+    nobody owns and nobody rotates. The value exists as this call's return value and nowhere
+    else, so a caller that needs it twice is asked twice. A secret-shaped name (a token, a
+    password, a secret) is read with the echo off; a username is echoed so a typo is visible.
+    """
+    label = _credential_label(name)
+    if _credential_is_secret(name):
+        return getpass.getpass(f"{label} (input hidden): ")
+    return input(f"{label}: ")
+
+
 def _require_env(name: str, target: str) -> str:
+    """The credential ``name``: its environment variable when set, else an interactive prompt.
+
+    The environment variable stays the first source, so an unattended run keeps working by
+    exporting it. When it is absent and a person is present, ask rather than refuse; when it
+    is absent and stdin is not a terminal, refuse as before and name both routes, because a
+    prompt nobody can answer is a hang rather than a question.
+    """
     val = os.environ.get(name)
-    if not val:
-        raise PublishError(target=target, doi=None, status=f"missing required credential env var {name}")
-    return val
+    if val:
+        return val
+    if _stdin_is_interactive():
+        prompted = _prompt_credential(name)
+        if prompted:
+            return prompted
+    raise PublishError(
+        target=target,
+        doi=None,
+        status=(
+            f"missing required credential {name}: export it, or run interactively and answer the prompt "
+            "(nothing is stored, so it is asked for again next time)"
+        ),
+    )
 
 
 def _check(resp, *, target: str, doi: str | None, step: str):
@@ -456,6 +570,8 @@ class _ZenodoTarget:
             "publication_date": date.today().isoformat(),
             "resource_type": {"id": "dataset"},
             "publisher": _PUBLISHER,
+            # license_spdx is an SPDX id for a table license and a LicenseRecord for a
+            # details-file one; build_inveniordm_rights maps each to its own payload form.
             "rights": build_inveniordm_rights(license_spdx),
             "related_identifiers": build_inveniordm_related(software_doi=software_doi),
         }
@@ -617,7 +733,18 @@ class _HydroShareTarget:
         }
 
 
-def _hydroshare_rights(license_spdx: str) -> dict:
+def _hydroshare_rights(license_spdx: str | LicenseRecord) -> dict:
+    """HydroShare ``metadata.rights`` for the dataset license: statement, and url when known.
+
+    HydroShare takes free text, so a details-file license needs no translation beyond its
+    own name. ``url`` is omitted rather than blanked when the record carries no link: an
+    empty string would read to a depositor as an address the owner never published.
+    """
+    if isinstance(license_spdx, LicenseRecord):
+        rights = {"statement": license_spdx.name}
+        if license_spdx.link is not None:
+            rights["url"] = license_spdx.link
+        return rights
     e = _SPDX_LICENSE_TABLE[license_spdx]
     return {"statement": e["name"], "url": e["uri"]}
 
@@ -642,9 +769,12 @@ def publish_analysis(
 ) -> dict:
     """Deposit an analysis to a DOI-minting repository.
 
-    Reads the license baked into the emitted ro-crate sidecar; override_dataset_license
-    ASSERTS the caller's expected value against the sidecar (raising PublishError on
-    mismatch) rather than re-stamping the archived crate.
+    Reads the license baked into the emitted ro-crate sidecar — as an SPDX id when the
+    crate carries a table license, or as a details-file record when the crate names its own
+    terms — and compares it against what the config declares, by record, so either form on
+    either side is one comparison. override_dataset_license ASSERTS the caller's expected
+    SPDX id against the sidecar (raising PublishError on mismatch) rather than re-stamping
+    the archived crate.
 
     Args:
         deposit_source: WHICH artifact to deposit. The data DOI's deposit is the
@@ -694,9 +824,23 @@ def publish_analysis(
                 f"license is never written.{_shadowed}"
             ),
         )
-    license_spdx = _read_license_from_sidecar(analysis_dir)
+    license_declared = _read_license_from_sidecar(analysis_dir)
     cfg_license = analysis.cfg_analysis.dataset_license
-    if cfg_license != license_spdx:
+    # getattr rather than a bare read: this is handed config-like objects that may predate
+    # the details-file field (test doubles built from a SimpleNamespace), and a license
+    # check must not turn into an AttributeError on such an object.
+    cfg_license_file = getattr(analysis.cfg_analysis, "dataset_license_file", None)
+    # Compared BY RECORD, not by an id string: the config may declare either form and the
+    # crate may carry either, and normalizing both sides is what lets one comparison cover
+    # the four combinations instead of a branch per form.
+    crate_record = as_license_record(license_declared)
+    cfg_record = as_license_record(
+        resolve_dataset_license(dataset_license=cfg_license, dataset_license_file=cfg_license_file)
+    )
+    # The crate's SPDX id, when its license is a table member. None for a details-file
+    # license, which has no id any config field could be set to.
+    crate_spdx = license_declared if isinstance(license_declared, str) else None
+    if cfg_record != crate_record:
         _shadowed = (
             f" The override_dataset_license={override_dataset_license!r} you passed was NOT"
             f" evaluated: this check runs first, because an override is compared against the"
@@ -708,34 +852,58 @@ def publish_analysis(
         # deliberate license CHANGE: for a field that was cleared or edited by mistake it costs
         # a full re-consolidation, and with a cleared field it writes unlicensed results that
         # the refusal above then stops, so the message would otherwise send the user in a circle.
-        _cfg_state = (
-            "analysis_config.dataset_license is not set"
-            if cfg_license is None
-            else f"analysis_config.dataset_license is {cfg_license!r}"
+        if cfg_record is None:
+            _cfg_state = "analysis_config.dataset_license is not set"
+        elif cfg_license_file is not None:
+            _cfg_state = f"analysis_config.dataset_license_file is {str(cfg_license_file)!r}"
+        else:
+            _cfg_state = f"analysis_config.dataset_license is {cfg_license!r}"
+        _crate_state = (
+            f"the license {crate_spdx!r}"
+            if crate_spdx is not None
+            else "the license they declare as "
+            f"{crate_record.name!r}" + (f" ({crate_record.link})" if crate_record.link is not None else " (no link)")
+        )
+        # The no-rebuild remedy differs by the CRATE's license form, because the config side
+        # has two fields and only one of them can express each form: an SPDX id is restored
+        # by naming it in dataset_license, while a details-file license can only be restored
+        # by pointing dataset_license_file at a file declaring the same terms.
+        _keep = (
+            f"To publish these results under {crate_spdx!r}, set analysis_config.dataset_license "
+            f"to {crate_spdx!r} and publish again; no re-consolidation is needed. "
+            if crate_spdx is not None
+            else (
+                "To publish these results under the license they carry, set "
+                "analysis_config.dataset_license_file to a details file declaring name "
+                f"{crate_record.name!r}"
+                + (f" and link {crate_record.link!r}" if crate_record.link is not None else "")
+                + " and publish again; no re-consolidation is needed. "
+            )
         )
         raise PublishError(
             target=target,
             doi=None,
             status=(
-                f"{_cfg_state}, but the archived results carry the license {license_spdx!r}, and "
-                f"publish does not re-stamp them. To publish these results under {license_spdx!r}, "
-                f"set analysis_config.dataset_license to {license_spdx!r} and publish again; no "
-                f"re-consolidation is needed. To publish under a different license, set it and "
+                f"{_cfg_state}, but the archived results carry {_crate_state}, and "
+                f"publish does not re-stamp them. {_keep}"
+                f"To publish under a different license, set it and "
                 f"re-emit the crate with reprocess(start_with='consolidate', regenerate_existing=True), "
                 f"then publish again. regenerate_existing=True is REQUIRED: it defaults to False, which "
                 f"deletes no consolidated zarr, so consolidation early-returns and the crate "
                 f"is never re-emitted.{_shadowed}"
             ),
         )
-    if override_dataset_license is not None and override_dataset_license != license_spdx:
+    if override_dataset_license is not None and override_dataset_license != crate_spdx:
         raise PublishError(
             target=target,
             doi=None,
             status=(
                 f"override_dataset_license={override_dataset_license!r} differs from the crate "
-                f"license {license_spdx!r}; set analysis_config.dataset_license and re-emit the "
-                f"crate with reprocess(start_with='consolidate', regenerate_existing=True) "
-                f"first — publish does not re-stamp the archived zarr."
+                f"license "
+                + (f"{crate_spdx!r}" if crate_spdx is not None else f"{crate_record.name!r}, which has no SPDX id")
+                + "; set analysis_config.dataset_license and re-emit the "
+                "crate with reprocess(start_with='consolidate', regenerate_existing=True) "
+                "first — publish does not re-stamp the archived zarr."
             ),
         )
 
@@ -768,7 +936,7 @@ def publish_analysis(
     try:
         return _TARGETS[target]().publish(
             deposit=deposit,
-            license_spdx=license_spdx,
+            license_spdx=license_declared,
             software_doi=software_doi,
             analysis_dir=analysis_dir,
             creators=creators,

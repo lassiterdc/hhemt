@@ -33,7 +33,7 @@ _DEFAULT_RANK_SWEEP: tuple[int, ...] = (2, 4, 8)
 _CLEAN_WALLTIME_MIN: int = 30  # generous single-allocation walltime for the clean sweep
 
 #: The two model arms of the compute-config experiment, as (arm_token, system-toggle overlay).
-#: The arms run as SIBLING sensitivity masters, never as one multi-model master:
+#: The arms run as SIBLING sensitivity primaries, never as one multi-model primary:
 #: workflow.py::generate_master_snakefile_content raises
 #: ValueError("Sensitivity analysis does not support multi-model execution") on >1
 #: enabled model and threads a scalar model_type into every per-member_id flag name.
@@ -242,9 +242,10 @@ def assert_coupling_nodes_distinct(
     retains the inflow assignment of only the most downstream node per cell. Fewer
     retained in-line nodes than MPI ranks => a node-free top rank => coupling-collective
     deadlock (see the ``_N_COUPLING_NODES`` definition in ``swmm_template``, whose
-    comment block cites triton.h:2363-2404). A deadlock is a HANG, not
-    an error -- the worst failure shape on HPC -- so this converts it into a plan-time
-    constraint on the coarsest rung.
+    comment block states that every rank must own at least one coupling node or it never
+    enters the TRITON-SWMM ``ENSIFY_COMM_WORLD`` coupling collective, so every rank
+    blocks forever). A deadlock is a HANG, not an error -- the worst failure shape on
+    HPC -- so this converts it into a plan-time constraint on the coarsest rung.
 
     Raises ProcessingError naming the offending rung and the colliding node pair.
     """
@@ -260,7 +261,7 @@ def assert_coupling_nodes_distinct(
     col = _centerline_col(params)
     mrs = _node_matrix_rows(params)
     # Reconstruct the in-line chain names + row_from_bottom exactly as ``_nodes`` does
-    # (swmm_template.py:241-242): J1..J(n-1) then ``collector`` (southernmost).
+    # (`swmm_template.py::_nodes`): J1..J(n-1) then ``collector`` (southernmost).
     names = [f"J{i + 1}" for i in range(len(mrs) - 1)] + ["collector"]
     inline_nodes = [(names[i], col, params.n_rows - 1 - mrs[i]) for i in range(len(mrs))]
 

@@ -37,7 +37,7 @@ class MigrationModule:
     # Django-style `elidable` marker: when True, this migration is a one-off
     # data-fix (e.g., CF attribute backfill) that can be dropped during a
     # future squash operation. When False (default), the migration's effect
-    # must be preserved in any squash. Per master Appendix A §7.
+    # must be preserved in any squash. Per primary Appendix A §7.
     elidable: bool = False
 
 

@@ -12,10 +12,10 @@ report that presents them side by side.
 ## Prerequisites
 
 --8<-- "prerequisites-base.md"
-- **Two or more emitted bundles on disk.** Produce each with
-  `hhemt bundle` (or `Analysis.bundle_report_data()` / the sensitivity-master
-  `TRITONSWMM_sensitivity_analysis.bundle_report_data()`) after a completed
-  `analysis.run()` + `render_report()`.
+- **Two or more emitted bundles on disk.** Produce each with `hhemt bundle`
+  after a run that has rendered its report. `hhemt bundle --system-config
+  my_system.yaml --analysis-config my_analysis.yaml` writes the archive; see the
+  [CLI reference](../reference/cli.md) for its optional flags.
 - The bundles must be **unpacked directories**, not the emitted `.zip`.
   `hhemt bundle` writes a `ZIP_STORED` archive; unzip each before combining:
 
@@ -25,14 +25,14 @@ report that presents them side by side.
   ```
 
 - Combine operates on **single-analysis** bundles (each ships its consolidated
-  `analysis_datatree.zarr` at the bundle root) **and on sensitivity-master
+  `analysis_datatree.zarr` at the bundle root) **and on sensitivity-primary
   bundles** (each ships `experiment_datatree.zarr` at the bundle root; a bundle
   produced before the store unification ships `analysis_datatree.zarr` or
   `sensitivity_datatree.zarr` and is still accepted). The
   combine step resolves whichever consolidated tree a bundle ships. It records
   the divergences its compatibility check finds in the combined bundle's
   `combined_compatibility.json`, and the cross-experiment report presents, for a
-  clean-vs-resume sensitivity-master pair, a
+  clean-vs-resume sensitivity-primary pair, a
   `cross_experiment_intercomparison` panel derived cross-bundle from the two
   consolidated trees (see *Compatibility gates* below).
 
@@ -86,23 +86,39 @@ warning row under **Cross-Experiment Errors and Warnings**:
 it is recorded only in the combined bundle's `combined_compatibility.json` and does not
 abort, because comparing the same experiment across UVA and Frontier is a supported use. The combined report additionally carries a
 clean-vs-resume `cross_experiment_intercomparison` figure under the "Cross-Experiment
-Results" category, projected from the `combined_intercomparison.json` read-model, so
-`CombinedBundle.regenerate_report()` re-renders it locally with no re-merge.
+Results" category, projected from the `combined_intercomparison.json` read-model, so a
+local re-render of the combined report picks it up with no re-merge.
+
+The enabled models come from the system config's toggles. Bundles from the same
+experiment agree on them; the paired model arms of one experiment are the one
+divergence the combine admits as a warning rather than a block. A single-model arm
+sets, for example:
+
+```yaml
+toggle_triton_model: false
+toggle_tritonswmm_model: true
+toggle_swmm_model: false
+```
 
 ## Regenerate or inspect the combined report
 
-The combined bundle mirrors a single-analysis bundle:
+The combined bundle mirrors a single-analysis bundle, with one asymmetry. The CLI
+renders a report from a **single-analysis** bundle (`hhemt report-from-bundle`,
+which requires a root `cfg_analysis.yaml` that a combined bundle does not carry),
+so regenerating a combined report in place is reachable through the Python API
+only. `hhemt combine`'s own help says so, and the
+[Bundles API reference](../reference/api-bundles.md) documents the entry point
+(`CombinedBundle.from_directory`, then `regenerate_report`).
 
-```python
-from hhemt.bundle import CombinedBundle
-
-cb = CombinedBundle.from_directory("combined/")
-report = cb.regenerate_report(format="zip")  # or format="html"
-```
-
-Each input experiment is preserved intact under `combined/child_crates/{experiment_id}/`;
-run `Bundle.from_directory(...).eda()` on a child directory for a per-experiment
-EDA surface (a combined bundle has no aggregate EDA surface).
+Each input experiment is preserved intact under `combined/child_crates/{experiment_id}/`.
+A child is a complete single-analysis bundle, so `hhemt report-from-bundle` renders
+one once every figure's recorded build stamp matches the running build. It refuses with
+a `StalePlotsError` otherwise, and also when the figures carry no stamp at all or
+disagree with each other, and the override is Python-only:
+`Bundle.from_directory(child).regenerate_report(declare_stale_plots=True)`.
+A child's EDA surface is the per-experiment one, reached through the Python API
+(`Bundle.from_directory(child).eda()`), which carries no build guard. A combined
+bundle has no aggregate EDA surface.
 
 ??? note "How the combined report is laid out"
     The combined report is one cohesive Snakemake `--report`. Its sidebar opens
@@ -126,5 +142,5 @@ EDA surface (a combined bundle has no aggregate EDA surface).
     `analysis_report.zip`).
 
 The combined report is a first-class Snakemake `--report` (shared chrome, nav, and CSS
-with the single-experiment reports); `CombinedBundle.from_directory(dir).regenerate_report()`
-re-renders it locally from the bundled read-models with no re-merge.
+with the single-experiment reports), and re-rendering it locally from the bundled
+read-models needs no re-merge.

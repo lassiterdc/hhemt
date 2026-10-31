@@ -50,6 +50,14 @@ def _analysis_stand_in(*, sensitivity: bool, calls: list):
         hpc_system_config_yaml=None,
         analysis_paths=SimpleNamespace(analysis_dir=Path("/nonexistent/an_x")),
         _warn_resume_zero_progress=lambda _pickup: None,
+        # The submit-time refusals (undefined inflow nodes, coupling declarations) run before
+        # anything is stamped or deleted and are orthogonal to the force-rerun count; the
+        # stand-in has no SWMM template or coupling to refuse, so each is a no-op.
+        _refuse_undefined_inflow_nodes=lambda: None,
+        _refuse_invalid_coupling_declaration=lambda: None,
+        _refuse_coupled_system_with_no_coupling_candidate=lambda: None,
+        _refuse_coupling_nodes_outside_triton_grid=lambda **_k: None,
+        _refuse_coupling_the_triton_build_would_not_read=lambda: None,
         _workflow_builder=SimpleNamespace(
             _acquire_submit_driver_claim=lambda *_a, **_k: None,
             submit_workflow=_stop,

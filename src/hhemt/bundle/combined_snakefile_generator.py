@@ -578,7 +578,7 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                         #   "NO "figure" facet here. On a harvested page the report result's own
                         #    NAME is already humanize_plot_id(plot_id), so a facet carrying the
                         #    same string restates the name rather than filtering by anything, and
-                        #    renders the label twice. The per-master rules can carry a "figure"
+                        #    renders the label twice. The per-primary rules can carry a "figure"
                         #    facet because their names and facets are independently authored;
                         #    this path derives both from one function."
                         #
@@ -650,7 +650,7 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                                 # `report(labels=...)` entry, where `expand_labels` re-expands
                                 # it through `apply_wildcards` -- so a `{` in any user-authored
                                 # member/event label aborts the render. `report_label_value` escapes
-                                # for the per-master rules; `humanize_plot_id` does not, because
+                                # for the per-primary rules; `humanize_plot_id` does not, because
                                 # its other two consumers (the composed page `<title>` here and
                                 # the React `name` field in `_react_surgery`) are never
                                 # re-expanded and would show doubled braces to the reader. The

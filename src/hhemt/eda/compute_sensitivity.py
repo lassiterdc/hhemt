@@ -1,6 +1,6 @@
 """Sensitivity + magnitude EDA calc members (ADR-9 members 2-4).
 
-Three pure-function calc members over a SENSITIVITY MASTER, mirroring
+Three pure-function calc members over a SENSITIVITY PRIMARY, mirroring
 ``cross_sim_identity.py``:
 
 - ``check_rank_sensitivity`` — WITHIN-family byte-identity + magnitude for the mpi
@@ -255,17 +255,17 @@ def _config_identity(sub) -> tuple:
         int(getattr(c, "n_gpus", 0) or 0),
         int(getattr(c, "n_nodes", 0) or 0),
         _partition(sub),
-        # DEFENCE-IN-DEPTH, not a live-bug fix (master R12). `_config_identity` is
-        # called only over ONE master's members (`:519`), and under the sibling-
-        # master architecture each master carries exactly one arm, so two arms can
+        # DEFENCE-IN-DEPTH, not a live-bug fix (primary R12). `_config_identity` is
+        # called only over ONE primary's members (`:519`), and under the sibling-
+        # primary architecture each primary carries exactly one arm, so two arms can
         # never reach the same bucket today. The component makes the identity correct
         # if the single-model restriction is ever lifted.
         _model_arm(sub),
     )
 
 
-def _resumes_by_member_id(master: TRITONSWMM_analysis, member_ids: list[str]) -> dict[str, int]:
-    """Max ``n_resumes`` per ``member_id`` from ``master.df_status`` (R9).
+def _resumes_by_member_id(primary: TRITONSWMM_analysis, member_ids: list[str]) -> dict[str, int]:
+    """Max ``n_resumes`` per ``member_id`` from ``primary.df_status`` (R9).
 
     ``df_status``'s ``member_id`` may carry the ``member_`` prefix while
     ``members`` keys are bare — normalize both directions so the mapping is
@@ -273,7 +273,7 @@ def _resumes_by_member_id(master: TRITONSWMM_analysis, member_ids: list[str]) ->
     """
     out: dict[str, int] = {member: 0 for member in member_ids}
     try:
-        df = master.df_status
+        df = primary.df_status
     except Exception:  # noqa: BLE001 — df_status is best-effort; absence -> all clean
         return out
     if df is None or "n_resumes" not in getattr(df, "columns", []):
@@ -349,9 +349,9 @@ def _compare_pair(
     return records
 
 
-def _emit(master: TRITONSWMM_analysis, renderer_kind: str, ds_vars: dict, source_subs: dict) -> tuple[Path, str]:
+def _emit(primary: TRITONSWMM_analysis, renderer_kind: str, ds_vars: dict, source_subs: dict) -> tuple[Path, str]:
     """Persist ``{analysis_dir}/eda/<plot_id>.zarr`` + manifest sidecar; return (path, plot_id)."""
-    eda_dir = Path(master.analysis_paths.analysis_dir) / "eda"
+    eda_dir = Path(primary.analysis_paths.analysis_dir) / "eda"
     eda_dir.mkdir(parents=True, exist_ok=True)
     plot_id = canonical_plot_id(renderer_kind)
     artifact_path = eda_dir / f"{plot_id}.zarr"
@@ -371,15 +371,15 @@ def _emit(master: TRITONSWMM_analysis, renderer_kind: str, ds_vars: dict, source
     emit_data_artifact_with_sources(
         artifact_path=artifact_path,
         source_paths=source_paths,
-        analysis_dir=Path(master.analysis_paths.analysis_dir),
+        analysis_dir=Path(primary.analysis_paths.analysis_dir),
         plot_id=plot_id,
     )
     return artifact_path, plot_id
 
 
-def _persist_verdict(master: TRITONSWMM_analysis, plot_id: str, verdict: CheckResult) -> None:
+def _persist_verdict(primary: TRITONSWMM_analysis, plot_id: str, verdict: CheckResult) -> None:
     """Write ``<plot_id>.verdict.json`` (``dataclasses.asdict(CheckResult)`` shape)."""
-    verdict_path = Path(master.analysis_paths.analysis_dir) / "eda" / f"{plot_id}.verdict.json"
+    verdict_path = Path(primary.analysis_paths.analysis_dir) / "eda" / f"{plot_id}.verdict.json"
     verdict_path.write_text(json.dumps(dataclasses.asdict(verdict), indent=2, default=str))
 
 
@@ -455,18 +455,18 @@ def _skipped(name: str, summary: str) -> EdaResult:
     )
 
 
-def check_rank_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg) -> EdaResult:
+def check_rank_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg) -> EdaResult:
     """WITHIN-family mpi rank-sensitivity: rank N vs rank 1 byte-identity + magnitude.
 
     Returns a skipped ``EdaResult`` on a non-sensitivity analysis. On a sensitivity
-    master, groups the ``run_mode == "mpi"`` subs by ``hpc_ensemble_partition`` family
+    primary, groups the ``run_mode == "mpi"`` subs by ``hpc_ensemble_partition`` family
     and, within each family, anchors to the ``n_mpi_procs == 1`` reference (R10); a
     family with no rank-1 mpi reference is skipped with a disclosed reason. Bit-
     identity is asserted within-family (a divergence is ``passed=False``); the
     magnitude metrics characterize any divergence.
     """
     name = "Rank sensitivity"
-    sub_items = list(_iter_members_or_self(master))
+    sub_items = list(_iter_members_or_self(primary))
     if len(sub_items) == 1 and sub_items[0][0] is None:
         return _skipped(name, "N/A — single sim per event iloc (non-sensitivity)")
 
@@ -538,7 +538,7 @@ def check_rank_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg
         passed=passed,
         summary=summary,
         details=details,
-        # SELF-REPORTED from the path actually taken (analysis_validation.py:55-71):
+        # SELF-REPORTED from the path actually taken (`analysis_validation.py::CheckResult`):
         # this check compares the FLAT per-scenario summaries via _compare_pair, whose
         # max_wlevel_m is stored float32 while the SWMM-side variables are float64, so
         # float32 eps is the coarsest floor across the variables actually compared.
@@ -550,24 +550,24 @@ def check_rank_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg
     )
 
     ds_vars = _artifact_vars(labeled)
-    _, plot_id = _emit(master, "eda_rank_sensitivity", ds_vars, contributing)
-    _persist_verdict(master, plot_id, verdict)
-    artifact_path = Path(master.analysis_paths.analysis_dir) / "eda" / f"{plot_id}.zarr"
+    _, plot_id = _emit(primary, "eda_rank_sensitivity", ds_vars, contributing)
+    _persist_verdict(primary, plot_id, verdict)
+    artifact_path = Path(primary.analysis_paths.analysis_dir) / "eda" / f"{plot_id}.zarr"
     return EdaResult(verdict=verdict, artifact_path=artifact_path, plot_id=plot_id)
 
 
-def check_resume_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg) -> EdaResult:
+def check_resume_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg) -> EdaResult:
     """Clean-vs-resume byte-identity + magnitude, paired per compute-config (R9).
 
-    Reads ``n_resumes`` from ``master.df_status`` to classify each sub as clean
+    Reads ``n_resumes`` from ``primary.df_status`` to classify each sub as clean
     (``n_resumes == 0``) or resume (``> 0``); pairs a clean and a resume sub sharing a
     compute-config identity and compares them (a resumed sim MUST reproduce its clean
     counterpart bit-for-bit). A config lacking BOTH a clean and a resume member is
     skipped with a disclosed reason. Returns a skipped ``EdaResult`` on a non-
-    sensitivity analysis, or when no clean/resume pair exists in the master.
+    sensitivity analysis, or when no clean/resume pair exists in the primary.
     """
     name = "Resume sensitivity"
-    sub_items = list(_iter_members_or_self(master))
+    sub_items = list(_iter_members_or_self(primary))
     if len(sub_items) == 1 and sub_items[0][0] is None:
         return _skipped(name, "N/A — single sim per event iloc (non-sensitivity)")
 
@@ -576,7 +576,7 @@ def check_resume_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_c
         return _skipped(name, "N/A — no member has present summaries")
     dry = _dry_threshold(cfg_analysis)
     tau = _tau(eda_cfg)
-    resumes = _resumes_by_member_id(master, list(subs.keys()))
+    resumes = _resumes_by_member_id(primary, list(subs.keys()))
 
     # Group by compute-config identity; within each, split clean (0) vs resume (>0).
     groups: dict[tuple, dict[str, list[str]]] = {}
@@ -629,7 +629,7 @@ def check_resume_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_c
                     )
 
     if not any_compared:
-        return _skipped(name, "N/A — no clean/resume pair sharing a compute-config in this master")
+        return _skipped(name, "N/A — no clean/resume pair sharing a compute-config in this primary")
 
     passed = all_identical
     n_pairs = len(labeled)
@@ -646,7 +646,7 @@ def check_resume_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_c
         passed=passed,
         summary=summary,
         details=details,
-        # SELF-REPORTED from the path actually taken (analysis_validation.py:55-71):
+        # SELF-REPORTED from the path actually taken (`analysis_validation.py::CheckResult`):
         # this check compares the FLAT per-scenario summaries via _compare_pair, whose
         # max_wlevel_m is stored float32 while the SWMM-side variables are float64, so
         # float32 eps is the coarsest floor across the variables actually compared.
@@ -658,13 +658,13 @@ def check_resume_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_c
     )
 
     ds_vars = _artifact_vars(labeled)
-    _, plot_id = _emit(master, "eda_resume_sensitivity", ds_vars, contributing)
-    _persist_verdict(master, plot_id, verdict)
-    artifact_path = Path(master.analysis_paths.analysis_dir) / "eda" / f"{plot_id}.zarr"
+    _, plot_id = _emit(primary, "eda_resume_sensitivity", ds_vars, contributing)
+    _persist_verdict(primary, plot_id, verdict)
+    artifact_path = Path(primary.analysis_paths.analysis_dir) / "eda" / f"{plot_id}.zarr"
     return EdaResult(verdict=verdict, artifact_path=artifact_path, plot_id=plot_id)
 
 
-def check_cross_hardware_magnitude(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg) -> EdaResult:
+def check_cross_hardware_magnitude(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg) -> EdaResult:
     """ADR-4 CROSS-hardware characterized-divergence: 1-GPU vs 1-rank serial-CPU (D-XHW).
 
     Uses the SAME ``compute_magnitude`` kernel as the within-family members but does
@@ -675,7 +675,7 @@ def check_cross_hardware_magnitude(master: TRITONSWMM_analysis, *, cfg_analysis,
     Returns a skipped ``EdaResult`` when either endpoint is absent.
     """
     name = "Cross-hardware magnitude"
-    sub_items = list(_iter_members_or_self(master))
+    sub_items = list(_iter_members_or_self(primary))
     if len(sub_items) == 1 and sub_items[0][0] is None:
         return _skipped(name, "N/A — single sim per event iloc (non-sensitivity)")
 
@@ -750,7 +750,7 @@ def check_cross_hardware_magnitude(master: TRITONSWMM_analysis, *, cfg_analysis,
         passed=True,
         summary=summary,
         details=details,
-        # SELF-REPORTED from the path actually taken (analysis_validation.py:55-71):
+        # SELF-REPORTED from the path actually taken (`analysis_validation.py::CheckResult`):
         # this check compares the FLAT per-scenario summaries via _compare_pair, whose
         # max_wlevel_m is stored float32 while the SWMM-side variables are float64, so
         # float32 eps is the coarsest floor across the variables actually compared.
@@ -762,7 +762,7 @@ def check_cross_hardware_magnitude(master: TRITONSWMM_analysis, *, cfg_analysis,
     )
 
     ds_vars = _artifact_vars(labeled)
-    _, plot_id = _emit(master, "eda_cross_hardware_magnitude", ds_vars, contributing)
-    _persist_verdict(master, plot_id, verdict)
-    artifact_path = Path(master.analysis_paths.analysis_dir) / "eda" / f"{plot_id}.zarr"
+    _, plot_id = _emit(primary, "eda_cross_hardware_magnitude", ds_vars, contributing)
+    _persist_verdict(primary, plot_id, verdict)
+    artifact_path = Path(primary.analysis_paths.analysis_dir) / "eda" / f"{plot_id}.zarr"
     return EdaResult(verdict=verdict, artifact_path=artifact_path, plot_id=plot_id)

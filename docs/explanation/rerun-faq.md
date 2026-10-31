@@ -8,6 +8,13 @@ re-run, and only the affected steps rebuild. This page explains the cases that
 surprise people. To *deliberately* force or suppress a re-run, see
 [Forcing and suppressing re-runs](../how-to/forcing-reruns.md).
 
+The analysis config's `force_rerun` field is the setting that overrides these triggers.
+The shipped template leaves it at its default:
+
+```yaml
+force_rerun: none
+```
+
 ## The three trigger classes
 
 A rule re-runs when Snakemake detects any of:

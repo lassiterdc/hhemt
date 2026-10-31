@@ -28,7 +28,7 @@ import plotly.io as pio
 
 
 # FigureSpec + _figure_divs: the data-visualization-specialist FQ1 VMS (the
-# first-figure-inline single-bundle mechanism). Applied verbatim from the master
+# first-figure-inline single-bundle mechanism). Applied verbatim from the primary
 # plan's Implementation Research; this is the single place the bundle-once
 # invariant lives.
 @dataclass
@@ -102,7 +102,7 @@ def render_scrollable_report(
     # INSIDE divs[0] (first figure carries include_plotlyjs=True), NOT returned
     # separately — so figure_divs[0] (emitted in <body>) carries the bundle.
     # Do NOT inject the second return value into <head>: it is the mode string,
-    # not bundle HTML (master FQ1 VMS: _figure_divs -> tuple[list[str], str]).
+    # not bundle HTML (primary FQ1 VMS: _figure_divs -> tuple[list[str], str]).
     fig_divs, _js_mode_used = _figure_divs(figures, plotly_js_mode=plotly_js_mode)
     # Pair each rendered div with its FigureSpec.title so the template can emit a
     # section header above the figure. Before this change `FigureSpec.title` was

@@ -348,6 +348,8 @@ class analysis_config(cfgBaseModel):
             "RO-Crate root Dataset.license when the outputs are consolidated and read back at "
             "publish time, so choosing it after consolidating means re-running "
             "reprocess(start_with='consolidate', regenerate_existing=True) before publishing. "
+            "Mutually exclusive with dataset_license_file, which supplies a license that is not "
+            "one of the seven ids here: set at most one of the two. "
             "'NonCommercial' is broader than 'education only' and does not turn on who the user is."
         ),
         json_schema_extra=field_meta(
@@ -371,6 +373,43 @@ class analysis_config(cfgBaseModel):
             }
         ),
     )
+    dataset_license_file: Path | None = Field(
+        default=None,
+        description=(
+            "Path to a YAML license-details file, for a dataset license that is NOT one of the "
+            "seven SPDX ids dataset_license accepts. The file is one YAML mapping carrying a "
+            "required 'name' (the license's human title) and an optional 'link' (the address "
+            "its owner publishes it at); no other key is read. Mutually exclusive with "
+            "dataset_license: set at most one of the two, and neither is required at load "
+            "because only publishing needs a license. Like dataset_license, the value is "
+            "written into the RO-Crate root Dataset.license when the outputs are consolidated, "
+            "so choosing it after consolidating means re-running "
+            "reprocess(start_with='consolidate', regenerate_existing=True) before publishing. "
+            "Because the terms live in the file rather than in this config, a deposit's license "
+            "is reproducible only if the file is carried alongside it -- the bundle does carry it."
+        ),
+        json_schema_extra=field_meta(),
+    )
+
+    @model_validator(mode="after")
+    def _at_most_one_dataset_license_source(self):
+        """Refuse a config that declares its dataset license two ways.
+
+        Two sources would make the crate, the published sidecar and the rights lists
+        disagree about one dataset's terms with no rule saying which wins, and whichever
+        one lost would be invisible in the deposit. Neither field is required: an analysis
+        that never publishes carries neither, which is why this is a mutual exclusion and
+        not a requiredness rule (D-106).
+        """
+        if self.dataset_license is not None and self.dataset_license_file is not None:
+            raise ValueError(
+                "dataset_license and dataset_license_file are both set. They are two ways of "
+                "declaring the SAME dataset license and a deposit can carry only one: clear "
+                "whichever does not describe the license, or clear both if this analysis will "
+                "not be published."
+            )
+        return self
+
     # COMPUTE CONFIG
     run_mode: Literal["serial", "openmp", "mpi", "hybrid", "gpu"] = Field(
         ...,
@@ -944,7 +983,8 @@ class analysis_config(cfgBaseModel):
             "else (no tag, no branch, no short sha). REQUIRED, no default ([Q331]): every process that "
             "constructs an analysis — the driver, the simulation runner, the in-image processing runner, "
             "the consolidator — compares it to the running toolkit's own identity (validation."
-            "running_identity) before doing anything else and refuses on a mismatch (exit 2).",
+            "running_identity) before writing anything into the analysis tree, and refuses on a mismatch "
+            "(exit 2), so a refused construction leaves no directory behind.",
             json_schema_extra=field_meta(),
         ),
     ]
@@ -972,7 +1012,7 @@ class analysis_config(cfgBaseModel):
             "(concatenated along event_iloc). Default False (summaries only) — enable to "
             "unblock over-time clean-vs-resume difference figures. The TRITON gridded "
             "timeseries is NOT consolidated: it is ~83x larger per scenario by payload "
-            "(6.6 MB vs 0.08 MB measured), would inflate a 28-scenario master tree 7.9x, "
+            "(6.6 MB vs 0.08 MB measured), would inflate a 28-scenario primary tree 7.9x, "
             "and is GB-scale per scenario on a production fine grid. It is excluded on "
             "COST, not for lack of a consumer — the clean-vs-resume over-time figure does "
             "read wlevel_m from the per-scenario gridded store, via a documented "
@@ -1270,7 +1310,7 @@ class analysis_config(cfgBaseModel):
             "prepare_simulation_command returns None on model_run_completed), so a "
             "processing failure re-runs only the processing pass. Applies to "
             "multi_sim_run_method='batch_job' and '1_job_many_srun_tasks'; REFUSED on a "
-            "sensitivity analysis (the sensitivity-master generator raises "
+            "sensitivity analysis (the sensitivity-primary generator raises "
             "ConfigurationError) until its member rules carry the same branch."
         ),
         json_schema_extra=field_meta(

@@ -257,7 +257,7 @@ def read_sub_resume_context(
     constructing a ``TRITONSWMM_analysis`` (keeps the kernel plain-dirs / no mkdir side effect).
 
     The synth compute-config experiment writes sim DATA under a scratch ``analysis_dir`` but
-    routes model runtime logs to ``{experiment_cfg_yaml.parent}/logs/sims`` — and the master
+    routes model runtime logs to ``{experiment_cfg_yaml.parent}/logs/sims`` — and the primary
     cfg lives in the platformdirs CACHE tree, so a scratch-arm log glob matches nothing. The sub
     yaml carries the authoritative ``experiment_cfg_yaml`` pointer, ``TRITON_reporting_timestep_s``,
     AND ``resume_interruption_schedule``, so ONE read resolves the resume-marker log path (log dir
@@ -280,15 +280,15 @@ def read_sub_resume_context(
     reporting_interval_s = float(interval) if interval is not None else None
     _sched = cfg.get("resume_interruption_schedule")
     schedule = tuple(int(n) for n in _sched) if _sched else None
-    master = cfg.get("experiment_cfg_yaml")
+    primary = cfg.get("experiment_cfg_yaml")
     log_path: Path | None = None
     # Resolve the model-log dir the way model_logfile_for now does: structurally, from the
-    # sub dir (`{master_analysis_dir}/members/member_{member_id}` -> .parent.parent). The
+    # sub dir (`{primary_analysis_dir}/members/member_{member_id}` -> .parent.parent). The
     # `experiment_cfg_yaml` pointer is retained ONLY as a legacy fallback, because this
     # function reads arms that COMPLETED before the relocation and whose logs are still at
     # the config-adjacent path. The new location is tried before the legacy one -- but the
     # FILENAME form is decided first and the location only breaks a tie within a form (see
-    # the ordering note below `master`): an identity-keyed record outranks a position-keyed
+    # the ordering note below `primary`): an identity-keyed record outranks a position-keyed
     # one wherever either sits.
     #
     # A fallback is correct HERE and wrong in model_logfile_for. This reader is tolerant by
@@ -301,12 +301,12 @@ def read_sub_resume_context(
     # compute-config sweep whose logs were written by toolkit commit 513d5e1 or EARLIER --
     # 513d5e1 being the last commit under which model_logfile_for anchored sub model logs to
     # the config-adjacent path. The concrete analysis trees that need it are that
-    # experiment's four sensitivity masters:
+    # experiment's four sensitivity primaries:
     #     synth_cc_clean_triton, synth_cc_clean_tritonswmm,
     #     synth_cc_resume_tritonswmm, synth_cc_resume_triton
     # DELETION CRITERION: once none of those four trees survives on disk, or every one has
     # been re-run under a post-513d5e1 toolkit, the first candidate is total -- drop the
-    # `if master:` branch, this comment, and the now-unused `master` read above.
+    # `if primary:` branch, this comment, and the now-unused `primary` read above.
     #
     # NAMES ARE OUTER AND ROOTS ARE INNER, so an IDENTITY-keyed record is preferred wherever it
     # lives over a POSITION-keyed one: the filename form decides first, the location only breaks
@@ -315,8 +315,8 @@ def read_sub_resume_context(
     # in the older -- the attribution Decision 5's priority (1) forbids, since the two names do
     # not carry equal information.
     _roots = [Path(analysis_dir).parent.parent / "logs" / "sims"]
-    if master:
-        _roots.append(Path(master).parent / "logs" / "sims")
+    if primary:
+        _roots.append(Path(primary).parent / "logs" / "sims")
     _names = _model_log_candidates(cfg, member_id, event_iloc, base_dir=Path(analysis_dir))
     _candidates = [root / name for name in _names for root in _roots]
     log_path = next((c for c in _candidates if c.exists()), None)
@@ -450,19 +450,19 @@ def build_binary_timestep_figure(
     return fig
 
 
-# --- Promotable calc member (ADR-9): the b4b figures' WITHIN-MASTER producer -----------
+# --- Promotable calc member (ADR-9): the b4b figures' WITHIN-PRIMARY producer -----------
 #
-# check_raw_byte_identity is single-arm by construction (master R12(b)): it reads ONLY the passed
-# master's own members' raw per-timestep rasters and NEVER reaches a sibling master.
+# check_raw_byte_identity is single-arm by construction (primary R12(b)): it reads ONLY the passed
+# primary's own members' raw per-timestep rasters and NEVER reaches a sibling primary.
 # It writes ONE backing artifact ALWAYS -- real grids or an honest-degradation marker --
 # so the registered report() target never raises WorkflowError:
-#   * eda/raw_byte_identity.zarr   config-vs-config raw identity over the master's CLEAN
+#   * eda/raw_byte_identity.zarr   config-vs-config raw identity over the primary's CLEAN
 #                                   subs (the raw-per-timestep analog of check_cross_sim_identity)
 #   * eda/b4b_clean_vs_resume.zarr  clean-vs-resume raw identity, pairing each resume sub with
-#                                   its clean config-counterpart WITHIN the master. Real only
-#                                   when the master carries both arms; degrades otherwise (the
-#                                   synth experiment runs clean/resume as SEPARATE masters --
-#                                   config/eda.py -- so the FULL cross-MASTER heatmap is the
+#                                   its clean config-counterpart WITHIN the primary. Real only
+#                                   when the primary carries both arms; degrades otherwise (the
+#                                   synth experiment runs clean/resume as SEPARATE primaries --
+#                                   config/eda.py -- so the FULL cross-PRIMARY heatmap is the
 #                                   R13-deferred combine artifact, not this).
 
 
@@ -497,13 +497,13 @@ def _b4b_sub_raw_bin_dir(sub, model: str, raw_out_type: str) -> Path | None:
     return None
 
 
-def _b4b_n_resumes(master, member_id) -> int:
-    """Max ``n_resumes`` for one member_id from ``master.df_status`` (R9); 0 on any absence.
+def _b4b_n_resumes(primary, member_id) -> int:
+    """Max ``n_resumes`` for one member_id from ``primary.df_status`` (R9); 0 on any absence.
 
     ``df_status``'s member_id may carry the ``member_`` prefix while sub keys are bare -- normalize.
     """
     try:
-        df = master.df_status
+        df = primary.df_status
     except Exception:  # noqa: BLE001 -- df_status is best-effort; absence -> clean
         return 0
     cols = getattr(df, "columns", [])
@@ -539,8 +539,8 @@ def _b4b_config_identity(sub) -> tuple:
         int(getattr(c, "n_gpus", 0) or 0),
         int(getattr(c, "n_nodes", 0) or 0),
         str(getattr(c, "hpc_ensemble_partition", "") or ""),
-        # DEFENCE-IN-DEPTH parity with compute_sensitivity._config_identity (master R12):
-        # each master carries exactly one arm today, so two arms never share a bucket; the
+        # DEFENCE-IN-DEPTH parity with compute_sensitivity._config_identity (primary R12):
+        # each primary carries exactly one arm today, so two arms never share a bucket; the
         # component makes clean/resume pairing correct if the single-model restriction lifts.
         _b4b_enabled_model(sub),
     )
@@ -760,15 +760,15 @@ def _collapse_replicates(per_config: dict, meta: dict) -> tuple[dict, dict, dict
     return out_pc, out_meta, n_rep
 
 
-def check_raw_byte_identity(master, *, cfg_analysis, eda_cfg):
-    """WITHIN-MASTER raw per-timestep byte-for-byte producer for the compute_config_byte_identity ReportingSet.
+def check_raw_byte_identity(primary, *, cfg_analysis, eda_cfg):
+    """WITHIN-PRIMARY raw per-timestep byte-for-byte producer for the compute_config_byte_identity ReportingSet.
 
-    Reads ONLY the passed master's own subs' raw outputs (single-arm; master R12(b)).
+    Reads ONLY the passed primary's own subs' raw outputs (single-arm; primary R12(b)).
     Writes eda/raw_byte_identity.zarr ALWAYS (a real per-family cross-config grid
     or a degraded marker) so the single report() target renders. The comparison is
-    PER-FAMILY over the master's OWN subs (each config vs its within-family
+    PER-FAMILY over the primary's OWN subs (each config vs its within-family
     minimum-device reference), so the ONE figure is applicable + non-degraded on BOTH the
-    clean and the resume master. The former within-master b4b_clean_vs_resume figure is
+    clean and the resume primary. The former within-primary b4b_clean_vs_resume figure is
     removed (F8); the clean-vs-resume comparison lives on the combine surface
     (cross_experiment_intercomparison). Returns one EdaResult carrying the per-family verdict.
     """
@@ -786,29 +786,29 @@ def check_raw_byte_identity(master, *, cfg_analysis, eda_cfg):
     schedule = getattr(cfg_analysis, "resume_interruption_schedule", None)
     boundaries = resume_boundaries_from_schedule(schedule, interval)
 
-    analysis_dir = Path(master.analysis_paths.analysis_dir)
+    analysis_dir = Path(primary.analysis_paths.analysis_dir)
     eda_dir = analysis_dir / "eda"
 
     from hhemt.config_labels import _derive_config_label
 
     # gather: (member_id, sub, model, raw_bin_dir, n_resumes)
     subs: list[tuple] = []
-    for member_id, sub in _iter_members_or_self(master):
+    for member_id, sub in _iter_members_or_self(primary):
         model = _b4b_enabled_model(sub)
         if model not in ("tritonswmm", "triton"):
             continue
         raw_bin = _b4b_sub_raw_bin_dir(sub, model, raw_out_type)
-        n_res = _b4b_n_resumes(master, member_id) if member_id is not None else 0
+        n_res = _b4b_n_resumes(primary, member_id) if member_id is not None else 0
         label = str(member_id) if member_id is not None else "self"
         subs.append((label, sub, model, raw_bin, n_res))
 
-    # PER-FAMILY cross-config raw byte-identity over the master's OWN subs. Applicable
-    # on BOTH the clean master (n_resumes==0) and the resume master (n_resumes>0): each family
+    # PER-FAMILY cross-config raw byte-identity over the primary's OWN subs. Applicable
+    # on BOTH the clean primary (n_resumes==0) and the resume primary (n_resumes>0): each family
     # is compared within itself against its minimum-device reference (serial-CPU for the cpu
     # class; 1-GPU for the single GPU class -- the DEVICE-CLASS axis at _b4b_family_key
     # collapses every GPU hardware into one class), so a GPU config is NEVER compared to a CPU
     # config. The clean-vs-resume comparison lives on the combine surface
-    # (cross_experiment_intercomparison), NOT here (F8: the old within-master b4b_clean_vs_resume
+    # (cross_experiment_intercomparison), NOT here (F8: the old within-primary b4b_clean_vs_resume
     # figure is removed).
     with_raw = [s for s in subs if s[3] is not None]
     families: dict[str, list[tuple]] = {}
@@ -864,8 +864,8 @@ def check_raw_byte_identity(master, *, cfg_analysis, eda_cfg):
     degraded_reason = ""
     if degraded:
         degraded_reason = (
-            "no member with present raw outputs in this master (raw cleared or absent); "
-            "the b4b masters must preserve raw outputs (clear_raw disabled)"
+            "no member with present raw outputs in this primary (raw cleared or absent); "
+            "the b4b primaries must preserve raw outputs (clear_raw disabled)"
             if not with_raw
             else "no within-family config pair with present raw outputs"
         )
@@ -897,7 +897,7 @@ def check_raw_byte_identity(master, *, cfg_analysis, eda_cfg):
     # _validate_source_path refuses a bare non-zarr DIRECTORY but accepts FILES, so the raw
     # dirs are expanded to their enclosed per-timestep files -- the remedy the gate's own
     # rejection message prescribes. Absent files are non-fatal at harvest (ADR-6 D3 skip-with-
-    # warning), so a raw-cleared master degrades rather than failing the bundle.
+    # warning), so a raw-cleared primary degrades rather than failing the bundle.
     srcs: list[Path] = []
     for _sub, _raw_bin in contrib:
         _df = return_fpath_wlevels(_raw_bin, interval)

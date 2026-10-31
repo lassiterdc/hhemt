@@ -15,6 +15,16 @@
 
 Start with the one path that is guaranteed to succeed on a laptop: load the Norfolk example, optionally smoke-test it, run it locally, and render the report. Every later section varies this same run by editing config fields. The calls below never change.
 
+This run is the configuration the Norfolk example ships, unchanged: `run_mode: serial`, which is one process, one thread and no GPU; `multi_sim_run_method: local`, which dispatches the ensemble to a local thread pool with no SLURM; and `local_cpu_cores_for_workflow: 4`, the size of that pool. The analysis is a single simulation of Hurricane Irene. Every section after this one starts from this baseline and changes one axis at a time.
+
+In the analysis config these are:
+
+```yaml
+run_mode: serial
+multi_sim_run_method: local
+local_cpu_cores_for_workflow: 4
+```
+
 ```python
 from hhemt.experiments import NorfolkIreneExperiment
 # hhemt_sha is the 40-hex commit you are running; `git rev-parse HEAD` prints it.
@@ -37,7 +47,7 @@ Outputs land in the analysis directory (under your configured system directory),
 
 ## Scaling up: changing the compute configuration
 
-Two orthogonal axes control how a run executes: the per-sim compute config (`run_mode` + the `n_*` counts) and the ensemble dispatch (`multi_sim_run_method`). The per-sim axis decides how one simulation uses cores/GPUs; the dispatch axis decides how the ensemble of simulations is launched. Vary the config fields below; the `analysis.run()` / `render_report()` calls from the worked path are unchanged.
+Two orthogonal axes control how a run executes: the per-sim compute config (`run_mode` + the `n_*` counts) and the ensemble dispatch (`multi_sim_run_method`). The per-sim axis decides how one simulation uses cores/GPUs; the dispatch axis decides how the ensemble of simulations is launched. The baseline for both is the worked path above: `run_mode: serial` and `multi_sim_run_method: local`. The worked path calls `analysis.run(..., execution_mode="local")`, and an explicit `local` overrides the dispatch axis, so holding that call as written varies the per-sim axis only. To vary the ensemble dispatch, pass `execution_mode="auto"` as the [Quickstart](quickstart.md) does, so that `multi_sim_run_method` picks the locus.
 
 ???+ example "Per-sim compute-config deltas (analysis config)"
     - **serial**: `run_mode: serial`

@@ -32,6 +32,13 @@ selected from:
 because it would be ignored. The file is one node name per line, with surrounding
 whitespace stripped, blank lines and lines starting `;` skipped, and no header.
 
+A system config that names its own coupling nodes sets both fields together:
+
+```yaml
+swmm_coupling_mode: list
+swmm_coupling_nodes_file: swmm_coupling_nodes.txt
+```
+
 **The legacy candidates**, an explicit opt-in with `swmm_coupling_mode: legacy`,
 follow SWMM's reading of an inflow line: a line names a FLOW
 inflow when it has at least three items and its constituent is not a name in

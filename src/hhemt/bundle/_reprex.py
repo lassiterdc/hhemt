@@ -67,7 +67,9 @@ class ReprexResult:
     # The comment here previously said `False => native-run bundle`, and that was wrong in
     # exactly the case that mattered: a CONTAINER bundle emitted before the ADR-19 (ii-a)
     # digest wire, or one whose SIF was a sandbox directory, or one whose setup-time digest
-    # read failed, ALSO lands False. Read `sif_container_mode` beside it to tell those apart.
+    # read failed, ALSO lands False. `sif_verified` tells those apart: a native bundle reports
+    # True (nothing to verify) and a container bundle with no digest reports None (nothing to
+    # verify WITH), which is the distinction this field alone cannot carry.
     sif_reference_present: bool
     # TRI-STATE, and the third value is the point:
     #   True  — a digest was present and MATCHED (`_verify_sif` fail-closed, so a mismatch raises)
@@ -91,12 +93,6 @@ class ReprexResult:
     # SIGNATURE checking is gone (ADR-2 as amended by ADR-21).
     sif_signature_ok: bool | None
     runnable: bool  # True => no sensitivity row exceeds a target partition cap
-    # The discriminator that makes `sif_reference_present=False` legible. Sourced from the
-    # bundle's OWN manifest (`sif_manifests` is emitted iff the analysis was container-mode,
-    # `_emit.py`), so it is a property of the bundle rather than an inference about it.
-    #   True  + reference_present False -> container bundle, digest MISSING  (unverifiable)
-    #   False + reference_present False -> genuinely native                  (nothing to verify)
-    sif_container_mode: bool = False
     problem_pairs: list[ValidationIssue] = field(default_factory=list)  # (member_id, column)
     amendments: list[Amendment] = field(default_factory=list)
     zero_user_info_leaks: list[str] = field(default_factory=list)  # informational (ADR-9)

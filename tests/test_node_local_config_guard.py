@@ -27,7 +27,6 @@ from pathlib import Path
 
 import pytest
 
-from hhemt.analysis import TRITONSWMM_analysis
 from hhemt.exceptions import ConfigurationError
 
 _ACK_ENV = "HHEMT_ALLOW_NODE_LOCAL_CONFIGS"
@@ -55,7 +54,11 @@ def _probe_analysis_first_mutation(monkeypatch) -> None:
 
 
 def _probe_sensitivity_first_mutation(monkeypatch) -> None:
-    monkeypatch.setattr(TRITONSWMM_analysis, "_apply_force_rerun", _boom)
+    # The facade's first post-guard mutation is the layout stamp, so the probe targets THAT
+    # rather than _apply_force_rerun: with the stamp in place, a guard that failed to fire
+    # would reach the stamp first and the old target would never be called, which would make
+    # the arm pass for the wrong reason.
+    monkeypatch.setattr("hhemt.version_migration.state.stamp_new_target", _boom)
 
 
 def _config_dir(analysis) -> Path:

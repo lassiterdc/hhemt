@@ -49,9 +49,10 @@ Three things it does not decide, all of them silent if wrong, and this file supp
    later convenience-forwarding change reds here rather than silently re-creating the claim.
 
 VENUE: laptop-safe. No solver is compiled or executed; every root is under ``tmp_path``, the
-configs are built from the schemas' own required fields with placeholder inputs, and the analysis
-construction is EXPECTED to raise after the sites under test so its exception is suppressed and
-counted. Following ``tests/test_system_observer_construction.py``'s stated pattern.
+configs are built from the schemas' own required fields with placeholder inputs, the running-identity
+gate (which sits ABOVE the ``sims/`` mkdir) is satisfied by stubbing both identity seams, and the
+analysis construction is EXPECTED to raise after the sites under test so its exception is suppressed
+and counted. Following ``tests/test_system_observer_construction.py``'s stated pattern.
 """
 
 import contextlib
@@ -60,8 +61,10 @@ from pathlib import Path
 import yaml
 
 import hhemt.analysis
+from hhemt import validation
 from hhemt.paths import AnalysisPaths
 from hhemt.system import TRITONSWMM_system
+from hhemt.validation import RunningIdentity
 from hhemt.version_migration.context import MigrationContext
 from tests.test_config_validation import _minimal_analysis_config_dict
 
@@ -117,6 +120,21 @@ def _analysis_yaml(tmp_path: Path, analysis_dir: Path) -> Path:
     return dst
 
 
+def _satisfy_identity_gate(monkeypatch, analysis_cfg: Path) -> None:
+    """Make the running toolkit's identity equal the sha the analysis config declares.
+
+    The analysis constructor refuses a ``hhemt_sha`` that is not the running toolkit's, and that
+    gate sits ABOVE the ``sims/`` mkdir (it runs before the constructor writes anything), so an
+    unstubbed run is refused before the site under test and every assertion about that site is
+    about nothing. Both seams are stubbed, as ``tests/test_identity_gate_before_mkdir.py`` does:
+    ``hhemt.validation.running_identity`` and the name ``hhemt.analysis`` imported from it.
+    """
+    declared = yaml.safe_load(analysis_cfg.read_text())["hhemt_sha"]
+    stub = lambda: RunningIdentity(sha=declared, shape="checkout", dirty=False)  # noqa: E731
+    monkeypatch.setattr(validation, "running_identity", stub)
+    monkeypatch.setattr(hhemt.analysis, "running_identity", stub)
+
+
 def _capture_paths(monkeypatch) -> list:
     """Patch ``hhemt.analysis.AnalysisPaths`` to record the instance production builds."""
     real = hhemt.analysis.AnalysisPaths
@@ -162,6 +180,7 @@ def test_apply_path_still_materializes_layout_state(tmp_path, monkeypatch):
     system_cfg = _system_yaml(tmp_path, system_dir)
     analysis_root = tmp_path / "analysis_root"
     analysis_cfg = _analysis_yaml(tmp_path, analysis_root)
+    _satisfy_identity_gate(monkeypatch, analysis_cfg)
 
     assert sorted(p.name for p in system_dir.iterdir()) == [], "precondition: fresh system dir"
 
@@ -196,7 +215,7 @@ def test_apply_path_still_materializes_layout_state(tmp_path, monkeypatch):
     )
 
 
-def test_default_analysis_construction_creates_the_simulation_directory(tmp_path):
+def test_default_analysis_construction_creates_the_simulation_directory(tmp_path, monkeypatch):
     """CONTROL for the ANALYSIS half: the no-argument construction still creates ``sims/``.
 
     Property: ``TRITONSWMM_analysis(analysis_config_yaml, system)`` with no ``skip_layout_state``
@@ -223,12 +242,14 @@ def test_default_analysis_construction_creates_the_simulation_directory(tmp_path
 
     analysis_root = tmp_path / "analysis_root"
     analysis_cfg = _analysis_yaml(tmp_path, analysis_root)
+    _satisfy_identity_gate(monkeypatch, analysis_cfg)
     expected_sim_dir = analysis_root / "sims"
     assert not expected_sim_dir.exists(), "precondition: the sims directory starts absent"
 
     with contextlib.suppress(Exception):
-        # The placeholder weather file is not a CSV, so the construction is EXPECTED to raise
-        # after the mkdir under test. The assertion below is about a directory production
+        # The identity gate is satisfied above, and it runs BEFORE the mkdir; the placeholder
+        # weather file is not a CSV, so the construction is EXPECTED to raise after the mkdir
+        # under test. The assertion below is about a directory production
         # created, so the suppression cannot make it vacuous -- an early raise leaves it absent
         # and reds the test rather than greening it.
         hhemt.analysis.TRITONSWMM_analysis(analysis_cfg, system)
@@ -239,7 +260,7 @@ def test_default_analysis_construction_creates_the_simulation_directory(tmp_path
     )
 
 
-def test_the_two_axes_are_independent(tmp_path):
+def test_the_two_axes_are_independent(tmp_path, monkeypatch):
     """``skip_layout_state`` on the ANALYSIS does not suppress the SYSTEM's stamp.
 
     Property: a system constructed with the default (which stamps) keeps its ``_version.json``
@@ -271,6 +292,7 @@ def test_the_two_axes_are_independent(tmp_path):
 
     analysis_root = tmp_path / "analysis_root"
     analysis_cfg = _analysis_yaml(tmp_path, analysis_root)
+    _satisfy_identity_gate(monkeypatch, analysis_cfg)
     with contextlib.suppress(Exception):
         hhemt.analysis.TRITONSWMM_analysis(analysis_cfg, system, skip_layout_state=True)
 

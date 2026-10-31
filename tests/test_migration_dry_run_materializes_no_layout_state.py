@@ -20,7 +20,8 @@ real migration materialises layout state by design.
 
 VENUE: laptop-safe. No solver is compiled or executed; every root is under ``tmp_path``, the
 system config is built from the schema's own required fields with placeholder inputs, and the
-analysis construction is EXPECTED to raise after the site under test (see the first test's
+running-identity gate (which sits ABOVE the ``sims/`` mkdir) is satisfied by stubbing both
+identity seams, and the analysis construction is EXPECTED to raise after the site under test (see the first test's
 docstring) so its exception is suppressed and counted rather than relied on.
 """
 
@@ -31,8 +32,10 @@ import yaml
 
 import hhemt.analysis
 import hhemt.system
+from hhemt import validation
 from hhemt.paths import AnalysisPaths
 from hhemt.system import TRITONSWMM_system
+from hhemt.validation import RunningIdentity
 from hhemt.version_migration.context import MigrationContext
 from tests.test_config_validation import _minimal_analysis_config_dict
 
@@ -96,6 +99,21 @@ def _analysis_yaml(tmp_path: Path, analysis_dir: Path) -> Path:
     return dst
 
 
+def _satisfy_identity_gate(monkeypatch, analysis_cfg: Path) -> None:
+    """Make the running toolkit's identity equal the sha the analysis config declares.
+
+    The analysis constructor refuses a ``hhemt_sha`` that is not the running toolkit's, and that
+    gate sits ABOVE the ``sims/`` mkdir (it runs before the constructor writes anything), so an
+    unstubbed run is refused before the site under test and every assertion about that site is
+    about nothing. Both seams are stubbed, as ``tests/test_identity_gate_before_mkdir.py`` does:
+    ``hhemt.validation.running_identity`` and the name ``hhemt.analysis`` imported from it.
+    """
+    declared = yaml.safe_load(analysis_cfg.read_text())["hhemt_sha"]
+    stub = lambda: RunningIdentity(sha=declared, shape="checkout", dirty=False)  # noqa: E731
+    monkeypatch.setattr(validation, "running_identity", stub)
+    monkeypatch.setattr(hhemt.analysis, "running_identity", stub)
+
+
 def test_dry_run_materializes_no_layout_state(tmp_path, monkeypatch):
     """Property: a ``dry_run=True`` planning construction leaves no ``_version.json`` and no ``sims/``.
 
@@ -122,9 +140,13 @@ def test_dry_run_materializes_no_layout_state(tmp_path, monkeypatch):
     absences hold.
 
     The analysis construction is EXPECTED to raise here -- the placeholder weather file is not
-    a CSV, and the ``hhemt_sha`` gate follows the site under test. WHICH exception is
-    irrelevant and is suppressed, because the site under test (``AnalysisPaths`` construction
-    then ``mkdir``) precedes every raise; the captured ``AnalysisPaths`` instance is what keeps
+    a CSV. The ``hhemt_sha`` identity gate PRECEDES the site under test (it sits above the
+    ``mkdir``, so a construction refused on identity touches nothing), which is why
+    ``_satisfy_identity_gate`` stubs the running identity to the config's declared sha: left
+    unstubbed, the construction is refused before ``AnalysisPaths`` is built and both absence
+    assertions pass for the wrong reason. WHICH exception is then raised is irrelevant and is
+    suppressed, because the site under test (``AnalysisPaths`` construction then ``mkdir``)
+    precedes every remaining raise; the captured ``AnalysisPaths`` instance is what keeps
     the suppression from making the assertions vacuous, and it is also what makes the asserted
     path the one PRODUCTION resolved rather than one this test guessed.
     """
@@ -133,6 +155,7 @@ def test_dry_run_materializes_no_layout_state(tmp_path, monkeypatch):
     cfg_yaml = _system_yaml(tmp_path, system_directory=system_dir)
     analysis_dir = tmp_path / "analysis_root"
     analysis_cfg = _analysis_yaml(tmp_path, analysis_dir)
+    _satisfy_identity_gate(monkeypatch, analysis_cfg)
 
     assert sorted(p.name for p in system_dir.iterdir()) == [], "precondition: fresh system dir"
 

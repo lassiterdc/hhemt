@@ -27,16 +27,16 @@ outputs.
 
 ## Declaring the model arms (and an optional resume schedule)
 
-A compute-sensitivity experiment runs as **one sensitivity master per model arm**.
+A compute-sensitivity experiment runs as **one sensitivity primary per model arm**.
 Declare the arms in the experiment config's matrix block:
 `model_arms: [tritonswmm, triton]`. Each arm runs the identical compute-config
-matrix and differs only in its system model toggles. The two masters are joined for
+matrix and differs only in its system model toggles. The two primaries are joined for
 reporting by `hhemt combine`; the cross-arm figures live on the combined report, not
-on either master's own report.
+on either primary's own report.
 
-??? note "Why one master per arm rather than one master with both"
+??? note "Why one primary per arm rather than one primary with both"
     The sensitivity Snakefile generator accepts exactly one enabled model type per
-    master, so a two-arm experiment is two masters by construction rather than by
+    primary, so a two-arm experiment is two primaries by construction rather than by
     preference.
 
 To interrupt the sims for a resume study, set `resume_interruption_schedule` on the
@@ -49,6 +49,13 @@ makes cross-config resume comparisons meaningful. Convert the fractions to indic
 once, in the committed experiment config; the runner performs no conversion. Leave
 it unset for a clean sweep. The retired `deterministic_kill_after_n_checkpoints`
 field is no longer accepted.
+
+On the 3.5 m / 24 h grid the three-resume schedule above is written in the analysis
+config as:
+
+```yaml
+resume_interruption_schedule: [36, 72, 108]
+```
 
 ## Set up the experiment
 
@@ -75,7 +82,7 @@ The config's cross-field validators reject any requested
     full clean+resume ensemble from the framework is a tracked follow-up; today
     the ensemble is driven by the companion driver
     (`scripts/experiments/synth_compute_config.py`), which runs the matrix and
-    consolidates the outputs into a sensitivity master.
+    consolidates the outputs into a sensitivity primary.
 
 ## Read the report
 
@@ -86,7 +93,7 @@ benchmarking figures in `analysis_report.html`:
 ```python
 from hhemt import Toolkit
 
-tk = Toolkit.from_configs("system.yaml", "analysis.yaml")   # the sensitivity master
+tk = Toolkit.from_configs("system.yaml", "analysis.yaml")   # the sensitivity primary
 tk.analysis.eda()                                           # emit plots/eda/ figures
 tk.analysis.render_report()                                 # renders the active reporting set
 ```
@@ -102,9 +109,9 @@ how to read a verdict file are covered once in
 [Run the exploratory analysis](running-eda.md). Two things are specific to this
 experiment. Its default figure selection is `config_diff_maps`, the config-diff
 comparison across compute configurations. And because it runs as two separate
-single-arm masters, a clean sweep and a resume sweep, the clean-versus-resume
+single-arm primaries, a clean sweep and a resume sweep, the clean-versus-resume
 comparison is produced at combine level by `hhemt combine` rather than inside
-either master.
+either primary.
 
 ## Running a DEM-resolution sweep instead
 
@@ -124,8 +131,8 @@ column, one row per resolution rung:
 | `res_7p0` | ... | 7.0 |
 | `res_14p0` | ... | 14.0 |
 
-Each row overlays `target_dem_resolution` onto the master system config
-(`system_config.model_validate({**master, **overlay})`), so the members share
+Each row overlays `target_dem_resolution` onto the base system config
+(`system_config.model_validate({**base, **overlay})`), so the members share
 everything but the DEM cell size. Choose a **constant-ratio** ladder, each coarser
 rung an integer multiple of the finest (e.g. 3.5 / 7.0 / 14.0 m, successive
 doubling), so each coarse grid is a clean aggregation of the finest, which is the
@@ -139,11 +146,11 @@ DEM-resolution reporting set:
 !!! warning "The two EDA families are mutually exclusive per experiment"
     The `compute_sensitivity` family's `config_diff_maps` requires a **uniform**
     grid across members and raises a named `ProcessingError` on a
-    mixed-resolution master; the `dem_resolution` family requires the varying grid.
+    mixed-resolution primary; the `dem_resolution` family requires the varying grid.
     Pick one reporting set per experiment: do not mix `config_diff_maps` with the
     `dem_resolution_*` renderers.
 
 To compare two experiments (e.g. clean vs resume, or two clusters) in one
 report, emit a bundle from each and combine them. See
 [Combining experiments](combining-experiments.md); `combine` accepts
-sensitivity-master bundles.
+sensitivity-primary bundles.

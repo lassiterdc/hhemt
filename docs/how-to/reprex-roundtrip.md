@@ -18,7 +18,7 @@ during `render_report()`, so run it first):
 # Single analysis
 bundle_dir = analysis.reprex_bundle()
 
-# Sensitivity master (the primary reprex surface, because the per-(member_id, column)
+# Sensitivity primary (the main reprex surface, because the per-(member_id, column)
 # problem-pair report is intrinsically a sensitivity concept)
 bundle_dir = sensitivity.reprex_bundle()
 ```
@@ -86,6 +86,14 @@ The reproducer fills two things with *their own* system's values:
    )
    ```
 
+   The same fields written as a `reprex_config.yaml`:
+
+   ```yaml
+   default_account: my-alloc
+   sif_root: /scratch/my-alloc/sifs
+   target_ensemble_partition: gpu-a100
+   ```
+
 2. Their own HPC-system config for the target machine.
 
     --8<-- "hpc-system-config-role.md"
@@ -104,9 +112,12 @@ result = Bundle.from_directory(bundle_dir).reprex(my_reprex, my_hpc_profile)
 
 1. **Verify the SIF's identity.** If the crate references a SIF (a container run), the digest
    is a **mandatory, fail-closed** `sha256` match against the image found by that digest
-   under `reprex_config.sif_root`, establishing that your image file is byte-identical to
-   the producer's. A mismatch, or no manifest under `sif_root` carrying that digest,
-   raises `ProcessingError` before any validation runs. **The toolkit does not PGP-sign
+   under `reprex_config.sif_root`, establishing that your image file's bytes hash to the
+   digest the crate records. A mismatch, or no manifest under `sif_root` carrying that
+   digest, raises `ProcessingError` before any validation runs. This does not establish
+   that the crate's digest is the one the producer ran, or that your host (MPI, drivers,
+   GPU) matches the producer's, so a matching image does not by itself promise matching
+   results. When the crate carries no SIF entity, this check does not run. **The toolkit does not PGP-sign
    SIFs: the digest is the identity carrier.** `result.sif_signature_ok` is retained on
    `ReprexResult` for schema stability and is permanently `None`; no `apptainer verify`
    runs, so the field reports nothing and cannot. A bundle whose

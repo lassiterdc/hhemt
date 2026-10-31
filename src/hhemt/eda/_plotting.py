@@ -3,11 +3,11 @@
 Free functions shared by `analysis.eda()` and `Bundle.eda()` (they take a `root`
 Path + the configs, NOT a TRITONSWMM_analysis, so the Bundle non-subclass boundary
 is honored). Each EDA plot emits via `emit_plot_with_sources` (HTML branch) under
-MASTER-ROOTED `{root}/plots/eda/<plot_id>.html` and declares its
+PRIMARY-ROOTED `{root}/plots/eda/<plot_id>.html` and declares its
 `{root}/eda/<plot_id>.zarr` data-prep artifact as a source - so the existing
 harvest chain carries the dataset into a render bundle (D1 Option A). EDA plots
 MUST NOT emit under plots/sensitivity/per_sim/member-{N}/ (harvest re-roots that subtree
-against members/member_{N}/, which has no eda/ dir; see the master-rooted-emission
+against members/member_{N}/, which has no eda/ dir; see the primary-rooted-emission
 stipulation).
 """
 
@@ -119,7 +119,7 @@ def _render_config_diff_maps(
     identity+absolute-diff table, and per byte-identical config group the SIGNED diff
     and percent-diff maps (DEM cells + SWMM conduits) vs the serial-CPU baseline with
     serial reference maps. Compute-config labels are derived from config attrs (never
-    the member_id name). Emits under MASTER-ROOTED plots/eda/ as config_diff_maps.html.
+    the member_id name). Emits under PRIMARY-ROOTED plots/eda/ as config_diff_maps.html.
 
     plot_id `config_diff_maps` (== on-disk stem, ADR-2). Existing bundles carrying the
     legacy `eda_cross_sim_identity` enabled_plots key are normalized to this kind by
@@ -148,7 +148,7 @@ def _render_rank_sensitivity(
     eda_cfg: eda_config,
 ) -> Path:
     """Rank-sensitivity EDA plot (within-family rank-N vs rank-1). Figure body is a
-    /eda-spinup seam; emits master-rooted plots/eda/eda_rank_sensitivity.html and declares
+    /eda-spinup seam; emits primary-rooted plots/eda/eda_rank_sensitivity.html and declares
     BOTH eda/eda_rank_sensitivity.zarr AND its .verdict.json as sources."""
     from hhemt.eda._sensitivity_figures import (
         build_rank_sensitivity_figure,
@@ -175,7 +175,7 @@ def _render_resume_sensitivity(
     eda_cfg: eda_config,
 ) -> Path:
     """Resume-sensitivity EDA plot (clean-vs-resume). Figure body is a /eda-spinup seam;
-    emits master-rooted plots/eda/eda_resume_sensitivity.html and declares BOTH
+    emits primary-rooted plots/eda/eda_resume_sensitivity.html and declares BOTH
     eda/eda_resume_sensitivity.zarr AND its .verdict.json as sources."""
     from hhemt.eda._sensitivity_figures import (
         build_resume_sensitivity_figure,
@@ -202,7 +202,7 @@ def _render_cross_hardware_magnitude(
     eda_cfg: eda_config,
 ) -> Path:
     """Cross-hardware-magnitude EDA plot (ADR-4 1-GPU vs 1-rank serial-CPU). Figure body
-    is a /eda-spinup seam; emits master-rooted plots/eda/eda_cross_hardware_magnitude.html
+    is a /eda-spinup seam; emits primary-rooted plots/eda/eda_cross_hardware_magnitude.html
     and declares BOTH eda/eda_cross_hardware_magnitude.zarr AND its .verdict.json."""
     from hhemt.eda._sensitivity_figures import (
         build_cross_hardware_magnitude_figure,
@@ -576,7 +576,7 @@ def _render_b4b(
         # is false there, because the calc member did run, so name the real cause instead.
         # Deliberately keyed on the rename map's predecessors of THIS stem and NOT on
         # config.eda._RETIRED_EDA_FIGURE_STEMS: that set also holds eda_cross_sim_identity,
-        # whose zarr is the live backing artifact of config_diff_maps on every master that
+        # whose zarr is the live backing artifact of config_diff_maps on every primary that
         # ran eda(), so a whole-set test would blame the rename for an artifact merely absent.
         from hhemt.config.eda import _EDA_RENAMES
 
@@ -625,8 +625,8 @@ def _render_b4b(
 
 
 def _render_raw_byte_identity(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
-    """Cross-hardware results comparison (b4b), reused per-family over each master's
-    own subs (serves both the clean and resume masters). Reads eda/raw_byte_identity.zarr;
+    """Cross-hardware results comparison (b4b), reused per-family over each primary's
+    own subs (serves both the clean and resume primaries). Reads eda/raw_byte_identity.zarr;
     R10 honest-degradation panel when raw outputs were cleared."""
     return _render_b4b(
         root,

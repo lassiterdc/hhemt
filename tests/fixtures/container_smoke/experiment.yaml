@@ -1,0 +1,70 @@
+# Container smoke test: ONE analysis, ONE GPU rank, executed inside the UVA container image.
+#
+# What this file is for. It is the build-and-verify configuration for the container
+# execution mode: the smallest run that still exercises the real path (a coupled
+# TRITON-SWMM simulation launched through `apptainer exec` with the container's own
+# OpenMPI), so that "the image runs" is measured by a simulation rather than by a probe.
+#
+# What this file is NOT. It is not an estate experiment descriptor (the schema at
+# src/hhemt/config/experiment_definition.py), which carries PATHS to a system config, an
+# analysis config and a per-cluster hpc config. This file carries those values INLINE, on
+# purpose: the smoke run must not depend on an estate checkout, and the session it is
+# launched from is a shipped test tree rather than an experiment directory. The three
+# configs it would otherwise point at are the toolkit's own synthetic case plus the
+# cluster profile named under `hpc_system_config` below.
+#
+# The `container:` block is copied from the anonymized UVA example profile
+# test_data/norfolk_coastal_flooding/hpc_system_config_uva.yaml. `{your-allocation}` is
+# substituted by the operator (or by the launcher) before the run; it is a placeholder,
+# never a real path.
+
+smoke:
+  # Container mode is the thing under test: the sockets below are ignored in native mode.
+  execution_environment: container
+
+  # ONE GPU, ONE rank, ONE node. The UVA image is a Kokkos-CUDA build for Ampere, so a CPU
+  # rank cannot execute it; and a single rank is the smallest thing that still crosses the
+  # container boundary. `gpu-a100-80` is the partition whose hardware the image is built for.
+  compute:
+    analysis.run_mode: gpu
+    analysis.n_gpus: 1
+    analysis.n_mpi_procs: 1
+    analysis.n_omp_threads: 1
+    analysis.n_nodes: 1
+    analysis.hpc_ensemble_partition: gpu-a100-80
+
+  # A single coupled simulation: one member, one event. Both model toggles on, because the
+  # coupled binary is what the image carries.
+  model: tritonswmm
+  members: 1
+  events: 1
+
+  # The cluster profile the launcher passes as its hpc_system_config override. It supplies
+  # the account, the partition caps and the container block; the placeholders in it are the
+  # operator's to fill.
+  hpc_system_config: test_data/norfolk_coastal_flooding/hpc_system_config_uva.yaml
+
+  # Copied from that profile's `container:` block. Consumed only when
+  # execution_environment == "container"; the native path ignores every key here.
+  container:
+    sif_root: "/scratch/{your-allocation}/sifs"
+    builds_containers: true
+    apptainer_module: "apptainer/1.5.0"
+    gpu_flag: "--nv"
+    srun_mpi: "pmix"
+    binds: ["/scratch", "/sfs"]
+    exe_in_sif:
+      triton: "/opt/hhemt/bin/triton_only.exe"
+      tritonswmm: "/opt/hhemt/bin/triton.exe"
+      swmm: "/opt/hhemt/bin/runswmm"
+
+# The verdict this smoke is read by. Two layers, both required, and the launcher's own exit
+# is recorded but never the verdict: a Snakemake or driver exit reports that a process
+# finished, not that the simulation did.
+verdict:
+  sim_step:
+    sacct_state: COMPLETED
+    sacct_exit_code: "0:0"
+  completion_marker:
+    kind: model_log
+    field: simulation_completed

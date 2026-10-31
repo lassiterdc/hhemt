@@ -102,7 +102,7 @@ def load_eda_context(root: Path | str) -> EdaContext:
     status_csv = root / "scenario_status.csv"
     scenario_status = pd.read_csv(status_csv) if status_csv.exists() else None
 
-    # SWMM GIS layers are exported under system_dir/gis (system_overview.py:138),
+    # SWMM GIS layers are exported under system_dir/gis (`_swmm_gis_layers.py::export_swmm_gis_layers`),
     # NOT analysis_dir/gis. On a bundle root the harvested copy is at {root}/gis;
     # prefer the bundle copy, fall back to the system-dir source for a live analysis.
     bundle_gis = root / "gis"

@@ -20,7 +20,7 @@ from hhemt.config.base import cfgBaseModel
 #: Retired EDA figure kinds, shared source of truth for (a) the config-load self-heal
 #: below and (b) the combine catch-all guard (bundle/combined_snakefile_generator.py::
 #: _figures_of). A RENAMED kind keeps rendering under its new stem; a DROPPED kind has no
-#: within-master replacement (F8: the clean-vs-resume result lives on the hhemt-combine
+#: within-primary replacement (F8: the clean-vs-resume result lives on the hhemt-combine
 #: cross_experiment_intercomparison surface). Add an entry when an EDA figure is retired.
 _EDA_RENAMES: dict[str, str] = {
     "eda_cross_sim_identity": "config_diff_maps",
@@ -44,7 +44,7 @@ class eda_config(cfgBaseModel):
 
         A kind that is a key of _EDA_RENAMES was renamed, and is rewritten to the kind
         it maps to (the on-disk figure stem + _EDA_RENDERERS key); a kind in _EDA_DROPS
-        has no within-master replacement, and is removed. A pre-rename
+        has no within-primary replacement, and is removed. A pre-rename
         cfg_analysis.yaml (or a baked render bundle) can still carry a retired kind.
         Rewriting it with an actionable DeprecationWarning, which names each rename
         it applied, lets Bundle.eda() render instead of raising the render_eda_plots
@@ -66,7 +66,7 @@ class eda_config(cfgBaseModel):
                 warnings.warn(
                     "eda.enabled_plots carried retired EDA figure kind(s): "
                     f"renamed [{applied}]; "
-                    f"dropped {dropped} (F8: no within-master replacement — the clean-vs-"
+                    f"dropped {dropped} (F8: no within-primary replacement — the clean-vs-"
                     "resume result lives on the hhemt-combine cross_experiment_intercomparison "
                     "surface). The legacy keys are rewritten this cycle and will be rejected "
                     "in a future release.",
@@ -79,13 +79,13 @@ class eda_config(cfgBaseModel):
         default_factory=lambda: [
             "config_diff_maps",
         ],
-        # NOTE (combine-first): eda_resume_sensitivity is a general per-master figure that
-        # requires a single master carrying BOTH clean and resume rows (check_resume_sensitivity
+        # NOTE (combine-first): eda_resume_sensitivity is a general per-primary figure that
+        # requires a single primary carrying BOTH clean and resume rows (check_resume_sensitivity
         # pairs them). The synthetic compute-sensitivity experiment is run as two SEPARATE
-        # single-arm masters (clean sweep + resume sweep), so the member always SKIPS here; the
+        # single-arm primaries (clean sweep + resume sweep), so the member always SKIPS here; the
         # clean-vs-resume comparison is produced at COMBINE level (cross_experiment_intercomparison).
         # Kept in _EDA_RENDERERS and analysis.eda() as an opt-in capability for a future both-arms
-        # master; enable it explicitly via enabled_plots to render it there.
+        # primary; enable it explicitly via enabled_plots to render it there.
         description=(
             "Renderer-kind keys of the EDA plots to render into eda_report.html, "
             "in order. Default is the single shipped first member (config_diff_maps, "
@@ -96,7 +96,7 @@ class eda_config(cfgBaseModel):
             "report.reporting_set='dem_resolution' and a system.target_dem_resolution "
             "sweep. The two families are mutually exclusive per experiment: "
             "config_diff_maps requires a UNIFORM grid across members and raises "
-            "a named ProcessingError on a mixed-resolution master. Membership is "
+            "a named ProcessingError on a mixed-resolution primary. Membership is "
             "VALIDATED AT RENDER TIME (not config-load): an unknown key raises "
             "ValueError in render_eda_plots, which fails fast at the eda() facade "
             "boundary. Config-load validation is deliberately NOT done here — the "

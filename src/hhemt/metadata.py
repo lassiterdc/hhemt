@@ -20,9 +20,11 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import yaml
 from rocrate.model.contextentity import ContextEntity
 from rocrate.rocrate import ROCrate
 
@@ -94,6 +96,208 @@ _SPDX_LICENSE_TABLE: dict[str, dict[str, str]] = {
         "scheme_uri": "https://spdx.org/licenses/",
     },
 }
+
+# The RO-Crate entity @id a custom licence is written under when its details file names no
+# link. A LOCAL id rather than a fabricated URL: the crate must not assert a resolvable
+# address the licence owner never published. Read-back resolves the record from the entity
+# rather than from a vocabulary lookup, so a local id is enough to make it recognizable.
+_LOCAL_LICENSE_ENTITY_ID = "#dataset-license"
+
+# The two keys a licence-details file may carry. `name` is the licence's human title and is
+# required; `link` is the address its owner publishes it at and is optional. A key outside
+# this set is REFUSED rather than ignored, because a misspelled `link` silently dropped
+# would ship a dataset whose terms cite no address -- a claim about the licence that no
+# later reader can correct from the deposit itself.
+_LICENSE_DETAILS_KEYS = frozenset({"name", "link"})
+
+
+@dataclass(frozen=True)
+class LicenseRecord:
+    """A dataset licence as a NAME plus an optional LINK -- the form outside the table.
+
+    The seven SPDX ids in ``_SPDX_LICENSE_TABLE`` are a closed vocabulary, so a licence
+    outside it (a laboratory's own terms, an institutional one) cannot be expressed as an
+    id. It is expressed as this record, and every consumer that needs the licence terms
+    takes one: the RO-Crate entity, the DataCite rightsList, the InvenioRDM ``rights``
+    entry, the HydroShare rights metadata and the bundle's staleness compare all read the
+    record rather than looking a name up in the table.
+
+    Deliberately NOT folded into ``_SPDX_LICENSE_TABLE`` as extra rows: the table is the
+    vocabulary ``analysis_config.dataset_license`` is pinned against (a seven-value
+    Literal), and a per-run free-text member would let the embedded core, the sidecar and
+    the rightsList drift apart -- the drift the single table exists to prevent.
+    """
+
+    name: str
+    link: str | None = None
+
+    @classmethod
+    def from_spdx(cls, spdx: str) -> LicenseRecord:
+        """The record for a table member, so both licence forms compare as one type."""
+        entry = _SPDX_LICENSE_TABLE[spdx]
+        return cls(name=entry["name"], link=entry["uri"])
+
+    @property
+    def crate_id(self) -> str:
+        """The RO-Crate entity @id this record is written under.
+
+        The published address when the details file gives one, else the local sentinel.
+        Either way ``Dataset.license`` points at an entity the crate itself carries, which
+        is what makes the licence recognizable on read-back without any vocabulary the
+        crate does not ship.
+        """
+        return self.link or _LOCAL_LICENSE_ENTITY_ID
+
+
+class UnrecognizedCrateLicense(Exception):
+    """A crate's root Dataset declares a licence this toolkit cannot name.
+
+    Carries the declared ``@id`` so each caller can name it in its own error surface: the
+    publish path raises ``PublishError`` with it, while the bundle's staleness check
+    reports it as a finding and refuses nothing.
+    """
+
+    def __init__(self, uri: str):
+        self.uri = uri
+        super().__init__(uri)
+
+
+def as_license_record(value: str | LicenseRecord | None) -> LicenseRecord | None:
+    """Normalize an SPDX id, a record, or None to a record or None.
+
+    Callers hold whichever form their own layer speaks -- the config declares an SPDX id,
+    a details file yields a record -- and compare it against a crate, which reports
+    either. Normalizing at the comparison is what lets one comparison cover both forms
+    instead of a second branch per form.
+    """
+    if value is None or isinstance(value, LicenseRecord):
+        return value
+    return LicenseRecord.from_spdx(value)
+
+
+def load_license_details(path: str | Path) -> LicenseRecord:
+    """Read a licence-details YAML file into a :class:`LicenseRecord`.
+
+    The file is one YAML mapping with a required ``name`` and an optional ``link``::
+
+        name: Our Lab Data License v1.0
+        link: https://example.org/licenses/our-lab-license-1.0
+
+    YAML rather than JSON because every other operator-authored file an analysis config
+    points at is one, and a licence file is authored by the same person in the same
+    session.
+
+    Raises:
+        ConfigurationError: the file is unreadable, is not a mapping, carries a key outside
+            ``{name, link}``, omits ``name``, or gives either key a non-string or empty
+            ``name``. Each arm names the file, because the whole point of an external
+            details file is that its value is not visible in the config pointing at it.
+    """
+    from hhemt.exceptions import ConfigurationError
+
+    details_path = Path(path)
+
+    def _refuse(message: str) -> ConfigurationError:
+        return ConfigurationError(field="dataset_license_file", message=message, config_path=details_path)
+
+    try:
+        raw = yaml.safe_load(details_path.read_text())
+    except OSError as exc:
+        raise _refuse(f"cannot read the license details file: {exc}") from exc
+    except yaml.YAMLError as exc:
+        raise _refuse(f"the license details file is not valid YAML: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise _refuse(
+            f"the license details file must be a YAML mapping with a 'name' key, but it parsed as {type(raw).__name__}"
+        )
+    unknown = sorted(set(raw) - _LICENSE_DETAILS_KEYS)
+    if unknown:
+        raise _refuse(
+            f"the license details file carries unrecognized key(s) {unknown}; "
+            f"only {sorted(_LICENSE_DETAILS_KEYS)} are read, and an ignored 'link' "
+            "would publish the licence with no address"
+        )
+    name = raw.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise _refuse("the license details file needs a non-empty string 'name'")
+    link = raw.get("link")
+    if link is not None and (not isinstance(link, str) or not link.strip()):
+        raise _refuse("the license details file's 'link' must be a non-empty string when given")
+    return LicenseRecord(name=name, link=link)
+
+
+def resolve_dataset_license(
+    *, dataset_license: str | None, dataset_license_file: str | Path | None
+) -> str | LicenseRecord | None:
+    """Return the licence a config declares: an SPDX id, a details-file record, or None.
+
+    Returns the SPDX ID STRING when ``dataset_license`` is set rather than a record, so a
+    table member's crate is written byte-identically to before the details-file form
+    existed. The details file wins when both are somehow present; the config refuses that
+    combination at load, so the precedence here is a total function's fallback rather than
+    a second policy.
+
+    ``dataset_license_file`` is widened to ``str`` as well as ``Path`` because this is
+    handed config-like objects whose Path field has not been through Pydantic coercion.
+    """
+    if dataset_license_file is not None:
+        return load_license_details(dataset_license_file)
+    return dataset_license
+
+
+def read_crate_license(graph: list[dict]) -> str | LicenseRecord | None:
+    """Return the licence a crate declares, from its ``@graph``.
+
+    THE single recognition rule, shared by the publish read-back and the bundle's
+    staleness check so the two cannot disagree about what a crate says:
+
+    - a table URI resolves to its SPDX id;
+    - a URI carried by a ``CreativeWork`` entity of the crate itself, with a ``name``,
+      resolves to that entity's record -- which is how a details-file licence is written,
+      and what makes such a licence recognizable without a vocabulary the crate lacks;
+    - a root Dataset with no ``license`` yields None.
+
+    The root is resolved through the metadata descriptor's ``about`` when a descriptor is
+    present, and otherwise through the ``"./"``/``""`` literal the toolkit's own emitter
+    writes, so a hand-built crate with no descriptor still reads.
+
+    Raises:
+        UnrecognizedCrateLicense: the root declares a licence whose ``@id`` is neither a
+            table URI nor carried by a ``CreativeWork`` entity of the crate.
+    """
+    descriptor = next(
+        (e for e in graph if isinstance(e, dict) and str(e.get("@id", "")).endswith("ro-crate-metadata.json")),
+        None,
+    )
+    about = descriptor.get("about") if descriptor is not None else None
+    root_id = about.get("@id") if isinstance(about, dict) else about
+    if root_id is None:
+        root = next((e for e in graph if isinstance(e, dict) and e.get("@id") in ("./", "")), None)
+    else:
+        root = next((e for e in graph if isinstance(e, dict) and e.get("@id") == root_id), None)
+    if root is None:
+        return None
+
+    lic = root.get("license")
+    uri = lic.get("@id") if isinstance(lic, dict) else lic
+    if uri is None:
+        return None
+    for spdx, entry in _SPDX_LICENSE_TABLE.items():
+        if entry["uri"] == uri:
+            return spdx
+    entity = next(
+        (
+            e
+            for e in graph
+            if isinstance(e, dict) and e.get("@id") == uri and isinstance(e.get("name"), str) and e["name"].strip()
+        ),
+        None,
+    )
+    if entity is None:
+        raise UnrecognizedCrateLicense(uri)
+    link = entity.get("url")
+    return LicenseRecord(name=entity["name"], link=link if isinstance(link, str) else None)
+
 
 # Single source of truth for what may live in the embedded core (CI grep-guard in
 # test_metadata.py asserts no other key reaches tree.attrs["ro_crate_metadata"]).
@@ -219,7 +423,9 @@ def build_analysis_crate(
     toolkit_git_sha: str,
     code_repository: str,
     cfg_case,  # CaseManifest
-    dataset_license: str | None = None,  # one of the SPDX ids in _SPDX_LICENSE_TABLE, or None: no license written
+    # An SPDX id in _SPDX_LICENSE_TABLE, a details-file LicenseRecord, or None (no license
+    # entity written at all).
+    dataset_license: str | LicenseRecord | None = None,
     sif_spec,  # {@id, softwareVersion, sha256, downloadUrl} | None (native run)
     consolidated_zarr_relpath: str,  # e.g. "analysis_datatree.zarr"
     input_parts: list[dict],  # [{"@id", "sha256", "contentSize", "encodingFormat"}]
@@ -245,15 +451,26 @@ def build_analysis_crate(
     # publish refuses it until one is chosen. Writing a placeholder license here instead
     # would make an unpublished dataset assert terms its owner never chose.
     if dataset_license is not None:
-        _lic = _SPDX_LICENSE_TABLE[dataset_license]
-        crate.add(
-            ContextEntity(
-                crate,
-                _lic["uri"],
-                properties={"@type": "CreativeWork", "name": _lic["name"]},
+        if isinstance(dataset_license, LicenseRecord):
+            # The details-file form: the entity carries the human name and, when the file
+            # gives one, the address the licence is published at. `url` is written ONLY
+            # when a link exists -- read_crate_license reads it back, and an empty string
+            # would read as an address the owner never published.
+            _properties = {"@type": "CreativeWork", "name": dataset_license.name}
+            if dataset_license.link is not None:
+                _properties["url"] = dataset_license.link
+            crate.add(ContextEntity(crate, dataset_license.crate_id, properties=_properties))
+            root["license"] = {"@id": dataset_license.crate_id}
+        else:
+            _lic = _SPDX_LICENSE_TABLE[dataset_license]
+            crate.add(
+                ContextEntity(
+                    crate,
+                    _lic["uri"],
+                    properties={"@type": "CreativeWork", "name": _lic["name"]},
+                )
             )
-        )
-        root["license"] = {"@id": _lic["uri"]}
+            root["license"] = {"@id": _lic["uri"]}
 
     toolkit_src = crate.add(
         ContextEntity(

@@ -91,6 +91,7 @@ _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
     "analysis_dir": PathPolicy.FORCED_DOT,
     "experiment_cfg_yaml": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "brand_theme": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+    "dataset_license_file": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "static_plot_configs": PathPolicy.BUNDLE_RELATIVE_LIST,
 }
 
@@ -222,7 +223,7 @@ _EXCLUDABLE_CATALOG: dict[str, ExcludableInput] = {
         ),
     ),
     "experiment_cfg_yaml": ExcludableInput(
-        description="Master analysis config the per-analysis configs derive from.",
+        description="Primary analysis config the per-analysis configs derive from.",
         reproducibility_cost="Tiny; excluding it buys no space.",
     ),
     "static_plot_configs": ExcludableInput(
@@ -235,6 +236,19 @@ _EXCLUDABLE_CATALOG: dict[str, ExcludableInput] = {
             "NOT EXCLUDABLE. _emit_resolved_brand_theme rewrites the bundled cfg to point at "
             "the emitted brand_theme.resolved.yaml sidecar, so an exclusion here would emit an "
             "input_deposit block that no consumer ever fetches — a dangling by-reference record."
+        ),
+        excludable=False,
+    ),
+    "dataset_license_file": ExcludableInput(
+        description=(
+            "License-details YAML naming the dataset's license ('name', optional 'link') when it "
+            "is not one of the seven SPDX ids the config field accepts."
+        ),
+        reproducibility_cost=(
+            "Tiny in bytes, and NOT EXCLUDABLE. The file IS the dataset's terms of use: a "
+            "deposit or a re-rendered report that recovered its license from somewhere it has "
+            "to fetch would state terms the bundle itself cannot show, so it travels "
+            "self-contained like every other tiny load-bearing input."
         ),
         excludable=False,
     ),
