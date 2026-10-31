@@ -35,6 +35,12 @@ result = tk.analysis.publish_reprex_bundle(target="zenodo")
 print(result["data_doi"], result["record_url"])
 ```
 
+The same deposit from an experiment definition:
+
+```bash
+hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --target zenodo --reprex-bundle
+```
+
 ??? note "What happens if the bundle is too large for the target"
     Before uploading, a size validator measures the bundle against the target's
     **documented** limits (Zenodo 50 GB/record; HydroShare 20 GB default account
@@ -46,8 +52,12 @@ print(result["data_doi"], result["record_url"])
 ## 2. Fetch and reconstitute on another machine
 
 ```bash
-hhemt ingest --doi {minted-doi} --host zenodo
+hhemt ingest --doi {minted-doi} --host zenodo --target-dir {target} --hpc-system-config {your-cluster-hpc-system-config.yaml}
 ```
+
+A reconstituted analysis that dispatches with `batch_job` needs your own cluster's
+`hpc_system_config`, so pass it here; without it the ingest stops at preflight with
+a configuration error (the download has already happened by then).
 
 If you minted against the **sandbox** in step 1, set the same base URL on the fetch side.
 The ingest resolves the Zenodo host from `HHEMT_ZENODO_BASE_URL`, so a sandbox DOI resolves
@@ -55,14 +65,27 @@ against the sandbox instead of 404ing on production:
 
 ```bash
 export HHEMT_ZENODO_BASE_URL=https://sandbox.zenodo.org
-hhemt ingest --doi {minted-doi} --host zenodo
+hhemt ingest --doi {minted-doi} --host zenodo --target-dir {target} --hpc-system-config {your-cluster-hpc-system-config.yaml}
 ```
 
 ## 3. Run
 
 ```bash
-hhemt run --system-config {reconstituted-system.yaml} --analysis-config {reconstituted-analysis.yaml}
+hhemt run --system-config {reconstituted-system.yaml} --analysis-config {reconstituted-analysis.yaml} --hpc-system-config {your-cluster-hpc-system-config.yaml}
 ```
+
+The `Run it with:` line that ingest prints omits `--hpc-system-config`; add it, as above,
+or the run is refused for the same reason.
+
+!!! example "Verified against a live deposit (Zenodo sandbox)"
+    The command forms on this page were run against a Zenodo **sandbox** deposit of a
+    15-configuration CPU sensitivity analysis: one data deposit and one runnable
+    reprex-bundle deposit. The reprex-bundle deposit is far larger because it carries the
+    declared inputs. The `10.5072` DOI prefix marks the sandbox: a sandbox record is
+    discardable and is not a citable DOI, and production Zenodo mints `10.5281`.
+    `HHEMT_ZENODO_BASE_URL=https://sandbox.zenodo.org` together with a sandbox token
+    selects the sandbox. Not verified: the 15-member sweep was not re-run from the
+    deposit; only `hhemt run --dry-run` on the reconstituted configs was.
 
 ## Excluding an input (the governed opt-out)
 

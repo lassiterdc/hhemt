@@ -168,7 +168,13 @@ def _build_crate(**over):
 
 
 class _DumpableModel:
-    """Stand-in config exposing the ``model_dump(mode=...)`` the deposit set writes."""
+    """Stand-in config exposing the ``model_dump(mode=...)`` the deposit set writes.
+
+    ``model_fields`` is empty on purpose: the deposit set rewrites every Path field of a real config
+    model, and a stand-in with no model fields has none to rewrite.
+    """
+
+    model_fields: dict = {}
 
     def __init__(self, payload):
         self._payload = payload
@@ -181,10 +187,13 @@ def _fake_analysis(analysis_dir: Path, *, dataset_license=None, dataset_license_
     cfg = _DumpableModel({"analysis_id": "a1"})
     cfg.dataset_license = dataset_license
     cfg.dataset_license_file = dataset_license_file
+    cfg_system = _DumpableModel({"system_id": "s1"})
+    # The deposit set relativizes against the system directory as well as the analysis one.
+    cfg_system.system_directory = analysis_dir
     return SimpleNamespace(
         analysis_paths=SimpleNamespace(analysis_dir=analysis_dir),
         cfg_analysis=cfg,
-        _system=SimpleNamespace(cfg_system=_DumpableModel({"system_id": "s1"})),
+        _system=SimpleNamespace(cfg_system=cfg_system),
     )
 
 

@@ -32,7 +32,6 @@ from pathlib import Path
 from typing import Literal
 
 import requests
-import yaml
 
 from hhemt.exceptions import PublishError
 from hhemt.metadata import (
@@ -251,22 +250,50 @@ def build_inveniordm_related(*, software_doi: str | None, paper_doi: str | None 
     return edges
 
 
-def _deposit_set(analysis, consolidated_zarr_relpath: str) -> list[Path]:
+def _deposit_set(analysis, consolidated_zarr_relpath: str, *, staging: Path, target: str = "?") -> list[Path]:
     """The analysis_dir deposit set: consolidated zarr + sidecar + configs.
 
-    Configs are NOT in the live analysis_dir by construction (only a bundle staging dir
-    carries them); materialize the two fixed-name configs into the deposit exactly as
-    analysis.eda() does. Takes the analysis (not just analysis_dir) so it can
-    read the config models — see publish_analysis below.
+    The two configs are written into ``staging`` -- the folder ``publish_analysis`` owns for the
+    length of the upload -- in the SAME relative-path form the render bundle writes
+    (``bundle._emit.emit_relative_config_pair``): every Path field is analysis-relative,
+    system-relative or ``external/{filename}``, the forced-dot fields read ``.`` and the two
+    software directories are null. Written as ``model_dump`` they carried the producer's
+    absolute paths into a public, immutable record.
+
+    NOTHING is written into the live analysis directory. ``cfg_analysis.yaml`` and
+    ``cfg_system.yaml`` there are the toolkit's own working copies (``analysis.eda()`` and the
+    consolidation write them, and ``hhemt eda --analysis-dir`` builds runnable configs from
+    them); overwriting them with relative paths would hand that reader a ``system_directory`` of
+    ``.`` resolved against whatever directory the process happens to be in.
+
+    Refuses when two DIFFERENT files would be written under one config string: the string names
+    one place and only one of the files can be there. ``target`` only names the destination in
+    that error.
     """
+    from hhemt.bundle._emit import (
+        _CONFIG_PAIR,
+        config_string_collisions,
+        emit_relative_config_pair,
+        format_collisions,
+    )
+
     root = Path(analysis.analysis_paths.analysis_dir)
-    (root / "cfg_analysis.yaml").write_text(yaml.safe_dump(analysis.cfg_analysis.model_dump(mode="json")))
-    (root / "cfg_system.yaml").write_text(yaml.safe_dump(analysis._system.cfg_system.model_dump(mode="json")))
+    staging = Path(staging)
+    _invariants, outputs = emit_relative_config_pair(analysis, staging)
+    collisions = config_string_collisions(outputs)
+    if collisions:
+        raise PublishError(
+            target=target,
+            doi=None,
+            status=(
+                "two different files would be written under one config path, and the deposit can name "
+                f"only one of them: {format_collisions(collisions)}. Rename or relocate one of the files."
+            ),
+        )
     parts = [
         root / "ro-crate-metadata.json",
         root / consolidated_zarr_relpath,
-        root / "cfg_analysis.yaml",
-        root / "cfg_system.yaml",
+        *(staging / filename for _attr, filename in _CONFIG_PAIR),
     ]
     return [p for p in parts if p.exists()]
 
@@ -907,50 +934,57 @@ def publish_analysis(
             ),
         )
 
-    if isinstance(deposit_source, Path):
-        deposit = [deposit_source]
-    elif deposit_source == "reprex_bundle":
-        from hhemt.bundle import emit_bundle
+    # The deposit's own staging folder, owned HERE for the length of the upload: the data
+    # deposit's relative-path configs are written into it and uploaded from it, then it is
+    # removed. Same parent as the Zenodo adapter's zip staging, and for the same reason: on an
+    # HPC login node the default /tmp is typically a small tmpfs, and the analysis directory
+    # sits on the filesystem that already holds the deposit.
+    staging_parent = os.environ.get("TMPDIR") or str(analysis_dir)
+    with tempfile.TemporaryDirectory(dir=staging_parent) as deposit_staging:
+        if isinstance(deposit_source, Path):
+            deposit = [deposit_source]
+        elif deposit_source == "reprex_bundle":
+            from hhemt.bundle import emit_bundle
 
-        deposit = [emit_bundle(analysis, container_defs=container_defs)]
-    else:
-        deposit = _deposit_set(analysis, consolidated_zarr_relpath)
+            deposit = [emit_bundle(analysis, container_defs=container_defs)]
+        else:
+            deposit = _deposit_set(analysis, consolidated_zarr_relpath, staging=Path(deposit_staging), target=target)
 
-    # The size validator ALWAYS runs before an irrevocable deposit. It reports and warns;
-    # it never blocks, because a deposit that carries its inputs can exceed HydroShare's
-    # 20 GB default quota and whether to proceed is the operator's call. The measured total
-    # is threaded to _classify_storage_error so a live rejection can be reframed with the
-    # real delta.
-    size_report = validate_deposit_size(deposit, target)
-    if not size_report["fits"]:
-        warnings.warn(
-            f"[{target}] deposit may exceed documented limits (as_of {size_report['as_of']}, "
-            f"{size_report['doc_url']}): "
-            + "; ".join(size_report["reasons"])
-            + ". Remediation: "
-            + " | ".join(size_report["remediation"])
-            + ". Attempting the deposit anyway — a live rejection will be surfaced verbatim.",
-            stacklevel=2,
-        )
+        # The size validator ALWAYS runs before an irrevocable deposit. It reports and warns;
+        # it never blocks, because a deposit that carries its inputs can exceed HydroShare's
+        # 20 GB default quota and whether to proceed is the operator's call. The measured total
+        # is threaded to _classify_storage_error so a live rejection can be reframed with the
+        # real delta.
+        size_report = validate_deposit_size(deposit, target)
+        if not size_report["fits"]:
+            warnings.warn(
+                f"[{target}] deposit may exceed documented limits (as_of {size_report['as_of']}, "
+                f"{size_report['doc_url']}): "
+                + "; ".join(size_report["reasons"])
+                + ". Remediation: "
+                + " | ".join(size_report["remediation"])
+                + ". Attempting the deposit anyway — a live rejection will be surfaced verbatim.",
+                stacklevel=2,
+            )
 
-    try:
-        return _TARGETS[target]().publish(
-            deposit=deposit,
-            license_spdx=license_declared,
-            software_doi=software_doi,
-            analysis_dir=analysis_dir,
-            creators=creators,
-        )
-    except PublishError as exc:
-        # Attempt-and-surface backstop: if the documented constant was stale or the
-        # account carries a non-default quota, the LIVE rejection lands here. Reframe it
-        # with the emit-side delta; otherwise re-raise verbatim (a non-storage failure must
-        # never be mislabelled as a quota problem).
-        reframed = _classify_storage_error(
-            str(exc.status if hasattr(exc, "status") else exc),
-            size_report["total_bytes"],
-            size_report["limit_bytes"],
-        )
-        if reframed is None:
-            raise
-        raise PublishError(target=target, doi=None, status=reframed) from exc
+        try:
+            return _TARGETS[target]().publish(
+                deposit=deposit,
+                license_spdx=license_declared,
+                software_doi=software_doi,
+                analysis_dir=analysis_dir,
+                creators=creators,
+            )
+        except PublishError as exc:
+            # Attempt-and-surface backstop: if the documented constant was stale or the
+            # account carries a non-default quota, the LIVE rejection lands here. Reframe it
+            # with the emit-side delta; otherwise re-raise verbatim (a non-storage failure must
+            # never be mislabelled as a quota problem).
+            reframed = _classify_storage_error(
+                str(exc.status if hasattr(exc, "status") else exc),
+                size_report["total_bytes"],
+                size_report["limit_bytes"],
+            )
+            if reframed is None:
+                raise
+            raise PublishError(target=target, doi=None, status=reframed) from exc

@@ -43,6 +43,40 @@ class EdaContext:
     is_bundle: bool
 
 
+def _holds_relative_path_records(cfg_analysis_path: Path, cfg_system_path: Path) -> bool:
+    """True when BOTH config files carry the forced-dot fields as ``.``: the signature of a
+    relative-path record, unpacked from a deposit.
+
+    The data deposit's two configs are written with every path measured from the deposit
+    folder, so ``analysis_dir`` and ``system_directory`` -- the two fields the bundle path
+    policy forces to ``.`` -- both read ``.``. A data deposit carries no ``bundle_manifest.json``,
+    so ``is_bundle`` cannot tell the loader that. The fields are FOUND by reading
+    ``_PATH_FIELD_POLICY`` for ``FORCED_DOT``, not typed here, so a field the policy later forces
+    is recognised without an edit.
+
+    EXACTLY ONE of the two reading ``.`` is NOT recognised: a live analysis directory whose
+    ``analysis_dir`` is null and whose ``system_directory`` is absolute (the dump this
+    repository produces) or one with an absolute ``analysis_dir`` reads as it always has. The
+    one wrong reading is a live config that writes ``.`` for both fields and is read from a
+    folder other than its own.
+    """
+    import yaml
+
+    from hhemt.bundle._path_policy import _PATH_FIELD_POLICY, PathPolicy, enumerate_path_fields
+    from hhemt.config.analysis import analysis_config
+    from hhemt.config.system import system_config
+
+    forced_dot = {name for name, policy in _PATH_FIELD_POLICY.items() if policy is PathPolicy.FORCED_DOT}
+    for path, model in ((cfg_analysis_path, analysis_config), (cfg_system_path, system_config)):
+        names = forced_dot & set(enumerate_path_fields(model))
+        if not names:
+            return False
+        raw = yaml.safe_load(path.read_text()) or {}
+        if not all(raw.get(name) == "." for name in names):
+            return False
+    return True
+
+
 def load_eda_context(root: Path | str) -> EdaContext:
     """Re-derive the 9 EdaContext fields from artifacts resident at ``root``.
 
@@ -72,10 +106,13 @@ def load_eda_context(root: Path | str) -> EdaContext:
         )
     if not cfg_system_path.exists():
         raise FileNotFoundError(f"{root} is not a valid EDA root: cfg_system.yaml absent.")
-    if is_bundle:
-        # A bundle's archived cfg carries bundle-relative paths; a live analysis_dir's
-        # may carry whatever the user's YAML carried, so rebasing it would repoint a
-        # legitimately-relative input at the analysis tree. Gate, do not rebase blind.
+    # A bundle's archived cfg carries bundle-relative paths, and so does an unpacked DATA
+    # deposit's (publish writes them in that form), but a deposit has no bundle_manifest.json.
+    # `is_bundle` stays derived from the manifest alone; only the config loader asks the
+    # second question. A live analysis_dir's cfg may carry whatever the user's YAML carried,
+    # so rebasing it would repoint a legitimately-relative input at the analysis tree.
+    # Gate, do not rebase blind.
+    if is_bundle or _holds_relative_path_records(cfg_analysis_path, cfg_system_path):
         from hhemt.bundle._path_policy import load_bundle_config
 
         cfg_analysis = load_bundle_config(cfg_analysis_path, analysis_config, root)

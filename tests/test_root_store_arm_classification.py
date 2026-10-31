@@ -1,8 +1,9 @@
 """The ARM classification over a two-store analysis root — the cell enumeration.
 
 POPULATION, DECLARED RATHER THAN IMPLIED. Every root this module builds is a LIVE ANALYSIS
-ROOT. `cfg_analysis.yaml` IS written to one, by `analysis.py::eda` and by
-`publishing.py::_deposit_set`, both binding `root` to `analysis_paths.analysis_dir`; it is
+ROOT. `cfg_analysis.yaml` IS written to one, by `analysis.py::eda` (which binds `root` to
+`analysis_paths.analysis_dir`); `publishing.py::_deposit_set` writes its copy into the
+deposit's own staging folder and never into the live root. It is
 not only a bundle artifact. It is written CONDITIONALLY, and an analysis that consolidated
 and never ran `eda()` carries none -- a state `analysis_validation.py` already names
 operator-facing. The `no-arm-*` cells below are that population.

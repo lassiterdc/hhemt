@@ -2941,10 +2941,22 @@ def ingest_command(
     analysis_dir = exp.analysis.analysis_paths.analysis_dir
     console.print(f"[green]Ingested bundle:[/green] {bundle_root}")
     console.print(f"[green]Reconstituted analysis_dir:[/green] {analysis_dir}")
+    # The printed command has to RUN as pasted. A reconstituted batch_job analysis
+    # refuses to validate (exit 2, "Required for multi_sim_run_method='batch_job'")
+    # without --hpc-system-config, so the flag is appended whenever the analysis ingest
+    # built carries one, from the same attribute it was constructed with. It is
+    # conditional because a native bundle ingested without one would otherwise print
+    # "--hpc-system-config None", which fails at typer's parser.
+    _hpc_system_config_arg = (
+        f" --hpc-system-config {exp.analysis.hpc_system_config_yaml}"
+        if exp.analysis.hpc_system_config_yaml is not None
+        else ""
+    )
     console.print(
         "Run it with:\n"
         f"  hhemt run --system-config {bundle_root}/system_config.yaml "
         f"--analysis-config {bundle_root}/analysis_config.yaml"
+        f"{_hpc_system_config_arg}"
     )
 
 

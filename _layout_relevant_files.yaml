@@ -4547,3 +4547,7 @@ non_breaking_allowlist:
     layout_signature: ae7c838b8c5f441a89c6f877d9997298030344245d718138b6dc9676072dae62
     justification: |-
       cross-solver-matrix 1b.3 -- ADDITIVE Optional LogField triton_head_commit_date on TRITONSWMM_system_log (YYYYMMDD committer date of the solver clone HEAD, captured beside triton_head_sha), listed in both hand-maintained name lists. Defaulted unset so every pre-existing system_log.json deserialises unchanged and every consumer treats absence as 'date not captured'. Same change class as this file's allowlisted additive sif_sha256 and per-target producing-sha fields. No on-disk filename, zarr group or _version.json change; no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/bundle_exclude.py
+    layout_signature: e41a20b1bce6e484e72ee8cb0185b2dd0211b3ae25f30c0a134a10afd8608450
+    justification: |-
+      NON-BREAKING. Docstring-only edit: the module docstring now names bundle/_emit.py::emit_relative_config_pair where it named _copy_configs_with_relative_paths. The AST with docstrings stripped is identical to origin/develop's blob, so no on-disk layout changes. The layout_signature is the file's sha256 at this write and must equal it as committed. KNOWN EXPIRY: this row expires on the next change to this path.

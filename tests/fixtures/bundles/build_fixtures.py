@@ -24,7 +24,7 @@ For each case the script:
 
   1. Materializes the analysis object via the cached-test-case helper.
   2. Writes ``cfg_system.yaml`` + ``cfg_analysis.yaml`` via the actual
-     ``_copy_configs_with_relative_paths`` helper from
+     ``emit_relative_config_pair`` writer from
      ``hhemt.bundle._emit`` — so the fixture exercises
      the real path-rewriter code path.
   3. Writes a minimal ``bundle_manifest.json`` containing the
@@ -52,7 +52,7 @@ if str(TESTS_ROOT) not in sys.path:
     sys.path.insert(0, str(TESTS_ROOT.parent))
 
 from hhemt.bundle._emit import (  # noqa: E402
-    _copy_configs_with_relative_paths,
+    emit_relative_config_pair,
 )
 from hhemt.version_migration.constants import (  # noqa: E402
     BUNDLE_MANIFEST_FILENAME,
@@ -70,9 +70,10 @@ def _build_one(case_name: str, fixture_subdir: str, analysis) -> Path:
         shutil.rmtree(out)
     out.mkdir(parents=True)
 
-    # _copy_configs_with_relative_paths returns the per-cfg invariants
-    # dict (Plan Phase 3 VMS-8 shape: {"cfg_system": {...}, "cfg_analysis": {...}}).
-    invariants = _copy_configs_with_relative_paths(analysis, out)
+    # emit_relative_config_pair returns a pair: the per-cfg invariants dict (Plan Phase 3 VMS-8
+    # shape: {"cfg_system": {...}, "cfg_analysis": {...}}) and the rewritten-string -> source-files
+    # mapping the publish and bundle refusals read, which a fixture has no use for.
+    invariants, _config_outputs = emit_relative_config_pair(analysis, out)
 
     manifest = {
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,

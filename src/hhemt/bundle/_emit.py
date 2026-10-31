@@ -27,6 +27,8 @@ import shutil
 import tempfile
 import warnings
 import zipfile
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -499,7 +501,13 @@ def emit_bundle(
         )
         _copy_bundle_baseline(analysis_dir, staging)
         _copy_reference_outputs(analysis, staging)
-        aggregated_invariants = _copy_configs_with_relative_paths(analysis, staging)
+        aggregated_invariants, config_outputs = emit_relative_config_pair(analysis, staging)
+        # THE NAMESPACE REFUSAL, before _copy_declared_inputs writes anything. The plan is
+        # made here and again inside _copy_declared_inputs (planning copies nothing and
+        # _copy_declared_inputs keeps its signature), so what is checked is what is written.
+        planned_inputs, _excluded = _plan_declared_inputs(analysis, exclude_config)
+        _assert_archive_namespace(config_outputs, planned_inputs, streamed)
+        _assert_no_emit_name_clobber(analysis, config_outputs, planned_inputs)
         _emit_resolved_brand_theme(analysis, staging)
         _copy_supporting_files(analysis, staging)
         _emit_hpc_identity(analysis, staging)
@@ -520,10 +528,54 @@ def emit_bundle(
             pruned_orphan_figures=pruned_orphan_figures,
             crate_license_finding=_crate_license_finding(analysis, staging),
             metadata_only_stores=metadata_only_stores,
+            analysis_dir=analysis_dir,
         )
         _emit_bundle_zip(staging, output_path, streamed=streamed)
 
     return output_path
+
+
+def _source_rel(resolved: Path, analysis_root: Path, *, name: str | None = None) -> Path:
+    """Where a declared source lives in the bundle, relative to the master analysis directory.
+
+    ``resolved`` under ``analysis_root`` keeps its position (so a sensitivity member's source
+    reads ``members/member_{N}/...``); anything outside becomes ``external/{filename}``.
+    ONE definition, called by ``_harvest_sources`` to name the archive entry and by
+    ``_write_bundle_manifest`` to spell the manifest's source paths, so the manifest names
+    exactly the entry the archive holds. ``name`` overrides the fallback filename: the
+    harvest passes the UNRESOLVED source's name so a symlinked source keeps the archive name
+    it has always had.
+    """
+    try:
+        return resolved.relative_to(analysis_root)
+    except ValueError:
+        return Path("external") / (name if name is not None else resolved.name)
+
+
+def _plan_harvest_entry(entries: dict[str, Path], arcname: str, source: Path) -> None:
+    """Record ``arcname -> source``, refusing when a DIFFERENT file already holds the name.
+
+    Replaces ``entries.setdefault``, which kept the first source and silently discarded the
+    second: after that call the loser is gone from the plan, so no check over the RETURNED
+    plan can see it, and the archive dropped a declared file without a word. The same file
+    reached twice (two renderers, or a symlink) is one file and is planned once.
+    """
+    held = entries.get(arcname)
+    if held is None:
+        entries[arcname] = source
+        return
+    if held.resolve() != source.resolve():
+        from hhemt.exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            field="source_paths_by_renderer",
+            message=(
+                f"two different files are declared under the one archive name {arcname!r}: "
+                f"{held.resolve()} and {source.resolve()}. The bundle can hold only one of them there, "
+                "and the other would be dropped silently."
+            ),
+            fix_hint="rename or relocate one of the two declared sources so their archive names differ",
+        )
 
 
 def _harvest_sources(
@@ -573,10 +625,7 @@ def _harvest_sources(
             if resolved in seen:
                 continue
             seen.add(resolved)
-            try:
-                rel = resolved.relative_to(analysis_root)
-            except ValueError:
-                rel = Path("external") / src.name
+            rel = _source_rel(resolved, analysis_root, name=src.name)
             if not src.exists():
                 declared_absent.append(str(rel))
                 warnings.warn(
@@ -595,9 +644,9 @@ def _harvest_sources(
                 for member in sorted(src.rglob("*")):
                     if not member.is_file() or (shallow and member.name not in metadata_names):
                         continue
-                    entries.setdefault((rel / member.relative_to(src)).as_posix(), member)
+                    _plan_harvest_entry(entries, (rel / member.relative_to(src)).as_posix(), member)
             else:
-                entries.setdefault(rel.as_posix(), src)
+                _plan_harvest_entry(entries, rel.as_posix(), src)
     return entries, sorted(set(declared_absent)), sorted(shallow_stores)
 
 
@@ -660,34 +709,119 @@ def _copy_reference_outputs(analysis: TRITONSWMM_analysis, staging: Path) -> Non
                 shutil.copy2(summ, dest)
 
 
-def _copy_configs_with_relative_paths(analysis: TRITONSWMM_analysis, staging: Path) -> dict[str, dict]:
-    """Copy cfg_system.yaml and cfg_analysis.yaml with all Pydantic
-    ``Path``-typed fields rewritten per the per-field policy table in
-    ``_path_policy._PATH_FIELD_POLICY``. Returns a dict keyed by cfg
-    attribute (``cfg_system`` / ``cfg_analysis``) mapping to the
-    ``RewriteResult.invariants`` dict from that cfg's rewrite — which
-    ``_write_bundle_manifest`` writes as the manifest's ``bundle_root_invariants`` key."""
+#: The two config files every deposit that carries configs writes, as ``(cfg attribute,
+#: filename)`` pairs. ONE tuple, read by the writer (``emit_relative_config_pair``), by the
+#: staged-names table below and by the data deposit's caller, so no site retypes either
+#: filename and a rename lands in one place.
+_CONFIG_PAIR: tuple[tuple[str, str], ...] = (
+    ("cfg_system", "cfg_system.yaml"),
+    ("cfg_analysis", "cfg_analysis.yaml"),
+)
+
+
+def _declared_preimage(value: Any, analysis_root: Path) -> Path:
+    """The RESOLVED FILE a config path value names: the identity every step here shares.
+
+    An absolute value resolves as written; a value already relative resolves against the
+    analysis directory, exactly as ``_plan_declared_inputs`` has always located a declared
+    input (``analysis_root / src`` then ``.resolve()``). One definition, because the refusal
+    over archive names, the copy step and the rewrite must agree on what "one file" means:
+    if they disagreed, a pair of spellings could be one file to the copy and two to the
+    check, or the reverse, and the check would refuse a bundle that loses nothing or pass
+    one that drops a file.
+    """
+    src = Path(value)
+    if not src.is_absolute():
+        src = analysis_root / src
+    return src.resolve()
+
+
+def _config_string_preimages(
+    original: dict, rewritten: dict, cfg_model: type[cfgBaseModel], analysis_dir: Path
+) -> list[tuple[str, Path]]:
+    """Pair every REWRITTEN path string a config carries with the file it was written for.
+
+    Only the fields whose policy carries an input into the bundle
+    (``_SELF_CONTAINED_POLICIES``) are paired: the forced-dot and nulled fields rewrite to
+    ``.`` or null whatever they held, so pairing them would report the analysis and system
+    directories as two files claiming the name ``.``. A list field pairs element by element,
+    because the rewrite maps each element to one output string.
+    """
+    analysis_root = analysis_dir.resolve()
+    pairs: list[tuple[str, Path]] = []
+    for name in enumerate_path_fields(cfg_model):
+        if _PATH_FIELD_POLICY.get(name) not in _SELF_CONTAINED_POLICIES:
+            continue
+        before, after = original.get(name), rewritten.get(name)
+        if before is None:
+            continue
+        befores = before if isinstance(before, list) else [before]
+        afters = after if isinstance(after, list) else [after]
+        for b, a in zip(befores, afters, strict=True):
+            if b is None or not isinstance(a, str):
+                continue
+            pairs.append((a, _declared_preimage(b, analysis_root)))
+    return pairs
+
+
+def emit_relative_config_pair(
+    analysis: TRITONSWMM_analysis, staging: Path
+) -> tuple[dict[str, dict], dict[str, set[Path]]]:
+    """Write ``cfg_system.yaml`` and ``cfg_analysis.yaml`` into ``staging`` with every
+    Pydantic ``Path``-typed field rewritten per ``_path_policy._PATH_FIELD_POLICY``.
+
+    The ONE writer of the relative-path config form. The render bundle calls it, and so does
+    the data deposit (``publishing._deposit_set``), so the two deposits cannot drift in how
+    they spell a path. The destination parameter is NAMED ``staging``, not ``dest`` or
+    ``out``: the totality pass over this module's staged names keys on that spelling, and a
+    renamed parameter would make this writer invisible to it.
+
+    Returns ``(invariants, outputs)``:
+
+    - ``invariants`` is keyed by cfg attribute (``cfg_system`` / ``cfg_analysis``) and holds
+      each ``RewriteResult.invariants``; ``_write_bundle_manifest`` writes it as the
+      manifest's ``bundle_root_invariants`` key.
+    - ``outputs`` maps each REWRITTEN input path string to the set of files that produced it
+      (see ``_declared_preimage``). Two different files under one string is a collision: the
+      string names one place in the bundle and only one of the two files can be there.
+    """
     import yaml
 
+    analysis_dir = analysis.analysis_paths.analysis_dir
+    system_directory = analysis._system.cfg_system.system_directory
     aggregated: dict[str, dict] = {}
-    for cfg_attr, filename in (
-        ("cfg_system", "cfg_system.yaml"),
-        ("cfg_analysis", "cfg_analysis.yaml"),
-    ):
+    outputs: dict[str, set[Path]] = {}
+    for cfg_attr, filename in _CONFIG_PAIR:
         cfg = analysis._system.cfg_system if cfg_attr == "cfg_system" else analysis.cfg_analysis
         cfg_dict = cfg.model_dump(mode="json")
         result = _rewrite_paths_to_relative(
             cfg_dict,
             cfg_model=type(cfg),
-            analysis_dir=analysis.analysis_paths.analysis_dir,
-            system_directory=analysis._system.cfg_system.system_directory,
+            analysis_dir=analysis_dir,
+            system_directory=system_directory,
         )
         # `result.invariants` is captured per-cfg and written into the bundle manifest
         # as bundle_root_invariants (see _write_bundle_manifest).
         aggregated[cfg_attr] = result.invariants
+        for out, preimage in _config_string_preimages(cfg_dict, result.cfg_dict, type(cfg), analysis_dir):
+            outputs.setdefault(out, set()).add(preimage)
         scrubbed = _scrub_user_bucket_fields(result.cfg_dict, cfg_model=type(cfg))
         (staging / filename).write_text(yaml.safe_dump(scrubbed, sort_keys=False))
-    return aggregated
+    return aggregated, outputs
+
+
+def config_string_collisions(outputs: dict[str, set[Path]]) -> list[tuple[str, list[Path]]]:
+    """The rewritten strings that name more than one DIFFERENT file, each with its files sorted.
+
+    Two fields naming the same file are one file and not a collision: the set holds one
+    member. Only distinct resolved files under one string are reported.
+    """
+    return sorted((out, sorted(files)) for out, files in outputs.items() if len(files) > 1)
+
+
+def format_collisions(collisions: list[tuple[str, list[Path]]]) -> str:
+    """Render collisions naming BOTH (every) full resolved path, one line per colliding name."""
+    return "; ".join(f"{name!r} is claimed by {' and by '.join(str(f) for f in files)}" for name, files in collisions)
 
 
 def _scrub_user_bucket_fields(cfg_dict: dict, *, cfg_model: type[cfgBaseModel]) -> dict:
@@ -821,21 +955,23 @@ def _rewrite_absolute_to_relative(
     analysis_root: Path,
     system_root: Path,
 ) -> Any:
-    """Rewrite an absolute path string to its bundle-relative form.
+    """Rewrite a path string to its bundle-relative form.
 
     Resolution order: ``analysis_root`` first, then ``system_root``, then
-    ``external/{filename}`` fallback. Mirrors the
-    ``_harvest_sources`` fallback at the archive-entry layer so the
-    cfg and the archive layout agree on where the file lives.
+    ``external/{filename}`` fallback. Mirrors the ``_harvest_sources`` fallback at the
+    archive-entry layer so the cfg and the archive layout agree on where the file lives.
     Non-string values are passed through unchanged.
+
+    A value that is ALREADY relative is rewritten the way an absolute one is: it is first
+    resolved to the file it names (``_declared_preimage``, against ``analysis_root``) and
+    then placed by the same three rules. Passing it through untouched left
+    ``../../../o1/w.nc`` in a deposit whose copy step puts that file at ``external/w.nc``,
+    so the config and the archive disagreed about where the input lives.
     """
     if not isinstance(value, str):
         return value
     try:
-        p = Path(value)
-        if not p.is_absolute():
-            return value
-        pr = p.resolve()
+        pr = _declared_preimage(value, analysis_root)
         if pr.is_relative_to(analysis_root):
             return str(pr.relative_to(analysis_root))
         if pr.is_relative_to(system_root):
@@ -1021,41 +1157,44 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _copy_declared_inputs(
+@dataclass(frozen=True)
+class _PlannedInput:
+    """One declared input the emit will carry: where it is, and where it lands in the bundle."""
+
+    src: Path
+    rel: str
+    is_dir: bool
+
+
+def _plan_declared_inputs(
     analysis: TRITONSWMM_analysis,
-    staging: Path,
     exclude_config: BundleExcludeConfig | None = None,
-) -> list[dict]:
-    """Self-contained emit: copy EVERY cfg-declared input file into the bundle
-    at exactly the location ``_rewrite_paths_to_relative`` writes into the cfg, so a
-    reconstituted config resolves every declared input on disk.
+) -> tuple[list[_PlannedInput], list[dict]]:
+    """PLAN every cfg-declared input -- copy nothing.
 
     Driven by the same ``_PATH_FIELD_POLICY`` table the rewrite consumes (one
-    policy-driven copy path — never a second source list, so
-    ``test_all_path_fields_have_policy``'s bidirectional guard already covers it).
-    Overlaps with ``_harvest_sources`` (a renderer-declared input that is also a
-    cfg field) resolve to this staged copy at the archive (``_emit_bundle_zip``: staging
-    wins an archive-name collision; both are the same bytes). A declared-but-absent input
-    is SKIPPED here;
-    ``from_doi``'s fail-closed materialize gate raises on it at ingest.
+    policy-driven path -- never a second source list, so ``test_all_path_fields_have_policy``'s
+    bidirectional guard already covers it). Returns ``(planned, deposits)``: ``planned`` is
+    each input that will be CARRIED, with its destination relative to the bundle root, and
+    ``deposits`` is the ``input_deposit`` block of each EXCLUDED input.
 
-    The governed opt-out. When ``exclude_config`` names a
-    field, its input(s) are NOT carried; instead an ``input_deposit`` block is returned for
-    each, and ``_write_bundle_manifest`` records it. The block is FILE-level:
-    ``{relpath, sha256, accessed, citation, contentUrl?, url?, identifier?}``. The toolkit
-    computes ``relpath`` (via the SAME ``_rewrite_absolute_to_relative`` the cfg rewrite
-    uses, so the block's path is byte-identical to where the reconstituted cfg looks),
-    ``sha256``, and ``accessed``; the operator supplies the rest. Self-contained remains the
-    default: no exclude-config => every input carried.
+    Split out of ``_copy_declared_inputs`` so the destinations are known BEFORE anything is
+    written: ``emit_bundle`` compares them against the harvest plan, the rewritten config
+    strings and the emit's own staged names, and refuses a collision while the staging folder
+    still holds nothing the refusal would have to unwind.
 
-    Returns:
-        The ``input_deposit`` blocks for the excluded inputs (empty when nothing is excluded).
+    The governed opt-out. When ``exclude_config`` names a field, its input(s) are not
+    planned for carriage; an ``input_deposit`` block is returned for each. The block is
+    FILE-level: ``{relpath, sha256, accessed, citation, contentUrl?, url?, identifier?}``.
+    The toolkit computes ``relpath`` (via the SAME ``_rewrite_absolute_to_relative`` the cfg
+    rewrite uses, so the block's path is byte-identical to where the reconstituted cfg
+    looks), ``sha256`` and ``accessed``; the operator supplies the rest.
 
     Raises:
         ConfigurationError: if an excluded input has no coordinate block, or resolves to a
             DIRECTORY (sha256 is undefined over a tree, so the by-reference record could not
             be integrity-pinned). Both are fail-closed: the toolkit MUST NOT emit a bundle
-            that neither carries nor properly references a declared input — that defect
+            that neither carries nor properly references a declared input -- that defect
             would surface only after a DOI had been minted.
     """
     from hhemt.exceptions import ConfigurationError
@@ -1064,6 +1203,7 @@ def _copy_declared_inputs(
     analysis_root = analysis_dir.resolve()
     system_root = analysis._system.cfg_system.system_directory.resolve()
     accessed = datetime.now(UTC).date().isoformat()
+    planned: list[_PlannedInput] = []
     deposits: list[dict] = []
 
     for cfg in (analysis._system.cfg_system, analysis.cfg_analysis):
@@ -1077,10 +1217,7 @@ def _copy_declared_inputs(
             for elem in value if isinstance(value, list) else [value]:
                 if elem is None:
                     continue
-                src = Path(elem)
-                if not src.is_absolute():
-                    src = analysis_root / src
-                src = src.resolve()
+                src = _declared_preimage(elem, analysis_root)
                 if not src.exists():
                     continue  # declared-but-absent: ingest fail-closed handles it
                 rel = _rewrite_absolute_to_relative(str(src), analysis_root=analysis_root, system_root=system_root)
@@ -1091,9 +1228,8 @@ def _copy_declared_inputs(
                     ref = exclude_config.refs_for(name, src.name)
                     if ref is None:
                         raise ConfigurationError(
-                            parameter=f"bundle_exclude_config.exclusions.{name}",
-                            value=src.name,
-                            reason=(
+                            field=f"bundle_exclude_config.exclusions.{name}",
+                            message=(
                                 f"'{name}' is excluded but carries no coordinates for "
                                 f"'{src.name}'. Every excluded input needs at least a "
                                 f"'citation'; add a 'contentUrl' too if a consumer can "
@@ -1103,10 +1239,9 @@ def _copy_declared_inputs(
                         )
                     if src.is_dir():
                         raise ConfigurationError(
-                            parameter=f"bundle_exclude_config.exclusions.{name}",
-                            value=str(src),
-                            reason=(
-                                "excluded input resolves to a DIRECTORY; sha256 is undefined "
+                            field=f"bundle_exclude_config.exclusions.{name}",
+                            message=(
+                                f"excluded input {src} resolves to a DIRECTORY; sha256 is undefined "
                                 "over a tree, so the by-reference record cannot be "
                                 "integrity-pinned. Deposit the directory as a single archive "
                                 "and point the cfg field at that file, or carry it in-bundle."
@@ -1118,7 +1253,7 @@ def _copy_declared_inputs(
                         "accessed": accessed,
                         "citation": ref.citation,
                     }
-                    # contentUrl present/absent IS the fetchable bit — omit the key entirely
+                    # contentUrl present/absent IS the fetchable bit -- omit the key entirely
                     # when absent rather than writing a null, so the manifest reads as a
                     # deliberate reference-only record.
                     for key in ("contentUrl", "url", "identifier"):
@@ -1128,17 +1263,42 @@ def _copy_declared_inputs(
                     deposits.append(block)
                     continue
 
-                dest = staging / rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                if src.is_dir():
-                    # copyfile, not copy2: _emit_bundle_zip stamps a fixed date_time and
-                    # 0o644 on every entry, so the mtime/mode/xattr copystat would preserve
-                    # are overwritten by construction -- and each copystat is three extra
-                    # metadata syscalls per file on the small-file create path that bounds
-                    # this emit. copytree still copystats each DIRECTORY once (stdlib tail).
-                    shutil.copytree(src, dest, dirs_exist_ok=True, copy_function=shutil.copyfile)
-                else:
-                    shutil.copyfile(src, dest)
+                planned.append(_PlannedInput(src=src, rel=rel, is_dir=src.is_dir()))
+
+    return planned, deposits
+
+
+def _copy_declared_inputs(
+    analysis: TRITONSWMM_analysis,
+    staging: Path,
+    exclude_config: BundleExcludeConfig | None = None,
+) -> list[dict]:
+    """Self-contained emit: copy EVERY cfg-declared input file into the bundle
+    at exactly the location ``_rewrite_paths_to_relative`` writes into the cfg, so a
+    reconstituted config resolves every declared input on disk.
+
+    Executes the plan ``_plan_declared_inputs`` makes. Overlaps with ``_harvest_sources``
+    (a renderer-declared input that is also a cfg field) resolve to this staged copy at the
+    archive (``_emit_bundle_zip``: staging wins an archive-name collision); ``emit_bundle``
+    has already refused the case where the two are DIFFERENT files. A declared-but-absent
+    input is SKIPPED here; ``from_doi``'s fail-closed materialize gate raises on it at ingest.
+
+    Returns:
+        The ``input_deposit`` blocks for the excluded inputs (empty when nothing is excluded).
+    """
+    planned, deposits = _plan_declared_inputs(analysis, exclude_config)
+    for item in planned:
+        dest = staging / item.rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if item.is_dir:
+            # copyfile, not copy2: _emit_bundle_zip stamps a fixed date_time and
+            # 0o644 on every entry, so the mtime/mode/xattr copystat would preserve
+            # are overwritten by construction -- and each copystat is three extra
+            # metadata syscalls per file on the small-file create path that bounds
+            # this emit. copytree still copystats each DIRECTORY once (stdlib tail).
+            shutil.copytree(item.src, dest, dirs_exist_ok=True, copy_function=shutil.copyfile)
+        else:
+            shutil.copyfile(item.src, dest)
 
     return deposits
 
@@ -1148,6 +1308,188 @@ REPREX_CONFIG_FILENAME = "reprex_config.yaml"
 HPC_TEMPLATE_FILENAME = "hpc_system_config.template.yaml"
 #: The workflow file the WRC mainEntity points at (the bundled, generated Snakefile).
 _WORKFLOW_RELPATH = "Snakefile.source"
+
+
+@dataclass(frozen=True)
+class _StagedName:
+    """One name ``emit_bundle`` writes into its staging folder itself.
+
+    ``kind`` is ``"file"`` or ``"tree"`` (a directory the emit fills). ``verbatim`` is the
+    ONLY exception to the rule that a declared input may not take the name: given
+    ``(analysis_dir, case_manifest_yaml, rest)`` -- ``rest`` being the part of the destination
+    under a tree row, and empty for a file row -- it returns the file the emit itself copies
+    to that name, or None when the emit writes the name from nothing on disk. A declared
+    input whose resolved source IS that file loses nothing by taking the name; any other file
+    would silently replace, or be replaced by, the emit's own.
+    """
+
+    name: str
+    kind: str
+    verbatim: Callable[[Path, Path | None, str], Path | None] | None = None
+
+
+#: The names ``emit_bundle`` writes into its staging folder: a CLOSED set, so it is a table
+#: and not a search to be repeated. The totality test in ``tests/test_publish_deposit_paths.py``
+#: parses this module for every write into the staging folder and fails when the writers and this
+#: table disagree, in either direction. A declared input (or a config string) that equals a
+#: file row, or lies under a tree row, refuses unless its source is the row's ``verbatim``.
+_EMIT_STAGED_NAMES: tuple[_StagedName, ...] = (
+    _StagedName(_CONFIG_PAIR[0][1], "file"),
+    _StagedName(_CONFIG_PAIR[1][1], "file"),
+    _StagedName("brand_theme.resolved.yaml", "file"),
+    _StagedName("Snakefile.source", "file", lambda a, c, r: a / "Snakefile"),
+    _StagedName(VERSION_FILE_NAME, "file", lambda a, c, r: a / VERSION_FILE_NAME),
+    _StagedName("scenario_status.csv", "file", lambda a, c, r: a / "scenario_status.csv"),
+    _StagedName(
+        "sensitivity_analysis_definition.csv", "file", lambda a, c, r: a / "sensitivity_analysis_definition.csv"
+    ),
+    _StagedName("ro-crate-metadata.json", "file"),
+    _StagedName("case.yaml", "file", lambda a, c, r: c),
+    _StagedName(HPC_IDENTITY_FILENAME, "file"),
+    _StagedName(REPREX_CONFIG_FILENAME, "file"),
+    _StagedName(HPC_TEMPLATE_FILENAME, "file"),
+    _StagedName(BUNDLE_MANIFEST_FILENAME, "file"),
+    _StagedName(BUNDLE_PLOTS_SUBDIR, "tree", lambda a, c, r: a / BUNDLE_PLOTS_SUBDIR / r),
+    _StagedName("reference_outputs", "tree"),
+    _StagedName(
+        BUNDLE_STATUS_SUBDIR,
+        "tree",
+        lambda a, c, r: a / BUNDLE_STATUS_SUBDIR / r if r == "_du.json" else None,
+    ),
+    _StagedName(BUNDLE_BASELINE_SUBDIR, "tree"),
+)
+
+
+def _staged_name_match(dest: str) -> tuple[_StagedName, str] | None:
+    """The table row a bundle-relative destination falls on, with the part under a tree row."""
+    for row in _EMIT_STAGED_NAMES:
+        if row.kind == "file" and dest == row.name:
+            return row, ""
+        if row.kind == "tree" and (dest == row.name or dest.startswith(row.name + "/")):
+            return row, dest[len(row.name) + 1 :]
+    return None
+
+
+def _declared_destinations(planned: list[_PlannedInput]) -> list[tuple[str, Path]]:
+    """Every file a plan will write, as ``(bundle-relative name, source file)``.
+
+    FILE granularity: a directory input contributes one name per member, because two
+    directories merging into one tree collide per file, not per directory. The sources are NOT
+    resolved here: a full-carry directory can hold hundreds of thousands of members, and a
+    source only needs resolving when its NAME is claimed twice (``_assert_archive_namespace``).
+    """
+    out: list[tuple[str, Path]] = []
+    for item in planned:
+        if not item.is_dir:
+            out.append((item.rel, item.src))
+            continue
+        for member in sorted(item.src.rglob("*")):
+            if member.is_file():
+                out.append(((Path(item.rel) / member.relative_to(item.src)).as_posix(), member))
+    return out
+
+
+def _assert_archive_namespace(
+    config_outputs: dict[str, set[Path]],
+    planned: list[_PlannedInput],
+    harvest_entries: dict[str, Path],
+) -> None:
+    """Refuse when two DIFFERENT files reach ONE name in the bundle root's archive namespace.
+
+    The namespace has three producers: the config strings, the destinations
+    ``_copy_declared_inputs`` writes, and the archive names ``_harvest_sources`` plans (merged
+    at ``_emit_bundle_zip``, where staging wins). Each of the three is a place the parent
+    commit silently kept one file and dropped the other. Two fields naming the same file
+    are ONE file and not a collision.
+
+    Sources are resolved LAZILY, only for a name with more than one claimant: the harvest plan of
+    a full-carry store is hundreds of thousands of entries, nearly all of them claimed once.
+    """
+    from hhemt.exceptions import ConfigurationError
+
+    claims: dict[str, list[tuple[Path, str]]] = {}
+
+    def _claim(name: str, source: Path, producer: str) -> None:
+        claims.setdefault(name, []).append((source, producer))
+
+    for out, files in config_outputs.items():
+        for f in files:
+            _claim(out, f, "a config path")
+    for name, source in _declared_destinations(planned):
+        _claim(name, source, "a declared input")
+    for name, source in harvest_entries.items():
+        _claim(name, source, "a harvested renderer source")
+
+    clashes: dict[str, dict[Path, str]] = {}
+    for name, claimants in claims.items():
+        if len(claimants) < 2:
+            continue
+        by_source: dict[Path, str] = {}
+        for source, producer in claimants:
+            by_source.setdefault(source.resolve(), producer)
+        if len(by_source) > 1:
+            clashes[name] = by_source
+    if clashes:
+        detail = "; ".join(
+            f"{name!r} is claimed by "
+            + " and by ".join(f"{src} ({producer})" for src, producer in sorted(by_source.items()))
+            for name, by_source in sorted(clashes.items())
+        )
+        raise ConfigurationError(
+            field="bundle_archive_namespace",
+            message=(
+                "two different files would take one name in the bundle, and the other would be dropped "
+                f"silently: {detail}."
+            ),
+            fix_hint="rename or relocate one of the files so the two bundle names differ",
+        )
+
+
+def _assert_no_emit_name_clobber(
+    analysis: TRITONSWMM_analysis,
+    config_outputs: dict[str, set[Path]],
+    planned: list[_PlannedInput],
+) -> None:
+    """Refuse a declared input or config path that takes a name the emit writes itself.
+
+    Direction does not matter: a name written BEFORE ``_copy_declared_inputs`` is overwritten
+    by the declared input, and one written AFTER overwrites it. Either way a file is lost.
+    The one exception is a source that IS the file the emit copies to that name
+    (``_StagedName.verbatim``), which loses nothing.
+    """
+    from hhemt.exceptions import ConfigurationError
+
+    analysis_dir = analysis.analysis_paths.analysis_dir.resolve()
+    case_yaml = getattr(analysis, "case_manifest_yaml", None)
+    case_path = Path(case_yaml) if case_yaml is not None else None
+
+    candidates: list[tuple[str, Path, str]] = [
+        (out, f, "a config path") for out, files in config_outputs.items() for f in files
+    ]
+    candidates += [(name, src, "a declared input") for name, src in _declared_destinations(planned)]
+    for name, source, producer in candidates:
+        hit = _staged_name_match(name)
+        if hit is None:
+            continue
+        row, rest = hit
+        verbatim = row.verbatim(analysis_dir, case_path, rest) if row.verbatim is not None else None
+        if verbatim is not None and source.resolve() == verbatim.resolve():
+            continue
+        # Name the emit's own file too when it has one: "one of two files is lost" is only
+        # actionable if the message says which two.
+        emit_side = (
+            f"the emit copies {verbatim.resolve()} to that name"
+            if verbatim is not None
+            else f"the emit writes {row.name!r} itself"
+        )
+        raise ConfigurationError(
+            field="bundle_staged_names",
+            message=(
+                f"{producer} ({source.resolve()}) would take the bundle name {name!r}, but {emit_side}. "
+                "One of the two files would be lost without a message."
+            ),
+            fix_hint="rename or relocate the file so its bundle name is not one the emit writes",
+        )
 
 
 def _emit_runnable_template_set(staging: Path) -> None:
@@ -1565,7 +1907,31 @@ def _write_bundle_manifest(
     pruned_orphan_figures: list[str] | None = None,
     crate_license_finding: str | None = None,
     metadata_only_stores: list[str] | None = None,
+    analysis_dir: Path | None = None,
 ) -> None:
+    """Write ``bundle_manifest.json`` into ``staging``.
+
+    ``analysis_dir`` is OPTIONAL. Given, each source in ``source_paths_by_renderer`` is
+    spelled the way the archive names it (``_source_rel``): master-analysis-relative for a
+    source under it (so a sensitivity member's source reads ``members/member_{N}/...``) and
+    ``external/{filename}`` outside it, which keeps the producer's absolute layout out of a
+    deposited manifest. Omitted, sources are written as given, and an ABSOLUTE source then
+    raises ``ValueError``: it could only be written as the producer's own path, which is the
+    leak this keyword exists to close. Callers that pass relative or empty sources are
+    unaffected.
+    """
+
+    def _spell(source: Path) -> str:
+        p = Path(source)
+        if not p.is_absolute():
+            return str(source)
+        if analysis_dir is None:
+            raise ValueError(
+                f"source path {p} is absolute and no analysis_dir was given to relativize it against; "
+                "pass analysis_dir so the manifest names the archive entry rather than the producer's path"
+            )
+        return _source_rel(p.resolve(), analysis_dir.resolve(), name=p.name).as_posix()
+
     manifest = {
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
         "layout_version": LAYOUT_VERSION,
@@ -1579,7 +1945,7 @@ def _write_bundle_manifest(
         **producing_stamp(),
         "analysis_id": analysis_id,
         "created_at_utc": datetime.now(UTC).isoformat(),
-        "source_paths_by_renderer": {name: [str(p) for p in paths] for name, paths in sources_by_renderer.items()},
+        "source_paths_by_renderer": {name: [_spell(p) for p in paths] for name, paths in sources_by_renderer.items()},
     }
     if bundle_root_invariants is not None:
         manifest["bundle_root_invariants"] = bundle_root_invariants
@@ -1632,9 +1998,12 @@ def _emit_bundle_zip(staging: Path, output_path: Path, *, streamed: dict[str, Pa
     # `streamed` maps archive name -> on-disk source for the harvested sources, which
     # are never copied into staging (they are byte-identical to their originals and
     # the zip normalizes every timestamp and mode). Staging wins an archive-name
-    # collision: the only collision class is a cfg-declared input that a renderer also
-    # declared (`_copy_declared_inputs` carries it into staging), and both are the same
-    # bytes, so first-wins is a dedupe, not a choice.
+    # collision. The only collision that can reach this point is a cfg-declared input that a
+    # renderer also declared (`_copy_declared_inputs` carries it into staging) with the SAME
+    # bytes, and that is true by construction: `emit_bundle` refuses, before anything is
+    # copied, every case where two DIFFERENT files would take one name
+    # (`_assert_archive_namespace`, and `_plan_harvest_entry` inside the harvest). First-wins
+    # is therefore a dedupe, not a choice.
     #
     # Determinism is achieved via two mechanisms applied jointly:
     # (1) sorted entry ordering by PATH PARTS (`a.split("/")`), which is the ordering

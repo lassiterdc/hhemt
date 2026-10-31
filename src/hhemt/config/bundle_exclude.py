@@ -7,7 +7,7 @@ YAML that drives that opt-out.
 
 Why a STANDALONE file passed by path, and not an ``analysis_config`` field
 -------------------------------------------------------------------------
-``bundle/_emit.py::_copy_configs_with_relative_paths`` serializes
+``bundle/_emit.py::emit_relative_config_pair`` serializes
 ``cfg_analysis.model_dump(mode="json")`` INTO the bundle, and ``_scrub_user_bucket_fields``
 nulls only ``"user"``-bucket fields. An exclusion block living on ``analysis_config`` would
 bucket ``"experiment"``, ride into the bundle, and be reconstituted on the consumer's

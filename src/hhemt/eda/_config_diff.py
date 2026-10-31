@@ -594,7 +594,7 @@ def _cfg_system_watershed_path(root: Path) -> Path | None:
 
     Present in BOTH render contexts: ``analysis.eda()`` writes cfg_system.yaml to the live
     root before ``render_eda_plots(root, ...)``, and the bundle staging dir carries it via
-    ``_copy_configs_with_relative_paths``. Returns None (never raises) when the file, the
+    ``emit_relative_config_pair``. Returns None (never raises) when the file, the
     key, or the YAML parse is unavailable — an absent polygon is a legitimate excludable-input
     state that the caller renders as "no watershed"."""
     cfg = root / "cfg_system.yaml"

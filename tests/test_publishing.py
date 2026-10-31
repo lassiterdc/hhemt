@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -24,7 +25,13 @@ from hhemt.exceptions import PublishError
 
 
 class _Model:
-    """Stand-in pydantic-like config exposing model_dump(mode=...)."""
+    """Stand-in pydantic-like config exposing model_dump(mode=...).
+
+    ``model_fields`` is empty on purpose: the deposit set rewrites every Path field of a real
+    config model, and a stand-in with no model fields has none to rewrite.
+    """
+
+    model_fields: dict = {}
 
     def __init__(self, payload=None):
         self._payload = payload or {}
@@ -45,6 +52,8 @@ class _FakeAnalysis:
         # test_deposit_set_contains_configs_sidecar_and_zarr asserting what it did before.
         self.cfg_analysis.dataset_license = "CC0-1.0"
         self._system = SimpleNamespace(cfg_system=_Model({"system_id": "s1"}))
+        # The deposit set relativizes against the system directory as well as the analysis one.
+        self._system.cfg_system.system_directory = Path(analysis_dir)
 
 
 def _write_sidecar(analysis_dir, spdx="CC0-1.0"):
@@ -203,12 +212,19 @@ def test_deposit_set_contains_configs_sidecar_and_zarr(tmp_path):
     _write_sidecar(tmp_path)
     (tmp_path / "analysis_datatree.zarr").mkdir()
     analysis = _FakeAnalysis(tmp_path)
-    deposit = publishing._deposit_set(analysis, "analysis_datatree.zarr")
+    # A staging folder DISTINCT from the live analysis directory, which is what makes the
+    # live-root assertions below mean something.
+    staging = tmp_path / "deposit_staging"
+    staging.mkdir()
+    deposit = publishing._deposit_set(analysis, "analysis_datatree.zarr", staging=staging)
     names = {p.name for p in deposit}
     assert names == {"ro-crate-metadata.json", "analysis_datatree.zarr", "cfg_analysis.yaml", "cfg_system.yaml"}
-    # Configs are materialized from the config models (eda() precedent).
-    assert (tmp_path / "cfg_analysis.yaml").exists()
-    assert (tmp_path / "cfg_system.yaml").exists()
+    # The configs are written into the deposit's own staging folder, never into the live
+    # analysis directory, where they are the toolkit's own working copies.
+    assert (staging / "cfg_analysis.yaml").exists()
+    assert (staging / "cfg_system.yaml").exists()
+    assert not (tmp_path / "cfg_analysis.yaml").exists()
+    assert not (tmp_path / "cfg_system.yaml").exists()
 
 
 # --------------------------------------------------------------------------------------

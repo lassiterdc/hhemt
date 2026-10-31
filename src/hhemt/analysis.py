@@ -1451,8 +1451,9 @@ class TRITONSWMM_analysis:
         _produced_kinds = {kind for kind, r in _eda_results if (not r.skipped and r.artifact_path is not None)}
         # load_eda_context reads the fixed-name
         # cfg_analysis.yaml / cfg_system.yaml at `root`; the LIVE analysis_dir does NOT
-        # carry them by construction (only the bundle staging dir does, via
-        # _copy_configs_with_relative_paths). Materialize them here so the loader's
+        # carry them by construction (only a staging dir does, via emit_relative_config_pair,
+        # which the bundle emit and the data deposit's _deposit_set both call).
+        # Materialize them here so the loader's
         # fixed-name contract holds for the live root too (without this, the notebook's
         # first executed cell `load_eda_context(root)` raises FileNotFoundError).
         import yaml as _yaml

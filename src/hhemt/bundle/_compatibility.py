@@ -13,7 +13,7 @@ Read surface (as-built, Phase 5). The pre-foundation skeleton assumed the ADR-6
 embedded JSON-LD core carried the identity fields; the LANDED foundation does not. The
 comparison surface is therefore sourced from each bundle's ``cfg_system.yaml`` (model
 toggles + ``target_dem_resolution``) + ``cfg_analysis.yaml`` (``weather_events_to_simulate``
-+ ``sensitivity_analysis``, written by ``_emit._copy_configs_with_relative_paths``), plus
++ ``sensitivity_analysis``, written by ``_emit.emit_relative_config_pair``), plus
 ``schemaVersion`` from the co-located ``ro-crate-metadata.json`` for version-skew. Phase 5
 additionally bundles ``case.yaml`` (the CaseManifest, copied by ``_emit._copy_supporting_files``
 from the analysis's ``case_manifest_yaml`` arg) so ``case_name`` is now sourced and classifies

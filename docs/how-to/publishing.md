@@ -13,17 +13,35 @@ you want the DOI to *do*:
 | Deposit unit | Command | The DOI mints a… | Use when |
 |---|---|---|---|
 | **analysis-directory set** (consolidated zarr + `ro-crate-metadata.json` + the two configs) | `analysis.publish(target=…)` | **data-DOI**: the archived, citable analysis outputs + provenance (reproducible from the configs and crate) | you're archiving results for citation / a data-availability statement |
-| **reprex bundle** (the round-trippable bundle that runs an experiment from scratch) | `analysis.publish_reprex_bundle(target=…)` | **runnable-DOI**: `hhemt ingest --doi {DOI}` fetches and reconstitutes it, then prints the `hhemt run` command that runs it | you want a reproducible experiment that anyone can fetch by DOI (see [the DOI round-trip runbook](doi-roundtrip-e2e.md)) |
+| **reprex bundle** (the round-trippable bundle that runs an experiment from scratch) | `analysis.publish_reprex_bundle(target=…)` | **runnable-DOI**: `hhemt ingest --doi {DOI} --hpc-system-config {your-cluster-hpc-system-config.yaml}` fetches and reconstitutes it, then prints the `hhemt run` command that runs it | you want a reproducible experiment that anyone can fetch by DOI (see [the DOI round-trip runbook](doi-roundtrip-e2e.md)) |
 
 Both go through the same `target` seam and the same credentials below; they differ only in
 what bytes are deposited. The rest of this guide uses `analysis.publish()` (the data-DOI); the
 runnable-DOI path is identical with `publish_reprex_bundle()` in place of `publish()`.
 
+From the command line, both deposits are made from an experiment definition, with the
+config-driven form:
+
+```bash
+hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --target zenodo
+hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --target zenodo --reprex-bundle
+```
+
+!!! example "Verified against a live deposit (Zenodo sandbox)"
+    The command forms on this page were run against a Zenodo **sandbox** deposit of a
+    15-configuration CPU sensitivity analysis: one data deposit and one runnable
+    reprex-bundle deposit. The reprex-bundle deposit is far larger because it carries the
+    declared inputs. The `10.5072` DOI prefix marks the sandbox: a sandbox record is
+    discardable and is not a citable DOI, and production Zenodo mints `10.5281`.
+    `HHEMT_ZENODO_BASE_URL=https://sandbox.zenodo.org` together with a sandbox token
+    selects the sandbox. Not verified: the 15-member sweep was not re-run from the
+    deposit; only `hhemt run --dry-run` on the reconstituted configs was.
+
 ## Before you publish
 
 `analysis.publish()` deposits the *analysis-directory set*: the consolidated
 `analysis_datatree.zarr`, the co-located `ro-crate-metadata.json` provenance sidecar, and
-the two configs (`cfg_analysis.yaml` + `cfg_system.yaml`). So the analysis must already be
+the two configs (`cfg_analysis.yaml` + `cfg_system.yaml`), whose paths are relative to the deposit folder. So the analysis must already be
 **consolidated** (run through `reprocess(start_with="consolidate")` or a full `run()`), or
 publish has nothing to deposit and no crate to read the license from.
 

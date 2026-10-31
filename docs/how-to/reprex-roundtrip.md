@@ -50,8 +50,9 @@ architecture needs and pass its path. A native analysis ignores the argument.
 
 The emitted bundle root carries the minimal runnable set:
 
-- `cfg_system.yaml` + `cfg_analysis.yaml`: path-scrubbed configs (your machine-local
-  paths are nulled; experiment fields are preserved verbatim).
+- `cfg_system.yaml` + `cfg_analysis.yaml`: path-scrubbed configs (their Path fields are
+  rewritten relative to the bundle, the two software directories are nulled, and
+  experiment fields are kept as written).
 - `reprex_config.yaml`: a **template** the reproducer fills with *their* values.
 - `hpc_system_config.template.yaml`: a scrubbed HPC profile with `{your-allocation}`
   placeholders (never your real account).
@@ -67,6 +68,20 @@ it from the DOI alone. [The DOI round-trip runbook](doi-roundtrip-e2e.md) is the
 the deposit, the fetch, the credentials, the sandbox, excluded inputs and the HydroShare
 manual-DOI caveat. `hhemt ingest` reads the crate `mainEntity` to reconstitute the runnable
 config pair, and the round-trip check below then applies on the reproducer's cluster.
+
+The deposit is made with `hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --target zenodo --reprex-bundle`, and the fetch with
+`hhemt ingest --doi {minted-doi} --host zenodo --target-dir {target} --hpc-system-config {your-cluster-hpc-system-config.yaml}`;
+the last option is needed because the reconstituted analysis dispatches with `batch_job`.
+
+!!! example "Verified against a live deposit (Zenodo sandbox)"
+    The command forms on this page were run against a Zenodo **sandbox** deposit of a
+    15-configuration CPU sensitivity analysis: one data deposit and one runnable
+    reprex-bundle deposit. The reprex-bundle deposit is far larger because it carries the
+    declared inputs. The `10.5072` DOI prefix marks the sandbox: a sandbox record is
+    discardable and is not a citable DOI, and production Zenodo mints `10.5281`.
+    `HHEMT_ZENODO_BASE_URL=https://sandbox.zenodo.org` together with a sandbox token
+    selects the sandbox. Not verified: the 15-member sweep was not re-run from the
+    deposit; only `hhemt run --dry-run` on the reconstituted configs was.
 
 ## What the reproducer supplies
 
@@ -167,9 +182,10 @@ information, but that is not yet enforced at emit time.
     that gate currently runs **consume-side and informationally**: `reprex()`
     populates `result.zero_user_info_leaks` but does not fail. Hard emit-time
     enforcement is deferred to an emit-hardening pass. The producer's absolute paths
-    still leak through `bundle_manifest.json`, harvested SWMM `.inp` `FILE`
-    references, and `validation_report.json`, all surfaces the config-field scrub
-    does not yet cover.
+    can still appear in other deposited files, for example the harvested SWMM `.inp`
+    files, `Snakefile.source`, the baseline report and plot pages,
+    `scenario_status.csv` and the zarr metadata, surfaces the config-field scrub does
+    not cover.
 
     Four further things about the gate. Its blocklist carrier comes from
     `$HHEMT_REPREX_BLOCKLIST` when that variable is set, and from the source checkout's

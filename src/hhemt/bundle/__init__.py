@@ -114,8 +114,9 @@ class Bundle:
         A missing ``bundle_root_invariants`` manifest key is read as ``{}`` (no
         enforced invariants), and that default is DEFENSIVE: a bundle at the
         current ``BUNDLE_SCHEMA_VERSION`` always carries the key, because
-        ``emit_bundle`` always passes the dict ``_copy_configs_with_relative_paths``
-        returns to ``_write_bundle_manifest``, and the exact version match above
+        ``emit_bundle`` always passes the invariants dict ``emit_relative_config_pair``
+        returns (the first element of its pair) to ``_write_bundle_manifest``, and the
+        exact version match above
         rejects bundles at any other version. Only a manifest built some other
         way reaches the default.
 
