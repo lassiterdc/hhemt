@@ -104,9 +104,12 @@ result = Bundle.from_directory(bundle_dir).reprex(my_reprex, my_hpc_profile)
 
 1. **Verify the SIF's identity.** If the crate references a SIF (a container run), the digest
    is a **mandatory, fail-closed** `sha256` match against the image found by that digest
-   under `reprex_config.sif_root`, establishing that your image file is byte-identical to
-   the producer's. A mismatch, or no manifest under `sif_root` carrying that digest,
-   raises `ProcessingError` before any validation runs. **The toolkit does not PGP-sign
+   under `reprex_config.sif_root`, establishing that your image file's bytes hash to the
+   digest the crate records. A mismatch, or no manifest under `sif_root` carrying that
+   digest, raises `ProcessingError` before any validation runs. This does not establish
+   that the crate's digest is the one the producer ran, or that your host (MPI, drivers,
+   GPU) matches the producer's, so a matching image does not by itself promise matching
+   results. When the crate carries no SIF entity, this check does not run. **The toolkit does not PGP-sign
    SIFs: the digest is the identity carrier.** `result.sif_signature_ok` is retained on
    `ReprexResult` for schema stability and is permanently `None`; no `apptainer verify`
    runs, so the field reports nothing and cannot. A bundle whose
