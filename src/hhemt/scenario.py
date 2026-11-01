@@ -1444,8 +1444,14 @@ class TRITONSWMM_scenario:
         # emitted bytes are deterministic for a member that sets both.
         cfg_content = append_swmm_snapshot_keep_all(cfg_content, self._analysis.cfg_analysis.swmm_snapshot_keep_all)
         # The DEM-rim key, on the same coupled surface: the guard runs FIRST, so a build that
-        # would ignore the key stops preparation instead of running with SWMM's rims.
-        if self._analysis.cfg_analysis.swmm_node_rim_from_dem:
+        # would ignore the key stops preparation instead of running with SWMM's rims. Judged
+        # only for a coupled system: the key sets a coupled node's rim, which a TRITON-only
+        # system has none of, so refusing it over the option would stop a run the option does
+        # not touch. The line is still appended below whatever the system, so the cfg bytes do
+        # not depend on this check; a system that does not say it is uncoupled keeps the check.
+        if self._analysis.cfg_analysis.swmm_node_rim_from_dem and getattr(
+            self._system.cfg_system, "toggle_tritonswmm_model", True
+        ):
             cfg_system = self._system.cfg_system
             require_dem_rim_capable_triton(
                 execution_environment=self._analysis.cfg_analysis.execution_environment,
@@ -1456,16 +1462,22 @@ class TRITONSWMM_scenario:
         cfg_content = append_swmm_node_rim_from_dem(cfg_content, self._analysis.cfg_analysis.swmm_node_rim_from_dem)
         # The coupling-node list this scenario wrote, judged against the filled hydraulics.inp
         # the solver reads: run entry judged the template, which a placeholder can leave open.
+        # Judged only for a coupled system, because only prepare_scenario's coupled branch writes
+        # that list: on a TRITON-only system, a solver that does not read swmm_coupling_nodes would
+        # send this check to open a file that does not exist (FileNotFoundError) and stop scenario
+        # preparation. The check is skipped only when the system says it is not coupled, so a
+        # system that does not say keeps the check.
         cfg_system = self._system.cfg_system
-        require_triton_couples_the_listed_nodes(
-            coupling_nodes_file_for(self.scen_paths.swmm_hydraulics_inp),
-            self.scen_paths.swmm_hydraulics_inp,
-            one_per_cell=bool(self._analysis.cfg_analysis.one_coupled_inflow_node_per_dem_cell),
-            execution_environment=self._analysis.cfg_analysis.execution_environment,
-            software_directory=cfg_system.TRITONSWMM_software_directory,
-            branch_key=cfg_system.TRITONSWMM_branch_key,
-            recorded_sha=self._system.log.triton_head_sha.get(),
-        )
+        if getattr(cfg_system, "toggle_tritonswmm_model", True):
+            require_triton_couples_the_listed_nodes(
+                coupling_nodes_file_for(self.scen_paths.swmm_hydraulics_inp),
+                self.scen_paths.swmm_hydraulics_inp,
+                one_per_cell=bool(self._analysis.cfg_analysis.one_coupled_inflow_node_per_dem_cell),
+                execution_environment=self._analysis.cfg_analysis.execution_environment,
+                software_directory=cfg_system.TRITONSWMM_software_directory,
+                branch_key=cfg_system.TRITONSWMM_branch_key,
+                recorded_sha=self._system.log.triton_head_sha.get(),
+            )
         if cfg_content != cfg_as_written:
             self.scen_paths.triton_swmm_cfg.write_text(cfg_content)
 
