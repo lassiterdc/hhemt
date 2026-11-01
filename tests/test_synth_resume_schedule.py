@@ -340,11 +340,17 @@ def _prune_fake_self(cfg_dir, analysis_dir):
         out_triton=out_dir,
         out_tritonswmm=out_dir,
     )
-    return types.SimpleNamespace(
-        _hotstart_cfg_dir=lambda mt: cfg_dir,
-        _scenario=types.SimpleNamespace(scen_paths=scen_paths),
-        _analysis=types.SimpleNamespace(analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir)),
-    )
+    # A REAL `TRITONSWMM_run` with `__init__` skipped, so every method the picker and the prune delegate to
+    # (`_complete_hotstart_cfgs`, which commit 609b7d45 split out of the picker, and any later split) is the
+    # production one. Only the attributes those two paths read are set; the stubbed `_hotstart_cfg_dir`
+    # points at the directory the REAL `ScenarioPaths` above names through `out_triton`.
+    from hhemt.run_simulation import TRITONSWMM_run
+
+    fake_self = TRITONSWMM_run.__new__(TRITONSWMM_run)
+    fake_self._hotstart_cfg_dir = lambda mt: cfg_dir
+    fake_self._scenario = types.SimpleNamespace(scen_paths=scen_paths)
+    fake_self._analysis = types.SimpleNamespace(analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir))
+    return fake_self
 
 
 def test_prune_forces_picker_to_scheduled_step_despite_overshoot(tmp_path):

@@ -200,41 +200,87 @@ def test_bare_canonical_fails_loud_not_silently(tmp_path):
     )
 
 
-def test_single_sourced_runs_root_literal():
-    """R12: exactly one `synthetic_test_runs` literal per legitimate site.
+_RUNS_ROOT_LITERAL = '"synthetic_test_runs"'
 
-    Uses a filesystem scan, NOT `git grep` — `git grep` skips untracked files, so
-    it cannot see a newly created module and would under-report.
+#: The sites allowed to carry the runs-root literal, repo-relative, each with the reason it may. A new entry
+#: is a conscious act, which is the property the guard protects.
+_RUNS_ROOT_SITES = {
+    # The ONE definition: `synthetic_runs_root()` builds the path here and every other product site calls it.
+    "src/hhemt/cache/paths.py": "the single definition",
+    # A deliberate second site, `SHARED_CACHE_MARK` (`_runner.py` line 142). The suite runner is a pytest plugin
+    # (`-p _runner`); its own comment at lines 857-862 gives the constraint it works under: "a plugin module is
+    # imported BEFORE the toolkit's repo-root conftest runs its `sys.path.insert(0, _SRC)`", so it imports
+    # `hhemt` lazily inside functions and never at module scope. The constant is module-level, and that
+    # comment does not itself say why the literal is repeated rather than imported lazily at its use site.
+    "src/hhemt/suite/_runner.py": "plugin that imports hhemt only lazily, never at module scope",
+    # The deliberately retained `runs_root_override` / scratch branches, which build the path with no slug.
+    "tests/fixtures/test_case_builder.py": "retained override and scratch branches",
+    # Assertion sites that check the path's VALUE; comparing a function against its own return would assert nothing.
+    "tests/test_cache_clear.py": "asserts the path's value",
+    "tests/test_cache_substrate.py": "asserts the path's value",
+}
 
-    The single DEFINITION no longer lives under `tests/`: the test cache's roots
-    moved into product code, so `synthetic_runs_root()` at
-    `src/hemt/cache/paths.py` is now the one place the name is defined, and it is
-    outside this scan's population. What remains here are the deliberately
-    retained `runs_root_override` branch and the assertion sites that check the
-    path's VALUE — the latter cannot be written without the literal, since
-    comparing a function against its own return value would assert nothing.
-    A new entry in this list is still a conscious act, which is the property the
-    guard exists to protect.
+
+def _runs_root_literal_sites(repo_root: Path, exclude: Path | None = None) -> list[str]:
+    """Repo-relative paths of every ``.py`` file under ``src/hhemt/`` and ``tests/`` that carries the literal.
+
+    A filesystem scan at FILE granularity, not ``git grep``: ``git grep`` skips untracked files, so it cannot see a
+    newly created module. A file is a hit if the literal appears anywhere in it, comment lines included.
     """
-    tests_dir = Path(__file__).resolve().parent
-    self_path = Path(__file__).resolve()
-    hits = sorted(
-        p.relative_to(tests_dir).as_posix()
-        for p in tests_dir.rglob("*.py")
-        # Exclude THIS module: its own assertion text contains the literal, which
-        # would otherwise make the guard fail on itself.
-        if p.resolve() != self_path and '"synthetic_test_runs"' in p.read_text()
+    hits = []
+    for top in ("src/hhemt", "tests"):
+        for p in (repo_root / top).rglob("*.py"):
+            if exclude is not None and p.resolve() == exclude:
+                continue
+            if _RUNS_ROOT_LITERAL in p.read_text():
+                hits.append(p.relative_to(repo_root).as_posix())
+    return sorted(hits)
+
+
+def _assert_runs_root_single_sourced(repo_root: Path, exclude: Path | None = None) -> None:
+    hits = _runs_root_literal_sites(repo_root, exclude)
+    assert hits == sorted(_RUNS_ROOT_SITES), (
+        "expected the runs-root literal at exactly the accepted sites "
+        f"{sorted(_RUNS_ROOT_SITES)} (definition: src/hhemt/cache/paths.py); got {hits}"
     )
-    assert hits == [
-        "fixtures/test_case_builder.py",
-        "test_cache_clear.py",
-        "test_cache_substrate.py",
-    ], (
-        "expected exactly the three legitimate sites under tests/: the "
-        "deliberately-retained runs_root_override branch in test_case_builder.py, "
-        "and the two modules whose assertions check the path's value against the "
-        f"literal; got {hits}"
-    )
+
+
+def test_single_sourced_runs_root_literal():
+    """The ``synthetic_test_runs`` literal is defined once in product code, with named accepted sites.
+
+    The definition is ``synthetic_runs_root()`` at ``src/hhemt/cache/paths.py``. The scan covers ``src/hhemt/``
+    AND ``tests/``, so a second product-code definition turns it red. The accepted sites, each with its reason
+    (also in ``_RUNS_ROOT_SITES``):
+
+    - ``src/hhemt/cache/paths.py``: the single definition.
+    - ``src/hhemt/suite/_runner.py``: a deliberate second site (``SHARED_CACHE_MARK``, line 142; the file also
+      mentions the literal in its comment at line 154, which file granularity counts as the same hit). The
+      module is a pytest plugin imported before the toolkit's conftest points ``hhemt`` at the checkout under
+      test, so it imports ``hhemt`` only lazily inside functions (its comment at lines 857-862).
+    - ``tests/fixtures/test_case_builder.py``: the retained ``runs_root_override`` and scratch branches.
+    - ``tests/test_cache_clear.py`` and ``tests/test_cache_substrate.py``: assertions on the path's value.
+
+    Granularity limit, stated so the guard is not over-read: the scan matches the double-quoted literal in ``.py``
+    files and counts a FILE once, so a new file turns it red but a second definition added to an already
+    accepted file (``_runner.py`` included) does not.
+
+    Excludes THIS module, whose own text contains the literal.
+    """
+    _assert_runs_root_single_sourced(Path(__file__).resolve().parent.parent, exclude=Path(__file__).resolve())
+
+
+def test_a_planted_third_runs_root_definition_turns_the_guard_red(tmp_path):
+    """Must-fire control: the same check, on a tree holding exactly the accepted sites, passes; one more fails."""
+    for rel in _RUNS_ROOT_SITES:
+        site = tmp_path / rel
+        site.parent.mkdir(parents=True, exist_ok=True)
+        site.write_text(f"X = {_RUNS_ROOT_LITERAL}\n")
+    _assert_runs_root_single_sourced(tmp_path)
+
+    planted = tmp_path / "src" / "hhemt" / "elsewhere.py"
+    planted.write_text(f"def runs():\n    return Path('c') / {_RUNS_ROOT_LITERAL}\n")
+    with pytest.raises(AssertionError, match="elsewhere.py"):
+        _assert_runs_root_single_sourced(tmp_path)
 
 
 @pytest.mark.slow

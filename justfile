@@ -61,6 +61,20 @@ test-fast *ARGS:
     @echo "Gate A (fast tier) with arg: {{ARGS}}"
     HHEMT_FORBID_COMPILE=1 PYTHONPATH="${PWD}/src/hhemt/suite" HHEMT_SUITE_LOGREPORT_OUT="${PWD}/suite_ledger_fast.jsonl" conda run --no-capture-output -n hhemt uv run --active --extra test pytest -p _runner -m "not slow and not compile_tier and not requires_snakemake_subprocess" {{ARGS}}
 
+# LAPTOP TIER -- everything that does not compile or run a solver. Solver compiles and runs belong to the
+# Rivanna tier, so `-m "not compile_tier"` leaves them out, and HHEMT_FORBID_COMPILE=1 makes any test that
+# still reaches a compile fail loudly instead of costing minutes. Two invocations, in this order:
+#   1. the xdist invocation: every selected test that does not carry requires_snakemake_subprocess, spread
+#      over every core (`-n` equal to the core count);
+#   2. the serial invocation: the tests that carry requires_snakemake_subprocess, which spawn Snakemake and
+#      are not run under xdist (nested parallelism).
+# `-p _runner` writes the JSONL ledger named by HHEMT_SUITE_LOGREPORT_OUT; each invocation writes its own file.
+test-laptop *ARGS:
+    @echo "Laptop tier, xdist invocation, with arg: {{ARGS}}"
+    HHEMT_FORBID_COMPILE=1 PYTHONPATH="${PWD}/src/hhemt/suite" HHEMT_SUITE_LOGREPORT_OUT="${PWD}/suite_ledger_laptop_xdist.jsonl" conda run --no-capture-output -n hhemt uv run --active --extra test pytest -p _runner -n "$(nproc)" -m "not compile_tier and not requires_snakemake_subprocess" {{ARGS}}
+    @echo "Laptop tier, serial invocation, with arg: {{ARGS}}"
+    HHEMT_FORBID_COMPILE=1 PYTHONPATH="${PWD}/src/hhemt/suite" HHEMT_SUITE_LOGREPORT_OUT="${PWD}/suite_ledger_laptop_serial.jsonl" conda run --no-capture-output -n hhemt uv run --active --extra test pytest -p _runner -m "not compile_tier and requires_snakemake_subprocess" {{ARGS}}
+
 # Run all the tests, but on failure, drop into the debugger
 pdb *ARGS:
     @echo "Running with arg: {{ARGS}}"

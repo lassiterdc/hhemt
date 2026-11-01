@@ -1,10 +1,11 @@
 """Synthetic-tier replacement for the RETIRED ``tests/test_analysis_test_end_to_end.py``.
 
-Covers the ``analysis.test()`` properties the real-Norfolk tier was the sole
-evaluator of: the multi-candidate branch of ``_select_test_representatives``
-(reachable only from a sensitivity master), the ``_capture_binary_provenance``
-no-``triton.exe`` early return (reachable only from a SWMM-only representative),
-and end-to-end ``.test()`` across the model-toggle axis.
+Runs ``analysis.test()`` end to end on the synthetic sensitivity case, which covers the multi-candidate branch of
+``_select_test_representatives`` (reachable only from a sensitivity master) through a real run. The selection per
+model-toggle combination, the ``_test/`` subset construction and both arms of ``_capture_binary_provenance`` (the
+no-``triton.exe`` early return included) are checked without a run in
+``tests/test_analysis_test_representatives_battery.py``; the four per-combination run tests that used to sit here
+(all models, multi-sim, TRITON-only and SWMM-only sensitivity) were replaced by that battery.
 
 Deliberately carries NO ``skipif(on_scheduler_node())``. Its sibling run-proof
 ``test_synth_09_from_doi_run_proof.py`` does, which is why that module cannot
@@ -46,25 +47,5 @@ def _assert_analysis_test_completes(analysis, *, min_groups: int = 1):
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_synth_analysis_test_all_models(synth_all_models_analysis):
-    _assert_analysis_test_completes(synth_all_models_analysis)
-
-
-@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_synth_analysis_test_multi_sim(synth_multi_sim_analysis):
-    _assert_analysis_test_completes(synth_multi_sim_analysis)
-
-
-@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_synth_analysis_test_sensitivity(synth_sensitivity_analysis):
     _assert_analysis_test_completes(synth_sensitivity_analysis, min_groups=2)
-
-
-@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_synth_analysis_test_sensitivity_triton_only(synth_sensitivity_triton_only):
-    _assert_analysis_test_completes(synth_sensitivity_triton_only, min_groups=2)
-
-
-@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_synth_analysis_test_sensitivity_swmm_only(synth_sensitivity_swmm_only):
-    _assert_analysis_test_completes(synth_sensitivity_swmm_only, min_groups=2)

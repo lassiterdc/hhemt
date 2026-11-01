@@ -1,21 +1,30 @@
 """The gridded TRITON timeseries under ``target_processed_output_type: nc``.
 
-THE PROBLEM. Until this change both gridded exporters published their chapter set as a
-zarr STORE at the ``.nc``-named path, which the reader then opened with the ``h5netcdf``
-engine and raised on. ``process_simulation.publish_chapters_to_netcdf`` is the ``nc`` arm
-that now publishes one NetCDF FILE there. These tests pin the three things that arm must
+THE PROBLEM. ``utils.merge_chapters_to_unified`` publishes a chapter set as a zarr STORE, which is a directory,
+and at a ``.nc``-named path the production reader opens that directory with the ``h5netcdf`` engine and raises
+``IsADirectoryError``. ``process_simulation.publish_chapters_to_netcdf`` is the ``nc`` arm that publishes one
+NetCDF FILE there instead. These tests pin the three things that arm must
 do: write a file the production reader opens, leave nothing behind but recoverable chapters
 when the write fails, and be reached from BOTH gridded exports.
 
-TWO TIERS IN ONE FILE, so select by NODE ID and never run the file whole. The first two
-tests are solver-free: they write flagged chapter stores directly with xarray and run the
-publisher on them, and they run anywhere. The third runs the synthetic models end to end,
-which compiles and executes a solver, so it runs on Rivanna scratch only and never on a
-laptop.
+The first two tests are solver-free: they write flagged chapter stores directly with xarray and run
+the publisher on them. The third starts from the RAW layer of the committed multi-sim golden
+(one committed zip holding a finished
+analysis tree and the files hhemt needs to construct an analysis object from it, described in section 1 of
+``tests/goldens/SPEC.md``; the raw layer is the binary TRITON
+outputs under ``out_triton/`` and ``out_tritonswmm/``), switches the persisted config to ``nc``, discards the golden's
+processed layer, and runs the processing path in-process. No solver is compiled or executed and no Snakemake process
+starts.
+
+A reprocess of a golden that runs through a workflow would need a Snakefile dry run, the interpreter directory on
+``PATH`` and a child-interpreter identity shim; this file sets up none of them. The third test calls the
+post-processing object directly, so it has no Snakefile, no ``python`` placed on ``PATH``, no child-interpreter
+identity shim and no build-gate declaration.
 """
 
 from __future__ import annotations
 
+import shutil
 from types import SimpleNamespace
 
 import numpy as np
@@ -25,6 +34,7 @@ import xarray as xr
 import hhemt.process_simulation as process_simulation
 from hhemt.process_simulation import TRITONSWMM_sim_post_processing, publish_chapters_to_netcdf
 from hhemt.utils import chapter_flag_for, chapter_store_for, completed_chapters, unified_flag_for
+from tests.fixtures.golden_trees import construct_golden_analysis
 
 _VARS = ("H", "QX")
 
@@ -34,6 +44,10 @@ def _write_chapters(root, lengths, ny: int = 5, nx: int = 6) -> None:
 
     The values encode the timestep, row and column, so a concatenation in the wrong order or
     a dropped chapter changes the data and not only the shape.
+
+    A chapter store counts as present only if its sibling flag file exists
+    (``utils.completed_chapters`` lists the flagged chapters whose store still exists).
+    What a chapter flag attests is stated in the docstring of ``utils.verify_and_flag_chapter``.
     """
     root.mkdir(parents=True, exist_ok=True)
     first = 0
@@ -65,8 +79,8 @@ def test_nc_tail_publishes_a_netcdf_file_equal_to_the_chapter_concatenation(tmp_
     chapters concatenated along ``timestep_min``; the completion flag is written and the
     chapters are gone.
 
-    Class: NEW CAPABILITY. The plausible wrong implementation is the pre-change tail,
-    ``utils.merge_chapters_to_unified`` called on the ``.nc`` path, which publishes a zarr
+    The plausible wrong implementation is the tail that calls
+    ``utils.merge_chapters_to_unified`` on the ``.nc`` path, which publishes a zarr
     DIRECTORY there; the production reader then raises ``IsADirectoryError`` from h5netcdf.
 
     Input class: any contiguous flagged chapter set, here three chapters of unequal length
@@ -76,8 +90,9 @@ def test_nc_tail_publishes_a_netcdf_file_equal_to_the_chapter_concatenation(tmp_
     ``h5netcdf`` engine under ``nc``, so an artifact that is not a NetCDF file fails every
     ``nc`` analysis at the summary.
 
-    Kills it: dispatching ``nc`` to ``merge_chapters_to_unified``; concatenating
-    ``sorted(parts)`` in any other order; dropping the last chapter.
+    Kills it: dispatching ``nc`` to ``merge_chapters_to_unified``; concatenating the chapters
+    in any order other than ascending chapter index (``completed_chapters`` maps chapter index
+    to store path); dropping the last chapter.
 
     A second correct implementation under which it still passes: merge the chapters to a
     temporary zarr store, convert that store with ``utils.write_zarr_then_netcdf`` onto a
@@ -109,7 +124,7 @@ def test_nc_tail_leaves_no_file_no_flag_and_every_chapter_when_the_write_fails(t
     no completion flag is written, and every flagged chapter survives, so the next invocation
     can publish again from the chapters.
 
-    Class: NEW CAPABILITY. The plausible wrong implementation writes the final path directly
+    The plausible wrong implementation writes the final path directly
     (``write_netcdf(ds, fname_out)``) and then the flag; a write that dies part-way then
     leaves a truncated file at the published path.
 
@@ -117,16 +132,20 @@ def test_nc_tail_leaves_no_file_no_flag_and_every_chapter_when_the_write_fails(t
     writer that writes a partial header to the path it is handed and then raises.
 
     Why it is required: raw TRITON outputs are cleared chapter by chapter, so after the
-    chapters are deleted nothing can regenerate the data; and the gridded writer returns
-    early whenever the flag exists, so a flag written before a complete file would make a
+    chapters are deleted nothing can regenerate the data; and the gridded writer
+    (``TRITONSWMM_sim_post_processing._streaming_chunked_zarr_write`` in ``process_simulation.py``)
+    returns early whenever the flag exists, so a flag written before a complete file would make a
     truncated file permanent.
 
     Kills it: writing the final path directly; writing the flag before ``os.replace``;
-    deleting the chapters before the flag; not removing the temporary on failure.
+    deleting the chapters before the flag; not removing a ``.tmp``-suffixed temporary on failure.
 
     A second correct implementation under which it still passes: write the NetCDF file into
     a temporary directory beside the chapters and move it into place, deleting that directory
-    on failure -- the test asserts the three post-failure states, not the temporary's name.
+    on failure -- the test asserts the three post-failure states, plus that no entry directly
+    under ``tmp_path`` ends in ``.tmp``. That last assertion constrains a temporary only when
+    it is a ``.tmp``-suffixed entry directly under ``tmp_path``: a leftover named ``.part``, or
+    placed inside another directory, is not seen and passes.
     """
     chapters = tmp_path / "TRITONSWMM_TRITON_tseries.nc.chapters"
     _write_chapters(chapters, [3, 3])
@@ -148,76 +167,64 @@ def test_nc_tail_leaves_no_file_no_flag_and_every_chapter_when_the_write_fails(t
     assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []
 
 
-# The synthetic end-to-end invocation, matching tests/test_synth_timeseries_consolidation.py.
-_WORKFLOW_KWARGS = dict(
-    mode="local",
-    process_system_level_inputs=True,
-    overwrite_system_inputs=True,
-    compile_TRITON_SWMM=True,
-    recompile_if_already_done_successfully=False,
-    prepare_scenarios=True,
-    overwrite_scenario_if_already_set_up=True,
-    rerun_swmm_hydro_if_outputs_exist=True,
-    process_timeseries=True,
-    which="both",
-    override_clear_raw="all",
-    compression_level=5,
-    pickup_where_leftoff=False,
-    verbose=True,
-)
+def _prepare_golden_for_nc_processing(golden_extractor, event_iloc: int = 0):
+    """Extract the multi-sim golden with ``nc`` as the persisted output type and no processed layer for one event.
+
+    The raw layer is left exactly as the golden carries it. Returns the constructed analysis and
+    the path of the event's ``processed`` directory, which no longer exists."""
+    system_dir = golden_extractor("multisim")
+    cfg = system_dir / "analysis_config.yaml"
+    text = cfg.read_text()
+    assert 'target_processed_output_type: "zarr"' in text
+    cfg.write_text(text.replace('target_processed_output_type: "zarr"', 'target_processed_output_type: "nc"'))
+    sim_dir = system_dir / "synth_multi_sim" / "sims" / f"event_index.{event_iloc}"
+    shutil.rmtree(sim_dir / "processed")
+    return construct_golden_analysis(system_dir), sim_dir / "processed"
 
 
-@pytest.mark.usefixtures("triton_only_cpu_compiled")
-def test_nc_synthetic_run_publishes_netcdf_from_both_gridded_exports(tmp_path, monkeypatch):
-    """Property: a synthetic ``nc`` run of BOTH the TRITON-only and the TRITON-SWMM model
-    publishes each gridded timeseries as a NetCDF FILE the production reader opens, and the
-    summary step completes for both.
+def test_nc_synthetic_run_publishes_netcdf_from_both_gridded_exports(golden_extractor):
+    """Property: processing the raw TRITON outputs of BOTH the TRITON-only and the TRITON-SWMM model under ``nc``
+    publishes each gridded timeseries as a NetCDF FILE the production reader opens, and the summary step completes
+    for both.
 
-    RIVANNA ONLY: this compiles and runs the solvers. Run it by node id on Rivanna scratch,
-    never on a laptop.
-
-    Class: NEW CAPABILITY. The plausible wrong implementation adds the ``nc`` arm to only
-    one of the two gridded exports, ``_export_TRITONSWMM_TRITON_outputs`` or
-    ``_export_TRITON_only_outputs``; the other model's ``.nc`` path is then a zarr directory
-    and its summary step raises. The solver-free tests above call the publisher directly and
+    The plausible wrong implementation adds the ``nc`` arm to only one of the two gridded
+    exports, ``_export_TRITONSWMM_TRITON_outputs`` or ``_export_TRITON_only_outputs``; the other model's ``.nc`` path
+    is then a zarr directory and its summary step raises. The solver-free tests above call the publisher directly and
     cannot see which exports reach it.
 
-    Input class: any analysis enabling both gridded models under ``nc``.
+    Input class: any analysis enabling both gridded models under ``nc``; here one event of the golden, whose raw layer
+    is the binary rasters of a reduced-size run.
 
-    Why it is required: each export resolves its own path and consolidates its own metadata,
-    so the publisher being correct says nothing about whether each export reaches it.
+    Why it is required: each export resolves its own path and consolidates its own metadata, so the publisher being
+    correct says nothing about whether each export reaches it.
 
     Kills it: either export calling ``merge_chapters_to_unified`` under ``nc``, or calling
     ``zarr.consolidate_metadata`` on the NetCDF path.
 
-    A second correct implementation under which it still passes: branch on the output type
-    in each export instead of inside the shared chapter writer.
+    A second correct implementation under which it still passes: branch on the output type in each export instead of
+    inside ``_streaming_chunked_zarr_write``, the writer both exports call (it calls
+    ``publish_chapters_to_netcdf`` under ``nc``).
     """
-    from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
+    from hhemt.scenario import TRITONSWMM_scenario
 
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
-    case = retrieve_synth_TRITON_SWMM_test_case(
-        analysis_name="synth_nc_second_arm",
-        toggle_tritonswmm_model=True,
-        toggle_triton_model=True,
-        toggle_swmm_model=False,
-        start_from_scratch=True,
-        additional_analysis_configs={"target_processed_output_type": "nc"},
-    )
-    a = case.analysis
+    a, processed = _prepare_golden_for_nc_processing(golden_extractor)
     assert a.cfg_analysis.target_processed_output_type == "nc"
-    result = a.submit_workflow(**_WORKFLOW_KWARGS)
-    assert result["success"], f"Workflow failed: {result.get('message', '')}"
+    assert not processed.exists(), "precondition: the processed layer is gone, so every output below was just written"
 
-    processed_dirs = sorted(a.analysis_paths.simulation_directory.glob("*/processed"))
-    assert processed_dirs, "no scenario processed directories were written"
-    for processed in processed_dirs:
-        for tseries, summary in (
-            ("TRITONSWMM_TRITON_tseries.nc", "TRITONSWMM_TRITON_summary.nc"),
-            ("TRITON_only_tseries.nc", "TRITON_only_summary.nc"),
-        ):
-            path = processed / tseries
-            assert path.is_file(), f"{path} is not a NetCDF file"
-            with _open_like_production(path) as ds:
-                assert ds.sizes["timestep_min"] > 0
-            assert (processed / summary).is_file(), f"{processed / summary} was not written"
+    scenario = TRITONSWMM_scenario(0, a)
+    for model_type in ("tritonswmm", "triton"):
+        proc = TRITONSWMM_sim_post_processing(scenario.run, model_log=scenario.get_log(model_type))
+        proc.write_timeseries_outputs(
+            which="TRITON", model_type=model_type, override_clear_raw="none", compression_level=5
+        )
+        proc.write_summary_outputs(which="TRITON", model_type=model_type, compression_level=5)
+
+    for tseries, summary in (
+        ("TRITONSWMM_TRITON_tseries.nc", "TRITONSWMM_TRITON_summary.nc"),
+        ("TRITON_only_tseries.nc", "TRITON_only_summary.nc"),
+    ):
+        path = processed / tseries
+        assert path.is_file(), f"{path} is not a NetCDF file"
+        with _open_like_production(path) as ds:
+            assert ds.sizes["timestep_min"] > 0
+        assert (processed / summary).is_file(), f"{processed / summary} was not written"

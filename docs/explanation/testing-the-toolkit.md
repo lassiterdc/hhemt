@@ -3,7 +3,8 @@
 Why the test suite is shaped the way it is. The commands live in
 [Contributing](../contributing.md#workflow) and in the
 [CLI reference](../reference/cli.md#hhemt-test-toolkit); this page is the reasoning
-behind them, and it deliberately carries no commands of its own.
+behind them. It names the one recipe that defines the laptop tier and otherwise
+carries no commands of its own.
 
 ## Two tiers, and why the split does not depend on your machine
 
@@ -20,6 +21,46 @@ collects the suite, so the same test lands in the same tier on every machine. An
 earlier arrangement decided the tier from whether `cmake` happened to be on your
 PATH, which meant two developers running the same
 recipe could gate on different sets of tests without either of them knowing.
+
+## The laptop tier and the Rivanna tier
+
+The two tiers run in two places, and the venue is a rule rather than a convenience.
+
+**The laptop tier** is everything that is not `compile_tier`. The `test-laptop` recipe in the
+repository's `justfile` runs it as two pytest invocations, each with `HHEMT_FORBID_COMPILE=1`
+so that a test which reaches for the solver is refused instead of building it:
+
+1. an xdist invocation over every core, selecting `not compile_tier and not requires_snakemake_subprocess`;
+2. a serial invocation selecting `not compile_tier and requires_snakemake_subprocess`.
+
+The serial invocation exists because the tests that carry `requires_snakemake_subprocess`
+start Snakemake as a child process, and a child scheduler under xdist is nested
+parallelism. The tier needs no solver: tests that need a finished analysis tree start from
+a committed golden tree (a small, generator-built, finished analysis) and reprocess it, so
+the laptop never compiles TRITON-SWMM. Which tests build a private tree of their own is a
+committed, reviewed list, compared against the build-request census by a test, so a new
+test of that kind cannot appear unseen.
+
+The tier is green. Its latest recorded timing, measured on the laptop, is 389.5 s for the
+xdist invocation and 1032.3 s for the serial one, about 23.7 minutes in total. `just` is not
+installed on every machine; the recipe is two shell commands, and the `justfile` holds
+their exact text, so they can be run directly.
+
+**The Rivanna tier** is the `compile_tier` tests, run through the pytest harness kept with
+the private companion repository. Solver compiles and solver runs belong to Rivanna scratch and never to
+a laptop. The harness runs the tests as a SLURM array, and its `scope` token states what a
+run covered:
+
+- `scope=array` is the array alone. Inside a SLURM allocation a set of tests structurally
+  cannot evaluate, so an array run covers that complement not at all.
+- `scope=union` is the array plus its complement, and only it supports a claim about the
+  suite.
+
+A Rivanna run reports at `scope=array` unless its complement also ran, and no suite-level
+green is claimed from an array-scoped result. This page gives no Rivanna timing because
+none has been recorded yet. The harness
+README describes a complement run, but no runner for it exists at present, so a
+`scope=union` result cannot currently be produced.
 
 ## The fixture cache, and why a rebuild is silent
 

@@ -140,7 +140,7 @@ def test_no_nan_reads_every_column_at_the_rank_attaining_max_total(tmp_path):
         "Compute must be read at the COHERENT rank (5.0), not at its own argmax (9.0) -- "
         "a coherent family reporting 9.0 here would be the defect under a new name"
     )
-    assert float(out["Compute"]) == pytest.approx(9.0), "the published max is untouched"
+    assert out["Compute"].item() == pytest.approx(9.0), "the published max is untouched"
     assert float(out["Compute_min"]) == pytest.approx(5.0)
     assert int(out["n_ranks"]) == 3
 
@@ -157,7 +157,7 @@ def test_partial_nan_selects_the_highest_valid_rank_not_the_nan_rank(tmp_path):
     )
     assert float(out["coherent_rank"]) == 2.0, "rank 2 is the highest VALID Total"
     assert float(out["Compute_coherent"]) == pytest.approx(7.0), "read at rank 2"
-    assert float(out["Total"]) == pytest.approx(2.0), "the sibling max skips the NaN rank too"
+    assert out["Total"].item() == pytest.approx(2.0), "the sibling max skips the NaN rank too"
 
     # CONTROL -- the named trap. Forcing `skipna=False` onto the selector returns the NaN
     # rank, which would read the whole coherent row at a rank the selector did not choose.
@@ -170,7 +170,7 @@ def test_all_nan_degrades_to_nan_exactly_as_the_sibling_max_does(tmp_path):
     ds = _tseries_summing_to([1.0, 2.0, 1.5], [9.0, 5.0, 7.0], nan_ranks=(0, 1, 2))
     out = _run_inline_site(ds, tmp_path)
 
-    assert math.isnan(float(out["Total"])), "the sibling max degrades to NaN"
+    assert math.isnan(out["Total"].item()), "the sibling max degrades to NaN"
     assert math.isnan(float(out["Total_coherent"])), "and so must the coherent value"
     assert math.isnan(float(out["Compute_coherent"])), (
         "Compute is finite at every rank, so an unmasked family would publish a finite "
@@ -281,7 +281,7 @@ def test_the_family_is_present_and_the_coherent_row_closes_its_level(two_rank_pe
     assert int(out["n_ranks"]) == 2
 
     # `Total` at argmax(Total) IS max(Total) -- identically, so no published figure moves.
-    assert float(out["Total_coherent"]) == float(out["Total"])
+    assert float(out["Total_coherent"]) == out["Total"].item()
 
     children = ("Compute", "MPI", "IO", "Resize", "SWMM", "Other")
     coherent_sum = sum(float(out[f"{c}_coherent"]) for c in children)
@@ -289,8 +289,8 @@ def test_the_family_is_present_and_the_coherent_row_closes_its_level(two_rank_pe
         "the coherent children must close their own parent -- that is the whole claim"
     )
     # And the published max row does NOT close, which is the defect being repaired.
-    published_sum = sum(float(out[c]) for c in children)
-    assert published_sum > float(out["Simulation"]), (
+    published_sum = sum(out[c].item() for c in children)
+    assert published_sum > out["Simulation"].item(), (
         "on this fixture the per-column maxima must overshoot; a fixture where they did "
         "not would make the coherent assertion above vacuous"
     )
@@ -306,7 +306,7 @@ def test_no_published_variable_name_or_value_moves(two_rank_perf_dir):
 
     for name in legacy.data_vars:
         assert name in out.data_vars
-        assert float(out[name]) == float(legacy[name]), f"{name} moved"
+        assert out[name].item() == legacy[name].item(), f"{name} moved"
     assert "Rank" not in out.coords, (
         "retaining a Rank carrier on the summary is a separate, later package's decision; "
         "this change must not introduce one as a side effect"

@@ -14,12 +14,16 @@ user cache root (`hhemt.cache.paths.cache_root()`) in every case.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
+from tests.fixtures.golden_trees import construct_golden_analysis
 from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV, retrieve_synth_TRITON_SWMM_test_case
+from tests.utils_dry_run_plan import planned_jobs
 
 pytestmark = pytest.mark.requires_snakemake_subprocess
 
@@ -151,149 +155,88 @@ def test_empty_independent_vars_degenerate_case(tmp_path):
     assert fp1 == {"__schema_version__": 1, "fields": {}}
 
 
-@pytest.mark.slow
-@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_one_row_edit_triggers_only_that_chain(synth_member_two_row):
-    """Editing one row re-queues only that member_id's chain (full execution; slow).
+# ---- plan rows: the sensitivity golden is planned with a dry run, so no solver is compiled or run ------------
 
-    It runs a FULL (non-dry-run) workflow, so it requests the compiled binaries,
-    as test_dry_run_orphan_cleanup_does_not_mutate does for its own first run;
-    the dry-run fingerprint tests stay ungated. Skips without cmake+mpic++; HARD-FAILS under
-    HHEMT_REQUIRE_COMPILE_TIER=1."""
-    case = synth_member_two_row
-    # Initial run (full execution, not dry-run) so flag files exist for member_0 and member_1
-    case.analysis.submit_workflow(mode="local")
+_STATUS_REPORT_JOBS = frozenset(
+    {
+        "all",
+        "export_scenario_status",
+        "plot_disk_utilization",
+        "plot_errors_and_warnings",
+        "plot_metadata",
+        "plot_per_analysis_summary_table",
+        "plot_scenario_status_appendix",
+        "plot_system_overview",
+        "plot_workflow_performance",
+        "render_report[format=zip]",
+    }
+    | {
+        f"plot_per_sim_per_member_{kind}[member_id={m},event_id=event_index.0]"
+        for kind in ("conduit_flow", "peak_flood_depth")
+        for m in range(4)
+    }
+)
 
-    # Edit only member_id=1's value in the parent CSV
-    df = pd.read_csv(case.sensitivity_csv_path)
+
+def _golden_member_csv(root: Path) -> Path:
+    """The sensitivity CSV an extracted sensitivity golden points at."""
+    return Path(yaml.safe_load((root / "analysis_config.yaml").read_text())["sensitivity_analysis"])
+
+
+def _chain_of_member(member_id: int) -> frozenset[str]:
+    """The jobs of one member's chain that a stale fingerprint schedules, plus the experiment consolidation."""
+    return frozenset(
+        {
+            f"prepare_member_{member_id}_evt_event_index_0",
+            f"simulation_member_{member_id}_evt_event_index_0",
+            f"process_member_{member_id}_evt_event_index_0",
+            f"consolidate_member_{member_id}",
+            "experiment_consolidation",
+        }
+    )
+
+
+def test_one_row_edit_triggers_only_that_chain(golden_extractor):
+    """Editing one row's value schedules only that member_id's chain (a dry-run plan over the sensitivity golden).
+
+    The untouched golden plans only its report-stage jobs. Editing member 1's ``n_omp_threads`` in the CSV
+    changes member 1's input fingerprint, which is an input of that member's rules, so the plan adds member 1's
+    prepare, simulation, process and consolidation jobs and the experiment consolidation, and no job of
+    members 0, 2 or 3."""
+    root = golden_extractor("sensitivity")
+    untouched = planned_jobs(root)
+    assert untouched == _STATUS_REPORT_JOBS
+
+    csv_path = _golden_member_csv(root)
+    df = pd.read_csv(csv_path)
     df.loc[df["member_id"].astype(str) == "1", "n_omp_threads"] = 8
-    df.to_csv(case.sensitivity_csv_path, index=False)
+    df.to_csv(csv_path, index=False)
 
-    # CRITICAL: case.analysis.sensitivity.members is built ONCE, in the constructor
-    # (`_create_members`, over the df_setup the constructor read from the CSV), and is NOT
-    # re-read by submit_workflow. The per-member_id fingerprint is computed from the
-    # in-memory member when the master Snakefile is generated, so reusing the stale case
-    # would reproduce the ORIGINAL fingerprint -> no mtime bump -> "Nothing to be done".
-    # Rebuild the case from the edited CSV: start_from_scratch=False keeps the
-    # materialized run (no wipe) and re-reads the configs and the edited CSV. This mirrors
-    # the real CLI flow (edit CSV -> re-instantiate analysis -> re-submit).
-    case = retrieve_synth_TRITON_SWMM_test_case(
-        analysis_name="synth_sensitivity_csv_row_rerun",
-        toggle_tritonswmm_model=True,
-        toggle_triton_model=False,
-        toggle_swmm_model=False,
-        sensitivity_csv=case.sensitivity_csv_path,
-        start_from_scratch=False,
-    )
-
-    # Rebuild and dry-run to inspect what would re-execute. submit_workflow has no
-    # capture_output param; the --dry-run snakemake stdout is redirected to a
-    # logfile (in `run_snakemake_local`) whose path the returned dict carries under
-    # "snakemake_logfile". Read the dry-run rule names from that log.
-    result = case.analysis.submit_workflow(mode="local", dry_run=True)
-    dry_run_log = result["snakemake_logfile"]
-    stdout = Path(dry_run_log).read_text() if Path(dry_run_log).exists() else ""
-
-    # Snakemake's --dry-run output names the rules that would run
-    assert "simulation_member_1" in stdout, "Expected member_1 simulation rule to be queued; full output:\n" + stdout
-    assert "simulation_member_0" not in stdout, (
-        "Did not expect member_0 simulation rule to be queued; full output:\n" + stdout
-    )
+    edited = planned_jobs(root)
+    assert edited - untouched == _chain_of_member(1)
+    assert untouched <= edited
 
 
-@pytest.mark.slow
-@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_dry_run_orphan_cleanup_does_not_mutate(tmp_path, monkeypatch):
+def test_dry_run_orphan_cleanup_does_not_mutate(golden_extractor):
     """FORBIDS: cleanup_all_orphans(dry_run=True) deleting the orphan fingerprint or rewriting a survivor's.
 
-    RENAMED because the old name claimed more than the body checked. The call below is a
-    DRY run, and its three file assertions are all "nothing changed", so they hold
-    whatever the deleting path does -- the test had no power over row-removal
-    invalidation (its title) or over delete-everything (its assertion message). Those two
-    intents belong to test_row_removal_preserves_surviving_fingerprints and
-    test_orphan_cleanup_deletes_only_the_orphan, whose bodies are not yet written (each is
-    a strict xfail that raises NotImplementedError).
+    The sensitivity golden is built from a CSV with member 1 removed, so member 1 is an orphan; a DRY-RUN
+    cleanup is called; the full CSV is then restored (bytes and time) and the tree is planned. A dry run that
+    deleted the orphan's fingerprint or flags, or rewrote any survivor's fingerprint, makes the plan schedule
+    that member's chain; a dry run that mutated nothing leaves the plan at the report-stage jobs only."""
+    root = golden_extractor("sensitivity")
+    csv_path = _golden_member_csv(root)
+    stamp = csv_path.stat().st_mtime
+    full_csv = csv_path.read_bytes()
+    pd.read_csv(csv_path).query("member_id != 1").to_csv(csv_path, index=False)
+    os.utime(csv_path, (stamp, stamp))
 
-    What survives here is real: a regression that made dry_run=True delete the orphan
-    fingerprint or rewrite a survivor's would redden at least one of those three
-    assertions, and that is the guarantee this test now names.
+    row_removed = construct_golden_analysis(root)
+    row_removed.sensitivity.cleanup_all_orphans(dry_run=True, force=True, verbose=False)
 
-    THE PIN GOES IN THE TEST BODY HERE, unlike synth_member_two_row's, because BOTH of
-    this test's builds are in the body -- so the placement that is wrong for a
-    fixture/test pair is the correct one for this shape.
-    """
-    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
-    csv_path = tmp_path / "sensitivity_3row.csv"
-    pd.DataFrame(
-        {
-            "member_id": ["0", "1", "2"],
-            "run_mode": ["openmp", "openmp", "openmp"],
-            "n_mpi_procs": [1, 1, 1],
-            "n_omp_threads": [2, 4, 8],
-            "n_gpus": [0, 0, 0],
-            "n_nodes": [1, 1, 1],
-        }
-    ).to_csv(csv_path, index=False)
-    case = retrieve_synth_TRITON_SWMM_test_case(
-        analysis_name="synth_sensitivity_csv_row_rerun_3row",
-        toggle_tritonswmm_model=True,
-        toggle_triton_model=False,
-        toggle_swmm_model=False,
-        sensitivity_csv=csv_path,
-        start_from_scratch=True,
-    )
-    case.analysis.submit_workflow(mode="local")
-
-    analysis_dir = case.analysis.analysis_paths.analysis_dir
-    mtime_0_before = (analysis_dir / "_status" / "member-0_inputs.json").stat().st_mtime
-    mtime_2_before = (analysis_dir / "_status" / "member-2_inputs.json").stat().st_mtime
-    orphan_path = analysis_dir / "_status" / "member-1_inputs.json"
-    assert orphan_path.exists()
-
-    # Remove member_id=1 from the CSV
-    pd.DataFrame(
-        {
-            "member_id": ["0", "2"],
-            "run_mode": ["openmp", "openmp"],
-            "n_mpi_procs": [1, 1],
-            "n_omp_threads": [2, 8],
-            "n_gpus": [0, 0],
-            "n_nodes": [1, 1],
-        }
-    ).to_csv(csv_path, index=False)
-    # Rebuild from the row-removed CSV: sensitivity.df_setup is set once, in the constructor,
-    # so the stale in-memory df would still list member_1 as "expected" and the orphan
-    # finders, which read df_setup.index, would find nothing (no-op false pass).
-    case = retrieve_synth_TRITON_SWMM_test_case(
-        analysis_name="synth_sensitivity_csv_row_rerun_3row",
-        toggle_tritonswmm_model=True,
-        toggle_triton_model=False,
-        toggle_swmm_model=False,
-        sensitivity_csv=csv_path,
-        start_from_scratch=False,
-    )
-    # Exercise the orphan cleanup directly, the call this test asserts on, instead of routing
-    # through run(): run() would first validate the active reporting set and then decide at
-    # its orphan gate whether to call cleanup_all_orphans at all, and neither step is what
-    # this test checks. run() forwards its own dry_run to that call; the run()-path
-    # cleanup_orphans integration is covered by test_cleanup_orphans_on_run.py.
-    case.analysis.sensitivity.cleanup_all_orphans(dry_run=True, force=True, verbose=False)
-
-    # ASSERT ON THE TREE THAT WAS ACTED ON. `analysis_dir` was bound from the FIRST build
-    # and `case` was rebound before the call above, so the two were different directories
-    # whenever the roots diverged -- the action could not reach the files being asserted.
-    # Re-deriving from the acting object makes them the same tree BY CONSTRUCTION rather
-    # than by coincidence, and the equality below is what says so out loud.
-    acted_dir = case.analysis.analysis_paths.analysis_dir
-    assert acted_dir == analysis_dir, (
-        "the rebuild resolved to a different tree than the first build; the assertions "
-        "below would be reading a directory this test never touched"
-    )
-    assert (acted_dir / "_status" / "member-1_inputs.json").exists(), (
-        "a dry run must leave the orphan fingerprint in place"
-    )
-    assert (acted_dir / "_status" / "member-0_inputs.json").stat().st_mtime == mtime_0_before
-    assert (acted_dir / "_status" / "member-2_inputs.json").stat().st_mtime == mtime_2_before
+    csv_path.write_bytes(full_csv)
+    os.utime(csv_path, (stamp, stamp))
+    assert planned_jobs(root) == _STATUS_REPORT_JOBS
 
 
 @pytest.mark.slow

@@ -22,6 +22,7 @@ from hhemt.cache import builder_provenance, finish_build, marker_state, warn_uns
 from hhemt.cache import keys as cache_keys
 from hhemt.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV
 from tests.fixtures._compile_guard import arm_compile_guard
+from tests.fixtures.golden_trees import *  # noqa: F403 -- the golden-tree fixtures; the module's __all__ names them
 from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV
 
 _SYNTH_SENSITIVITY_REPORT_CONFIG = (
@@ -126,6 +127,32 @@ def pytest_runtest_teardown(item, nextitem):
 _COMPILE_GUARD_ENV = "HHEMT_FORBID_COMPILE"
 
 
+def _parametrized_fixture_reaches_compile(item, cache: dict[str, bool]) -> bool:
+    """Whether a parametrize value of this item names a fixture whose closure holds the coupled compile.
+
+    A test that fetches a fixture with `request.getfixturevalue(name)` does not list `name` in
+    `item.fixturenames`, so the closure check above cannot see it. When the name comes from a
+    `parametrize` value, the node's `callspec.params` holds it: each string value that names a fixture is
+    expanded to that fixture's own closure, and the node is marked when `tritonswmm_cpu_compiled` is in it.
+    A string that names no fixture is ignored. `cache` memoizes the answer per fixture name for one collection."""
+    callspec = getattr(item, "callspec", None)
+    if callspec is None:
+        return False
+    manager = item.session._fixturemanager
+    for value in callspec.params.values():
+        if not isinstance(value, str):
+            continue
+        if value not in cache:
+            if manager.getfixturedefs(value, item) is None:
+                cache[value] = False
+            else:
+                closure, _ = manager.getfixtureclosure(parentnode=item, initialnames=(value,), ignore_args=set())
+                cache[value] = "tritonswmm_cpu_compiled" in closure
+        if cache[value]:
+            return True
+    return False
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
     """Mark every test whose fixture closure reaches the coupled compile as `compile_tier`.
@@ -142,8 +169,11 @@ def pytest_collection_modifyitems(config, items):
     conftest.py arms it by default. Here it is only force-armed, when
     HHEMT_FORBID_COMPILE=1 (see the comment below).
     """
+    closure_reaches_compile: dict[str, bool] = {}
     for item in items:
-        if "tritonswmm_cpu_compiled" in item.fixturenames:
+        if "tritonswmm_cpu_compiled" in item.fixturenames or _parametrized_fixture_reaches_compile(
+            item, closure_reaches_compile
+        ):
             item.add_marker(pytest.mark.compile_tier)
     # ARMING now defaults ON and lives in the REPO-ROOT conftest (see there for why).
     # HHEMT_FORBID_COMPILE is retained as an explicit force-arm so every existing
@@ -1258,6 +1288,12 @@ def rendered_synth_sensitivity_triton_only(tritonswmm_cpu_compiled, triton_only_
             start_from_scratch=True,
         )
         case.analysis.run(report_config=_SYNTH_SENSITIVITY_REPORT_CONFIG)
+        # The workflow just ran for real: every aggregated completion check must hold before any consumer
+        # sees this tree. Asserting here carries the claim that a TRITON-only sensitivity workflow completes
+        # once per session, in the fixture that already pays for the run.
+        from tests.utils_for_testing import assert_analysis_workflow_completed_successfully
+
+        assert_analysis_workflow_completed_successfully(case.analysis)
         case.analysis.render_report(format="html")
         case.analysis.render_report(format="zip")
     snapshot = _mtime_sha_snapshot(case.analysis.analysis_paths.analysis_dir)
@@ -1402,8 +1438,12 @@ def synth_prepared_scenario(tritonswmm_cpu_compiled, triton_only_cpu_compiled, t
 
 
 @pytest.fixture
-def synth_case_hydrology_disabled(tmp_path, monkeypatch):
+def synth_case_hydrology_disabled(tritonswmm_cpu_compiled, tmp_path, monkeypatch):
     """A synth analysis with toggle_use_swmm_for_hydrology=False.
+
+    `tritonswmm_cpu_compiled` is a compile-only gate (it returns None): `prepare_scenario` checks that the coupled
+    CPU build exists, and the build lives in the shared slug `_software` tree this gate fills. Requesting it also
+    puts the consuming test in the compile tier, so the laptop tier leaves it out.
 
     Constructed through `additional_system_configs` rather than by mutating
     `cfg_system` on a built analysis: the runners read the PERSISTED

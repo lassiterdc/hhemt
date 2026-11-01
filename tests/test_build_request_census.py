@@ -32,7 +32,11 @@ How it decides, in seven rules.
 4. Excused. A node is excused when every run-reaching call in its graph passes a literal
    ``dry_run=True`` or ``--dry-run`` or is a CLI call carrying ``--help``; when it carries an
    unconditional ``skip`` marker; or when its node id is in the excuse table below. One real call
-   beside dry ones is not excused.
+   beside dry ones is not excused. A GOLDEN-BACKED node is also excused for its ``reprocess`` and
+   ``submit_reprocess_workflow`` sites: its closure holds one of the golden-tree fixtures
+   (``tests/fixtures/golden_trees.py``) and no compile fixture, so the tree it re-derives is a committed
+   finished tree and no solver build is involved. Its ``run``, ``submit_workflow`` and ``test`` sites stay
+   unexcused, because those need the solver the golden does not hold.
 5. What fails. A run-reaching node that is neither covered nor excused, and a table entry that is
    STALE (its node no longer collects, no longer reaches a run, or is now covered), so the table
    shrinks with the suite instead of rotting.
@@ -85,8 +89,11 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+from tests.fixtures.golden_trees import __all__ as _GOLDEN_FIXTURE_NAMES
 
 _TESTS_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _TESTS_DIR.parent
@@ -95,6 +102,9 @@ _REPO_ROOT = _TESTS_DIR.parent
 _RUN_ATTRS = frozenset({"reprocess", "run", "submit_reprocess_workflow", "submit_workflow", "test"})
 # The subset whose call sites are the re-derive population: they rebuild a processed tree.
 _RE_DERIVE_ATTRS = frozenset({"reprocess", "submit_reprocess_workflow"})
+# The fixtures that hand a test a committed golden tree, and the marker of a compile fixture in a name.
+_GOLDEN_FIXTURES = frozenset(_GOLDEN_FIXTURE_NAMES)
+_COMPILE_FIXTURE_MARK = "_compiled"
 _DRY_FLAG = "--dry-run"
 _HELP_FLAG = "--help"
 _FLAGS = frozenset({_DRY_FLAG, _HELP_FLAG})
@@ -1024,6 +1034,7 @@ class _CallGraph:
         described = {
             "id": item.nodeid,
             "covered": item.get_closest_marker("compile_tier") is not None,
+            "golden": _is_golden_backed(item.fixturenames),
             "skip": any(mark.name == "skip" for mark in item.iter_markers()),
             "sites": [vars(s) for s in unique.values()],
             "tree": tree,
@@ -1087,9 +1098,17 @@ def _collect_in_child(out_path: Path) -> dict:
     return json.loads(out_path.read_text(encoding="utf-8"))
 
 
-def _all_sites_are_noops(node: dict) -> bool:
-    """True when every run-reaching call of ``node`` is a literal dry run or a `--help` call."""
-    return all(site["dry"] or site["help"] for site in node["sites"])
+def _is_golden_backed(fixture_names) -> bool:
+    """True when a closure holds a golden-tree fixture and no compile fixture (a name containing ``_compiled``)."""
+    names = list(fixture_names)
+    return any(n in _GOLDEN_FIXTURES for n in names) and not any(_COMPILE_FIXTURE_MARK in n for n in names)
+
+
+def _all_sites_are_excused(node: dict) -> bool:
+    """True when every run-reaching call of ``node`` is a literal dry run, a `--help` call, or (for a golden-backed
+    node) a re-derive call."""
+    golden = node.get("golden", False)
+    return all(site["dry"] or site["help"] or (golden and site["attr"] in _RE_DERIVE_ATTRS) for site in node["sites"])
 
 
 def _is_completed_fixture(name: str) -> bool:
@@ -1121,7 +1140,7 @@ def _disposition(node: dict, table: dict[str, _Excuse]) -> str:
     """How one run-reaching node is accounted for: coverage, an auto-excuse, a table row, or nothing."""
     if node["covered"]:
         return "covered"
-    if node["skip"] or _all_sites_are_noops(node):
+    if node["skip"] or _all_sites_are_excused(node):
         return "auto-excused"
     return "table-excused" if node["id"] in table else "undispositioned"
 
@@ -1190,7 +1209,7 @@ def _empty_tree_artifact(nodes: list[dict], table: dict[str, _Excuse]) -> dict:
             "id": node["id"],
             "covered": node["covered"],
             "skip": node["skip"],
-            "noop": _all_sites_are_noops(node),
+            "noop": _all_sites_are_excused(node),
             "table_excused": node["id"] in table,
             "sites": node["sites"],
             "fixtures": node.get("fixtures", []),
@@ -1200,6 +1219,27 @@ def _empty_tree_artifact(nodes: list[dict], table: dict[str, _Excuse]) -> dict:
     ]
     actionable = [e for e in entries if not (e["covered"] or e["skip"] or e["noop"] or e["table_excused"])]
     return {"unit": "nodes", "count": len(entries), "count_actionable": len(actionable), "nodes": entries}
+
+
+def _unexcused_message(unexcused: list[dict], describe) -> str:
+    """The failure text: a golden-backed node is told what a golden allows, never to request the compile."""
+    golden = [n for n in unexcused if n.get("golden")]
+    other = [n for n in unexcused if not n.get("golden")]
+    parts = []
+    if other:
+        parts.append(
+            f"{len(other)} test(s) reach a simulation workflow without requesting the build "
+            f"(no compile_tier marker; add `usefixtures('tritonswmm_cpu_compiled')` or an excuse-table row):\n  "
+            + "\n  ".join(describe(n) for n in other)
+        )
+    if golden:
+        parts.append(
+            f"{len(golden)} golden-backed test(s) reach a real run (`run`, `submit_workflow` or `test`). A golden "
+            f"tree is finished and holds no solver build, so such a test may only reprocess or plan with a "
+            f"literal dry_run=True; do not add a compile fixture to it. A test that really runs the solver "
+            f"belongs in a separate test that requests the build:\n  " + "\n  ".join(describe(n) for n in golden)
+        )
+    return "\n".join(parts)
 
 
 def test_every_run_reaching_test_requests_the_build(tmp_path, capsys):
@@ -1227,7 +1267,7 @@ def test_every_run_reaching_test_requests_the_build(tmp_path, capsys):
 
     reaching = [n for n in nodes.values() if n["sites"]]
     uncovered = [n for n in reaching if not n["covered"]]
-    auto_excused = [n for n in uncovered if n["skip"] or _all_sites_are_noops(n)]
+    auto_excused = [n for n in uncovered if n["skip"] or _all_sites_are_excused(n)]
     unexcused = [n for n in uncovered if n not in auto_excused and n["id"] not in table]
 
     stale = []
@@ -1300,9 +1340,86 @@ def test_every_run_reaching_test_requests_the_build(tmp_path, capsys):
         f"records, so the census would be blind to them. Look for -m/-k/--deselect in pytest addopts or in "
         f"conftest hooks."
     )
-    assert not unexcused, (
-        f"{len(unexcused)} test(s) reach a simulation workflow without requesting the build "
-        f"(no compile_tier marker; add `usefixtures('tritonswmm_cpu_compiled')` or an excuse-table row):\n  "
-        + "\n  ".join(describe(n) for n in unexcused)
-    )
+    assert not unexcused, _unexcused_message(unexcused, describe)
     assert not stale, "stale excuse-table rows (remove them):\n  " + "\n  ".join(stale)
+
+
+# ---- the golden-backed rule and its must-fail control -----------------------------------------------------------
+
+
+def _probe_golden_reprocess(golden_multisim_analysis):
+    golden_multisim_analysis.reprocess(start_with="consolidate")
+
+
+def _probe_golden_real_run(golden_multisim_analysis):
+    golden_multisim_analysis.run()
+
+
+def _probe_golden_dry_run(golden_multisim_analysis):
+    golden_multisim_analysis.run(dry_run=True)
+
+
+def _probe_golden_with_compile(golden_multisim_analysis, tritonswmm_cpu_compiled):
+    golden_multisim_analysis.reprocess(start_with="consolidate")
+
+
+def _probe_cached_reprocess(synthetic_multisim_completed):
+    synthetic_multisim_completed.reprocess(start_with="consolidate")
+
+
+def _probe_node(func) -> dict:
+    """Describe ``func`` with the census's own describer, as a collected node that is not marked ``compile_tier``."""
+    names = list(inspect.signature(func).parameters)
+    item = SimpleNamespace(
+        function=func,
+        fixturenames=names,
+        nodeid=f"probe::{func.__name__}",
+        get_closest_marker=lambda name: None,
+        iter_markers=lambda: iter(()),
+    )
+    return _CallGraph().describe(item)
+
+
+def _unexcused_probes(*funcs) -> list[str]:
+    """The probe nodes the census would leave unexcused, by the same predicate as the census test."""
+    nodes = [_probe_node(f) for f in funcs]
+    unexcused = [n for n in nodes if n["sites"] and not (n["covered"] or n["skip"] or _all_sites_are_excused(n))]
+    return [n["id"].split("::")[-1] for n in unexcused]
+
+
+def test_a_golden_backed_reprocess_or_dry_run_is_excused() -> None:
+    assert _unexcused_probes(_probe_golden_reprocess, _probe_golden_dry_run) == []
+
+
+def test_the_golden_probes_are_run_reaching_and_golden_backed() -> None:
+    """Control for the excusal: the probes reach a run and are classified golden-backed, so the empty list above
+    means the rule excused them and not that the walk found nothing."""
+    for func in (_probe_golden_reprocess, _probe_golden_real_run, _probe_golden_dry_run):
+        node = _probe_node(func)
+        assert node["sites"], func.__name__
+        assert node["golden"], func.__name__
+    assert not _probe_node(_probe_cached_reprocess)["golden"]
+    assert not _probe_node(_probe_golden_with_compile)["golden"]
+
+
+def test_a_golden_backed_real_run_stays_unexcused() -> None:
+    """Must-fail control: the same golden-backed node with a real `.run()` site is not excused."""
+    assert _unexcused_probes(_probe_golden_real_run) == ["_probe_golden_real_run"]
+
+
+def test_a_reprocess_without_a_golden_stays_unexcused() -> None:
+    """Must-fail control: the rule keys on the golden fixture, so a cached-tree reprocess and a golden node that
+    also requests the compile are not excused by it."""
+    assert _unexcused_probes(_probe_cached_reprocess, _probe_golden_with_compile) == [
+        "_probe_cached_reprocess",
+        "_probe_golden_with_compile",
+    ]
+
+
+def test_the_message_for_a_golden_backed_node_does_not_ask_for_the_compile() -> None:
+    golden = _probe_node(_probe_golden_real_run)
+    cached = _probe_node(_probe_cached_reprocess)
+    golden_text = _unexcused_message([golden], lambda n: n["id"])
+    assert "tritonswmm_cpu_compiled" not in golden_text
+    assert "golden-backed" in golden_text
+    assert "tritonswmm_cpu_compiled" in _unexcused_message([cached], lambda n: n["id"])

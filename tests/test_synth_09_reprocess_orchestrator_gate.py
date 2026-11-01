@@ -8,8 +8,25 @@ monkeypatching).
 import json
 from pathlib import Path
 
+import pytest
+
 from hhemt import orchestrator_sentinels as osent
 from hhemt.exceptions import WorkflowError
+
+
+@pytest.fixture(autouse=True)
+def _outside_any_slurm_allocation(monkeypatch):
+    """Run every test here as a process that is NOT inside a SLURM allocation.
+
+    `write_orchestrator_sentinel` stamps `$SLURM_JOB_ID` into a non-local sentinel whose caller names no job id, and the
+    gate treats a sentinel whose recorded job id equals the current allocation's as a requeue of its own run
+    (`SLURM_JOB_ID` is the only SLURM variable either one reads). Inside an allocation the tests below that
+    write a sentinel with no job id therefore get one equal to `$SLURM_JOB_ID`, the gate takes that requeue
+    carve-out and proceeds, and their premise (a record carrying no job id) no longer holds. Clearing the
+    variable here makes the module independent of where it runs; the carve-out itself is tested in
+    `test_submit_driver_claim_and_snakefile_write.py`.
+    """
+    monkeypatch.delenv("SLURM_JOB_ID", raising=False)
 
 
 def _write_sentinel(analysis_dir, driver_id, mode, **kw):

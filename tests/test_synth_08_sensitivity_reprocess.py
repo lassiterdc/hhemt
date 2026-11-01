@@ -6,12 +6,12 @@ with ``sensitivity.reprocess(start_with="consolidate", execution_mode="local")``
 to regenerate ``sensitivity_datatree.zarr`` (and the master consolidate
 flag) without re-running any simulation rule.
 
-The session-scoped ``synthetic_sensitivity_completed`` fixture
-(``tests/conftest.py``) runs the synth sensitivity master once per pytest
-session to the ``f_consolidate_experiment_complete.flag`` state; these tests
-consume the per-test ``synthetic_sensitivity_completed_isolated`` copy-on-read
-wrapper (D1) so the reprocess mutation lands on a ``tmp_path`` clone, then
-assert the master datatree zarr's mtime advances.
+Eight rows of this module run on the committed sensitivity GOLDEN (``golden_member``, built from
+``tests/fixtures/golden_trees.py``) instead of a session-scoped completed synthetic tree: they extract the golden into
+``tmp_path`` and reprocess it for real, so they need no solver build. The three rows that still use
+``synthetic_sensitivity_completed_isolated`` (the dry-run no-mutation row, the live-orchestrator refusal and the
+failed-scoped-delete row) keep that fixture and stay in the Rivanna tier. Each converted row asserts what it asserted
+before: the master datatree zarr's mtime advances or is preserved, or the reprocess succeeds.
 
 Phase 3 (reprocess_orchestrator_liveness_gate) adds the sensitivity
 analogues of gate-integration scenarios (a)/(b)/(e) against the master
@@ -22,7 +22,10 @@ live ``_orchestrator/`` driver, and NEVER reaches the interactive
 """
 
 import json
+import os
 import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -32,6 +35,66 @@ from hhemt.utils import resolve_experiment_tree
 from hhemt.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV, WorkflowError
 
 pytestmark = [pytest.mark.requires_snakemake_subprocess]
+
+# A reprocess runs its rules as child interpreters, and each child constructs an analysis, which refuses a toolkit
+# checkout with uncommitted tracked changes (``hhemt.validation.running_identity`` -> ``dirty``). The golden fixtures
+# clear ``dirty`` in THIS process only; a child needs the same, so this shim is put first on the children's
+# ``PYTHONPATH`` as a ``sitecustomize`` that clears ``dirty`` once ``hhemt.validation`` is imported. On a clean
+# tree the shim changes nothing (``dirty`` is already False). It touches no sha, so the identity gate still compares
+# the configured ``hhemt_sha`` with the real commit.
+_IDENTITY_SHIM = """
+import dataclasses
+import importlib.abc
+import importlib.machinery
+import sys
+
+
+class _ClearDirty(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path, target=None):
+        if name != "hhemt.validation":
+            return None
+        spec = importlib.machinery.PathFinder.find_spec(name, path)
+        if spec is None or spec.loader is None:
+            return spec
+        loader = spec.loader
+        exec_module = loader.exec_module
+
+        def patched(module):
+            exec_module(module)
+            real = module.running_identity
+            module.running_identity = lambda: dataclasses.replace(real(), dirty=False)
+
+        loader.exec_module = patched
+        return spec
+
+
+sys.meta_path.insert(0, _ClearDirty())
+"""
+
+
+@pytest.fixture
+def golden_member(golden_sensitivity_analysis, monkeypatch, tmp_path):
+    """The sensitivity golden as the ``sensitivity`` facade the old tests got from the completed-session clone.
+
+    Three things a golden does not provide for a reprocess: the Snakefile (SPEC section 9 does not carry it), which a
+    dry run writes; the interpreter on ``PATH`` (the sensitivity Snakefile calls a bare ``python``); and a toolkit
+    identity the child interpreters accept on a tree with uncommitted changes (``_IDENTITY_SHIM``).
+
+    It also declares the consolidation build stale-but-acceptable (``HHEMT_DECLARE_STALE_BUILD=1``, the operator escape
+    of ``provenance.store_build_mismatch``). A golden's log carries no consolidation build stamp, and an absent stamp
+    is always a mismatch, so without the declaration the build gate is armed on every golden and rebuilds the
+    consolidated store unconditionally, which would make the rows that assert PRESERVATION fail and the rows that
+    assert an mtime ADVANCE pass vacuously. With it the gate reuses the store exactly as on a matching build."""
+    from tests.fixtures.golden_trees import dry_run_plan
+
+    shim_dir = tmp_path / "identity_shim"
+    shim_dir.mkdir()
+    (shim_dir / "sitecustomize.py").write_text(_IDENTITY_SHIM)
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(filter(None, [str(shim_dir), os.environ.get("PYTHONPATH", "")])))
+    monkeypatch.setenv("PATH", os.pathsep.join([str(Path(sys.executable).parent), os.environ.get("PATH", "")]))
+    monkeypatch.setenv("HHEMT_DECLARE_STALE_BUILD", "1")
+    dry_run_plan(golden_sensitivity_analysis)
+    return golden_sensitivity_analysis.sensitivity
 
 
 def _fake_ps_run(ps_alive):
@@ -52,11 +115,11 @@ def _zarr_mtime_target(zarr):
     return zgroup if zgroup.exists() else zarr
 
 
-def test_sensitivity_reprocess_consolidate_default_preserves_zarr(synthetic_sensitivity_completed_isolated):
+def test_sensitivity_reprocess_consolidate_default_preserves_zarr(golden_member):
     """Phase 2 FQ1 default (regenerate_existing=False): sensitivity master
     reprocess(consolidate) PRESERVES the master datatree zarr (mtime unchanged —
     no rebuild, no DU restamp) and re-fires the report."""
-    member = synthetic_sensitivity_completed_isolated
+    member = golden_member
     mdt = resolve_experiment_tree(member.experiment.analysis_paths.analysis_dir)
     assert mdt.exists(), "fixture should have materialized sensitivity_datatree.zarr"
     mtime_target = _zarr_mtime_target(mdt)
@@ -76,10 +139,10 @@ def test_sensitivity_reprocess_consolidate_default_preserves_zarr(synthetic_sens
     )
 
 
-def test_sensitivity_reprocess_consolidate_regenerate_existing_rebuilds_zarr(synthetic_sensitivity_completed_isolated):
+def test_sensitivity_reprocess_consolidate_regenerate_existing_rebuilds_zarr(golden_member):
     """Phase 2 regenerate_existing=True: sensitivity master reprocess(consolidate)
     deletes and rebuilds the master datatree zarr (mtime advances)."""
-    member = synthetic_sensitivity_completed_isolated
+    member = golden_member
     mdt = resolve_experiment_tree(member.experiment.analysis_paths.analysis_dir)
     assert mdt.exists(), "fixture precondition: master zarr present"
     # DROP-WITNESS PRECONDITION. This test asserts an mtime ADVANCE, which is only
@@ -111,7 +174,7 @@ def test_sensitivity_reprocess_consolidate_regenerate_existing_rebuilds_zarr(syn
     )
 
 
-def test_sensitivity_reprocess_consolidate_subset_member_ids(synthetic_sensitivity_completed_isolated):
+def test_sensitivity_reprocess_consolidate_subset_member_ids(golden_member):
     """sensitivity.reprocess(member_ids=[...]) restricts per-member invalidation to the subset.
 
     The invalidation step only deletes the named per-member consolidate flags; the
@@ -119,7 +182,7 @@ def test_sensitivity_reprocess_consolidate_subset_member_ids(synthetic_sensitivi
     subset's per-member flags and the master flag must be re-created (success exit
     proves Snakemake completed the consolidate + experiment_consolidation chain).
     """
-    member = synthetic_sensitivity_completed_isolated
+    member = golden_member
     status_dir = member.experiment.analysis_paths.analysis_dir / "_status"
     all_member_ids = [str(sid) for sid in member.members.keys()]
     # Subset: first member only.
@@ -139,12 +202,12 @@ def test_sensitivity_reprocess_consolidate_subset_member_ids(synthetic_sensitivi
 
 
 def test_sensitivity_reprocess_proceeds_with_submitted_workers_no_orchestrator(
-    synthetic_sensitivity_completed_isolated,
+    golden_member,
 ):
     """(a) R2: sensitivity reprocess PROCEEDS when ``_submitted/`` sim-WORKER
     sentinels are present in the master dir but no live ``_orchestrator/``
     DRIVER sentinel exists."""
-    member = synthetic_sensitivity_completed_isolated
+    member = golden_member
     master_dir = member.experiment.analysis_paths.analysis_dir
     submitted = master_dir / "_status" / "_submitted"
     submitted.mkdir(parents=True, exist_ok=True)
@@ -194,14 +257,12 @@ def test_sensitivity_reprocess_refuses_fast_with_live_orchestrator(
         osent.remove_orchestrator_sentinel(master_dir, "live-driver")
 
 
-def test_sensitivity_reprocess_never_calls_input_even_with_stale_lock(
-    synthetic_sensitivity_completed_isolated, monkeypatch
-):
+def test_sensitivity_reprocess_never_calls_input_even_with_stale_lock(golden_member, monkeypatch):
     """(e) non-TTY no-hang: even with the non-interactive lock-clear env var
     UNSET and a stale ``.snakemake/locks/*.lock`` planted on the master dir,
     the sensitivity reprocess path's ``skip_lock_check=True`` returns before
     the interactive prompt (``builtins.input`` raises if reached)."""
-    member = synthetic_sensitivity_completed_isolated
+    member = golden_member
     master_dir = member.experiment.analysis_paths.analysis_dir
     monkeypatch.delenv(_NON_INTERACTIVE_LOCK_CLEAR_ENV, raising=False)
     locks_dir = master_dir / ".snakemake" / "locks"
@@ -266,7 +327,7 @@ def test_sensitivity_reprocess_dry_run_no_destructive_mutation(synthetic_sensiti
     assert master_du.stat().st_mtime_ns == master_du_mtime0, "dry-run must NOT re-stamp master _du.json"
 
 
-def test_reprocess_rebuild_rewrites_summary(synthetic_sensitivity_completed_isolated):
+def test_reprocess_rebuild_rewrites_summary(golden_member):
     """FIX 1 end-to-end: sensitivity ``reprocess(start_with='process',
     regenerate_existing=True)`` re-fires the per-member ``process_*`` rebuild rules
     AND clears the per-model processing log so the runner actually re-writes the
@@ -282,7 +343,7 @@ def test_reprocess_rebuild_rewrites_summary(synthetic_sensitivity_completed_isol
     to find the per-member summary it expected. Asserts the master datatree zarr's
     mtime advances and ``result["success"]`` is True.
     """
-    member = synthetic_sensitivity_completed_isolated
+    member = golden_member
     mdt = resolve_experiment_tree(member.experiment.analysis_paths.analysis_dir)
     assert mdt.exists(), "fixture precondition: master sensitivity_datatree.zarr present"
     # DROP-WITNESS PRECONDITION -- see the identical guard in
@@ -350,13 +411,13 @@ def test_unlink_dprocess_flags_for_regenerate_clears_only_matching_flags(tmp_pat
 
 
 @pytest.fixture
-def synth_partial_state_analysis(synthetic_sensitivity_completed_isolated):
+def synth_partial_state_analysis(golden_member):
     """A completed synth sensitivity analysis with ONE member induced into
     the summary-absent partial state (its d_process/c_run flags left intact),
     for conditional-process-emit regression coverage (R5)."""
     from tests.fixtures.test_case_builder import induce_incomplete_analysis
 
-    member = synthetic_sensitivity_completed_isolated
+    member = golden_member
     target_member_id = sorted(member.members)[0]
     induce_incomplete_analysis(member, target_member_id, delete_master_tree=True)
     return member, target_member_id
@@ -496,7 +557,7 @@ def test_failed_scoped_delete_raises_instead_of_consolidating_stale(
 
 
 def test_explicit_local_execution_mode_is_not_overridden_by_run_method(
-    synthetic_sensitivity_completed_isolated,
+    golden_member,
 ):
     """execution_mode='local' must keep the scoped delete off the SLURM route.
 
@@ -504,7 +565,7 @@ def test_explicit_local_execution_mode_is_not_overridden_by_run_method(
     Edit 3 the config won silently, so a caller forcing local execution still had
     the deletion offloaded to SLURM.
     """
-    member = synthetic_sensitivity_completed_isolated
+    member = golden_member
     _force_hpc(member)
     calls = []
     # success=False so that IF the SLURM route were taken, the raise would fire

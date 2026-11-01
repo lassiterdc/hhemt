@@ -1,26 +1,24 @@
-"""Synthetic-model report-target-predicate parity tier (Phase 1).
+"""Synthetic-model report-target-predicate parity tier.
 
-Regression for the predicate-divergence class behind the live
-``uva_sensitivity_suite`` reprocess ``render_report`` failure: the per-sim figure
+Regression for the predicate-divergence class: the per-sim figure
 ``report()``/``rule all``/render-target enumeration must filter on
 **summary-existence** (the predicate consolidation consumes), NOT on the
-``c_run`` flag — because ``c_run`` is a strictly weaker signal (Gotcha 34): a sim
+``c_run`` flag — because ``c_run`` is a strictly weaker signal (the comment above
+``_SUMMARY_STEMS_BY_MODEL`` in ``hhemt.summary_paths`` states why): a sim
 can have run (``c_run`` present) with its per-scenario summary absent (e.g. after
 a ``regenerate_existing`` deletion), which enumerated an unsatisfiable per-sim
 report target and made ``render_report`` raise ``WorkflowError: File ... marked
 for report but does not exist``.
 
-Generator-parity scope (Phase 1): the TWO **reprocess** generators —
+Generator-parity scope: the TWO **reprocess** generators —
 ``SensitivityAnalysisWorkflowBuilder.generate_reprocess_master_snakefile_content``
 (whole-sub, ``start_with``-aware) and
 ``reprocess_snakefile_generator._available_event_ids`` (per-event) — both filter
 their report-target enumeration on summary-existence via the shared
-``workflow._scenario_summaries_present`` / ``_member_summaries_complete``
+``workflow._scenario_summaries_present`` / ``_analysis_summaries_complete``
 helpers. The PRODUCTION generator ``generate_master_snakefile_content`` is
-intentionally DESCOPED (it generates before sims run, so a generation-time gate
-is harmful, and its render failure is unreachable in a single-DAG ``run()`` — the
-report branch is transitively gated behind ``experiment_consolidation``); it is NOT
-covered here. See the phase-doc descope note + the v2 research addendum.
+intentionally NOT covered: it generates before sims run, so a generation-time gate
+is harmful.
 """
 
 import ast
@@ -29,43 +27,34 @@ import shutil
 
 import pytest
 
-import tests.utils_for_testing as tst_ut
 from hhemt.exceptions import ConfigurationError
 from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL
 
-pytestmark = [
-    pytest.mark.requires_snakemake_subprocess,
-    # Runs the sensitivity workflow to completion (real summaries on disk) before
-    # deleting one; needs the compiled binaries. Skips without cmake+mpic++;
-    # HARD-FAILS under HHEMT_REQUIRE_COMPILE_TIER=1.
-    pytest.mark.usefixtures("tritonswmm_cpu_compiled"),
-]
-
-# model_type -> the FULL consolidate-consumed per-enabled-mode summary attrs
-# (the canonical set lives in hhemt.summary_paths — one declaration, imported by
-# every consumer; the report-target predicate and consolidation's
-# _retrieve_combined_output key against the same table). Used only to pick a
-# present summary to delete.
+# The test runs on the committed sensitivity golden (extracted into ``tmp_path`` by
+# ``golden_sensitivity_analysis``), so it needs no solver build. The reprocess it ends with is refused by a
+# preflight before any rule runs, so none of the prerequisites a reprocess that executes rules needs (a
+# dry-run-written Snakefile, the interpreter on ``PATH``, an identity shim for child interpreters) is required.
+pytestmark = [pytest.mark.requires_snakemake_subprocess]
 
 
-# R3 exclusion: retained, not converted — the reprocess call IS the behaviour under test.
 # Property: the reprocess generators exclude a c_run-present/summary-absent sub from the per-member
 # consolidate enumeration and the per-sim plot targets, and an unscoped reprocess over that
 # divergent tree fails fast rather than publishing a partial datatree.
-@pytest.mark.slow
 def test_report_target_predicate_excludes_summary_absent_sub(
-    synth_sensitivity_analysis,
+    golden_sensitivity_analysis,
 ):
     """The two reprocess generators exclude a c_run-present/summary-absent sub/event.
 
-    Arrange: run the sensitivity workflow to completion (real summaries + c_run
-    flags on disk), then delete ONE per-scenario summary for one sub's first
-    event while leaving its ``c_run`` flag — the exact Gotcha-34 divergence state.
+    Arrange: take the finished sensitivity golden (real summaries + c_run flags on
+    disk), then delete ONE per-scenario summary for one sub's first
+    event while leaving its ``c_run`` flag — the c_run-present/summary-absent
+    divergence state the module docstring describes.
 
     Assert:
     - (d) ``generate_reprocess_master_snakefile_content`` RETURNS without raising
-      (the ~6785 shared-sub-inclusion EQUALITY invariant holds — generation does
-      not abort).
+      (its own check that the per-member consolidate loop and ``completed_member_ids``
+      emit the same members, which raises ``RuntimeError`` on a mismatch, holds —
+      generation does not abort).
     - (a)/(b) the sensitivity reprocess generator EXCLUDES the incomplete sub from
       both its per-member consolidate enumeration (``completed_member_ids`` / ``rule all``)
       and its per-sim plot targets (``MEMBER_EVENT_PAIRS``), while a COMPLETE sub is
@@ -73,12 +62,21 @@ def test_report_target_predicate_excludes_summary_absent_sub(
     - (a)/(b) the non-sensitivity ``_available_event_ids`` EXCLUDES the divergent
       event (per-event predicate) while keeping every complete event.
     - (c) an UNSCOPED ``reprocess(start_with="consolidate")`` over the divergent tree
-      FAILS FAST: the R7 consolidate-stage divergence preflight (Gotcha 40) raises
-      ``ConfigurationError`` so a partial ``sensitivity_datatree.zarr`` is never
-      silently published. (The generator-level exclusion in (a)/(b)/(d) is independent
-      — R7 fires on execution, not on content generation.) The fail-fast (Gotcha 40)
-      vs graceful-exclusion (Gotcha 37) tension for the unscoped path is flagged for
-      main's owner; this test conservatively pins the newer guard's behavior.
+      FAILS FAST: the consolidate-stage divergence preflight in
+      ``TRITONSWMM_sensitivity_analysis.reprocess`` raises ``ConfigurationError`` so a
+      partial ``sensitivity_datatree.zarr`` is never silently published. (The
+      generator-level exclusion in (a)/(b)/(d) is independent — the preflight fires
+      on execution, not on content generation.) That fail-fast and the generators'
+      graceful exclusion are two deliberate behaviors in tension for the unscoped
+      path; this test pins the preflight's fail-fast behavior, and which end-state is
+      intended is a design question this test does not settle.
+
+    What kills it: a generator that filters on ``c_run`` still enumerates the
+    divergent sub, so the (a)/(b) exclusion asserts fail; removing the preflight
+    makes ``pytest.raises(ConfigurationError, match="cannot consolidate")`` fail.
+    A generator that excluded the sub by a different summary-existence check than
+    the shared helpers would still pass, because the asserts read the generated
+    content and the returned event ids and never name the helper.
     """
     from hhemt.constants import (
         consolidate_analysis_flag,
@@ -93,27 +91,7 @@ def test_report_target_predicate_excludes_summary_absent_sub(
         compute_event_id_slug,
     )
 
-    analysis = synth_sensitivity_analysis
-
-    # ── Arrange: full sensitivity run so real summary zarrs + c_run flags exist. ──
-    result = analysis.submit_workflow(
-        mode="local",
-        process_system_level_inputs=True,
-        overwrite_system_inputs=True,
-        compile_TRITON_SWMM=True,
-        recompile_if_already_done_successfully=True,
-        prepare_scenarios=True,
-        overwrite_scenario_if_already_set_up=True,
-        rerun_swmm_hydro_if_outputs_exist=True,
-        process_timeseries=True,
-        which="both",
-        override_clear_raw="none",
-        compression_level=5,
-        pickup_where_leftoff=False,
-        verbose=True,
-    )
-    assert result["success"], f"Workflow submission failed: {result.get('message', '')}"
-    tst_ut.assert_analysis_summaries_created(analysis)
+    analysis = golden_sensitivity_analysis
 
     master_dir = analysis.analysis_paths.analysis_dir
 
@@ -136,6 +114,10 @@ def test_report_target_predicate_excludes_summary_absent_sub(
     assert c_run_flag.exists(), f"expected c_run flag present before delete: {c_run_flag}"
 
     # Delete one present per-scenario summary for the target sub's first event.
+    # _SUMMARY_ATTRS_BY_MODEL (declared once in hhemt.summary_paths) maps model_type to
+    # the full set of per-enabled-mode summary attributes; its file-stem counterpart
+    # _SUMMARY_STEMS_BY_MODEL is "Keyed IDENTICALLY" to it. This test uses it only to
+    # find one present summary to delete.
     summary_to_delete = None
     for attr in _SUMMARY_ATTRS_BY_MODEL[model_type]:
         p = getattr(scen.scen_paths, attr, None)
@@ -151,7 +133,7 @@ def test_report_target_predicate_excludes_summary_absent_sub(
     assert c_run_flag.exists(), "c_run flag must survive summary deletion (this IS the divergence state)"
 
     # ── (d) generation must not raise + (a)/(b) sensitivity reprocess generator
-    # excludes the summary-absent sub. ──────────────────────────────────────────
+    # excludes the summary-absent sub.
     content = analysis.sensitivity._workflow_builder.generate_reprocess_master_snakefile_content(
         start_with="consolidate"
     )
@@ -161,8 +143,8 @@ def test_report_target_predicate_excludes_summary_absent_sub(
     complete_consolidate_flag = consolidate_analysis_flag(complete_member)
     assert target_consolidate_flag not in content, (
         "incomplete sub's consolidate flag must NOT be enumerated "
-        "(completed_member_ids / rule all / per-member consolidate loop) — the ~6785 "
-        f"equality holds and the sub is excluded: {target_consolidate_flag}"
+        "(completed_member_ids / rule all / per-member consolidate loop) — the "
+        f"shared sub-inclusion equality holds and the sub is excluded: {target_consolidate_flag}"
     )
     # Sanity: a COMPLETE sub IS still enumerated (the fix is not over-filtering).
     assert complete_consolidate_flag in content, (
@@ -183,7 +165,7 @@ def test_report_target_predicate_excludes_summary_absent_sub(
     )
 
     # ── (a)/(b) non-sensitivity per-event predicate excludes ONLY the divergent
-    # event. ────────────────────────────────────────────────────────────────────
+    # event.
     sub_builder = target_sub._workflow_builder
     enabled = _enabled_models(sub_builder)
     n_events = len(target_sub.df_sims)
@@ -195,19 +177,20 @@ def test_report_target_predicate_excludes_summary_absent_sub(
     assert len(available) == n_events - 1, "exactly the one summary-absent event is excluded; all complete events kept"
 
     # ── (c) end-to-end: an UNSCOPED reprocess(start_with="consolidate") over a tree
-    # with a c_run-present/summary-absent divergence must FAIL FAST. The R7 consolidate-
-    # stage divergence preflight (Gotcha 40, sensitivity_analysis.py) raises
+    # with a c_run-present/summary-absent divergence must FAIL FAST. The consolidate-stage
+    # divergence preflight in TRITONSWMM_sensitivity_analysis.reprocess raises
     # ConfigurationError so a partial sensitivity_datatree.zarr is never silently
-    # published with the divergent sub dropped. This is the NEWER deliberate guard; it
-    # intentionally supersedes the older "proceed over the completed subset" expectation
-    # for the UNSCOPED call (the generator-level exclusion in (a)/(b)/(d) above is still
-    # proven — R7 only fires on actual execution, not on content generation).
+    # published with the divergent sub dropped. For the UNSCOPED call this test asserts
+    # that the call raises ConfigurationError matching "cannot consolidate" (the
+    # generator-level exclusion in (a)/(b)/(d) above is still proven — the preflight
+    # only fires on actual execution, not on content generation).
     #
-    # NOTE (flagged for main's owner — see follow-up): R7/Gotcha-40 (fail-fast) and the
-    # generator's Gotcha-37 (graceful exclusion) are two deliberate features in tension
-    # for the unscoped path. This test pins the fail-fast behavior conservatively rather
-    # than softening the guard from the worktree; whether the intended end-state is
-    # fail-fast or proceed-over-subset is main's design decision.
+    # Not established: which end-state is intended. The preflight's fail-fast and the
+    # generators' graceful exclusion are two deliberate behaviors in tension for the
+    # unscoped path, and this test pins the fail-fast one rather than softening the
+    # guard; whether the intended end-state is fail-fast or proceed-over-subset is an
+    # open design question that this test's pass or fail does not answer.
+    # The golden carries no analysis_report.zip (tests/goldens/SPEC.md section 9).
     report_zip = master_dir / "analysis_report.zip"
     if report_zip.exists():
         report_zip.unlink()

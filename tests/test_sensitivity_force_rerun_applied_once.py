@@ -39,11 +39,29 @@ def _stop(*_a, **_k):
     raise _StopBeforeSnakemake
 
 
+class _AnalysisStandIn(SimpleNamespace):
+    """A `SimpleNamespace` whose every `_refuse_*` precondition is a no-op.
+
+    `TRITONSWMM_analysis.submit_workflow` opens by calling the run-entry refusals
+    (`_refuse_undefined_inflow_nodes`, `_refuse_invalid_coupling_declaration`, ...), none of which this
+    module's stubbed submit exercises. A bare `SimpleNamespace` raised `AttributeError` each time a
+    refusal was added to the method; answering the `_refuse_` prefix here means the next refusal needs
+    no edit to this stand-in. Only a name the real `TRITONSWMM_analysis` defines is answered, so a call to a
+    refusal that does not exist (a misspelt or removed one), and any other missing attribute, still fails
+    loudly.
+    """
+
+    def __getattr__(self, name):
+        if name.startswith("_refuse_") and hasattr(TRITONSWMM_analysis, name):
+            return lambda *_a, **_k: None
+        raise AttributeError(name)
+
+
 def _analysis_stand_in(*, sensitivity: bool, calls: list):
     def record(value, *, dry_run=False):
         calls.append((value, dry_run))
 
-    analysis = SimpleNamespace(
+    analysis = _AnalysisStandIn(
         _system=SimpleNamespace(cfg_system=SimpleNamespace(), system_config_yaml=None),
         cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=sensitivity, multi_sim_run_method="local"),
         analysis_config_yaml=None,

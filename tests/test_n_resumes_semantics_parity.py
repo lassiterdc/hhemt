@@ -69,6 +69,8 @@ _TABLE: dict[str, tuple[str, str | None]] = {
         "reads-as-attempts",
         None,
     ),
+    "tests/goldens/SPEC.md": ("incidental mention", None),
+    "tests/goldens/generator/records.py": ("incidental mention", None),
     "tests/test_check_known_resume_defects.py": ("reads-as-attempts", None),
     "tests/test_clean_restart_facade_thread.py": ("incidental mention", None),
     "tests/test_clean_restart_wipe.py": ("incidental mention", None),

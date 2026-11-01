@@ -1,29 +1,33 @@
-"""Coverage for the opt-in per-scenario timeseries consolidation (FQ1) + the durable
-``replay_t`` resume-boundary capture (FQ3) — the consolidation half of the Round-2
-over-time clean-vs-resume difference figure.
+"""Coverage for the opt-in per-scenario timeseries consolidation and the durable ``replay_t`` resume-boundary capture.
 
-Two tiers:
-  * HPC-free unit — ``_parse_replay_t`` extracts the LAST replay marker's ``t=`` value
-    from a model-log string (proves FQ3 without any pipeline run).
-  * Synth-tier (compile) — flip ``toggle_consolidate_timeseries`` ON, run the full synth
-    pipeline (which lands the per-scenario timeseries zarrs, then consolidates), and assert
-    the two SWMM node/link timeseries tree nodes appear; a default-OFF re-consolidation has
-    no timeseries node (byte-compatible with pre-change trees). Mirrors the
-    ``test_metadata_consolidation.py`` end-to-end setup (compile-tier; slow).
+Three kinds of test:
+  * Unit: ``_parse_replay_t`` extracts the LAST replay marker's ``t=`` value from a model-log string, with no
+    pipeline run. A replay marker is the line TRITON prints (``SWMM exchange history replayed to t=``) when a resumed
+    coupled run replays SWMM's exchange history; its ``t`` is the simulation time, in seconds, at which the resumed
+    run was positioned. One model log can hold several markers, and the LAST is the final resume boundary.
+  * Config only: ``test_default_is_off`` reads the toggle from ``synth_multi_sim_builder``, a configured analysis
+    that was not run (its docstring in ``tests/conftest.py`` says "no compile, no scenario prep").
+  * Golden: the two consolidation tests extract the committed multi-sim golden (``tests/fixtures/golden_trees.py``),
+    which already carries the per-scenario SWMM node and link timeseries stores, set ``toggle_consolidate_timeseries``
+    in the PERSISTED analysis config, and call ``consolidate_to_datatree`` in-process. No solver is compiled or run
+    and no Snakemake process starts.
+
+No golden-reprocess prerequisites are copied. The rows need no Snakefile, no ``python`` on ``PATH`` and no child
+interpreter identity shim, because nothing is reprocessed through the workflow. The one environment declaration used
+is explained at ``_declare_stale_build``.
 """
 
 from __future__ import annotations
 
-import pytest
 import xarray as xr
 
 from hhemt.analysis_validation import _TRITON_REPLAY_MARKER
 from hhemt.processing_analysis import _parse_replay_t
-from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV
+from tests.fixtures.golden_trees import construct_golden_analysis
 
 
 # ---------------------------------------------------------------------------
-# HPC-free unit — FQ3 replay-marker parse
+# Unit: replay-marker parse
 # ---------------------------------------------------------------------------
 def test_parse_replay_t_extracts_float():
     line = f"[00:12:34] {_TRITON_REPLAY_MARKER}123.5\n"
@@ -35,8 +39,9 @@ def test_parse_replay_t_returns_none_when_marker_absent():
 
 
 def test_parse_replay_t_keeps_last_marker():
-    # The model log is "w"-truncated per exec, but within one exec multiple markers can
-    # appear; the durable value is the LAST one (the final resume boundary).
+    # The model log is "w"-truncated per exec (one launch of the solver through ``run_simulation_runner``), so it
+    # holds only the latest exec's markers; within one exec multiple markers can appear, and the durable value is
+    # the LAST one (the final resume boundary).
     text = f"{_TRITON_REPLAY_MARKER}100.0\n... more log ...\n{_TRITON_REPLAY_MARKER}3000.0\n"
     assert _parse_replay_t(text, _TRITON_REPLAY_MARKER) == 3000.0
 
@@ -46,163 +51,116 @@ def test_parse_replay_t_none_on_unparseable_value():
 
 
 # ---------------------------------------------------------------------------
-# Synth-tier (compile) — FQ1 opt-in timeseries consolidation
+# Opt-in timeseries consolidation: the toggle default (config only), then the golden rows
 # ---------------------------------------------------------------------------
-# Proven-good full-pipeline invocation (mirrors test_metadata_consolidation's kwargs);
-# process_timeseries=True is required so the per-scenario node/link timeseries zarrs land.
-_WORKFLOW_KWARGS = dict(
-    mode="local",
-    process_system_level_inputs=True,
-    overwrite_system_inputs=True,
-    compile_TRITON_SWMM=True,
-    recompile_if_already_done_successfully=False,
-    prepare_scenarios=True,
-    overwrite_scenario_if_already_set_up=True,
-    rerun_swmm_hydro_if_outputs_exist=True,
-    process_timeseries=True,
-    which="both",
-    override_clear_raw="all",
-    compression_level=5,
-    pickup_where_leftoff=False,
-    verbose=True,
-)
+_TS_NODES = ("swmm_node_timeseries", "swmm_link_timeseries")
 
 
 def test_default_is_off(synth_multi_sim_builder):
-    """Default-OFF regression (HPC-free). The toggle must default False so a
-    consolidation that does not opt in stays byte-compatible with pre-change
-    trees.
+    """The toggle must default False so a consolidation that does not opt in stays byte-compatible with trees built
+    before the option existed.
 
-    This is asserted on the CONFIG rather than by a second full-pipeline run:
-    consolidation executes in a SUBPROCESS reading the persisted
-    analysis_config.yaml (see the toggle-ON test below), so an in-memory flip to
-    False would not reach it either -- a "default-OFF" pipeline test written that
-    way would pass for the wrong reason. The gating itself is covered because
-    every OTHER synth-tier test consolidates without the toggle and none produce
-    timeseries nodes.
+    This is asserted on the CONFIG rather than by a second consolidation: the workflow's consolidate step runs as a
+    separate process that loads the persisted ``analysis_config.yaml``, so an in-memory flip to False in this process
+    would not reach it and such a test would pass for the wrong reason. Established here: the default, and (by the
+    toggle-OFF pass of ``test_toggle_change_invalidates_an_already_consolidated_tree``) that ``swmm_node_timeseries``
+    is absent after a consolidation with the toggle false. Not established: byte-compatibility with older trees, which
+    no test here compares, and the absence of the link timeseries node under the toggle OFF, which that pass does not
+    check.
     """
     assert synth_multi_sim_builder.cfg_analysis.toggle_consolidate_timeseries is False
 
 
-@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_toggle_on_consolidates_node_and_link_timeseries(tmp_path, monkeypatch):
-    # FQ1: with the opt-in toggle ON, the consolidated DataTree gains the two SWMM
-    # node/link timeseries nodes (concatenated along event_iloc), each keeping a time dim.
-    #
-    # The toggle MUST be injected through the case's config-construction path, not
-    # set in memory on an already-built analysis. `consolidate_to_datatree` runs in a
-    # Snakemake rule-shell SUBPROCESS invoked as
-    #   python -m hhemt.consolidate_workflow --analysis-config {...}/analysis_config.yaml
-    # so it reads the PERSISTED config; an in-memory attribute set on the parent's
-    # analysis object never reaches it and the timeseries loop silently no-ops.
-    # `retrieve_synth_TRITON_SWMM_test_case` composes analysis_config.yaml from
-    # `additional_analysis_configs`, which is the same seam the private-estate
-    # runner uses -- so this exercises the real operator path.
-    from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
+def _golden_with_timeseries_toggle(golden_extractor, *, on: bool):
+    """Extract the multi-sim golden and construct its analysis with the toggle written into the persisted config.
 
-    # Isolate the start_from_scratch wipe under tmp_path (mirrors the
-    # synth_multi_sim_analysis fixture) so it cannot clobber the shared session cache.
-    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
-    case = retrieve_synth_TRITON_SWMM_test_case(
-        analysis_name="synth_multi_sim",
-        n_events=3,
-        start_from_scratch=True,
-        additional_analysis_configs={"toggle_consolidate_timeseries": True},
-    )
-    a = case.analysis
+    The line is appended, which adds the key exactly once only because the multi-sim golden's ``analysis_config.yaml``
+    does not already set ``toggle_consolidate_timeseries`` and ends with a newline (both read from the committed
+    ``multisim.zip``).
+    """
+    system_dir = golden_extractor("multisim")
+    cfg = system_dir / "analysis_config.yaml"
+    cfg.write_text(cfg.read_text() + f"toggle_consolidate_timeseries: {'true' if on else 'false'}\n")
+    return construct_golden_analysis(system_dir)
+
+
+def _declare_stale_build(monkeypatch):
+    """Make the consolidation build gate defer to the inputs fingerprint.
+
+    A golden's log carries no consolidation build stamp, and a checkout with uncommitted changes never matches one,
+    so the build gate would force a rebuild on every call and hide whether the fingerprint alone decides. The
+    documented operator escape (``HHEMT_DECLARE_STALE_BUILD=1``) makes the gate reuse a store exactly as it does on a
+    matching build, leaving the fingerprint as the only reason to rebuild.
+
+    Setting it is the operator's declaration that the build-stamp mismatch is known and accepted: the gate prints the
+    mismatch and reuses the store instead of rebuilding. ``stale`` in the name therefore refers to the BUILD that wrote
+    the store, which is the opposite of the staleness of a TREE that
+    ``test_toggle_change_invalidates_an_already_consolidated_tree`` exercises, where a changed inputs fingerprint
+    forces a rebuild."""
+    monkeypatch.setenv("HHEMT_DECLARE_STALE_BUILD", "1")
+
+
+def test_toggle_on_consolidates_node_and_link_timeseries(golden_extractor):
+    # With the opt-in toggle ON, the consolidated DataTree gains the two SWMM node/link timeseries nodes
+    # (concatenated along event_iloc), each keeping a time dim. The golden already carries a consolidated tree and a
+    # complete log (tests/goldens/SPEC.md section 3 and section 4.4). Its log carries no consolidation build stamp
+    # (section 4.4: ``consolidation_build_stamp: null``) and an absent stamp never counts as matching, so the build
+    # gate by itself is enough to force the first consolidation to rebuild the tree, which is what builds the
+    # timeseries nodes.
+    a = _golden_with_timeseries_toggle(golden_extractor, on=True)
     assert a.cfg_analysis.toggle_consolidate_timeseries is True
-    result = a.submit_workflow(**_WORKFLOW_KWARGS)
-    assert result["success"], f"Workflow failed: {result.get('message', '')}"
+
+    a.process.consolidate_to_datatree()
 
     tree_path = a.analysis_paths.analysis_datatree_zarr
     assert tree_path is not None and tree_path.exists()
-    tree = xr.open_datatree(tree_path, engine="zarr", consolidated=False)
-
-    tsg = tree["tritonswmm"]
-    assert "swmm_node_timeseries" in tsg
-    assert "swmm_link_timeseries" in tsg
-    # The per-scenario SWMM timeseries name their time axis `date_time` (NOT `time`).
-    # The VMS-4 assertion contract said "time"; the live tree is
-    # {event_iloc, node_id|link_id, date_time}, so the contract's name was wrong and
-    # is corrected here against observed data rather than propagated.
-    for node_name in ("swmm_node_timeseries", "swmm_link_timeseries"):
+    tsg = xr.open_datatree(tree_path, engine="zarr", consolidated=False)["tritonswmm"]
+    for node_name in _TS_NODES:
+        assert node_name in tsg
         node = tsg[node_name]
+        # The per-scenario SWMM timeseries name their time axis `date_time`, not `time`.
         assert "date_time" in node.dims, f"{node_name} missing date_time dim: {dict(node.dims)}"
         assert "event_iloc" in node.dims, f"{node_name} missing event_iloc dim: {dict(node.dims)}"
 
-    # NOTE: the default-OFF regression is asserted in `test_default_is_off` above,
-    # on the config rather than by flipping the toggle here. An in-memory flip to
-    # False followed by a re-consolidate would NOT reach the consolidating
-    # subprocess (same persisted-config mechanism documented at the top of this
-    # test), so it would have passed while proving nothing about the gate.
 
-
-@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_toggle_change_invalidates_an_already_consolidated_tree(tmp_path, monkeypatch):
+def test_toggle_change_invalidates_an_already_consolidated_tree(golden_extractor, monkeypatch):
     """The consolidation-inputs fingerprint rebuilds a STALE tree.
 
-    This is the state transition the fingerprint exists to produce, and nothing
-    else in this file exercises it: both tests above construct the case with the
-    toggle already at its final value at materialization time, so neither ever
-    meets a tree that is present, complete, AND built from different inputs.
+    A tree can be present, complete AND built from different inputs than the ones now on disk: the timeseries toggle
+    was once flipped ON in every persisted config, consolidation re-ran, and the output was silently unchanged because
+    the reuse guard keyed only on existence and log completion. ``regenerate_existing`` does not help, since it is a
+    driver-side deletion flag that never reaches ``consolidate_to_datatree``.
 
-    The 2026-07-20 production failure was exactly that state — the toggle was
-    flipped ON in all 28 persisted per-sub configs, consolidation re-ran, and the
-    output was silently unchanged, because the guard keyed only on
-    ``fname_out.exists() and _log_complete``. `regenerate_existing` does not help:
-    it is a driver-side DELETION flag that never reaches this guard (verified: it
-    is passed to `consolidate_to_datatree` nowhere in `src/hhemt/`), and on an HPC
-    method its deletion is routed to a SLURM-offloaded workflow whose failure the
-    call site discards.
-
-    Shape: consolidate with the toggle OFF, rebuild the analysis object from a
-    config with the toggle ON WITHOUT wiping, consolidate again, assert the
-    timeseries nodes appear. The second consolidation is invoked directly rather
-    than through a second full workflow — the guard under test lives in
-    ``consolidate_to_datatree``, so driving it directly is both sufficient and
-    ~5 minutes cheaper.
+    Shape: consolidate with the toggle OFF, rewrite the persisted config with the toggle ON on the same tree without
+    wiping, build a fresh analysis object, consolidate again, and assert the timeseries nodes appear and the tree was
+    rewritten. The guard lives in ``consolidate_to_datatree``, so calling it directly is sufficient.
     """
-    from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
+    _declare_stale_build(monkeypatch)
+    system_dir = golden_extractor("multisim")
+    cfg = system_dir / "analysis_config.yaml"
+    original = cfg.read_text()
 
-    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
-
-    # --- Pass 1: toggle OFF (the default). Full pipeline, so the per-scenario
-    # timeseries zarrs land on disk and are AVAILABLE to consolidate -- the point
-    # is that they are available and still not consolidated, not that they are absent.
-    case_off = retrieve_synth_TRITON_SWMM_test_case(
-        analysis_name="synth_multi_sim", n_events=3, start_from_scratch=True
-    )
-    a_off = case_off.analysis
+    cfg.write_text(original + "toggle_consolidate_timeseries: false\n")
+    a_off = construct_golden_analysis(system_dir)
     assert a_off.cfg_analysis.toggle_consolidate_timeseries is False
-    result = a_off.submit_workflow(**_WORKFLOW_KWARGS)
-    assert result["success"], f"Workflow failed: {result.get('message', '')}"
-
+    a_off.process.consolidate_to_datatree()
     tree_path = a_off.analysis_paths.analysis_datatree_zarr
     assert tree_path is not None and tree_path.exists()
     tsg_off = xr.open_datatree(tree_path, engine="zarr", consolidated=False)["tritonswmm"]
     assert "swmm_node_timeseries" not in tsg_off, "toggle OFF should not consolidate timeseries"
     mtime_after_pass1 = tree_path.stat().st_mtime
 
-    # --- Pass 2: same on-disk analysis, toggle ON in the PERSISTED config.
-    # start_from_scratch=False so the pass-1 tree SURVIVES -- that surviving,
-    # complete-but-stale tree is the whole fixture.
-    case_on = retrieve_synth_TRITON_SWMM_test_case(
-        analysis_name="synth_multi_sim",
-        n_events=3,
-        start_from_scratch=False,
-        additional_analysis_configs={"toggle_consolidate_timeseries": True},
-    )
-    a_on = case_on.analysis
+    cfg.write_text(original + "toggle_consolidate_timeseries: true\n")
+    a_on = construct_golden_analysis(system_dir)
     assert a_on.cfg_analysis.toggle_consolidate_timeseries is True
-    assert tree_path.exists(), "pass-1 tree must survive; otherwise this tests a fresh build, not staleness"
+    assert tree_path.exists(), "the first tree must survive; otherwise this tests a fresh build, not staleness"
 
-    a_on.process.consolidate_to_datatree(compression_level=5, verbose=True)
+    a_on.process.consolidate_to_datatree()
 
-    # The guard must have detected the fingerprint mismatch and rebuilt.
     tsg_on = xr.open_datatree(tree_path, engine="zarr", consolidated=False)["tritonswmm"]
-    for node_name in ("swmm_node_timeseries", "swmm_link_timeseries"):
+    for node_name in _TS_NODES:
         assert node_name in tsg_on, (
-            f"{node_name} absent after a toggle change on an already-consolidated tree — "
+            f"{node_name} absent after a toggle change on an already-consolidated tree: "
             "the consolidation-inputs fingerprint did not invalidate it"
         )
     assert tree_path.stat().st_mtime > mtime_after_pass1, "tree was not rewritten"

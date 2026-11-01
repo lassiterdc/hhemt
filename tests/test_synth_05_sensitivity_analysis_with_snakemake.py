@@ -1,5 +1,12 @@
-"""Synthetic-model sensitivity + Snakemake tier. Mirror of test_PC_05 using synth fixtures."""
+"""Synthetic-model sensitivity + Snakemake tier. Mirror of test_PC_05 using synth fixtures.
 
+Checks, for a sensitivity analysis on the synthetic model and on a committed golden tree: master and member Snakefile
+generation, the reprocess self-heal and render paths, report rendering, EDA rule emission for the reporting sets, and
+the ``system.`` / ``analysis.`` sensitivity-CSV columns.
+"""
+
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -7,17 +14,90 @@ import pytest
 import tests.utils_for_testing as tst_ut
 from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV
 
-pytestmark = [
-    pytest.mark.requires_snakemake_subprocess,
-    pytest.mark.skipif(
-        tst_ut.compile_toolchain_unavailable() and not tst_ut.require_compile_tier(),
-        reason=(
-            "TRITON-SWMM/SWMM compile toolchain (cmake + mpic++) absent. Runs under the "
-            "hhemt conda env; HHEMT_REQUIRE_COMPILE_TIER=1 turns absence into a "
-            "hard failure."
-        ),
-    ),
-]
+pytestmark = [pytest.mark.requires_snakemake_subprocess]
+
+_TOOLCHAIN_ABSENT_REASON = (
+    "TRITON-SWMM/SWMM compile toolchain (cmake + mpic++) absent. Runs under the "
+    "hhemt conda env; HHEMT_REQUIRE_COMPILE_TIER=1 turns absence into a "
+    "hard failure."
+)
+
+
+@pytest.fixture(autouse=True)
+def _compile_toolchain_gate(request):
+    """Skip a test that needs the compile toolchain when it is absent (the module-level ``skipif`` this replaces).
+
+    The rows that run on the committed golden need no toolchain (they compile and run no solver), so they are
+    exempt: a module-level skip would silently drop them on any machine without cmake and mpic++."""
+    if "golden_sensitivity_analysis" in request.fixturenames:
+        return
+    if tst_ut.compile_toolchain_unavailable() and not tst_ut.require_compile_tier():
+        pytest.skip(_TOOLCHAIN_ABSENT_REASON)
+
+
+# The identity shim ``_IDENTITY_SHIM`` and the fixtures ``golden_reprocess_env`` and ``golden_planned`` below supply
+# what a reprocess over a committed golden tree needs and a tree built by a real run already has. The shim string is
+# copied into other test modules that reprocess a golden, so one grep for ``_IDENTITY_SHIM`` finds every copy.
+# Each prerequisite here is needed by the rows that request it, and none is included for a row that does not need
+# it. In particular the consolidation-build escape (HHEMT_DECLARE_STALE_BUILD) is absent on purpose: no row below
+# asserts the modification time of a consolidated store, which is the only thing that escape protects.
+#
+# Child interpreters (the reprocess rules) refuse a toolkit checkout with uncommitted tracked changes, because each
+# constructs an analysis (``hhemt.validation.running_identity`` -> ``dirty``). The golden fixtures clear ``dirty`` in
+# THIS process only, so this ``sitecustomize`` shim, put first on the children's ``PYTHONPATH``, clears it once
+# ``hhemt.validation`` is imported. It never touches the sha, and on a clean tree it is the identity.
+_IDENTITY_SHIM = """
+import dataclasses
+import importlib.abc
+import importlib.machinery
+import sys
+
+
+class _ClearDirty(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path, target=None):
+        if name != "hhemt.validation":
+            return None
+        spec = importlib.machinery.PathFinder.find_spec(name, path)
+        if spec is None or spec.loader is None:
+            return spec
+        loader = spec.loader
+        exec_module = loader.exec_module
+
+        def patched(module):
+            exec_module(module)
+            real = module.running_identity
+            module.running_identity = lambda: dataclasses.replace(real(), dirty=False)
+
+        loader.exec_module = patched
+        return spec
+
+
+sys.meta_path.insert(0, _ClearDirty())
+"""
+
+
+@pytest.fixture
+def golden_reprocess_env(monkeypatch, tmp_path):
+    """The child-interpreter environment of a golden reprocess: the identity shim first on ``PYTHONPATH``, the
+    interpreter's directory first on ``PATH`` (the sensitivity Snakefile calls a bare ``python``)."""
+    shim_dir = tmp_path / "identity_shim"
+    shim_dir.mkdir()
+    (shim_dir / "sitecustomize.py").write_text(_IDENTITY_SHIM)
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(filter(None, [str(shim_dir), os.environ.get("PYTHONPATH", "")])))
+    monkeypatch.setenv("PATH", os.pathsep.join([str(Path(sys.executable).parent), os.environ.get("PATH", "")]))
+
+
+@pytest.fixture
+def golden_planned(golden_sensitivity_analysis, golden_reprocess_env):
+    """The sensitivity golden with the Snakefile a golden does not carry (tests/goldens/SPEC.md section 9), written by
+    a dry run.
+
+    Needed by ``test_reprocess_render_report_over_partial_completion`` (the report rules read it);
+    ``test_reprocess_process_self_heals_deleted_summary`` runs without it."""
+    from tests.fixtures.golden_trees import dry_run_plan
+
+    dry_run_plan(golden_sensitivity_analysis)
+    return golden_sensitivity_analysis
 
 
 def test_snakemake_sensitivity_workflow_generation_and_write(
@@ -119,14 +199,14 @@ def _render_report_rule_block(snakefile_content: str) -> str:
 
 
 def test_reprocess_render_report_rule_carries_reprocess_flag(synth_sensitivity_analysis):
-    """Generation assertion (reprocess-render-report-snakefile-selection, R3/R5).
+    """Generation assertion for the ``--reprocess`` flag on ``rule render_report``.
 
     The REPROCESS master Snakefile's ``rule render_report`` shell MUST pass
     ``--reprocess`` to ``render_report_runner`` so ``render_report()`` selects
     ``Snakefile.reprocess``; the PRODUCTION master Snakefile's ``rule
     render_report`` shell MUST NOT (keeping the production render path
-    byte-identical). Guards against the synergy refactor silently dropping the
-    flag.
+    byte-identical). Guards against the flag being silently dropped from the
+    reprocess rule.
     """
     builder = synth_sensitivity_analysis.sensitivity._workflow_builder
 
@@ -138,23 +218,22 @@ def test_reprocess_render_report_rule_carries_reprocess_flag(synth_sensitivity_a
 
     assert "render_report_runner" in reprocess_block, "reprocess render_report rule must invoke the runner"
     assert "--reprocess" in reprocess_block, (
-        "reprocess master render_report shell MUST pass --reprocess so render_report() "
-        "selects Snakefile.reprocess (R3/R5)"
+        "reprocess master render_report shell MUST pass --reprocess so render_report() selects Snakefile.reprocess"
     )
     assert "render_report_runner" in production_block, "production render_report rule must invoke the runner"
     assert "--reprocess" not in production_block, (
-        "production master render_report shell MUST NOT pass --reprocess (byte-identical production render path; R3/R5)"
+        "production master render_report shell MUST NOT pass --reprocess (byte-identical production render path)"
     )
 
 
 def test_master_snakefile_emits_per_target_setup_rules(
     synth_sensitivity_analysis,
 ):
-    """Phase 3: master Snakefile emits one `rule setup_target_{N}` per unique system target.
+    """The master Snakefile emits one `rule setup_target_{N}` per unique system target.
 
     The synth fixture has no per-SA `system_config_yaml` column, so all members
-    collapse to a single UniqueSystemTarget. The Snakefile must emit exactly one
-    `rule setup_target_0` and zero standalone `rule setup:` blocks.
+    collapse to a single UniqueSystemTarget. The Snakefile must contain `rule setup_target_0`,
+    no standalone `rule setup:` block and no `_status/a_setup_complete.flag`.
     """
     analysis = synth_sensitivity_analysis
     sensitivity = analysis.sensitivity
@@ -168,14 +247,13 @@ def test_master_snakefile_emits_per_target_setup_rules(
 
     assert "rule setup_target_0:" in content
     assert "_status/a_setup_target_0_complete.flag" in content
-    # The legacy single-target rule name and flag must not appear.
+    # The standalone `rule setup:` and `_status/a_setup_complete.flag` must not appear.
     assert "rule setup:\n" not in content
     assert "_status/a_setup_complete.flag" not in content
-    # Per-SA prepare rules must depend on the new flag.
+    # Every member has a `prepare_member_{id}_evt_` rule.
     for member_id in sensitivity.members.keys():
         assert f"rule prepare_member_{str(member_id).replace('.', '_').replace('-', '_')}_evt_" in content
-    # The setup-target flag must surface in rule all so the DAG planner reaches it
-    # even for members whose df_sims is empty.
+    # The setup-target flag must surface in rule all.
     rule_all_block = content.split("rule all:")[1].split("rule setup_target_0:")[0]
     assert "_status/a_setup_target_0_complete.flag" in rule_all_block
 
@@ -214,7 +292,6 @@ def test_snakemake_sensitivity_workflow_config_generation(synth_sensitivity_anal
     Verifies that:
     1. All parameters are correctly formatted in master Snakefile
     2. Consolidation command includes correct flags
-    3. Member references are correct
     """
     analysis = synth_sensitivity_analysis
     sensitivity = analysis.sensitivity
@@ -242,6 +319,8 @@ def test_snakemake_sensitivity_workflow_dry_run(
     2. All dependencies resolve correctly
     3. No actual execution occurs
     4. Snakemake exit code is 0
+    5. df_status carries the ``snakemake_allocated_*`` columns and a leading ``member_id`` column holding
+       ``str(i)`` for each row
     """
     analysis = synth_sensitivity_analysis
     result = analysis.submit_workflow(
@@ -287,11 +366,9 @@ def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
 
     Validates that:
     1. submit_workflow() returns success
-    2. Setup phase completes for each member
-    3. All simulations execute without errors
-    4. Member consolidation completes
-    5. Master consolidation completes
-    6. Final sensitivity analysis summaries are generated
+    2. ``tst_ut.assert_analysis_workflow_completed_successfully`` passes: it runs ``validate_analysis`` over the
+       analysis ("Runs all 7 checks", per that helper's docstring)
+    3. The benchmarking HTML figure for ``n_devices`` exists under ``plots/sensitivity/benchmarking``
     """
     analysis = synth_sensitivity_analysis
 
@@ -324,31 +401,28 @@ def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
         assert figure.exists(), f"Expected benchmarking figure missing: {figure}"
 
 
-@pytest.mark.slow
-@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-# R3 exclusion: retained, not converted — the reprocess call IS the behaviour under test.
 # Property: reprocess(start_with="process") self-heals a summary deleted under a surviving
 # d_process flag at the default regenerate_existing=False, leaves healthy flag mtimes untouched,
 # and emits zero process_member_* rules on the second pass.
-def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis):
-    """Regression (reprocess-rebuild-divergence-fix).
+def test_reprocess_process_self_heals_deleted_summary(golden_sensitivity_analysis, golden_reprocess_env):
+    """Regression: a deleted summary under a surviving completion flag must be rebuilt by a default reprocess.
 
     The divergence state is: a per-scenario summary output was deleted, but its
     ``d_process_*`` completion flag survived. ``reprocess(start_with="process")``
     must self-heal it — reconcile the flag + per-model processing log against
     on-disk summary presence — and rebuild the missing summary, REGARDLESS of
-    ``regenerate_existing`` (the May-31 failure ran the default ``False``).
+    ``regenerate_existing``.
 
     Asserts:
-    - R1/R2/R4/R6 (rebuild): delete one summary zarr while leaving its
+    - Rebuild: delete one summary zarr while leaving its
       ``d_process`` flag → ``reprocess(start_with="process",
       regenerate_existing=False)`` rebuilds the summary, re-runs consolidate,
       and reproduces the analysis summaries.
-    - R3 (healthy no-op): every OTHER ``d_process`` flag retains its
+    - Healthy no-op: every OTHER ``d_process`` flag retains its
       pre-reprocess mtime (only the divergent pair was unlinked).
-    - First-run idempotence: a SECOND ``reprocess(start_with="process",
-      dry_run=True)`` emits ZERO ``process_member_*`` rules (the gate is now closed
-      for all events) — asserted via a deterministic Snakefile.reprocess parse.
+    - Steady state: a SECOND ``reprocess(start_with="process",
+      dry_run=True)`` emits ZERO ``process_member_*`` rules — asserted via a
+      deterministic Snakefile.reprocess parse.
     """
     import shutil
 
@@ -362,10 +436,9 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
         compute_event_id_slug,
     )
 
-    # Guard: this regression test is meaningless unless it exercises the SOURCE
-    # under test (the worktree edits), not a stale installed copy. Assert the
-    # loaded analysis module is the worktree's and carries the new self-heal
-    # helper before doing any expensive build/run work.
+    # Guard: assert that the loaded TRITONSWMM_analysis carries
+    # `_reconcile_stale_process_flags_against_summaries` before doing any expensive build/run work; the failure
+    # message names the loaded module's file, which shows a stale installed copy if that is what was imported.
     assert hasattr(
         _analysis_mod.TRITONSWMM_analysis,
         "_reconcile_stale_process_flags_against_summaries",
@@ -375,37 +448,13 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
     )
 
     # model_type -> consolidate-consumed summary attrs (the canonical table in
-    # hhemt.summary_paths, shared with the production self-heal's D3 predicate).
+    # hhemt.summary_paths, shared with the production self-heal's predicate).
     from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL
 
-    analysis = synth_sensitivity_analysis
+    analysis = golden_sensitivity_analysis
 
-    # ── Arrange: run the full sensitivity workflow to completion so real
-    # summary zarrs exist on disk (mirrors test_snakemake_sensitivity_workflow_
-    # execution). ──────────────────────────────────────────────────────────────
-    result = analysis.submit_workflow(
-        mode="local",
-        process_system_level_inputs=True,
-        overwrite_system_inputs=True,
-        compile_TRITON_SWMM=True,
-        recompile_if_already_done_successfully=True,
-        prepare_scenarios=True,
-        overwrite_scenario_if_already_set_up=True,
-        rerun_swmm_hydro_if_outputs_exist=True,
-        process_timeseries=True,
-        which="both",
-        # Preserve raw sim outputs (out_tritonswmm/*): the reprocess rebuild
-        # re-reads them to regenerate the deleted summary. Clearing raw here
-        # ("all") would delete the rebuild source and make the rebuild assertion
-        # unsatisfiable — that is the separate raw-also-gone case the
-        # _assert_reprocess_rebuild_sources_present preflight guards, not the
-        # divergence-rebuild path this test validates.
-        override_clear_raw="none",
-        compression_level=5,
-        pickup_where_leftoff=False,
-        verbose=True,
-    )
-    assert result["success"], f"Workflow submission failed: {result.get('message', '')}"
+    # ── Arrange: the committed golden is already a completed sensitivity analysis with the raw layer, so the real
+    # summary zarrs exist on disk and need no workflow run. ─────────────────────────────────────────────────────────
     tst_ut.assert_analysis_summaries_created(analysis)
 
     master_dir = analysis.analysis_paths.analysis_dir
@@ -445,20 +494,20 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
     assert not summary_to_delete.exists(), "summary should be deleted"
     assert flag_path.exists(), "d_process flag must survive summary deletion (this IS the divergence state)"
 
-    # Record all d_process flag mtimes for the no-op (R3) arm.
+    # Record all d_process flag mtimes for the healthy no-op arm.
     pre_mtimes = {f: f.stat().st_mtime for f in status_dir.glob("d_process_*_complete.flag")}
 
     # ── Act: reprocess on the process path with the DEFAULT
     # regenerate_existing=False (the configuration that originally failed). ──────
     analysis.reprocess(start_with="process", execution_mode="local", regenerate_existing=False)
 
-    # ── Assert (rebuild, R1/R2/R4/R6). ─────────────────────────────────────────
+    # ── Assert (rebuild). ──────────────────────────────────────────────────────
     assert summary_to_delete.exists(), "self-heal must rebuild the deleted summary on the process path"
     consolidate_flag = master_dir / consolidate_analysis_flag(target_member)
     assert consolidate_flag.exists(), f"per-member consolidate flag must be present after reprocess: {consolidate_flag}"
     tst_ut.assert_analysis_summaries_created(analysis)
 
-    # ── Assert (healthy no-op, R3): every OTHER d_process flag keeps its
+    # ── Assert (healthy no-op): every OTHER d_process flag keeps its
     # pre-reprocess mtime; only the divergent pair was unlinked + rebuilt. ──────
     for f, mtime in pre_mtimes.items():
         if f == flag_path:
@@ -466,9 +515,9 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
         assert f.exists(), f"healthy d_process flag unexpectedly missing: {f}"
         assert f.stat().st_mtime == mtime, f"healthy d_process flag mtime changed unexpectedly (should be a no-op): {f}"
 
-    # ── Assert (first-run idempotence): a SECOND process reprocess (dry-run)
+    # ── Assert (steady state): a SECOND process reprocess (dry-run)
     # emits ZERO process_member_ rules — the gate's `not d_process_path.exists()` is
-    # now False for every event. Parse the generated Snakefile.reprocess
+    # False for every event. Parse the generated Snakefile.reprocess
     # (deterministic; does not depend on snakemake dry-run stats formatting). ───
     analysis.reprocess(start_with="process", execution_mode="local", dry_run=True)
     snakefile = master_dir / "Snakefile.reprocess"
@@ -479,10 +528,8 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
     )
 
 
-@pytest.mark.slow
-@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_experiment_consolidation_tolerates_incomplete_analysis(synth_sensitivity_analysis):
-    """Regression (sensitivity-consolidation-tolerate-incomplete).
+def test_experiment_consolidation_tolerates_incomplete_analysis(golden_sensitivity_analysis):
+    """Regression: master consolidation with one incomplete member must not crash.
 
     Reproduces the FUNCTION-LEVEL crash behind the live uva_sensitivity_suite
     experiment_consolidation FileNotFoundError: consolidate_sensitivity_datatree
@@ -491,14 +538,15 @@ def test_experiment_consolidation_tolerates_incomplete_analysis(synth_sensitivit
     datatree_consolidation_complete log is False — the real never-consolidated
     state). This test calls consolidate_sensitivity_datatree directly (the
     unit-level gate for the function under change); the consolidate_workflow.py
-    call site inherits the True default UNCHANGED under Decision D2, so that
-    default-inheritance wiring is covered by the end-to-end synth_05 run (V2),
-    not by this unit test. Master consolidation must still assemble
+    call site passes no ``allow_incomplete`` and so inherits the True default, a
+    wiring the end-to-end runs in this module reach (the master Snakefile passes
+    ``--consolidate-sensitivity-analysis-outputs``) and this unit test does not.
+    Master consolidation must still assemble
     sensitivity_datatree.zarr over the COMPLETED subset under
-    allow_incomplete=True (the default per Decision D2), skipping the incomplete sub.
+    allow_incomplete=True (the default), skipping the incomplete sub.
 
-    Asserts R2/R4 (tolerant regen over the completed subset; experiment definition
-    preserved in the root `parameters` node) and R3 (fail-fast when allow_incomplete=False).
+    Asserts the tolerant regeneration over the completed subset (experiment definition
+    preserved in the root `parameters` node) and the fail-fast when allow_incomplete=False.
     """
     import shutil
 
@@ -507,27 +555,9 @@ def test_experiment_consolidation_tolerates_incomplete_analysis(synth_sensitivit
     from hhemt.scenario import TRITONSWMM_scenario
     from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL
 
-    analysis = synth_sensitivity_analysis
+    analysis = golden_sensitivity_analysis
 
-    # Arrange: full sensitivity run so real per-sub datatrees + master tree exist.
-    result = analysis.submit_workflow(
-        mode="local",
-        process_system_level_inputs=True,
-        overwrite_system_inputs=True,
-        compile_TRITON_SWMM=True,
-        recompile_if_already_done_successfully=True,
-        prepare_scenarios=True,
-        overwrite_scenario_if_already_set_up=True,
-        rerun_swmm_hydro_if_outputs_exist=True,
-        process_timeseries=True,
-        which="both",
-        override_clear_raw="all",
-        compression_level=5,
-        pickup_where_leftoff=False,
-        verbose=True,
-    )
-    assert result["success"], f"Workflow submission failed: {result.get('message', '')}"
-
+    # Arrange: the committed golden already holds real per-sub datatrees and the master tree.
     sensitivity = analysis.sensitivity
     member_items = list(sensitivity.members.items())
     assert len(member_items) >= 2, "test needs >=2 members (one incomplete, one complete)"
@@ -573,7 +603,7 @@ def test_experiment_consolidation_tolerates_incomplete_analysis(synth_sensitivit
     # Act: tolerant consolidation (default True; pass explicitly for clarity).
     out = sensitivity.consolidate_sensitivity_datatree(allow_incomplete=True)
 
-    # Assert R2/R4.
+    # Assert the tolerant regeneration over the completed subset.
     assert out.exists(), "master tree must regenerate over the completed subset"
     tree = xr.open_datatree(out, engine="zarr", consolidated=False)
     member_nodes = {c for c in tree.children if c.startswith(prefix)}
@@ -592,13 +622,13 @@ def test_experiment_consolidation_tolerates_incomplete_analysis(synth_sensitivit
         "root `parameters` Dataset must list every defined member"
     )
 
-    # Assert R3: fail-fast preserved when allow_incomplete=False.
+    # Assert the fail-fast is preserved when allow_incomplete=False.
     shutil.rmtree(out)
     with pytest.raises((FileNotFoundError, ValueError)):
         sensitivity.consolidate_sensitivity_datatree(allow_incomplete=False)
 
 
-# ─── Phase 7: Snakemake report integration tests (sensitivity master) ──────────
+# ─── Sensitivity-master report configuration and rendering tests ───────────────
 
 from pathlib import Path as _Path  # noqa: E402
 
@@ -608,21 +638,18 @@ _SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7 = (
 
 
 def test_synth_sensitivity_report_inlined_passes_run_entry_validation():
-    """R2 (DECISION 1 = Option A — D2 consolidation): the BARE ``_TestCaseBuilder``
-    synth-sensitivity construction (no catalog report injection) must inline
-    ``cfg_analysis.report`` so the ``run()``-entry cross-validation passes.
+    """The BARE ``_TestCaseBuilder`` synth-sensitivity construction (no catalog report
+    injection) must inline ``cfg_analysis.report`` so the ``run()``-entry
+    cross-validation passes.
 
-    Red-before-green characterization (SE F-B 2): with the ~13 synth-wrapper
-    ``additional_analysis_configs={"report": ...}`` injections removed from
-    ``test_case_catalog.py``, this path routes through the bare builder. PRE-D2 the
-    builder emitted ``report: {}`` -> ``cfg_analysis.report.sensitivity is None`` ->
-    ``validate_sensitivity_independent_vars`` raises ``ConfigurationError`` (verified
-    RED before the ``test_case_builder.py`` inline landed). POST-D2 the builder
-    inlines ``report_config_synth_sensitivity.yaml``, so ``report.sensitivity`` is
-    populated and validation passes. This is the test the consolidation makes
-    meaningful — the bare-builder path is now the standard synth construction, so a
-    pattern-match against the (previously report-injecting) catalog wrappers would
-    have been tautologically green.
+    The catalog wrappers no longer inject ``additional_analysis_configs={"report": ...}``,
+    so this path routes through the bare builder. Before the builder inlined a report
+    block it emitted ``report: {}`` -> ``cfg_analysis.report.sensitivity is None`` ->
+    ``validate_sensitivity_independent_vars`` raises ``ConfigurationError``. Now the
+    builder inlines ``report_config_synth_sensitivity.yaml``, so ``report.sensitivity``
+    is populated and validation passes. The bare-builder path is the standard synth
+    construction, so a pattern-match against the (previously report-injecting) catalog
+    wrappers would have been tautologically green.
     """
     from pathlib import Path
 
@@ -632,9 +659,9 @@ def test_synth_sensitivity_report_inlined_passes_run_entry_validation():
     case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(start_from_scratch=False, skip_run=True)
     analysis = case.analysis
 
-    # Post-D2: the bare builder inlines the synth sensitivity report block.
+    # The bare builder inlines the synth sensitivity report block.
     assert analysis.cfg_analysis.report.sensitivity is not None, (
-        "D2 builder-inline regressed: bare _TestCaseBuilder emitted an empty "
+        "builder-inline regressed: bare _TestCaseBuilder emitted an empty "
         "report block (cfg_analysis.report.sensitivity is None)"
     )
 
@@ -647,7 +674,12 @@ def test_synth_sensitivity_report_inlined_passes_run_entry_validation():
 @pytest.mark.slow
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_run_and_render_report(synth_sensitivity_analysis_cached):
-    """Sensitivity run -> master render. Asserts master report exists; no per-member report (R13)."""
+    """Sensitivity run -> master render.
+
+    Asserts the master report exists, the benchmarking figures exist under ``plots/sensitivity/benchmarking``, no
+    per-member report exists, and every member whose ``analysis_datatree.zarr`` exists on disk is a node of the
+    master ``sensitivity_datatree.zarr`` (silent-drop guard).
+    """
     from pathlib import Path
 
     analysis = synth_sensitivity_analysis_cached
@@ -663,19 +695,18 @@ def test_run_and_render_report(synth_sensitivity_analysis_cached):
     assert bench_dir.exists()
     assert any(bench_dir.glob("benchmarking__*.vs.total.html"))
 
-    # R13: no per-member report
     for member_id, sub in analysis.sensitivity.members.items():
         sub_html = sub.analysis_paths.analysis_dir / "analysis_report.html"
         assert not sub_html.exists(), f"unexpected per-member report at {sub_html} for member_id={member_id}"
 
-    # OE-3 / R8: master-tree membership parity (silent-drop guard).
+    # Master-tree membership parity (silent-drop guard).
     # After a FULL clean consolidation (all subs present), every member
     # whose analysis_datatree.zarr exists on disk MUST appear as a node in the
     # master sensitivity_datatree.zarr. Asserting the on-disk-zarr set is a
-    # subset of the master-tree-node set catches the silent-drop class (Gotcha 36
+    # subset of the master-tree-node set catches the silent-drop class (where
     # `allow_incomplete=True` lets build_sensitivity_datatree drop a skipped sub
     # while returning success=True) against on-disk ground truth -- independent
-    # of the clobberable/stale in-memory + log completion flags this plan fixed.
+    # of the clobberable/stale in-memory + log completion flags.
     import xarray as xr
 
     sensitivity = analysis.sensitivity
@@ -699,7 +730,7 @@ def test_run_and_render_report(synth_sensitivity_analysis_cached):
 @pytest.mark.slow
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_render_report_idempotent(synth_sensitivity_analysis_cached):
-    """Sensitivity render_report() is idempotent (R11)."""
+    """Sensitivity render_report() is idempotent."""
     import time
     from pathlib import Path
 
@@ -722,8 +753,7 @@ def test_synth_render_report_interactive_zip(synth_sensitivity_analysis_cached, 
     # ZIP-fallback path: render_report(format="zip") writes
     # `analysis_report.zip` containing `report.html` + per-figure
     # `data/*.html` entries. Asserts the bundle carries >= 6 data/*.html
-    # entries (one per interactive figure under the master plan's expected
-    # shape).
+    # entries.
     import zipfile
     from pathlib import Path
 
@@ -746,7 +776,7 @@ def test_synth_render_report_interactive_zip(synth_sensitivity_analysis_cached, 
 @pytest.mark.slow
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_plot_sources_attribution(synth_sensitivity_analysis_cached):
-    """R15: 'Sources:' bullet block appears in master HTML report."""
+    """The string 'Sources:' appears in the master HTML report."""
     from pathlib import Path
 
     analysis = synth_sensitivity_analysis_cached
@@ -802,7 +832,8 @@ def test_no_html_content_in_svg_file_references(synth_sensitivity_analysis_cache
 
 
 # ============================================================================
-# Phase 1 of prefixed_column_config_variation — tests
+# Sensitivity-CSV columns prefixed ``system.``: validation errors, synthesis of
+# per-target system YAMLs, the fingerprint payload, and the df_setup accessor
 # ============================================================================
 
 import yaml as _yaml  # noqa: E402
@@ -812,13 +843,13 @@ from hhemt.exceptions import ConfigurationError  # noqa: E402
 
 
 def test_system_overlay_mutual_exclusion_with_system_config_yaml():
-    """Phase 1 R3 — row with both system_config_yaml and system.* raises ConfigurationError."""
+    """A row with both system_config_yaml and system.* columns raises ConfigurationError."""
     with pytest.raises(ConfigurationError, match="mutually exclusive"):
         _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_mutex_violation(start_from_scratch=True)
 
 
 def test_system_overlay_validator_re_fire_invalid_value():
-    """Phase 1 R4 — invalid overlay value raises ConfigurationError via Pydantic."""
+    """An invalid system.* overlay value raises ConfigurationError via Pydantic."""
     with pytest.raises(ConfigurationError, match="SystemConfig validation"):
         _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_invalid_overlay(start_from_scratch=True)
 
@@ -826,8 +857,8 @@ def test_system_overlay_validator_re_fire_invalid_value():
 def test_gpu_hardware_override_column_raises_migration_error():
     """Legacy `gpu_hardware_override` column is rejected as unknown.
 
-    Phase 6: the prior migration target `system.gpu_hardware` is itself retired
-    (Phase 4, R7 — gpu_hardware is now partition-DERIVED). The column is rejected
+    The prior migration target `system.gpu_hardware` is itself retired
+    (gpu_hardware is now partition-DERIVED). The column is rejected
     as unknown; the message lists the valid columns (including the `hpc.partition`
     alias that selects GPU hardware via the partition spec)."""
     with pytest.raises(ConfigurationError, match="Unknown sensitivity-CSV columns") as excinfo:
@@ -838,7 +869,7 @@ def test_gpu_hardware_override_column_raises_migration_error():
 
 
 def test_unknown_column_rejected_with_nearest_match_hint():
-    """Phase 1 R9 — unknown column (typo) raises ConfigurationError."""
+    """An unknown column (a typo) raises ConfigurationError."""
     with pytest.raises(ConfigurationError, match="Unknown sensitivity-CSV columns"):
         _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_typo_in_prefixed_column(
             start_from_scratch=True
@@ -848,7 +879,7 @@ def test_unknown_column_rejected_with_nearest_match_hint():
 def test_system_dot_prefix_column_recognized_and_synthesizes_yaml(
     synth_sensitivity_with_system_overlay,
 ):
-    """Phase 1 R1, R5, R6 — system.target_dem_resolution synthesizes two per-target YAMLs."""
+    """A system.target_dem_resolution column synthesizes two per-target YAMLs."""
     analysis = synth_sensitivity_with_system_overlay
     generated_dir = analysis.analysis_paths.analysis_dir / "_generated"
     assert generated_dir.exists()
@@ -861,7 +892,7 @@ def test_system_dot_prefix_column_recognized_and_synthesizes_yaml(
 def test_fingerprint_payload_includes_system_overlay(
     synth_sensitivity_with_system_overlay,
 ):
-    """Phase 1 R7 — fingerprint payload attaches system_overlay key + schema 3."""
+    """The fingerprint payload attaches a system_overlay key and schema version 3."""
     experiment = synth_sensitivity_with_system_overlay
     analysis = experiment.sensitivity.members["0"]
     payload = experiment.sensitivity._compute_member_id_fingerprint_payload(analysis)
@@ -887,15 +918,17 @@ def test_df_setup_with_system_overlays_carries_prefixed_system_columns(
 
 
 # ============================================================================
-# Phase 2 of prefixed_column_config_variation — tests
+# Sensitivity-CSV columns prefixed ``analysis.`` or left bare (the bare-name DeprecationWarning and the
+# analysis/system split of the independent variables); the fourth test below checks that a runner subprocess does
+# not purge ``_generated/``.
 # ============================================================================
 
 
 def test_bare_name_analysis_config_column_emits_deprecation_warning(monkeypatch, tmp_path):
-    """Phase 2 R2 — bare-name analysis-config columns emit DeprecationWarning at construction."""
+    """Bare-name analysis-config columns emit DeprecationWarning at construction."""
     # The default synth sensitivity CSV uses bare names (run_mode, n_mpi_procs, etc.),
     # so a fresh load must surface a DeprecationWarning naming a bare analysis-config column.
-    # census-green-up isolation: this is a start_from_scratch=True retrieve on the SHARED
+    # Isolation: this is a start_from_scratch=True retrieve on the SHARED
     # synth_sensitivity slug cache. Without the runs_root override it fast_rmtree-wipes the
     # shared cache to a configured-only (empty sims/) state (no run) — which then breaks the
     # downstream *_cached consumers (e.g. test_synth_07's failing_synth_sensitivity_analysis
@@ -907,7 +940,7 @@ def test_bare_name_analysis_config_column_emits_deprecation_warning(monkeypatch,
 
 
 def test_analysis_dot_prefix_column_accepted_silently(synth_sensitivity_all_analysis_prefixed):
-    """Phase 2 R2 — `analysis.{field}` columns accepted without DeprecationWarning."""
+    """`analysis.{field}` columns are accepted without DeprecationWarning."""
     import warnings
 
     analysis = synth_sensitivity_all_analysis_prefixed
@@ -920,7 +953,7 @@ def test_analysis_dot_prefix_column_accepted_silently(synth_sensitivity_all_anal
 
 
 def test_attributes_varied_for_analysis_split(synth_sensitivity_mixed_prefixed_columns):
-    """Phase 2 R10 — `analysis_independent_vars` and `system_independent_vars` are separate."""
+    """`analysis_independent_vars` and `system_independent_vars` are separate."""
     analysis = synth_sensitivity_mixed_prefixed_columns
     assert "n_omp_threads" in analysis.sensitivity.analysis_independent_vars  # bare-name in fixture
     assert "n_mpi_procs" in analysis.sensitivity.analysis_independent_vars  # analysis.n_mpi_procs in fixture
@@ -932,7 +965,7 @@ def test_build_unique_system_targets_skips_purge_in_runner_subprocess(
     synth_sensitivity_with_system_overlay,
     monkeypatch,
 ):
-    """Phase 1 R-P1-4 — is_main_orchestrator=False skips fast_rmtree of _generated/."""
+    """is_main_orchestrator=False skips fast_rmtree of _generated/."""
     from hhemt import utils as _utils_mod
 
     analysis = synth_sensitivity_with_system_overlay
@@ -941,6 +974,8 @@ def test_build_unique_system_targets_skips_purge_in_runner_subprocess(
     called: list[Path] = []
 
     def fake_rmtree(p, *args, **kwargs):
+        # Records each path passed to fast_rmtree instead of deleting it, so the assertion below can check whether
+        # _generated/ was among them.
         called.append(Path(p))
 
     monkeypatch.setattr(_utils_mod, "fast_rmtree", fake_rmtree)
@@ -951,14 +986,11 @@ def test_build_unique_system_targets_skips_purge_in_runner_subprocess(
     assert generated_dir not in called, f"fast_rmtree was called on _generated/ in runner-subprocess mode: {called}"
 
 
-# R3 exclusion: retained, not converted — the reprocess call IS the behaviour under test.
 # Property: reprocess(start_with="render") over a partial-completion suite reads
 # Snakefile.reprocess, whose report targets are filtered to completed subs, so snakemake --report
 # never enumerates a deleted figure.
-@pytest.mark.slow
-@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analysis):
-    """Behavioral regression (reprocess-render-report-snakefile-selection, R4).
+def test_reprocess_render_report_over_partial_completion(golden_planned):
+    """Behavioral regression: a render-stage reprocess over a partial-completion suite must succeed.
 
     Reproduces the live uva_sensitivity_suite failure: ``reprocess(start_with=
     "render")`` over a PARTIAL-completion sensitivity suite hard-failed because
@@ -967,7 +999,7 @@ def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analy
     including a never-completed one), so the report engine's existence gate
     (``report/__init__.py``) aborted on the first absent ``report()``-flagged
     figure with a ``WorkflowError``. The fix routes the reprocess render to
-    ``Snakefile.reprocess`` (Gotcha 37 filters report targets to the completed
+    ``Snakefile.reprocess`` (which filters report targets to the completed
     subset), so the report renders over exactly the completed subset.
 
     Makes the differential real: deletes one sub's per-scenario summary (so the
@@ -980,22 +1012,18 @@ def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analy
     subset with no error.
     """
     import shutil
-    from pathlib import Path
 
     from hhemt.scenario import TRITONSWMM_scenario
     from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL
 
-    analysis = synth_sensitivity_analysis
+    analysis = golden_planned
 
-    # Arrange: full local sensitivity run WITH a report config so per-sim
-    # figures + the master report are materialized for every sub.
-    analysis.run(
-        from_scratch=True,
-        execution_mode="local",
-        report_config=Path(_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7),
-        report_formats=["zip"],
-        verbose=True,
+    # Arrange: a golden carries no plots or report (tests/goldens/SPEC.md section 9), so a consolidate-stage reprocess
+    # of the complete golden materializes the per-sim figures and the master report for every sub.
+    arrange = analysis.reprocess(
+        start_with="consolidate", execution_mode="local", report_formats=["zip"], verbose=False
     )
+    assert arrange["success"], f"arranging the report failed: {arrange.get('message')!r}"
 
     sensitivity = analysis.sensitivity
     member_items = list(sensitivity.members.items())
@@ -1009,7 +1037,7 @@ def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analy
     incomplete_id = str(incomplete_key)
 
     # (a) Delete one per-scenario summary so the reprocess generator's
-    #     summary-existence filter (Gotcha 37) EXCLUDES this sub from
+    #     summary-existence filter EXCLUDES this sub from
     #     Snakefile.reprocess's report-target enumeration.
     scen = TRITONSWMM_scenario(0, incomplete_sub)
     model_type = scen.run.model_types_enabled[0]
@@ -1045,7 +1073,7 @@ def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analy
         verbose=True,
     )
 
-    # Assert R4: render succeeds over the completed subset, no WorkflowError.
+    # Assert the render succeeds over the completed subset, with no WorkflowError.
     assert reprocess_result["success"], (
         "reprocess(start_with='render') over a partial-completion suite must render the "
         f"report over the completed subset with no WorkflowError; got "
@@ -1058,20 +1086,20 @@ def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analy
 
 @pytest.mark.skipif(
     not tst_ut.provenance_audit_enabled(),
-    reason="renderer-IO provenance audit is opt-in (ADR-18); set "
+    reason="renderer-IO provenance audit is opt-in; set "
     "HHEMT_ENABLE_PROVENANCE_AUDIT=1 to enable the audit AND run this test.",
 )
 @pytest.mark.slow
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_renderer_provenance_audit_passes_for_all_sensitivity_renderers(synth_sensitivity_analysis_cached):
     """Sensitivity-tier audit-passes guard — exercises sensitivity_benchmarking
-    (Plotly branch), the rebased per-member per-sim renderers, and errors_and_warnings /
-    per_analysis_summary reading the persisted validation_report.json (Option D).
+    (Plotly branch), the per-member per-sim renderers, and errors_and_warnings /
+    per_analysis_summary reading the persisted validation_report.json.
 
     Master plots are deleted before the second run() to force a fresh render through
     the audited _cli subprocess path (the _cached fixture key is the swmm-topology
     SHA, not the renderer source). render_report() requires every report()-flagged
-    figure to exist (Gotcha 39), so its success is the audit-passed-for-every-renderer
+    figure to exist, so its success is the audit-passed-for-every-renderer
     signal: a single renderer's audit ProcessingError leaves its figure missing.
     """
     import shutil
@@ -1128,16 +1156,19 @@ from hhemt.report_renderers._reporting_sets import (  # noqa: E402
 def test_dem_resolution_set_emits_one_eda_rule_per_registry_template(
     synth_sensitivity_analysis, active_set, expected_template_count
 ):
-    """Phase 4 / D13 — the dem-resolution set emits ONE EDA rule per registry template.
+    """The dem-resolution set emits ONE EDA rule per registry template.
 
     Guards the registry-read generalization end to end: the builder iterates
     ``sel.rule_spec_template`` instead of hardcoding one figure, and BOTH the ``rule
     all`` enumeration and ``render_report``'s DERIVED input follow from the same
-    single source. Assertions are membership PARITY against the registry rather than a
-    bare count of four, so adding, removing or renaming a template without updating the
-    emission path fails here.
+    single source. The expected template count is asserted (4 for ``dem_resolution``; 5 for the
+    composed set, the 4 plus the single template that
+    ``test_compute_sensitivity_set_still_emits_its_single_eda_rule`` asserts for
+    ``compute_sensitivity``) and the emitted rule names are compared by membership PARITY
+    against the registry templates, so adding, removing or renaming a template without
+    updating the emission path fails here.
 
-    S19: parametrized over (registry object, composed object). The registry arm is the
+    Parametrized over (registry object, composed object). The registry arm is the
     differently-positioned satisfying arm and must stay green -- it is what catches a
     composition that changed single-set emission. The composed arm is the one that is
     red before _emit_active_set_plot_rules handles a merged template tuple.
@@ -1155,7 +1186,7 @@ def test_dem_resolution_set_emits_one_eda_rule_per_registry_template(
         which="both", compression_level=5
     )
 
-    # T2: the expectation is CONTRIBUTOR-derived on the composed arm. A registry-derived
+    # The expectation is CONTRIBUTOR-derived on the composed arm. A registry-derived
     # expectation is correct for the registry arm and WRONG for the composed one, where
     # the union over contributors is the answer -- and using one expectation for both
     # arms is what makes the assertion an identity over the registry.
@@ -1194,12 +1225,12 @@ def test_dem_resolution_set_emits_one_eda_rule_per_registry_template(
 def test_compute_sensitivity_set_still_emits_its_single_eda_rule(
     synth_sensitivity_analysis,
 ):
-    """Phase 4 / Risk X2 — the SHIPPED compute-sensitivity set is output-preserving.
+    """The SHIPPED compute-sensitivity set is output-preserving.
 
-    The D13 generalization changed a code path this set runs. Its single EDA rule must
-    still be emitted under its registry rule_name and output path, and its log path must
-    now read `_logs/` (the deliberate Risk-X2 reconciliation: the builder was the lone
-    `logs/` outlier versus the registry template).
+    The one-rule-per-registry-template generalization tested above changed a code path
+    this set runs. Its single EDA rule must still be emitted under its registry rule_name
+    and output path, and its log path must now read `_logs/` (a deliberate
+    reconciliation: the builder was the lone `logs/` outlier versus the registry template).
     """
     from hhemt.report_renderers._reporting_sets import get_reporting_set
 
@@ -1211,7 +1242,7 @@ def test_compute_sensitivity_set_still_emits_its_single_eda_rule(
     )
 
     templates = _eda_templates_for("compute_sensitivity")
-    assert len(templates) == 1, "compute-sensitivity must carry exactly one EDA template (15c, folded)"
+    assert len(templates) == 1, "compute-sensitivity must carry exactly one EDA template"
     (tmpl,) = templates
     assert f"rule {tmpl.rule_name}:" in content
     assert f'"{tmpl.output_path_template.replace("__OUTPUT_EXT__", ".html")}"' in content
