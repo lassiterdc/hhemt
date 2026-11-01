@@ -49,7 +49,7 @@ pages in the first report below, 7 of 13 in the second), so figures stay blank w
 network connection.
 
 - [Compute-configuration sweep report](bundles/norfolk-compute-config-sweep-report.html):
-  one storm run under 15 compute configurations, with run time, compute cost, speedup and
+  one storm run under a sweep of compute configurations, with run time, compute cost, speedup and
   efficiency for each. The tutorial [Compute configurations](../tutorials/norfolk-compute-config-sweep.md)
   reads it and states the decision it supports.
 - [Observed events report](bundles/norfolk-observed-events-report.html): an ensemble over

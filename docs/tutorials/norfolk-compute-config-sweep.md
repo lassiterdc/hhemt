@@ -8,9 +8,10 @@ evidence is embedded at the end.
 
 The experiment runs one storm, Hurricane Irene (2011-08-27 00:44 to 2011-08-28 08:58), on
 the Norfolk, VA case study at a 3.5 m grid, with the coupled TRITON-SWMM model only. It runs
-that one storm under 15 compute configurations on a CPU partition of a university cluster,
-natively and with every simulation on one node. The compute configuration is the only
-designed difference between the 15 runs; the limits section below says what else differs.
+that one storm under every compute configuration in the matrix below, on a CPU partition of a
+university cluster, natively and with every simulation on one node. The compute configuration
+is the only designed difference between the runs; the limits section below says what else
+differs.
 
 ## The decision
 
@@ -48,7 +49,7 @@ as possible, 16 cores is the faster choice and the table prices it.
 
 The sweep is a [sensitivity analysis](../reference/glossary.md#sensitivity-analysis) whose
 axis is the compute configuration, the study the [Benchmarking study](benchmarking-study.md)
-teaches in full. Its 15 rows are every combination of MPI ranks and OpenMP threads, on one
+teaches in full. Its rows are every combination of MPI ranks and OpenMP threads, on one
 node, whose product is at most 16 and that the full CPU matrix contains. Each row is one
 [member](../reference/glossary.md#member).
 
@@ -85,7 +86,7 @@ report:
   reporting_set: benchmarking
 ```
 
-Run it with the config-driven command. The dry run validates all 15 members before anything
+Run it with the config-driven command. The dry run validates every member before anything
 is submitted.
 
 ```bash
@@ -130,10 +131,10 @@ ranks and OpenMP threads.
 Read the decision with these limits, which the table makes visible and the report does not
 state.
 
-- **Five of the 15 members were not re-simulated in the job that produced the report.**
-  Members 5, 6, 24, 28 and 32 come from an earlier run of the same suite, which the toolkit
-  reused because their inputs had not changed. The report presents all 15 as one sweep. These
-  five include the serial baseline that every speedup divides by, and all four 8-core rows.
+- **Members 5, 6, 24, 28 and 32 were not re-simulated in the job that produced the report.**
+  They come from an earlier run of the same suite, which the toolkit reused because their
+  inputs had not changed. The report presents all members as one sweep. These include the serial
+  baseline that every speedup divides by, and all four 8-core rows.
   The 8-core rows therefore agree with each other, but the comparison between 8 cores and
   either 4 or 16 crosses two jobs.
 - **Each configuration ran once.** The table has one run per row, so it cannot say how much
@@ -142,9 +143,6 @@ state.
 - **One storm, one grid, one machine.** The decision is for this model at 3.5 m on this
   partition. The sweep stops at 16 cores per simulation, so it says nothing about returns
   beyond 16.
-- **The report's Metadata page carries older wording.** Its analysis description says six
-  configurations on Hurricane Irene, written before the lattice grew to 15. The tables and
-  figures embed all 15.
 - **It is documentation, not a benchmark.** A study meant to support a published claim needs
   replicates and the full range of core counts.
 

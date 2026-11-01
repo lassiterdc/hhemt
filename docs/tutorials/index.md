@@ -42,6 +42,6 @@ produced, so you can read the result before you run anything.
 - [Observed events](norfolk-observed-events.md): an ensemble over six storms that
   really happened on the Norfolk case study, with all three model families, and how
   its events are selected by key from the observed-event index.
-- [Compute configurations](norfolk-compute-config-sweep.md): one storm run under 15
+- [Compute configurations](norfolk-compute-config-sweep.md): one storm run under a sweep of
   compute configurations, the decision about how many cores a simulation should get,
   and the evidence and limits behind it.
