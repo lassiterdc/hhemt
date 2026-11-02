@@ -408,7 +408,7 @@ def test_resume_sensitivity_two_arm_bucket_pairs_both_arms(tmp_path):
     assert res.skipped is False
     assert res.verdict.passed is True
     # TWO within-arm pairs (not one), and no pair silently dropped.
-    assert "All 2 resume-vs-clean pair(s) bit-identical" in res.verdict.summary
+    assert "All 2 resume-vs-clean pairs are bit-identical" in res.verdict.summary
     assert "dropped" not in res.verdict.summary
 
 
@@ -432,5 +432,5 @@ def test_member_summary_names_examined_and_dropped_counts(tmp_path):
     master = _fake_master(tmp_path, subs)
     res = check_rank_sensitivity(master, cfg_analysis=SimpleNamespace(), eda_cfg=SimpleNamespace())
     assert res.skipped is False
-    assert "All 1 within-family rank-N vs rank-1 mpi pair(s) bit-identical" in res.verdict.summary  # examined named
-    assert "1 pair(s) dropped for absent/unreadable outputs" in res.verdict.summary  # denominator disclosed
+    assert "All 1 within-family rank-N vs rank-1 MPI pair is bit-identical" in res.verdict.summary  # examined named
+    assert "1 pair dropped for absent/unreadable outputs" in res.verdict.summary  # denominator disclosed

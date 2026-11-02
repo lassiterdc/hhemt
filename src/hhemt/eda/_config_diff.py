@@ -815,7 +815,7 @@ def _config_diff_absent_panel(*, headline: str, observed: str, remedy: str) -> g
         font=dict(size=13),
     )
     fig.update_layout(
-        title="Config diff maps -- not applicable",
+        title="Config diff maps: not applicable",
         height=320,
         xaxis=dict(visible=False),
         yaxis=dict(visible=False),
@@ -847,7 +847,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
                 "loaded."
             ),
             remedy=(
-                "The figure populates once primary consolidation has completed (or, for a "
+                "The figure populates once the sweep's consolidation has completed (or, for a "
                 "render bundle, once the consolidated tree is carried into the bundle)."
             ),
         )
@@ -857,8 +857,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             headline="Config-diff maps unavailable (no comparable members)",
             observed=("The consolidated tree carries no member with a TRITON node, so there is nothing to compare."),
             remedy=(
-                "The figure populates once the primary carries members whose processed "
-                "outputs include the TRITON depth tier."
+                "The figure populates once the sweep has members whose processed outputs include the TRITON depth tier."
             ),
         )
     if len(subs) < 2:
@@ -871,14 +870,13 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         return _config_diff_absent_panel(
             headline="Config-diff maps not applicable (single compute configuration)",
             observed=(
-                f"This primary carries exactly one member (<code>{_only}</code>), so no "
+                f"This sweep has only the member <code>{_only}</code>, so no "
                 "second compute configuration exists to difference against a reference and the "
                 "comparison is mathematically undefined."
             ),
             remedy=(
-                "This is what a one-simulation smoke run looks like. The figure populates "
-                "automatically once the primary carries two or more members spanning "
-                "distinct compute configurations."
+                "This is what a smoke run of one model run looks like. The figure appears "
+                "once the sweep has members spanning at least 2 distinct compute configurations."
             ),
         )
 
@@ -1018,7 +1016,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     _headers = (
         [
             "Panel",
-            "# configs in group",
+            "# compute configurations in group",
             "byte-identical to family ref (peak summary)?",
             "max_flow_cms abs diff (vs serial)",
             "max_wlevel_m abs diff (vs serial)",
@@ -1026,7 +1024,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         if has_flow
         else [
             "Panel",
-            "# configs in group",
+            "# compute configurations in group",
             "byte-identical to family ref (peak summary)?",
             "max_wlevel_m abs diff (vs serial)",
         ]
@@ -1232,12 +1230,12 @@ def build_config_diff_figure(root: Path) -> go.Figure:
                     # two-column sibling of the three-column side table in
                     # `cross_experiment_intercomparison_maps`; both go through the same
                     # policy so the two figure families cannot drift apart again.
-                    **plotly_table_header(["byte-identical configs", "n_resumes"]),
+                    **plotly_table_header(["byte-identical compute configurations", "n_resumes"]),
                     fill_color="#eef2f7",
                     font=dict(size=9),
                     height=20,
                 ),
-                columnwidth=plotly_columnwidth(["byte-identical configs", "n_resumes"]),
+                columnwidth=plotly_columnwidth(["byte-identical compute configurations", "n_resumes"]),
                 cells=dict(values=[_configs(g), _nr_col], align="left", font=dict(size=9), height=18),
                 domain=dict(x=tbl_x, y=[max(0.0, y_bot), min(1.0, y_top)]),
             )
@@ -1295,7 +1293,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             diverging=False,
         ):
             fig.add_trace(tr, row=serial_row, col=2)
-    _panel_label("<b>Panel A</b> — Serial CPU reference", serial_row, serial_row)
+    _panel_label("<b>Panel A</b>: serial CPU reference", serial_row, serial_row)
     _panel_config_table(serial_grp, serial_row, serial_row)
 
     # ---- Panels B, C ... : per differing group (diff row + percent-diff row) ----
@@ -1392,7 +1390,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         # or dict iteration order. That is the same ordering the side table and the panel
         # letters use, which is why the rotated label and the first table row agree rather
         # than happening to coincide.
-        _panel_label(f"<b>Panel {panel}</b> — {_configs(g)[0]} group", diff_row, pct_row)
+        _panel_label(f"<b>Panel {panel}</b>: {_configs(g)[0]} group", diff_row, pct_row)
         _panel_config_table(g, diff_row, pct_row)
 
     # Bottom map row of EACH panel (Panel A = serial_row; each diff panel = its pct row) —
@@ -1584,18 +1582,18 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     _caption_b_px = add_figure_caption(
         fig,
         (
-            "Identity column = byte-identity of the <b>max_wlevel_m PEAK water-level summary</b>, "
-            "evaluated after the max over time, vs each config's hardware-family minimum-device "
-            "reference (CPU → serial-CPU, GPU → 1-GPU). Diff/percent maps below are vs the "
-            "serial-CPU minimum-device reference. "
+            "Identity column = byte-identity of the <b>peak flood depth summary (max_wlevel_m)</b>, "
+            "evaluated after the max over time, vs each compute configuration's hardware-family "
+            "minimum-device reference (CPU → serial-CPU, GPU → 1-GPU). The difference and percent "
+            "maps below are vs the serial-CPU minimum-device reference. "
             # P1 (state what cannot be seen) + P2 (no experiment-specific values): the
             # mechanism is a property of the storage cast and transfers to any system,
             # so no residual magnitude appears here. BOTH directions are stated -- a
             # one-directional "values are quantized to float32" understates the second,
             # which is the one that manufactures a false byte-identical control.
             "Differences are read from the float32 <code>.zarr</code> summary tier: a "
-            "residual below one float32 ULP is reported at that ULP, and a residual far "
-            "below it is reported as exactly zero. Both bounds are properties of the "
+            "residual below a float32 ULP is reported at that ULP, and a residual far "
+            "below it is reported as zero. Both bounds are properties of the "
             "storage cast, not of the model."
         ),
         content_w_px=_caption_w_px,
@@ -1611,7 +1609,10 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         height=plot_h + T_MARGIN + _caption_b_px,
         width=fig_width,
         margin=dict(t=T_MARGIN, l=30, r=30, b=_caption_b_px),
-        title="Config diff maps: spatial difference vs the minimum-device reference, per byte-identical config group",
+        title=(
+            "Difference maps: spatial difference vs the minimum-device reference, "
+            "per byte-identical compute configuration group"
+        ),
         annotations=list(fig.layout.annotations) + annotations,
         shapes=shapes,
         showlegend=False,

@@ -143,6 +143,10 @@ state.
 - **One storm, one grid, one machine.** The decision is for this model at 3.5 m on this
   partition. The sweep stops at 16 cores per simulation, so it says nothing about returns
   beyond 16.
+- **The job count on the Workflow Performance page can leave out the workflow run that
+  rendered the report.** A report rendered inside a workflow run leaves that workflow run out,
+  because its jobs were still running when the page was built, and the page names the workflow
+  run it left out. A report rendered later, from the analysis directory, counts every job.
 - **It is documentation, not a benchmark.** A study meant to support a published claim needs
   replicates and the full range of core counts.
 

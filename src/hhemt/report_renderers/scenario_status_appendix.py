@@ -131,8 +131,7 @@ def _build_tabulator_html(
     if not csv_present or df is None:
         placeholder = (
             "<h2>Scenario Status</h2>\n"
-            "<p><em>scenario_status.csv not yet written — workflow may have "
-            "been killed before the onsuccess/onerror Snakemake hook ran.</em></p>"
+            "<p><em>The status table is not shown: <code>scenario_status.csv</code> is not written.</em></p>"
         )
         return (
             "<!DOCTYPE html>\n"
@@ -403,9 +402,9 @@ def _build_column_groups(
             (
                 "Performance Breakdown",
                 perf_cols,
-                "n_resumes + run_completed (resume health) head this group. The perf_* fields "
-                "come from the simulation's performance.txt and are invalid for hotstart-resumed "
-                "runs (n_resumes > 0) — they reflect only the resumed timestep range.",
+                "The resume count and run completion head this group. The perf_* fields "
+                "come from the simulation's performance.txt files. On a resumed run they add up "
+                "every allocation of the run.",
             )
         )
     if actual_cols:

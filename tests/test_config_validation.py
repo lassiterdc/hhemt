@@ -839,7 +839,9 @@ def test_react_surgery_none_default_matches_hardcoded_comparator():
         '(a, b) => {const ORDER = {"Workflow Status": 1, "Errors and Warnings": 2, '
         '"Key Results": 3, "System Information": 4, '
         '"Per Simulation Results": 5}; '
-        "return (ORDER[a] ?? 99) - (ORDER[b] ?? 99) || a.localeCompare(b);}"
+        "const rank = k => ORDER[k] ?? ORDER[Object.keys(ORDER).find("
+        "o => o.toLowerCase() === k.toLowerCase())] ?? 99; "
+        "return rank(a) - rank(b) || a.localeCompare(b);}"
     ) in out
 
 

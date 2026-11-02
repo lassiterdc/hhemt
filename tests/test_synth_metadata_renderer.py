@@ -308,8 +308,10 @@ def test_volatile_fields_never_reach_the_rendered_page(tmp_path):
     html, _, _ = _render(tmp_path, doc=doc)
     assert _SENTINEL_HOST not in html
     assert _SENTINEL_TIME not in html
-    # The run unit itself IS surfaced — count + instrument->result edges only.
-    assert "run unit(s) recorded" in html
+    # The run unit itself IS surfaced — instrument->result edges only; the page prints no
+    # hand-made count line above the table, which shows its own rows.
+    assert "run unit(s) recorded" not in html
+    assert "Instrument(s)" in html
     assert "#hhemt-app" in html
 
 
@@ -452,7 +454,8 @@ def test_reprex_guide_groups_every_field_into_three_buckets(tmp_path):
     html, _, _ = _render(tmp_path, doc=_full_crate())
     for verb in ("Supply", "Amend", "Keep"):
         assert verb in html
-    assert "USER" in html and "HPC" in html and "EXPERIMENT" in html
+    for heading in metadata._BUCKET_HEADING.values():
+        assert heading in html, heading
 
 
 def test_reprex_guide_renders_placeholders_not_values(tmp_path):
@@ -467,14 +470,12 @@ def test_reprex_guide_renders_placeholders_not_values(tmp_path):
     html, _, _ = _render(tmp_path, doc=_full_crate())
     assert "{amend for your target system}" in html
     assert "{your-default_account}" in html
-    # The EXPERIMENT placeholder contains an em-dash, and as Tabulator data these cells ride
-    # in the fragment's options JSON. `json.dumps` defaults to ensure_ascii=True, so the
-    # em-dash is emitted as the escape `\u2014` -- which renders as an em-dash in the
-    # browser but is NOT the literal character in the file. Asserting the literal form
-    # here would fail on a page that displays correctly, so the two ASCII halves are
-    # asserted instead and the escape is asserted explicitly.
-    assert "{inherit " in html and " carried by the bundle}" in html
-    assert "\\u2014" in html, "em-dash should be JSON-escaped, not dropped"
+    # The EXPERIMENT placeholder is plain text. The empty-cell dash still rides in the
+    # fragment's options JSON, and `json.dumps` defaults to ensure_ascii=True, so it is emitted
+    # as the escape `\u2014` -- which renders as a dash in the browser but is NOT the literal
+    # character in the file. The escape is asserted explicitly.
+    assert "{inherited from the bundle}" in html
+    assert "\\u2014" in html, "the empty-cell dash should be JSON-escaped, not dropped"
 
 
 def test_reprex_guide_rows_default_to_required_first_then_alphabetical(tmp_path, monkeypatch):
@@ -813,7 +814,7 @@ def test_native_run_crate_has_no_sif_entity(tmp_path):
 def test_sensitivity_master_crate_has_no_run_units(tmp_path):
     """A master crate is emitted with with_run_units=False -> no CreateAction nodes."""
     html, _, _ = _render(tmp_path, doc=_crate(_ROOT, _DESCRIPTOR, _APP, _SIF))
-    assert "consolidation-level crate" in html
+    assert "Model runs are not listed here: this is a sweep" in html
     assert _SENTINEL_HOST not in html
 
 
@@ -900,23 +901,33 @@ def test_efficiency_reports_union_is_keyed_on_jobid_and_is_idempotent():
     assert resolved["111.0"]["Elapsed"] == "00:00:99"
 
 
-def test_unrecognised_csv_column_is_disclosed_not_silently_dropped():
-    """A column the curated table does not display must be NAMED on the page.
+def test_unrecognised_csv_column_is_disclosed_not_silently_dropped(caplog):
+    """A column the curated table does not display must be NAMED in the log.
 
     The curated column set is what keeps the table readable, so dropping an
     unexpected column is deliberate. Dropping it SILENTLY is not: a future plugin
     version that starts reporting a new measurement would otherwise lose it with
-    nothing on the page to say so.
+    nothing to say so. A reader of the page cannot act on a column the plugin newly
+    reports, so the disclosure is a log warning for the maintainer and not a note on
+    the page.
     """
+    import logging
+
     csv_text = _EFF_HEADER.rstrip("\n") + ",GPUUtilPct\n"
     csv_text += "0,111.0,python,00:00:23,1,1,700K,,23.0,0.0,690.0,1000.0,111,0.0,69.0,87.5\n"
-    html = metadata._build_slurm_efficiency_html([("r", csv_text)], {}, {}, lambda p: "").html
-    assert "Unrecognised column" in html
-    assert "GPUUtilPct" in html
+    with caplog.at_level(logging.WARNING, logger=metadata.__name__):
+        html = metadata._build_slurm_efficiency_html([("r", csv_text)], {}, {}, lambda p: "").html
+    assert "Unrecognised column" not in html
+    assert "GPUUtilPct" not in html
+    warned = [r.getMessage() for r in caplog.records if r.name == metadata.__name__]
+    assert len(warned) == 1 and "GPUUtilPct" in warned[0]
 
-    # A report carrying only known columns emits no such note.
+    # A report carrying only known columns logs no such warning.
+    caplog.clear()
     plain = _EFF_HEADER + "0,111.0,python,00:00:23,1,1,700K,,23.0,0.0,690.0,1000.0,111,0.0,69.0\n"
-    assert "Unrecognised column" not in metadata._build_slurm_efficiency_html([("r", plain)], {}, {}, lambda p: "").html
+    with caplog.at_level(logging.WARNING, logger=metadata.__name__):
+        metadata._build_slurm_efficiency_html([("r", plain)], {}, {}, lambda p: "")
+    assert [r for r in caplog.records if r.name == metadata.__name__] == []
 
 
 def test_zero_cpu_efficiency_renders_as_not_measured_not_as_a_measured_zero():
@@ -1243,8 +1254,8 @@ def test_reader_visible_prose_uses_one_dash_convention():
     """Reader-visible prose mixed an em dash and an ASCII '--' for the same mark.
 
     SCOPE IS DELIBERATELY NARROWER THAN "all reader-visible prose", and the residual is
-    disclosed rather than hidden. This asserts over `_EFF_UNCAPTURED_NOTE` only, where
-    the count is ZERO.
+    disclosed rather than hidden. This asserts over the blank-cell note (`_uncaptured_note`)
+    only, where the count is ZERO.
 
     `_reduction_caption()` is EXCLUDED: at the time of writing it carries 10 ASCII '--'
     that have not been converted -- 8 in the six `_Reduction.why`/`.rule` fields and 2 in
@@ -1254,7 +1265,7 @@ def test_reader_visible_prose_uses_one_dash_convention():
     `metadata._reduction_caption()` as well as the note, and it will fail until those
     10 are converted.
     """
-    prose = re.sub(r"<[^>]+>", "", metadata._EFF_UNCAPTURED_NOTE)
+    prose = re.sub(r"<[^>]+>", "", metadata._uncaptured_note([{"JobID": "1", "toolkit_record": "no toolkit record"}]))
     ascii_dash = re.findall(r"(?<![-<!])--(?!>)", prose)
     assert not ascii_dash, f"{len(ascii_dash)} ASCII '--' in prose that elsewhere uses an em dash"
 
@@ -1316,19 +1327,20 @@ def test_a_total_scenario_join_miss_is_disclosed_not_silent():
     html_miss = metadata._build_slurm_efficiency_html(
         [("r", _EFF_HEADER + _EFF_ROW)], purpose_map, stale, lambda p: ""
     ).html
-    assert "Scenario-record join: 0 of 1" in html_miss
-    assert "No simulation row matched" in html_miss
+    notice = "No job matched a record in <code>scenario_status.csv</code>, so the columns read from it are empty."
+    assert notice in html_miss
+    assert "Scenario-record join" not in html_miss
 
     fresh = {("", slug, "triton"): {"run_mode": "hybrid"}}
     html_hit = metadata._build_slurm_efficiency_html(
         [("r", _EFF_HEADER + _EFF_ROW)], purpose_map, fresh, lambda p: ""
     ).html
-    assert "Scenario-record join: 1 of 1" in html_hit
-    assert "No simulation row matched" not in html_hit
+    assert "Scenario-record join" not in html_hit
+    assert notice not in html_hit
 
     html_none = metadata._build_slurm_efficiency_html([("r", _EFF_HEADER + _EFF_ROW)], {}, {}, lambda p: "").html
-    assert "Scenario-record join: 0 of 0" in html_none
-    assert "No simulation row matched" not in html_none
+    assert "Scenario-record join" not in html_none
+    assert notice not in html_none
 
 
 # --- Sub-dataset path tree ---------------------------------------------------

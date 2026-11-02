@@ -123,7 +123,7 @@ def render(analysis: Any, report_cfg: Any, output_path: Path, **kwargs: Any) -> 
         with prov.artist(
             axes_id="placeholder",
             kind="text",
-            note="cross-solver comparison placeholder (no read-model cells)",
+            note="cross-solver comparison placeholder (no comparison cells)",
         ) as artist:
             artist.add_channel("data", ProvenanceRef(source_path=READ_MODEL_FILENAME))
         html = _placeholder_html(problem)
@@ -522,7 +522,7 @@ def _build_figure(cells: list[_Cell], payload: dict[str, Any], prov: ProvenanceL
                         col=col,
                     )
 
-        fig.update_xaxes(title_text="compute config", tickangle=-20, row=1, col=col)
+        fig.update_xaxes(title_text="compute configuration", tickangle=-20, row=1, col=col)
         fig.update_yaxes(
             title_text=metric_title if col == 1 else None,
             range=[bottom, top],

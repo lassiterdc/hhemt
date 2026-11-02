@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -203,6 +204,62 @@ def _job_ids_from_job_index(analysis_dir: Path) -> set[str]:
     if not isinstance(payload, dict):
         return set()
     return {str(k) for k in payload if str(k).isdigit()}
+
+
+#: Snakemake's own log, one file per invocation. The SLURM executor plugin prints one
+#: `SLURM run ID: {uuid}` line near the top of each invocation's log and one
+#: `Job {n} has been submitted with SLURM jobid {id} (log: ...)` line per submitted job.
+#: Both forms were read from the 2026-11-01T015232 log (line 3 and line 87).
+_SNAKEMAKE_LOG_RELDIR = (".snakemake", "log")
+_SNAKEMAKE_LOG_GLOB = "*.snakemake.log"
+_RUN_ID_RE = re.compile(r"SLURM run ID: ([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})")
+_SUBMIT_RE = re.compile(r"has been submitted with SLURM jobid (\d+)")
+
+
+def submitted_job_ids_by_invocation(analysis_dir: Path) -> dict[str, dict]:
+    """The SLURM job ids each Snakemake invocation SUBMITTED, read from its own log.
+
+    The submit lines are the only source that holds every submitted job, including jobs
+    cancelled while pending that no accounting store or plugin report ever received a row for.
+
+    Parses every `{analysis_dir}/.snakemake/log/*.snakemake.log` and returns, keyed by the
+    log's FILE NAME (the invocation label), `{"run_id": uuid, "job_ids": [str, ...],
+    "file": name}` with `job_ids` distinct and sorted numerically. A log with no
+    `SLURM run ID` line yields NO entry: a jobid line that sits under no run id belongs to
+    no invocation, and attributing it to one by file name alone would key it to an
+    invocation the plugin never announced. A log that carries a run id and no submit line
+    (a local run, or `1_job_many_srun_tasks`) yields an entry with an empty `job_ids`.
+
+    Stdlib only, preserving this module's leaf property. Degrades to an empty dict on a
+    missing directory, and skips an unreadable log, so a roster that is short is recovered
+    on the next capture rather than raising into a back-fill.
+    """
+    log_dir = analysis_dir.joinpath(*_SNAKEMAKE_LOG_RELDIR)
+    if not log_dir.is_dir():
+        return {}
+    out: dict[str, dict] = {}
+    for path in sorted(log_dir.glob(_SNAKEMAKE_LOG_GLOB)):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        run_id: str | None = None
+        ids: set[str] = set()
+        for line in text.splitlines():
+            if run_id is None:
+                found = _RUN_ID_RE.search(line)
+                if found:
+                    run_id = found.group(1)
+                    continue
+            submitted = _SUBMIT_RE.search(line)
+            if submitted:
+                ids.add(submitted.group(1))
+        if run_id is None:
+            continue
+        out[path.name] = {"run_id": run_id, "job_ids": sorted(ids, key=int), "file": path.name}
+    return out
 
 
 def _job_ids_from_existing_store(analysis_dir: Path) -> set[str]:
@@ -377,24 +434,33 @@ def backfill(analysis_dir: Path, *, timeout_s: float = 60.0, run_method: str = "
     """Recover and write for one analysis dir. Returns a coverage report.
 
     The report is the point, not a side note: a PARTIAL recovery changes what Stage B can
-    promise, so the caller gets counts rather than a boolean. `ids_missing` is the number of
-    MainJobIDs the CSVs carry for which sacct returned no job row -- jobs aged out of the
-    accounting database.
+    promise, so the caller gets counts rather than a boolean. `ids_in_csv` is the size of the
+    whole widened roster (the key name predates the widening), and `ids_missing` is the number
+    of roster ids for which sacct returned no job row -- jobs aged out of the accounting
+    database, or jobs that never started.
     """
     # The roster is the architectural lever. Sourcing it from the plugin's CSVs alone caps
     # this store at "whatever the plugin already kept", so it can never become the SOLE
     # source -- it is definitionally a subset of one of the sources it is meant to replace.
-    # Union three independent rosters instead:
+    # Union four independent rosters instead:
     #   - the executor's own per-job log tree, via _status/_job_index.json, which covers every
     #     job submitted including the ones a later submission's flag-sidecar overwrite forgot;
     #   - the store's OWN existing keys, so a job sacct has since aged out stays in the roster
     #     and keeps its already-captured row rather than silently leaving the population;
-    #   - the plugin CSVs, retained so this is additive and nothing that works today regresses.
+    #   - the plugin CSVs, retained so this is additive and nothing that works today regresses;
+    #   - every job id each Snakemake invocation SUBMITTED, from its own log. This is the only
+    #     source holding jobs cancelled while pending, which no accounting store or plugin
+    #     report ever received a row for (a job never started has no accounting row to recover).
     ids = sorted(
         {
             *main_job_ids_from_efficiency_csvs(analysis_dir),
             *_job_ids_from_job_index(analysis_dir),
             *_job_ids_from_existing_store(analysis_dir),
+            *(
+                job_id
+                for entry in submitted_job_ids_by_invocation(analysis_dir).values()
+                for job_id in entry["job_ids"]
+            ),
         },
         key=int,
     )

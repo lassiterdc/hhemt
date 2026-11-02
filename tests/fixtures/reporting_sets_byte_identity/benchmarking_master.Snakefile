@@ -6,8 +6,8 @@ from datetime import datetime as _dt
 from hhemt.report_renderers._figure_emission import format_sources_rst as _fmt_sources_rst
 
 try:
-    from importlib.metadata import version as _pkg_version
-    _toolkit_version = _pkg_version("hhemt")
+    from hhemt.provenance import _describe_version
+    _toolkit_version = _describe_version()
 except Exception:
     _toolkit_version = "unknown"
 
@@ -602,8 +602,7 @@ rule plot_system_overview:
             labels={"figure": "System map"},
         )
     params:
-        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'members/member_0/sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'members/member_0/sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '{SYNTH_MODELS}/{MODEL_KEY}/boundary.geojson', 'variables': []}],
-        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``members/member_0/sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``members/member_0/sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``{SYNTH_MODELS}/{MODEL_KEY}/boundary.geojson``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/system_overview.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=10
@@ -629,8 +628,7 @@ rule plot_per_analysis_summary_table:
             labels={"figure": "Summary table"},
         )
     params:
-        source_paths = [{'path': 'members/member_0/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'members/member_0/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'members/member_1/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'members/member_1/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'members/member_2/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'members/member_2/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'members/member_3/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'members/member_3/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}],
-        source_paths_rst = '- ``members/member_0/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``members/member_0/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``members/member_1/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``members/member_1/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``members/member_2/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``members/member_2/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``members/member_3/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``members/member_3/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/per_analysis_summary_table.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=5
@@ -656,8 +654,7 @@ rule plot_scenario_status_appendix:
             labels={"figure": "Per-scenario status table"},
         )
     params:
-        source_paths = [{'path': 'scenario_status.csv', 'variables': ['event_id', 'model_type', 'status', 'runtime_s', 'continuity_error_pct', 'notes']}],
-        source_paths_rst = '- ``scenario_status.csv``\n\n  - ``event_id``\n  - ``model_type``\n  - ``status``\n  - ``runtime_s``\n  - ``continuity_error_pct``\n  - ``notes``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/scenario_status_appendix.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -684,8 +681,7 @@ rule plot_errors_and_warnings:
             labels={"figure": "Validation report"},
         )
     params:
-        source_paths = [{'path': 'scenario_status.csv', 'variables': ['scenario_setup', 'run_completed', 'actual_nTasks', 'actual_omp_threads', 'actual_total_gpus', 'actual_gpu_backend']}, {'path': 'sims/<event_id>/log_<model_type>.json', 'variables': ['simulation_completed (per scenario × model_type)']}, {'path': '../system_log.json', 'variables': ['compilation_tritonswmm_cpu_successful', 'compilation_tritonswmm_gpu_successful', 'compilation_triton_cpu_successful', 'compilation_triton_gpu_successful', 'compilation_swmm_successful']}],
-        source_paths_rst = '- ``scenario_status.csv``\n\n  - ``scenario_setup``\n  - ``run_completed``\n  - ``actual_nTasks``\n  - ``actual_omp_threads``\n  - ``actual_total_gpus``\n  - ``actual_gpu_backend``\n\n- ``sims/<event_id>/log_<model_type>.json``\n\n  - ``simulation_completed (per scenario × model_type)``\n\n- ``../system_log.json``\n\n  - ``compilation_tritonswmm_cpu_successful``\n  - ``compilation_tritonswmm_gpu_successful``\n  - ``compilation_triton_cpu_successful``\n  - ``compilation_triton_gpu_successful``\n  - ``compilation_swmm_successful``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/errors_and_warnings.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -709,8 +705,7 @@ rule plot_disk_utilization:
             labels={"figure": "Disk Utilization"},
         )
     params:
-        source_paths = [{'path': '_status/_du.json', 'variables': ['disk_utilization_bytes', 'sub_path_breakdown']}],
-        source_paths_rst = '- ``_status/_du.json``\n\n  - ``disk_utilization_bytes``\n  - ``sub_path_breakdown``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/disk_utilization.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -734,8 +729,7 @@ rule plot_metadata:
             labels={"figure": "Metadata"},
         )
     params:
-        source_paths = [{'path': 'ro-crate-metadata.json', 'variables': ['provenance']}],
-        source_paths_rst = '- ``ro-crate-metadata.json``\n\n  - ``provenance``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/metadata.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -755,12 +749,11 @@ rule plot_workflow_performance:
         report(
             "plots/workflow_performance.html",
             caption="report/captions/workflow_performance.rst",
-            category="Workflow performance",
+            category="Workflow Performance",
             labels={"figure": "Workflow performance"},
         )
     params:
-        source_paths = [],
-        source_paths_rst = '',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/workflow_performance.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -830,30 +823,6 @@ _EVENT_SIDEBAR_LABELS = _event_sidebar_labels_from_status(workflow.basedir)
 _MEMBER_LABELS = _member_labels_from_status(workflow.basedir)
 
 
-def _per_sim_per_member_flood_depth_sources(wildcards):
-    from hhemt.report_renderers._figure_emission import (
-        collect_per_sim_source_paths,
-    )
-    return collect_per_sim_source_paths(
-        "peak_flood_depth",
-        wildcards.event_id,
-        rainfall_datavar='RG_synth',
-        storm_tide_datavar='water_level',
-        member_id=wildcards.member_id,
-    )
-
-def _per_sim_per_member_conduit_flow_sources(wildcards):
-    from hhemt.report_renderers._figure_emission import (
-        collect_per_sim_source_paths,
-    )
-    return collect_per_sim_source_paths(
-        "conduit_flow",
-        wildcards.event_id,
-        rainfall_datavar='RG_synth',
-        storm_tide_datavar='water_level',
-        member_id=wildcards.member_id,
-    )
-
 rule plot_per_sim_per_member_peak_flood_depth:
     input:
         master = "_status/f_consolidate_experiment_complete.flag",
@@ -868,8 +837,7 @@ rule plot_per_sim_per_member_peak_flood_depth:
         member_id="[A-Za-z0-9_.]+",
         event_id="[A-Za-z0-9_.]+",
     params:
-        source_paths = _per_sim_per_member_flood_depth_sources,
-        source_paths_rst = lambda w: _fmt_sources_rst(_per_sim_per_member_flood_depth_sources(w)),
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
         event_iloc = lambda w: ILOC_BY_EVENT_ID_BY_MEMBER[w.member_id][w.event_id],
     log: "logs/plots/per_sim_per_member_peak_flood_depth_member-{member_id}_{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
@@ -899,8 +867,7 @@ rule plot_per_sim_per_member_conduit_flow:
         member_id="[A-Za-z0-9_.]+",
         event_id="[A-Za-z0-9_.]+",
     params:
-        source_paths = _per_sim_per_member_conduit_flow_sources,
-        source_paths_rst = lambda w: _fmt_sources_rst(_per_sim_per_member_conduit_flow_sources(w)),
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
         event_iloc = lambda w: ILOC_BY_EVENT_ID_BY_MEMBER[w.member_id][w.event_id],
     log: "logs/plots/per_sim_per_member_conduit_flow_member-{member_id}_{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
@@ -918,15 +885,6 @@ rule plot_per_sim_per_member_conduit_flow:
 
 INDEPENDENT_VARS = ['n_devices']
 
-def _sensitivity_source_paths(wildcards):
-    from hhemt.report_renderers._figure_emission import (
-        collect_sensitivity_source_paths,
-    )
-    return collect_sensitivity_source_paths(
-        wildcards.independent_var,
-        swmm_only_rpt_rel_paths=[],
-    )
-
 rule plot_sensitivity_benchmarking:
     input:
         "scenario_status.csv",
@@ -942,8 +900,7 @@ rule plot_sensitivity_benchmarking:
     wildcard_constraints:
         independent_var="[A-Za-z0-9_.]+",
     params:
-        source_paths = _sensitivity_source_paths,
-        source_paths_rst = lambda w: _fmt_sources_rst(_sensitivity_source_paths(w)),
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/sensitivity_benchmarking_{independent_var}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=4000, time_min=10

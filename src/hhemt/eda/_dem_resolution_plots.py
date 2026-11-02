@@ -511,7 +511,7 @@ def build_dem_resolution_cost_error_figure(root: Path) -> go.Figure:
         line=dict(dash="dot", color="#999999"),
     )
     fig.update_layout(
-        title="DEM-resolution cost vs error (DRAFT)",
+        title="DEM-resolution cost vs error",
         width=_FIG_W,
         # 70 top + 580 plot + 40 bottom. The plot band is byte-identical to figure 2's, so the row
         # proportions the user approved are untouched; only the now-empty caption strip is reclaimed.
@@ -919,8 +919,8 @@ def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
             )
         )
 
-    _title(1, 1, f"Reference {order[0]:g} m — depth (m)")
-    _title(1, 2, f"Reference {order[0]:g} m — flow (cms)")
+    _title(1, 1, f"Reference {order[0]:g} m: depth (m)")
+    _title(1, 2, f"Reference {order[0]:g} m: flow (cms)")
     for pi, p in enumerate(panels):
         dr, pr = 2 + 2 * pi, 3 + 2 * pi
         # Per-panel p95 |Δ| restores the quantitative anchor the shared color range removes.
@@ -1032,7 +1032,7 @@ def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
         margin=dict(t=_T_MARGIN, l=30, r=30, b=_B_MARGIN),
         title=(
             "DEM resolution: signed spatial difference vs the finest reference<br>"
-            "(coarse − fine, RED = coarse under-estimates) — DRAFT"
+            "(coarse − fine; red means the coarse run under-estimates)"
         ),
         annotations=list(fig.layout.annotations) + ann,
         shapes=shapes,
@@ -1317,7 +1317,7 @@ def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | 
     fig.update_xaxes(title_text="depth error |coarse − fine| (m)", type="log", row=1, col=1)
     fig.update_yaxes(title_text="cumulative fraction of wet cells", range=[0, 1.02], row=1, col=1)
     fig.update_layout(
-        title="DEM-resolution depth-error ECDF vs the finest reference (DRAFT)",
+        title="DEM-resolution depth-error ECDF vs the finest reference",
         template="plotly_white",
         showlegend=True,
         width=1000,
@@ -1347,9 +1347,7 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
     count of the SWMM junctions coupled to the TRITON surface, identified by their [INFLOWS]
     entries (where TRITON writes surface water into SWMM; the junction also surcharges back
     to the surface when its head exceeds the cell). No per-model node-name assumptions, so
-    it applies to ANY coupled model. Each DEM grid cell holds at most one coupling junction,
-    so coarsening the grid can reduce the count (flat on a fixture, like this one, where
-    every junction keeps its own cell even at the coarsest rung). It imports NO generator
+    it applies to ANY coupled model. It imports NO generator
     rank-cap/deadlock constant -- that construct stays in swmm_template/synthetic_experiment.
     Peak = absolute max per resolution; the signed
     over/under-estimate columns are coarse - fine (depth regridded onto the finest grid;
@@ -1442,7 +1440,7 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
         peak_depth = float(np.nanmax(wl))
         peak_flow = float(np.nanmax(fl))
         if res == finest_res:
-            od = ud = of = uf = "— (reference)"
+            od = ud = of = uf = "0 (reference)"
         else:
             # Δ = coarse − fine. Split max|Δ| into signed over/under-estimation (user item B):
             # overestimate = most-positive Δ (coarse > fine), underestimate = most-negative Δ
@@ -1501,14 +1499,14 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
         height=250 + 34 * (len(rows) + 2),
         width=1000,
         margin=dict(t=92, l=20, r=20, b=150),
-        title="DEM resolution × coupling / peak / over-under table (DRAFT)",
+        title="DEM resolution × coupling / peak / over-under table",
     )
     _tj = total_junctions_model if total_junctions_model is not None else "?"
     _caption_text = (
         "Coupling junctions exchange water with the TRITON surface cell they occupy. TRITON surface "
         "water enters the junction, and the junction surcharges back to the surface when its head "
-        "exceeds the cell. Each DEM grid cell may have no more than one coupling junction, so a "
-        f"coarser grid can reduce their number. This model has {_tj} junctions total. Δ is coarse − "
+        "exceeds the cell. "
+        f"This model has {_tj} junctions total. Δ is coarse − "
         "fine at the same location. A positive value means the coarse run produces a greater value "
         # The two trailing sentences were cut at user iterate-1 (the "extent disagreement rather
         # than a depth error" gloss was too interpretive, and explaining what a max is duplicates

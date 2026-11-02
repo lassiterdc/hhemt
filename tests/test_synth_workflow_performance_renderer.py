@@ -1,4 +1,4 @@
-"""Unit tests for the Workflow performance report renderer (`[Q160]`(7)).
+"""Unit tests for the Workflow Performance report renderer (`[Q160]`(7)).
 
 HPC-free / compile-free. This page carries the run timeline and the SLURM
 resource-efficiency table, both extracted out of the Metadata page: they describe how
@@ -19,6 +19,7 @@ from pathlib import Path
 
 from hhemt.config.report import report_config
 from hhemt.report_renderers import metadata, workflow_performance
+from hhemt.report_renderers.metadata import _SLURM_EFF_GLOB
 
 
 def _fake_analysis(analysis_dir: Path):
@@ -120,7 +121,7 @@ def test_page_title_and_jump_nav_cover_this_pages_sections(tmp_path):
     analysis_dir.mkdir()
     html, _ = _render(analysis_dir)
 
-    assert "<h2>Workflow performance — A1</h2>" in html
+    assert "<h2>Workflow Performance — A1</h2>" in html
     for title in metadata._WORKFLOW_PERFORMANCE_SECTION_TITLES:
         assert f'href="#{metadata._anchor(title)}"' in html
     for title in metadata._SECTION_TITLES:
@@ -138,7 +139,7 @@ def test_absent_inputs_degrade_to_banners_not_an_error(tmp_path):
     assert manifest["renderer_data"]["status_flag_count"] == 0
     assert manifest["renderer_data"]["slurm_csv_present"] is False
     assert "Run timeline" in html and "SLURM Efficiency" in html
-    assert "No SLURM resource-efficiency data" in html
+    assert "SLURM Efficiency is not shown: no <code>slurm_efficiency_report_*.csv</code> record was found." in html
 
 
 # --- SLURM efficiency: MOVED verbatim-in-substance from test_synth_metadata_renderer.py.
@@ -214,10 +215,10 @@ def test_slurm_csv_with_header_only_degrades(tmp_path):
 
 
 def test_absent_slurm_csv_degrades_gracefully(tmp_path):
-    """R7: no efficiency CSV -> heading present, teardown-timing explained."""
+    """R7: no efficiency CSV -> heading present, the absence stated in the not-shown form."""
     html, manifest = _render(tmp_path / "analysis")
     assert 'id="slurm-efficiency"' in html
-    assert "teardown" in html
+    assert f"SLURM Efficiency is not shown: no <code>{_SLURM_EFF_GLOB}</code> record was found." in html
     # Narrowed from a blanket `endswith(".csv")` to the EFFICIENCY csv specifically,
     # which is what this test's name and docstring have always scoped it to. The
     # blanket form was a safe over-approximation only while the efficiency CSV was the

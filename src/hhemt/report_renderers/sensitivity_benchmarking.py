@@ -144,7 +144,7 @@ _CFG_HOVER_LABELS: dict[str, str] = {
     "n_omp_threads": "OMP threads",
     "n_gpus": "GPUs",
     "n_nodes": "Nodes",
-    "n_replicates": "Runs of this config",
+    "n_replicates": "Runs of this compute configuration",
 }
 
 if TYPE_CHECKING:
@@ -803,6 +803,7 @@ def render(
             df[col] = df["sa_id"].map(df_setup[resolved_col])
 
     wall_unit, wall_factor = _adaptive_time_unit(df["wallclock_hr"].max())
+    wall_label = _wall_label(sensitivity)
     cost_unit, cost_factor = _adaptive_time_unit(df["compute_hr"].max())
     df["wallclock_disp"] = df["wallclock_hr"] * wall_factor
     df["compute_disp"] = df["compute_hr"] * cost_factor
@@ -861,6 +862,7 @@ def render(
             strong_eff_pg,
             model_arm=_model_arm,
             wall_unit=wall_unit,
+            wall_label=wall_label,
             cost_unit=cost_unit,
             independent_var=independent_var,
             group_by_var=group_by_var,
@@ -966,7 +968,7 @@ def render(
     )
 
     _apply_matplotlib_axis_groups(ax_wall, ax_cost, ax_speedup, ax_eff, top=_axis_top, bottom=_axis_bottom)
-    ax_wall.set_ylabel(f"Wall-clock time ({wall_unit})")
+    ax_wall.set_ylabel(f"{wall_label} ({wall_unit})")
     ax_cost.set_ylabel(f"Compute cost ({cost_unit} × devices)")
     ax_speedup.set_ylabel("Strong-Scaling Speedup\n" + r"$S(N) = t(1)\,/\,t(N)$")
     ax_eff.set_ylabel("Strong-Scaling Efficiency\n" + r"$E_s(N) = t(1)\,/\,(N \cdot t(N))$")
@@ -1723,6 +1725,20 @@ def _draw_metric_panel(
         raise ValueError(f"ideal_kind must be 'linear' or 'constant'; got {ideal_kind!r}")
 
 
+def _wall_label(sensitivity) -> str:
+    """The measure the wall-clock panel plots, named for the models the sweep runs.
+
+    A member that runs only SWMM has no MPI ranks: its value is the SWMM total elapsed time
+    parsed from its report file (`_collect_rows`). A sweep whose members are all SWMM-only
+    therefore titles its time axis for that measure; every other sweep plots the wall-clock
+    time of the TRITON or TRITON-SWMM run.
+    """
+    models = [member._get_enabled_model_types() for member in sensitivity.members.values()]
+    if models and all(m == ["swmm"] for m in models):
+        return "SWMM elapsed time"
+    return "Wall-clock time"
+
+
 def _adaptive_time_unit(max_hours: float) -> tuple[str, float]:
     """Pick label + multiplicative factor for converting hours → display unit.
 
@@ -2047,6 +2063,7 @@ def _build_sensitivity_benchmarking_figure(
     strong_eff_per_group: dict,
     *,
     wall_unit: str,
+    wall_label: str = "Wall-clock time",
     cost_unit: str,
     independent_var: str,
     group_by_var: str | None,
@@ -2291,7 +2308,7 @@ def _build_sensitivity_benchmarking_figure(
         hw_cols=_hw_cols,
         labels=sens_cfg.independent_var_labels,
     )
-    fig.update_yaxes(title_text=f"Wall-clock ({wall_unit})", row=1, col=1)
+    fig.update_yaxes(title_text=f"{wall_label} ({wall_unit})", row=1, col=1)
     fig.update_yaxes(title_text=f"Compute cost ({cost_unit} × devices)", row=2, col=1)
     # OE-1: the numerator is the FAMILY baseline (CPU -> serial CPU; each GPU hardware ->
     # its own 1-GPU run), not the plotted series' own t(1) and not a global serial.
@@ -2372,6 +2389,7 @@ def _render_plotly_branch(
     strong_eff_per_group: dict,
     *,
     wall_unit: str,
+    wall_label: str = "Wall-clock time",
     cost_unit: str,
     independent_var: str,
     group_by_var: str | None,
@@ -2393,6 +2411,7 @@ def _render_plotly_branch(
         speedup_per_group,
         strong_eff_per_group,
         wall_unit=wall_unit,
+        wall_label=wall_label,
         cost_unit=cost_unit,
         independent_var=independent_var,
         group_by_var=group_by_var,

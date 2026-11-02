@@ -1295,7 +1295,7 @@ def test_a_reduced_cell_is_recorded_and_listed_as_a_passing_disclosure(tmp_path)
     res = check_inflow_node_reduction(_fake_validated_analysis(sim_dir))
     assert res.passed is True and res.applicable is True
     assert len(res.details) == 1 and "J2 (ranking)" in res.details[0]["detail"]
-    assert "1 DEM cell(s) reduced" in res.summary
+    assert "1 DEM cell reduced" in res.summary
     assert ValidationReport(checks=[res]).overall_passed is True
     assert "J2 (ranking)" in _render_aggregate_table([res])
 
@@ -1323,7 +1323,7 @@ def test_one_node_cells_leave_an_empty_record_and_a_zero_count(tmp_path):
     assert json.loads((event_dir / "_status" / "inflow_node_selection.json").read_text()) == {"cells": []}
     res = check_inflow_node_reduction(_fake_validated_analysis(sim_dir))
     assert res.applicable is True and res.details == []
-    assert "0 DEM cell(s) reduced" in res.summary
+    assert "0 DEM cells reduced" in res.summary
 
 
 def test_a_scenario_without_a_record_is_not_measured(tmp_path):

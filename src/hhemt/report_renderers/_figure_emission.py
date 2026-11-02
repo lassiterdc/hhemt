@@ -839,7 +839,7 @@ def collect_sensitivity_source_paths(
         {
             "path": "sensitivity_analysis_definition.csv",
             "variables": [
-                "sa_id, run_mode, n_mpi_procs, n_omp_threads, n_gpus, n_nodes",
+                "member_id, run_mode, n_mpi_procs, n_omp_threads, n_gpus, n_nodes",
             ],
         },
     ]

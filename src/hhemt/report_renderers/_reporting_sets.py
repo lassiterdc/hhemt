@@ -149,7 +149,7 @@ _STANDARD_CATEGORY_ORDER: tuple[str, ...] = (
     "Key Results",
     "System Information",
     "Per Simulation Results",
-    "Workflow performance",
+    "Workflow Performance",
     "Metadata",
 )
 
@@ -266,7 +266,7 @@ _TMPL_WORKFLOW_PERFORMANCE = RuleSpecTemplate(
     output_path_template="plots/workflow_performance__OUTPUT_EXT__",
     report_kwargs={
         "caption": "report/captions/workflow_performance.rst",
-        "category": "Workflow performance",
+        "category": "Workflow Performance",
         "labels": '{"figure": "Workflow performance"}',
     },
     wildcards=(),

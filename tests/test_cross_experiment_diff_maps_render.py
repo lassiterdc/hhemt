@@ -83,7 +83,7 @@ def test_compared_variable_is_named_as_a_peak_not_a_final_timestep(tmp_path):
     text = " ".join(a.text or "" for a in fig.layout.annotations)
     assert_figure_invariants(fig)
     assert "max_wlevel_m" in text
-    assert "PEAK water level" in text and "maximum over the whole simulation" in text
+    assert "peak flood depth" in text and "maximum over the whole simulation" in text
 
 
 def test_pure_triton_combine_omits_the_swmm_truncation_caveat(tmp_path):

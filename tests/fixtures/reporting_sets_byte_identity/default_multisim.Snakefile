@@ -7,8 +7,8 @@ from datetime import datetime as _dt
 from hhemt.report_renderers._figure_emission import format_sources_rst as _fmt_sources_rst
 
 try:
-    from importlib.metadata import version as _pkg_version
-    _toolkit_version = _pkg_version("hhemt")
+    from hhemt.provenance import _describe_version
+    _toolkit_version = _describe_version()
 except Exception:
     _toolkit_version = "unknown"
 
@@ -455,8 +455,7 @@ rule plot_system_overview:
             labels={"figure": "System map"},
         )
     params:
-        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '{SYNTH_MODELS}/{MODEL_KEY}/boundary.geojson', 'variables': []}],
-        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``{SYNTH_MODELS}/{MODEL_KEY}/boundary.geojson``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/system_overview.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=10
@@ -468,24 +467,6 @@ rule plot_system_overview:
             --output {output} \
             2>&1 | tee {log}
         """
-
-def _per_sim_event_page_sources(wildcards):
-    from hhemt.report_renderers._figure_emission import (
-        collect_per_sim_source_paths,
-    )
-    out = []
-    for _kind in ("peak_flood_depth", "conduit_flow"):
-        for _src in collect_per_sim_source_paths(
-            _kind,
-            wildcards.event_id,
-            rainfall_datavar='RG_synth',
-            storm_tide_datavar='water_level',
-            dem_rel_path='../elevation_10.00m.dem',
-            watershed_rel_path='{SYNTH_MODELS}/{MODEL_KEY}/watershed.geojson',
-        ):
-            if _src not in out:
-                out.append(_src)
-    return out
 
 rule plot_per_sim_event_page:
     input:
@@ -500,8 +481,7 @@ rule plot_per_sim_event_page:
     wildcard_constraints:
         event_id="[A-Za-z0-9_.]+",
     params:
-        source_paths = _per_sim_event_page_sources,
-        source_paths_rst = lambda w: _fmt_sources_rst(_per_sim_event_page_sources(w)),
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
         event_iloc = lambda w: ILOC_BY_EVENT_ID[w.event_id],
     log: "logs/plots/per_sim_event_page_{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
@@ -529,8 +509,7 @@ rule plot_per_analysis_summary_table:
             labels={"figure": "Summary table"},
         )
     params:
-        source_paths = [{'path': 'sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_index.0/log_triton.json', 'variables': ['model_run_completed[triton] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.0/log_swmm.json', 'variables': ['model_run_completed[swmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.1/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_index.1/log_triton.json', 'variables': ['model_run_completed[triton] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.1/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.1/log_swmm.json', 'variables': ['model_run_completed[swmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.2/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_index.2/log_triton.json', 'variables': ['model_run_completed[triton] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.2/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.2/log_swmm.json', 'variables': ['model_run_completed[swmm] (status flag for n_successful / n_pending counts)']}],
-        source_paths_rst = '- ``sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_index.0/log_triton.json``\n\n  - ``model_run_completed[triton] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.0/log_swmm.json``\n\n  - ``model_run_completed[swmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.1/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_index.1/log_triton.json``\n\n  - ``model_run_completed[triton] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.1/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.1/log_swmm.json``\n\n  - ``model_run_completed[swmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.2/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_index.2/log_triton.json``\n\n  - ``model_run_completed[triton] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.2/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.2/log_swmm.json``\n\n  - ``model_run_completed[swmm] (status flag for n_successful / n_pending counts)``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/per_analysis_summary_table.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=5
@@ -556,8 +535,7 @@ rule plot_scenario_status_appendix:
             labels={"figure": "Per-scenario status table"},
         )
     params:
-        source_paths = [{'path': 'scenario_status.csv', 'variables': ['event_id', 'model_type', 'status', 'runtime_s', 'continuity_error_pct', 'notes']}],
-        source_paths_rst = '- ``scenario_status.csv``\n\n  - ``event_id``\n  - ``model_type``\n  - ``status``\n  - ``runtime_s``\n  - ``continuity_error_pct``\n  - ``notes``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/scenario_status_appendix.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -584,8 +562,7 @@ rule plot_errors_and_warnings:
             labels={"figure": "Validation report"},
         )
     params:
-        source_paths = [{'path': 'scenario_status.csv', 'variables': ['scenario_setup', 'run_completed', 'actual_nTasks', 'actual_omp_threads', 'actual_total_gpus', 'actual_gpu_backend']}, {'path': 'sims/<event_id>/log_<model_type>.json', 'variables': ['simulation_completed (per scenario × model_type)']}, {'path': '../system_log.json', 'variables': ['compilation_tritonswmm_cpu_successful', 'compilation_tritonswmm_gpu_successful', 'compilation_triton_cpu_successful', 'compilation_triton_gpu_successful', 'compilation_swmm_successful']}],
-        source_paths_rst = '- ``scenario_status.csv``\n\n  - ``scenario_setup``\n  - ``run_completed``\n  - ``actual_nTasks``\n  - ``actual_omp_threads``\n  - ``actual_total_gpus``\n  - ``actual_gpu_backend``\n\n- ``sims/<event_id>/log_<model_type>.json``\n\n  - ``simulation_completed (per scenario × model_type)``\n\n- ``../system_log.json``\n\n  - ``compilation_tritonswmm_cpu_successful``\n  - ``compilation_tritonswmm_gpu_successful``\n  - ``compilation_triton_cpu_successful``\n  - ``compilation_triton_gpu_successful``\n  - ``compilation_swmm_successful``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/errors_and_warnings.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -609,8 +586,7 @@ rule plot_disk_utilization:
             labels={"figure": "Disk Utilization"},
         )
     params:
-        source_paths = [{'path': '_status/_du.json', 'variables': ['disk_utilization_bytes', 'sub_path_breakdown']}],
-        source_paths_rst = '- ``_status/_du.json``\n\n  - ``disk_utilization_bytes``\n  - ``sub_path_breakdown``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/disk_utilization.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -634,8 +610,7 @@ rule plot_metadata:
             labels={"figure": "Metadata"},
         )
     params:
-        source_paths = [{'path': 'ro-crate-metadata.json', 'variables': ['provenance']}],
-        source_paths_rst = '- ``ro-crate-metadata.json``\n\n  - ``provenance``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/metadata.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -655,12 +630,11 @@ rule plot_workflow_performance:
         report(
             "plots/workflow_performance.html",
             caption="report/captions/workflow_performance.rst",
-            category="Workflow performance",
+            category="Workflow Performance",
             labels={"figure": "Workflow performance"},
         )
     params:
-        source_paths = [],
-        source_paths_rst = '',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/workflow_performance.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5

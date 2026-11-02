@@ -111,12 +111,12 @@ def test_an_unregistered_pin_pass_discloses_that_nothing_was_assessed(tmp_path, 
     unreg = _run(monkeypatch, _analysis(tmp_path / "u", {0: "CFS"}), _UNREGISTERED)
     pin = _run(monkeypatch, _analysis(tmp_path / "p", {0: "CFS"}), _PIN)
     assert unreg.passed is True and pin.passed is True
-    assert "3 INDETERMINATE and therefore NOT assessed at this pin" in unreg.summary
+    assert "3 indeterminate and therefore not assessed at this pin" in unreg.summary
     for did in _COUPLED_IDS:
         assert did in unreg.summary
-    assert "assessed ABSENT" not in unreg.summary
-    assert "3 assessed ABSENT" in pin.summary
-    assert "INDETERMINATE" not in pin.summary
+    assert "assessed absent" not in unreg.summary
+    assert "3 assessed absent" in pin.summary
+    assert "indeterminate" not in pin.summary
     assert unreg.summary.replace(_UNREGISTERED[:12], "{PIN}") != pin.summary.replace(_PIN[:12], "{PIN}")
 
 
@@ -137,8 +137,8 @@ def test_a_no_us_analysis_counts_the_us_unit_entry_not_determinable_unless_every
         assert res.passed is False
         assert "TRITON-COUPLED-RIM-BELOW-CROWN" in res.summary
         assert "TRITON-COUPLED-LIST-MISALIGNED" in res.summary
-        assert "2 PRESENT" in res.summary
-    assert "1 not determinable (TRITON-COUPLED-US-UNIT-RIM: 1 scenario(s)" in gap.summary
+        assert "2 present" in res.summary
+    assert "1 not determinable (TRITON-COUPLED-US-UNIT-RIM: 1 scenario" in gap.summary
     assert "not applicable to any scenario" not in gap.summary
     assert "1 not applicable to any scenario (TRITON-COUPLED-US-UNIT-RIM)" in full.summary
     assert "1 not determinable (" not in full.summary
@@ -177,4 +177,4 @@ def test_the_resume_check_reports_the_stale_clean_start_snapshot_and_does_not_co
     for did in coupled_ids:
         assert did not in res.summary
     n_resume = sum(1 for d in REGISTRY if d.trigger != "coupled")
-    assert f"{n_resume} applicable registry defect(s)" in res.summary
+    assert f"{n_resume} applicable registry defect" + ("" if n_resume == 1 else "s") in res.summary

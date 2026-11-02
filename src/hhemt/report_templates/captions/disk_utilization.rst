@@ -1,6 +1,6 @@
 Disk utilization breakdown for analysis **{{ snakemake.config.analysis_id }}**.
 
-Total disk usage under the analysis directory plus a per-sub-path breakdown (one row per child of the analysis root), shown in mebibytes (MiB). Values read from the ``_status/_du.json`` sentinel written by the analysis-scope consolidate step (Phase 1 DU sentinel infrastructure). When the sentinel is absent, the table is replaced by a re-run prompt.
+One row per top-level entry of the analysis root that holds data, in mebibytes (MiB), leaving out status markers and the ephemeral test directory. The ``members/`` and ``sims/`` rows are the totals recorded in ``_status/_du.json``, rolled up from the member and scenario records; every other row is measured when this page is rendered.
 
 **Sources:**
 

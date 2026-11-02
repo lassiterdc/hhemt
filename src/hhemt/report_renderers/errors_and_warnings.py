@@ -56,8 +56,8 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     ),
     "Analysis summaries created": (
         "Analysis summaries",
-        "Every consolidated DataTree the analysis owes is present on disk — the "
-        "analysis tree, and on a sensitivity master the master tree plus each "
+        "Every consolidated DataTree the analysis owes is present on disk: the "
+        "analysis tree, and on a sweep the sweep tree plus each "
         "member tree.",
     ),
     "scenario_status.csv created": (
@@ -103,7 +103,7 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     ),
     "resume validity": (
         "Resume validity",
-        "Every resumed coupled sim runs at a solver build with no known resume defect, and "
+        "Every resumed coupled model run uses a solver build with no known resume defect, and "
         "its exchange history replays rather than silently re-initializing.",
     ),
     "Known resume defects": (
@@ -118,11 +118,11 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     ),
     "Resume schedule honored": (
         "Resume schedule",
-        "Every resumed sim's realized resume count and boundary match the schedule its configuration requested.",
+        "Every resumed model run's realized resume count and boundary match the schedule its configuration requested.",
     ),
     "resume event evidence": (
         "Resume evidence",
-        "Every sim that attempted a resume left a durable record of each attempt, with no sim "
+        "Every model run that attempted a resume left a durable record of each attempt, with no model run "
         "missing that record for some or all of its attempts and no alarm row in its "
         "resume-event record.",
     ),
@@ -164,16 +164,15 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
     ),
     "forcing tail influence": (
         "Forcing tail influence",
-        "No cell reaches its peak water level after that event's forcing ended \u2014 a "
-        "regression detector for the window trim, since a simulation running past its "
+        "No cell reaches its peak flood depth after that event's forcing ended. The check "
+        "guards the window trim, since a model run continuing past its "
         "forcing holds the coastal boundary frozen at the last tabulated value.",
     ),
     "Log recoveries": (
         "Log recovery records",
-        "No analysis, system, or per-model scenario log document carries a record of having "
-        "been rebuilt from a single process's state after failing to parse; every such "
-        "recovery is listed, with the quarantine path where the failed bytes were preserved, "
-        "because a rebuilt document carries defaults for every field its writer had not set.",
+        "Each analysis, system and per-model scenario log document is counted once. Every "
+        "document that was rebuilt after failing to parse is listed, with the path where its "
+        "failed bytes were kept.",
     ),
 }
 
@@ -321,10 +320,16 @@ def _omitted_note(n_omitted: int) -> str:
     """
     if n_omitted <= 0:
         return ""
-    plural = "s" if n_omitted != 1 else ""
+    if n_omitted == 1:
+        return '\n<p class="floor-note">1 check is not shown: it does not apply to this analysis.</p>'
+    return f'\n<p class="floor-note">{n_omitted} checks are not shown: they do not apply to this analysis.</p>'
+
+
+def _missing_record_note() -> str:
+    """The notice that replaces the banner and tables when the record holds no checks."""
     return (
-        f'\n<p class="floor-note">{n_omitted} check{plural} not applicable to this '
-        f"analysis {'were' if n_omitted != 1 else 'was'} omitted.</p>"
+        '<p class="floor-note">Check results are not shown: <code>validation_report.json</code> '
+        "is missing or holds no checks.</p>"
     )
 
 
@@ -438,6 +443,11 @@ def _render_resource_mismatches_table(checks: list[CheckResult]) -> str:
     # `details` list carries the per-scenario per-resource mismatch records.
     if not checks:
         return ""
+    # A not-applicable check is counted in the page's one omission line, so it gets no row
+    # here either: the count and the tables must agree on which checks are left out.
+    checks, _n_omitted = _partition_applicable(checks)
+    if not checks:
+        return ""
     all_issues: list[dict] = []
     for c in checks:
         if not c.passed:
@@ -541,14 +551,19 @@ def render(
     # not-applicable count -- so the page states the omission exactly once and in the place
     # a reader looking at the headline figure will see it.
     _n_omitted = sum(1 for c in report.checks if not getattr(c, "applicable", True))
-    body_parts = [
-        _render_overall_banner(report),
-        _omitted_note(_n_omitted).lstrip("\n"),
-        _render_system_level_table(by_level.get("system", [])),
-        _render_aggregate_table(by_level.get("aggregate", [])),
-        _render_resource_mismatches_table(by_level.get("resource", [])),
-        _render_granular_failures_table(report.granular_failures),
-    ]
+    # A record that holds no checks would otherwise render a green "0 of 0" banner that reads
+    # as a clean analysis, so the page states the missing record instead of a banner.
+    if not report.checks:
+        body_parts = [_missing_record_note()]
+    else:
+        body_parts = [
+            _render_overall_banner(report),
+            _omitted_note(_n_omitted).lstrip("\n"),
+            _render_system_level_table(by_level.get("system", [])),
+            _render_aggregate_table(by_level.get("aggregate", [])),
+            _render_resource_mismatches_table(by_level.get("resource", [])),
+            _render_granular_failures_table(report.granular_failures),
+        ]
     analysis_id = str(analysis.cfg_analysis.analysis_id)
     html = _wrap_html_doc(
         "\n".join(b for b in body_parts if b),

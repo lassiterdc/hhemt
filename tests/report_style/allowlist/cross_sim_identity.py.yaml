@@ -1,0 +1,20 @@
+source: src/hhemt/eda/cross_sim_identity.py
+entries:
+- rule: retired_word
+  string: Cross-sim byte-identity
+  status: baseline
+  reason: present when the style test was added
+- rule: retired_word
+  string: sa_id
+  status: permitted
+  reason: 'dictionary key and coordinate name of the stored verdict and datatree layout (renaming it is a layout migration); not printed: the page prints the key''s value under its own column header'
+  count: 17
+- rule: retired_word
+  string: subanalyses
+  status: permitted
+  reason: key naming the retired directory layout that a read-only archive still carries, used to read old archives; not printed (the one message that printed the layout name was reworded)
+  count: 2
+- rule: retired_word
+  string: subanalyses/sa_*
+  status: permitted
+  reason: glob over the retired directory layout of a read-only archive, used as a path; not printed on a page

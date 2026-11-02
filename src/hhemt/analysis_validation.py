@@ -26,6 +26,12 @@ from hhemt.member_identity import resolve_member_id_column
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
 
+
+def _count(n: int, noun: str) -> str:
+    """`1 stage`, `3 stages`: the numeral beside its unit, in the number's own form."""
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -169,12 +175,12 @@ def check_system_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
     if manning is None:
         issues.append({"detail": "Mannings not created"})
     if dem is not None and manning is not None and dem.shape != manning.shape:
-        issues.append({"detail": f"DEM shape {dem.shape} != Mannings shape {manning.shape}"})
+        issues.append({"detail": f"DEM dimensions {dem.shape} != Mannings dimensions {manning.shape}"})
     if dem is not None and (len(dem.shape) != 3 or dem.shape[0] != 1):
-        issues.append({"detail": f"Expected DEM shape (1, rows, cols), got {dem.shape}"})
+        issues.append({"detail": f"Expected DEM dimensions (1, rows, cols), got {dem.shape}"})
 
     passed = not issues
-    summary = "System setup OK" if passed else f"System setup FAILED ({len(issues)} issue(s))"
+    summary = "System setup OK" if passed else f"System setup failed ({_count(len(issues), 'issue')})"
     # Disclosed denominator: `passed` derives from len(issues)==0 and
     # therefore cannot distinguish "evaluated and found nothing" from "did not
     # evaluate". A system that declares a GPU backend but resolves NO GPU build dir
@@ -191,8 +197,8 @@ def check_system_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
         ]
         if _abstained:
             summary += (
-                f" [GPU compile term NOT evaluated for {', '.join(_abstained)}: this system "
-                "declares a GPU backend but resolves no GPU build dir (master-level template; "
+                f" [GPU compile term not evaluated for {', '.join(_abstained)}: this system "
+                "declares a GPU backend but resolves no GPU build dir (a sweep-level template; "
                 "GPU hardware varies per member). CPU term evaluated; per-hardware GPU "
                 "compile status is certified downstream by each member's own system.]"
             )
@@ -347,7 +353,7 @@ def check_analysis_summaries_created(analysis: TRITONSWMM_analysis) -> CheckResu
         _check_one(analysis)
 
     passed = not missing
-    summary = "Analysis summaries OK" if passed else f"Analysis summaries missing ({len(missing)} item(s))"
+    summary = "Analysis summaries OK" if passed else f"Analysis summaries missing ({_count(len(missing), 'item')})"
     return CheckResult(
         name="Analysis summaries created",
         level="system",
@@ -441,11 +447,25 @@ def check_resource_usage(analysis: TRITONSWMM_analysis, *, df_status=None) -> Ch
             if i.get("severity") == "info" and str(i.get("actual", "")).startswith("pass_by_negative_signature")
         ]
     )
-    _disclosure = f" (GPU binding: {n_unmeasured} row(s) not measured, {n_signature} classified by negative signature)"
+    # An empty issue list does not mean "no GPU": a GPU run that passes adds no row. The
+    # validator's own examined-GPU-row count does mean it. Unknown (None) keeps the tally.
+    try:
+        from hhemt.consolidate_workflow import count_examined_gpu_rows
+
+        n_gpu_rows = count_examined_gpu_rows(analysis, df_status=df_status)
+    except Exception:  # noqa: BLE001 -- an unknown count falls back to the tally wording
+        n_gpu_rows = None
+    if n_gpu_rows == 0 and not any(i.get("resource", "").startswith("GPU") for i in issues):
+        _disclosure = " (no GPU model runs in this analysis)"
+    else:
+        _disclosure = (
+            f" (GPU binding: {_count(n_unmeasured, 'row')} not measured, "
+            f"{n_signature} classified by negative signature)"
+        )
     summary = (
         "All scenarios used expected compute resources" + _disclosure
         if passed
-        else f"Resource mismatches in {n_fail} scenario(s)" + _disclosure
+        else f"Resource mismatches in {_count(n_fail, 'scenario')}" + _disclosure
     )
     return CheckResult(
         name="Resource usage matches config",
@@ -773,6 +793,18 @@ _PROVENANCE_STAGES = (
     "report",
 )
 
+#: The stages `check_provenance_completeness` counts: those that have produced their stamp
+#: by the time the validation report is written, at consolidation. The plots and report
+#: stages run after that write, so they cannot be stamped when the count is taken and are
+#: left to the Metadata page's "Rendered by" row. Any caller stating a COUNT must derive it
+#: from len() of this tuple.
+_VALIDATED_STAGES = ("setup", "sim", "processing", "consolidate")
+
+_PROVENANCE_NOT_COUNTED_NOTE = (
+    " The plots and report stages are not counted: they run after this check, and the "
+    'Metadata page row "Rendered by" names the build that rendered them.'
+)
+
 
 def _collect_stage_stamps(analysis) -> dict[str, dict | None]:
     """Per-stage producing stamps for this analysis; ``None`` where none was captured.
@@ -886,7 +918,7 @@ def _collect_stage_stamps(analysis) -> dict[str, dict | None]:
 
 
 def check_provenance_completeness(analysis) -> CheckResult:
-    """How many of the `_PROVENANCE_STAGES` left a version stamp on this analysis.
+    """How many of the `_VALIDATED_STAGES` left a version stamp on this analysis.
 
     Reports COVERAGE, never a back-filled value. A stage with no stamp is reported as
     "not captured", which is the honest state for any analysis produced before that
@@ -901,7 +933,9 @@ def check_provenance_completeness(analysis) -> CheckResult:
     captured" and never raises, because a provenance check that can abort
     validate_analysis takes the whole sidebar down with it.
     """
-    stages = _collect_stage_stamps(analysis)  # {stage: stamp-dict-or-None}
+    # {stage: stamp-dict-or-None}, restricted to the stages that can be stamped when this
+    # check runs; plots and report are stamped after the validation report is written.
+    stages = {s: v for s, v in _collect_stage_stamps(analysis).items() if s in _VALIDATED_STAGES}
     captured = sorted(s for s, v in stages.items() if v)
     missing = sorted(s for s, v in stages.items() if not v)
     dirty = sorted(s for s, v in stages.items() if v and v.get("hhemt_dirty") == "true")
@@ -979,9 +1013,10 @@ def check_provenance_completeness(analysis) -> CheckResult:
                 f"({', '.join(undetermined) or 'none'}); not captured: {len(missing)} "
                 f"({', '.join(missing) or 'none'}); no value is inferred for either group. "
                 f"The recorded sha does not identify the code that ran for the dirty stages. "
-                f"Whether this product would be reproduced is NOT ESTABLISHED here: this "
+                f"Whether this product would be reproduced is not established here: this "
                 f"check reads toolkit source only, and does not observe the environment, "
                 f"inputs, or nondeterminism that also determine the product."
+                f"{_PROVENANCE_NOT_COUNTED_NOTE}"
             ),
             details=details,
         )
@@ -992,15 +1027,16 @@ def check_provenance_completeness(analysis) -> CheckResult:
             passed=False,
             summary=(
                 f"{len(captured)}/{len(stages)} stages stamped, and they disagree on the hhemt "
-                f"build. Compared on hhemt_sha over {n_contributing} contributing stage(s) "
+                f"build. Compared on hhemt_sha over {_count(n_contributing, 'contributing stage')} "
                 f"({n_excluded} excluded as unresolved, {n_legacy} read from a legacy "
-                f"scalar carrier and therefore a PARTIAL capture): "
+                f"scalar carrier and therefore a partial capture): "
                 f"{', '.join(sorted(builds))}. Not captured: {len(missing)} "
                 f"({', '.join(missing) or 'none'}); dirty-state undetermined: "
                 f"{len(undetermined)} ({', '.join(undetermined) or 'none'}); no value is "
                 f"inferred for either group. At least one stage was produced by different "
                 f"toolkit code than the others, so no single sha identifies the code that "
                 f"produced this analysis."
+                f"{_PROVENANCE_NOT_COUNTED_NOTE}"
             ),
             details=details,
         )
@@ -1011,8 +1047,9 @@ def check_provenance_completeness(analysis) -> CheckResult:
             passed=True,
             summary=(
                 f"{len(captured)}/{len(stages)} stages stamped; not captured: {', '.join(missing)}. "
-                "Informational, not a failure -- an analysis produced before a stage gained its "
+                "This is not a failure: an analysis produced before a stage gained its "
                 "capture site legitimately has no stamp there, and no value is inferred for it."
+                f"{_PROVENANCE_NOT_COUNTED_NOTE}"
             ),
             details=details,
         )
@@ -1022,14 +1059,15 @@ def check_provenance_completeness(analysis) -> CheckResult:
         passed=True,
         summary=(
             f"all {len(stages)} stages stamped at one hhemt build, compared on hhemt_sha "
-            f"over {n_contributing} contributing stage(s) ({n_excluded} excluded as "
-            f"unresolved, {n_legacy} a legacy PARTIAL capture) -- a single contributing "
+            f"over {_count(n_contributing, 'contributing stage')} ({n_excluded} excluded as "
+            f"unresolved, {n_legacy} a legacy partial capture). A single contributing "
             f"stage establishes no agreement; with no uncommitted "
             f"tracked changes recorded; dirty-state undetermined for {len(undetermined)} "
             f"({', '.join(undetermined) or 'none'}), and no value is inferred for those. "
             f"This reports what the toolkit-source stamps show. It does not establish that "
-            f"a re-run reproduces this product, which also depends on the environment, "
+            f"a re-run reproduces this product: reproduction also depends on the environment, "
             f"inputs, and nondeterminism this check does not observe."
+            f"{_PROVENANCE_NOT_COUNTED_NOTE}"
         ),
         details=details,
     )
@@ -1076,7 +1114,7 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
             level="aggregate",
             passed=True,
             applicable=False,
-            summary="No resume record available — known-resume-defect status N/A.",
+            summary="No resume record available: known-resume-defect status N/A.",
             details=[],
         )
     n_resumed = int((pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0) >= 1).sum())
@@ -1086,7 +1124,7 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
             level="aggregate",
             passed=True,
             applicable=False,
-            summary="No sim was resumed — known-resume-defect status N/A (0 resumed sim(s)).",
+            summary="No model run was resumed: known-resume-defect status N/A (0 resumed model runs).",
             details=[],
         )
     # Module-global call, NEVER a local import: every test in this module monkeypatches
@@ -1099,7 +1137,7 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
             level="aggregate",
             passed=True,
             applicable=False,
-            summary="Producing-TRITON sha unknown — known-resume-defect status N/A.",
+            summary="Producing-TRITON sha unknown: known-resume-defect status N/A.",
             details=[],
         )
     coupled = bool(getattr(analysis._system.cfg_system, "toggle_tritonswmm_model", False))
@@ -1158,15 +1196,15 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
     # over.
     # The three counts SUM to the denominator in every arm, so a reader can check the
     # arithmetic on the page rather than trusting the sentence.
-    _parts = [f"{len(applicable_defects)} applicable registry defect(s)"]
+    _parts = [_count(len(applicable_defects), "applicable registry defect")]
     if present:
-        _parts.append(f"{len(present)} PRESENT")
+        _parts.append(f"{len(present)} present")
     if n_absent:
-        _parts.append(f"{n_absent} assessed ABSENT")
+        _parts.append(f"{n_absent} assessed absent")
     if indeterminate:
         _parts.append(
-            f"{len(indeterminate)} INDETERMINATE and therefore NOT assessed at this pin "
-            f"({', '.join(d.defect_id for d in indeterminate)}) -- the pin is in no "
+            f"{len(indeterminate)} indeterminate and therefore not assessed at this pin "
+            f"({', '.join(d.defect_id for d in indeterminate)}): the pin is in no "
             "known-absent/known-present set and the read path has no clone for ancestry, "
             "so register it in model_defects.py"
         )
@@ -1177,9 +1215,9 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
             level="aggregate",
             passed=False,
             summary=(
-                f"{n_resumed} resumed sim(s) at a TRITON build carrying {len(present)} known "
-                f"resume defect(s): {', '.join(d.defect_id for d in present)} (pin {sha[:12]}; "
-                f"{_denom})."
+                f"{_count(n_resumed, 'resumed model run')} at a TRITON build carrying "
+                f"{_count(len(present), 'known resume defect')}: "
+                f"{', '.join(d.defect_id for d in present)} (pin {sha[:12]}; {_denom})."
             ),
             details=[{"scenario": "(analysis-level)", "detail": f"{d.defect_id}: {d.remedy}"} for d in present],
         )
@@ -1187,7 +1225,10 @@ def check_known_resume_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
         name=_name,
         level="aggregate",
         passed=True,
-        summary=(f"{n_resumed} resumed sim(s) at a build carrying no known resume defect (pin {sha[:12]}; {_denom})."),
+        summary=(
+            f"{_count(n_resumed, 'resumed model run')} at a build carrying no known resume defect "
+            f"(pin {sha[:12]}; {_denom})."
+        ),
         details=[],
     )
 
@@ -1223,7 +1264,7 @@ def check_known_solver_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
             level="aggregate",
             passed=True,
             applicable=False,
-            summary="The coupled model is not selected — known-solver-defect status N/A.",
+            summary="The coupled model is not selected: known-solver-defect status N/A.",
             details=[],
         )
     # Module-global call, as in the resume check: tests monkeypatch `_read_triton_provenance`.
@@ -1234,7 +1275,7 @@ def check_known_solver_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
             level="aggregate",
             passed=True,
             applicable=False,
-            summary="No producing TRITON sha recorded — known-solver-defect status N/A.",
+            summary="No producing TRITON sha recorded: known-solver-defect status N/A.",
             details=[],
         )
     entries = [d for d in REGISTRY if d.trigger == "coupled"]
@@ -1277,21 +1318,24 @@ def check_known_solver_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
     absent = [d for d in entries if verdicts[d.defect_id].status == "absent"]
     indeterminate = [d for d in entries if verdicts[d.defect_id].status == "indeterminate"]
     us_not_carried = us_counts is not None and not us_counts["US"]
-    _parts = [f"{len(entries)} every-coupled-run registry defect(s)", f"{len(scenarios)} scenario(s) examined"]
+    _parts = [
+        _count(len(entries), "every-coupled-run registry defect"),
+        f"{_count(len(scenarios), 'scenario')} examined",
+    ]
     if present:
-        _parts.append(f"{len(present)} PRESENT")
+        _parts.append(f"{len(present)} present")
     if absent:
-        _parts.append(f"{len(absent)} assessed ABSENT")
+        _parts.append(f"{len(absent)} assessed absent")
     if indeterminate:
         _parts.append(
-            f"{len(indeterminate)} INDETERMINATE and therefore NOT assessed at this pin "
-            f"({', '.join(d.defect_id for d in indeterminate)}) -- the pin is in no "
+            f"{len(indeterminate)} indeterminate and therefore not assessed at this pin "
+            f"({', '.join(d.defect_id for d in indeterminate)}): the pin is in no "
             "known-absent/known-present set and the read path has no clone for ancestry, "
             "so register it in model_defects.py"
         )
     if us_not_carried and us_counts["not determinable"]:
         _parts.append(
-            f"1 not determinable ({us.defect_id}: {us_counts['not determinable']} scenario(s) "
+            f"1 not determinable ({us.defect_id}: {_count(us_counts['not determinable'], 'scenario')} "
             "without a prepared hydraulics.inp, and no scenario read as US)"
         )
     elif us_not_carried:
@@ -1308,7 +1352,7 @@ def check_known_solver_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
             level="aggregate",
             passed=False,
             summary=(
-                f"The TRITON build {sha[:12]} carries {len(present)} known every-coupled-run defect(s): "
+                f"The TRITON build {sha[:12]} carries {_count(len(present), 'known every-coupled-run defect')}: "
                 f"{', '.join(d.defect_id for d in present)} ({_denom})."
             ),
             details=details,
@@ -1421,7 +1465,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
             level="aggregate",
             passed=True,
             applicable=False,
-            summary="No resume record available — resume validity N/A (scenario_status.csv absent or missing "
+            summary="No resume record available: resume validity N/A (scenario_status.csv absent or missing "
             "model_type/n_resumes).",
             details=[],
         )
@@ -1488,7 +1532,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
             level="aggregate",
             passed=True,
             applicable=False,
-            summary=(f"Producing-TRITON resume status unknown ({replay.detail}); resume validity NOT verified."),
+            summary=(f"Producing-TRITON resume status unknown ({replay.detail}); resume validity not verified."),
             details=[],
         )
 
@@ -1523,7 +1567,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
             level="aggregate",
             passed=True,
             summary=(
-                f"{_n_resumed} resumed sim(s) at a TRITON build carrying no known resume defect "
+                f"{_count(_n_resumed, 'resumed model run')} at a TRITON build carrying no known resume defect "
                 f"for this model selection ({triton_sha[:12]}); resume validity verified from the "
                 "defect registry."
             ),
@@ -1580,10 +1624,10 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
                 {
                     "scenario": str(row.get("scenario_directory", "")),
                     "detail": (
-                        f"produced by PRE-FIX TRITON ({triton_sha}) with a coupled hotstart "
+                        f"produced by pre-fix TRITON ({triton_sha}) with a coupled hotstart "
                         f"resume (n_resumes={int(row.get('n_resumes') or 0)}); coupled SWMM "
                         "re-inits from t=0 on resume so max-flow/depth summaries are "
-                        "systematically low. Re-run these sims with the pinned "
+                        "systematically low. Re-run these model runs with the pinned "
                         "coupled-resume-fix TRITON."
                     ),
                 }
@@ -1681,8 +1725,8 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
                             {
                                 "scenario": scen_dir,
                                 "detail": (
-                                    "resumed coupled sim; the durable resume-evidence stamp shows "
-                                    "the coupled state was restored by NEITHER mechanism — no "
+                                    "resumed coupled model run; the durable resume-evidence stamp shows "
+                                    "the coupled state was restored by neither mechanism: no "
                                     "snapshot restore and no exchange replay (log purged; "
                                     "tree-stamped at consolidation). SWMM re-initialized from t=0, "
                                     "so summaries are truncated."
@@ -1722,12 +1766,12 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
                         "scenario": scen_dir,
                         "detail": (
                             f"resumed (n_resumes={int(row.get('n_resumes') or 0)}) at the "
-                            "pinned coupled-resume-fix TRITON: this sim's last execution read "
-                            "its hotstart checkpoints and ran to t=end, but NEITHER resume "
-                            "marker is present in its TRITON log — no snapshot restore and no "
-                            "exchange replay — so the coupled state was never restored, SWMM "
-                            "re-initialized from t=0, and this sim's max-flow/depth summaries "
-                            "are truncated exactly as under pre-fix TRITON. Cause: rank 0's "
+                            "pinned coupled-resume-fix TRITON: this model run's last execution read "
+                            "its hotstart checkpoints and ran to t=end, but neither resume "
+                            "marker is present in its TRITON log: no snapshot restore and no "
+                            "exchange replay, so the coupled state was never restored, SWMM "
+                            "re-initialized from t=0, and this model run's max-flow/depth summaries "
+                            "are truncated as under pre-fix TRITON. Cause: rank 0's "
                             "row-strip owned no SWMM node (TRITON's engage guard is rank-0-local, "
                             "triton.h:435), or both the snapshot and the exchange-replay "
                             "side-file were purged. Re-run from a clean start, or re-run at a "
@@ -1774,14 +1818,14 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
                     "scenario": str(row.get("scenario_directory", "")),
                     "detail": (
                         f"coupled hotstart resume (n_resumes={int(row.get('n_resumes') or 0)}) at a "
-                        f"TRITON pin ({triton_sha}) that lacks the SWMM node-depth SCATTER on the "
+                        f"TRITON pin ({triton_sha}) that lacks the SWMM node-depth scatter on the "
                         "resume path: replay_exchange_history rebuilds node depths into rank 0's "
                         "global_new_depth[] but never scatters them into the per-rank new_depth[], "
                         "so the first post-resume step evaluates every manhole at new_depth=0 and "
                         "writes a permanent perturbation into TRITON's depth field. TRITON-side "
-                        "max_wlevel_m / H / MH from this sim are INVALID; SWMM-side max_flow_cms "
+                        "max_wlevel_m / H / MH from this model run are invalid; SWMM-side max_flow_cms "
                         "and hydraulics.rpt maxima are unaffected at reported precision and are "
-                        "NOT evidence of validity. Re-run once the upstream scatter fix lands "
+                        "not evidence of validity. Re-run once the upstream scatter fix lands "
                         "(_PINNED_TRITON_SWMM_DEPTH_SCATTER_FIX_SHA)."
                     ),
                 }
@@ -1789,10 +1833,10 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
 
     n = len(details)
     passed = n == 0
-    _parts = [f"{examined} resumed coupled sim(s) examined"]
+    _parts = [f"{_count(examined, 'resumed coupled model run')} examined"]
     if indeterminate:
         _parts.append(
-            f"{indeterminate} INDETERMINATE (unresolvable, unreadable, resume did not take, "
+            f"{indeterminate} indeterminate (unresolvable, unreadable, resume did not take, "
             "or last execution incomplete)"
         )
     if not_resumed_last_exec:
@@ -1824,15 +1868,15 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
             level="aggregate",
             passed=True,
             applicable=False,
-            summary=f"No resumed coupled sim was examined — coupled-resume validity N/A ({_denom}).",
+            summary=f"No resumed coupled model run was examined: coupled-resume validity N/A ({_denom}).",
             details=[],
         )
     if passed:
         summary = f"No coupled-resume invalidity detected ({_denom})."
     elif replay.status == "present":
         summary = (
-            f"{n} coupled sim(s) produced by PRE-FIX TRITON WITH a hotstart resume — "
-            f"summaries likely invalid ({_denom})."
+            f"{_count(n, 'coupled model run')} produced by pre-fix TRITON with a hotstart resume: "
+            f"summaries are systematically low ({_denom})."
         )
     elif scatter.status == "present":
         # Arm C: post-fix pin, replay marker PRESENT, but the replayed depths never reach
@@ -1842,13 +1886,13 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
         # avoids it, so they must be re-run at a pin carrying the scatter fix (the registry
         # entry's `fixed_in`, model_defects.SHA_DEPTH_SCATTER_FIX).
         summary = (
-            f"{n} resumed coupled sim(s) ran at a pin lacking the SWMM node-depth scatter "
-            f"— TRITON depth fields are invalid ({_denom})."
+            f"{_count(n, 'resumed coupled model run')} ran at a pin lacking the SWMM node-depth scatter: "
+            f"TRITON depth fields are invalid ({_denom})."
         )
     else:
         summary = (
-            f"{n} resumed coupled sim(s) at the pinned TRITON lack the exchange-replay "
-            f"marker — replay did not engage; summaries likely truncated ({_denom})."
+            f"{_count(n, 'resumed coupled model run')} at the pinned TRITON had no exchange-replay "
+            f"marker: replay did not engage; summaries are truncated ({_denom})."
         )
     return CheckResult(
         name="resume validity",
@@ -1899,7 +1943,7 @@ def check_resume_event_evidence(analysis: TRITONSWMM_analysis, *, df_status=None
             level="aggregate",
             passed=True,
             applicable=False,
-            summary="No resume record available — resume event evidence N/A (0 resumed sim(s) examined; "
+            summary="No resume record available: resume event evidence N/A (0 resumed model runs examined; "
             "scenario_status absent or missing model_type/n_resumes/event_iloc).",
             details=[],
         )
@@ -1944,7 +1988,7 @@ def check_resume_event_evidence(analysis: TRITONSWMM_analysis, *, df_status=None
                 detail["sa_id"] = f"member_{_member}"
             details.append(detail)
 
-    _denom = f"{examined} resumed sim(s) examined"
+    _denom = f"{_count(examined, 'resumed model run')} examined"
     if indeterminate:
         _denom += f"; {indeterminate} could not be assessed (owning analysis unresolvable or ledger unreadable)"
     if examined == 0:
@@ -1953,7 +1997,7 @@ def check_resume_event_evidence(analysis: TRITONSWMM_analysis, *, df_status=None
             level="aggregate",
             passed=True,
             applicable=False,
-            summary=f"No resumed sim was examined — resume event evidence N/A ({_denom}).",
+            summary=f"No resumed model run was examined: resume event evidence N/A ({_denom}).",
             details=[],
         )
     passed = not details
@@ -1961,7 +2005,7 @@ def check_resume_event_evidence(analysis: TRITONSWMM_analysis, *, df_status=None
         summary = f"Every resume attempt left durable evidence, and no alarm row ({_denom})."
     else:
         summary = (
-            f"{counts['evidence-absent']} sim(s) with NO evidence for any resume attempt, "
+            f"{_count(counts['evidence-absent'], 'model run')} with no evidence for any resume attempt, "
             f"{counts['evidence-shortfall']} with partial evidence, "
             f"{n_alarm_sims} carrying an alarm row ({_denom})."
         )
@@ -2017,7 +2061,7 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis, *, df_status=No
             level="aggregate",
             passed=True,
             applicable=False,
-            summary="Neither coupled nor pure-TRITON model enabled — resume-schedule verification N/A.",
+            summary="Neither coupled nor pure-TRITON model enabled: resume-schedule verification N/A.",
             details=[],
         )
 
@@ -2072,7 +2116,7 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis, *, df_status=No
                             f"the last configured boundary is t={rec.get('expected_replay_t')}s "
                             "(schedule[-1] * TRITON_reporting_timestep_s); the realized resume did "
                             "not reach the last scheduled interruption, so the coupled state was "
-                            "restored short and later summaries may be truncated."
+                            "restored short, so later summaries are truncated."
                         ),
                     }
                 )
@@ -2105,10 +2149,11 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis, *, df_status=No
                         {
                             "scenario": str(row.get("scenario_directory", "")),
                             "detail": (
-                                f"pure-TRITON resume count n_resumes={n_r} != {len(sched)} configured "
-                                "interruption(s) (resume_interruption_schedule). The pure-TRITON arm "
+                                f"pure-TRITON resume count n_resumes={n_r} != "
+                                f"{_count(len(sched), 'configured interruption')} (resume_interruption_schedule). "
+                                "The pure-TRITON arm "
                                 "emits no replay marker, so its schedule is verified by the resume "
-                                "count (arm asymmetry) — a mismatch means the schedule was not honored."
+                                "count (arm asymmetry): a mismatch means the schedule was not honored."
                             ),
                         }
                     )
@@ -2137,12 +2182,13 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis, *, df_status=No
                             {
                                 "scenario": str(row.get("scenario_directory", "")),
                                 "detail": (
-                                    f"pure-TRITON resume count n_resumes={n_r} matches the {len(sched)} "
-                                    "configured interruption(s), but NO realized resume boundaries were "
+                                    f"pure-TRITON resume count n_resumes={n_r} matches the "
+                                    f"{_count(len(sched), 'configured interruption')}, but no realized resume "
+                                    "boundaries were "
                                     "recorded (resume_reporting_tsteps absent/empty), so the "
-                                    "same-timestep claim CANNOT BE VERIFIED. Either this tree predates "
+                                    "same-timestep claim cannot be verified. Either this tree predates "
                                     "realized-boundary persistence, or the resume arm was re-run over an "
-                                    "existing analysis dir without start_from_scratch — in which case no "
+                                    "existing analysis dir without start_from_scratch, and then no "
                                     "interruption fired and the data is clean-arm data carrying the "
                                     "resume arm's label."
                                 ),
@@ -2154,20 +2200,20 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis, *, df_status=No
                                 "scenario": str(row.get("scenario_directory", "")),
                                 "detail": (
                                     f"pure-TRITON realized resume boundaries {list(_realized)} != "
-                                    f"configured schedule {list(sched)}. The resume COUNT is correct, "
+                                    f"configured schedule {list(sched)}. The resume count is correct, "
                                     "so the harness fired the right number of interruptions, but at "
                                     "least one config resumed from a different reporting step than "
-                                    "requested — the b4b same-timestep comparison across configs is "
-                                    "NOT valid for this sim."
+                                    "requested: the b4b same-timestep comparison across configs is "
+                                    "not valid for this model run."
                                 ),
                             }
                         )
 
     n = len(details)
     passed = n == 0
-    _parts = [f"{examined} resumed sim(s) schedule-verified"]
+    _parts = [f"{_count(examined, 'resumed model run')} schedule-verified"]
     if indeterminate:
-        _parts.append(f"{indeterminate} INDETERMINATE (no replay_t / no configured schedule)")
+        _parts.append(f"{indeterminate} indeterminate (no replay_t / no configured schedule)")
     _denom = "; ".join(_parts)
     # See the twin gate in check_coupled_resume_validity. Both clean runs rendered a
     # green PASS here carrying "(0 resumed sim(s) schedule-verified)" — this check touches
@@ -2182,13 +2228,13 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis, *, df_status=No
             level="aggregate",
             passed=True,
             applicable=False,
-            summary=f"No resumed sim was examined — resume-schedule verification N/A ({_denom}).",
+            summary=f"No resumed model run was examined: resume-schedule verification N/A ({_denom}).",
             details=[],
         )
     summary = (
-        f"All resumed sims honored their configured resume schedule ({_denom})."
+        f"All resumed model runs honored their configured resume schedule ({_denom})."
         if passed
-        else f"{n} resumed sim(s) did not honor the configured resume schedule ({_denom})."
+        else f"{_count(n, 'resumed model run')} did not honor the configured resume schedule ({_denom})."
     )
     return CheckResult(
         name="Resume schedule honored",
@@ -2279,7 +2325,7 @@ def check_eda_calc_ran(analysis: TRITONSWMM_analysis) -> CheckResult:
             level="aggregate",
             passed=True,
             applicable=False,
-            summary="This analysis enumerates no EDA report targets — EDA completeness N/A.",
+            summary="This analysis enumerates no EDA report targets: EDA completeness N/A.",
             details=[],
         )
     n_targets = len(templates)
@@ -2291,7 +2337,8 @@ def check_eda_calc_ran(analysis: TRITONSWMM_analysis) -> CheckResult:
             level="aggregate",
             passed=True,
             summary=(
-                f"{n_targets} EDA report target(s) enumerated; {len(verdicts)} verdict artifact(s) present "
+                f"{_count(n_targets, 'EDA report target')} enumerated; "
+                f"{_count(len(verdicts), 'verdict artifact')} present "
                 f"under {eda_dir.name}/."
             ),
             details=[],
@@ -2301,10 +2348,10 @@ def check_eda_calc_ran(analysis: TRITONSWMM_analysis) -> CheckResult:
         level="aggregate",
         passed=False,
         summary=(
-            f"{n_targets} EDA plot(s) are enumerated as report targets but {eda_dir} carries no "
-            "*.verdict.json — analysis.eda() never ran for this analysis. Every EDA figure in the "
-            "report is an honest-degradation panel, and any claim sourced from eda/*.verdict.json "
-            "is unevidenceable. Run `hhemt eda` (or analysis.eda()) BEFORE render_report() and "
+            f"{_count(n_targets, 'EDA plot')} enumerated as report targets, but {eda_dir} carries no "
+            "<code>*.verdict.json</code>: analysis.eda() never ran for this analysis. Every EDA figure in the "
+            "report is a degraded panel, and any claim sourced from <code>eda/*.verdict.json</code> "
+            "is unevidenceable. Run `hhemt eda` (or analysis.eda()) before render_report() and "
             "before bundle_report_data()."
         ),
         details=[
@@ -2328,6 +2375,8 @@ _RECLAIM_LOG_FIELDS: dict[str, str] = {
     "prep_inputs_reclaimed": "scenario-prep inputs (dats/, extbc/, sim_weather.nc)",
     "hydrographs_reclaimed": "TRITON inflow hydrographs (strmflow/), captured to zarr first",
     "standalone_rpt_reclaimed": "standalone SWMM reports (full.rpt truncated; hydro.rpt captured then removed)",
+    "raw_TRITON_outputs_cleared": "raw TRITON outputs cleared",
+    "raw_SWMM_outputs_cleared": "raw SWMM outputs cleared",
 }
 
 
@@ -2471,7 +2520,7 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
         applicable=examined > 0,
         instrument="summary_tier",
         summary=(
-            f"examined {examined} scenario(s), {indeterminate} indeterminate; "
+            f"examined {_count(examined, 'scenario')}, {indeterminate} indeterminate; "
             f"{len(details)} with a per-cell maximum attained after their forcing ended"
         ),
         details=details,
@@ -2547,7 +2596,7 @@ def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
                         "scenario_dir": str(sim_dir / event_id),
                         "detail": (
                             f"{model}: reclaim recorded ({', '.join(classes)}) but the "
-                            "per-model summary set is ABSENT -- the reclaim is damage, not "
+                            "per-model summary set is absent: the reclaim is damage, not "
                             "a disclosed reclaim"
                         ),
                     }
@@ -2560,14 +2609,14 @@ def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
     if not reclaimed_bits:
         headline = "No per-scenario artifacts were reclaimed"
     else:
-        headline = "Reclaimed after processing -- " + "; ".join(reclaimed_bits)
+        headline = "Reclaimed after processing: " + "; ".join(reclaimed_bits)
     summary = (
-        f"{headline}. Examined {examined} (model, scenario) pair(s); "
+        f"{headline}. Examined {_count(examined, '(model, scenario) pair')}; "
         f"{indeterminate} indeterminate (no readable model log)."
     )
     if not passed:
         summary = (
-            f"{len(details)} of {examined} (model, scenario) pair(s) record a reclaim with "
+            f"{len(details)} of {_count(examined, '(model, scenario) pair')} record a reclaim with "
             f"their summaries absent. {summary}"
         )
     return CheckResult(
@@ -2601,9 +2650,17 @@ def check_log_recoveries(analysis: TRITONSWMM_analysis) -> CheckResult:
     details: list[dict] = []
     examined = 0
     indeterminate = 0
+    # A document is examined once however many members point at it: members of a sweep
+    # share one system log, and counting it per member inflated both the denominator and any
+    # recovery row it carried.
+    seen: set[Path] = set()
 
     def _rows_for(doc_path: Path, label: str, member_id) -> None:
         nonlocal examined, indeterminate
+        key = doc_path.resolve()
+        if key in seen:
+            return
+        seen.add(key)
         examined += 1
         if not doc_path.exists():
             indeterminate += 1
@@ -2628,6 +2685,14 @@ def check_log_recoveries(analysis: TRITONSWMM_analysis) -> CheckResult:
                 row["sa_id"] = f"member_{member_id}"
             details.append(row)
 
+    # The analysis's own log: for a sweep this is the master's log, which no member shares;
+    # for a plain analysis it is the same document the loop below reaches, and `seen`
+    # keeps it from being counted twice.
+    try:
+        _rows_for(Path(analysis.analysis_paths.f_log), "analysis log", None)
+    except Exception:  # noqa: BLE001 -- an analysis we cannot address is indeterminate, not failed
+        pass
+
     for member_id, sub in _iter_members_or_self(analysis):
         try:
             enabled = sub._get_enabled_model_types()
@@ -2637,7 +2702,8 @@ def check_log_recoveries(analysis: TRITONSWMM_analysis) -> CheckResult:
         except Exception:  # noqa: BLE001 -- a sub we cannot address is indeterminate, not failed
             continue
         _rows_for(analysis_log, "analysis log", member_id)
-        _rows_for(system_log, "system log", member_id)
+        # The system log belongs to the system, not to a member.
+        _rows_for(system_log, "system log", None)
         for event_iloc in sub.df_sims.index:
             ev = sub._retrieve_weather_indexer_using_integer_index(event_iloc)
             event_id = compute_event_id_slug(ev)
@@ -2645,11 +2711,15 @@ def check_log_recoveries(analysis: TRITONSWMM_analysis) -> CheckResult:
                 _rows_for(sim_dir / event_id / f"log_{model}.json", event_id, member_id)
 
     passed = not details
-    summary = (
-        f"{'No' if passed else len(details)} log document(s) were reconstructed after failing to "
-        f"parse. Examined {examined} log document(s); {indeterminate} indeterminate (absent or "
-        "unreadable)."
-    )
+
+    def _docs(n: int) -> str:
+        return f"{n} log document" if n == 1 else f"{n} log documents"
+
+    if passed:
+        lead = "No log documents were reconstructed after failing to parse."
+    else:
+        lead = f"{_docs(len(details))} {'was' if len(details) == 1 else 'were'} reconstructed after failing to parse."
+    summary = f"{lead} Examined {_docs(examined)}; {indeterminate} could not be read (absent or unreadable)."
     # `level="aggregate"` routes this row to a Check table, so the exact-cover guard in
     # tests/test_iter7_check_vocabulary.py OBLIGES the matching _CHECK_VOCABULARY entry in
     # report_renderers/errors_and_warnings.py in the SAME change -- the obligation the
@@ -2727,7 +2797,7 @@ def check_inflow_node_reduction(analysis: TRITONSWMM_analysis) -> CheckResult:
                     row["sa_id"] = f"member_{member_id}"
                 details.append(row)
     denominator = (
-        f"{examined} scenario(s) examined, {measured} measured, {examined - measured} not measured "
+        f"{_count(examined, 'scenario')} examined, {measured} measured, {examined - measured} not measured "
         "(no selection record: prepared without the one-node-per-cell option, with the coupled model "
         "off, or before it existed)"
     )
@@ -2737,7 +2807,7 @@ def check_inflow_node_reduction(analysis: TRITONSWMM_analysis) -> CheckResult:
             level="aggregate",
             passed=True,
             applicable=False,
-            summary=f"No scenario carries an inflow-node selection record — inflow node reduction N/A ({denominator}).",
+            summary=f"No scenario carries an inflow-node selection record: inflow node reduction N/A ({denominator}).",
             details=[],
         )
     return CheckResult(
@@ -2745,7 +2815,8 @@ def check_inflow_node_reduction(analysis: TRITONSWMM_analysis) -> CheckResult:
         level="aggregate",
         passed=True,
         summary=(
-            f"{n_cells} DEM cell(s) reduced to one coupled inflow node, {n_dropped} node(s) not written "
+            f"{_count(n_cells, 'DEM cell')} reduced to one coupled inflow node, "
+            f"{_count(n_dropped, 'node')} not written "
             f"to the coupling-node list ({denominator})."
         ),
         details=details,

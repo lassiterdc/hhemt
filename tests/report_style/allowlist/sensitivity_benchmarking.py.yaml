@@ -1,0 +1,15 @@
+source: src/hhemt/report_renderers/sensitivity_benchmarking.py
+entries:
+- rule: capitals
+  string: 'sensitivity_benchmarking: decomposition {} resolved to {}, a poor LINE colour on white. Point colour IS line colour in this figure, so this'
+  status: permitted
+  reason: Python warning text for the maintainer; the page never prints it.
+- rule: number_word
+  string: than one incidental fill -- reorder the supplied palette so its first four entries are line-safe.
+  status: permitted
+  reason: Python warning text for the maintainer; the page never prints it.
+- rule: retired_word
+  string: sa_id
+  status: permitted
+  reason: Dictionary key of the member table.
+  count: 14

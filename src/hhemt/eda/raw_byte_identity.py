@@ -45,6 +45,11 @@ from hhemt.process_simulation import CANONICAL_TRITON_VARS, load_triton_output_w
 TRITON_VARS: tuple[str, ...] = CANONICAL_TRITON_VARS
 
 
+def _plural(n: int, one: str, many: str) -> str:
+    """The noun form a count takes, for the summaries a reader sees."""
+    return one if n == 1 else many
+
+
 def _stub_index_dem(bin_dir: Path, raw_out_type: str = "bin") -> xr.DataArray:
     """A minimal (y,x) index-coord DataArray sized from the first raw raster's 2-value header.
 
@@ -426,7 +431,7 @@ def build_binary_timestep_figure(
             colorscale=[[0.0, "crimson"], [1.0, "seagreen"]],
             zmin=0,
             zmax=1,
-            cbar_title="b4b (1=identical)",
+            cbar_title="byte-identical (1=yes)",
             cbar_x=1.02,
             cbar_y=0.5,
             cbar_len=0.9,
@@ -441,7 +446,7 @@ def build_binary_timestep_figure(
             annotation_position="top",
         )
     fig.update_layout(
-        title=f"Raw per-timestep clean-vs-resume b4b — {config_label}",
+        title=f"Raw per-timestep clean-versus-resume identity: {config_label}",
         xaxis_title="reporting timestep (min)",
         yaxis_title="raw output type",
         height=300,
@@ -864,10 +869,10 @@ def check_raw_byte_identity(primary, *, cfg_analysis, eda_cfg):
     degraded_reason = ""
     if degraded:
         degraded_reason = (
-            "no member with present raw outputs in this primary (raw cleared or absent); "
-            "the b4b primaries must preserve raw outputs (clear_raw disabled)"
+            "no member with present raw outputs in this sweep (raw cleared or absent); "
+            "raw outputs must be preserved for this figure (clear_raw disabled)"
             if not with_raw
-            else "no within-family config pair with present raw outputs"
+            else "no within-family compute configuration pair with present raw outputs"
         )
 
     eda_dir.mkdir(parents=True, exist_ok=True)
@@ -927,13 +932,13 @@ def check_raw_byte_identity(primary, *, cfg_analysis, eda_cfg):
         # reader to assume the ring files were covered.
         _rots = ", ".join(str(v) for v in ds["raw_output_type"].values)
         summary = (
-            f"per-family raw byte-identity: every config is byte-identical to its within-family "
-            f"reference across raw output type(s) [{_rots}] [{fams}]"
+            f"per-family raw byte-identity: every compute configuration is byte-identical to its "
+            f"within-family reference across raw output types [{_rots}] [{fams}]"
         )
     else:
         summary = (
-            f"per-family raw byte-identity: {n_diff} (config, raw-type, timestep) cell(s) differ "
-            f"from their within-family reference"
+            f"per-family raw byte-identity: {n_diff} (compute configuration, raw-type, timestep) "
+            f"{_plural(n_diff, 'cell differs', 'cells differ')} from their within-family reference"
         )
     verdict = CheckResult(
         name=name,

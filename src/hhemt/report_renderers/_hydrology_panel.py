@@ -112,7 +112,7 @@ def draw_event_hydrology_panel(
         with prov.artist(
             axes_id="ax_rain",
             kind="bar",
-            note="rainfall time series (event hydrology — top sub-panel)",
+            note="rainfall time series (event hydrology, top sub-panel)",
         ) as a:
             a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
             a.add_channel("y", rain_ref, units=rain_units)
@@ -154,7 +154,7 @@ def draw_event_hydrology_panel(
         with prov.artist(
             axes_id="ax_bc",
             kind="line2d",
-            note="boundary condition water level (event hydrology — bottom sub-panel)",
+            note="boundary condition water level (event hydrology, bottom sub-panel)",
         ) as a:
             a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
             a.add_channel("y", bc_ref, units=bc_units)

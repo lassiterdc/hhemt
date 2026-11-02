@@ -23,7 +23,7 @@ def test_b4b_category_grouping_yields_one_cpu_one_gpu_panel():
 def test_b4b_category_title_is_human():
     assert _b4b_category_title("cpu") == "CPU"
     assert _b4b_category_title("gpu") == "GPU"
-    assert _b4b_category_title("all") == "All configs"
+    assert _b4b_category_title("all") == "All compute configurations"
 
 
 def test_absent_artifact_panel_names_a_bundle_emitted_before_the_rename(tmp_path):
@@ -64,10 +64,10 @@ def test_absent_artifact_panel_names_a_bundle_emitted_before_the_rename(tmp_path
     (bundle / "eda" / f"{predecessors[0]}.zarr").mkdir(parents=True)
     text = panel_text(bundle)
     assert "predates" in text
-    assert "calc member did not run" not in text
+    assert "byte-identity calculation did not run" not in text
 
     control = tmp_path / "control"
     (control / "eda" / "eda_cross_sim_identity.zarr").mkdir(parents=True)
     text = panel_text(control)
     assert "predates" not in text
-    assert "calc member did not run" in text
+    assert "byte-identity calculation did not run" in text

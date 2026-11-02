@@ -21,6 +21,7 @@ from hhemt.report_renderers._provenance import (
     ProvenanceLog,
     ProvenanceRef,
 )
+from hhemt.report_renderers.cross_experiment_disk_utilization import MODEL_NOT_RECORDED, model_from_groups
 
 
 def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
@@ -62,7 +63,7 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
     """Deterministic 'what was combined' table (Q6a). One row per child crate."""
     rows = prov_rows or []
     if not rows:
-        return "<p class='note'>No child crates recorded for this combine.</p>"
+        return "<p class='note'>No experiment is recorded for this combine.</p>"
     # CP-5 (user ruling 2026-08-11): abbreviate the solver sha and MARK the rows whose
     # solver differs from the others, so a split pin is visible at a glance instead of
     # requiring a reader to diff four 40-char shas across rows. The marker is keyed on
@@ -140,8 +141,7 @@ def _provenance_table_html(prov_rows: list[dict] | None) -> str:
     if _split:
         _notes.append(
             "* on the Solver sha column marks an experiment run on a different solver "
-            "build than the others. Full shas are recorded on each child crate; the "
-            "abbreviation here is for reading, not for identification."
+            "build than the others. The column shows the first 8 characters of each sha."
         )
     elif rows:
         _notes.append("Solver sha is identical across every row.")
@@ -257,7 +257,7 @@ def _combine_provenance_rows(analysis_dir: Path) -> list[dict]:
             except OSError:
                 pass
         # model + n_subs from the consolidated tree tiers
-        model, n_subs = "TRITON", 0
+        model, n_subs = MODEL_NOT_RECORDED, 0
         solver_sha, toolkit_version = "", ""
         from hhemt.utils import resolve_experiment_tree
 
@@ -291,15 +291,8 @@ def _combine_provenance_rows(analysis_dir: Path) -> list[dict]:
                     if derived:
                         toolkit_version = derived
                 grps = set(dt.groups)
-                member = sorted(g for g in grps if g.count("/") == 1 and g.startswith("/member_"))
-                n_subs = len(member)
-                for g in member:
-                    if f"{g}/tritonswmm/triton" in grps:
-                        model = "TRITON-SWMM"
-                        break
-                    if f"{g}/triton_only/triton" in grps:
-                        model = "TRITON"
-                        break
+                n_subs = len([g for g in grps if g.count("/") == 1 and g.startswith("/member_")])
+                model = model_from_groups(grps)
             except Exception:
                 pass
         # toolkit sha from the child bundle manifest

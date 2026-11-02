@@ -1,14 +1,14 @@
-Workflow performance for **{{ snakemake.config.analysis_id }}** — how the workflow RAN,
-as distinct from what it produced (which the Metadata page covers).
+Workflow Performance for {{ snakemake.config.analysis_id }}: how the workflow ran. The
+Metadata page covers what it produced.
 
-- **Run timeline** — projected from the per-rule ``_status/*.flag.json`` sidecars, which
-  are appended one file at a time as each workflow rule finishes. It therefore covers
-  setup through consolidation for the WHOLE experiment and does not shrink when this
-  report is regenerated.
-- **SLURM efficiency** — the union of every ``slurm_efficiency_report_*.csv`` written
-  across all submissions for this analysis, joined to each rule's purpose. It is
-  finalized at workflow teardown, AFTER this report is rendered, so it is expected to be
-  absent on the run that produces this page; re-render after the run completes.
+- **Run timeline**: the workflow rules completed so far, from setup through consolidation
+  and across every workflow run, read from the ``_status/*.flag.json`` records. Records
+  that name a member no longer in the analysis are left out, and the section states how
+  many. A record that names no member is shown with an empty Member cell. When no record
+  exists, the section says so.
+- **SLURM Efficiency**: one row per job, joined to the purpose of its rule. Jobs cancelled
+  before they started are counted separately from jobs that ran. When no job is listed,
+  the section says why.
 
 **Sources:**
 

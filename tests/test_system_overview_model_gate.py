@@ -53,12 +53,12 @@ def test_manifest_pure_triton_has_dem_and_mannings_only():
     names = [p["name"] for p in md["panels"]]
     assert names == ["triton_dem", "mannings"], names
     mannings = next(p for p in md["panels"] if p["name"] == "mannings")
-    assert mannings["title"] == "Mannings (10.0m)"
+    assert mannings["title"] == "Manning's n (10.0m)"
 
 
 def test_manifest_mannings_present_without_resolution_label():
     """The Manning's panel is present even when the resolution is unknown (falls back
-    to a bare 'Mannings' title) — it never depends on a SWMM model being loaded."""
+    to a bare "Manning's n" title) — it never depends on a SWMM model being loaded."""
     md = _build_manifest_data(
         analysis_id="a",
         dem_bounds=(0.0, 0.0, 1.0, 1.0),
@@ -67,4 +67,4 @@ def test_manifest_mannings_present_without_resolution_label():
         bc_present=False,
     )
     mannings = [p for p in md["panels"] if p["name"] == "mannings"]
-    assert len(mannings) == 1 and mannings[0]["title"] == "Mannings"
+    assert len(mannings) == 1 and mannings[0]["title"] == "Manning's n"

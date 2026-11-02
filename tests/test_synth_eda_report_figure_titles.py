@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 
 from hhemt.eda._report import FigureSpec, render_scrollable_report
 
-_TITLE = "TRITON-SWMM - Peak flood depth"
+_TITLE = "TRITON-SWMM: Peak flood depth"
 
 
 def _fig():

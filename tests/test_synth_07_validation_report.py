@@ -78,7 +78,7 @@ def _synthetic_report() -> ValidationReport:
                 name="System setup",
                 level="system",
                 passed=False,
-                summary="System setup FAILED (1 issue(s))",
+                summary="System setup failed (1 issue)",
                 details=[{"detail": "TRITON-SWMM compilation failed"}],
             ),
             CheckResult(
@@ -127,7 +127,7 @@ def _synthetic_report() -> ValidationReport:
                 name="Analysis summaries created",
                 level="system",
                 passed=False,
-                summary="Analysis summaries missing (1 item(s))",
+                summary="Analysis summaries missing (1 item)",
                 details=[{"detail": "TRITONSWMM TRITON summary missing"}],
             ),
             CheckResult(
@@ -140,7 +140,7 @@ def _synthetic_report() -> ValidationReport:
                 name="Resource usage matches config",
                 level="resource",
                 passed=False,
-                summary="Resource mismatches in 1 scenario(s)",
+                summary="Resource mismatches in 1 scenario",
                 details=[
                     {
                         "scenario": "member_3 / event_index.0",
@@ -436,7 +436,7 @@ def test_eda_calc_ran_fails_when_targets_are_enumerated_but_no_verdicts_exist(tm
     result = check_eda_calc_ran(_eda_stub(tmp_path, ["config_diff_maps"], reporting_set="compute_config_byte_identity"))
 
     assert result.passed is False
-    assert "2 EDA plot(s)" in result.summary, "the summary must name the ENUMERATED-target count"
+    assert "2 EDA plots" in result.summary, "the summary must name the ENUMERATED-target count"
     assert result.level == "aggregate"
     assert result.details and "verdict_count=0" in result.details[0]["detail"]
 
@@ -452,7 +452,7 @@ def test_eda_calc_ran_passes_once_a_verdict_artifact_is_present(tmp_path):
     result = check_eda_calc_ran(_eda_stub(tmp_path, ["config_diff_maps"], reporting_set="compute_config_byte_identity"))
 
     assert result.passed is True
-    assert "1 verdict artifact(s) present" in result.summary
+    assert "1 verdict artifact present" in result.summary
 
 
 def test_eda_calc_ran_is_not_applicable_when_the_set_enumerates_no_targets(tmp_path):
@@ -591,7 +591,7 @@ def test_clean_arm_carries_an_affected_build_but_stays_not_applicable(tmp_path):
     result = check_coupled_resume_validity(stub)
     assert result.applicable is False, f"applicable={result.applicable!r} summary={result.summary!r}"
     assert "INDETERMINATE" not in result.summary, result.summary
-    assert "(0 resumed coupled sim(s) examined)" in result.summary, result.summary
+    assert "(0 resumed coupled model runs examined)" in result.summary, result.summary
 
 
 def _stub_absent_record():

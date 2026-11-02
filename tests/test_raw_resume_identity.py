@@ -457,7 +457,7 @@ def test_b4b_family_title_renders_the_collapsed_gpu_token():
 
     assert _b4b_family_title("gpu") == "GPU"
     assert _b4b_family_title("cpu") == "CPU"
-    assert _b4b_family_title("all") == "All configs"
+    assert _b4b_family_title("all") == "All compute configurations"
     # Legacy per-hardware token from a pre-N3 artifact still renders.
     assert _b4b_family_title("a100-80") == "GPU a100-80"
 

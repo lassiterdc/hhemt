@@ -33,7 +33,7 @@ set renders, in sidebar order:
 | Errors and Warnings | The post-completion validation report: system-level checks, aggregate per-scenario checks, granular per-scenario failures, and resource-utilisation mismatches |
 | System Information | DEM, Manning's roughness, boundary conditions, SWMM network elements, and disk utilisation |
 | Per Simulation Results | One figure group per simulated event |
-| Workflow performance | Per-rule scheduler and runtime accounting |
+| Workflow Performance | Per-rule scheduler and runtime accounting |
 | Metadata | RO-Crate provenance, the reproduction guide, and SLURM efficiency |
 | Appendix | The `scenario_status.csv` table (emitted by the default set, but not yet declared in its sidebar order) |
 

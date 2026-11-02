@@ -200,6 +200,11 @@ def _dry_threshold(cfg_analysis) -> float:
     return float(getattr(report, "dry_threshold_m", _DRY_THRESHOLD_M))
 
 
+def _plural(n: int, one: str, many: str) -> str:
+    """The noun form a count takes, for the summaries a reader sees."""
+    return one if n == 1 else many
+
+
 def _tau(eda_cfg) -> float:
     """Resolve the τ floor from the eda config (if it exposes an override), else default."""
     return float(getattr(eda_cfg, "magnitude_tau_m", _TAU_M))
@@ -468,7 +473,7 @@ def check_rank_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_cf
     name = "Rank sensitivity"
     sub_items = list(_iter_members_or_self(primary))
     if len(sub_items) == 1 and sub_items[0][0] is None:
-        return _skipped(name, "N/A — single sim per event iloc (non-sensitivity)")
+        return _skipped(name, "N/A: not a sweep, so each event has one model run")
 
     subs = _present_subs(sub_items)
     dry = _dry_threshold(cfg_analysis)
@@ -491,7 +496,7 @@ def check_rank_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_cf
         ref_id = next((member for member, sub in sorted(members.items()) if _n_mpi(sub) == 1), None)
         if ref_id is None:
             details.append(
-                {"family": partition, "detail": f"no n_mpi_procs==1 mpi reference in family '{partition}' — skipped"}
+                {"family": partition, "detail": f"family '{partition}' has no 1-rank MPI reference, so it is skipped"}
             )
             continue
         ref_sub = members[ref_id]
@@ -521,16 +526,22 @@ def check_rank_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_cf
                     )
 
     if not any_compared:
-        return _skipped(name, "N/A — no within-family mpi rank pair with a rank-1 reference")
+        return _skipped(name, "N/A: no MPI rank pair in a family has a 1-rank reference")
 
     passed = all_identical
     n_pairs = len(labeled)
     n_div = len([d for d in details if "variable" in d])
-    dropped_note = f" ({n_dropped} pair(s) dropped for absent/unreadable outputs)" if n_dropped else ""
+    dropped_note = (
+        f" ({n_dropped} {_plural(n_dropped, 'pair', 'pairs')} dropped for absent/unreadable outputs)"
+        if n_dropped
+        else ""
+    )
     summary = (
-        f"All {n_pairs} within-family rank-N vs rank-1 mpi pair(s) bit-identical{dropped_note}."
+        f"All {n_pairs} within-family rank-N vs rank-1 MPI "
+        f"{_plural(n_pairs, 'pair is', 'pairs are')} bit-identical{dropped_note}."
         if all_identical
-        else f"{n_div} (member, event, variable) tuple(s) diverged from the rank-1 reference{dropped_note}."
+        else f"{n_div} (member, event, variable) {_plural(n_div, 'tuple', 'tuples')} "
+        f"diverged from the rank-1 reference{dropped_note}."
     )
     verdict = CheckResult(
         name=name,
@@ -569,11 +580,11 @@ def check_resume_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_
     name = "Resume sensitivity"
     sub_items = list(_iter_members_or_self(primary))
     if len(sub_items) == 1 and sub_items[0][0] is None:
-        return _skipped(name, "N/A — single sim per event iloc (non-sensitivity)")
+        return _skipped(name, "N/A: not a sweep, so each event has one model run")
 
     subs = {member: sub for member, sub in _present_subs(sub_items).items() if _enabled_modes(sub)}
     if not subs:
-        return _skipped(name, "N/A — no member has present summaries")
+        return _skipped(name, "N/A: no member has summaries")
     dry = _dry_threshold(cfg_analysis)
     tau = _tau(eda_cfg)
     resumes = _resumes_by_member_id(primary, list(subs.keys()))
@@ -598,7 +609,7 @@ def check_resume_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_
         if not clean_ids or not resume_ids:
             if resume_ids:
                 details.append(
-                    {"config": str(cid), "detail": "resume run(s) present but no clean counterpart — skipped"}
+                    {"config": str(cid), "detail": "a resume run has no clean counterpart, so it is skipped"}
                 )
             continue
         ref_id = clean_ids[0]
@@ -629,16 +640,21 @@ def check_resume_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_
                     )
 
     if not any_compared:
-        return _skipped(name, "N/A — no clean/resume pair sharing a compute-config in this primary")
+        return _skipped(name, "N/A: no clean and resume pair shares a compute configuration in this sweep")
 
     passed = all_identical
     n_pairs = len(labeled)
     n_div = len([d for d in details if "variable" in d])
-    dropped_note = f" ({n_dropped} pair(s) dropped for absent/unreadable outputs)" if n_dropped else ""
+    dropped_note = (
+        f" ({n_dropped} {_plural(n_dropped, 'pair', 'pairs')} dropped for absent/unreadable outputs)"
+        if n_dropped
+        else ""
+    )
     summary = (
-        f"All {n_pairs} resume-vs-clean pair(s) bit-identical{dropped_note}."
+        f"All {n_pairs} resume-vs-clean {_plural(n_pairs, 'pair is', 'pairs are')} bit-identical{dropped_note}."
         if all_identical
-        else f"{n_div} (member, event, variable) tuple(s) diverged from the clean counterpart{dropped_note}."
+        else f"{n_div} (member, event, variable) {_plural(n_div, 'tuple', 'tuples')} "
+        f"diverged from the clean counterpart{dropped_note}."
     )
     verdict = CheckResult(
         name=name,
@@ -677,7 +693,7 @@ def check_cross_hardware_magnitude(primary: TRITONSWMM_analysis, *, cfg_analysis
     name = "Cross-hardware magnitude"
     sub_items = list(_iter_members_or_self(primary))
     if len(sub_items) == 1 and sub_items[0][0] is None:
-        return _skipped(name, "N/A — single sim per event iloc (non-sensitivity)")
+        return _skipped(name, "N/A: not a sweep, so each event has one model run")
 
     subs = {member: sub for member, sub in _present_subs(sub_items).items() if _enabled_modes(sub)}
     dry = _dry_threshold(cfg_analysis)
@@ -693,7 +709,7 @@ def check_cross_hardware_magnitude(primary: TRITONSWMM_analysis, *, cfg_analysis
         if _run_mode(sub) == "gpu" and int(getattr(_cfg(sub), "n_gpus", 0) or 0) == 1
     ]
     if serial_id is None or not gpu_ids:
-        return _skipped(name, "N/A — need both a 1-rank serial-CPU run and a 1-GPU run for the cross-hardware panel")
+        return _skipped(name, "N/A: the cross-hardware panel needs both a 1-rank serial-CPU run and a 1-GPU run")
 
     ref_sub = subs[serial_id]
     ref_modes = _enabled_modes(ref_sub)
@@ -727,7 +743,7 @@ def check_cross_hardware_magnitude(primary: TRITONSWMM_analysis, *, cfg_analysis
             )
 
     if not any_compared:
-        return _skipped(name, "N/A — no comparable 1-GPU vs 1-rank serial-CPU pair")
+        return _skipped(name, "N/A: no comparable pair of a 1-GPU run and a 1-rank serial-CPU run")
 
     # ADR-4: disclosed bounds ARE the verdict; passed=True regardless of magnitude.
     bounds = [
@@ -736,13 +752,19 @@ def check_cross_hardware_magnitude(primary: TRITONSWMM_analysis, *, cfg_analysis
         if d.get("max_abs_diff_m") is not None and d["variable"] == _DEPTH_VAR
     ]
     n_gpu_compared = len(labeled)
-    dropped_note = f" ({n_dropped} GPU pair(s) dropped for absent/unreadable outputs)" if n_dropped else ""
+    dropped_note = (
+        f" ({n_dropped} GPU {_plural(n_dropped, 'pair', 'pairs')} dropped for absent/unreadable outputs)"
+        if n_dropped
+        else ""
+    )
     summary = (
         f"Characterized cross-hardware divergence (1-GPU vs 1-rank serial-CPU; disclosed, ref member_id={serial_id}): "
-        f"{n_gpu_compared} GPU pair(s) compared{dropped_note}; max_abs_depth_diff_m {', '.join(bounds)}."
+        f"{n_gpu_compared} GPU {_plural(n_gpu_compared, 'pair', 'pairs')} compared{dropped_note}; "
+        f"max_abs_depth_diff_m {', '.join(bounds)}."
         if bounds
         else f"Characterized cross-hardware divergence: no comparable depth field "
-        f"(ref member_id={serial_id}; {n_gpu_compared} GPU pair(s) compared{dropped_note})."
+        f"(ref member_id={serial_id}; {n_gpu_compared} GPU "
+        f"{_plural(n_gpu_compared, 'pair', 'pairs')} compared{dropped_note})."
     )
     verdict = CheckResult(
         name=name,

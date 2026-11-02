@@ -868,7 +868,7 @@ def _build_conduit_flow_figure(
                 kind="line2d",
                 note=(
                     f"conduit lines (bin {bin_idx}/{N_BINS}, "
-                    f"mid_val={mid_val:.3f}, n={len(conduits_in_bin)}) — "
+                    f"mid_val={mid_val:.3f}, n={len(conduits_in_bin)}), "
                     f"per-conduit channels registered in inner loop"
                 ),
             ) as a:
@@ -988,7 +988,7 @@ def _build_conduit_flow_figure(
                     # key needs a markers-mode trace.
                     showlegend=False,
                     legendgroup="watershed_extent",
-                    name="watershed extent (bbox)",
+                    name=WATERSHED_LEGEND_LABEL,
                 ),
                 row=1,
                 col=col_idx,
@@ -1059,14 +1059,14 @@ def _build_conduit_flow_figure(
     with prov.artist(
         axes_id="ax_rain_plotly",
         kind="line2d",
-        note="rainfall time series (event hydrology — top sub-panel)",
+        note="rainfall time series (event hydrology, top sub-panel)",
     ) as a:
         a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
         a.add_channel("y", rain_ref, units=rain_units)
     with prov.artist(
         axes_id="ax_bc_plotly",
         kind="line2d",
-        note="boundary condition water level (event hydrology — bottom sub-panel)",
+        note="boundary condition water level (event hydrology, bottom sub-panel)",
     ) as a:
         a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
         a.add_channel("y", bc_ref, units=bc_units)

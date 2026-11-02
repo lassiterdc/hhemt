@@ -206,6 +206,10 @@ def test_data_availability_check_is_registered_and_graceful_absent():
         "prep_inputs_reclaimed",
         "hydrographs_reclaimed",
         "standalone_rpt_reclaimed",
+        # The clear_raw clearance of the raw TRITON and SWMM outputs: both log fields are written
+        # when the raw outputs are removed, so a cleared analysis discloses the reclaim.
+        "raw_TRITON_outputs_cleared",
+        "raw_SWMM_outputs_cleared",
     }
     # Assert on the CODE, not the source text: the docstring legitimately names
     # `remove_after_processing` in order to say the check must not read it, so a raw

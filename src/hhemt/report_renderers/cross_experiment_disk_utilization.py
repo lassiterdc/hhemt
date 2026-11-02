@@ -27,26 +27,49 @@ def _fmt_bytes(size_bytes: int) -> str:
     return f"{size:.1f} PiB"
 
 
+#: The label of an experiment whose consolidated tree is missing, unreadable or holds no model tier.
+MODEL_NOT_RECORDED = "model not recorded"
+
+
+#: The models an experiment's members can run, in the order the label lists them, each with the
+#: tier of the consolidated tree that records it.
+_MODEL_TIERS: tuple[tuple[str, str], ...] = (
+    ("TRITON", "triton_only/triton"),
+    ("TRITON-SWMM", "tritonswmm/triton"),
+    ("SWMM", "swmm_only"),
+)
+
+
+def model_from_groups(groups: set[str]) -> str:
+    """Every model an experiment's members ran, read from the groups of its consolidated tree.
+
+    The label lists each distinct model once, in the order of `_MODEL_TIERS`, joined by " + "
+    (for example "TRITON-SWMM + SWMM" for an experiment with a coupled member and a SWMM-only
+    member). A tree whose members hold no model tier returns `MODEL_NOT_RECORDED`, never a guess.
+    """
+    found: set[str] = set()
+    for g in (g for g in groups if g.count("/") == 1 and g.startswith("/member_")):
+        for model, tier in _MODEL_TIERS:
+            if any(name == f"{g}/{tier}" or name.startswith(f"{g}/{tier}/") for name in groups):
+                found.add(model)
+    ordered = [model for model, _tier in _MODEL_TIERS if model in found]
+    return " + ".join(ordered) if ordered else MODEL_NOT_RECORDED
+
+
 def _child_model(child: Path) -> str:
-    """'TRITON-SWMM' when a coupled tier exists on any /member_* node, else 'TRITON'."""
+    """The experiment's model label (`model_from_groups`), or `MODEL_NOT_RECORDED` without a readable tree."""
     from hhemt.utils import resolve_experiment_tree
 
     store = resolve_experiment_tree(child)
     if not store.exists():
-        return "TRITON"
+        return MODEL_NOT_RECORDED
     try:
         import xarray as xr
 
         dt = xr.open_datatree(str(store), engine="zarr", consolidated=False)
-        grps = set(dt.groups)
-        for g in sorted(g for g in grps if g.count("/") == 1 and g.startswith("/member_")):
-            if f"{g}/tritonswmm/triton" in grps:
-                return "TRITON-SWMM"
-            if f"{g}/triton_only/triton" in grps:
-                return "TRITON"
+        return model_from_groups(set(dt.groups))
     except Exception:
-        return "TRITON"
-    return "TRITON"
+        return MODEL_NOT_RECORDED
 
 
 def render(analysis, report_cfg, output_path: Path) -> Path:
@@ -140,7 +163,7 @@ def render(analysis, report_cfg, output_path: Path) -> Path:
         if not source_paths:  # honest empty state + declare the expected dir (ADR-6 D3)
             html = (
                 "<section class='cross-experiment-disk-utilization'>"
-                "<p class='note'>No child crates recorded.</p></section>"
+                "<p class='note'>No experiment is recorded for this combine.</p></section>"
             )
             source_paths = [crates / "_du.json"]
 

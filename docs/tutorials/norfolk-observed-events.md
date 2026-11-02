@@ -114,7 +114,7 @@ Its sidebar follows the default reporting set, described in
 - **Per Simulation Results** holds one page per event. Each page shows the rainfall and
   boundary-condition forcing, then the peak flood depth from TRITON and from TRITON-SWMM, and
   the conduit flow from TRITON-SWMM and from SWMM.
-- **Workflow performance** and **Metadata** record what each job cost and which toolkit build
+- **Workflow Performance** and **Metadata** record what each job cost and which toolkit build
   produced the result.
 
 Comparing the two peak-flood-depth panels on one event is the quickest way to see what the

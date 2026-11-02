@@ -50,9 +50,8 @@ _PLOTLY_PORTABLE_FORMATS = frozenset({"pdf", "svg", "png", "eps"})
 
 _PROMOTED_HEADER = (
     "# Promoted EDA plot (source render backend: plotly).\n"
-    "# The matplotlib-specific colorbar/colormap fields below are INERT for this\n"
-    "# plot-ID until the static_plots() consumer defines EDA-plot-ID render dispatch\n"
-    "# (reporting-system_static-plots-entrypoint-and-distribution).\n"
+    "# The matplotlib-specific colorbar/colormap fields below have no effect for this\n"
+    "# plot ID until the static plots consumer defines render dispatch for EDA plot IDs.\n"
 )
 
 
@@ -131,16 +130,15 @@ def register_eda_plot_in_reporting_set(plot_id: str, set_name: str) -> EdaReport
     _wired = any(sel.builder_key == "eda_compute_sensitivity" for sel in REPORTING_SETS[set_name].renderer_selection)
     if _wired:
         print(
-            f"[eda-promote] {plot_id!r} registered against reporting set {set_name!r} — "
+            f"[eda-promote] {plot_id!r} registered against reporting set {set_name!r}: "
             f"this set already renders the EDA adapter; select it with "
             f"report.reporting_set={set_name!r} in your analysis config.",
             flush=True,
         )
     else:
         print(
-            f"[eda-promote] {plot_id!r} registered against reporting set {set_name!r} — "
-            f"NOT yet routed (this set has no EDA render adapter; report()-routing is "
-            f"deferred to reporting-system_eda-skill).",
+            f"[eda-promote] {plot_id!r} registered against reporting set {set_name!r}: "
+            f"not yet routed (this set has no EDA render adapter, so report() does not route it).",
             flush=True,
         )
     return EdaReportingSetRegistration(

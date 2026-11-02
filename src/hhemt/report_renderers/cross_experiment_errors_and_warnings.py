@@ -59,7 +59,7 @@ def _derived_block_html(derived: dict) -> str:
     return (
         "<p class='note fail'><b>"
         + _html.escape(str(derived.get("name", "")))
-        + "</b> (derived across experiments) &mdash; "
+        + "</b> (derived across experiments): "
         + _html.escape(str(derived.get("summary", "")))
         + "</p>"
     )
@@ -99,15 +99,15 @@ def _swmm_invisible_divergence_finding(combined_root: Path) -> dict | None:
         "level": "aggregate",
         "passed": False,
         "summary": (
-            f"Every coupled config's max_wlevel_m differs clean-vs-resume "
-            f"({n_depth_diff}/{len(depth)}) while every config's max_flow_cms is identical "
+            f"Every coupled compute configuration's max_wlevel_m differs clean-vs-resume "
+            f"({n_depth_diff}/{len(depth)}) while every compute configuration's max_flow_cms is identical "
             f"(0/{len(flow)} differ). This asymmetry is the signature of the SWMM node-depth "
-            "SCATTER defect on the resume path: the replayed depths never reach the per-rank "
+            "scatter defect on the resume path: the replayed depths never reach the per-rank "
             "new_depth[], the first post-resume step forces the Case-1 exchange branch at every "
             "manhole, and the perturbation lands permanently in TRITON's depth field while the "
             "interface error decays below SWMM's reported precision within ~1000 steps. "
-            "SWMM-side agreement is NOT evidence that the resume reproduced the clean run. "
-            "See the per-analysis 'resume validity' check."
+            "SWMM-side agreement is not evidence that the resume reproduced the clean run. "
+            f"See the {_vocab_name('resume validity')} check of each experiment."
         ),
         "details": [],
     }
@@ -150,9 +150,10 @@ def _compat_divergence_finding(combined_root: Path) -> dict | None:
         "level": "aggregate",
         "passed": False,
         "summary": (
-            f"{len(unexpected)} of {len(divs)} identity-field divergence(s) are not "
+            f"{len(unexpected)} of {len(divs)} identity-field "
+            f"{'divergence is' if len(unexpected) == 1 and len(divs) == 1 else 'divergences are'} not "
             f"accounted for by the combine's intended structure: {_lines}. Figures "
-            "render, but cross-bundle field semantics may differ."
+            "render, and the skewed fields mean different things in different bundles."
         ),
         "details": [],
     }
@@ -235,7 +236,10 @@ def _render_rollup_html(child_reports: list[tuple[str, list[dict]]], *, derived:
                 check_names.append(name)
 
     if not child_reports or not check_names:
-        body = "<p class='note'>No per-experiment validation reports were found in child_crates/.</p>"
+        body = (
+            "<p class='note'>The check table is not shown: every <code>validation_report.json</code> "
+            "is missing or holds no checks.</p>"
+        )
         for _d in derived or ():
             body += _derived_block_html(_d)
         return (
@@ -286,7 +290,7 @@ def _render_rollup_html(child_reports: list[tuple[str, list[dict]]], *, derived:
                         if _floor is None
                         else f"identical only to within {float(_floor):.3g} ({_inst} floor)"
                     )
-                    _t = _html.escape(f"{match.get('summary', '')} — {_q}")
+                    _t = _html.escape(f"{match.get('summary', '')} ({_q})")
                     cells.append(f"<td class='pass-qualified' title='{_t}'>PASS*</td>")
             else:
                 summ = _html.escape(str(match.get("summary", "")))
@@ -307,8 +311,7 @@ def _render_rollup_html(child_reports: list[tuple[str, list[dict]]], *, derived:
         _summ = _html.escape(str(_d.get("summary", "")))
         _nm = _html.escape(str(_d.get("name", "")))
         rows.append(
-            f"<tr><td colspan='{_n_cols}' class='fail'>"
-            f"<b>{_nm}</b> (derived across experiments) &mdash; {_summ}</td></tr>"
+            f"<tr><td colspan='{_n_cols}' class='fail'><b>{_nm}</b> (derived across experiments): {_summ}</td></tr>"
         )
 
     # `Name`, not `Check`: after I7-4 the per-analysis tables' `Check` column carries a
@@ -320,7 +323,7 @@ def _render_rollup_html(child_reports: list[tuple[str, list[dict]]], *, derived:
         + _INLINE_STYLE
         + "</head><body><section class='cross-experiment-errors-and-warnings'>"
         + "<h2>Cross-Experiment Errors and Warnings</h2>"
-        + "<p>Per-experiment validation-check outcomes. Expand an experiment's own section "
+        + "<p>Check outcomes for each experiment. Expand an experiment's own section "
         + "for its full Errors and Warnings detail.</p>"
         + table
         + "</section></body></html>"

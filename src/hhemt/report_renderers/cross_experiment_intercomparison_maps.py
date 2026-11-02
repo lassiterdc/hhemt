@@ -43,17 +43,7 @@ from hhemt.report_renderers._table_presentation import (
 )
 from hhemt.utils import EXPERIMENT_TREE_NAME
 
-_TRUNCATION_CAVEAT = (
-    "Absolute magnitudes inherit the variable-dt SWMM final-period truncation "
-    "(Nperiods=N-1). The truncation is ONE-SIDED, not common-mode: the clean arm "
-    "drops the final period on every config, while a resumed run recovers it "
-    "whenever the restart time falls on the emitting side of SWMM's report-gate "
-    "tolerance (measured: 14 of 28 members). SWMM series are therefore "
-    "compared over the shared leading periods, which are timestamp-identical "
-    "across both arms; the clean-vs-resume DIFFERENCE shown here is taken over "
-    "that shared prefix. TRITON-side fields are unaffected (full length on both "
-    "arms)."
-)
+_TRUNCATION_CAVEAT = "SWMM series are compared over the reporting periods both experiments share."
 
 
 def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
@@ -90,8 +80,8 @@ def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
 #: final-timestep snapshot. max_wlevel_m is a PEAK summary: the per-DEM-cell maximum
 #: water level over the WHOLE simulation.
 _VARIABLE_GLOSS = {
-    "max_wlevel_m": "max_wlevel_m — per-DEM-cell PEAK water level (maximum over the whole simulation)",
-    "max_flow_cms": "max_flow_cms — per-SWMM-link PEAK flow (maximum over the whole simulation)",
+    "max_wlevel_m": "max_wlevel_m, per-cell peak flood depth (maximum over the whole simulation)",
+    "max_flow_cms": "max_flow_cms, per-link peak flow (maximum over the whole simulation)",
 }
 
 #: Experiment-id suffix -> model label. Mirrors _combine._MODEL_BY_TOKEN so the renderer's
@@ -211,7 +201,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         if not ps:
             verdict = "not compared (no clean+resume pair for this model)"
         elif not diffs:
-            verdict = f"bit-identical on all {len(ps)} compared pairs — resume reproduces clean"
+            verdict = f"bit-identical on all {len(ps)} compared pairs: resume reproduces clean"
         else:
             verdict = f"{len(diffs)} of {len(ps)} compared pairs differ"
         verdict_rows.append([m or "(unattributed)", len(ps), verdict, f"{max(mads):.4g}" if mads else "—"])
@@ -282,7 +272,11 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     # words rather than drawing empty axes.
     diffs_present = bool(panel_keys)
 
-    if not diffs_present:
+    if not models:
+        caption_text += (
+            " No difference panels are drawn: the combined experiments hold no clean and resume pair to compare."
+        )
+    elif not diffs_present:
         caption_text += (
             " No difference panels are drawn: every compared pair is bit-identical, so "
             "resume minus clean is exactly zero everywhere and a difference map would "
@@ -1267,15 +1261,12 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         )
 
     _caption = (
-        caption_text + " ONE PANEL PER BYTE-IDENTITY EQUIVALENCE CLASS, derived from the data rather "
-        "than from a hardware taxonomy: every config whose outputs are byte-identical shares a "
-        "panel, so a class may span CPU and GPU where those agree and split where they do not. "
-        "Each panel's side table names every config in its class with that config's resume-arm "
-        "resume count, so byte-identity across differing resume counts is visible rather than "
-        "asserted. Panels are grouped under their model arm. The reference within a class is its "
-        "minimum-device clean, uninterrupted run. Diff panels share one "
+        caption_text + " Each panel is one class of configurations with byte-identical outputs. "
+        "Each panel's side table lists every configuration in its class with its resume count "
+        "in the resume experiment. Panels are grouped under their model. The reference within a "
+        "class is its minimum-device clean, uninterrupted run. Diff panels share one "
         f"symmetric range (+/-{wsym:.4g} m, +/-{psym:.4g} %), quantised to a shared ladder so "
-        "co-located model arms coincide whenever their percentiles share a bin."
+        "panels of different models coincide whenever their percentiles share a bin."
     )
     # As in the empty-plan branch: declare width + side margins first so the caption's
     # content width is READ from the figure rather than re-derived at the call site.

@@ -1,0 +1,18 @@
+source: src/hhemt/report_renderers/_react_surgery.py
+entries:
+- rule: capitals
+  string: (a, b) => {const ORDER = {}; const rank = k => ORDER[k] ?? ORDER[Object.keys(ORDER).find(o =
+  status: permitted
+  reason: JavaScript identifier in the category comparator spliced into the page script; not shown to a reader.
+- rule: capitals
+  string: (a, b) => {const ORDER = {}; const rank = k => ORDER[k] ?? ORDER[Object.keys(ORDER).find(o => o.toLowerCase() === k.toLowe
+  status: permitted
+  reason: JavaScript identifier in the category comparator spliced into the page script; not shown to a reader.
+- rule: capitals
+  string: (a, b) => {const ORDER = {}; const rank = k => ORDER[k] ?? ORDER[Object.keys(ORDER).find(o => o.toLowerCase() === k.toLowerCase())] ??
+  status: permitted
+  reason: JavaScript identifier in the category comparator spliced into the page script; not shown to a reader.
+- rule: capitals
+  string: => {const ORDER = {}; const rank = k => ORDER[k] ?? ORDER[Object.keys(ORDER).find(o => o.toLowerCase() === k.toLowerCase())] ?? 99; return rank(a
+  status: permitted
+  reason: JavaScript identifier in the category comparator spliced into the page script; not shown to a reader.

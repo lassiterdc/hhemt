@@ -1,0 +1,6 @@
+source: src/hhemt/report_renderers/_figure_emission.py
+entries:
+- rule: retired_word
+  string: '{}sims/{}/swmm/hydraulics.inp'
+  status: permitted
+  reason: A file path as the workflow writes it; the Sources list names the file the reader opens.

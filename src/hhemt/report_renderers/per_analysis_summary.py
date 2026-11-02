@@ -2,7 +2,8 @@
 
 Migrated from a matplotlib `ax.table(...)` + SVG output to a self-contained
 Tabulator HTML emit at Phase 6 of the interactive_report_renderers feature.
-Default rows in regular multisim mode: total simulations, expected total,
+Default rows in regular multisim mode: scenarios (one per weather event),
+model runs (scenarios times enabled model types), expected total,
 n successful / pending / failed, enabled model types, sensitivity-analysis
 mode (when applicable). Sensitivity-master mode renders one row per
 member with status counts.
@@ -116,7 +117,7 @@ def render(
             per_member_rows.append(
                 {
                     "member": member_id,
-                    "n sims": n,
+                    "Scenarios": n,
                     "successful": n_succ,
                     "pending": n_pend,
                     "failed": n_fail,
@@ -158,14 +159,15 @@ def render(
         if is_sensitivity:
             n_member_rows = len(analysis.sensitivity.df_setup.index)
             expected_total = n_weather_events * n_member_rows
-            expected_label = f"Expected total (derived: {n_weather_events} events × {n_member_rows} member rows)"
+            expected_label = "Expected scenarios (events × members)"
         else:
             expected_total = n_weather_events
-            expected_label = f"Expected total (derived: {n_weather_events} weather events)"
+            expected_label = "Expected scenarios"
 
         rows = []
         if "n_sims" in metrics:
-            rows.append(("Total simulations", n_sims))
+            rows.append(("Scenarios", n_sims))
+            rows.append(("Model runs", n_sims * len(analysis._get_enabled_model_types())))
             rows.append((expected_label, expected_total))
         if "n_successful" in metrics:
             rows.append(("Successful", n_successful))
@@ -175,7 +177,7 @@ def render(
             rows.append(("Failed", n_failed))
         if "enabled_model_types" in metrics:
             enabled = analysis._get_enabled_model_types()
-            rows.append(("Enabled model types", ", ".join(enabled) if enabled else "(none)"))
+            rows.append(("Models", ", ".join(enabled) if enabled else "(none)"))
         if "sensitivity_mode" in metrics:
             sensitivity_cfg = getattr(report_cfg, "sensitivity", None)
             mode = getattr(sensitivity_cfg, "mode", None) if sensitivity_cfg else None
@@ -198,7 +200,7 @@ def render(
     with prov.artist(
         axes_id="ax_summary",
         kind="table",
-        note=("per-analysis workflow-health table (status counts + enabled model types) — Tabulator data grid"),
+        note="per-analysis summary table: status counts and models",
     ) as a:
         for rel in rel_sources:
             a.add_channel(

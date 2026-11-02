@@ -69,7 +69,7 @@ def render(
     if not sections:
         return _emit_model_type_skip_placeholder(
             output_path,
-            "no per-simulation figures are applicable to this analysis",
+            "The event page is not shown: no model of this analysis produces a per-event figure.",
             report_cfg.figure_defaults.savefig_dpi,
         )
 
@@ -102,14 +102,14 @@ def render(
         figures.append(
             FigureSpec(
                 figure=built[0],
-                title=f"{MODEL_DISPLAY_NAMES[model_type]} - {_RENDERER_LABELS[renderer_kind]}",
+                title=f"{MODEL_DISPLAY_NAMES[model_type]}: {_RENDERER_LABELS[renderer_kind]}",
             )
         )
 
     if not figures:
         return _emit_model_type_skip_placeholder(
             output_path,
-            "per-simulation figures are not yet available for this scenario",
+            "The event page is not shown: none of its figures could be built for this event.",
             report_cfg.figure_defaults.savefig_dpi,
         )
 
@@ -119,7 +119,7 @@ def render(
     html_text = render_scrollable_report(
         figures,
         [],
-        title=f"Simulation results - {event_page_reference(analysis, event_iloc)}",
+        title=f"Results for {event_page_reference(analysis, event_iloc)}",
         brand=None,
         plotly_js_mode=interactive.plotly_js_mode,
         tabulator_js_mode=interactive.tabulator_js_mode,

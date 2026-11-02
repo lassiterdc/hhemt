@@ -455,7 +455,17 @@ unpaired_allowlist:
       expires on the next change to this renderer.
   - renderer: cross_experiment_disk_utilization
     caption: src/hhemt/report_templates/captions/cross_experiment_disk_utilization.rst
-    renderer_sha256: b698ad22092661e1f49fa70f4e0df587f056383716bcad95ddd2f9c71e509d2d
+    renderer_sha256: f5bdf1c7e2be1fadfc702c03d52b8c84b0250c16e99b2ee0b8e1b087b89d2d93
+    justification_2026_11_02_empty_state_sentence: >-
+      The sentence the page prints when no experiment is recorded changes from one that named
+      child crates to "No experiment is recorded for this combine." Caption RE-READ IN FULL (5
+      lines: the description of the columns, rows and footer, the clause that the page says so
+      when no experiment is recorded, and the Sources block) against the diff. The clause stays
+      true of the new sentence and nothing else in the caption describes the string. The diff
+      of this renderer against HEAD has one hunk, listed by `git diff -U0 | grep '^@@'`, the
+      line holding that sentence. This is a PAIRING discharge on a re-read, not a formatting
+      exemption. Digest recorded after the edit, so the exemption expires on the next change
+      to this renderer.
     justification: >-
       docs-and-experiment-system merge. FORMATTING ONLY -- discharged by measurement,
       not by judgement. This renderer's abstract syntax tree, parsed from the working
@@ -482,7 +492,142 @@ unpaired_allowlist:
       the rename, so the exemption expires on the next change to this renderer.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: c30c77987e93e3e630e474d4a294252b8fd0ab9ea9fa568ffed63c63bc5941f5
+    renderer_sha256: e21b919441001b64b00f9e9525a51ab47a846b7f0235556a7a53ce5aed686f83
+    justification_2026_11_02_metadata_page_text: >-
+      The Metadata page text follows the report style brief, and the caption is rewritten in the
+      same change (so this entry is not what satisfies the pairing guard for this change; it
+      records the digest of the file the caption was re-read against). Caption RE-READ IN FULL
+      (20 lines: the three displayed sections, Provenance, Data Availability and Reproduction
+      Guide, plus the Sources block) against the diff. The renderer change: bucket headings and
+      the HPC instruction, the placeholder, the software, environment, inputs, process and
+      outputs notices, the collapsed-run summary, the data dictionary note, the option tooltip
+      separator, the Required and Conditional cells, the reproduction guide note, the
+      omission notices of Provenance and Data Availability (one new helper, `_omitted`), the
+      removed process count line and provenance chain note, and the reclaim banner. Digest
+      recorded after the last edit, so the exemption expires on the next change to this renderer.
+    justification_2026_11_02_job_count_text: >-
+      The SLURM efficiency table's text follows the report style brief: the summary note counts
+      jobs submitted, cancelled before starting and ran with the plural of the number, the
+      Invocation column becomes Workflow run, the Toolkit record column is cut (a dash already
+      marks a job with no record, and the blank-cell note counts those jobs from an internal
+      key), the note on unrecognised report columns becomes a log warning, the column rules
+      and the glossary under the table are reworded, and the glossary drops its Method line.
+      Caption RE-READ IN FULL (27 lines: the three displayed sections, Provenance summary, Data
+      availability and Reproduction guide, plus the Sources block) against the diff. The table
+      is on the Workflow performance page, whose own caption is edited in the same change; the
+      Metadata caption makes no claim about it. The diff of this renderer against HEAD has
+      twenty-eight hunks, listed by `git diff -U0 | grep '^@@'`, and every one sits in the SLURM
+      efficiency table code: one module import (`logging`); the reduction declarations
+      `_SUM_STEPS`, `_MAX_STEPS`, `_JOB_RECORD`, `_QUEUE_JOIN`, `_ATTEMPTS_JOIN`,
+      `_TOOLKIT_JOIN` and `_INVOCATION_JOIN`; the `_EFF_COLUMNS` table; `_reduction_caption`;
+      the comment above the two toolkit-record constants; two strings of
+      `_invocation_for_job`; the removed flag line of `_enrich_efficiency_rows`; the removed
+      `_undisplayed_columns_note`; and the summary, queue provenance string and log warning in
+      `_build_slurm_efficiency_html`. None reaches the RO-Crate provenance summary, the
+      data-availability projection or the reproduction guide. This is a PAIRING discharge on a
+      re-read, not a formatting exemption. Digest recorded after the last edit, so the
+      exemption expires on the next change to this renderer.
+    justification_2026_11_01_excluded_run_sentence: >-
+      The summary note of the SLURM efficiency table gains one sentence that names the workflow
+      run left out of the table, or states that none was. Caption RE-READ IN FULL (27 lines:
+      the three displayed sections, Provenance summary, Data availability and Reproduction
+      guide, plus the Sources block) against the diff. The table is on the Workflow performance
+      page and the Metadata caption makes no claim about it. The diff of this renderer against
+      HEAD has two hunks, listed by `git diff -U0 | grep '^@@'`: the block before the summary
+      that chooses the sentence, and the summary's last line gaining the sentence. Neither
+      reaches the RO-Crate provenance summary, the data-availability projection or the
+      reproduction guide. This is the last change of this renderer in its group of edits, so
+      the digest recorded here equals the landed file. This is a PAIRING discharge on a
+      re-read, not a formatting exemption. Digest recorded after the edit, so the exemption
+      expires on the next change to this renderer.
+    justification_2026_11_01_provenance_values: >-
+      The verifiability anchors print "input digests not captured" when no input entity carries
+      a digest and label the anchor's git-SHA as the consolidation build's, the provenance chain
+      splits "Simulated / processed by" into "Simulated by" and "Processed by" and rewrites its
+      note for four rows, and a gapped id set in the folder tree prints its ranges. The caption
+      is edited in the same change (its first bullet, 27 lines in all), so this entry is not
+      what satisfies the pairing guard for this change; it records the digest of the file the
+      caption was re-read against, in full, including the Data availability and Reproduction
+      guide bullets and the Sources block, which no hunk reaches. The diff of this renderer
+      against HEAD has eleven hunks, listed by `git diff -U0 | grep '^@@'`, in these groups: two
+      in `_provenance_bluf`; one new helper `_stage_stamps` before the chain; six in
+      `_provenance_chain` (the docstring summary line, the docstring paragraph, the simulating row, the
+      processing row, the removed old rows, and the note); one in `_index_template` (the label
+      built from `_id_ranges`); one new function `_id_ranges`.
+    justification_2026_11_01_blank_cell_notes: >-
+      The note on blank cells in the SLURM efficiency table becomes a function that writes one
+      sentence per kind of blank cell with a count computed from the rendered rows, the paragraph
+      on the scenario join rate is removed, and the banner for a join that matched no job becomes
+      a one-sentence notice. Caption RE-READ IN FULL (23 lines: the three displayed sections,
+      Provenance summary, Data availability and Reproduction guide, plus the Sources block)
+      against the diff. The table and its notes are on the Workflow performance page and the
+      Metadata caption makes no claim about them. The diff of this renderer against HEAD has
+      ten hunks, listed by `git diff -U0 | grep '^@@'`, in these groups: one new helper
+      `_banner_html` after `_banner`; two in the docstring of `_eff_label`; one replacing the old note constant with the function
+      `_uncaptured_note`; one comment in `_enrich_efficiency_rows`; four in
+      `_build_slurm_efficiency_html` (the comment on the join counts, the removed join-rate
+      paragraph, the replaced banner, and the call that adds the note); one docstring in
+      `_read_scenario_status`. None reaches the RO-Crate provenance summary, the
+      data-availability projection or the reproduction guide. This is a PAIRING discharge on a
+      re-read, not a formatting exemption. Digest recorded after the edit, so the exemption
+      expires on the next change to this renderer.
+    justification_2026_11_01_member_resolution: >-
+      A member is now read from a rule name only for the rule families that name one, compared
+      with the analysis's member ids after the dot and dash replacement the workflow applies,
+      and the run timeline leaves out and counts records of members no longer in the analysis.
+      Caption RE-READ IN FULL (23 lines: the three displayed sections, Provenance summary, Data
+      availability and Reproduction guide, plus the Sources block) against the diff. The run
+      timeline and the purpose join are on the Workflow performance page and the Metadata
+      caption makes no claim about them. The diff of this renderer against HEAD has sixteen
+      hunks, listed by `git diff -U0 | grep '^@@'`, in these groups: two module imports
+      (`Collection`, `member_id_from_mapping`); one removal of the old rule-name pattern and its
+      comment; one new block holding the family patterns, `_member_token`, `_resolve_member`
+      and `_count`; five in `_job_purpose_map` (a new parameter, a docstring paragraph, the
+      sidecar member read, the removed pattern match, the rule-name member read); seven in
+      `_provenance_timeline` (a new parameter, a docstring paragraph, the left-out filter and
+      count, the Member cell, the sentence on the count, the branch for a timeline whose records
+      are all left out, and the note text). None reaches the RO-Crate provenance summary, the
+      data-availability projection or the reproduction guide. This is a PAIRING discharge on a
+      re-read, not a formatting exemption. Digest recorded after the edit, so the exemption
+      expires on the next change to this renderer.
+    justification_2026_11_01_invocation_column: >-
+      The SLURM efficiency table's Record column becomes an Invocation column that names the
+      Snakemake invocation which submitted each job, and the former two-valued flag moves to its
+      own Toolkit record column with the values "toolkit record" and "no toolkit record". Caption
+      RE-READ IN FULL (23 lines: the three displayed sections, Provenance summary, Data
+      availability and Reproduction guide, plus the Sources block) against the diff. The table
+      is on the Workflow performance page and the Metadata caption makes no claim about it. The
+      diff of this renderer against HEAD has twelve hunks, listed by
+      `git diff -U0 | grep '^@@'`, in these groups: one module import (`Mapping`); one new
+      reduction declaration `_INVOCATION_JOIN` beside `_TOOLKIT_JOIN`; one in the `_EFF_COLUMNS`
+      table (the Invocation column and the Toolkit record column); one line of
+      `_EFF_UNCAPTURED_NOTE` (the column its prose names); one line in
+      `_parse_efficiency_csvs` (it keeps each row's report label) and one block after it
+      holding the new constants and the helpers `_report_uuid` and `_invocation_for_job`; two
+      lines in `_enrich_efficiency_rows` (a comment line edited above the flag, and the flag's
+      key and values); four in
+      `_build_slurm_efficiency_html` (a new parameter, the docstring paragraph that describes it,
+      the per-job report run ids, and the loop that sets the invocation and the flag on every row). None reaches the RO-Crate
+      provenance summary, the data-availability projection or the reproduction guide.
+      This is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded
+      after the edit, so the exemption expires on the next change to this renderer.
+    justification_2026_11_01_job_set: >-
+      The SLURM efficiency table builder takes an optional job universe and an exclusion set,
+      adds a State column and a cancelled-before-starting count, rewords the table's summary
+      sentence, and corrects three docstrings and comments about the efficiency reports. Caption
+      RE-READ IN FULL (23 lines: the three displayed sections, Provenance summary, Data
+      availability and Reproduction guide, plus the Sources block) against the diff. The table
+      lives on the Workflow performance page, whose own caption is edited in the same change; the
+      Metadata caption makes no claim about it. The diff of this renderer against HEAD has
+      eighteen hunks, listed by `git diff -U0 | grep '^@@'`, and every one sits in the SLURM
+      efficiency table code: one in the `_EFF_COLUMNS` table (the new State column), two in
+      `_EFF_KNOWN_UNDISPLAYED` and the comment above `_RECOVERED_ONLY_STEP_FIELDS`, one new
+      module-level helper `_is_never_started` placed after `_load_job_recovery`, five in
+      `_aggregate_jobs`, seven in `_build_slurm_efficiency_html` and two in
+      `_resolve_all_efficiency_csvs`. None reaches the RO-Crate provenance summary, the
+      data-availability projection or the reproduction guide.
+      This is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded
+      after the edit, so the exemption expires on the next change to this renderer.
     justification_2026_10_28_root_store_resolver: >-
       The renderer now takes its consolidated-store pick from the shared root-store resolver
       instead of its own name walk. Caption RE-READ IN FULL (23 lines: the three displayed
@@ -945,7 +1090,47 @@ unpaired_allowlist:
 
   - renderer: workflow_performance
     caption: src/hhemt/report_templates/captions/workflow_performance.rst
-    renderer_sha256: cca1e829a4dae74906bb1a9d6f90ef6161b96d38e498ff792699b9455fb9a4c1
+    renderer_sha256: 1b3b072feb5d29c39d62211cf58c3fd586ad12e0fa89ac59ab98566e05feb346
+    justification_2026_11_02_job_count_text: >-
+      The absent-report notice is rebuilt as one sentence that names the report file, and the
+      provenance note of the run timeline is reworded. The caption is edited in the same change
+      (its SLURM Efficiency bullet drops the list of source files and the section's absence
+      sentence), so this entry is not what satisfies the pairing guard for this change; it
+      records the digest of the file the caption was re-read against, in full (14 lines), with
+      the diff of this renderer against HEAD: four hunks, listed by
+      `git diff -U0 | grep '^@@'`: the import of `_SLURM_EFF_GLOB` and the removal of the
+      `_absent_banner` import, the run timeline's provenance note, and the replaced notice.
+      Digest recorded after the last edit, so the exemption expires on the next change to this
+      renderer.
+    justification_2026_11_01_member_set: >-
+      The renderer reads the member ids from the analysis's configuration and passes them to the
+      run timeline and to the purpose join, replaces the note shown when no status record exists,
+      and gains the function that reads the member ids. The caption is rewritten in the same
+      change: its Run timeline bullet states that records of members no longer in the analysis
+      are left out and counted and that a record naming no member has an empty Member cell, and
+      both bullets and the opening sentence follow the report style brief. Caption RE-READ IN
+      FULL (16 lines) against the diff and against the built page for a sweep, a plain analysis,
+      a sweep whose records are all left out, and an analysis with no status record. The diff of
+      this renderer against HEAD has six hunks, listed by `git diff -U0 | grep '^@@'`: two added
+      imports (`_code`, `_heading`); the new function that reads the member ids; the line that
+      calls it before the run timeline; the timeline call gaining the member ids; the replaced
+      notice for a missing status record, now built with `_code` so the file name prints as code;
+      and the purpose join call gaining the member ids. This is a PAIRING discharge on a re-read of
+      an edited caption, not a formatting exemption. Digest recorded after the edit, so the
+      exemption expires on the next change to this renderer.
+    justification_2026_11_01_invocation_labels: >-
+      The render call now passes the table builder one more argument, a mapping from each job
+      id a Snakemake log names to that log's file name without its ".snakemake.log" suffix, built
+      from the submit map the renderer already holds. Caption RE-READ IN FULL (15 lines: the
+      run-timeline bullet, the SLURM efficiency bullet, and the Sources block) against the diff.
+      The diff of this renderer against HEAD is ONE hunk, `git diff -U0 | grep '^@@'` returns
+      `@@ -223,0 +224,5 @@`, five added lines inside `render()`, at the call to the table builder.
+      The caption names no column of the table and says only that each row is one SLURM job read
+      from the submit records, the reports and the recovery store, which this argument makes
+      truer in practice and does not change. The earlier edit of this renderer that changed the
+      job set was paired with its caption edit in its own commit. This is a PAIRING discharge on
+      a re-read, not a formatting exemption. Digest recorded after the edit, so the exemption
+      expires on the next change to this renderer.
     justification_2026_09_21: >-
       Grouped bundle-emit commit (INEF-4's 27 specs + EMIT-1's 5). Caption RE-READ IN FULL
       against the diff. COMMENT-AND-FORMAT ONLY -- discharged by measurement, not by
@@ -981,7 +1166,7 @@ unpaired_allowlist:
       the next real change to this renderer rather than on arrival.
   - renderer: scenario_status_appendix
     caption: src/hhemt/report_templates/captions/scenario_status_appendix.rst
-    renderer_sha256: 8c430d0a846e9241f586427b56f5c45cd17fdd06ee670efd8b74aeb52797bcf8
+    renderer_sha256: 25442751300defe41cd98ca14082cf156adccec5aedda6ee96dd5d07d7d6ca35
     justification: >-
       SUPERSEDES the formatting-only entry recorded at 3d7c2682, whose discharge does
       NOT carry over -- this is a semantic change to the renderer, and it was re-read
@@ -1005,6 +1190,10 @@ unpaired_allowlist:
       previously carry.
       Digest recorded at the post-change renderer content, so this exemption expires on
       the NEXT change to the renderer and the re-read is owed again then.
+      RE-RECORDED for chunk 3b.3 (round 3): the renderer's only change is that the
+      not-shown notice prints the file name scenario_status.csv inside a code element
+      (style brief rule 7); the caption makes no claim about the notice's markup, so no
+      caption edit follows.
   - renderer: eda_compute_sensitivity
     caption: src/hhemt/report_templates/captions/eda_dem_resolution_cost_error.rst
     renderer_sha256: bdc88d215eee86385ef762794f9ca9686fbc8edda049ee7f583316da5747c023
@@ -1095,3 +1284,16 @@ unpaired_allowlist:
       none of those is touched by the diff, so no clause is falsified, weakened or left ambiguous and
       there is no caption edit to make. Digest recorded at the post-change renderer content, so this
       exemption expires on the next change to the renderer.
+  - renderer: per_sim_event_page
+    caption: src/hhemt/report_templates/captions/per_sim_event_page.rst
+    renderer_sha256: 29db65491930268e76e3eec33430e3d197cce0acf5b53a3e047d8a1a31856ef7
+    justification: >-
+      Chunk 3e.2 round 2, re-read against this renderer's diff (4 hunks, `git diff -U0 HEAD --
+      src/hhemt/report_renderers/per_sim_event_page.py`). The diff changes four strings the page
+      prints: the document title ("Simulation results - {event}" to "Results for {event}"), the
+      section heading join (a spaced hyphen to a colon), and the two omission notices (now "The event
+      page is not shown: {reason}."). The caption (15 lines, read in full) opens "Results for event",
+      describes the depth, conduit-flow and Flood Drivers panels, and names none of the four changed
+      strings, so no clause is falsified, weakened or left ambiguous and there is no caption edit to
+      make. Digest recorded after the last edit, so this exemption expires on the next change to the
+      renderer.

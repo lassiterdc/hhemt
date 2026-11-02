@@ -12,30 +12,34 @@ It reads two module-level values only. It compiles no solver and runs no simulat
 
 import re
 
-from hhemt.bundle.combined_snakefile_generator import _COMBINED_WORKFLOW_DESCRIPTION
+from hhemt.bundle.combined_snakefile_generator import _combined_workflow_description
 from hhemt.report_renderers._reporting_sets import get_reporting_set
 
 
-def test_combined_description_names_exactly_the_combined_sidebar_sections():
-    """Property: every section the description names in bold is a section of the
-    combined reporting set, and every such section is named.
+def test_combined_description_names_exactly_the_rendered_combined_sections():
+    """Property: for every combination of the two conditions the description depends on, every
+    section it names in bold is a section of the combined reporting set and is rendered, and
+    every rendered section is named.
 
-    Class: every bold (`**...**`) span in the description, against the set's whole
-    `category_order` as the registry holds it when the test runs.
+    Class: the bold (`**...**`) spans of `_combined_workflow_description(rendered, ...)`, over
+    the whole `category_order` as the registry holds it when the test runs, with the
+    cross-solver section rendered or not and the clean-and-resume pair present or not (four
+    combinations; the full set with a pair is the old static description).
 
-    Why required: the description is the landing page's only guide to the sidebar,
-    and a bold name with no matching section sends the reader to look for a section
-    that does not exist.
+    Why required: the description is the landing page's only guide to the sidebar, and a bold
+    name with no matching section sends the reader to look for a section that does not exist.
 
-    What kills it: a description naming a section the registry does not carry, or
-    a registry section renamed or added without the description following.
-
-    A second correct implementation that still passes: a description generated
-    from `category_order` at import time, which names every section by construction.
+    What kills it: a description naming a section the report does not render, or a rendered
+    section the description leaves out.
     """
     sections = list(get_reporting_set("combined").category_order)
     assert sections, "the combined set declares no sections, so the check would be vacuous"
-    named = re.findall(r"\*\*(.+?)\*\*", _COMBINED_WORKFLOW_DESCRIPTION)
-    assert named, "the description names no section in bold, so the check would be vacuous"
-    assert [n for n in named if n not in sections] == []
-    assert [s for s in sections if s not in named] == []
+    for solver in (True, False):
+        for pair in (True, False):
+            rendered = [s for s in sections if solver or s != "Cross-Solver Comparison"]
+            text = _combined_workflow_description(rendered, clean_vs_resume=pair)
+            named = re.findall(r"\*\*(.+?)\*\*", text)
+            assert named, "the description names no section in bold, so the check would be vacuous"
+            assert named == rendered, (solver, pair)
+            assert ("clean" in text) == pair, (solver, pair)
+            assert ("Cross-Solver Comparison" in text) == solver, (solver, pair)

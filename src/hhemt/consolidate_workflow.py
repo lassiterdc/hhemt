@@ -283,6 +283,30 @@ def validate_resource_usage(analysis, logger=None, *, df_status=None):
         return True, issues_flat
 
 
+def count_examined_gpu_rows(analysis, *, df_status=None) -> int | None:
+    """Number of completed scenario rows run in GPU mode, as `validate_resource_usage` counts them.
+
+    `validate_resource_usage` returns no issue row for a GPU run that passes, so an empty
+    issue list cannot tell a CPU-only analysis from a clean GPU one. This count can. It
+    applies the same two conditions the validator applies before it counts a row (the row
+    completed, and its run mode is "gpu", read from the row for a sweep and from the
+    analysis configuration otherwise). Returns None when the validator would skip
+    validation because no log.out was found: the count is then unknown, not zero.
+    """
+    if df_status is None:
+        df_status = analysis.df_status
+    if df_status["actual_nTasks"].isna().all():
+        return None
+    n = 0
+    for _idx, row in df_status.iterrows():
+        if not row["run_completed"]:
+            continue
+        run_mode = row["run_mode"] if "run_mode" in df_status.columns else analysis.cfg_analysis.run_mode
+        if run_mode == "gpu":
+            n += 1
+    return n
+
+
 def reclaim_unconsolidated_scenarios(analysis, enabled_models, scoped, analysis_dir) -> dict[str, dict[str, bool]]:
     """Run the scenario-scoped reclaim for events the per-scenario barrier did not cover.
 

@@ -609,7 +609,7 @@ class Bundle:
         # Sidebar order: the bundled config's active reporting set, resolved by the same
         # helper the two analysis render paths use, so the re-render ranks its categories
         # as the original render did. Without it the surgery's five-name default moves
-        # "Workflow performance" and "Metadata" to the alphabetical tail. A Bundle built
+        # "Workflow Performance" and "Metadata" to the alphabetical tail. A Bundle built
         # without a config (never the case through from_directory) keeps that default.
         from types import SimpleNamespace
 

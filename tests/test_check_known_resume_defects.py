@@ -83,6 +83,11 @@ class _StubAnalysis:
         self._system = _StubSystem(coupled)
 
 
+def _plural(n: int, noun: str) -> str:
+    """The numeral beside its unit in the number's own form, as the check prints it."""
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
 def _df(*, n_resumes: int = 1, model_type: str = "tritonswmm", columns: bool = True) -> pd.DataFrame:
     if not columns:
         return pd.DataFrame({"scenario_directory": ["s0"]})
@@ -115,7 +120,7 @@ def test_no_resume_record_is_na():
 def test_nothing_resumed_is_na():
     res = av.check_known_resume_defects(_StubAnalysis(), df_status=_df(n_resumes=0))
     assert res.applicable is False and res.passed is True
-    assert "No sim was resumed" in res.summary
+    assert "No model run was resumed" in res.summary
 
 
 def test_unknown_producing_sha_is_na(monkeypatch):
@@ -170,8 +175,8 @@ def test_an_affected_sha_fails_and_its_present_count_matches_its_detail_rows(mon
     assert all(r["scenario"] == "(analysis-level)" for r in res.details)
     # The denominator is on the FAILING arm too: a FAIL naming one defect out of four
     # applicable ones must still say what happened to the other three.
-    assert f"{len(_RESUME_REGISTRY)} applicable registry defect(s)" in res.summary
-    assert f"{present} PRESENT" in res.summary
+    assert _plural(len(_RESUME_REGISTRY), "applicable registry defect") in res.summary
+    assert f"{present} present" in res.summary
 
 
 def test_the_two_positive_controls_together_cover_every_registered_defect():
@@ -284,21 +289,21 @@ def test_registered_and_unregistered_rows_differ(monkeypatch):
 def test_registered_row_names_its_assessed_count(monkeypatch):
     res = _run(monkeypatch, _SHA_REGISTERED)
     assert res.passed is True
-    assert f"{len(_RESUME_REGISTRY)} applicable registry defect(s)" in res.summary
-    assert f"{len(_RESUME_REGISTRY)} assessed ABSENT" in res.summary
-    assert "INDETERMINATE" not in res.summary
+    assert _plural(len(_RESUME_REGISTRY), "applicable registry defect") in res.summary
+    assert f"{len(_RESUME_REGISTRY)} assessed absent" in res.summary
+    assert "indeterminate" not in res.summary
 
 
 def test_unregistered_row_names_its_indeterminate_count_and_the_defect_ids(monkeypatch):
     res = _run(monkeypatch, _SHA_UNREGISTERED)
     assert res.passed is True
-    assert f"{len(_RESUME_REGISTRY)} INDETERMINATE" in res.summary
-    assert "NOT assessed at this pin" in res.summary
+    assert f"{len(_RESUME_REGISTRY)} indeterminate" in res.summary
+    assert "not assessed at this pin" in res.summary
     # NAMING the unassessed defects is what makes the row actionable rather than merely
     # honest: the remedy is per-defect-set membership.
     for defect in _RESUME_REGISTRY:
         assert defect.defect_id in res.summary
-    assert "assessed ABSENT" not in res.summary
+    assert "assessed absent" not in res.summary
 
 
 def test_disclosed_counts_sum_to_the_denominator(monkeypatch):
@@ -311,9 +316,9 @@ def test_disclosed_counts_sum_to_the_denominator(monkeypatch):
 
     for sha in (_SHA_REGISTERED, _SHA_UNREGISTERED, _SHA_PRE_FIX, _SHA_PRE_SNAPSHOT_FIX):
         res = _run(monkeypatch, sha)
-        denom = int(re.search(r"(\d+) applicable registry defect\(s\)", res.summary).group(1))
+        denom = int(re.search(r"(\d+) applicable registry defects?", res.summary).group(1))
         parts = 0
-        for pat in (r"(\d+) PRESENT", r"(\d+) assessed ABSENT", r"(\d+) INDETERMINATE"):
+        for pat in (r"(\d+) present", r"(\d+) assessed absent", r"(\d+) indeterminate"):
             m = re.search(pat, res.summary)
             parts += int(m.group(1)) if m else 0
         assert parts == denom, f"{sha[:12]}: parts={parts} denom={denom} summary={res.summary!r}"
@@ -366,8 +371,8 @@ def test_trigger_scoping_sets_the_denominator(monkeypatch, coupled, expected):
     derived = sum(1 for d in _RESUME_REGISTRY if not (d.trigger == "resumed_coupled" and not coupled))
     assert derived == expected, f"registry membership changed: derived={derived} literal={expected}"
     res = _run(monkeypatch, _SHA_REGISTERED, coupled=coupled)
-    assert f"{expected} applicable registry defect(s)" in res.summary
-    assert f"{expected} assessed ABSENT" in res.summary
+    assert _plural(expected, "applicable registry defect") in res.summary
+    assert f"{expected} assessed absent" in res.summary
 
 
 def test_the_restated_pin_is_the_live_pin():

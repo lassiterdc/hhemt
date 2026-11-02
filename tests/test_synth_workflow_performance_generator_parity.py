@@ -1,4 +1,4 @@
-"""Four-generator parity for the Workflow performance page (`[Q160]`(7)).
+"""Four-generator parity for the Workflow Performance page (`[Q160]`(7)).
 
 WHY THIS FILE EXISTS, stated as the failure it catches rather than as coverage.
 
@@ -12,7 +12,7 @@ present, rule absent). The miss is therefore SILENT.
 
 It matters here specifically because this campaign renders four arms through DIFFERENT
 generators and then combines them: a missed reprocess-generator entry yields a combined
-report in which some arms carry the Workflow performance section and others do not,
+report in which some arms carry the Workflow Performance section and others do not,
 detectable only by eye.
 
 There are FOUR generators, not three. `hhemt architecture.md` Gotcha 66 enumerates four

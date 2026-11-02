@@ -367,9 +367,15 @@ def apply_post_process_surgery(
     # after the first pass the localeCompare literal is gone, so re-application is a
     # no-op.
     _order_js_literal = _order_js(category_order or _DEFAULT_CATEGORY_ORDER)
+    # rank() looks a category up by its exact name first and then by its name compared
+    # without case, so a Snakefile written before a category was respelled in title
+    # case still ranks that category where the active set declares it. The ORDER
+    # literal itself is unchanged.
     _comparator = (
         f"(a, b) => {{const ORDER = {_order_js_literal}; "
-        "return (ORDER[a] ?? 99) - (ORDER[b] ?? 99) || a.localeCompare(b);}"
+        "const rank = k => ORDER[k] ?? ORDER[Object.keys(ORDER).find("
+        "o => o.toLowerCase() === k.toLowerCase())] ?? 99; "
+        "return rank(a) - rank(b) || a.localeCompare(b);}"
     )
     html_text = html_text.replace("(a, b) => a.localeCompare(b)", _comparator)
 

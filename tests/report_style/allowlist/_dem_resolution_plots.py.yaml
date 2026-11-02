@@ -1,0 +1,12 @@
+source: src/hhemt/eda/_dem_resolution_plots.py
+entries:
+- rule: retired_word
+  string: members/*/sims/*/swmm/hydraulics.inp
+  status: permitted
+  reason: glob over the on-disk layout the toolkit writes, used as a path to read files; not printed on a page
+  count: 2
+- rule: retired_word
+  string: members/*{}*/sims/*/swmm/hydraulics.inp
+  status: permitted
+  reason: glob over the on-disk layout the toolkit writes, used as a path to read files; not printed on a page
+  count: 2

@@ -1,0 +1,6 @@
+source: src/hhemt/report_renderers/cross_solver_comparison.py
+entries:
+- rule: which
+  string: 'x marks a not_run cell: that solver has no simulation at that config, which is NOT a measured zero. A config missing from one solver is kept on t'
+  status: baseline
+  reason: present when the style test was added

@@ -136,7 +136,7 @@ def test_summary_discloses_abstention_when_gpu_path_unresolvable(synth_multi_sim
         "precondition: this arm requires an UNRESOLVABLE GPU build dir"
     )
     result = check_system_setup(_analysis_with(system, monkeypatch, synth_multi_sim_builder))
-    assert "GPU compile term NOT evaluated" in result.summary
+    assert "GPU compile term not evaluated" in result.summary
 
 
 def test_summary_is_silent_when_gpu_path_resolves(synth_multi_sim_builder, tmp_path, monkeypatch):
@@ -147,7 +147,7 @@ def test_summary_is_silent_when_gpu_path_resolves(synth_multi_sim_builder, tmp_p
         "precondition: this arm requires a RESOLVABLE GPU build dir"
     )
     result = check_system_setup(_analysis_with(system, monkeypatch, synth_multi_sim_builder))
-    assert "GPU compile term NOT evaluated" not in result.summary
+    assert "GPU compile term not evaluated" not in result.summary
 
 
 # ---------------------------------------------------------------------------

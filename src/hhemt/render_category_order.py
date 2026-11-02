@@ -14,7 +14,7 @@ would convert a working lazy cycle into a hard one.
 
 It is also deliberately NOT sited in `report_renderers/_react_surgery.py`, which
 carries its own `_DEFAULT_CATEGORY_ORDER`. That constant is SHORTER than the
-registry's `default` set (5 entries against 7; it omits "Workflow performance"
+registry's `default` set (5 entries against 7; it omits "Workflow Performance"
 and "Metadata") and must not be reused as this fallback: the surgery's comparator
 ranks a name absent from the order last, so every degraded render would silently
 move those two sidebar categories to the alphabetical tail.

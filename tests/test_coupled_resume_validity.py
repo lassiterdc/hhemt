@@ -269,7 +269,7 @@ def test_prefix_with_resume_warns(monkeypatch):
     res = check_coupled_resume_validity(_analysis_stub(df=_resumed_df()))
     assert res.passed is False
     assert len(res.details) == 1
-    assert "PRE-FIX" in res.details[0]["detail"]
+    assert "pre-fix" in res.details[0]["detail"]
 
 
 def test_prefix_without_resume_is_na(monkeypatch):
@@ -304,8 +304,8 @@ def test_postfix_missing_replay_marker_warns(monkeypatch, tmp_path):
     # resume mechanism fired, because "no replay marker" stopped meaning "no restore" the
     # moment the snapshot path landed. `passed is False` and the 1-detail count above are
     # the both-states properties; this line tracks the message.
-    assert "NEITHER resume marker is present" in res.details[0]["detail"]
-    assert "1 resumed coupled sim(s) examined" in res.summary
+    assert "neither resume marker is present" in res.details[0]["detail"]
+    assert "1 resumed coupled model run examined" in res.summary
 
 
 def test_postfix_with_replay_marker_passes(monkeypatch, tmp_path):
@@ -324,7 +324,7 @@ def test_postfix_with_replay_marker_passes(monkeypatch, tmp_path):
     res = check_coupled_resume_validity(a)
     assert res.passed is True
     assert res.details == []
-    assert "1 resumed coupled sim(s) examined" in res.summary
+    assert "1 resumed coupled model run examined" in res.summary
 
 
 def test_postfix_unreadable_log_is_indeterminate(monkeypatch, tmp_path):
@@ -341,8 +341,8 @@ def test_postfix_unreadable_log_is_indeterminate(monkeypatch, tmp_path):
     res = check_coupled_resume_validity(a)
     assert res.passed is True
     assert res.details == []
-    assert "0 resumed coupled sim(s) examined" in res.summary
-    assert "1 INDETERMINATE" in res.summary
+    assert "0 resumed coupled model runs examined" in res.summary
+    assert "1 indeterminate" in res.summary
 
 
 def test_postfix_incomplete_last_exec_is_indeterminate(monkeypatch, tmp_path):
@@ -361,7 +361,7 @@ def test_postfix_incomplete_last_exec_is_indeterminate(monkeypatch, tmp_path):
     res = check_coupled_resume_validity(a)
     assert res.passed is True
     assert res.details == []
-    assert "1 INDETERMINATE" in res.summary
+    assert "1 indeterminate" in res.summary
 
 
 def test_postfix_fresh_last_exec_is_out_of_scope(monkeypatch, tmp_path):
@@ -386,9 +386,9 @@ def test_postfix_fresh_last_exec_is_out_of_scope(monkeypatch, tmp_path):
     res = check_coupled_resume_validity(a)
     assert res.passed is True
     assert res.details == []
-    assert "0 resumed coupled sim(s) examined" in res.summary
+    assert "0 resumed coupled model runs examined" in res.summary
     assert "1 out of scope" in res.summary
-    assert "INDETERMINATE" not in res.summary  # out-of-scope is NOT indeterminate
+    assert "indeterminate" not in res.summary  # out-of-scope is NOT indeterminate
 
 
 def test_postfix_partial_checkpoint_read_is_indeterminate(monkeypatch, tmp_path):
@@ -411,7 +411,7 @@ def test_postfix_partial_checkpoint_read_is_indeterminate(monkeypatch, tmp_path)
     res = check_coupled_resume_validity(a)
     assert res.passed is True
     assert res.details == []
-    assert "1 INDETERMINATE" in res.summary
+    assert "1 indeterminate" in res.summary
     assert "out of scope" not in res.summary
 
 
@@ -681,7 +681,7 @@ def test_postfix_unreadable_log_durable_stamp_replayed_passes(monkeypatch, tmp_p
     res = check_coupled_resume_validity(a)
     assert res.passed is True
     assert res.details == []
-    assert "1 resumed coupled sim(s) examined" in res.summary
+    assert "1 resumed coupled model run examined" in res.summary
 
 
 def test_postfix_unreadable_log_durable_stamp_not_replayed_warns(monkeypatch, tmp_path):
@@ -726,8 +726,8 @@ def test_postfix_unreadable_log_durable_stamp_not_replayed_warns(monkeypatch, tm
     write_datatree_zarr(tree, zarr_path)
     res = check_coupled_resume_validity(a)
     assert res.details == [], "a v1 stamp that never measured the snapshot must not assert the defect"
-    assert "0 resumed coupled sim(s) examined" in res.summary
-    assert "1 INDETERMINATE" in res.summary
+    assert "0 resumed coupled model runs examined" in res.summary
+    assert "1 indeterminate" in res.summary
 
 
 def test_resume_schedule_honored_warns_on_short_coupled_replay(tmp_path):
@@ -766,7 +766,7 @@ def test_resume_schedule_honored_warns_on_short_coupled_replay(tmp_path):
     assert res.passed is False
     assert res.name == "Resume schedule honored"
     assert any("did not reach the last scheduled interruption" in d["detail"] for d in res.details)
-    assert "1 resumed sim(s) schedule-verified" in res.summary  # disclosed denominator
+    assert "1 resumed model run schedule-verified" in res.summary  # disclosed denominator
 
 
 def _triton_arm_b_stub(df):
@@ -800,7 +800,7 @@ def test_resume_schedule_honored_surfaces_unverifiable_when_no_realized_boundari
     df = pd.DataFrame([{"model_type": "triton", "n_resumes": 3, "scenario_directory": "sim_0"}])
     res = check_resume_schedule_honored(_triton_arm_b_stub(df))
 
-    assert any("CANNOT BE VERIFIED" in d["detail"] for d in res.details), (
+    assert any("cannot be verified" in d["detail"] for d in res.details), (
         "a resumed sim with no realized boundaries must be surfaced, not silently passed"
     )
     assert any("start_from_scratch" in d["detail"] for d in res.details), (
@@ -849,7 +849,7 @@ def test_armc_suppressed_when_arm_a_fires(monkeypatch, tmp_path):
     res = check_coupled_resume_validity(a)
     assert res.passed is False
     assert len(res.details) == 1, "Arm C must not append a second detail on the pre-fix branch"
-    assert "PRE-FIX" in res.details[0]["detail"]
+    assert "pre-fix" in res.details[0]["detail"]
 
 
 def test_armc_fires_on_postfix_replayed_without_scatter(monkeypatch, tmp_path):
@@ -866,8 +866,8 @@ def test_armc_fires_on_postfix_replayed_without_scatter(monkeypatch, tmp_path):
     res = check_coupled_resume_validity(a)
     assert res.passed is False
     assert len(res.details) == 1
-    assert "lacks the SWMM node-depth SCATTER" in res.details[0]["detail"]
-    assert "max_wlevel_m / H / MH from this sim are INVALID" in res.details[0]["detail"]
+    assert "lacks the SWMM node-depth scatter" in res.details[0]["detail"]
+    assert "max_wlevel_m / H / MH from this model run are invalid" in res.details[0]["detail"]
     assert "lacking the SWMM node-depth scatter" in res.summary
 
 
@@ -903,7 +903,7 @@ def test_coupled_zero_examined_is_na_not_a_green_pass(monkeypatch):
     """No resumed coupled sim -> N/A, not PASS.
 
     FAILS PRE-FIX: today this returns applicable=True with
-    "No coupled-resume invalidity detected (0 resumed coupled sim(s) examined)", which the
+    "No coupled-resume invalidity detected (0 resumed coupled model runs examined)", which the
     roll-up renderer draws as a green PASS.
     """
     monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
@@ -913,7 +913,7 @@ def test_coupled_zero_examined_is_na_not_a_green_pass(monkeypatch):
     assert res.passed is True
     assert res.details == []
     # The denominator survives into the N/A summary — the reason stays legible on hover.
-    assert "0 resumed coupled sim(s) examined" in res.summary
+    assert "0 resumed coupled model runs examined" in res.summary
 
 
 def test_coupled_examined_population_stays_a_real_pass(monkeypatch, tmp_path):
@@ -930,7 +930,7 @@ def test_coupled_examined_population_stays_a_real_pass(monkeypatch, tmp_path):
     res = check_coupled_resume_validity(a)
     assert res.applicable is True, res.summary
     assert res.passed is True
-    assert "1 resumed coupled sim(s) examined" in res.summary
+    assert "1 resumed coupled model run examined" in res.summary
 
 
 def test_armc_zero_examined_finding_is_not_silenced(monkeypatch, tmp_path):
@@ -953,7 +953,7 @@ def test_armc_zero_examined_finding_is_not_silenced(monkeypatch, tmp_path):
     a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
     res = check_coupled_resume_validity(a)
     assert res.details, "Arm C must have fired on the scatter-less pin"
-    assert "0 resumed coupled sim(s) examined" in res.summary, "the zero-examined shape is the premise"
+    assert "0 resumed coupled model runs examined" in res.summary, "the zero-examined shape is the premise"
     assert res.applicable is True, f"Arm-C finding was silenced into N/A: {res.summary}"
     assert res.passed is False
 
@@ -962,7 +962,7 @@ def test_schedule_zero_examined_is_na_not_a_green_pass():
     """No resumed sim -> N/A, not PASS. Covers BOTH clean arms' schedule cell.
 
     FAILS PRE-FIX: today this returns applicable=True with "All resumed sims honored their
-    configured resume schedule (0 resumed sim(s) schedule-verified)".
+    configured resume schedule (0 resumed model runs schedule-verified)".
     """
     from hhemt.analysis_validation import check_resume_schedule_honored
 
@@ -971,7 +971,7 @@ def test_schedule_zero_examined_is_na_not_a_green_pass():
     assert res.applicable is False, res.summary
     assert res.passed is True
     assert res.details == []
-    assert "0 resumed sim(s) schedule-verified" in res.summary
+    assert "0 resumed model runs schedule-verified" in res.summary
 
 
 def test_schedule_examined_population_stays_a_real_pass():
@@ -991,7 +991,7 @@ def test_schedule_examined_population_stays_a_real_pass():
     res = check_resume_schedule_honored(_triton_arm_b_stub(df))
     assert res.applicable is True, res.summary
     assert res.passed is True
-    assert "1 resumed sim(s) schedule-verified" in res.summary
+    assert "1 resumed model run schedule-verified" in res.summary
 
 
 def test_schedule_examined_population_still_fails():
@@ -1136,7 +1136,7 @@ def test_postfix_snapshot_restore_passes(monkeypatch, tmp_path):
     res = check_coupled_resume_validity(a)
     assert res.passed is True, f"a snapshot-restored resume was reported defective: {res.details!r}"
     assert res.details == []
-    assert "1 resumed coupled sim(s) examined" in res.summary
+    assert "1 resumed coupled model run examined" in res.summary
 
 
 def test_postfix_neither_marker_still_warns(monkeypatch, tmp_path):
@@ -1150,8 +1150,8 @@ def test_postfix_neither_marker_still_warns(monkeypatch, tmp_path):
     res = check_coupled_resume_validity(a)
     assert res.passed is False
     assert len(res.details) == 1
-    assert "NEITHER resume marker is present" in res.details[0]["detail"]
-    assert "1 resumed coupled sim(s) examined" in res.summary
+    assert "neither resume marker is present" in res.details[0]["detail"]
+    assert "1 resumed coupled model run examined" in res.summary
 
 
 def test_durable_stamp_v2_snapshot_passes_and_v2_none_warns(monkeypatch, tmp_path):
@@ -1174,7 +1174,7 @@ def test_durable_stamp_v2_snapshot_passes_and_v2_none_warns(monkeypatch, tmp_pat
         write_datatree_zarr(tree, zarr_path)
         res = check_coupled_resume_validity(a)
         assert res.passed is expect_pass, f"mechanism={mech!r} -> passed={res.passed!r}"
-        assert "1 resumed coupled sim(s) examined" in res.summary
+        assert "1 resumed coupled model run examined" in res.summary
 
 
 def test_schedule_honored_verifies_a_snapshot_restore(tmp_path):
@@ -1216,7 +1216,7 @@ def test_schedule_honored_verifies_a_snapshot_restore(tmp_path):
     )
     res = check_resume_schedule_honored(analysis)
     assert res.passed is False
-    assert "1 resumed sim(s) schedule-verified" in res.summary
+    assert "1 resumed model run schedule-verified" in res.summary
     assert any("(snapshot) restored the coupled state to t=300.0s" in d["detail"] for d in res.details)
 
 

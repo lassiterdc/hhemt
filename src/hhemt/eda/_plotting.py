@@ -87,16 +87,16 @@ def render_eda_plots(
         # that surfaces genuine kind/stem drift is preserved exactly where it is still meaningful.
         if not artifact.exists() and kind in (must_emit or ()) and kind not in _ALWAYS_EMIT_KINDS:
             warnings.warn(
-                f"EDA plot kind {kind!r} is an ENUMERATED report target but its backing "
-                f"artifact {artifact} is absent -- rendering the degradation panel rather "
+                f"EDA plot kind {kind!r} is a report target but its backing "
+                f"artifact {artifact} is absent, so the degradation panel is rendered rather "
                 f"than skipping (a skip would fail the workflow). If the calc member did "
-                f"NOT legitimately skip, this is a kind/stem mismatch.",
+                f"not legitimately skip, this is a kind/stem mismatch.",
                 stacklevel=2,
             )
         elif not artifact.exists() and kind not in _ALWAYS_EMIT_KINDS:
             warnings.warn(
                 f"EDA plot kind {kind!r} is enabled but its backing artifact "
-                f"{artifact} is absent -- skipping. If the calc member did NOT "
+                f"{artifact} is absent, so it is skipped. If the calc member did not "
                 f"legitimately skip, this is a kind/stem mismatch.",
                 stacklevel=2,
             )
@@ -264,7 +264,7 @@ def _b4b_category_title(cat: str) -> str:
     if cat == "cpu":
         return "CPU"
     if cat == "all":
-        return "All configs"
+        return "All compute configurations"
     return "GPU"
 
 
@@ -276,7 +276,7 @@ def _b4b_family_title(fam: str) -> str:
     if fam == "cpu":
         return "CPU"
     if fam == "all":
-        return "All configs"
+        return "All compute configurations"
     if fam == "gpu":
         return "GPU"
     return f"GPU {fam}"
@@ -485,8 +485,8 @@ def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_bound
         if _nr and max(_nr) > 1:
             _rng = str(_nr[0]) if len(_nr) == 1 else f"{min(_nr)}–{max(_nr)}"
             caption += (
-                f" Each row aggregates {_rng} replicate run(s) of that compute config,"
-                " worst-case: a cell is green only if EVERY replicate was byte-identical,"
+                f" Each row aggregates {_rng} replicate runs of that compute configuration,"
+                " worst case: a cell is green only if every replicate was byte-identical,"
                 " and |Δ| is the maximum over replicates."
             )
 
@@ -570,7 +570,9 @@ def _render_b4b(
     if not artifact.exists():
         ds = None
         degraded = True
-        reason = "raw byte-for-byte backing artifact absent (the b4b calc member did not run before this render)"
+        reason = (
+            "raw byte-for-byte backing artifact absent (the byte-identity calculation did not run before this render)"
+        )
         # A bundle emitted before this figure's stem was renamed carries its backing artifact
         # under the predecessor's name, which this renderer no longer reads. The reason above
         # is false there, because the calc member did run, so name the real cause instead.
@@ -645,8 +647,8 @@ def _render_raw_byte_identity(root: Path, *, cfg_analysis: analysis_config, eda_
             # user has confirmed the second direction already truncated a real
             # pure-TRITON resume sensitivity to apparent zero.
             "Differences are read from the float32 <code>.zarr</code> summary tier: a "
-            "residual below one float32 ULP is reported at that ULP, and a residual far "
-            "below it is reported as exactly zero. Both bounds are properties of the "
+            "residual below a float32 ULP is reported at that ULP, and a residual far "
+            "below it is reported as zero. Both bounds are properties of the "
             "storage cast, not of the model."
         ),
         eda_cfg=eda_cfg,

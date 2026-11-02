@@ -49,9 +49,10 @@ import csv
 import html as _html
 import io
 import json
+import logging
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -71,7 +72,7 @@ if TYPE_CHECKING:
 # leak into the bundle-shippable render. `metadata._VOLATILE_GRAPH_KEYS` is
 # empty, so the sidecar DOES carry these volatile keys; the projection simply
 # never reaches for them, and `_prop` raises if a maintainer tries.
-from hhemt.member_identity import member_id_from, resolve_member_id_column
+from hhemt.member_identity import member_id_from, member_id_from_mapping, resolve_member_id_column
 from hhemt.report_renderers._tabulator_defaults import (
     TableFragment,
     build_columns_spec,
@@ -87,7 +88,7 @@ _SIDECAR_FILENAME = "ro-crate-metadata.json"
 # HOST, NOT CALLER. This module DEFINES the SLURM-efficiency reader -- these three globs plus
 # `_load_job_recovery`, `_build_slurm_efficiency_html` and `_resolve_all_efficiency_csvs` -- but
 # since `[Q160]`(7) its ONLY caller is `report_renderers/workflow_performance.py`.
-# `metadata.render()` reaches none of them; the SLURM table renders on the Workflow performance
+# `metadata.render()` reaches none of them; the SLURM table renders on the Workflow Performance
 # page. They stayed here rather than moving because moving them would have been a ~390-line
 # relocation that changes no behaviour and breaks `tests/test_job_purpose_map_tiering.py`'s
 # import; `workflow_performance.py` imports them instead.
@@ -143,13 +144,56 @@ _RULE_PREFIX_TO_PURPOSE: tuple[tuple[str, str], ...] = (
 )
 
 #: Recover member_id / event_id from a rule NAME, for jobs that survive only in the executor's
-#: log tree (Tier 2 of `_job_purpose_map`) and therefore carry no sidecar record. Lossless
-#: because `workflow.py` mints per-member rule names as `{phase}_member_{member_id}_evt_{id}`.
-#: The member_id alternation tolerates the evt-less forms (`consolidate_member_{member_id}`),
-#: and the capture is non-greedy so a member_id containing underscores (`gpu_0_r1`) stops at `_evt_`
-#: rather than swallowing it.
-_RULE_MEMBER_ID_RE = re.compile(r"_member_(.+?)(?:_evt_|$)")
+#: log tree (Tier 2 of `_job_purpose_map`) and therefore carry no sidecar record.
 _RULE_EVENT_ID_RE = re.compile(r"_evt_(.+)$")
+
+#: The rule families whose NAME carries a member id, each anchored at the start of the name.
+#: `workflow.py` mints these as `{prepare,simulation,process}_member_{member}_evt_{event}`,
+#: `consolidate_member_{member}` and `delete_member_{member}`; `delete_member_reprocess_*` is a
+#: different rule that names no single member. The member token is the member id with `.` and
+#: `-` replaced by `_`, and the capture is non-greedy so an id containing underscores
+#: (`gpu_0_r1`) stops at `_evt_` rather than swallowing it. Any other rule name, such as the
+#: figure rule `plot_per_sim_per_member_conduit_flow` that runs once per member under one name,
+#: yields no member.
+_MEMBER_RULE_FAMILIES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^(?:prepare|simulation|process)_member_(?P<m>.+?)_evt_"),
+    re.compile(r"^consolidate_member_(?P<m>.+)$"),
+    re.compile(r"^delete_member_(?!reprocess_)(?P<m>.+)$"),
+)
+
+
+def _member_token(member_id: object) -> str:
+    """A member id as it appears inside a rule name."""
+    return str(member_id).replace(".", "_").replace("-", "_")
+
+
+def _resolve_member(payload: Mapping[str, object], rule_name: str, member_ids: Collection[str] | None) -> str:
+    """The member a status record or rule name belongs to, or "" when it names none.
+
+    A member id the record itself carries (`member_id_from_mapping`) wins. Failing that, a rule
+    in one of `_MEMBER_RULE_FAMILIES` names its member: the token is compared with each id in
+    `member_ids` after the `.` and `-` replacement and the matching id is returned; a token
+    matching none is returned as parsed, which is how a record of a member no longer in the
+    analysis is recognised. With `member_ids` None the parsed token is returned.
+    """
+    recorded = member_id_from_mapping(payload)
+    if recorded:
+        return recorded
+    for pattern in _MEMBER_RULE_FAMILIES:
+        found = pattern.search(rule_name)
+        if found:
+            token = found.group("m")
+            for member_id in member_ids or ():
+                if _member_token(member_id) == token:
+                    return str(member_id)
+            return token
+    return ""
+
+
+def _count(n: int, noun: str) -> str:
+    """`1 job`, `3 jobs`: the numeral beside its unit, in the number's own form."""
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
 
 _ROOT_ID = "./"
 _APP_ID = "#hhemt-app"
@@ -169,9 +213,9 @@ _BUCKET_COLOR: dict[str, str] = {
     "experiment": "#009E73",  # bluish green
 }
 _BUCKET_HEADING: dict[str, str] = {
-    "user": "you provide these (USER)",
+    "user": "you provide these",
     "hpc": "bundled, but revise for your machine (HPC)",
-    "experiment": "these define the experiment (EXPERIMENT)",
+    "experiment": "these define the experiment",
 }
 _BUCKET_INSTRUCTION: dict[str, str] = {
     "user": (
@@ -180,20 +224,20 @@ _BUCKET_INSTRUCTION: dict[str, str] = {
     ),
     "hpc": (
         "These ride along in the bundle but are specific to the producing cluster. "
-        "Revise them for your target system — EXCEPT any row marked as varied by the "
-        "sensitivity analysis, which is a measured axis of this experiment and must be "
-        "reproduced as swept, not revised. Bundle.reprex(reprex_config, "
-        "target_hpc_profile) emits the concrete per-(member_id, column) problem pairs and "
-        "validated-vs-advisory amendments for your target."
+        "Revise them for your target system, except any row marked as varied by the "
+        "sweep: a varied setting is a measured axis of this experiment and is reproduced "
+        "as swept. Bundle.reprex(reprex_config, target_hpc_profile) lists the "
+        "(member_id, column) problems and the validated and advisory amendments for "
+        "your target."
     ),
     "experiment": (
-        "Do NOT change these. They define the scientific experiment; changing one "
+        "Do not change these. They define the scientific experiment; changing one "
         "changes what is being measured, not merely where it runs."
     ),
 }
 _BUCKET_PLACEHOLDER: dict[str, str] = {
     "hpc": "{amend for your target system}",
-    "experiment": "{inherit — carried by the bundle}",
+    "experiment": "{inherited from the bundle}",
 }
 
 # `reprex_config` mixes two buckets, per its own docstring: four host-local USER
@@ -339,9 +383,22 @@ def _banner(message: str) -> str:
     return f'<div class="banner info">{_esc(message)}</div>'
 
 
+def _banner_html(message_html: str) -> str:
+    """A banner whose message is already escaped HTML, for a message that carries `<code>`."""
+    return f'<div class="banner info">{message_html}</div>'
+
+
 def _absent_banner(section_title: str, message: str) -> str:
     """Always-present <h3 id> heading + a .banner.info placeholder body (R7)."""
     return f"{_heading(section_title)}\n{_banner(message)}"
+
+
+def _omitted(section_title: str, reason_html: str) -> str:
+    """Heading plus the one-sentence notice "{Element} is not shown: {reason}." (brief rule 6).
+
+    `reason_html` is already escaped HTML, so it can name the file the reader opens in `<code>`.
+    """
+    return f"{_heading(section_title)}\n" + _banner_html(f"{_esc(section_title)} is not shown: {reason_html}.")
 
 
 def _kv_table(rows: list[tuple[str, str]]) -> str:
@@ -469,13 +526,17 @@ def _provenance_bluf(app: dict, sif: dict | None, inputs: list[dict]) -> str:
     """The verifiability anchors, up top: what makes this run CHECKABLE, not merely disclosed."""
     git_sha = _prop(app, "softwareVersion")
     parts: list[str] = []
-    parts.append(f"code git-SHA {_code(git_sha)}" if git_sha else "code git-SHA <em>not captured</em>")
+    parts.append(
+        f"consolidation code git-SHA {_code(git_sha)}"
+        if git_sha
+        else "consolidation code git-SHA <em>not captured</em>"
+    )
     if sif is not None and _prop(sif, "sha256"):
         parts.append(f"environment SIF sha256 {_code(_prop(sif, 'sha256'))}")
     else:
         parts.append("no container digest (native run)")
     n_digests = sum(1 for e in inputs if _prop(e, "sha256"))
-    parts.append(f"{n_digests} input digest(s)")
+    parts.append(_count(n_digests, "input digest") if n_digests else "input digests <em>not captured</em>")
     return (
         '<div class="banner info"><strong>Verifiability anchors:</strong> '
         + " &middot; ".join(parts)
@@ -529,7 +590,7 @@ def _provenance_software(app: dict, src: dict) -> str:
         # ("exact code that produced this") asserted the first was the third.
         rows.append(("Git SHA (consolidation)", _code(git_sha)))
     if not rows:
-        return "<h4>2. Software</h4>\n" + _banner("No software provenance captured in this crate.")
+        return "<h4>2. Software</h4>\n" + _banner("No software provenance is recorded for this analysis.")
     return "<h4>2. Software</h4>\n" + _kv_table(rows)
 
 
@@ -614,18 +675,31 @@ def _read_producing_shas(tree_path: Path | None) -> tuple[str | None, str | None
     return (out[0], out[1])
 
 
-def _provenance_chain(analysis_dir: Path, analysis: TRITONSWMM_analysis | None, crate_sha: str | None) -> str:
-    """Three-row recreation chain: who SIMULATED, who CONSOLIDATED, who RENDERED.
+def _stage_stamps(analysis: TRITONSWMM_analysis | None) -> dict[str, dict | None]:
+    """Per-stage producing stamps, or an empty mapping when there is no analysis to read."""
+    if analysis is None:
+        return {}
+    from hhemt.analysis_validation import _collect_stage_stamps
 
-    ADR-14 D1 compliant: no second read-model is introduced. The three values are
-    projected from records that already exist and already ride in every bundle --
-    the ADR-15 per-event producing-stamp coordinates on the consolidated tree, the
-    RO-Crate sidecar, and the running build. They are disambiguated rather than
-    merged, because collapsing them is what produced a caption asserting the
+    try:
+        return _collect_stage_stamps(analysis)
+    except Exception:  # noqa: BLE001 -- provenance display must never break the render
+        return {}
+
+
+def _provenance_chain(analysis_dir: Path, analysis: TRITONSWMM_analysis | None, crate_sha: str | None) -> str:
+    """Four-row recreation chain: who SIMULATED, PROCESSED, CONSOLIDATED and RENDERED.
+
+    ADR-14 D1 compliant: no second read-model is introduced. The four values are
+    projected from records that already exist: the simulation stage's stamp from
+    `_collect_stage_stamps` ("Simulated by"), the ADR-15 per-event producing-stamp
+    coordinates on the consolidated tree ("Processed by"), the RO-Crate sidecar
+    ("Consolidated by") and the running build ("Rendered by"). They are disambiguated
+    rather than merged, because collapsing them is what produced a caption asserting the
     consolidation SHA was the code that generated the data.
 
-    Idempotence, and it is falsifiable: the only row that varies between two renders
-    of unchanged data is "Rendered by" -- precisely the entry that SHOULD change.
+    On two renders of unchanged data on the same route, the only row that varies is
+    "Rendered by" -- precisely the entry that SHOULD change.
     """
     tree_path = _resolve_consolidated_tree(analysis_dir, analysis)
     produced_sha, produced_version = _read_producing_shas(tree_path)
@@ -638,19 +712,21 @@ def _provenance_chain(analysis_dir: Path, analysis: TRITONSWMM_analysis | None, 
         render_stamp = {}
 
     rows: list[tuple[str, str]] = []
+    # "Simulated by" is the simulation stage's own stamp; it is never inferred from the
+    # processing stage's (`_collect_stage_stamps` keeps them apart for that reason).
+    sim_stamp = _stage_stamps(analysis).get("sim")
+    sim_sha = (sim_stamp or {}).get("hhemt_sha")
+    simulated = _code(sim_sha) if sim_sha else "<em>not captured</em>"
+    if sim_sha and (sim_stamp or {}).get("hhemt_version"):
+        simulated = f"{simulated} ({_esc(sim_stamp['hhemt_version'])})"
+    rows.append(("Simulated by", simulated))
     if produced_sha:
         label = _code(produced_sha)
         if produced_version:
             label = f"{label} ({_esc(produced_version)})"
-        rows.append(("Simulated / processed by", label))
+        rows.append(("Processed by", label))
     else:
-        rows.append(
-            (
-                "Simulated / processed by",
-                "<em>not stamped</em> — this analysis was processed by a toolkit build "
-                "that predates the per-event producing stamp (ADR-15).",
-            )
-        )
+        rows.append(("Processed by", "<em>not captured</em>"))
     rows.append(("Consolidated by", _code(crate_sha) if crate_sha else "<em>not captured</em>"))
     render_sha = render_stamp.get("hhemt_sha") or render_stamp.get("sha")
     render_version = render_stamp.get("hhemt_version") or render_stamp.get("version")
@@ -659,14 +735,7 @@ def _provenance_chain(analysis_dir: Path, analysis: TRITONSWMM_analysis | None, 
         rendered = f"{rendered} ({_esc(render_version)})"
     rows.append(("Rendered by", rendered))
 
-    note = (
-        "<p class='note'>These three are legitimately different, and the difference is the "
-        "point: the code that produced the data, the code that assembled the consolidated "
-        "store, and the code that drew this page are separately recorded so none of them can "
-        "be mistaken for the others. Only the last row changes when this report is "
-        "regenerated from unchanged data.</p>"
-    )
-    return "<h4>2b. Provenance chain</h4>\n" + note + _kv_table(rows)
+    return "<h4>2b. Provenance chain</h4>\n" + _kv_table(rows)
 
 
 def _read_status_flag_payloads(analysis_dir: Path) -> tuple[list[dict], list[Path]]:
@@ -706,6 +775,7 @@ def _purpose_for_rule(rule_name: str) -> str:
 def _job_purpose_map(
     payloads: list[dict],
     job_index: dict[str, str] | None = None,
+    member_ids: Collection[str] | None = None,
 ) -> dict[str, dict[str, str]]:
     """`{slurm_job_id: {purpose, rule_name, member_id, event_id, model_type, written_at}}`.
 
@@ -735,6 +805,12 @@ def _job_purpose_map(
 
     Locally-executed rules carry a null job id and are skipped rather than keyed on the
     empty string.
+
+    `member_ids`, when given, is the analysis's member ids. Tier 1 then reads a member from the
+    rule name of a sidecar that records none, and Tier 2 matches the parsed token against them
+    (`_resolve_member`). Only the rule families in `_MEMBER_RULE_FAMILIES` name a member, so a
+    figure rule such as `plot_per_sim_per_member_conduit_flow` has none. With `member_ids` None
+    Tier 1 reads the sidecar's own member field only and Tier 2 returns the parsed token.
     """
     out: dict[str, dict[str, str]] = {}
     for payload in payloads:
@@ -745,7 +821,13 @@ def _job_purpose_map(
         out[str(job_id)] = {
             "purpose": _purpose_for_rule(rule_name),
             "rule_name": rule_name,
-            "sa_id": str(payload.get("sa_id") or ""),
+            # A sidecar's rule name is read only when the member ids are known: without them a
+            # name cannot be told from a member-less rule, so the record's own field is all there is.
+            "sa_id": (
+                _resolve_member(payload, rule_name, member_ids)
+                if member_ids is not None
+                else member_id_from_mapping(payload)
+            ),
             "event_id": str(payload.get("event_id") or ""),
             "model_type": str(payload.get("model_type") or ""),
             "written_at": str(payload.get("written_at") or ""),
@@ -757,12 +839,11 @@ def _job_purpose_map(
         if not job_id or job_id in out:
             continue
         rule_name = str(rule_name or "")
-        member_match = _RULE_MEMBER_ID_RE.search(rule_name)
         evt_match = _RULE_EVENT_ID_RE.search(rule_name)
         out[job_id] = {
             "purpose": _purpose_for_rule(rule_name),
             "rule_name": rule_name,
-            "sa_id": member_match.group(1) if member_match else "",
+            "sa_id": _resolve_member({}, rule_name, member_ids),
             "event_id": evt_match.group(1) if evt_match else "",
             # Not parseable from a rule name: the model type is a per-scenario property,
             # not a naming component. Left empty rather than guessed -- an em-dash here
@@ -776,7 +857,7 @@ def _job_purpose_map(
 def _provenance_environment(sif: dict | None) -> str:
     if sif is None:
         return "<h4>3. Environment</h4>\n" + _banner(
-            "Native run — no container environment captured. The software environment "
+            "Native run: no container environment is recorded. The software environment "
             "is not pinned, so recreation has reduced verifiability: a reproducer must "
             "reconstruct the toolchain from the module stack and conda environment."
         )
@@ -795,9 +876,7 @@ def _provenance_environment(sif: dict | None) -> str:
 def _provenance_inputs(inputs: list[dict]) -> str:
     if not inputs:
         return "<h4>4. Inputs</h4>\n" + _banner(
-            "Input digests not captured for this analysis. (This does not mean there "
-            "were no inputs — the case manifest was not wired at consolidation, so no "
-            "by-reference File parts were recorded.)"
+            "Input digests not captured for this analysis. That does not mean the analysis had no inputs."
         )
     rows = [
         [
@@ -821,9 +900,7 @@ def _provenance_process(runs: list[dict]) -> str:
     """
     if not runs:
         return "<h4>5. Process</h4>\n" + _banner(
-            "Run units not captured — this is a consolidation-level crate "
-            "(a sensitivity master aggregates its members, each of which "
-            "carries its own per-run provenance)."
+            "Model runs are not listed here: this is a sweep, and each member records its own."
         )
     rows: list[list[str]] = []
     for action in runs:
@@ -838,8 +915,7 @@ def _provenance_process(runs: list[dict]) -> str:
                 " ".join(_code(r) for r in results) or "—",
             ]
         )
-    summary = f"<p class='note'>{_esc(len(runs))} run unit(s) recorded.</p>"
-    return "<h4>5. Process</h4>\n" + summary + _grid_table(["Run", "Instrument(s)", "Inputs", "Result(s)"], rows)
+    return "<h4>5. Process</h4>\n" + _grid_table(["Run", "Instrument(s)", "Inputs", "Result(s)"], rows)
 
 
 # Iter-11, item 14. A run of TWO identical siblings collapses to a sentinel line plus a
@@ -911,9 +987,26 @@ def _index_template(names: list[str]) -> tuple[str, str] | None:
         nm = "i" if len(varying) == 1 else f"i{k + 1}"
         out[i] = f"{{{nm}}}"
         vals = sorted({int(t[i]) for t in toks})
-        gap = "" if vals == list(range(vals[0], vals[-1] + 1)) else f" ({len(vals)} of {vals[-1] - vals[0] + 1})"
-        spans.append(f"{nm} = {vals[0]}…{vals[-1]}{gap}")
+        spans.append(f"{nm} = {_id_ranges(vals)}")
     return "".join(out), ", ".join(spans)
+
+
+def _id_ranges(vals: list[int]) -> str:
+    """The sorted distinct ids as ranges: `4…9, 22…29, 32`. One unbroken run is `a…b`.
+
+    A gapped set lists a run of three or more as `a…b` and shorter runs as single ids, so
+    the label names exactly the ids present and never a count of how many are missing.
+    """
+    runs: list[list[int]] = [[vals[0]]]
+    for v in vals[1:]:
+        if v == runs[-1][-1] + 1:
+            runs[-1].append(v)
+        else:
+            runs.append([v])
+    if len(runs) == 1:
+        return f"{vals[0]}…{vals[-1]}"
+    parts = [f"{run[0]}…{run[-1]}" if len(run) >= 3 else ", ".join(str(v) for v in run) for run in runs]
+    return ", ".join(parts)
 
 
 def _sentinel_label(names: list[str]) -> str:
@@ -1037,10 +1130,8 @@ def _path_tree_html(paths: list[str]) -> str:
     )
     total = sum(len(names) for _, names in collapsed)
     return (
-        tree_html + f"<details><summary class='note'>Collapsed runs — show the {_esc(total)} member name(s)"
-        "</summary><p class='note'>Membership is always decided, never assumed: by comparing "
-        "each sibling's stored contents where there are any, and otherwise by the name's "
-        "shape — identical but for one or more integer indices. " + members + "</p></details>"
+        tree_html + f"<details><summary class='note'>Collapsed runs: show the {_esc(_count(total, 'member name'))}"
+        "</summary><p class='note'>" + members + "</p></details>"
     )
 
 
@@ -1208,7 +1299,7 @@ def _provenance_outputs(
     dataset = _find_consolidated_dataset(graph)
     parts: list[str] = ["<h4>6. Outputs &amp; CF data dictionary</h4>"]
     if dataset is None:
-        parts.append(_banner("No consolidated output dataset recorded in this crate."))
+        parts.append(_banner("No consolidated output dataset is recorded for this analysis."))
         return "\n".join(parts)
 
     rows: list[tuple[str, str]] = [("Output", _code(dataset.get("@id")))]
@@ -1222,7 +1313,7 @@ def _provenance_outputs(
     sub_parts = _ref_ids(_prop(root, "hasPart"))
     if sub_parts:
         # Iter-10 H: a folder tree, not a space-joined run of <code> spans.
-        rows.append((f"Sub-datasets (hasPart) — {len(sub_parts)}", _path_tree_html(list(sub_parts))))
+        rows.append((f"Sub-datasets (hasPart): {len(sub_parts)}", _path_tree_html(list(sub_parts))))
     # Iter-13 bullet 9. The hasPart tree above is a FILE-PATH listing: it stops at
     # `analysis_datatree.zarr` and never descends into it, so a reader learns the store
     # exists and nothing about what is in it. This row supplies the store's own DataTree
@@ -1234,9 +1325,9 @@ def _provenance_outputs(
     if _group_paths:
         rows.append(
             (
-                "Store hierarchy — this run"
+                "Store hierarchy: this run"
                 if _realized
-                else "Store hierarchy — typical (store not carried in this bundle)",
+                else "Store hierarchy: typical (store not carried in this bundle)",
                 _path_tree_html(_group_paths),
             )
         )
@@ -1270,22 +1361,15 @@ def _provenance_outputs(
         )
     if var_rows:
         parts.append(
-            "<p class='note'><strong>Data dictionary.</strong> One row per variable this "
-            "crate advertises. <em>Spatial representation</em> is the geometry each value "
-            "describes (grid cell, point/node, line/conduit, or a whole-domain scalar); "
-            "<em>Source variables</em> are the raw model outputs the value was computed from; "
-            "<em>Operation</em> is the computation applied to them. These three are read from "
-            "the toolkit's own quantity-provenance table rather than restated by hand. That "
-            "table's drift guard compares it against the whole set this crate may advertise, "
-            "so a variable reaching this table with no descriptor fails a test rather than "
-            "rendering an em-dash here. An em-dash in these three columns therefore means the "
-            "variable is advertised from outside that set entirely, not that its descriptor "
-            "was forgotten. The CF <code>cell_methods</code> string, where one is declared, "
-            "remains stamped on the data itself; the thirteen performance columns declare "
-            "none at this advertisement, so for those rows <em>Operation</em> above is the "
-            "only account of the reduction a reader is given — and it names both reduced "
-            "axes, the per-rank sum over reporting timesteps and the maximum over ranks, "
-            "where the CF string could only ever have named the second.</p>"
+            "<p class='note'><strong>Data dictionary.</strong> One row per variable the output "
+            "advertises. <em>Spatial representation</em> is the geometry each value describes "
+            "(grid cell, point or node, line or conduit, or a whole-domain scalar). "
+            "<em>Source variables</em> are the raw model outputs the value was computed from. "
+            "<em>Operation</em> is the computation applied to them. A dash in the "
+            "<em>Spatial representation</em>, <em>Source variables</em> and <em>Operation</em> "
+            "columns means the toolkit holds no descriptor for the variable. For the "
+            "performance variables, <em>Operation</em> names both reduced axes: the per-rank "
+            "sum over reporting timesteps and the maximum over ranks.</p>"
         )
         parts.append(
             _grid_table(
@@ -1321,7 +1405,7 @@ def _build_provenance_html(
     unchanged.
 
     `[Q160]`(7): the `5b. Run timeline` sub-block that used to sit between Process and
-    Outputs is PERFORMANCE data and now renders on the Workflow performance page
+    Outputs is PERFORMANCE data and now renders on the Workflow Performance page
     (`workflow_performance.py`). Numbering is unaffected -- `5b` was a SUB-label of
     `5. Process`, so removing it leaves `5` and `6` contiguous rather than opening a
     hole. The `status_payloads` parameter went with it: measured, the timeline was its
@@ -1432,7 +1516,7 @@ def _mounted_tabulator_table(
     return _MountedTable(f'<div id="{container_id}-mount"></div>', (container_id, fragment))
 
 
-def _provenance_timeline(payloads: list[dict]) -> _MountedTable | None:
+def _provenance_timeline(payloads: list[dict], member_ids: Collection[str] | None = None) -> _MountedTable | None:
     """Whole-experiment run timeline, projected from `_status/*.flag.json`.
 
     This is the record the Process section cannot supply on a sensitivity master
@@ -1440,27 +1524,56 @@ def _provenance_timeline(payloads: list[dict]) -> _MountedTable | None:
     CreateAction nodes at all). The sidecars are append-only per completed rule, so
     this table covers setup -> prepare -> simulate -> process -> consolidate for the
     WHOLE experiment and does not shrink when the report is regenerated.
+
+    `member_ids`, when given, is the analysis's member ids. A record whose member (the one it
+    records, else the one its rule name carries) is not among them belongs to a member no longer
+    in the analysis and is left out; the note gives how many. A record that names no member
+    (setup, a figure rule) is kept with an empty Member cell. With `member_ids` None nothing is
+    left out and the note says why.
     """
+    n_left_out = 0
+    members: list[str] = []
+    kept: list[dict] = []
+    for p in payloads:
+        owner = _resolve_member(p, str(p.get("rule_name") or ""), member_ids)
+        if member_ids is not None and owner and owner not in member_ids:
+            n_left_out += 1
+            continue
+        kept.append(p)
+        members.append(owner)
+    left_out_note = (
+        f" {_esc(_count(n_left_out, 'record'))} left out: they belong to members no longer in this analysis."
+        if member_ids is not None
+        else " The count of records left out is not shown: this analysis has no members."
+    )
     rows = [
         [
             _esc(str(p.get("written_at") or "")),
             _esc(_purpose_for_rule(str(p.get("rule_name") or ""))),
             _code(p.get("rule_name") or "—"),
-            _esc(str(p.get("sa_id") or "—")),
+            _esc(owner),
             _esc(str(p.get("event_id") or "—")),
             _esc(str(p.get("model_type") or "—")),
             _code(p.get("slurm_job_id")) if p.get("slurm_job_id") else "—",
         ]
-        for p in payloads
+        for p, owner in zip(kept, members, strict=True)
     ]
     if not rows:
-        return None
+        if not n_left_out:
+            return None
+        return _MountedTable(
+            _heading("Run timeline")
+            + "\n"
+            + _banner(
+                f"All {_count(n_left_out, 'record')} belong to members no longer in this analysis, so none are shown."
+            ),
+            None,
+        )
     rows.sort(key=lambda r: r[0])
     note = (
-        f"<p class='note'><strong>Run timeline.</strong> {_esc(len(rows))} completed "
-        "rule(s), recorded one file at a time as each finished. This is the whole experiment "
-        "from setup through consolidation, not the most recent run — regenerating this report "
-        f"cannot shorten it. {_TABLE_INTERACTION_NOTE}</p>"
+        f"<p class='note'><strong>Run timeline.</strong> {_esc(_count(len(rows), 'completed rule'))}, "
+        f"from setup through consolidation, across every workflow run.{left_out_note} "
+        f"{_TABLE_INTERACTION_NOTE}</p>"
     )
     # `[Q160]`(7): the container id MUST NOT equal the section anchor. `_heading` below
     # derives the <h3> id from the title via `_anchor` ("Run timeline" -> "run-timeline"),
@@ -1474,7 +1587,7 @@ def _provenance_timeline(payloads: list[dict]) -> _MountedTable | None:
         container_id="run-timeline-table",
     )
     # `[Q160]`(7): promoted from a `<h4>5b.` sub-block of `5. Process` on the Metadata
-    # page to a top-level section of the Workflow performance page, so the jump-nav
+    # page to a top-level section of the Workflow Performance page, so the jump-nav
     # anchor resolves. `_heading` is what mints that anchor.
     return _MountedTable(_heading("Run timeline") + "\n" + note + mounted.html, mounted.fragment)
 
@@ -1594,7 +1707,7 @@ def _options_tooltip(field_info: Any) -> str:
     options = declared(field_info, "options")
     if not options:
         return ""
-    return "\n".join(f"{k} — {v}" for k, v in options.items())
+    return "\n".join(f"{k}: {v}" for k, v in options.items())
 
 
 def _config_field_tooltips() -> dict[str, str]:
@@ -1695,7 +1808,7 @@ def _requiredness_cell(field_info: Any) -> str:
     from hhemt.config.base import declared, render_clauses
 
     if _toolkit_clones_into(field_info):
-        return "<strong>Required</strong> — you choose the location; the toolkit clones/builds into it"
+        return "<strong>Required</strong>: you choose the location; the toolkit clones or builds into it"
     try:
         required = field_info.is_required()
     except Exception:  # noqa: BLE001 -- schema introspection must not break the render
@@ -1704,7 +1817,7 @@ def _requiredness_cell(field_info: Any) -> str:
         return "<strong>Required</strong>"
     clauses = declared(field_info, "required_when")
     if clauses:
-        cell = f"<strong>Conditional</strong> — required when {_esc(render_clauses(clauses))}"
+        cell = f"<strong>Conditional</strong>: required when {_esc(render_clauses(clauses))}"
         # [Q151]: a conditionally-required field can ALSO carry a meaningful default --
         # the trigger says when it must be supplied, the default says what applies when
         # it is not. Today none of the 15 declared fields is both (all default to None),
@@ -1943,21 +2056,16 @@ def _build_reprex_guide_html(
     parts.append(
         "<p class='note'>Every configuration field below is grouped by what a reproducer must "
         "do with it. <strong>Description</strong>, <strong>Required</strong>, the permissible "
-        "options listed beneath a description, and the default shown beside <em>Optional</em> "
-        "are read directly off the configuration schema, not maintained separately. A "
-        "<strong>Conditional</strong> requirement names the setting that triggers it, and is "
-        "read from the same declaration the configuration validator enforces. A field the "
-        "sensitivity analysis VARIED shows that instead of a value: it has no single value "
-        "used, and naming one arm's setting would misreport the experiment. Values are shown "
-        "only for the bundled HPC and experiment "
-        "settings — which the bundle already carries in <code>cfg_system.yaml</code> / "
-        "<code>cfg_analysis.yaml</code>. The <em>Supply</em> block is placeholders only: this "
-        "page never carries the producing user's own account, paths, or host details, so it is "
-        "safe to ship inside a bundle. File paths are shown relative to the analysis "
-        "directory. The <code>report</code> block may be supplied as a standalone YAML file "
-        "instead of inline, by passing <code>report_config=&lt;path&gt;</code> to "
-        "<code>analysis.run()</code>; an explicit path takes precedence over the inline "
-        "block, and the inline block is used when no path is given.</p>"
+        "options listed beneath a description and the default shown beside <em>Optional</em> "
+        "come from the configuration schema. A <strong>Conditional</strong> requirement names "
+        "the setting that triggers it. A field the sweep varied shows that instead of a "
+        "value, because it has no single value. Values are shown only for the bundled HPC "
+        "and experiment settings; the bundle carries them in <code>cfg_system.yaml</code> and "
+        "<code>cfg_analysis.yaml</code>. The <em>Supply</em> block holds placeholders only, so "
+        "the page is safe to ship inside a bundle. File paths are relative to the analysis "
+        "directory. To supply the <code>report</code> block as a standalone YAML file, pass "
+        "<code>report_config=&lt;path&gt;</code> to <code>analysis.run()</code>; an explicit "
+        "path takes precedence over the inline block.</p>"
     )
 
     if unclassified:
@@ -2331,57 +2439,39 @@ def _reduce_joined(field: str):
 _SUM_STEPS = _Reduction(
     name="Summed across steps",
     why=(
-        "CPU time is additive across a job's steps, so the job's total is their sum. This is "
-        "`seff`'s own reduction, chosen so this number agrees with what the cluster's standard "
-        "tool reports rather than offering a second opinion a reader would have to reconcile."
+        "CPU time adds across the steps of a job, so the job total is their sum. This is the "
+        "total that the cluster's seff command reports."
     ),
     tag="\u03a3 steps",
     rule=(
-        "Summed across every step of the job, including the batch step — `seff`'s own "
-        "reduction, read from its source. The per-step CPU time is taken from each step's "
-        "recorded resource usage rather than from its `TotalCPU` field, which reads zero "
-        "for work done inside an `srun` step and so would report only the batch wrapper's "
-        "own CPU. A step that recorded no CPU time is left out of the sum rather than "
-        "counted as zero, so a job with no usable measurement reads blank, not 0%. The "
-        "denominator is the CPU-time the allocation was BILLED — its CPU count times its "
-        "wall time — so this is the share of what you were charged for that was consumed, "
-        "not the share of its cores the solver kept busy. The two differ here and the gap "
-        "is the point: a job's solver steps run one after another with the allocation idle "
-        "between them, so on this campaign the figure tracks how much of the allocation had "
-        "a solver running in it rather than how hard that solver worked."
+        "Sum of the CPU time of every step of the job, including the batch step. A step that "
+        "recorded no CPU time is left out of the sum, so a job with no usable measurement shows "
+        "a dash. The percentage divides this sum by the CPU time billed for the allocation: its "
+        "CPU count times its wall time. It measures how much of the billed time the steps used "
+        "and not how busy the solver kept its cores. Solver steps run one after another with the "
+        "allocation idle between them, so the figure follows how much of the allocation had a "
+        "solver running."
     ),
     apply=_reduce_cpu_sum,
 )
 _MAX_STEPS = _Reduction(
     name="Maximum across steps",
-    why=(
-        "A memory request has to be sized for the largest step, not the average one, so the "
-        "peak is the number that decides whether the next run fits. The peak step is often the "
-        "runner's own wrapper rather than the solver -- measured 817884K against 33164K on one "
-        "job -- which is why each cell names the step it came from."
-    ),
+    why="A memory request must fit the largest step, so the peak decides whether the next run fits.",
     tag="max step",
     rule=(
-        "The largest value across the job's steps, which is `seff`'s reduction and the correct "
-        "one for sizing a request. Each cell names the step that produced it, because the peak "
-        "is often the runner's own wrapper rather than the solver."
+        "Largest value across the steps of the job. Each cell names the step that produced it, "
+        "so a peak from the runner wrapper reads differently from a peak from the solver."
     ),
     apply=_reduce_rss_max,
 )
 _JOB_RECORD = _Reduction(
     name="Read from the job record",
     why=(
-        "A job's wall time is neither the sum nor the maximum of its steps' -- measured on one "
-        "job as 296 s against a 235 s sum and a 67 s max, three different numbers of which only "
-        "one is the job's elapsed time. It is read from the allocation's own record because it "
-        "is not reconstructible from the steps at all."
+        "The wall time of a job is neither the sum nor the maximum of the wall times of its "
+        "steps, so the steps cannot rebuild it."
     ),
     tag="job record",
-    rule=(
-        "Read from the job's own accounting record rather than reduced from its steps -- `seff` "
-        "does the same, because a job's wall time is neither the sum nor the maximum of its "
-        "steps' wall times."
-    ),
+    rule="Read from the accounting record of the job and not reduced from its steps.",
     apply=None,
 )
 #: `Queue, this job (s)` needs its OWN reduction rather than sharing `_TOOLKIT_JOIN`, because
@@ -2400,10 +2490,10 @@ _JOB_RECORD = _Reduction(
 _QUEUE_JOIN = _Reduction(
     name="Queue-wait lookup",
     why=(
-        "The wait happened to the allocation, not to any step, so there is nothing to reduce. "
-        "hhemt's own per-job map is preferred because it is exact; the SLURM fallback exists "
-        "because that map is routinely empty -- it derives from `_walltime` ledgers a render "
-        "bundle does not carry, so an off-cluster re-render has no access to it."
+        "The wait happened to the allocation and not to any step, so there is nothing to reduce. "
+        "The toolkit's own per-job queue record is preferred because it is exact. The SLURM "
+        "accounting record is the fallback, because a render bundle does not carry the "
+        "toolkit's record."
     ),
     # EMPTY tag, matching the joined-column family. The tag slot renders as a header SUFFIX
     # describing a REDUCTION over steps -- `(job record)`, `(Σ steps)`, `(max step)` -- and a
@@ -2413,9 +2503,9 @@ _QUEUE_JOIN = _Reduction(
     # tooltip) and in the per-value provenance, not in the header text.
     tag="",
     rule=(
-        "How long this job waited before it started. Preferred source is hhemt's own per-job "
-        "queue map; where that is absent the value falls back to SLURM's `Planned` on the job "
-        "accounting record. Each cell's tooltip names which of the two produced that value."
+        "How long this job waited before it started. The value comes from the toolkit's own "
+        "per-job queue record when it has one, and otherwise from the Planned field of the SLURM "
+        "accounting record. Each cell's tooltip names the source."
     ),
     apply=None,
 )
@@ -2426,21 +2516,18 @@ _QUEUE_JOIN = _Reduction(
 _ATTEMPTS_JOIN = _Reduction(
     name="Attempt count",
     why=(
-        "How many times a simulation ran is a property of hhemt's own per-attempt records, not "
-        "of SLURM accounting, which cannot distinguish an attempt from a concurrent simulation "
-        "-- the accounting rows are structurally identical in the two cases. Where the run "
-        "method cannot support the count, it is reported as not measured rather than given a "
-        "number a reader could not tell from a real one."
+        "How many times a model run started is a property of the toolkit's own per-attempt "
+        "records and not of SLURM accounting. SLURM accounting cannot tell an attempt from a "
+        "concurrent model run: the rows are identical in both cases."
     ),
     tag="",
     rule=(
-        "How many times this simulation ran, joined from hhemt's own per-attempt records. "
-        "The count is only recoverable when each attempt is its own SLURM job, which is how "
-        "`batch_job` submits them. Under `1_job_many_srun_tasks` every attempt is a step of "
-        "one shared allocation and a step cannot be attributed to a particular simulation, "
-        "so the count is not recovered there and reads 1 for a run that may have resumed "
-        "several times. A 1 in this column therefore means 'one attempt, or not recoverable' "
-        "-- check the run method before reading it as a resume-free run."
+        "How many times this model run started, taken from the toolkit's own per-attempt "
+        "records. The count is recoverable only when each attempt is its own SLURM job, as under "
+        "batch_job. Under 1_job_many_srun_tasks every attempt is a step of one shared "
+        "allocation and a step cannot be attributed to a model run, so the count is not "
+        "recoverable there and shows 1 for a model run resumed several times. Check the run "
+        "method before reading a 1 as a model run without resumes."
     ),
     apply=None,
 )
@@ -2448,13 +2535,30 @@ _ATTEMPTS_JOIN = _Reduction(
 _TOOLKIT_JOIN = _Reduction(
     name="Carried from toolkit records",
     why=(
-        "These describe what hhemt ASKED FOR rather than what SLURM measured, so no reduction "
-        "applies and none is claimed -- the value is carried from the record that made the "
-        "request. This is the family whose three members previously shared the invented term "
-        "'joined' despite one of them reading from SLURM accounting after all."
+        "These columns describe what the toolkit requested and not what SLURM measured, so no "
+        "reduction applies. The value is carried from the record that made the request."
     ),
     tag="",
-    rule="Joined from hhemt's own per-rule records for this job, not from SLURM accounting.",
+    rule="Taken from the toolkit's own per-rule records for this job and not from SLURM accounting.",
+    apply=None,
+)
+
+
+_WORKFLOW_RUN_JOIN = _Reduction(
+    name="Read from the workflow run records",
+    why=(
+        "The accounting row of a job does not name the workflow run that submitted it. The "
+        "label is read from the first record that holds it, so a row names its workflow run "
+        "whenever any such record survives."
+    ),
+    tag="",
+    rule=(
+        "The workflow run that submitted this job: the timestamp of its Snakemake log when a "
+        "submit record in that log names the job, otherwise the run id in the name of the "
+        "efficiency report that lists the job, otherwise the job name on the job-recovery record "
+        "(the plugin names every job with the run id of its workflow run). The cell shows a dash "
+        "when no record holds it."
+    ),
     apply=None,
 )
 
@@ -2479,6 +2583,9 @@ class _EffColumn:
 _EFF_COLUMNS: tuple[_EffColumn, ...] = (
     _EffColumn("JobID", "Job ID", _JOB_RECORD),
     _EffColumn("Elapsed", "Elapsed", _JOB_RECORD),
+    # SLURM's terminal state for the job, so a job cancelled before it started is visibly not
+    # a job that ran. Empty (an em-dash) where no accounting record was recovered.
+    _EffColumn("State", "State", _JOB_RECORD),
     _EffColumn("NNodes", "Nodes", _JOB_RECORD),
     _EffColumn("NCPUS", "CPUs", _JOB_RECORD),
     # The header names the DENOMINATOR because every available misreading of this cell is a
@@ -2491,7 +2598,10 @@ _EFF_COLUMNS: tuple[_EffColumn, ...] = (
     _EffColumn("RequestedMem_MB", "Req mem (MB)", _JOB_RECORD),
     _EffColumn("mem_used_pct", "Mem used (%)", _MAX_STEPS),
     _EffColumn("attempts", "Attempts", _ATTEMPTS_JOIN),
-    _EffColumn("record", "Record", _TOOLKIT_JOIN),
+    # Which workflow run submitted the job. The toolkit-record flag that used to follow it is
+    # no longer a column: a dash in a toolkit-joined column already marks a job with no record,
+    # and the blank-cell note counts those jobs from the internal `toolkit_record` key.
+    _EffColumn("record", "Workflow run", _WORKFLOW_RUN_JOIN),
     _EffColumn("purpose", "Job desc", _TOOLKIT_JOIN),
     _EffColumn("sa_id", "Member", _TOOLKIT_JOIN),
     _EffColumn("event_id", "Event", _TOOLKIT_JOIN),
@@ -2547,7 +2657,7 @@ def _eff_label(key: str) -> str:
 
     Prose that names a column must not hand-author its label: that makes a second copy of a
     string the `_EffColumn` table already owns, and the two drift silently at the next rename.
-    They already did -- the disclosure note below called this table's CPU column "CPU
+    They already did -- an earlier blank-cell note called this table's CPU column "CPU
     efficiency" after it was renamed to "Billed CPU used", so the note named a column the page
     no longer had.
 
@@ -2555,11 +2665,11 @@ def _eff_label(key: str) -> str:
     `<em></em>` -- a silently empty reference is the failure this accessor exists to prevent,
     and returning "" would reintroduce it in a new costume.
 
-    Deliberately NOT used for every emphasised name in that note. Two of them -- `CPU model`
-    and `Queue time` -- name a MEASUREMENT rather than a column, and have no declaration to
-    read. `Queue time` is the clearest case: the live column's label is `Queue, this job (s)`,
-    which does not fit the sentence it appears in, and that misfit is the diagnostic. Derive
-    where the prose names a COLUMN; write plainly where it names a CONCEPT.
+    `_uncaptured_note` reads the labels of the columns its sentences name (the queue, CPU
+    efficiency, member, event and model columns) through this accessor, so a rename moves the
+    sentence with it. `CPU model` names a measurement with no column, so that one name is
+    written plainly. Derive where the prose names a COLUMN; write plainly where it names a
+    CONCEPT.
     """
     for col in _EFF_COLUMNS:
         if col.key == key:
@@ -2593,74 +2703,49 @@ def _reduction_caption() -> str:
     for col in _EFF_COLUMNS:
         if col.reduction not in seen:
             seen.append(col.reduction)
-    # One BLOCK per reduction -- subheader, then why, then the method. The method line is
-    # DERIVED from the callable rather than authored, so a reducer that is edited or swapped
-    # changes this page. That is deterministic linkage: there is no hand-written sentence here
-    # that can silently fall out of date, because there is no hand-written sentence here at all.
-    blocks: list[str] = []
-    for r in seen:
-        if r.apply is None:
-            method = (
-                "No reduction is applied. The value is carried from its source as-is, so there is no function to link."
-            )
-        else:
-            doc = (r.apply.__doc__ or "").strip().splitlines()
-            summary = doc[0].strip() if doc else "(the function carries no docstring)"
-            method = f"{r.apply.__name__}() — {summary}"
-        blocks.append(
-            f"<h5>{_esc(r.name)}</h5>"
-            f"<p>{_esc(r.why)}</p>"
-            f"<p><strong>Method.</strong> <code>{_esc(method)}</code></p>"
-            f"<p>{_esc(r.rule)}</p>"
-        )
+    # One BLOCK per reduction: subheader, then why, then the rule. Every sentence a reader sees
+    # is authored in the `_Reduction` declaration; nothing here is derived from a function's
+    # name or docstring, because a function name is not text for a reader.
+    blocks = [f"<h5>{_esc(r.name)}</h5><p>{_esc(r.why)}</p><p>{_esc(r.rule)}</p>" for r in seen]
     return (
         "<h4>How each column was reduced</h4>"
-        "<p class='note'>Every column header carries its reduction's symbol, and hovering "
-        "a header or a value repeats nothing — both read this same declaration.</p>" + "".join(blocks)
+        "<p class='note'>Each column header carries the symbol of its reduction. Hovering a header "
+        "shows the rule; hovering a value shows where that value came from.</p>" + "".join(blocks)
     )
 
 
-#: Columns the user asked for that SLURM accounting does not capture. Rendered as an
-#: explicit disclosure rather than omitted: an absent measurement that is silently left
-#: out reads as "not applicable", and an empty column reads as zero. Neither is true.
-_EFF_UNCAPTURED_NOTE = (
-    "<p class='note'><strong>Not shown, and why.</strong> "
-    "<em>CPU model</em> is not recorded by the toolkit today; it is "
-    "recoverable on the cluster from <code>sacct -o NodeList</code> plus "
-    "<code>scontrol show node</code> while the accounting database still holds the job. "
-    "<em>Queue time</em> is captured only for runs submitted one job per simulation "
-    "(<code>multi_sim_run_method: batch_job</code>). Under "
-    "<code>1_job_many_srun_tasks</code> the whole ensemble shares a single allocation, so "
-    "there is no per-simulation queue to measure and the column is left blank rather than "
-    "filled with the allocation's own wait — a repeated number there would be a per-sim "
-    "figure that no simulation actually experienced. A blank cell here means not "
-    "measured; it never means the job did not wait. The column reports the queue THIS JOB "
-    "waited, which is a property of the row; the simulation's accumulated queue across all "
-    "of its allocations is a property of a set one row does not span, and is not shown here. "
-    f"<em>{_eff_label('cpu_eff_pct').removesuffix(' (%)')}</em> is shown as not-measured "
-    "wherever SLURM reported no CPU time "
-    "for the job step; a zero there would claim the job used no processor, which is not "
-    "what an absent measurement means.</p>"
-    "<p class='note'><strong>Why most rows carry no purpose, member or compute "
-    "configuration.</strong> The toolkit columns in this table are joined in from "
-    "<code>_status/*.flag.json</code>, which records ONE SLURM job id per rule — the most "
-    "recent one. A simulation that resumed across several allocations, and any rule that "
-    "re-ran in a later submission, therefore matches on its LAST allocation only; every "
-    "earlier allocation appears here as a measured SLURM job with no toolkit label. On this "
-    "report that is the majority of rows. An em-dash in these columns means the row could "
-    "not be matched to a toolkit record — never that the job ran without a partition, "
-    "without MPI ranks, or outside a member. Every one of those values existed; this "
-    f"table cannot currently reach them, and the <em>{_eff_label('record')}</em> column says "
-    "which rows those "
-    "are. This is a MEASURED CEILING rather than a capture failure: the join already matches "
-    "87 of the 88 job ids the sidecars still retain, or 99% of its available keys. The "
-    "shortfall is structural — this table is a cumulative history across every workflow "
-    "submission, while <code>_status/*.flag.json</code> is a last-wins SNAPSHOT, so most rows "
-    "predate the records that survive. The values are not recoverable elsewhere: "
-    "<code>sacct</code> Comment is empty on this cluster, AdminComment carries node telemetry "
-    "rather than rule identity, and the engine's log tree retains 5 of 771 job ids. Re-running "
-    "does not recover them either — a fresh run overwrites the same per-rule slots.</p>"
-)
+def _uncaptured_note(rows: list[dict[str, Any]]) -> str:
+    """One sentence per kind of blank cell the rendered rows hold, each with its count.
+
+    A blank cell in this table has one of three causes, and the reader needs to know which: no
+    queue wait was recorded, no CPU efficiency could be computed, or no toolkit record matches
+    the job so its member, event, model and compute configuration are unknown. Each sentence
+    appears only when its count is above zero. The CPU model has no column to blank, so its
+    sentence is constant. Counts are computed from `rows`, never written by hand.
+    """
+    queue = _eff_label("queue_seconds_this_job").removesuffix(" (s)")
+    cpu = _eff_label("cpu_eff_pct").removesuffix(" (%)")
+    toolkit_columns = f"{_eff_label('sa_id')}, {_eff_label('event_id')}, {_eff_label('model_type')}"
+    n_queue = sum(1 for r in rows if not r.get("queue_seconds_this_job"))
+    n_cpu = sum(1 for r in rows if not r.get("cpu_eff_pct"))
+    n_unmatched = sum(1 for r in rows if r.get("toolkit_record") == _NO_TOOLKIT_RECORD)
+    sentences = ["CPU model is not shown."]
+    if n_queue:
+        sentences.append(
+            f"{_esc(queue)} shows a dash for {_count(n_queue, 'job')} where neither the toolkit "
+            "nor SLURM recorded a queue wait."
+        )
+    if n_cpu:
+        sentences.append(
+            f"{_esc(cpu)} shows a dash for {_count(n_cpu, 'job')} where SLURM recorded no CPU "
+            "time, no CPU count or no elapsed time."
+        )
+    if n_unmatched:
+        sentences.append(
+            f"The {_esc(toolkit_columns)} and compute configuration columns show a dash for "
+            f"{_count(n_unmatched, 'job')} without a matching record in {_code('_status/*.flag.json')}."
+        )
+    return "<p class='note'>" + " ".join(sentences) + "</p>"
 
 
 def _parse_efficiency_csvs(csv_texts: list[tuple[str, str]]) -> tuple[list[str], dict[str, dict[str, str]]]:
@@ -2691,8 +2776,55 @@ def _parse_efficiency_csvs(csv_texts: list[tuple[str, str]]) -> tuple[list[str],
             job_id = (record.get("JobID") or "").strip()
             if not job_id:
                 continue
+            record["_report_label"] = _label
             merged[job_id] = record
     return header, merged
+
+
+#: The two values of the internal `toolkit_record` key: whether hhemt's own per-rule record of
+#: the job survives (`_status/*.flag.json` keeps one job id per rule, the most recent). It is no
+#: longer a column; the blank-cell note counts the jobs without one.
+_TOOLKIT_RECORD = "toolkit record"
+_NO_TOOLKIT_RECORD = "no toolkit record"
+
+_REPORT_UUID_RE = re.compile(r"efficiency_report_(.+)\.csv$")
+
+
+def _report_uuid(report_label: str) -> str:
+    """The run id in an efficiency report's file name, or "" when the name carries none.
+
+    The plugin writes `efficiency_report_{run_uuid}.csv`; the label is the report's path
+    relative to the analysis directory.
+    """
+    found = _REPORT_UUID_RE.search(report_label.rsplit("/", 1)[-1])
+    return found.group(1) if found else ""
+
+
+def _invocation_for_job(
+    job_id: str,
+    invocation_by_job: Mapping[str, str] | None,
+    report_uuid_by_job: Mapping[str, str],
+    recovery: dict[str, dict[str, dict[str, str]]],
+) -> tuple[str, str]:
+    """`(label, how it was found)` for the invocation that submitted `job_id`; ("", why) if none.
+
+    First the submit records, then the run id in the name of the report that lists the job,
+    then the job name of its recovery row.
+    """
+    label = (invocation_by_job or {}).get(job_id, "")
+    if label:
+        return (label, "read from the Snakemake submit records")
+    label = report_uuid_by_job.get(job_id, "")
+    if label:
+        return (label, "run id in the name of the efficiency report that lists this job")
+    for kind_row in (recovery.get(job_id) or {}).values():
+        label = (kind_row.get("JobName") or "").strip()
+        if label:
+            return (
+                label,
+                "job name on the job-recovery record (the plugin names every job with the run id of its workflow run)",
+            )
+    return ("", "no submit record, report or recovery record names this job's workflow run")
 
 
 def _enrich_efficiency_rows(
@@ -2715,11 +2847,6 @@ def _enrich_efficiency_rows(
         main_job_id = (record.get("MainJobID") or job_id.split(".")[0]).strip()
         enriched: dict[str, str] = dict(record)
         meta = purpose_map.get(main_job_id, {})
-        # Item 25. Derived purely from the join above -- no new source, no new read, and
-        # grain-independent (the key is main_job_id either way). `bool(meta)` rather than
-        # `bool(purpose)`: a purpose recovered from the plugin's RuleName column is not a
-        # surviving toolkit record, and on this cluster RuleName is absent anyway.
-        enriched["record"] = "this run" if meta else "historical"
         # A rule name the plugin recovered from SLURM --comment beats nothing, but the
         # toolkit's own sidecar beats both. `RuleName` is present only on clusters that
         # store job comments; on UVA Rivanna it is absent, which is why JobName reads
@@ -2752,10 +2879,9 @@ def _enrich_efficiency_rows(
                     # any step the ledger does not record.
                     enriched["_attempt_n"] = _n
                     enriched["purpose"] += f" ({_attempt_label(_n)})"
-        # Join-rate marker (develop `34b2624`). A total join FAILURE and legitimately
-        # uncaptured data both render as an em-dash, so the rate is disclosed below and a
-        # zero raises a banner. Carried onto the aggregated JOB row so the disclosure's
-        # denominator matches the grain the table actually displays ([Q145]).
+        # Join marker. A total join FAILURE and legitimately uncaptured data both render as
+        # an em-dash, so a join that matched no job raises a notice. Carried onto the
+        # aggregated JOB row so the notice counts at the grain the table displays ([Q145]).
         enriched["_scen_joined"] = "1" if scen else ""
         # Three spellings, not one: `hpc.partition` is a sensitivity-CSV overlay column a
         # non-sensitivity export never emits, and older sensitivity trees carry
@@ -2854,7 +2980,6 @@ _EFF_KNOWN_UNDISPLAYED: frozenset[str] = frozenset(
         "MainJobID",  # the join key; the step id is shown as Job ID
         "RuleName",  # present only where SLURM stores job comments; superseded
         "Comment",
-        "State",
     }
 )
 
@@ -2867,9 +2992,10 @@ _EFF_KNOWN_UNDISPLAYED: frozenset[str] = frozenset(
 #: while its `cpu=` key carries the real time (`slurm_job_recovery.py` states this at its
 #: field-set declaration), so the reduction is wrong without it.
 #:
-#: `State` feeds the per-attempt roster ONLY (`_attempt_details_html`) and is read by no
-#: reducer -- verified by census: `State` appears exactly twice in this module, here and at
-#: that one display site. It is what makes the CANCELLED/COMPLETED breakdown legible, which
+#: `State` feeds the per-attempt roster (`_attempt_details_html`) and is read by no step
+#: reducer; the JOB row's own `State` is read separately, by `_aggregate_jobs` into the
+#: table's State column and the cancelled-before-starting count. The step-level copy is
+#: what makes the CANCELLED/COMPLETED breakdown legible, which
 #: `_build_efficiency_rows` names as this campaign's subject: the solver steps ARE the resume
 #: attempts. Without the join the roster renders every attempt as "state not recorded", which
 #: is a disclosure that discloses nothing -- the failure `[Q153]`'s trackability condition
@@ -2902,9 +3028,26 @@ def _load_job_recovery(analysis_dir: Path) -> tuple[dict[str, dict[str, dict[str
     return (out, path)
 
 
+def _is_never_started(state: str, start: str) -> bool:
+    """True when a job was cancelled before it started.
+
+    `State` BEGINS WITH `CANCELLED` and `Start` is `None`, `Unknown` or empty. The prefix test
+    is deliberate: sacct appends the cancelling uid to a cancellation (`CANCELLED by 554635`),
+    so equality with the bare word would count every such job as one that ran. A job cancelled
+    AFTER it started carries a real `Start` and is therefore not matched.
+    """
+    return (state or "").strip().upper().startswith("CANCELLED") and (start or "").strip().lower() in (
+        "",
+        "none",
+        "unknown",
+    )
+
+
 def _aggregate_jobs(
     merged: dict[str, dict[str, str]],
     recovery: dict[str, dict[str, dict[str, str]]],
+    universe: frozenset[str] | set[str] | None = None,
+    exclude: frozenset[str] | set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Collapse step rows to ONE row per job ([Q145]), applying each column's declared reducer.
 
@@ -2912,6 +3055,11 @@ def _aggregate_jobs(
     Stage-A `slurm_job_recovery` output, `{main_job_id: {"job": row, "batch": row}}`, supplying
     the two row classes the plugin's parsing drops. The `.batch` row is folded into the step
     list because `seff` reduces over it and SLURM records CPU time nowhere else.
+
+    `universe` is an optional set of main job ids that get a row even when `merged` holds no
+    step row for them: such a job takes its fields from its recovery job row, or is an id-only
+    row when the store holds none. `exclude` removes main job ids from the result wherever they
+    came from. Both default to None, which reproduces the report-only population exactly.
 
     Each row carries `_provenance`, a per-column map of where its value came from. That is the
     per-value half of [Q153]'s trackability, and it is PRODUCED BY the reducer rather than
@@ -2922,6 +3070,10 @@ def _aggregate_jobs(
         main = (record.get("MainJobID") or record.get("JobID", "").split(".", 1)[0]).strip()
         if main:
             by_job.setdefault(main, []).append(record)
+    for extra_id in universe or ():
+        by_job.setdefault(extra_id, [])
+    for dropped_id in exclude or ():
+        by_job.pop(dropped_id, None)
 
     out: list[dict[str, Any]] = []
     for main_job_id, steps in by_job.items():
@@ -2958,9 +3110,10 @@ def _aggregate_jobs(
         rss_value, rss_prov = _reduce_rss_max(all_steps, job_row)
         row["max_rss_mb"], prov["max_rss_mb"] = rss_value, rss_prov
 
-        for field in ("Elapsed", "NNodes", "NCPUS", "RequestedMem_MB"):
+        for field in ("Elapsed", "State", "NNodes", "NCPUS", "RequestedMem_MB"):
             value, why = _reduce_job_field(field)(all_steps, job_row)
             row[field], prov[field] = value, why
+        row["_never_started"] = _is_never_started(row.get("State", ""), job_row.get("Start", ""))
 
         # Queue-wait FALLBACK, staged here because `job_row` is in scope only inside this
         # function; the caller applies it after the toolkit join so the toolkit value wins.
@@ -3108,31 +3261,32 @@ def _undisplayed_csv_columns(header: list[str]) -> list[str]:
     return sorted(c for c in header if c not in displayed and c not in _EFF_KNOWN_UNDISPLAYED)
 
 
-def _undisplayed_columns_note(columns: list[str]) -> str:
-    return (
-        "<p class='note'><strong>Unrecognised column(s) in the efficiency report:</strong> "
-        + ", ".join(_code(c) for c in columns)
-        + ". These were present in the source CSV but are not part of this table's curated "
-        "column set, so their values are not shown. That usually means the SLURM executor "
-        "plugin started reporting something new — worth adding here if it is useful.</p>"
-    )
-
-
 def _build_slurm_efficiency_html(
     csv_texts: list[tuple[str, str]],
     purpose_map: dict[str, dict[str, str]],
     scenario_map: dict[tuple[str, str, str], dict[str, str]],
     gpu_hardware_for_partition,
     recovery: dict[str, dict[str, dict[str, str]]] | None = None,
+    universe: frozenset[str] | set[str] | None = None,
+    exclude_job_ids: frozenset[str] | set[str] | None = None,
+    invocation_by_job: Mapping[str, str] | None = None,
 ) -> _MountedTable:
     """Render the UNION of every efficiency report at JOB grain ([Q145]), reduced per [Q153].
 
-    The union is load-bearing: each CSV covers exactly ONE Snakemake invocation (the
-    plugin builds it from `sacct --name={run_uuid}`), so the former latest-by-mtime
-    selection showed only the most recent invocation's jobs -- on a re-render, the render
-    jobs and nothing else. The table is EMPTY on the producing run, because each CSV is
-    written at Snakemake teardown AFTER the report renders; it populates on a later
-    re-render or reprocess. That is inherent, not a defect.
+    The union over reports is load-bearing: each CSV comes from one Snakemake invocation's
+    teardown (the plugin builds it from `sacct --name={run_uuid}`), so the former
+    latest-by-mtime selection showed only the most recent invocation's jobs -- on a
+    re-render, the render jobs and nothing else. A report is written at teardown AFTER the
+    report renders, so the invocation producing the page has no report yet. That alone does
+    not empty the table when `universe` is given: the job ids the invocations SUBMITTED (read
+    from their logs by the caller) get rows whether or not any report or step row holds them,
+    and `exclude_job_ids` removes the jobs of the invocation rendering the page. With neither,
+    the table is empty on the producing run and populates on a later re-render or reprocess.
+
+    `invocation_by_job` maps a main job id to the label of the Snakemake invocation that
+    submitted it; each row's Workflow run cell takes that label first, then the run id in the
+    name of the report that lists the job, then the job name on its recovery row, and is
+    blank when none holds it. Without the mapping only the last two sources are reached.
 
     `[Q160]`(7): returns a `_MountedTable` rather than a bare string, because the table is
     a Tabulator fragment now. The degenerate branches (no CSV text, no job rows) carry a
@@ -3141,13 +3295,13 @@ def _build_slurm_efficiency_html(
     """
     recovery = recovery or {}
     heading = _heading("SLURM Efficiency")
-    if not csv_texts:
+    if not csv_texts and not universe:
         return _MountedTable(
             heading + "\n" + _banner("The SLURM resource-efficiency report is present but empty."), None
         )
 
     _header, merged = _parse_efficiency_csvs(csv_texts)
-    if not merged:
+    if not merged and not universe:
         return _MountedTable(
             heading + "\n" + _banner("The SLURM resource-efficiency reports contain no job rows."), None
         )
@@ -3161,7 +3315,13 @@ def _build_slurm_efficiency_html(
         if main and main not in joined:
             joined[main] = s
 
-    rows = _aggregate_jobs(merged, recovery)
+    rows = _aggregate_jobs(merged, recovery, universe, exclude_job_ids)
+    report_uuid_by_job = {
+        (rec.get("MainJobID") or rec.get("JobID", "").split(".", 1)[0]).strip(): _report_uuid(
+            rec.get("_report_label", "")
+        )
+        for rec in merged.values()
+    }
     for row in rows:
         src = joined.get(str(row["JobID"]), {})
         row.setdefault("_scen_joined", src.get("_scen_joined", ""))
@@ -3181,17 +3341,27 @@ def _build_slurm_efficiency_html(
         elif row.get("_planned_seconds"):
             row["queue_seconds_this_job"] = row["_planned_seconds"]
             _q_prov["queue_seconds_this_job"] = (
-                "SLURM `Planned` on the job accounting record — hhemt's own queue map had no "
-                "entry for this job (it derives from _walltime ledgers a bundle does not carry)"
+                "Planned field of the SLURM job accounting record: the toolkit's own queue record has "
+                "no entry for this job (a bundle does not carry it)"
             )
         else:
             row.setdefault("queue_seconds_this_job", "")
 
+    # The invocation each job belongs to, and whether hhemt's own per-rule record of it
+    # survives. Set for EVERY row, including a job with no step row, which the join above
+    # cannot reach.
+    for row in rows:
+        job_id = str(row["JobID"])
+        label, how = _invocation_for_job(job_id, invocation_by_job, report_uuid_by_job, recovery)
+        row["record"] = label
+        row.setdefault("_provenance", {})["record"] = how
+        row["toolkit_record"] = _TOOLKIT_RECORD if purpose_map.get(job_id) else _NO_TOOLKIT_RECORD
+
     undisplayed = _undisplayed_csv_columns(_header)
     n_recovered = sum(1 for r in rows if r.get("Elapsed"))
-    # Scenario-join rate, counted over the JOB rows the table displays rather than over the
-    # step rows the enrichment walked -- `[Q145]` fixes the grain at one row per job, so a
-    # step-grained denominator would disclose a number no column on the page reports.
+    n_never_started = sum(1 for r in rows if r.get("_never_started"))
+    # Scenario-join counts, over the JOB rows the table displays rather than over the step
+    # rows the enrichment walked -- `[Q145]` fixes the grain at one row per job.
     joinable_rows = sum(1 for r in rows if r.get("model_type"))
     scen_joined = sum(1 for r in rows if r.get("_scen_joined"))
     # The ledger's attempt resolution, read ONCE during enrichment and carried here so the
@@ -3213,32 +3383,31 @@ def _build_slurm_efficiency_html(
         return f'<span title="{_esc(why)}">{_esc(value)}</span>' if why else _esc(value)
 
     grid = [[_cell(row, col) for col in _EFF_COLUMNS] for row in rows]
+    excluded_labels = sorted({(invocation_by_job or {}).get(job_id, "") for job_id in (exclude_job_ids or ())} - {""})
+    if exclude_job_ids and excluded_labels:
+        excluded_sentence = (
+            "The workflow run that rendered this page is left out: "
+            + ", ".join(_code(label) for label in excluded_labels)
+            + "."
+        )
+    elif exclude_job_ids:
+        excluded_sentence = "The workflow run that rendered this page is left out."
+    else:
+        excluded_sentence = "No workflow run is left out."
+    n_ran = len(rows) - n_never_started
     summary = (
-        f"<p class='note'>{_esc(len(rows))} job(s) across {_esc(len(csv_texts))} efficiency "
-        f"report(s), one row per JOB with its steps aggregated. {_esc(n_recovered)} job(s) "
-        f"carry a recovered accounting record; a job without one shows an em-dash in the "
-        f"columns read from it. {_TABLE_INTERACTION_NOTE}</p>"
+        f"<p class='note'>{_esc(_count(len(rows), 'job'))} submitted, "
+        f"{_esc(_count(n_never_started, 'job'))} cancelled before starting, "
+        f"{_esc(_count(n_ran, 'job'))} ran. One row per job. "
+        f"{_esc(_count(n_recovered, 'job'))} {'has' if n_recovered == 1 else 'have'} an accounting record; "
+        f"a job without one shows a dash in the columns read from it. "
+        f"{excluded_sentence} {_TABLE_INTERACTION_NOTE}</p>"
     )
-    # Join-rate disclosure (develop `34b2624`). Kept because it separates two states the
-    # em-dash alone renders identically: a JOIN FAILURE and legitimately uncaptured data.
-    # develop's own first paragraph is NOT carried -- it is step-grained, which `[Q145]`
-    # retires, and it restates the sort/filter sentence that `_TABLE_INTERACTION_NOTE`
-    # single-sources ([Q153]).
-    summary += (
-        f"<p class='note'>Scenario-record join: {_esc(scen_joined)} of {_esc(joinable_rows)} "
-        f"simulation row(s) matched a <code>scenario_status.csv</code> record. Every column "
-        f"from <code>Partition</code> rightward is sourced from that record, so a zero here "
-        f"means the whole block is blank for a JOIN failure rather than for missing data. "
-        f"<code>Partition</code> and <code>Nodes (config)</code> fall back to this analysis's "
-        f"own configuration when the record predates the per-row partition column.</p>"
-    )
+    # A join that matched no job is the one case the dashes alone cannot distinguish from
+    # uncaptured data, so it gets a one-sentence notice. A routine partial join gets none.
     if joinable_rows and not scen_joined:
-        summary += _banner(
-            "No simulation row matched a scenario_status.csv record, so every "
-            "scenario-sourced column below is blank because the join failed — not "
-            "because the values were not captured. This is a key-vocabulary mismatch "
-            "between the CSV and the _status/*.flag.json sidecars; the sidecar records "
-            "the scenario slug as its event id."
+        summary += _banner_html(
+            f"No job matched a record in {_code('scenario_status.csv')}, so the columns read from it are empty."
         )
     summary += _reduction_caption()
     # DISTINCT from the section heading's own anchor -- `_anchor("SLURM Efficiency")` is
@@ -3251,8 +3420,13 @@ def _build_slurm_efficiency_html(
     )
     parts = [heading, summary, mounted.html]
     if undisplayed:
-        parts.append(_undisplayed_columns_note(undisplayed))
-    parts.append(_EFF_UNCAPTURED_NOTE)
+        # A reader cannot act on a column the plugin newly reports, so the page does not carry
+        # it; the maintainer who can add the column reads the log.
+        logging.getLogger(__name__).warning(
+            "Unrecognised column(s) in the SLURM efficiency report, not shown in the table: %s",
+            ", ".join(undisplayed),
+        )
+    parts.append(_uncaptured_note(rows))
     return _MountedTable("\n".join(parts), mounted.fragment)
 
 
@@ -3268,11 +3442,15 @@ def _resolve_all_efficiency_csvs(eff_dir: Path) -> list[Path]:
     every actual FILE, descending into any directory-shaped match; return ``[]``
     when no CSV file is present (absent-banner fallback).
 
-    A HISTORY, not a snapshot: one report is written per Snakemake invocation, so
-    a report that is present in an older file and absent from the newest one is
-    RETAINED HISTORY, never a gap. Anything that later prunes these directories
-    for tidiness would silently re-break that, and the rendered table would once
-    again show only the most recent invocation.
+    A HISTORY, not a snapshot: reports accumulate across Snakemake invocations, so a
+    job present in an older file and absent from the newest one is RETAINED HISTORY,
+    never a gap. Anything that later prunes these directories for tidiness would
+    silently re-break that, and the rendered table would once again show only the most
+    recent invocation. A report is NOT a complete record of an invocation: the plugin
+    asks sacct with no start time, so a report holds only the jobs that ended on its
+    teardown day, and some invocations write none. The complete record of what an
+    invocation submitted is its Snakemake log (`slurm_job_recovery.
+    submitted_job_ids_by_invocation`), which the caller unions in.
 
     Glob / is_file / is_dir / stat only (os.scandir + os.stat) -- no file is
     opened, so this adds no file-open audit surface (Gotcha 53).
@@ -3291,10 +3469,11 @@ def _resolve_all_efficiency_csvs(eff_dir: Path) -> list[Path]:
     candidates.extend(p for p in sorted(eff_dir.glob(_SLURM_EFF_INNER_GLOB)) if p.is_file())
     if not candidates:
         return []
-    # UNION, not latest. Each Snakemake invocation writes its own report covering only
-    # that invocation's jobs (plugin: `sacct --name={run_uuid}`), so `max(mtime)` showed
-    # the newest INVOCATION rather than the newest DATA -- on a re-render that is two
-    # render jobs and nothing else. Returned newest-last so the caller's dict-merge
+    # UNION, not latest. A report comes from one invocation's teardown (plugin:
+    # `sacct --name={run_uuid}`, with no start time, so it covers only jobs that ended on
+    # that day and some invocations write none), so `max(mtime)` showed the newest
+    # INVOCATION rather than the newest DATA -- on a re-render that is two render jobs and
+    # nothing else. Returned newest-last so the caller's dict-merge
     # resolves a duplicate JobID in favour of the more recent report. Inner run-uuid
     # filenames do not sort chronologically, hence mtime rather than name.
     return sorted(set(candidates), key=lambda p: p.stat().st_mtime)
@@ -3320,8 +3499,8 @@ def _read_scenario_status(analysis_dir: Path) -> tuple[dict[tuple[str, str, str]
       from one variable in adjacent lines, and `analysis.py` writes that path here.
 
     This is a key SET, not a guarantee. A sidecar vocabulary outside the set produces
-    a MISS, and the miss is disclosed as the scenario-join rate in the rendered
-    efficiency table rather than left to read as absent data.
+    a MISS, and a total miss is disclosed by a notice in the rendered efficiency table
+    rather than left to read as absent data.
     """
     path = analysis_dir / _SCENARIO_STATUS_FILENAME
     if not path.is_file():
@@ -3414,41 +3593,26 @@ def _build_data_availability_html(report_path: Path) -> str:
     tag.
     """
     if not report_path.exists():
-        return _absent_banner(
-            "Data Availability",
-            "Data-availability record not available -- validation_report.json was not "
-            "found. It is written at consolidation; re-run consolidation to populate.",
-        )
+        return _omitted("Data Availability", f"{_code(_VALIDATION_REPORT_FILENAME)} is not available")
     try:
         payload = json.loads(report_path.read_text())
     except (OSError, ValueError):
-        return _absent_banner(
-            "Data Availability",
-            "Data-availability record could not be read -- validation_report.json is present but did not parse.",
-        )
+        return _omitted("Data Availability", f"{_code(_VALIDATION_REPORT_FILENAME)} did not parse")
     check = next(
         (c for c in payload.get("checks", []) if c.get("name") == _DATA_AVAILABILITY_CHECK),
         None,
     )
     if check is None:
-        return _absent_banner(
-            "Data Availability",
-            "This analysis was consolidated by a toolkit build that predates the "
-            "post-processing reclaim, so no data-availability record exists. Every "
-            "per-scenario artifact the run produced is still on disk.",
-        )
+        return _omitted("Data Availability", f"{_code(_VALIDATION_REPORT_FILENAME)} holds no Data availability check")
     rows = [
-        ("Status", _esc("reclaim recorded and consistent" if check.get("passed") else "INCONSISTENT")),
+        ("Status", _esc("reclaim recorded and consistent" if check.get("passed") else "inconsistent")),
         ("Record", _esc(str(check.get("summary", "")))),
     ]
     parts = [_heading("Data Availability"), _kv_table(rows)]
     parts.append(
         _banner(
-            "Reclaimed artifact classes were removed deliberately, after this toolkit "
-            "verified the corresponding summary outputs were present and openable on "
-            "disk. An absent timeseries or raw output is a disclosed reclaim, not a "
-            "failed run -- but reprocessing those scenarios is not possible without "
-            "re-running the simulations."
+            "An absent timeseries or raw output is a recorded reclaim, not a failed run. "
+            "Reprocessing those scenarios requires re-running their model runs."
         )
     )
     detail_rows = [
@@ -3463,7 +3627,7 @@ def _build_data_availability_html(report_path: Path) -> str:
 #: The page's sections, in render order. Module-level so the jump-nav and the test's
 #: anchor coverage read ONE declaration -- a literal in each drifted silently when the
 #: Data Availability section landed and only the nav learned about it.
-#: [Q160](7): every Tabulator table on the Metadata page AND on the Workflow performance
+#: [Q160](7): every Tabulator table on the Metadata page AND on the Workflow Performance
 #: page bundles its assets inline rather than pulling them from a CDN. The user's ruling
 #: was to converge the run-timeline and SLURM tables on the appendix's Tabulator style AND
 #: to land inline bundling, so the convergence does not cost the offline rendering the old
@@ -3476,7 +3640,7 @@ _TABULATOR_JS_MODE = "inline"
 _SECTION_TITLES = ("Provenance", "Data Availability", "Reproduction Guide")
 
 #: `[Q160]`(7): the run-timeline and SLURM-efficiency tables are PERFORMANCE data and
-#: render on the Workflow performance page (`workflow_performance.py`), which owns this
+#: render on the Workflow Performance page (`workflow_performance.py`), which owns this
 #: title tuple. It is declared HERE rather than there because `_jump_nav` and
 #: `_wrap_html_doc` are shared across both pages, and a second copy of the anchor
 #: vocabulary is exactly the drift the single-declaration comment above forbids.
@@ -3669,7 +3833,7 @@ def render(
     """Render the Metadata page (provenance + data availability + reproduction guide).
 
     `[Q160]`(7): the run timeline and the SLURM-efficiency table are no longer here.
-    They are PERFORMANCE data and render on the Workflow performance page
+    They are PERFORMANCE data and render on the Workflow Performance page
     (`workflow_performance.py`), which owns their reads and their declarations.
     """
     from hhemt.report_renderers._figure_emission import emit_plot_with_sources
@@ -3692,11 +3856,11 @@ def render(
         # This string is SHIPPED, not a comment: `_provenance.py` serializes it to
         # `manifest["artists"][i]["note"]` in the emitted `<stem>.manifest.json` and renders
         # it into the human-readable provenance header. It named "SLURM efficiency", which
-        # `[Q160]`(7) moved to the Workflow performance page -- a false claim in an artifact
+        # `[Q160]`(7) moved to the Workflow Performance page -- a false claim in an artifact
         # rather than in a comment. It also named the reprex taxonomy, which is built outside
         # any artist block. Scoped to what THIS block actually declares: the sidecar and the
         # consolidated tree's producing stamps.
-        note="metadata page, provenance section (RO-Crate sidecar + consolidated-tree producing stamps)",
+        note="metadata page, provenance section (provenance record + consolidated-tree producing stamps)",
     ) as artist:
         artist.add_channel("provenance", ProvenanceRef(source_path=_SIDECAR_FILENAME))
         # `[Q160]`(7): the per-rule `_status/*.flag.json` read that used to sit here is
@@ -3726,12 +3890,7 @@ def render(
             doc = json.loads(sidecar_path.read_text())
             provenance_html = _build_provenance_html(doc, analysis_dir=analysis_dir, analysis=analysis)
         else:
-            provenance_html = _absent_banner(
-                "Provenance",
-                "Provenance metadata not available — the RO-Crate sidecar "
-                "(ro-crate-metadata.json) was not found. It is written at "
-                "consolidation; re-run consolidation to populate.",
-            )
+            provenance_html = _omitted("Provenance", f"no {_code(_SIDECAR_FILENAME)} record was found")
 
     # (2) Data availability -- reads the SAME persisted validation_report.json the
     # Errors-and-Warnings renderer reads (ADR-14 D1: no second read-model). Declared

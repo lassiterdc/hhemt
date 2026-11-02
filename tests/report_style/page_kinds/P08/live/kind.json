@@ -1,0 +1,9 @@
+{
+  "n_events": 3,
+  "model_types": [
+    "triton",
+    "tritonswmm",
+    "swmm"
+  ],
+  "members": null
+}

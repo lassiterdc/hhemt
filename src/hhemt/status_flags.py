@@ -163,6 +163,6 @@ def emit_runner_flag(args: Any) -> None:
         flag_path=Path(flag_output),
         rule_name=getattr(args, "rule_name", None) or "(unknown)",
         model_type=getattr(args, "model_type", None),
-        member_id=getattr(args, "sa_id", None),
+        member_id=getattr(args, "member_id", None),
         event_id=getattr(args, "event_id", None),
     )

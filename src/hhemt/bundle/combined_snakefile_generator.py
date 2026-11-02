@@ -34,6 +34,7 @@ output path.
 from __future__ import annotations
 
 import warnings
+from collections.abc import Collection
 from pathlib import Path
 
 from hhemt.report_plot_ids import escape_label_braces, humanize_plot_id
@@ -54,42 +55,69 @@ from hhemt.workflow import (
 _COMBINED_STATIC_BACKEND = "plotly"
 _COMBINED_NAVBAR_TEXT = "Combined cross-experiment report"
 
-# Static combined workflow-description (NO config refs, NO timestamp) so the rendered
-# report is byte-deterministic. RST title underline must be >= title length.
-_COMBINED_WORKFLOW_DESCRIPTION = """\
-================================
-Combined cross-experiment report
-================================
+#: The text of the combined report's landing page, by part. The page is built by
+#: `_combined_workflow_description` from the sections the report renders, so a section that is
+#: not rendered is not named. Byte-deterministic: no config refs, no timestamp. The RST title
+#: underline must be at least as long as the title.
+_COMBINED_DESCRIPTION_PARTS = {
+    "title": "================================\nCombined cross-experiment report\n================================\n",
+    "intro": (
+        "Overview\n--------\n\n"
+        "This report combines completed experiments into one cross-experiment comparison. "
+        "The sidebar holds these cross-experiment sections:\n\n"
+    ),
+    "outro": (
+        "\nBelow them, the combined experiments' own figures are grouped by kind, under the section "
+        "each figure has in a single-experiment report (for example System Information); a figure "
+        "that no section claims is listed under Other. Inside those sections, each experiment's "
+        "figures appear under entries whose names start with that experiment's name.\n\n"
+        "Each combined experiment keeps its own render bundle under ``child_crates/``; open the "
+        "report of one experiment from there.\n"
+    ),
+    "Combine Provenance & Compatibility": "the experiments combined and the builds that produced them.",
+    "Cross-Experiment Results": "the clean-versus-resume comparison of key-result summaries, as a table and as maps.",
+    "Cross-Experiment Results (no pair)": (
+        "the comparison page and maps. They show a notice when the combined experiments cannot be compared."
+    ),
+    "Cross-Solver Comparison": "the same measurement across solver versions, one series per solver.",
+    "Cross-Experiment Errors and Warnings": "the validation checks of each experiment, side by side.",
+    "Cross-Experiment Disk Utilization": "the disk use of each experiment, side by side.",
+}
 
-Overview
---------
 
-This report combines multiple completed experiment bundles into one
-cross-experiment comparison. The sidebar holds five cross-experiment sections:
+def _combined_workflow_description(rendered_sections: Collection[str], *, clean_vs_resume: bool) -> str:
+    """The landing page text, listing exactly the sections the report renders.
 
-- **Combine Provenance & Compatibility**: the metadata-compatibility summary
-  across the combined experiments.
-- **Cross-Experiment Results**: the clean-vs-resume intercomparison of
-  key-result summaries, as a table and as maps.
-- **Cross-Solver Comparison**: the same measurement across solver versions,
-  one series per solver. It appears only when the combined experiments ran two
-  or more distinct solver commits.
-- **Cross-Experiment Errors and Warnings**: each experiment's validation
-  checks, side by side.
-- **Cross-Experiment Disk Utilization**: each experiment's disk use, side by
-  side.
+    Sections come from the `combined` set's `category_order`, in its order, and only those in
+    `rendered_sections` are named. The Results section names the clean-versus-resume comparison
+    only when `clean_vs_resume` is true (the combined experiments are one clean and one resume
+    experiment); otherwise it says the comparison page shows a notice.
+    """
+    parts = _COMBINED_DESCRIPTION_PARTS
+    lines = []
+    for section in get_reporting_set("combined").category_order:
+        if section not in rendered_sections:
+            continue
+        key = (
+            section
+            if (clean_vs_resume or section != "Cross-Experiment Results")
+            else "Cross-Experiment Results (no pair)"
+        )
+        lines.append(f"- **{section}**: {parts[key]}\n")
+    return parts["title"] + "\n" + parts["intro"] + "".join(lines) + parts["outro"]
 
-Below them, the combined experiments' own figures are grouped by kind, under
-the section each figure has in a single-experiment report (for example
-System Information); a figure that no section claims is listed under Other.
-Inside those sections, each combined experiment's figures appear under entries
-whose names start with that experiment's name, with that experiment's model
-runs shown together on one page.
 
-Each combined experiment retains its own intact render bundle under
-``child_crates/``; run the per-experiment report from there for
-single-experiment detail.
-"""
+def _has_clean_resume_pairs(bundle_root: Path) -> bool:
+    """True iff the combine found at least one clean and resume pair to compare."""
+    import json
+
+    source = bundle_root / "combined_intercomparison.json"
+    if not source.exists():
+        return False
+    try:
+        return bool(json.loads(source.read_text(encoding="utf-8")).get("pairs"))
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def _combined_preamble() -> str:
@@ -912,15 +940,22 @@ def write_combined_snakefile(bundle_root: Path) -> tuple[Path, tuple[Path, ...]]
 
 
 def stage_combined_report_artifacts(bundle_root: Path) -> None:
-    """Stage report.css (DEFAULT_BRAND_THEME), captions, and the STATIC combined
+    """Stage report.css (DEFAULT_BRAND_THEME), captions, and the combined
     workflow-description. Overwrites the single-analysis workflow_description
-    _emit_report_artifacts stages with the combined static one."""
+    _emit_report_artifacts stages with the combined one."""
     from hhemt.config.brand_theme import DEFAULT_BRAND_THEME
     from hhemt.workflow import _brand_theme_css_map, _emit_report_artifacts
 
     bundle_root = Path(bundle_root).resolve()
     _emit_report_artifacts(bundle_root, brand_theme=_brand_theme_css_map(DEFAULT_BRAND_THEME))
-    (bundle_root / "report" / "workflow_description.rst").write_text(_COMBINED_WORKFLOW_DESCRIPTION)
+    rendered = {
+        tmpl.report_kwargs.get("category")
+        for sel in _active_combined_selections(bundle_root)
+        for tmpl in sel.rule_spec_template
+    }
+    (bundle_root / "report" / "workflow_description.rst").write_text(
+        _combined_workflow_description(rendered, clean_vs_resume=_has_clean_resume_pairs(bundle_root))
+    )
 
 
 def render_combined_report_via_snakemake(bundle_root: Path, *, formats: tuple[str, ...] = ("html", "zip")) -> None:

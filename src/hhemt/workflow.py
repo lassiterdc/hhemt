@@ -266,13 +266,15 @@ class RuleSpec:
     report_kwargs: dict[str, str] | None
     resources_yaml: str
     log_path_template: str
-    source_paths_fn_name: str | None = None
     input_label: str = "consolidated"
     # Additional positional inputs emitted alongside the labeled `input_flags`.
     # Positional entries are emitted BEFORE labeled entries because Snakemake
     # parses the input: block as a Python function-call argument list and
     # "positional after keyword" is a SyntaxError.
     additional_inputs: tuple[str, ...] = ()
+    # True when the caption's Sources block is read from the figure's own manifest at report
+    # time instead of from `source_paths`.
+    sources_from_manifest: bool = False
 
 
 # _OUTPUT_EXT_BY_RENDERER, the canonical-plot-ID grammar
@@ -344,6 +346,25 @@ def _registry_report_kwargs(rule_name: str) -> dict[str, str]:
     return found[0]
 
 
+def _sources_rst_from_manifest(output_path) -> str:
+    """Sources block for a figure, read from the ``<stem>.manifest.json`` beside it.
+
+    Snakemake calls this while it builds the report, after the plot rule has written the
+    figure and its manifest. When the manifest is not there yet (Snakemake also evaluates
+    the parameter when it plans the run) or cannot be read, the block is empty.
+    """
+    import json
+    import os
+
+    manifest = os.path.splitext(str(output_path))[0] + ".manifest.json"
+    try:
+        with open(manifest, encoding="utf-8") as fh:
+            paths = json.load(fh).get("source_paths_relative", [])
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return format_sources_rst(list(paths))
+
+
 def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
     """Emit a single Snakemake plot rule as a string.
 
@@ -404,13 +425,15 @@ def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
             f"        )"
         )
 
-    # params: block — either literal source_paths or function reference,
-    # plus any extra_params entries (e.g. event_iloc lambdas).
-    if spec.source_paths_fn_name is not None:
-        fn = spec.source_paths_fn_name
+    # params: block. A rule that reads its Sources block from the figure's manifest passes a
+    # callable of the rule's output: Snakemake evaluates it when it builds the report, after
+    # the output and its manifest exist. Other rules (the static and combined generators)
+    # carry a literal list.
+    if spec.sources_from_manifest:
         params_lines = [
-            f"        source_paths = {fn},",
-            f"        source_paths_rst = lambda w: _fmt_sources_rst({fn}(w)),",
+            "        source_paths_rst = lambda w, output: "
+            '__import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])'
+            "._sources_rst_from_manifest(output[0]),",
         ]
     else:
         sp = list(spec.source_paths)
@@ -3006,48 +3029,16 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         (`e_consolidate_complete`); the sensitivity master Snakefile passes
         `f_consolidate_experiment_complete.flag` instead.
         """
-        import os as _os
-
         if ctx is None:
             ctx = self._make_rule_emission_context(static_backend=self._get_report_cfg_static_backend())
-
-        analysis_dir = self.analysis.analysis_paths.analysis_dir
-        analysis_root = str(analysis_dir.resolve())
-        cfg_ana = self.analysis.cfg_analysis
-        if getattr(cfg_ana, "toggle_sensitivity_analysis", False):
-            subs = self.analysis.sensitivity.members
-            first_sub = subs[next(iter(subs))]
-            repr_scen_paths = first_sub._retrieve_sim_runs(0)._scenario.scen_paths
-        else:
-            repr_scen_paths = self.analysis._retrieve_sim_runs(0)._scenario.scen_paths
-        source_paths: list[dict] = [
-            {
-                "path": _os.path.relpath(str(self.system.sys_paths.dem_processed.resolve()), analysis_root),
-                "variables": [],
-            },
-            {
-                "path": _os.path.relpath(str(Path(repr_scen_paths.swmm_hydro_inp).resolve()), analysis_root),
-                "variables": ["[SUBCATCHMENTS]", "[JUNCTIONS]", "[OUTFALLS]"],
-            },
-            {
-                "path": _os.path.relpath(str(Path(repr_scen_paths.swmm_hydraulics_inp).resolve()), analysis_root),
-                "variables": ["[CONDUITS]", "[JUNCTIONS]", "[POLYGONS]"],
-            },
-        ]
-        if cfg_ana.toggle_storm_tide_boundary and cfg_ana.storm_tide_boundary_line_gis:
-            source_paths.append(
-                {
-                    "path": _os.path.relpath(str(Path(cfg_ana.storm_tide_boundary_line_gis).resolve()), analysis_root),
-                    "variables": [],
-                }
-            )
 
         spec = RuleSpec(
             rule_name="plot_system_overview",
             renderer_module="system_overview",
             input_flags=(input_flag,),
             output_path_template="plots/system_overview__OUTPUT_EXT__",
-            source_paths=tuple(source_paths),
+            source_paths=(),
+            sources_from_manifest=True,
             wildcards=(),
             extra_cli_flags=(),
             extra_params=(),
@@ -3080,12 +3071,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             renderer_module="disk_utilization",
             input_flags=(input_flag,),
             output_path_template="plots/disk_utilization__OUTPUT_EXT__",
-            source_paths=(
-                {
-                    "path": "_status/_du.json",
-                    "variables": ["disk_utilization_bytes", "sub_path_breakdown"],
-                },
-            ),
+            source_paths=(),
+            sources_from_manifest=True,
             wildcards=(),
             extra_cli_flags=(),
             extra_params=(),
@@ -3122,12 +3109,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             renderer_module="metadata",
             input_flags=(input_flag,),
             output_path_template="plots/metadata__OUTPUT_EXT__",
-            source_paths=(
-                {
-                    "path": "ro-crate-metadata.json",
-                    "variables": ["provenance"],
-                },
-            ),
+            source_paths=(),
+            sources_from_manifest=True,
             wildcards=(),
             extra_cli_flags=(),
             extra_params=(),
@@ -3147,7 +3130,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         *,
         ctx: RuleEmissionContext | None = None,
     ) -> str:
-        """Emit the Snakemake rule for the Workflow performance page.
+        """Emit the Snakemake rule for the Workflow Performance page.
 
         The whole-experiment run timeline (projected from the per-rule
         `_status/*.flag.json` sidecars) and the SLURM resource-efficiency table, both
@@ -3155,7 +3138,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         rather than what it produced.
 
         `report_kwargs["category"]` MUST equal `_TMPL_WORKFLOW_PERFORMANCE`'s
-        (`"Workflow performance"`) — the co-sourcing guard checks exactly this.
+        (`"Workflow Performance"`) — the co-sourcing guard checks exactly this.
 
         NOTE the `source_paths` here is the RULE-emission declaration used to render the
         caption's Sources block; it is deliberately EMPTY because this page's real source
@@ -3172,12 +3155,13 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             input_flags=(input_flag,),
             output_path_template="plots/workflow_performance__OUTPUT_EXT__",
             source_paths=(),
+            sources_from_manifest=True,
             wildcards=(),
             extra_cli_flags=(),
             extra_params=(),
             report_kwargs={
                 "caption": "report/captions/workflow_performance.rst",
-                "category": "Workflow performance",
+                "category": "Workflow Performance",
                 "labels": '{"figure": "Workflow performance"}',
             },
             resources_yaml="mem_mb=1000, time_min=5",
@@ -3703,8 +3687,8 @@ from datetime import datetime as _dt
 from hhemt.report_renderers._figure_emission import format_sources_rst as _fmt_sources_rst
 
 try:
-    from importlib.metadata import version as _pkg_version
-    _toolkit_version = _pkg_version("hhemt")
+    from hhemt.provenance import _describe_version
+    _toolkit_version = _describe_version()
 except Exception:
     _toolkit_version = "unknown"
 
@@ -4059,95 +4043,6 @@ rule render_report:
 '''
         return snakefile_content
 
-    def _collect_per_analysis_summary_source_paths(self) -> list[dict]:
-        """Return analysis-dir-relative .rpt + TRITON-log descriptors the renderer reads.
-
-        Dispatch on enabled model types (each model type has its own log) — `swmm_hydraulics_rpt`
-        for TRITON-SWMM coupled mode, `swmm_full_rpt_file` for SWMM-only; and, per enabled
-        model type, the model-state JSON log `sim_folder/log_{mt}.json`, which is what the
-        renderer reads for status counts (NOT the `log_run_*` execution logs).
-
-        Each returned dict has the schema ``{"path": str, "variables": list[str]}``
-        — the variable list names which fields the renderer parses from each
-        source (e.g., "Flow Routing Continuity error" from SWMM .rpt). Caption
-        RSTs render the dict as a path bullet with variable sub-bullets, with a
-        backward-compat shim for callers still returning ``list[str]``.
-
-        Sensitivity-master detection: if the analysis is a sensitivity master,
-        iterate per-member scenarios so the master per_analysis_summary
-        table has provenance for every member's status counts.
-        """
-        import os as _os
-
-        analysis_dir = self.analysis.analysis_paths.analysis_dir
-        analysis_root = str(Path(analysis_dir).resolve())
-        enabled = self.analysis._get_enabled_model_types()
-        sources: list[dict] = []
-        # Sensitivity-master scope: iterate every member's scenarios.
-        is_sensitivity_master = (
-            getattr(self.analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
-            and getattr(self.analysis, "sensitivity", None) is not None
-        )
-        if is_sensitivity_master:
-            scenario_objs = []
-            for sub in self.analysis.sensitivity.members.values():
-                for event_iloc in sub.df_sims.index:
-                    try:
-                        scenario_objs.append(sub._retrieve_sim_run_processing_object(event_iloc).scen_paths)
-                    except Exception:
-                        continue
-        else:
-            scenario_objs = []
-            for event_iloc in self.analysis.df_sims.index:
-                scenario_objs.append(self.analysis._retrieve_sim_run_processing_object(event_iloc).scen_paths)
-        for scen_paths in scenario_objs:
-            if "tritonswmm" in enabled and scen_paths.swmm_hydraulics_rpt is not None:
-                sources.append(
-                    {
-                        "path": _os.path.relpath(
-                            str(Path(scen_paths.swmm_hydraulics_rpt).resolve()),
-                            analysis_root,
-                        ),
-                        "variables": ["Flow Routing Continuity error (%)"],
-                    }
-                )
-            elif "swmm" in enabled and scen_paths.swmm_full_rpt_file is not None:
-                sources.append(
-                    {
-                        "path": _os.path.relpath(
-                            str(Path(scen_paths.swmm_full_rpt_file).resolve()),
-                            analysis_root,
-                        ),
-                        "variables": ["Flow Routing Continuity error (%)"],
-                    }
-                )
-            # Per-model-type model-state JSON logs (sim_folder/log_{mt}.json) are
-            # what the renderer's _is_scenario_successful / _is_scenario_pending
-            # actually read for status counts — NOT the simulation execution
-            # logs (log_run_*) that the renderer never opens. Enumerate one entry
-            # per enabled model type per scenario.
-            sim_folder = getattr(scen_paths, "sim_folder", None)
-            if sim_folder is not None:
-                for mt in enabled:
-                    log_file = Path(sim_folder) / f"log_{mt}.json"
-                    # Emit unconditionally from the config-derived scenario set — never
-                    # gate on `log_file.exists()`. Snakefile emission must be a pure
-                    # function of config, not of current disk state: an existence gate
-                    # makes the emitted `source_paths` vary with whatever happens to be
-                    # on disk at generation time, which is nondeterministic across a
-                    # fresh tree vs. a completed run (and silently reddened the byte-
-                    # identity goldens). Mirrors the `is not None` treatment of the
-                    # sibling .rpt gates above.
-                    sources.append(
-                        {
-                            "path": _os.path.relpath(str(log_file.resolve()), analysis_root),
-                            "variables": [
-                                f"model_run_completed[{mt}] (status flag for n_successful / n_pending counts)",
-                            ],
-                        }
-                    )
-        return sources
-
     def _build_plot_rule_block_per_analysis_summary(
         self,
         input_flag: str = "_status/e_consolidate_complete.flag",
@@ -4166,13 +4061,13 @@ rule render_report:
         """
         if ctx is None:
             ctx = self._make_rule_emission_context(static_backend=self._get_report_cfg_static_backend())
-        source_paths = self._collect_per_analysis_summary_source_paths()
         spec = RuleSpec(
             rule_name="plot_per_analysis_summary_table",
             renderer_module="per_analysis_summary",
             input_flags=(input_flag,),
             output_path_template="plots/per_analysis/summary_table__OUTPUT_EXT__",
-            source_paths=tuple(source_paths),
+            source_paths=(),
+            sources_from_manifest=True,
             wildcards=(),
             extra_cli_flags=(),
             extra_params=(),
@@ -4216,25 +4111,16 @@ rule render_report:
         ``input_flag`` defaults to the regular multisim consolidation flag;
         the sensitivity master Snakefile passes the master flag instead.
         """
-        import os as _os
-
         if ctx is None:
             ctx = self._make_rule_emission_context(static_backend=self._get_report_cfg_static_backend())
-        analysis_dir = self.analysis.analysis_paths.analysis_dir
-        analysis_root = str(analysis_dir.resolve())
-        csv_rel = _os.path.relpath(str((analysis_dir / "scenario_status.csv").resolve()), analysis_root)
-        source_paths = [
-            {
-                "path": csv_rel,
-                "variables": ["event_id", "model_type", "status", "runtime_s", "continuity_error_pct", "notes"],
-            }
-        ]
+
         spec = RuleSpec(
             rule_name="plot_scenario_status_appendix",
             renderer_module="scenario_status_appendix",
             input_flags=(input_flag,),
             output_path_template="plots/appendix/scenario_status__OUTPUT_EXT__",
-            source_paths=tuple(source_paths),
+            source_paths=(),
+            sources_from_manifest=True,
             wildcards=(),
             extra_cli_flags=(),
             extra_params=(),
@@ -4268,46 +4154,16 @@ rule render_report:
         ``input_flag`` defaults to the regular multisim consolidation flag;
         the sensitivity master Snakefile passes the master flag instead.
         """
-        import os as _os
-
         if ctx is None:
             ctx = self._make_rule_emission_context(static_backend=self._get_report_cfg_static_backend())
-        analysis_dir = self.analysis.analysis_paths.analysis_dir
-        analysis_root = str(analysis_dir.resolve())
-        csv_rel = _os.path.relpath(str((analysis_dir / "scenario_status.csv").resolve()), analysis_root)
-        source_paths = [
-            {
-                "path": csv_rel,
-                "variables": [
-                    "scenario_setup",
-                    "run_completed",
-                    "actual_nTasks",
-                    "actual_omp_threads",
-                    "actual_total_gpus",
-                    "actual_gpu_backend",
-                ],
-            },
-            {
-                "path": "sims/<event_id>/log_<model_type>.json",
-                "variables": ["simulation_completed (per scenario × model_type)"],
-            },
-            {
-                "path": "../system_log.json",
-                "variables": [
-                    "compilation_tritonswmm_cpu_successful",
-                    "compilation_tritonswmm_gpu_successful",
-                    "compilation_triton_cpu_successful",
-                    "compilation_triton_gpu_successful",
-                    "compilation_swmm_successful",
-                ],
-            },
-        ]
+
         spec = RuleSpec(
             rule_name="plot_errors_and_warnings",
             renderer_module="errors_and_warnings",
             input_flags=(input_flag,),
             output_path_template="plots/errors_and_warnings/validation_report__OUTPUT_EXT__",
-            source_paths=tuple(source_paths),
+            source_paths=(),
+            sources_from_manifest=True,
             wildcards=(),
             extra_cli_flags=(),
             extra_params=(),
@@ -4411,51 +4267,16 @@ rule export_scenario_status:
 '''
 
     def _build_plot_rule_block_per_sim(self, *, ctx: RuleEmissionContext | None = None) -> str:
-        """Generate two per-sim plot rules wildcarded over event_id.
+        """Generate the per-event page plot rule, wildcarded over event_id.
 
-        `params.source_paths` for each rule is a function-based lookup
-        (`_per_sim_*_sources`) that reads event-scoped paths at rule-schedule
-        time (not Snakefile-emit time) — keeps the generated Snakefile
-        readable even for large scenario counts. The wildcards' `event_id`
-        is mapped to the integer `event_iloc` argument expected by the
-        renderer CLI via the Snakefile-level `ILOC_BY_EVENT_ID` dict (set
-        alongside `SIM_IDS` in `generate_snakefile_content`).
-
-        System-level paths (DEM, watershed shapefile) used by the
-        peak_flood_depth renderer are computed at emit time and baked into
-        the closure as default kwargs — they are constant per analysis
-        regardless of event wildcard.
+        The caption's Sources block is read from the figure's manifest when the report is
+        built (see ``_sources_rst_from_manifest``), so no source list is declared here. The
+        wildcards' `event_id` is mapped to the integer `event_iloc` argument expected by the
+        renderer CLI via the Snakefile-level `ILOC_BY_EVENT_ID` dict (set alongside
+        `SIM_IDS` in `generate_snakefile_content`).
         """
-        import os as _os
-
         if ctx is None:
             ctx = self._make_rule_emission_context(static_backend=self._get_report_cfg_static_backend())
-        analysis_root = str(self.analysis.analysis_paths.analysis_dir.resolve())
-        dem_rel = _os.path.relpath(str(self.system.sys_paths.dem_processed.resolve()), analysis_root)
-        watershed_path = self.system.cfg_system.watershed_gis_polygon
-        watershed_rel = _os.path.relpath(str(Path(watershed_path).resolve()), analysis_root) if watershed_path else None
-        rainfall_datavar = self.analysis.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
-        storm_tide_datavar = self.analysis.cfg_analysis.weather_time_series_storm_tide_datavar
-
-        helpers = f"""
-def _per_sim_event_page_sources(wildcards):
-    from hhemt.report_renderers._figure_emission import (
-        collect_per_sim_source_paths,
-    )
-    out = []
-    for _kind in ("peak_flood_depth", "conduit_flow"):
-        for _src in collect_per_sim_source_paths(
-            _kind,
-            wildcards.event_id,
-            rainfall_datavar={rainfall_datavar!r},
-            storm_tide_datavar={storm_tide_datavar!r},
-            dem_rel_path={dem_rel!r},
-            watershed_rel_path={watershed_rel!r},
-        ):
-            if _src not in out:
-                out.append(_src)
-    return out
-"""
 
         page_spec = RuleSpec(
             rule_name="plot_per_sim_event_page",
@@ -4467,6 +4288,7 @@ def _per_sim_event_page_sources(wildcards):
                 event_id="{event_id}",
             ),
             source_paths=(),
+            sources_from_manifest=True,
             wildcards=("event_id",),
             extra_cli_flags=("--event-iloc {params.event_iloc}",),
             extra_params=(("event_iloc", "lambda w: ILOC_BY_EVENT_ID[w.event_id]"),),
@@ -4477,9 +4299,8 @@ def _per_sim_event_page_sources(wildcards):
             },
             resources_yaml="mem_mb=8000, time_min=30",
             log_path_template="logs/plots/per_sim_event_page_{event_id}.log",
-            source_paths_fn_name="_per_sim_event_page_sources",
         )
-        return helpers + _emit_plot_rule(page_spec, ctx)
+        return _emit_plot_rule(page_spec, ctx)
 
     def generate_snakemake_config(self, mode: Literal["local", "slurm", "single_job"]) -> dict:
         """
@@ -9523,20 +9344,19 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         log_dir_str = str(self.experiment.analysis_paths.analysis_log_directory)
         experiment_id = str(self.experiment.cfg_analysis.analysis_id)
         n_analyses = len(self.sensitivity_analysis.members)
-        # Total scenarios across all members (best-effort; matches per-member n_sims sum)
+        # Total scenarios across all members. When counting fails the front page omits the
+        # count: a member count published as a scenario count would be a different number.
         try:
             total_n_sims = sum(len(sub.df_sims) for sub in self.sensitivity_analysis.members.values())
         except Exception as exc:
             logger.warning(
-                "Total-sim-count enumeration failed for the sensitivity master "
-                "(%s: %s); falling back to n_members=%d for config['n_sims']. "
-                "The reported sim count will be approximate. This is a silent "
-                "degradation unless you are reading this line.",
+                "Scenario count enumeration failed for the sensitivity master (%s: %s); "
+                "the front page omits the scenario count.",
                 type(exc).__name__,
                 exc,
-                n_analyses,
             )
-            total_n_sims = n_analyses
+            total_n_sims = None
+        _n_sims_config = f'config["n_sims"] = {total_n_sims}\n' if total_n_sims is not None else ""
 
         # Compute paired (member_id, event_id) lists for per-member per-event plot rules.
         # Used by `_build_plot_rule_block_per_sim_per_member` and the master `rule all`
@@ -9564,16 +9384,15 @@ from datetime import datetime as _dt
 from hhemt.report_renderers._figure_emission import format_sources_rst as _fmt_sources_rst
 
 try:
-    from importlib.metadata import version as _pkg_version
-    _toolkit_version = _pkg_version("hhemt")
+    from hhemt.provenance import _describe_version
+    _toolkit_version = _describe_version()
 except Exception:
     _toolkit_version = "unknown"
 
 # Config dict consumed by report_templates/workflow_description.rst.j2
 config["analysis_id"] = {experiment_id!r}
 config["toolkit_version"] = _toolkit_version
-config["n_sims"] = {total_n_sims}
-config["is_sensitivity"] = True
+{_n_sims_config}config["is_sensitivity"] = True
 config["n_members"] = {n_analyses}
 config["independent_vars"] = {_independent_vars!r}
 config["group_by_var"] = {_group_by_var!r}
@@ -10280,15 +10099,13 @@ rule render_report:
             total_n_sims = sum(len(sub.df_sims) for sub in self.sensitivity_analysis.members.values())
         except Exception as exc:
             logger.warning(
-                "Total-sim-count enumeration failed for the reprocess master "
-                "(%s: %s); falling back to n_members=%d for config['n_sims']. "
-                "The reported sim count will be approximate. This is a silent "
-                "degradation unless you are reading this line.",
+                "Scenario count enumeration failed for the reprocess master (%s: %s); "
+                "the front page omits the scenario count.",
                 type(exc).__name__,
                 exc,
-                n_analyses,
             )
-            total_n_sims = n_analyses
+            total_n_sims = None
+        _n_sims_config = f'config["n_sims"] = {total_n_sims}\n' if total_n_sims is not None else ""
 
         # Paired (member_id, event_id) lists for per-member per-event plot rules.
         # Report-target invariant: only include a sub's (member_id, event_id) pairs
@@ -10350,15 +10167,14 @@ from datetime import datetime as _dt
 from hhemt.report_renderers._figure_emission import format_sources_rst as _fmt_sources_rst
 
 try:
-    from importlib.metadata import version as _pkg_version
-    _toolkit_version = _pkg_version("hhemt")
+    from hhemt.provenance import _describe_version
+    _toolkit_version = _describe_version()
 except Exception:
     _toolkit_version = "unknown"
 
 config["analysis_id"] = {experiment_id!r}
 config["toolkit_version"] = _toolkit_version
-config["n_sims"] = {total_n_sims}
-config["is_sensitivity"] = True
+{_n_sims_config}config["is_sensitivity"] = True
 config["n_members"] = {n_analyses}
 config["independent_vars"] = {_independent_vars!r}
 config["group_by_var"] = {_group_by_var!r}
@@ -10854,7 +10670,8 @@ rule render_report:
                 renderer_module=tmpl.renderer_module,
                 input_flags=(consolidate_experiment_flag(),),
                 output_path_template=tmpl.output_path_template,
-                source_paths=("experiment_datatree.zarr",),
+                source_paths=(),
+                sources_from_manifest=True,
                 wildcards=tmpl.wildcards,
                 extra_cli_flags=(),
                 extra_params=(),
@@ -10876,40 +10693,14 @@ rule render_report:
         ``validate_active_reporting_set`` at ``analysis.run()`` entry); names reaching here are guaranteed
         Snakemake-safe.
 
-        SWMM-only members' .rpt paths are computed at emit time and baked
-        into the closure as a list, so the collector can declare them as
-        provenance even though they are conditional on enabled-model-types.
+        The caption's Sources block is read from the figure's manifest when the report is built.
         """
-        import os as _os
-
         if ctx is None:
             ctx = self._base_builder._make_rule_emission_context(
                 static_backend=self._base_builder._get_report_cfg_static_backend()
             )
-        master_root = str(self.experiment.analysis_paths.analysis_dir.resolve())
-        swmm_only_rpt_rels: list[str] = []
-        for sub in self.sensitivity_analysis.members.values():
-            sub_enabled = sub._get_enabled_model_types()
-            if sub_enabled == ["swmm"] or sub_enabled == ("swmm",):
-                for event_iloc in sub.df_sims.index:
-                    try:
-                        scen_paths = sub._retrieve_sim_run_processing_object(event_iloc).scen_paths
-                        rpt = getattr(scen_paths, "swmm_full_rpt_file", None)
-                        if rpt:
-                            swmm_only_rpt_rels.append(_os.path.relpath(str(Path(rpt).resolve()), master_root))
-                    except Exception:
-                        continue
         helpers = f"""
 INDEPENDENT_VARS = {independent_vars!r}
-
-def _sensitivity_source_paths(wildcards):
-    from hhemt.report_renderers._figure_emission import (
-        collect_sensitivity_source_paths,
-    )
-    return collect_sensitivity_source_paths(
-        wildcards.independent_var,
-        swmm_only_rpt_rel_paths={swmm_only_rpt_rels!r},
-    )
 """
         spec = RuleSpec(
             rule_name="plot_sensitivity_benchmarking",
@@ -10926,6 +10717,7 @@ def _sensitivity_source_paths(wildcards):
                 descriptor="{independent_var}.vs.total",
             ),
             source_paths=(),
+            sources_from_manifest=True,
             wildcards=("independent_var",),
             extra_cli_flags=("--independent-var {wildcards.independent_var}",),
             extra_params=(),
@@ -10939,7 +10731,6 @@ def _sensitivity_source_paths(wildcards):
             },
             resources_yaml="mem_mb=4000, time_min=10",
             log_path_template="logs/plots/sensitivity_benchmarking_{independent_var}.log",
-            source_paths_fn_name="_sensitivity_source_paths",
         )
         # plot_sensitivity_benchmarking honors the backend-resolved extension via
         # __OUTPUT_EXT__ substitution in _emit_plot_rule, matching the pattern
@@ -10976,36 +10767,9 @@ def _sensitivity_source_paths(wildcards):
                 event_id = compute_event_id_slug(ev)
                 iloc_by_event_id_by_member[str(member_id)][event_id] = int(event_iloc)
 
-        rainfall_datavar = self.experiment.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
-        storm_tide_datavar = self.experiment.cfg_analysis.weather_time_series_storm_tide_datavar
-
         helpers = f"""
 ILOC_BY_EVENT_ID_BY_MEMBER = {iloc_by_event_id_by_member!r}
 {LABEL_GLOBALS_BLOCK}
-
-def _per_sim_per_member_flood_depth_sources(wildcards):
-    from hhemt.report_renderers._figure_emission import (
-        collect_per_sim_source_paths,
-    )
-    return collect_per_sim_source_paths(
-        "peak_flood_depth",
-        wildcards.event_id,
-        rainfall_datavar={rainfall_datavar!r},
-        storm_tide_datavar={storm_tide_datavar!r},
-        member_id=wildcards.member_id,
-    )
-
-def _per_sim_per_member_conduit_flow_sources(wildcards):
-    from hhemt.report_renderers._figure_emission import (
-        collect_per_sim_source_paths,
-    )
-    return collect_per_sim_source_paths(
-        "conduit_flow",
-        wildcards.event_id,
-        rainfall_datavar={rainfall_datavar!r},
-        storm_tide_datavar={storm_tide_datavar!r},
-        member_id=wildcards.member_id,
-    )
 """
         flood_spec = RuleSpec(
             rule_name="plot_per_sim_per_member_peak_flood_depth",
@@ -11018,6 +10782,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 event_id="{event_id}",
             ),
             source_paths=(),
+            sources_from_manifest=True,
             wildcards=("member_id", "event_id"),
             extra_cli_flags=(
                 "--member-id {wildcards.member_id}",
@@ -11030,7 +10795,6 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             },
             resources_yaml="mem_mb=4000, time_min=15",
             log_path_template="logs/plots/per_sim_per_member_peak_flood_depth_member-{member_id}_{event_id}.log",
-            source_paths_fn_name="_per_sim_per_member_flood_depth_sources",
             input_label="master",
         )
         # NB: the underlying renderer module is `per_sim_peak_flood_depth`
@@ -11050,6 +10814,7 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
                 event_id="{event_id}",
             ),
             source_paths=(),
+            sources_from_manifest=True,
             wildcards=("member_id", "event_id"),
             extra_cli_flags=(
                 "--member-id {wildcards.member_id}",
@@ -11062,7 +10827,6 @@ def _per_sim_per_member_conduit_flow_sources(wildcards):
             },
             resources_yaml="mem_mb=4000, time_min=15",
             log_path_template="logs/plots/per_sim_per_member_conduit_flow_member-{member_id}_{event_id}.log",
-            source_paths_fn_name="_per_sim_per_member_conduit_flow_sources",
             input_label="master",
         )
         conduit_emit = RuleSpec(**{**conduit_spec.__dict__, "renderer_module": "per_sim_conduit_flow"})

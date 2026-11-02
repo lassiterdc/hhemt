@@ -75,6 +75,11 @@ _LAST_SUFFIX = "_last"
 NOT_EVALUATED = "NOT-EVALUATED"
 
 
+def _plural(n: int, one: str, many: str) -> str:
+    """The noun form a count takes, for the summaries a reader sees."""
+    return one if n == 1 else many
+
+
 def derive_compared_columns(ds: xr.Dataset) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
     """§8.7.2's PAIR-SIGNATURE derivation, ranged over the COMPARED ARTIFACT.
 
@@ -576,7 +581,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
                 level="aggregate",
                 passed=True,
                 applicable=False,
-                summary="N/A — single sim per event iloc",
+                summary="N/A: not a sweep, so each event has one model run",
             ),
         )
 
@@ -590,7 +595,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
                 level="aggregate",
                 passed=True,
                 applicable=False,
-                summary="N/A — no member has present summaries",
+                summary="N/A: no member has summaries",
             ),
         )
     # PRIMARY reference = the global _ref_rank winner among present subs (serial-CPU when a CPU
@@ -638,7 +643,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
         if member_id == ref_id:
             continue
         if not _enabled_modes(sub):
-            details.append({"sa_id": member_id, "detail": "summaries absent — skipped"})
+            details.append({"sa_id": member_id, "detail": "summaries absent, so the member is skipped"})
             continue
         # Compare against THIS sub's own family reference. For a non-primary family reference
         # this resolves to itself (self-compare -> identical / 0.0), which is what keeps its row
@@ -682,7 +687,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
                         "verdict": NOT_EVALUATED,
                         "detail": (
                             f"G1: empty compared set for mode {mode} "
-                            f"(derivation={col_prov['derivation']}) — nothing was compared"
+                            f"(derivation={col_prov['derivation']}): nothing was compared"
                         ),
                     }
                 )
@@ -705,7 +710,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
                             "variable": var,
                             "verdict": NOT_EVALUATED,
                             "detail": (
-                                "derived on the reference and absent on the member — comparison narrowed, not performed"
+                                "derived on the reference and absent on the member: comparison narrowed, not performed"
                             ),
                         }
                     )
@@ -872,7 +877,8 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
             f"{len(subs) - 1} compared members (per-family refs: {_ref_desc})."
             if all_identical
             else f"{len([d for d in details if 'variable' in d])} (member, event, variable) "
-            f"tuple(s) diverged from their OWN family's reference (per-family refs: {_ref_desc})."
+            f"{_plural(len([d for d in details if 'variable' in d]), 'tuple', 'tuples')} diverged from their own "
+            f"family's reference (per-family refs: {_ref_desc})."
         )
         passed = all_identical
     else:
@@ -1199,8 +1205,7 @@ def compare_arms(
         # The vacuous-pass trigger arriving from the PATH layer: one glob matching 30 on one
         # side and 0 on the other zips to nothing and would otherwise report agreement.
         return _not_evaluated(
-            f"empty member intersection (arm={len(arm_suffixes)} under {arm_layout}, "
-            f"reference={len(ref_suffixes)} under {reference_layout})"
+            f"empty member intersection (arm={len(arm_suffixes)} members, reference={len(ref_suffixes)} members)"
         )
 
     details: list[dict] = []
@@ -1274,7 +1279,7 @@ def compare_arms(
                 only_arm = tuple(sorted(set(columns_arm) - set(columns)))
                 return _not_evaluated(
                     f"asymmetric compared set on member {suffix} artifact {rel}: "
-                    f"reference|COMPARED|={len(columns)}, arm|COMPARED|={len(columns_arm)}; "
+                    f"reference compared={len(columns)}, arm compared={len(columns_arm)}; "
                     f"reference-only={only_ref}, arm-only={only_arm}"
                 )
             # G1, per compared artifact, and now provably SYMMETRIC: the sets are equal above,
@@ -1335,7 +1340,7 @@ def compare_arms(
     disagreements = [d for d in details if d.get("verdict") == "DISAGREE"]
     verdict = "DISAGREE" if disagreements else "AGREE"
     reason = (
-        f"{len(disagreements)} differing (member, artifact, column) tuple(s)"
+        f"{len(disagreements)} differing (member, artifact, column) {_plural(len(disagreements), 'tuple', 'tuples')}"
         if disagreements
         else f"all {total_compared} compared column instances bitwise equal"
     )

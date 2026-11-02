@@ -107,8 +107,8 @@ def _build_intercomparison_html(source: Path, report_cfg) -> str:
 
     if not pairs:
         body = (
-            "<p class='note'>No paired compute-configs found across the two bundles — "
-            "the combined report renders the compatibility half only.</p>"
+            "<p class='note'>This page is not shown: the combined experiments are not one clean and one "
+            "resume experiment with a compute configuration in common.</p>"
         )
         return _plain_html(heading, body)
 
@@ -138,10 +138,9 @@ def _build_intercomparison_html(source: Path, report_cfg) -> str:
     js_mode = getattr(getattr(report_cfg, "interactive", None), "tabulator_js_mode", "cdn")
     column_groups = [
         (
-            "Compute config",
+            "Compute configuration",
             list(_CONFIG_FIELDS),
-            "The six compute-configuration fields, split out of the packed identity key "
-            "(run mode, MPI ranks, OpenMP threads, GPUs, nodes, partition).",
+            "The compute configuration of each pair: run mode, MPI ranks, OpenMP threads, GPUs, nodes and partition.",
         ),
         (
             "Result",

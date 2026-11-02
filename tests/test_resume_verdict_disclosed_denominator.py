@@ -166,12 +166,12 @@ def test_the_check_discloses_an_empty_denominator_as_not_applicable(tmp_path):
     What kills it: a summary without the examined count, or ``applicable`` left True.
 
     A second correct implementation under which it still passes: a summary worded "no sim
-    attempted a resume (0 resumed sim(s) examined)"; the assertion reads the count phrase.
+    attempted a resume (0 resumed model runs examined)"; the assertion reads the count phrase.
     """
     res = check_resume_event_evidence(_analysis(tmp_path), df_status=_status(0))
     assert res.applicable is False
     assert res.passed is True
-    assert "0 resumed sim(s) examined" in res.summary
+    assert "0 resumed model runs examined" in res.summary
 
 
 def test_the_check_fails_a_resumed_sim_with_no_ledger_and_names_the_denominator(tmp_path):
@@ -191,8 +191,8 @@ def test_the_check_fails_a_resumed_sim_with_no_ledger_and_names_the_denominator(
     """
     res = check_resume_event_evidence(_analysis(tmp_path), df_status=_status(4))
     assert res.passed is False
-    assert "1 sim(s) with NO evidence" in res.summary
-    assert "1 resumed sim(s) examined" in res.summary
+    assert "1 model run with no evidence" in res.summary
+    assert "1 resumed model run examined" in res.summary
     assert len(res.details) == 1
 
 
@@ -211,7 +211,7 @@ def test_the_check_passes_a_complete_ledger_and_still_names_the_denominator(tmp_
     res = check_resume_event_evidence(_analysis(tmp_path), df_status=_status(2))
     assert res.passed is True
     assert res.applicable is True
-    assert "1 resumed sim(s) examined" in res.summary
+    assert "1 resumed model run examined" in res.summary
 
 
 def test_a_members_failing_row_reaches_the_granular_table_with_its_member_tag(tmp_path):

@@ -1,6 +1,6 @@
-Compute-config EDA: config-diff maps.
+Compute configuration EDA: difference maps.
 
-Cross-compute-configuration exploratory analysis for this sensitivity master. The figure reads the consolidated ``experiment_datatree.zarr`` (per-cell ``max_wlevel_m`` + per-conduit ``max_flow_cms`` + per-sub compute-config attrs) and renders a cross-config identity + absolute-diff table plus, per byte-identical config group, the signed-diff and percent-diff maps (DEM cells + SWMM conduits) versus the serial-CPU baseline. Compute-config labels derive from config attributes, not the ``member_id`` name. Rendered as a config-selectable tab via the ``compute_sensitivity`` reporting set (``report.reporting_set``).
+Compares the members of this sweep that differ in compute configuration. A table gives each configuration's identity and absolute difference from the serial-CPU baseline; below it, each group of byte-identical configurations has signed-difference and percent-difference maps (DEM cells and SWMM conduits) against that baseline. Labels come from each member's compute configuration, not from its member id.
 
 **Sources:**
 

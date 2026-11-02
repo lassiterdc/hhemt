@@ -270,7 +270,7 @@ def test_s13_controlled_pair_mixed_build_fails_uniform_build_passes(monkeypatch)
     """
     from hhemt import analysis_validation as av
 
-    mixed = _stage_stamps(report={"hhemt_sha": "b" * 40, "hhemt_version": "v0.1.0+B", "hhemt_dirty": "false"})
+    mixed = _stage_stamps(processing={"hhemt_sha": "b" * 40, "hhemt_version": "v0.1.0+B", "hhemt_dirty": "false"})
     monkeypatch.setattr(av, "_collect_stage_stamps", lambda _a: mixed)
     bad = av.check_provenance_completeness(object())
     assert bad.passed is False, "a mixed-build analysis must not pass"
@@ -284,11 +284,11 @@ def test_s13_controlled_pair_mixed_build_fails_uniform_build_passes(monkeypatch)
 def test_s14_summary_discloses_its_denominator(monkeypatch):
     """Gotcha 71: "no discrepancies" over zero examined stages must not read as a pass."""
     from hhemt import analysis_validation as av
-    from hhemt.analysis_validation import _PROVENANCE_STAGES
+    from hhemt.analysis_validation import _PROVENANCE_STAGES, _VALIDATED_STAGES
 
     monkeypatch.setattr(av, "_collect_stage_stamps", lambda _a: dict.fromkeys(_PROVENANCE_STAGES))
     res = av.check_provenance_completeness(object())
-    assert f"/{len(_PROVENANCE_STAGES)}" in res.summary, (
+    assert f"/{len(_VALIDATED_STAGES)}" in res.summary, (
         "the summary must name how many stages were examined, not only how many were clean"
     )
     assert res.level == "aggregate"
@@ -305,15 +305,15 @@ def test_s15_dirty_arm_names_every_stage_it_ranges_over(monkeypatch):
     from hhemt import analysis_validation as av
 
     stamps = _stage_stamps(
-        plots={"hhemt_sha": "a" * 40, "hhemt_version": "v0.1.0+A", "hhemt_dirty": "true"},
+        processing={"hhemt_sha": "a" * 40, "hhemt_version": "v0.1.0+A", "hhemt_dirty": "true"},
         consolidate={"hhemt_sha": "a" * 40, "hhemt_version": "v0.1.0+A", "hhemt_dirty": "unknown"},
-        report=None,
+        setup=None,
     )
     monkeypatch.setattr(av, "_collect_stage_stamps", lambda _a: stamps)
     res = av.check_provenance_completeness(object())
     assert res.passed is False
     assert res.level == "aggregate"
-    for stage in ("plots", "consolidate", "report"):
+    for stage in ("processing", "consolidate", "setup"):
         # Word boundary, not `in`: the terminal arm's own prose carries "reports", so a
         # bare substring test passes on a message that never names the `report` stage.
         assert re.search(rf"\b{stage}\b", res.summary), f"the summary must name {stage}; the arm ranges over it"

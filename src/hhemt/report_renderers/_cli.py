@@ -36,15 +36,14 @@ def main() -> None:
         "sibling runners (setup_workflow/prepare_scenario_runner/export_scenario_status).",
     )
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--event-iloc", type=int, default=None, help="for per-sim renderers")
+    parser.add_argument("--event-iloc", type=int, default=None, help="for renderers that draw one event")
     parser.add_argument("--independent-var", type=str, default=None, help="for sensitivity renderers")
     parser.add_argument(
         "--member-id",
         type=str,
         default=None,
-        help="member id (sensitivity master scope only); when present, the renderer "
-        "receives the resolved member instead of the master analysis, so per-sim "
-        "renderers can operate on per-member-scoped scenario data.",
+        help="member id, for a sweep only. When present, the renderer receives that member "
+        "in place of the sweep, so renderers that draw one event work on that member's scenarios.",
     )
     parser.add_argument(
         "--static-config-id",
@@ -58,8 +57,8 @@ def main() -> None:
         type=Path,
         default=None,
         help="Absolute path to the per-plot static-config YAML. The static-plots "
-        "generator emits this so the render is self-contained — the config is loaded "
-        "directly from this path, NOT re-searched in the (possibly override-supplied, "
+        "generator emits this so the render is self-contained. The config is loaded "
+        "directly from this path and not searched for in the (possibly override-supplied, "
         "non-persisted) cfg_analysis.static_plot_configs. Falls back to an id-search "
         "when only --static-config-id is given (persisted-config usage).",
     )

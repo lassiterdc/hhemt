@@ -52,6 +52,33 @@ if TYPE_CHECKING:
     from hhemt.config.static_plots import StaticPlotBaseConfig
 
 
+# Panel headings the page prints. Each conditional SWMM panel's heading carries one line saying
+# what the panel draws (shape K9), because the caption names only the always-present panels.
+DEM_PANEL_TITLE = "TRITON DEM"
+MANNINGS_PANEL_TITLE = "Manning's n"
+HYDROLOGY_PANEL_TITLE = "Hydrology: subcatchments and the drainage lines to their outlets"
+HYDRAULICS_PANEL_TITLE = "Hydraulics: junctions, outfalls and conduits"
+
+
+def _mannings_panel_title(mannings_res) -> str:
+    """The Manning's n panel heading, with the resolution when known (both routes print this)."""
+    return f"{MANNINGS_PANEL_TITLE} ({mannings_res}m)" if mannings_res is not None else MANNINGS_PANEL_TITLE
+
+
+def _label_static_mannings_panel(ax, mannings_res) -> None:
+    """Give the static Manning's n panel the heading and colour-bar label the page names it by.
+
+    The shared plotter (`plot_system.processed_mannings`) prints "Mannings (...m)" and the
+    colour-bar label "mannings"; the caption names the panel **Manning's n**, so both are set here
+    after the plotter returns.
+    """
+    ax.set_title(_mannings_panel_title(mannings_res))
+    for artist in (*ax.images, *ax.collections):
+        colorbar = getattr(artist, "colorbar", None)
+        if colorbar is not None:
+            colorbar.set_label(MANNINGS_PANEL_TITLE)
+
+
 def render(
     analysis: TRITONSWMM_analysis,
     report_cfg: report_config,
@@ -314,6 +341,7 @@ def render(
     from hhemt.plot_system import TRITONSWMM_system_plotting
 
     TRITONSWMM_system_plotting(analysis._system).processed_mannings(ax=ax_mannings)
+    _label_static_mannings_panel(ax_mannings, analysis._system.cfg_system.target_dem_resolution)
     if _renders_swmm:
         # Bottom row (coupled only): Hydrology (col 0) + Hydraulics (col 1).
         ax_hydro, ax_hydraulics = _axes[1][0], _axes[1][1]
@@ -371,7 +399,7 @@ def _build_manifest_data(
         panels.append(
             {
                 "name": "hydrology",
-                "title": "Hydrology",
+                "title": HYDROLOGY_PANEL_TITLE,
                 "axis_extents": panel_extents,
                 "element_counts": {
                     "subcatchments_with_polygons": n_subcatchments,
@@ -383,7 +411,7 @@ def _build_manifest_data(
         panels.append(
             {
                 "name": "hydraulics",
-                "title": "Hydraulics",
+                "title": HYDRAULICS_PANEL_TITLE,
                 "axis_extents": panel_extents,
                 "element_counts": {
                     "junctions": int(len(hydraulics_model.inp.junctions)),
@@ -396,7 +424,7 @@ def _build_manifest_data(
     panels.append(
         {
             "name": "triton_dem",
-            "title": "TRITON DEM",
+            "title": DEM_PANEL_TITLE,
             "axis_extents": panel_extents,
             "dem_bounds": [float(b) for b in dem_bounds],
             "legend_labels": ["Storm tide BC"] if bc_present else [],
@@ -406,7 +434,7 @@ def _build_manifest_data(
     panels.append(
         {
             "name": "mannings",
-            "title": (f"Mannings ({mannings_res}m)" if mannings_res is not None else "Mannings"),
+            "title": _mannings_panel_title(mannings_res),
             "axis_extents": panel_extents,
         }
     )
@@ -496,7 +524,7 @@ def _draw_hydrology_panel(
     ax.set_aspect("equal")
     ax.set_xlim(dem_bounds[0], dem_bounds[2])
     ax.set_ylim(dem_bounds[1], dem_bounds[3])
-    ax.set_title("Hydrology")
+    ax.set_title(HYDROLOGY_PANEL_TITLE)
     if legend_handles:
         ax.legend(
             handles=legend_handles,
@@ -674,7 +702,7 @@ def _draw_hydraulics_panel(
     ax.set_aspect("equal")
     ax.set_xlim(dem_bounds[0], dem_bounds[2])
     ax.set_ylim(dem_bounds[1], dem_bounds[3])
-    ax.set_title("Hydraulics")
+    ax.set_title(HYDRAULICS_PANEL_TITLE)
     ax.legend(
         handles=legend_handles,
         loc=map_cfg.legend_loc,
@@ -895,7 +923,7 @@ def _draw_elevation_panel(
                 Line2D([], [], color=map_cfg.bc_color, linewidth=ep.bc_line_width, label="Storm tide BC")
             )
 
-    ax.set_title("TRITON DEM")
+    ax.set_title(DEM_PANEL_TITLE)
     if legend_handles:
         ax.legend(
             handles=legend_handles,
@@ -1034,9 +1062,9 @@ def _build_system_overview_figure(
     # row-major so make_subplots' positional `subplot_titles` and the equal-aspect loop
     # index each cell correctly.
     _coupled = hydro_model is not None and hydraulics_model is not None
-    _cells: list[tuple[int, int, str]] = [(1, 1, "TRITON DEM"), (1, 2, "Mannings")]
+    _cells: list[tuple[int, int, str]] = [(1, 1, DEM_PANEL_TITLE), (1, 2, MANNINGS_PANEL_TITLE)]
     if _coupled:
-        _cells += [(2, 1, "Hydrology"), (2, 2, "Hydraulics")]
+        _cells += [(2, 1, HYDROLOGY_PANEL_TITLE), (2, 2, HYDRAULICS_PANEL_TITLE)]
     _nrows = 2 if _coupled else 1
     _ncols = 2
     fig = make_subplots(
@@ -1076,7 +1104,7 @@ def _build_system_overview_figure(
         # Plotly numbers subplot axes row-major: (1,1)->x1, (1,2)->x2, (2,1)->x3, (2,2)->x4.
         _axis_idx = (_pr - 1) * _ncols + col
         _is_dem = _pr == 1 and col == 1
-        x_title = f"Easting (m) — {crs_authority}" if _is_dem else "Easting (m)"
+        x_title = f"Easting (m), {crs_authority}" if _is_dem else "Easting (m)"
         x_kwargs = dict(
             range=[panel_bounds[0], panel_bounds[2]],
             title_text=x_title,
@@ -1272,13 +1300,13 @@ def _render_plotly_branch(
     # The doc title names the panels actually rendered — DEM + Mannings for
     # a pure-TRITON master; DEM + Mannings + Hydrology + Hydraulics (2×2) when coupled.
     _title_panels = (
-        "TRITON DEM, Mannings, Hydrology, Hydraulics"
+        "TRITON DEM, Manning's n, Hydrology, Hydraulics"
         if (hydro_model is not None and hydraulics_model is not None)
-        else "TRITON DEM, Mannings"
+        else "TRITON DEM, Manning's n"
     )
     html_text = html_text.replace(
         '<head><meta charset="utf-8" /></head>',
-        f'<head><meta charset="utf-8" /><title>System overview — {_title_panels}</title></head>',
+        f'<head><meta charset="utf-8" /><title>System overview: {_title_panels}</title></head>',
         1,
     )
 

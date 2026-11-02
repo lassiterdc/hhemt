@@ -90,7 +90,7 @@ def test_intercomparison_honest_placeholder_when_no_pairs(tmp_path):
     out.parent.mkdir(parents=True)
     cross_experiment_intercomparison.render(_stub_analysis(analysis_dir), report_cfg=None, output_path=out)
     html = out.read_text()
-    assert "No paired compute-configs" in html
+    assert "This page is not shown" in html
     # N5: `heading` is shared with the populated path, so the asymmetry note must NOT
     # render here — an unguarded note would disclose a denominator that was never measured.
     assert "Why the row counts differ per model" not in html
@@ -205,6 +205,6 @@ def test_cross_experiment_disk_utilization_honest_empty_state(tmp_path):
     out.parent.mkdir(parents=True)
     cross_experiment_disk_utilization.render(_stub_analysis(analysis_dir), report_cfg=None, output_path=out)
     html = out.read_text()
-    assert "No child crates recorded" in html
+    assert "No experiment is recorded for this combine." in html
     manifest = json.loads((out.parent / "disk_utilization.manifest.json").read_text())
     assert manifest["source_paths_relative"], "Q7b: empty-state must still declare a source (ADR-6 D3)"

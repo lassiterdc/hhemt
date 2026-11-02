@@ -1421,7 +1421,7 @@ def _build_peak_flood_depth_figure(
                 # separate markers-mode trace.
                 showlegend=False,
                 legendgroup="watershed_extent",
-                name="watershed extent (bbox)",
+                name=WATERSHED_LEGEND_LABEL,
             ),
             row=1,
             col=1,
@@ -1445,7 +1445,7 @@ def _build_peak_flood_depth_figure(
                 # boundaries together, which is the correct coupling — it is one geometry.
                 showlegend=False,
                 legendgroup="watershed_extent",
-                name="watershed extent (bbox)",
+                name=WATERSHED_LEGEND_LABEL,
             ),
             row=1,
             col=2,
@@ -1519,14 +1519,14 @@ def _build_peak_flood_depth_figure(
     with prov.artist(
         axes_id="ax_rain_plotly",
         kind="line2d",
-        note="rainfall time series (event hydrology — top sub-panel)",
+        note="rainfall time series (event hydrology, top sub-panel)",
     ) as a:
         a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
         a.add_channel("y", rain_ref, units=rain_units)
     with prov.artist(
         axes_id="ax_bc_plotly",
         kind="line2d",
-        note="boundary condition water level (event hydrology — bottom sub-panel)",
+        note="boundary condition water level (event hydrology, bottom sub-panel)",
     ) as a:
         a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
         a.add_channel("y", bc_ref, units=bc_units)

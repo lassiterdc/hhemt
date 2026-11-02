@@ -53,7 +53,7 @@ AXIS_BAND_PX = 46
 #: `_config_diff`'s swatch call site ("small UNFILLED rectangle, wider than tall"). That
 #: preference is not reachable on the legend side -- plotly's marker vocabulary has no
 #: rectangle -- so squaring the rect is the only direction in which the two can converge.
-WATERSHED_LEGEND_LABEL = "watershed extent (bbox)"
+WATERSHED_LEGEND_LABEL = "watershed polygon"
 
 #: plotly `legendgroup` coupling every watershed artist into ONE legend toggle. Named here
 #: rather than at each call site for the same reason as the label: two families spelling it

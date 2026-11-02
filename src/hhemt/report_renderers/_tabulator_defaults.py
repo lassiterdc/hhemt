@@ -1107,8 +1107,11 @@ def _controls_js(root: str) -> str:
         '          document.execCommand("copy");\n'
         "          document.body.removeChild(ta);\n"
         "        }\n"
+        "        const nRows = dataRows.length;\n"
+        "        const nCols = fields.length;\n"
         "        copyStatus.textContent = "
-        '"Copied " + dataRows.length + " rows × " + fields.length + " cols to clipboard.";\n'
+        '"Copied " + nRows + (nRows === 1 ? " row" : " rows") + " × " + nCols + '
+        '(nCols === 1 ? " column" : " columns") + " to the clipboard.";\n'
         "        setTimeout(function() {\n"
         '          copyStatus.textContent = "";\n'
         "        }, 3000);\n"
@@ -1337,11 +1340,11 @@ def build_table_fragment(
                 else (
                     '<div class="trf-table-toolbar" role="group" aria-label="Table actions">\n'
                     '  <button type="button" class="trf-copy-table" '
-                    'title="Copy filtered rows × visible columns to the clipboard as '
-                    'tab-separated text. Paste directly into Excel or Sheets.">Copy table</button>\n'
+                    'title="Copy the filtered rows and visible columns as tab-separated text. '
+                    'Paste into a spreadsheet.">Copy table</button>\n'
                     '  <button type="button" class="trf-reset-all" '
-                    'title="Clear all persisted table state (sort / filter / headerFilter / '
-                    'group / page) from localStorage and reload the page.">Reset all</button>\n'
+                    'title="Clear the saved sort, filters and page of this table, '
+                    'then reload the page.">Reset all</button>\n'
                     '  <div class="trf-copy-status" aria-live="polite" role="status"></div>\n'
                     "</div>\n"
                 )
@@ -1355,12 +1358,11 @@ def build_table_fragment(
                 '    <button type="button" class="trf-toggle-all" data-action="show-all">Show all</button>\n'
                 '    <button type="button" class="trf-toggle-all" data-action="hide-all">Hide all</button>\n'
                 '    <button type="button" class="trf-copy-table" '
-                'title="Copy filtered rows × visible columns to clipboard (tab-separated). '
-                'Paste into a spreadsheet to keep cell boundaries.">Copy table</button>\n'
+                'title="Copy the filtered rows and visible columns as tab-separated text. '
+                'Paste into a spreadsheet.">Copy table</button>\n'
                 '    <button type="button" class="trf-reset-all" '
-                'title="Clear all persisted table state (sort / filter / headerFilter / group / page / '
-                "cached column widths) from localStorage and reload the page. "
-                'Use this if the table behaves oddly after a config change.">Reset all</button>\n'
+                'title="Clear the saved sort, filters and page of this table, '
+                'then reload the page.">Reset all</button>\n'
                 '    <div class="trf-copy-status" aria-live="polite" role="status"></div>\n'
                 '    <div class="trf-column-list"></div>\n'
                 "  </aside>\n"

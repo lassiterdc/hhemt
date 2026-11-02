@@ -62,7 +62,9 @@ def generate_regeneration_snakefile(
         cfg_analysis=cfg_analysis,
     )
     preamble = _build_preamble()
-    config_block = _build_config_block(cfg_analysis=cfg_analysis, is_sensitivity=is_sensitivity)
+    config_block = _build_config_block(
+        cfg_analysis=cfg_analysis, is_sensitivity=is_sensitivity, bundle_root=bundle_root
+    )
     report_directive = 'report: "report/workflow_description.rst"\n'
 
     plot_output_paths = tuple(
@@ -257,18 +259,14 @@ def _harvest_rule_specs(
         for tmpl in sel.rule_spec_template:
             if not _predicate_passes(tmpl.predicate_key):
                 continue
-            if tmpl.wildcards:
-                source_paths: tuple[str, ...] = ()
-            else:
-                sidecar = bundle_root / tmpl.output_path_template.replace("__OUTPUT_EXT__", ".manifest.json")
-                source_paths = tuple(_load_source_paths(sidecar))
             specs.append(
                 RuleSpec(
                     rule_name=tmpl.rule_name,
                     renderer_module=tmpl.renderer_module,
                     input_flags=(),  # bundle-side regen-only: no status flag input
                     output_path_template=tmpl.output_path_template,
-                    source_paths=source_paths,
+                    source_paths=(),
+                    sources_from_manifest=True,
                     wildcards=tmpl.wildcards,
                     extra_cli_flags=(),
                     extra_params=(),
@@ -313,24 +311,55 @@ def _build_preamble() -> str:
     )
 
 
-def _build_config_block(*, cfg_analysis: dict, is_sensitivity: bool) -> str:
-    """Emit the config[...] assignment block matching the source-side shape."""
-    n_sims = int(cfg_analysis.get("n_sims", 0))
+def _counts_from_scenario_status(bundle_root: Path) -> tuple[int | None, int | None]:
+    """(scenarios, members) counted from the bundled ``scenario_status.csv``; ``None`` where unknown.
+
+    A scenario is one event in one analysis or member, so scenarios are the distinct
+    (member, event) pairs of the file and members are its distinct member ids. The
+    analysis configuration carries neither count, so a bundle without the file has no
+    source for them and the front page omits them.
+    """
+    import pandas as pd
+
+    from hhemt.member_identity import resolve_member_id_column
+
+    csv = bundle_root / "scenario_status.csv"
+    if not csv.is_file():
+        return None, None
+    try:
+        df = pd.read_csv(csv)
+    except (OSError, ValueError):
+        return None, None
+    if "event_iloc" not in df.columns:
+        return None, None
+    member_col = resolve_member_id_column(df.columns)
+    keys = [member_col, "event_iloc"] if member_col else ["event_iloc"]
+    n_scenarios = int(len(df[keys].drop_duplicates()))
+    n_members = int(df[member_col].nunique()) if member_col else None
+    return n_scenarios, n_members
+
+
+def _build_config_block(*, cfg_analysis: dict, is_sensitivity: bool, bundle_root: Path | None = None) -> str:
+    """Emit the config[...] assignment block matching the source-side form.
+
+    Counts come from the bundled ``scenario_status.csv``; a count with no source is
+    assigned ``None`` and the front page template omits it.
+    """
+    n_sims, n_members = _counts_from_scenario_status(bundle_root) if bundle_root is not None else (None, None)
     analysis_id = cfg_analysis.get("analysis_id", "unknown")
     lines = [
         "# Config dict consumed by report_templates/workflow_description.rst.j2",
         f'config["analysis_id"] = {analysis_id!r}',
         'config["toolkit_version"] = _toolkit_version',
-        f'config["n_sims"] = {n_sims}',
+        f'config["n_sims"] = {n_sims!r}',
         f'config["is_sensitivity"] = {is_sensitivity}',
         'config["report"] = {"generated_at": _dt.now().isoformat(timespec="seconds")}',
     ]
     if is_sensitivity:
-        n_sub = int(cfg_analysis.get("n_members", 0))
-        independent_vars = cfg_analysis.get("independent_vars", [])
-        lines.append(f'config["n_members"] = {n_sub}')
-        lines.append(f'config["independent_vars"] = {independent_vars!r}')
-        group_by = cfg_analysis.get("group_by_var")
+        independent_vars = ((cfg_analysis.get("report") or {}).get("sensitivity") or {}).get("independent_vars") or []
+        lines.append(f'config["n_members"] = {n_members!r}')
+        lines.append(f'config["independent_vars"] = {list(independent_vars)!r}')
+        group_by = ((cfg_analysis.get("report") or {}).get("sensitivity") or {}).get("group_by_var")
         if group_by:
             lines.append(f'config["group_by_var"] = {group_by!r}')
     return "\n".join(lines) + "\n"

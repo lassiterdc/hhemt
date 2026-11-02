@@ -318,7 +318,7 @@ def test_check_resource_usage_summary_discloses_counts(monkeypatch):
         ),
     )
     r = av.check_resource_usage(analysis=None)
-    assert r.passed is True and "1 row(s) not measured, 1 classified by negative signature" in r.summary
+    assert r.passed is True and "1 row not measured, 1 classified by negative signature" in r.summary
     monkeypatch.setattr(
         "hhemt.consolidate_workflow.validate_resource_usage",
         lambda analysis, logger=None, df_status=None: (
@@ -327,4 +327,4 @@ def test_check_resource_usage_summary_discloses_counts(monkeypatch):
         ),
     )
     r = av.check_resource_usage(analysis=None)
-    assert r.passed is False and r.summary.startswith("Resource mismatches in 1 scenario(s)")
+    assert r.passed is False and r.summary.startswith("Resource mismatches in 1 scenario")

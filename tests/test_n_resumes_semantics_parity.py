@@ -52,7 +52,6 @@ _TABLE: dict[str, tuple[str, str | None]] = {
     "src/hhemt/report_renderers/cross_experiment_compatibility.py": ("reads-as-attempts", None),
     "src/hhemt/report_renderers/cross_experiment_intercomparison_maps.py": ("reads-as-attempts", None),
     "src/hhemt/report_renderers/scenario_status_appendix.py": ("reads-as-attempts", None),
-    "src/hhemt/report_templates/captions/raw_byte_identity.rst": ("asserts-a-predicate", None),
     "src/hhemt/resume_events.py": ("reads-as-attempts", None),
     "src/hhemt/run_simulation.py": ("reads-as-attempts", None),
     "src/hhemt/run_simulation_runner.py": ("reads-as-attempts", None),
@@ -87,6 +86,7 @@ _TABLE: dict[str, tuple[str, str | None]] = {
     "tests/test_n_resumes_semantics_parity.py": ("reads-as-attempts", None),
     "tests/test_raw_resume_identity.py": ("reads-as-attempts", None),
     "tests/test_synth_07_validation_report.py": ("reads-as-attempts", None),
+    "tests/test_report_text_job_and_metadata_pages.py": ("reads-as-attempts", None),
     "tests/test_resume_event_cause_term.py": ("reads-as-attempts", None),
     "tests/test_resume_event_ledger.py": ("reads-as-attempts", None),
     "tests/test_resume_stepback_from_cut_off_snapshot.py": ("reads-as-attempts", None),
@@ -185,4 +185,6 @@ def test_the_caption_states_the_predicate_its_renderer_applies():
         re.search(r"\bselect", s, re.IGNORECASE) and re.search(r"\braw\W+(?:\w+\W+)?rasters?\b", s, re.IGNORECASE)
         for s in sentences
     )
-    assert _TABLE["src/hhemt/report_templates/captions/raw_byte_identity.rst"][0] == "asserts-a-predicate"
+    # The caption no longer names the field (3e.1), so it has no table row and may not name it again.
+    assert "n_resumes" not in caption
+    assert "src/hhemt/report_templates/captions/raw_byte_identity.rst" not in _TABLE

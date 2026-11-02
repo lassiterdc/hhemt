@@ -239,7 +239,7 @@ def test_check_known_resume_defects_cannot_distinguish_absent_from_indeterminate
     monkeypatch.setattr(av, "_read_triton_provenance", lambda _a: _SHA_PRE_FIX)
     pre = av.check_known_resume_defects(_StubAnalysis(), df_status=df)
     assert pre.passed is False
-    assert "known resume defect(s)" in pre.summary
+    assert "known resume defects" in pre.summary
 
     registered, unregistered = _report(_SHA_CURRENT_PIN), _report(_SHA_UNREGISTERED)
     assert registered[0] is True and unregistered[0] is True

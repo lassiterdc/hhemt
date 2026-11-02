@@ -4,9 +4,9 @@
 surgery, whose sort comparator ranks sidebar categories by a ``category_order``. The
 analysis render paths pass the active reporting set's full order. If the bundle path
 passes none, the surgery falls back to its own five-name default, which lacks
-"Workflow performance" and "Metadata". Those two then rank 99 and sort alphabetically,
-so the re-rendered sidebar ends "Metadata", "Workflow performance" while the original
-report ends "Workflow performance", "Metadata".
+"Workflow Performance" and "Metadata". Those two then rank 99 and sort alphabetically,
+so the re-rendered sidebar ends "Metadata", "Workflow Performance" while the original
+report ends "Workflow Performance", "Metadata".
 
 Every step before the surgery call is replaced with a stub, and the two surgery entry
 points are replaced with recorders. No solver runs and no Snakemake process starts.

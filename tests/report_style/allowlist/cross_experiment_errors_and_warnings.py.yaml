@@ -1,0 +1,14 @@
+source: src/hhemt/report_renderers/cross_experiment_errors_and_warnings.py
+entries:
+- rule: capitals
+  string: <td class='fail' title='{}'>FAIL</td>
+  status: baseline
+  reason: present when the style test was added
+- rule: capitals
+  string: <td class='pass-qualified' title='{}'>PASS*</td>
+  status: baseline
+  reason: present when the style test was added
+- rule: capitals
+  string: 'e;width:100%;font-size:13px;}th,td{padding:6px 10px;border:1px solid #DADADA;text-align:left;}th{background:#232D4B;color:#fff;}td.pass{color:#1F7'
+  status: baseline
+  reason: present when the style test was added

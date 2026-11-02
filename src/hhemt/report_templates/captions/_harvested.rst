@@ -1,8 +1,6 @@
 Harvested from experiment **{{ snakemake.params.experiment_id }}**.
 
-This figure is the intact, already-rendered figure from that experiment's own
-render bundle, re-presented here under its per-experiment sidebar section. Open the
-intact child bundle under ``child_crates/`` for the full single-experiment report.
+The full report of that experiment is in its bundle under ``child_crates/``.
 
 **Sources:**
 

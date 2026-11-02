@@ -219,7 +219,7 @@ def test_resume_validity_check_is_invariant_under_non_utf8_bytes(monkeypatch, tm
     assert not _strict_decodable(blob)
     clean = _verdict(body, tmp_path / "clean")
     assert clean[0] is replayed, "control: the clean log must produce the verdict the arm is named for"
-    assert "1 resumed coupled sim(s) examined" in clean[1]
+    assert "1 resumed coupled model run examined" in clean[1]
     assert _verdict(blob, tmp_path / "bad") == clean
 
 
