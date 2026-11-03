@@ -42,6 +42,7 @@ from hhemt.report_renderers._table_presentation import (
     plotly_columnwidth,
     plotly_table_header,
 )
+from hhemt.utils import open_store
 
 #: Diverging colorscale for signed diffs (iter-2 user feedback): RED = NEGATIVE
 #: (lower than serial), white = 0, BLUE = POSITIVE. Plotly "RdBu" maps low->red,
@@ -136,7 +137,7 @@ def _identity_labels(root: Path) -> dict[str, int] | None:
     store = root / "eda" / "eda_cross_sim_identity.zarr"
     if not store.exists():
         return None
-    ds = xr.open_zarr(store, consolidated=False)
+    ds = open_store(store, kind="zarr")
     if "identity_group" not in ds:
         # PRESENT but pre-`identity_group` schema. Distinct from absent, and the two demand
         # different operator actions: absent -> the EDA member never ran; legacy -> it ran
@@ -396,6 +397,17 @@ def _resolve_experiment_tree(root: Path) -> Path:
     return resolve_experiment_tree(root)
 
 
+def _open_experiment_tree(root: Path) -> xr.DataTree:
+    """Open the root consolidated store of the experiment at ``root`` as a lazy DataTree.
+
+    This is the open that ``_load_subs`` used to do inline. It is a function of its own so a
+    caller that reads several events from one experiment (the cross-experiment maps renderer)
+    opens the tree once and calls ``_load_subs_from_tree`` once per event, instead of paying a
+    full open of every node's metadata for each event.
+    """
+    return open_store(str(_resolve_experiment_tree(root)))
+
+
 def _load_subs(root: Path, *, event_iloc: int = 0) -> dict[str, dict]:
     """Load per-sub compute-config + spatial arrays from sensitivity_datatree.zarr.
 
@@ -406,7 +418,17 @@ def _load_subs(root: Path, *, event_iloc: int = 0) -> dict[str, dict]:
     ``event_iloc``, and reusing this loader without threading it would narrow every panel to
     event 0 while looking like a pure refactor.
     """
-    dt = xr.open_datatree(str(_resolve_experiment_tree(root)), engine="zarr", consolidated=False)
+    return _load_subs_from_tree(_open_experiment_tree(root), root, event_iloc=event_iloc)
+
+
+def _load_subs_from_tree(dt: xr.DataTree, root: Path, *, event_iloc: int) -> dict[str, dict]:
+    """Build the per-sub dict ``_load_subs`` returns from an already open tree ``dt``.
+
+    ``root`` is the experiment directory the tree came from; it is read for the per-member
+    resume counts in ``scenario_status.csv``. ``event_iloc`` has no default here because a
+    caller holding a tree is choosing an event on purpose. The returned arrays are lazy views
+    of ``dt``, so one tree can serve several events.
+    """
     n_res = _n_resumes_by_member_id(root)  # b5: member_id -> max n_resumes from scenario_status.csv
     subs: dict[str, dict] = {}
     for g in dt.groups:

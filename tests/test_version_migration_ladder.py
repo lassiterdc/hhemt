@@ -99,6 +99,7 @@ EXPECTED_LADDER: list[str] = [
     "V0024__rank_coherent_perf_reductions",
     "V0025__retire_stranded_regular_store",
     "V0026__raw_byte_identity_stem",
+    "V0027__consolidate_zarr_metadata",
 ]
 
 

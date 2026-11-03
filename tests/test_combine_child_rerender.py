@@ -139,7 +139,7 @@ def _plant(child: Path) -> Path:
 # errors_and_warnings figure is planted).
 def test_child_rerender_erases_a_planted_sentinel(golden_rendered, tmp_path):
     a, b = _two_bundles(golden_rendered, tmp_path)
-    cb = combine_bundle([a, b])
+    cb = combine_bundle([a, b], unzipped=True)
     crates = cb.root / _combine._CHILD_CRATES_SUBDIR
     planted = [_plant(c) for c in sorted(p for p in crates.iterdir() if p.is_dir())]
     assert planted, "fixture produced no child crates; the assertion would be vacuous"

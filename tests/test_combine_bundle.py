@@ -41,10 +41,14 @@ def test_blocking_aborts(tmp_path, monkeypatch):
     # **kwargs so the double tracks check_bundle_compatibility's keyword-only options
     # (declare_solver_split) without this test asserting anything about them.
     monkeypatch.setattr(CB, "check_bundle_compatibility", lambda roots, **_kw: rep)
+    ids = iter(["exp_a", "exp_b"])
+    monkeypatch.setattr(CB, "_experiment_id", lambda root: next(ids))
     a = tmp_path / "a"
     a.mkdir()
+    (a / BUNDLE_MANIFEST_FILENAME).write_text("{}")
     b = tmp_path / "b"
     b.mkdir()
+    (b / BUNDLE_MANIFEST_FILENAME).write_text("{}")
     with pytest.raises(ConfigurationError, match="not combine-compatible"):
         CB.combine_bundle([a, b])
 

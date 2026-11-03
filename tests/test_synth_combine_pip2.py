@@ -123,7 +123,7 @@ def test_combine_pip2_roundtrip(golden_rendered, tmp_path):
     differently below each base directory, since only per-base presence is asserted.
     """
     a, b = _two_bundles(golden_rendered, tmp_path)
-    cb = combine_bundle([a, b])  # raises if a BLOCKING divergence exists (none here)
+    cb = combine_bundle([a, b], unzipped=True)  # raises if a BLOCKING divergence exists (none here)
     assert (cb.root / "bundle_manifest.json").exists()
     crate = json.loads((cb.root / "ro-crate-metadata.json").read_text())
     # flat hasPart-by-reference over the two intact child crates (NOT N mainEntity, one per child crate;

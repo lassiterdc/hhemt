@@ -81,6 +81,7 @@ from hhemt.report_renderers._tabulator_defaults import (
     tabulator_head_assets,
     tabulator_shared_js,
 )
+from hhemt.utils import open_store
 
 _VOLATILE_EXCLUDED_KEYS: frozenset[str] = frozenset({"startTime", "endTime", "agent"})
 
@@ -659,9 +660,7 @@ def _read_producing_shas(tree_path: Path | None) -> tuple[str | None, str | None
     if tree_path is None or not tree_path.exists():
         return (None, None)
     try:
-        import xarray as xr
-
-        tree = xr.open_datatree(tree_path, engine="zarr", chunks=None, consolidated=False)
+        tree = open_store(tree_path, chunks=None)
     except Exception:  # noqa: BLE001 -- provenance display must never break the render
         return (None, None)
     attrs = dict(tree.attrs)
@@ -1161,9 +1160,7 @@ def _consolidated_group_paths(
     tree_path = _resolve_consolidated_tree(analysis_dir, analysis) if analysis_dir else None
     if tree_path is not None and tree_path.exists():
         try:
-            import xarray as xr
-
-            tree = xr.open_datatree(tree_path, engine="zarr", chunks=None, consolidated=False)
+            tree = open_store(tree_path, chunks=None)
         except Exception:
             tree = None
         if tree is not None:
@@ -3875,7 +3872,7 @@ def render(
         if tree_path is not None:
             source_paths.append(tree_path)
             # METADATA-ONLY: both opens of this store (`_read_producing_shas`,
-            # `_consolidated_group_paths`) are `chunks=None, consolidated=False` and read
+            # `_consolidated_group_paths`) are `open_store(..., chunks=None)` and read
             # root attrs + group names, never a chunk. Qualifying it lets the bundle
             # harvest carry the store's zarr metadata documents without its chunk files
             # (326,747 of them on a 3,798-event campaign) unless another figure

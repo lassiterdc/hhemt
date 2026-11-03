@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import xarray as xr
 
-from hhemt.utils import current_datetime_string
+from hhemt.utils import append_zarr, current_datetime_string, deferred_consolidation, open_store
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
@@ -54,7 +54,7 @@ class TRITONSWMM_system_post_processing:
         if not group_path.exists():
             return None
         try:
-            ds_root = xr.open_dataset(system_zarr, engine="zarr", group=analysis_id, consolidated=False)
+            ds_root = open_store(system_zarr, kind="dataset", group=analysis_id)
         except Exception:
             return None
         return ds_root.attrs.get("output_creation_date")
@@ -67,46 +67,54 @@ class TRITONSWMM_system_post_processing:
         system_zarr.parent.mkdir(parents=True, exist_ok=True)
 
         start_time = time.time()
-        for analysis in self._analyses():
-            analysis_id = str(analysis.cfg_analysis.analysis_id)
-            try:
-                analysis_tree = analysis.process.open_datatree()
-            except ValueError:
-                if verbose:
-                    print(f"Skipping analysis {analysis_id}: DataTree zarr not present.")
-                continue
-
-            new_creation_date = analysis_tree.attrs.get("output_creation_date")
-            existing_date = self._existing_creation_date(system_zarr, analysis_id)
-            unchanged = (
-                existing_date is not None and new_creation_date is not None and existing_date == new_creation_date
-            )
-            if unchanged and not overwrite_unchanged:
-                if verbose:
-                    print(f"Analysis {analysis_id} unchanged; skipping append.")
-                continue
-
-            # Overwrite-if-present semantics per analysis group.
-            analysis_root = system_zarr / analysis_id
-            if analysis_root.exists():
-                # EXEMPT-DU: system-dir
-                shutil.rmtree(analysis_root)
-
-            # Write the analysis root dataset with identifying metadata.
-            root_ds = xr.Dataset(
-                attrs={
-                    "analysis_id": analysis_id,
-                    "output_creation_date": new_creation_date or current_datetime_string(),
-                }
-            )
-            root_ds.to_zarr(system_zarr, group=analysis_id, mode="a", consolidated=False)
-            # Append each populated leaf under the analysis group.
-            for path, node in analysis_tree.subtree_with_keys:
-                if not node.has_data:
+        # ONE index rebuild for the whole build, not one per appended group: the block removes the
+        # store's index first and rebuilds it once when the loop ends, so an interruption leaves an
+        # unindexed store instead of an index that omits (or, after the rmtree below, still lists)
+        # groups. Deliberately NOT per-append consolidation, whose cost grows with the square of the appends.
+        with deferred_consolidation(system_zarr):
+            for analysis in self._analyses():
+                analysis_id = str(analysis.cfg_analysis.analysis_id)
+                try:
+                    analysis_tree = analysis.process.open_datatree()
+                except ValueError:
+                    if verbose:
+                        print(f"Skipping analysis {analysis_id}: DataTree zarr not present.")
                     continue
-                group = f"{analysis_id}/{path.lstrip('/')}"
-                node.dataset.to_zarr(system_zarr, group=group, mode="a", consolidated=False)
 
+                new_creation_date = analysis_tree.attrs.get("output_creation_date")
+                existing_date = self._existing_creation_date(system_zarr, analysis_id)
+                unchanged = (
+                    existing_date is not None and new_creation_date is not None and existing_date == new_creation_date
+                )
+                if unchanged and not overwrite_unchanged:
+                    if verbose:
+                        print(f"Analysis {analysis_id} unchanged; skipping append.")
+                    continue
+
+                # Overwrite-if-present semantics per analysis group.
+                analysis_root = system_zarr / analysis_id
+                if analysis_root.exists():
+                    # EXEMPT-DU: system-dir
+                    shutil.rmtree(analysis_root)
+
+                # Write the analysis root dataset with identifying metadata.
+                root_ds = xr.Dataset(
+                    attrs={
+                        "analysis_id": analysis_id,
+                        "output_creation_date": new_creation_date or current_datetime_string(),
+                    }
+                )
+                append_zarr(root_ds, system_zarr, group=analysis_id, consolidate=False)
+                # Append each populated leaf under the analysis group.
+                for path, node in analysis_tree.subtree_with_keys:
+                    if not node.has_data:
+                        continue
+                    group = f"{analysis_id}/{path.lstrip('/')}"
+                    append_zarr(node.dataset, system_zarr, group=group, consolidate=False)
+
+        from hhemt.processing_analysis import _assert_store_index_current
+
+        _assert_store_index_current(system_zarr, "consolidate_system_datatree")
         if hasattr(self._system.log, "system_datatree_consolidation_complete"):
             self._system.log.system_datatree_consolidation_complete.set(True)
             self._system.log.write()
@@ -123,4 +131,5 @@ class TRITONSWMM_system_post_processing:
         target = system_zarr / analysis_id
         if target.exists():
             # EXEMPT-DU: system-dir
-            shutil.rmtree(target)
+            with deferred_consolidation(system_zarr):
+                shutil.rmtree(target)

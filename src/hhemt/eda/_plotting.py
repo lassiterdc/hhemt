@@ -28,6 +28,7 @@ from hhemt.eda._dem_resolution_plots import (
 from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
+from hhemt.utils import open_store
 
 if TYPE_CHECKING:
     from hhemt.config.analysis import analysis_config
@@ -556,7 +557,6 @@ def _render_b4b(
     eda/{stem}.zarr as the source (raw dirs fail _validate_source_path; the producer owns
     raw-presence detection via the `degraded` attr, so this render reads only its own zarr
     and passes the Gotcha-53 renderer-IO audit)."""
-    import xarray as xr
 
     plot_id = canonical_plot_id(stem)  # pass-through == stem
     artifact = root / "eda" / f"{plot_id}.zarr"
@@ -593,7 +593,7 @@ def _render_b4b(
             )
         da = None
     else:
-        ds = xr.open_zarr(artifact, consolidated=False)
+        ds = open_store(artifact, kind="zarr")
         degraded = bool(int(ds.attrs.get("degraded", 0)))
         reason = str(ds.attrs.get("degraded_reason", ""))
         da = ds["identical"] if "identical" in ds else None

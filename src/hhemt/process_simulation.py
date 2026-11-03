@@ -40,11 +40,13 @@ from hhemt.utils import (
     chapters_dir_for,
     clear_raw_for_timesteps,
     completed_chapters,
+    consolidate_zarr_store,
     convert_datetime_to_str,
     covered_timesteps,
     current_datetime_string,
     get_file_size_MiB,
     merge_chapters_to_unified,
+    open_store,
     paths_to_strings,
     reap_unflagged_chapters,
     resolve_chunk_grid,
@@ -54,6 +56,7 @@ from hhemt.utils import (
     write_netcdf,
     write_zarr,
     write_zarr_then_netcdf,
+    zarr_store_has_index,
 )
 
 # Subdirectories under `out_tritonswmm/` or `out_triton/` that the cleanup
@@ -262,7 +265,7 @@ class TRITONSWMM_sim_post_processing:
                 "decode_timedelta": False,
             }
             if open_kwargs["engine"] == "zarr":
-                open_kwargs["consolidated"] = False
+                open_kwargs["consolidated"] = zarr_store_has_index(f)
             return xr.open_dataset(f, **open_kwargs)  # type: ignore
         else:
             raise ValueError(
@@ -502,7 +505,7 @@ class TRITONSWMM_sim_post_processing:
                 ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
                 ds_batch.attrs["output_creation_date"] = current_datetime_string()
                 ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
-                ds_batch.to_zarr(_store, mode="w", encoding=encoding, consolidated=False)
+                write_zarr(ds_batch, _store, chunks=None, encoding=encoding)
                 verify_and_flag_chapter(_store, _flag, _n)
                 if _clear_raw_ok:
                     _freed_bytes += clear_raw_for_timesteps(
@@ -533,7 +536,7 @@ class TRITONSWMM_sim_post_processing:
             ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
             ds_batch.attrs["output_creation_date"] = current_datetime_string()
             ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
-            ds_batch.to_zarr(_store, mode="w", encoding=encoding, consolidated=False)
+            write_zarr(ds_batch, _store, chunks=None, encoding=encoding)
             verify_and_flag_chapter(_store, _flag, _n)
             if _clear_raw_ok:
                 _freed_bytes += clear_raw_for_timesteps(
@@ -1208,9 +1211,7 @@ class TRITONSWMM_sim_post_processing:
         if self._analysis.cfg_analysis.target_processed_output_type == "zarr":
             if verbose:
                 print("[Chunked Processing] Consolidating zarr metadata", flush=True)
-            import zarr
-
-            zarr.consolidate_metadata(fname_out)
+            consolidate_zarr_store(fname_out)
 
         if verbose:
             print(f"[Chunked Processing] Complete: {fname_out.name}", flush=True)
@@ -1289,9 +1290,7 @@ class TRITONSWMM_sim_post_processing:
         if self._analysis.cfg_analysis.target_processed_output_type == "zarr":
             if verbose:
                 print("[Chunked Processing] Consolidating zarr metadata", flush=True)
-            import zarr
-
-            zarr.consolidate_metadata(fname_out)
+            consolidate_zarr_store(fname_out)
 
         if verbose:
             print(f"[Chunked Processing] Complete: {fname_out.name}", flush=True)
@@ -2295,9 +2294,7 @@ class TRITONSWMM_sim_post_processing:
         if path is None or not Path(path).exists():
             return False
         try:
-            import xarray as _xr
-
-            _xr.open_zarr(str(path), consolidated=False).close()
+            open_store(str(path), kind="zarr").close()
         except Exception:
             return False
         return True
@@ -2661,7 +2658,7 @@ def reclaim_scenario_scoped_classes(scen, classes, *, verbose: bool = False) -> 
             _captured = 0 if _ds is None else int(_ds.sizes.get("subcatchment_id", 0))
             if _ds is not None and _declared is not None and _captured == _declared:
                 _hydro_cap.parent.mkdir(parents=True, exist_ok=True)
-                _ds.to_zarr(_hydro_cap, mode="w")
+                write_zarr(_ds, _hydro_cap, chunks=None, encoding={})
                 # A WRITE; the scenario's DU sentinel is re-derived at consolidate_scenario.
             elif verbose:
                 # THREE reasons and THREE remedies, built together. Splitting the reason
@@ -3564,7 +3561,7 @@ def publish_chapters_to_netcdf(chapters: Path, fname_out, *, scenario_dir: Path,
     # A temp left by a process killed mid-write is a partial file and is never promoted.
     if tmp.exists():
         tmp.unlink()  # EXEMPT-DU: transient-intermediate
-    stores = [xr.open_zarr(parts[k], consolidated=False) for k in sorted(parts)]
+    stores = [open_store(parts[k], kind="zarr") for k in sorted(parts)]
     try:
         ds = xr.concat(stores, dim="timestep_min")
         try:

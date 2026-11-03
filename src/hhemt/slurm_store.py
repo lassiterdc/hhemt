@@ -32,8 +32,6 @@ a role at capture.
 from __future__ import annotations
 
 import json
-import os
-import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -485,9 +483,12 @@ def read_rows(analysis_dir: Path) -> list[dict[str, str]]:
     if not path.exists():
         return []
     import numpy as np
-    import xarray as xr
 
-    with xr.open_dataset(path, engine="zarr", chunks="auto", consolidated=False) as ds:
+    from hhemt.utils import open_store
+
+    # The store is zarr format 2, whose index document is the root `.zmetadata`; `open_store` reads
+    # through it, so the write path's consolidated store is also the one this reads.
+    with open_store(path, kind="dataset", chunks="auto") as ds:
         ds = ds.load()
     out: list[dict[str, str]] = []
     n = ds.sizes.get("row", 0)
@@ -516,10 +517,11 @@ def write_store(
 ) -> Path | None:
     """Merge `rows` into the store and rewrite it atomically (D3). Returns the path.
 
-    Staged through a `.tmp` sibling and `os.replace`d, so a crash mid-write leaves the
-    PREVIOUS store intact. That is strictly better than the artifact this replaces, where a
-    crash inside `write_text` left a truncated CSV that `csv.DictReader` parses without
-    error into a short store -- a silent partial that reads as a complete one.
+    Written through `utils.write_zarr`, which stages a `.tmp` sibling and renames it into
+    place, so a crash mid-write leaves the PREVIOUS store (or none) rather than a partial
+    one. That is strictly better than the artifact this replaces, where a crash inside
+    `write_text` left a truncated CSV that `csv.DictReader` parses without error into a
+    short store -- a silent partial that reads as a complete one.
 
     Merge-then-rewrite rather than an in-place update: a full rewrite measures ~203 ms at
     this grain, which is below any threshold at which correctness should be traded for
@@ -533,16 +535,13 @@ def write_store(
     if not merged:
         return None
     ds = rows_to_dataset(merged, availability=availability, derived_from=derived_from)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    if tmp.exists():
-        # EXEMPT-DU: outside-analysis-tree
-        shutil.rmtree(tmp)
-    tmp.parent.mkdir(parents=True, exist_ok=True)
-    ds.to_zarr(tmp, mode="w", consolidated=False, zarr_format=ZARR_FORMAT)
-    if path.exists():
-        # EXEMPT-DU: outside-analysis-tree
-        shutil.rmtree(path)
-    os.replace(tmp, path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Imported here, not at module level: this module stays importable without xarray.
+    # `encoding={}` and `chunks=None` keep the store's own variable settings (fixed-width
+    # unicode, no Blosc), which a computed encoding or an automatic rechunk would replace.
+    from hhemt.utils import write_zarr
+
+    write_zarr(ds, path, chunks=None, encoding={}, zarr_format=ZARR_FORMAT)
     return path
 
 

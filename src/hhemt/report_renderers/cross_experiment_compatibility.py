@@ -21,7 +21,7 @@ from hhemt.report_renderers._provenance import (
     ProvenanceLog,
     ProvenanceRef,
 )
-from hhemt.report_renderers.cross_experiment_disk_utilization import MODEL_NOT_RECORDED, model_from_groups
+from hhemt.report_renderers.cross_experiment_disk_utilization import MODEL_NOT_RECORDED, model_label_from_models
 
 
 def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
@@ -259,21 +259,22 @@ def _combine_provenance_rows(analysis_dir: Path) -> list[dict]:
         # model + n_subs from the consolidated tree tiers
         model, n_subs = MODEL_NOT_RECORDED, 0
         solver_sha, toolkit_version = "", ""
-        from hhemt.utils import resolve_experiment_tree
+        from hhemt.utils import experiment_tree_summary, resolve_experiment_tree
 
         store = resolve_experiment_tree(child)
         if store.exists():
             try:
-                import xarray as _xr
-
-                dt = _xr.open_datatree(str(store), engine="zarr", consolidated=False)
+                # The summary reads the root attributes, the member groups and every model any
+                # member runs from the store's metadata; a full open read every node's zarr.json.
+                summary = experiment_tree_summary(store)
                 # CP-5: the solver pin and toolkit version are ROOT ATTRS on this
                 # same tree, stamped at consolidation (processing_analysis stamps
                 # triton_producing_sha; analysis_validation already reads it back).
-                # No new read: `dt` is already open for the model/n_subs derivation
-                # below, so this costs nothing and cannot introduce a new failure.
-                solver_sha = str(dt.attrs.get("triton_producing_sha") or "")
-                hhemt_sha = str(dt.attrs.get("hhemt_producing_sha") or "")
+                # No new read: the summary already carries the root attrs for the
+                # model/n_subs derivation below, so this costs nothing and cannot
+                # introduce a new failure.
+                solver_sha = str(summary.attrs.get("triton_producing_sha") or "")
+                hhemt_sha = str(summary.attrs.get("hhemt_producing_sha") or "")
                 # The DELIVERED generation stamped the static pyproject pin here, so
                 # this reads "0.1.0" on every pre-fix tree -- true, and useless. Rather
                 # than splice a corrected value into an archived DOI-candidate artifact,
@@ -285,14 +286,13 @@ def _combine_provenance_rows(analysis_dir: Path) -> list[dict]:
                 # PEP-440 local version has and a bare pin does not, never by a
                 # hardcoded "0.1.0" comparison, which would silently stop firing at
                 # the next release.
-                toolkit_version = str(dt.attrs.get("hhemt_producing_version") or "")
+                toolkit_version = str(summary.attrs.get("hhemt_producing_version") or "")
                 if toolkit_version and "+" not in toolkit_version and hhemt_sha:
                     derived = _derive_version_from_sha(hhemt_sha)
                     if derived:
                         toolkit_version = derived
-                grps = set(dt.groups)
-                n_subs = len([g for g in grps if g.count("/") == 1 and g.startswith("/member_")])
-                model = model_from_groups(grps)
+                n_subs = len(summary.members)
+                model = model_label_from_models(summary.models)
             except Exception:
                 pass
         # toolkit sha from the child bundle manifest

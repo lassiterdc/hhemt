@@ -51,6 +51,7 @@ from hhemt.eda.cross_sim_identity import (
 from hhemt.member_identity import resolve_member_id_column, warn_missing_member_id_column
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import emit_data_artifact_with_sources
+from hhemt.utils import write_zarr
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
@@ -367,7 +368,7 @@ def _emit(primary: TRITONSWMM_analysis, renderer_kind: str, ds_vars: dict, sourc
     # (identical is cast to float there); pin that so it is contractual, not incidental.
     ds = xr.Dataset(ds_vars)
     encoding = {v: {"dtype": "float64"} for v in ds.data_vars}
-    ds.to_zarr(artifact_path, mode="w", consolidated=False, encoding=encoding)
+    write_zarr(ds, artifact_path, chunks=None, encoding=encoding)
     # Declare the FLAT per-scenario summary files this member actually read
     # (_retrieve_combined_output, per the flat-summary stipulation), not the consolidated
     # store — which this member is forbidden to open and which the old declaration named

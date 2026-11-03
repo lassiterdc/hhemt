@@ -547,6 +547,30 @@ def apply_post_process_surgery(
     return html_text
 
 
+def _without_zip64_record(extra: bytes) -> bytes:
+    """Return the zip extra field ``extra`` without any zip64 record (tag 0x0001).
+
+    ``ZipFile.writestr`` adds its own zip64 record whenever the entry needs one, so copying an
+    input entry's extra field unchanged leaves TWO zip64 records in the new local header, which
+    readers reject or misread. Records are ``tag(2) size(2) data(size)``, little-endian; every
+    other record is kept byte for byte, in order. A trailing fragment too short to be a record
+    is kept as it is rather than guessed at.
+    """
+    kept = []
+    pos = 0
+    while pos + 4 <= len(extra):
+        tag = int.from_bytes(extra[pos : pos + 2], "little")
+        size = int.from_bytes(extra[pos + 2 : pos + 4], "little")
+        end = pos + 4 + size
+        if end > len(extra):
+            break
+        if tag != 0x0001:
+            kept.append(extra[pos:end])
+        pos = end
+    kept.append(extra[pos:])
+    return b"".join(kept)
+
+
 def apply_post_process_surgery_to_zip(
     zip_path,
     bundle_mode: bool = False,
@@ -555,20 +579,31 @@ def apply_post_process_surgery_to_zip(
     member_labels: dict[str, str] | None = None,
     event_labels: dict[str, str] | None = None,
 ) -> None:
-    """Apply post-process surgery to `analysis_report/report.html` inside a zip.
+    """Apply post-process surgery to the ``report.html`` page inside a report zip.
 
-    Extracts the zip to a tempdir, modifies the inner HTML in place, then
-    re-zips back to the original path (overwriting). Idempotent: re-running
-    on a surgery'd zip does not double-inject (per ``apply_post_process_surgery``
-    semantics).
+    Reads the zip entry by entry and writes a new zip beside it in which every entry
+    is copied with its own name, date, mode and compression method and only the page's
+    bytes are replaced; the new zip is then renamed over ``zip_path``. Nothing is
+    extracted to disk, so the cost does not grow with a per-file create on a shared file
+    system, and an entry the input did not carry (a directory entry) is not added.
+    Idempotent: re-running on a surgery'd zip does not double-inject (per
+    ``apply_post_process_surgery`` semantics). A zip with no ``report.html`` is left
+    untouched; a failure while writing leaves the original zip intact and removes the
+    partial file.
+
+    The page is the entry named ``{zip stem}/report.html`` when present (where
+    Snakemake 9.15.0 writes it), otherwise the first entry in archive order whose
+    last path segment is ``report.html``. A result file that is also named
+    ``report.html`` could be chosen in the fallback case, as it could by the
+    extract-and-search code this replaced.
 
     Parameters
     ----------
     zip_path : pathlib.Path
         Path to the Snakemake-rendered ``analysis_report.zip``.
     """
-    import shutil
-    import tempfile
+    import copy
+    import os
     import zipfile
     from pathlib import Path
 
@@ -576,37 +611,36 @@ def apply_post_process_surgery_to_zip(
     if not zip_path.exists():
         return
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir_path = Path(tmpdir)
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(tmpdir_path)
-        # Find the report page by searching the extracted tree. Snakemake 9.15.0 writes
-        # it at `{zip stem}/report.html`; the search takes the first `report.html`
-        # anywhere, so a result file that is also named report.html could be picked
-        # instead, depending on traversal order. With no match the zip is left untouched.
-        candidates = list(tmpdir_path.rglob("report.html"))
-        if not candidates:
-            return
-        inner_html = candidates[0]
-        modified = apply_post_process_surgery(
-            inner_html.read_text(),
-            bundle_mode=bundle_mode,
-            navbar_text=navbar_text,
-            category_order=category_order,
-            member_labels=member_labels,
-            event_labels=event_labels,
-        )
-        inner_html.write_text(modified)
-        # Write the new archive beside zip_path and only then move it over the original,
-        # so a failure while zipping leaves the original archive intact rather than
-        # half-written. root_dir is the extraction tree, so the archive keeps Snakemake's
-        # top-level `{zip stem}/` directory.
-        new_zip_no_ext = zip_path.with_suffix("")
-        archive_tmp = Path(
-            shutil.make_archive(
-                str(new_zip_no_ext) + ".surgery_tmp",
-                "zip",
-                root_dir=str(tmpdir_path),
+    new_path = zip_path.with_name(zip_path.stem + ".surgery_tmp.zip")
+    try:
+        with zipfile.ZipFile(zip_path, "r") as src:
+            infos = src.infolist()
+            preferred = f"{zip_path.stem}/report.html"
+            page = next((i for i in infos if i.filename == preferred), None)
+            if page is None:
+                page = next(
+                    (i for i in infos if not i.is_dir() and i.filename.rsplit("/", 1)[-1] == "report.html"),
+                    None,
+                )
+            if page is None:
+                return
+            modified = apply_post_process_surgery(
+                src.read(page).decode("utf-8"),
+                bundle_mode=bundle_mode,
+                navbar_text=navbar_text,
+                category_order=category_order,
+                member_labels=member_labels,
+                event_labels=event_labels,
             )
-        )
-        shutil.move(str(archive_tmp), str(zip_path))
+            with zipfile.ZipFile(new_path, "w") as dst:
+                for info in infos:
+                    data = modified.encode("utf-8") if info is page else src.read(info)
+                    # A COPY of the input's ZipInfo carries name, date, mode and method; writestr
+                    # rewrites size, CRC and offset on the object it is given, which must not be
+                    # the one the source zip still reads from.
+                    out = copy.copy(info)
+                    out.extra = _without_zip64_record(info.extra)
+                    dst.writestr(out, data, compress_type=info.compress_type)
+        os.replace(new_path, zip_path)
+    finally:
+        new_path.unlink(missing_ok=True)  # EXEMPT-DU: transient-intermediate

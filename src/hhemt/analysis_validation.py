@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from hhemt.member_identity import resolve_member_id_column
+from hhemt.utils import open_store
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
@@ -713,7 +714,6 @@ def _read_triton_provenance(analysis: TRITONSWMM_analysis) -> str | None:
     applicability is derived from the sha by ``model_defects.resolve``, so a defect added to
     the registry later classifies trees already on disk.
     """
-    import xarray as xr
 
     paths = analysis.analysis_paths
     if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
@@ -731,7 +731,7 @@ def _read_triton_provenance(analysis: TRITONSWMM_analysis) -> str | None:
     # NotImplementedError; no-chunks -> reads triton_producing_sha=3a832f7d...,
     # triton_has_coupled_resume_fix=True.
     try:
-        tree = xr.open_datatree(zarr_path, engine="zarr", consolidated=False)
+        tree = open_store(zarr_path)
     except (FileNotFoundError, OSError, KeyError, ValueError):
         # Genuinely absent / unreadable tree (pre-provenance or off-checkout) —
         # the documented graceful-absent path. Quiet by design.
@@ -840,9 +840,7 @@ def _collect_stage_stamps(analysis) -> dict[str, dict | None]:
         if not store.exists():
             return None
         try:
-            import xarray as _xr
-
-            attrs = _xr.open_datatree(str(store), engine="zarr", consolidated=False).attrs
+            attrs = open_store(str(store)).attrs
         except Exception:
             return None
         sha = attrs.get("hhemt_producing_sha")
@@ -1674,13 +1672,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
                 else analysis.analysis_paths.analysis_datatree_zarr
             )
             if _p is not None and _p.exists():
-                import xarray as xr
-
-                _tree_ev = json.loads(
-                    xr.open_datatree(_p, engine="zarr", consolidated=False).attrs.get(
-                        "coupled_resume_replay_evidence", "{}"
-                    )
-                )
+                _tree_ev = json.loads(open_store(_p).attrs.get("coupled_resume_replay_evidence", "{}"))
         except Exception:  # noqa: BLE001 — durable-evidence fallback is best-effort; absence -> log-only Arm B
             _tree_ev = {}
         _id_col = resolve_member_id_column(getattr(resume_candidates, "columns", []))
@@ -2079,13 +2071,7 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis, *, df_status=No
                 else analysis.analysis_paths.analysis_datatree_zarr
             )
             if _p is not None and _p.exists():
-                import xarray as xr
-
-                _ev = json.loads(
-                    xr.open_datatree(_p, engine="zarr", consolidated=False).attrs.get(
-                        "coupled_resume_replay_evidence", "{}"
-                    )
-                )
+                _ev = json.loads(open_store(_p).attrs.get("coupled_resume_replay_evidence", "{}"))
         except Exception:  # noqa: BLE001 — durable-stamp read is best-effort; absence -> Arm A N/A
             _ev = {}
         for key, rec in sorted(_ev.items()):
@@ -2454,7 +2440,6 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
     a vacuous pass is legible in the artifact rather than reading as a verified good.
     """
     import numpy as np
-    import xarray as xr
 
     from hhemt.scenario import compute_event_id_slug
 
@@ -2491,7 +2476,7 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
                 if forced_end_min is None:
                     indeterminate += 1
                     continue
-                zarr = xr.open_zarr(summaries[0], consolidated=False)
+                zarr = open_store(summaries[0], kind="zarr")
                 tmx = zarr["time_of_max_wlevel_min"].isel(event_iloc=0).values.astype(float)
                 mx = zarr["max_wlevel_m"].isel(event_iloc=0).values.astype(float)
             except Exception:
@@ -2823,6 +2808,196 @@ def check_inflow_node_reduction(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
+#: Name of the consolidated-metadata staleness check (a ``system``-level row of the Check table).
+CONSOLIDATED_METADATA_CHECK = "consolidated metadata current"
+
+
+def _consolidation_migration_layout() -> int:
+    """The layout version from which stores must carry a consolidated-metadata index.
+
+    That is the version of the migration module ``V{NNNN}__consolidate_zarr_metadata.py`` once chunk 3a.3
+    lands it (the number in its file name), and the layout AFTER the current one until then, so the
+    threshold follows the migration instead of being a literal that can drift from it.
+    """
+    import re
+
+    import hhemt.version_migration as _vm
+    from hhemt.version_migration.constants import LAYOUT_VERSION
+
+    versions_dir = Path(_vm.__file__).resolve().parent / "versions"
+    found = sorted(versions_dir.glob("V*__consolidate_zarr_metadata.py"))
+    if not found:
+        return LAYOUT_VERSION + 1
+    return int(re.match(r"V(\d+)__", found[-1].name).group(1))
+
+
+#: First layout version whose stores must carry a consolidated-metadata index (see the function above).
+#: An analysis stamped below it has legacy stores, for which an ABSENT index is expected and not an error.
+CONSOLIDATED_INDEX_REQUIRED_FROM_LAYOUT = _consolidation_migration_layout()
+
+_V3_DERIVED_KEY = "consolidated_metadata"
+
+
+def _index_and_disk_documents(store: Path) -> tuple[dict | None, dict]:
+    """(stored index entries or None, the metadata documents found on disk), both keyed by node.
+
+    A format 3 store keys nodes by their slash-joined path and stores each node's whole ``zarr.json``
+    document; a format 2 store keys documents by their file path (``a/.zarray``) under the root
+    ``.zmetadata``. The disk side is rebuilt from the same documents ``zarr.consolidate_metadata``
+    reads, WITHOUT writing. For format 3 a group's own ``consolidated_metadata`` key is dropped from
+    both sides: zarr stores an empty one in the index entry and none in the node's document.
+    """
+    import json
+
+    v3_root = store / "zarr.json"
+    if v3_root.is_file():
+        stored = json.loads(v3_root.read_text(encoding="utf-8")).get(_V3_DERIVED_KEY)
+        index = None if stored is None else {k: dict(v) for k, v in stored.get("metadata", {}).items()}
+        if index is not None:
+            for entry in index.values():
+                entry.pop(_V3_DERIVED_KEY, None)
+        disk: dict = {}
+        for doc in sorted(store.rglob("zarr.json")):
+            if doc.parent == store:
+                continue
+            node = json.loads(doc.read_text(encoding="utf-8"))
+            node.pop(_V3_DERIVED_KEY, None)
+            disk[doc.parent.relative_to(store).as_posix()] = node
+        return index, disk
+    zmetadata = store / ".zmetadata"
+    index = None
+    if zmetadata.is_file():
+        index = json.loads(zmetadata.read_text(encoding="utf-8")).get("metadata", {})
+    disk = {}
+    for name in (".zgroup", ".zarray", ".zattrs"):
+        for doc in sorted(store.rglob(name)):
+            disk[doc.relative_to(store).as_posix()] = json.loads(doc.read_text(encoding="utf-8"))
+    return index, disk
+
+
+def check_consolidated_metadata_current(store: Path, *, index_required: bool = True) -> CheckResult:
+    """Compare one store's consolidated-metadata index with its metadata documents on disk.
+
+    The index is rebuilt in memory from the documents on disk (the ones ``zarr.consolidate_metadata``
+    reads) and compared with the stored one NODE BY NODE, including each node's attributes and each
+    array's shape, dtype and chunk grid, so an attribute updated in place or an array extended behind
+    the index is reported even though the node list is unchanged. Any difference is a failure naming
+    the first differing node and field. An ABSENT index is also a failure when ``index_required``
+    (the store is at or after the layout version that requires one): an append killed between its
+    first and last write, or an interrupted ``deferred_consolidation`` block, leaves exactly that,
+    and ``open_store`` would then read the store unindexed with no error. Not applicable (and not a
+    failure) when the store does not exist, or has no index and ``index_required`` is False.
+    """
+    store = Path(store)
+    if not store.is_dir():
+        return CheckResult(
+            name=CONSOLIDATED_METADATA_CHECK,
+            level="system",
+            passed=True,
+            applicable=False,
+            summary=f"Store {store.name} not present: consolidated metadata N/A.",
+        )
+    index, disk = _index_and_disk_documents(store)
+    if index is None:
+        if not index_required:
+            return CheckResult(
+                name=CONSOLIDATED_METADATA_CHECK,
+                level="system",
+                passed=True,
+                applicable=False,
+                summary=f"Store {store.name} carries no index and predates the layout that requires one: N/A.",
+            )
+        message = (
+            f"Store {store.name} carries no consolidated-metadata index although this layout requires one "
+            "(an interrupted append or deferred block, or a write outside the toolkit's helpers); it is read "
+            "unindexed until the index is rebuilt."
+        )
+        return CheckResult(
+            name=CONSOLIDATED_METADATA_CHECK,
+            level="system",
+            passed=False,
+            summary=message,
+            details=[{"store": str(store), "node": "/", "field": "consolidated_metadata", "detail": message}],
+        )
+    for node in sorted(set(index) | set(disk)):
+        if node not in disk:
+            field_name, why = "node", "the index lists a node that is not on disk"
+        elif node not in index:
+            field_name, why = "node", "a node on disk is missing from the index"
+        elif index[node] != disk[node]:
+            field_name = next(
+                k for k in sorted(set(index[node]) | set(disk[node])) if index[node].get(k) != disk[node].get(k)
+            )
+            why = f"the index and the document on disk differ in {field_name!r}"
+        else:
+            continue
+        message = f"Store {store.name} index is stale at node {node!r}, field {field_name!r}: {why}."
+        return CheckResult(
+            name=CONSOLIDATED_METADATA_CHECK,
+            level="system",
+            passed=False,
+            summary=message,
+            details=[{"store": str(store), "node": node, "field": field_name, "detail": message}],
+        )
+    return CheckResult(
+        name=CONSOLIDATED_METADATA_CHECK,
+        level="system",
+        passed=True,
+        summary=f"Store {store.name}: index matches its {len(disk)} metadata document(s) node by node.",
+    )
+
+
+def check_consolidated_metadata(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """System-level: every zarr store the analysis owns carries a current consolidated-metadata index.
+
+    Stores examined, when present: each analysis's consolidated DataTree (a sensitivity master's own
+    tree and every member's) and the format 2 ``slurm_jobs.zarr`` beside them, whose root ``.zmetadata``
+    is its index. An absent index is a failure only for an analysis stamped at or after
+    ``CONSOLIDATED_INDEX_REQUIRED_FROM_LAYOUT``; a stale one always is. Reports the first failing store.
+    """
+    from hhemt.slurm_store import store_path
+    from hhemt.version_migration.state import read_version_file
+
+    try:
+        state = read_version_file(Path(analysis.analysis_paths.analysis_dir))
+    except Exception:  # noqa: BLE001 -- an unreadable stamp means the layout is unknown: treat as legacy
+        state = None
+    required = state is not None and state.layout_version >= CONSOLIDATED_INDEX_REQUIRED_FROM_LAYOUT
+    stores: list[Path] = []
+    for _member_id, sub in [(None, analysis), *list(_iter_members_or_self(analysis))]:
+        for attr in ("analysis_datatree_zarr", "sensitivity_datatree_zarr"):
+            candidate = getattr(sub.analysis_paths, attr, None)
+            if candidate is not None and Path(candidate).is_dir() and Path(candidate) not in stores:
+                stores.append(Path(candidate))
+    jobs = store_path(Path(analysis.analysis_paths.analysis_dir))
+    if jobs.is_dir():
+        stores.append(jobs)
+    results = [check_consolidated_metadata_current(s, index_required=required) for s in stores]
+    failed = [r for r in results if not r.passed]
+    if failed:
+        return CheckResult(
+            name=CONSOLIDATED_METADATA_CHECK,
+            level="system",
+            passed=False,
+            summary=failed[0].summary,
+            details=[d for r in failed for d in r.details],
+        )
+    if not any(r.applicable for r in results):
+        return CheckResult(
+            name=CONSOLIDATED_METADATA_CHECK,
+            level="system",
+            passed=True,
+            applicable=False,
+            summary="No zarr store with a consolidated-metadata index to compare: N/A.",
+        )
+    return CheckResult(
+        name=CONSOLIDATED_METADATA_CHECK,
+        level="system",
+        passed=True,
+        summary=f"{sum(r.applicable for r in results)} store(s): every index matches its metadata documents.",
+    )
+
+
 def validate_analysis(analysis: TRITONSWMM_analysis, *, df_status=None) -> ValidationReport:
     """Run all core checks; return aggregated ValidationReport.
 
@@ -2892,6 +3067,7 @@ def validate_analysis(analysis: TRITONSWMM_analysis, *, df_status=None) -> Valid
             check_provenance_completeness(analysis),  # per-stage version coverage
             check_log_recoveries(analysis),  # quarantine-and-reconstruct events on any log tier
             check_inflow_node_reduction(analysis),  # one-node-per-cell option: cells reduced
+            check_consolidated_metadata(analysis),  # every zarr store's index matches its documents on disk
         ]
         + _read_persisted_eda_verdicts(analysis)
     )

@@ -1096,8 +1096,8 @@ requires-dist = [
     { name = "tabulate" },
     { name = "ty", marker = "extra == 'test'" },
     { name = "typer" },
-    { name = "xarray", specifier = ">=2024.10" },
-    { name = "zarr" },
+    { name = "xarray", specifier = ">=2026.2" },
+    { name = "zarr", specifier = ">=3.1.4" },
 ]
 provides-extras = ["test", "hpc", "docs"]
 

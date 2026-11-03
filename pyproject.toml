@@ -36,7 +36,7 @@ dependencies = [
     "filelock",
     "pydantic==2.7.*",
     "pyyaml",
-    "zarr",
+    "zarr>=3.1.4",
     "netcdf4",
     "h5netcdf",
     "h5py",  # h5netcdf's default backend; scenario._write_sim_weather_nc reads weather.nc via the xarray h5netcdf engine
@@ -98,7 +98,7 @@ dependencies = [
     # byte-deterministic serialization; its footprint does not touch the pydantic pin.
     "rocrate==0.15.0",
     # Ten module-level imports that were declared nowhere until D142 (see environment.yaml).
-    "xarray>=2024.10",
+    "xarray>=2026.2",
     # numpy<2 and pandas<3 are the VALIDATION pins environment.yaml carries (the stack the
     # toolkit is certified against); without them a pip install resolves numpy 2.x and pandas 3.x.
     "pandas<3",

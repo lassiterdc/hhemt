@@ -240,6 +240,8 @@ __marimo__/
 
 # TRITON-SWMM toolkit custom
 *_archive*
+!src/hhemt/bundle/_archive.py
+!tests/test_bundle_archive.py
 *test_data/*/system*
 *test_data/*/tests/*
 *test_data/*/triton/*

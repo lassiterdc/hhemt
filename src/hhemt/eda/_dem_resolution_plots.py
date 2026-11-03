@@ -49,7 +49,7 @@ from hhemt.report_renderers._figure_emission import (
     emit_plot_with_sources,  # noqa: F401  # reserved for the /design-figure-authored bodies
 )
 from hhemt.report_renderers._table_presentation import plotly_table_header
-from hhemt.utils import resolve_experiment_tree
+from hhemt.utils import open_store, resolve_experiment_tree
 
 if TYPE_CHECKING:
     from hhemt.config.analysis import analysis_config
@@ -319,7 +319,6 @@ def build_dem_resolution_cost_error_figure(root: Path) -> go.Figure:
     any coarser resolution at or below this band is indistinguishable from the
     reference's own convergence uncertainty.
     """
-    import xarray as xr
     from plotly.subplots import make_subplots
 
     from hhemt.config.loaders import yaml_to_model
@@ -338,7 +337,7 @@ def build_dem_resolution_cost_error_figure(root: Path) -> go.Figure:
     cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config, existence="metadata")
     epsg = cfg_system.crs.horizontal_epsg
 
-    dt = xr.open_datatree(str(resolve_experiment_tree(root)), engine="zarr", consolidated=False)
+    dt = open_store(str(resolve_experiment_tree(root)))
 
     def _res_m(node_name: str) -> float:
         # "member_dem_3p5_r1" -> 3.5 ; the resolution is encoded in the member node name.
@@ -562,7 +561,6 @@ def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
     centroid rule makes a per-rung rasterization an inconsistent physical footprint.
     """
     # ── FIRST DRAFT (Phase 3 /design-figure iterates the geometry) ───────────────
-    import xarray as xr
     from plotly.subplots import make_subplots
 
     from hhemt.config.loaders import yaml_to_model
@@ -590,7 +588,7 @@ def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
     cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config, existence="metadata")
     epsg = cfg_system.crs.horizontal_epsg
 
-    dt = xr.open_datatree(str(resolve_experiment_tree(root)), engine="zarr", consolidated=False)
+    dt = open_store(str(resolve_experiment_tree(root)))
 
     def _res_m(node_name: str) -> float:
         return float(node_name.split("dem_")[1].split("_r")[0].replace("p", "."))
@@ -1113,7 +1111,6 @@ def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | 
     no asymptotic-range verification is arithmetic, not estimation.
     """
     # ── FIRST DRAFT (Phase 3 /design-figure iterates) ───────────────────────────
-    import xarray as xr
     from plotly.subplots import make_subplots
 
     from hhemt.config.loaders import yaml_to_model
@@ -1127,7 +1124,7 @@ def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | 
     cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config, existence="metadata")
     epsg = cfg_system.crs.horizontal_epsg
 
-    dt = xr.open_datatree(str(resolve_experiment_tree(root)), engine="zarr", consolidated=False)
+    dt = open_store(str(resolve_experiment_tree(root)))
 
     def _res_m(node_name: str) -> float:
         return float(node_name.split("dem_")[1].split("_r")[0].replace("p", "."))
@@ -1356,7 +1353,6 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
     """
     # ── FIRST DRAFT (Phase 3 /design-figure iterates) ───────────────────────────
     import swmmio
-    import xarray as xr
 
     from hhemt.config.loaders import yaml_to_model
     from hhemt.config.system import system_config
@@ -1367,7 +1363,7 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
     cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config, existence="metadata")
     epsg = cfg_system.crs.horizontal_epsg
 
-    dt = xr.open_datatree(str(resolve_experiment_tree(root)), engine="zarr", consolidated=False)
+    dt = open_store(str(resolve_experiment_tree(root)))
 
     def _res_m(n: str) -> float:
         return float(n.split("dem_")[1].split("_r")[0].replace("p", "."))

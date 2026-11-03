@@ -37,6 +37,7 @@ from hhemt.analysis_validation import CheckResult, _iter_members_or_self
 from hhemt.eda._result import EdaResult
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import emit_data_artifact_with_sources
+from hhemt.utils import open_store, write_zarr
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
@@ -940,7 +941,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
             _encoding[_v] = {"dtype": "float64"}
         elif _v == "identity_group":
             _encoding[_v] = {"dtype": "int32"}
-    artifact_ds.to_zarr(artifact_path, mode="w", consolidated=False, encoding=_encoding)
+    write_zarr(artifact_ds, artifact_path, chunks=None, encoding=_encoding)
 
     # Source paths = every per-sub summary file the comparison consumed. Declared so
     # the artifact is a first-class harvest_source_paths provenance source (ADR-6).
@@ -1358,5 +1359,5 @@ def compare_arms(
 def _open_summary(path: Path) -> xr.Dataset:
     """Open one FLAT per-scenario summary (``.zarr`` store or ``.nc`` file)."""
     if path.suffix == ".zarr" or path.is_dir():
-        return xr.open_zarr(path, consolidated=False)
+        return open_store(path, kind="zarr")
     return xr.open_dataset(path)

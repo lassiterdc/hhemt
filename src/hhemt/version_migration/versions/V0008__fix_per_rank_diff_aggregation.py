@@ -131,6 +131,7 @@ def _regenerate_perf_summary(sim_dir: Path, raw_perf_dir: Path) -> None:
         _aggregate_perf_summary,
         _aggregate_perf_tseries,
     )
+    from hhemt.utils import write_zarr
 
     # resume_steps=[] is a POSITIVE assertion, not a placeholder. V0008 targets trees
     # written before resume_reporting_tsteps existed (pre-KR-b), which therefore carry no
@@ -147,7 +148,7 @@ def _regenerate_perf_summary(sim_dir: Path, raw_perf_dir: Path) -> None:
     # this migration's prior output exactly and no golden fixture moves.
     ds_tseries = _aggregate_perf_tseries(raw_perf_dir, resume_steps=[])
     perf_tseries_path = sim_dir / "processed" / "TRITONSWMM_perf_tseries.zarr"
-    ds_tseries.to_zarr(perf_tseries_path, mode="w", consolidated=False)
+    write_zarr(ds_tseries, perf_tseries_path, chunks=None, encoding={})
 
     ds_summary = _aggregate_perf_summary(raw_perf_dir, resume_steps=[])
     ds_summary.attrs["units"] = "seconds"
@@ -159,7 +160,7 @@ def _regenerate_perf_summary(sim_dir: Path, raw_perf_dir: Path) -> None:
         "means)."
     )
     perf_summary_path = sim_dir / "processed" / "TRITONSWMM_perf_summary.zarr"
-    ds_summary.to_zarr(perf_summary_path, mode="w", consolidated=False)
+    write_zarr(ds_summary, perf_summary_path, chunks=None, encoding={})
     logger.info("V0008: regenerated %s", perf_summary_path)
 
 

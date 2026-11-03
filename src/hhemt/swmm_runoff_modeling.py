@@ -18,6 +18,7 @@ from swmm.toolkit.shared_enum import NodeAttribute
 
 from hhemt._compile_venue import COMPILE_VENUE_ENV, swmm_execution_refused
 from hhemt.exceptions import ProcessingError
+from hhemt.utils import write_zarr
 
 if TYPE_CHECKING:
     from .scenario import TRITONSWMM_scenario
@@ -332,7 +333,7 @@ class SWMMRunoffModeler:
         )
         ds = ds.assign_coords(event_iloc=self.scenario.event_iloc).expand_dims("event_iloc")
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        ds.to_zarr(out_path, mode="w")
+        write_zarr(ds, out_path, chunks=None, encoding={})
         # DN-3 / clause 2: a WRITE during scenario preparation needs no per-mutation
         # accounting; the scenario's own sentinel is re-derived at consolidate_scenario
         # (clause 10). The removed restamp fired once per scenario preparation and

@@ -32,28 +32,22 @@ def upgrade(ctx: MigrationContext) -> None:
     # stipulation; reimplementing it here would silently drift from the
     # canonical CF contract (auto long_name fallback, _CF_VARIABLE_MAP
     # updates, mode-specific overrides). See cf_conventions.py:184.
-    import xarray as xr
-    import zarr
 
     from hhemt import cf_conventions as cf
+    from hhemt.utils import append_zarr, deferred_consolidation, open_store
 
-    for mode in ("triton", "tritonswmm", "swmm"):
-        group_path = f"/{mode}/summary"
-        try:
-            ds = xr.open_dataset(
-                store,
-                engine="zarr",
-                group=group_path,
-                consolidated=False,
-                chunks={},
-            )
-        except (KeyError, FileNotFoundError, OSError):
-            continue  # mode not present in this analysis
-        ds = cf.apply_cf_attributes(ds, mode=mode)
-        # mode="a" preserves existing encoding when no encoding= kwarg is passed.
-        ds.to_zarr(store, group=group_path, mode="a", consolidated=False)
-
-    # Reconsolidate after full backfill so consolidated=True readers
-    # (project default per `datatree primary consolidation format` stipulation)
-    # see the updated attrs.
-    zarr.consolidate_metadata(str(store))
+    # The three appends run in one deferred block: it removes the store's index first, so an
+    # interrupted backfill leaves an unindexed store (read unindexed, every group visible) rather
+    # than an index that is stale against the attrs already rewritten, and rebuilds the index once
+    # at the end so consolidated=True readers (project default per `datatree primary consolidation
+    # format` stipulation) see the updated attrs.
+    with deferred_consolidation(store):
+        for mode in ("triton", "tritonswmm", "swmm"):
+            group_path = f"/{mode}/summary"
+            try:
+                ds = open_store(store, kind="dataset", group=group_path, chunks={})
+            except (KeyError, FileNotFoundError, OSError):
+                continue  # mode not present in this analysis
+            ds = cf.apply_cf_attributes(ds, mode=mode)
+            # mode="a" preserves existing encoding when no encoding= kwarg is passed.
+            append_zarr(ds, store, group=group_path, consolidate=False)

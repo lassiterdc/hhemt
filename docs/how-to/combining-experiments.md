@@ -16,14 +16,12 @@ report that presents them side by side.
   after a run that has rendered its report. `hhemt bundle --system-config
   my_system.yaml --analysis-config my_analysis.yaml` writes the archive; see the
   [CLI reference](../reference/cli.md) for its optional flags.
-- The bundles must be **unpacked directories**, not the emitted `.zip`.
-  `hhemt bundle` writes a `ZIP_STORED` archive; unzip each before combining:
-
-  ```bash
-  unzip bundle_a.zip -d bundle_a/
-  unzip bundle_b.zip -d bundle_b/
-  ```
-
+- Each input is a bundle **zip** (as `hhemt bundle` writes it) or an **unpacked
+  bundle directory**; give them as they are, with no unzip step. A bundle zip is
+  compressed entry by entry: zarr chunk files are stored (the toolkit already
+  compresses them) and every other entry is deflated at zlib level 6. A zip made by an
+  earlier toolkit stores every entry uncompressed, and is accepted too. The inputs are
+  never modified.
 - Combine operates on **single-analysis** bundles (each ships its consolidated
   `analysis_datatree.zarr` at the bundle root) **and on sensitivity-primary
   bundles** (each ships `experiment_datatree.zarr` at the bundle root; a bundle
@@ -39,17 +37,28 @@ report that presents them side by side.
 ## Combine the bundles
 
 ```bash
-hhemt combine bundle_a/ bundle_b/ -o combined/
+hhemt combine bundle_a.zip bundle_b.zip -o combined
 ```
 
-- Positional arguments: two or more bundle directories.
-- `-o` / `--output` (optional): the target directory for the combined bundle.
-  Defaults to `{first_bundle}/../combined_{n}bundles_{git_sha}/`.
+- Positional arguments: two or more bundle zips or bundle directories.
+- `-o` / `--output` (optional): the combined bundle is written as one zip,
+  `{output}.zip` (a value that already ends in `.zip` is used as given). Defaults to
+  `{first_bundle}/../combined_{n}bundles_{git_sha}.zip`.
+- `--unzipped` (optional): write a folder at `--output` instead, holding each
+  experiment's full bundle under `child_crates/{experiment_id}/`.
+- `--workdir` (optional): the directory under which the combine makes its private working
+  folder. Defaults to the system temporary directory. The folder holds each input's
+  render set (everything except the raw `out_*/bin` solver output, which no combine step
+  reads) and is removed when the combine ends, including on SIGTERM.
 
-The command (1) runs a metadata-compatibility check, (2) merges the bundles'
-consolidated trees, (3) renders one cross-experiment report, and (4) writes a
-standalone combined bundle at the output path. It **aborts with an error** if the
-bundles carry a *blocking* divergence (see below).
+The command (1) refuses an input whose consolidated tree was carried without its data,
+(2) extracts each input's render set into the working folder, (3) runs a
+metadata-compatibility check, (4) renders one cross-experiment report, and (5) writes the
+combined bundle at the output path, replacing any earlier output. It **aborts with an
+error** if the bundles carry a *blocking* divergence (see below). The combined zip holds
+the root files (crate, read-models, manifest, report, `plots/`) and, per experiment,
+`child_crates/{experiment_id}.zip` (that experiment's own bundle zip) and
+`child_crates/{experiment_id}.refreshed/` (the two child figures the combine re-rendered).
 
 ## Read the compatibility report
 
@@ -102,15 +111,14 @@ toggle_swmm_model: false
 
 ## Regenerate or inspect the combined report
 
-The combined bundle mirrors a single-analysis bundle, with one asymmetry. The CLI
-renders a report from a **single-analysis** bundle (`hhemt report-from-bundle`,
-which requires a root `cfg_analysis.yaml` that a combined bundle does not carry),
-so regenerating a combined report in place is reachable through the Python API
-only. `hhemt combine`'s own help says so, and the
-[Bundles API reference](../reference/api-bundles.md) documents the entry point
-(`CombinedBundle.from_directory`, then `regenerate_report`).
+`hhemt report-from-bundle combined.zip` re-renders a combined bundle. It unpacks the
+render set beside the zip, into `combined/`, and renders there; a second run reuses the
+folder while the zip is unchanged. In Python, `CombinedBundle.from_zip(path)` does the
+unpack and `CombinedBundle.from_directory(folder)` opens a folder, and either handle's
+`regenerate_report()` renders.
 
-Each input experiment is preserved intact under `combined/child_crates/{experiment_id}/`.
+Each input experiment is preserved intact: as `child_crates/{experiment_id}.zip` in the
+combined zip, and as `child_crates/{experiment_id}/` in a `--unzipped` folder or after unpacking.
 A child is a complete single-analysis bundle, so `hhemt report-from-bundle` renders
 one once every figure's recorded build stamp matches the running build. It refuses with
 a `StalePlotsError` otherwise, and also when the figures carry no stamp at all or

@@ -53,7 +53,18 @@
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
-    renderer_sha256: a3feeb11e59567d5ee530081fbe0f604e2a9c3755b05580d756c884115c46ce7
+    renderer_sha256: 625688f9b6529e8340d0d54635f4d544732d2567ba399626c640c3dbc0b4a7d2
+    justification_2026_11_02_develop_integration: >-
+      Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that the store opens go through `open_store`, with no change to any displayed text.
+      Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
+      This is a PAIRING discharge on a re-read, not a formatting exemption; the digest expires on the next change to this renderer.
+    justification_2026_11_02_consolidated_metadata: >-
+      Re-read 2026-11-02 against this renderer's diff (chunk 3a.2, consolidated metadata). The only hunks
+      replace two xr.open_datatree(..., consolidated=False) calls with utils.open_store(...) and add its
+      import; the store is read through its index when it carries one and the values returned are the same.
+      The caption's claims (the dependent variable, the aggregation mode, the axis auto-scaling) concern what is
+      plotted and none is touched, so no clause is falsified, weakened or left ambiguous and there is no caption
+      edit to make. Digest recorded at the post-change renderer, so this exemption expires on the next change.
     justification_2026_10_18: >-
       Re-read 2026-10-18. The reporting-system change altered one docstring word only
       (raw_resume_identity -> raw_byte_identity, the module's current name); with docstrings
@@ -262,7 +273,7 @@ unpaired_allowlist:
       change to this renderer.
   - renderer: cross_experiment_intercomparison_maps
     caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison_maps.rst
-    renderer_sha256: 46ffe57fc6ebc7be252eef7eab4dd8f5e8fe62f5201eb99caf315fedcbf17863
+    renderer_sha256: 0a49530638f5ec0c057e0bdef79640bed5a506267b0227ca20ea52939e5241d5
     justification_2026_11_02_title_colon: >-
       The figure title and the panel heading join their parts with a colon in place of an em dash, and
       the figure title now puts the figure name before the experiment pair. Caption RE-READ IN FULL
@@ -275,6 +286,10 @@ unpaired_allowlist:
       difference panel is drawn when every pair is identical and the verdict table states the result still
       holds, and it quotes none of the three changed strings. Digest recorded after the last edit, so the
       exemption expires on the next change to this renderer.
+    justification_2026_11_02_develop_integration: >-
+      Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that each child's tree is opened once and cached across events, with no change to any displayed text.
+      Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
+      This is a PAIRING discharge on a re-read, not a formatting exemption; the digest expires on the next change to this renderer.
     justification: >-
       Iteration-8 annotation-carrier group (D3 annotation split and the
       title-collision fix), plus a whole-file ruff-format pass. Caption re-read:
@@ -298,9 +313,30 @@ unpaired_allowlist:
       axes, its aggregation or its rendering path, so no caption claim is reachable by it. This
       is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after
       the rename, so the exemption expires on the next change to this renderer.
+      Experiment-tree summary, chunk 2b.3, 2026-11-02. Caption RE-READ in full against the
+      measured diff of this renderer: the only hunks replace `_load_subs(crates / eid, ...)`
+      with one cached `_open_experiment_tree` per child and `_load_subs_from_tree` per event,
+      an unopenable child yielding no subs for every event as a failed open did per event.
+      The caption describes diff-map semantics (resume minus clean over byte-identity
+      classes), the resume-count table, the RdBu direction convention and the variable-dt SWMM
+      truncation; all are data claims and the arrays, event selection and classes come from the
+      same function body. Looked; no change needed. Digest recorded after the change, so the
+      exemption expires on the next change to this renderer.
   - renderer: errors_and_warnings
     caption: src/hhemt/report_templates/captions/errors_and_warnings.rst
-    renderer_sha256: 24c6da1b164473e6eb5adab1659d1b1620df0f7161e7f763fd730f11aab66995
+    renderer_sha256: 706b11fd30019f797177c8d6ec11d698bd94cba337a69f947bf25e7aab7037fe
+    justification_2026_11_02_develop_integration: >-
+      Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that one vocabulary entry is added for the consolidated-metadata check.
+      Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
+      This is a PAIRING discharge on a re-read, not a formatting exemption; the digest expires on the next change to this renderer.
+    justification_2026_11_02_consolidated_metadata: >-
+      Re-read 2026-11-02 against this renderer's diff (chunk 3a.2, consolidated metadata). The only hunk adds
+      one _CHECK_VOCABULARY row for the new system-level check 'consolidated metadata current', which
+      validate_analysis now runs. The caption describes the page as the projection of the read-model written by
+      the same checks the pytest aggregate runs, ordered system-level checks first; that aggregate calls
+      validate_analysis, so the new row is covered by those sentences and none is falsified, weakened or left
+      ambiguous; there is no caption edit to make. Digest recorded at the post-change renderer, so this
+      exemption expires on the next change to the renderer.
     justification: >-
       docs-and-experiment-system merge. Caption re-read against a MEASURED diff
       rather than a read-through. The merge-authored delta to this renderer --
@@ -467,7 +503,11 @@ unpaired_allowlist:
       expires on the next change to this renderer.
   - renderer: cross_experiment_disk_utilization
     caption: src/hhemt/report_templates/captions/cross_experiment_disk_utilization.rst
-    renderer_sha256: f5bdf1c7e2be1fadfc702c03d52b8c84b0250c16e99b2ee0b8e1b087b89d2d93
+    renderer_sha256: c4225448eeff9272075a91a6cde436b811348f24644bdc1b8132cc6ad85764d7
+    justification_2026_11_02_develop_integration: >-
+      Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that the model label is read from `experiment_tree_summary` through a shared `model_label_from_models` helper instead of a full open, giving develop's label for every tree develop's tests cover.
+      Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
+      This is a PAIRING discharge on a re-read, not a formatting exemption; the digest expires on the next change to this renderer.
     justification_2026_11_02_empty_state_sentence: >-
       The sentence the page prints when no experiment is recorded changes from one that named
       child crates to "No experiment is recorded for this combine." Caption RE-READ IN FULL (5
@@ -502,14 +542,26 @@ unpaired_allowlist:
       axes, its aggregation or its rendering path, so no caption claim is reachable by it. This
       is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after
       the rename, so the exemption expires on the next change to this renderer.
+      Experiment-tree summary, chunk 2b.3, 2026-11-02. Caption RE-READ in full against the
+      measured diff of this renderer: the only hunk is in `_child_model`, where
+      `experiment_tree_summary(store).tier == "tritonswmm"` replaces a `dt.groups` loop and
+      returns the same two labels with the same defaults. The caption states one column per
+      model, one row per storage scope, MiB values with per-model totals, derived from each child
+      bundle's `_status/_du.json`; the values, scopes and source are untouched, and the caption
+      names no store-opening mechanism. Looked; no change needed. Digest recorded after the
+      change, so the exemption expires on the next change to this renderer.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: 3362bac804e7e5c53334c4876bb1c9107ce403ef4990d6713f836a81af1e2098
+    renderer_sha256: b5b9932170f373d70b4d8fbba953178daa860b3b6378fa9f3c516ac7fc19f0f0
     justification_2026_11_02_title_colon: >-
       The page title joins the page name and the analysis id with a colon in place of an em dash.
       Caption RE-READ IN FULL (20 lines): it names no page title, and it describes the three displayed
       sections, which this one string edit does not touch. Digest recorded after the last edit, so the
       exemption expires on the next change to this renderer.
+    justification_2026_11_02_develop_integration: >-
+      Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that the store opens go through `open_store`, with no change to any section or wording.
+      Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
+      This is a PAIRING discharge on a re-read, not a formatting exemption; the digest expires on the next change to this renderer.
     justification_2026_11_02_metadata_page_text: >-
       The Metadata page text follows the report style brief, and the caption is rewritten in the
       same change (so this entry is not what satisfies the pairing guard for this change; it
@@ -645,6 +697,14 @@ unpaired_allowlist:
       data-availability projection or the reproduction guide.
       This is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded
       after the edit, so the exemption expires on the next change to this renderer.
+    justification_2026_11_02_consolidated_metadata: >-
+      Re-read 2026-11-02 against this renderer's diff (chunk 3a.2, consolidated metadata). The hunks replace two
+      xr.open_datatree(..., consolidated=False) calls with utils.open_store(tree_path, chunks=None), add its
+      import and correct one comment. The caption's claims (the provenance summary read from the co-located
+      ro-crate-metadata.json sidecar, the data-availability item projected from the Data availability check) are
+      untouched, and the producing-sha and group-name reads return the same values for a current index, so no
+      clause is falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at the
+      post-change renderer, so this exemption expires on the next change to the renderer.
     justification_2026_10_28_root_store_resolver: >-
       The renderer now takes its consolidated-store pick from the shared root-store resolver
       instead of its own name walk. Caption RE-READ IN FULL (23 lines: the three displayed
@@ -1029,7 +1089,11 @@ unpaired_allowlist:
       on the next real change to this file rather than on arrival.
   - renderer: cross_experiment_compatibility
     caption: src/hhemt/report_templates/captions/cross_experiment_compatibility.rst
-    renderer_sha256: 75b495c201f95b55bff1921c351580b25271876f5ab852f90a2027524c5baf70
+    renderer_sha256: bc60990be0c353fa53d73610389b44daa0841d602e084951485beacbf92c4356
+    justification_2026_11_02_develop_integration: >-
+      Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that the model label, the member count and the root attributes are read from `experiment_tree_summary` (metadata only, the union of models) instead of a full open, giving develop's label and count.
+      Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
+      This is a PAIRING discharge on a re-read, not a formatting exemption; the digest expires on the next change to this renderer.
     justification: >-
       docs-and-experiment-system <- sidequest-clearing-08-30 merge. FORMATTING ONLY --
       discharged by measurement, not by judgement, and following the AST-equivalence
@@ -1057,6 +1121,15 @@ unpaired_allowlist:
       axes, its aggregation or its rendering path, so no caption claim is reachable by it. This
       is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after
       the rename, so the exemption expires on the next change to this renderer.
+      Experiment-tree summary, chunk 2b.3, 2026-11-02. Caption RE-READ in full against the
+      measured diff of this renderer: the only hunks replace a full `xr.open_datatree` plus two
+      `dt.groups` loops with `hhemt.utils.experiment_tree_summary(store)`, taking `n_subs` as
+      `len(summary.members)` and `model` from `summary.tier` by the same first-member-with-a-tier
+      rule, and the root attrs from `summary.attrs`. The caption states what each row records
+      (role, model, member count, toolkit and solver builds), that compatibility is enforced
+      upstream, and its read-model source; none of that moved, and it names no store-opening
+      mechanism. Looked; no change needed. Digest recorded after the change, so the exemption
+      expires on the next change to this renderer.
   - renderer: cross_experiment_intercomparison
     caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison.rst
     renderer_sha256: 801a266b2893eda088131064678016e7b0837823448d2462203cc61f5dde5b49

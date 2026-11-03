@@ -48,13 +48,21 @@ Inputs are sorted before harvest and the archive reuses ``_emit._emit_bundle_zip
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import signal
+import subprocess
+import tempfile
+import time
+import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Literal
 
-from hhemt.bundle._combine_merge import _experiment_id, merge_experiment_trees
+from hhemt.bundle._archive import MODERATE, CompressionPolicy, _confined_target, extract_zip, render_set, write_zip
+from hhemt.bundle._combine_merge import _experiment_id, _resolve_root_tree
 from hhemt.bundle._compatibility import (
     _CFG_SYSTEM_FILENAME,
     CompatibilityReport,
@@ -64,6 +72,7 @@ from hhemt.bundle._compatibility import (
 from hhemt.bundle._emit import _get_toolkit_git_sha
 from hhemt.exceptions import ConfigurationError, ProcessingError
 from hhemt.provenance import producing_stamp
+from hhemt.utils import ROOT_TREE_NAMES, open_store
 from hhemt.version_migration.constants import (
     BUNDLE_MANIFEST_FILENAME,
     BUNDLE_SCHEMA_VERSION,
@@ -71,6 +80,7 @@ from hhemt.version_migration.constants import (
 
 # Combined-bundle layout constants.
 _CHILD_CRATES_SUBDIR = "child_crates"
+_MEMBER_ZIP_DIR = ".member_zips"
 _COMBINED_ROCRATE_FILENAME = "ro-crate-metadata.json"
 _COMBINED_COMPAT_FILENAME = "combined_compatibility.json"
 # Provenance Run Crate profile — the combined tier is a base RO-Crate 1.2 +
@@ -81,22 +91,201 @@ _COMBINED_CONFORMS_TO = (
 )
 
 
+class _BundleSource:
+    """One input bundle as the combine reads it: a directory or a member zip.
+
+    The combine needs three things from an input: the names of its files, the bytes of a
+    named file (the manifest, before anything is extracted), and a way to put a chosen
+    subset of its files on disk. Putting those behind one class keeps every later step
+    (identity, compatibility, the provenance gate, the renderers) working on a folder, and
+    leaves one place to change when a source is read from somewhere else.
+
+    A source holds NO open file between calls. A zip source opens its archive for each call
+    and closes it again, so while the combine walks its inputs one at a time only one
+    member's table of contents is in memory, never all of them.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def names(self) -> list[str]:
+        """Every file in the bundle, as a path relative to the bundle root, ``/``-separated."""
+        raise NotImplementedError
+
+    def read_bytes(self, name: str) -> bytes:
+        """The bytes of the file ``name``; ``KeyError`` when the bundle has no such file."""
+        raise NotImplementedError
+
+    def extract(self, dest: Path, members: list[str]) -> None:
+        """Write the files ``members`` under the directory ``dest``, keeping their relative paths."""
+        raise NotImplementedError
+
+
+class _DirectorySource(_BundleSource):
+    """A bundle that is an unpacked directory."""
+
+    def names(self) -> list[str]:
+        # Directory links are followed, because the `shutil.copytree` this replaces copied what a
+        # symlinked subdirectory points at: not following them would drop its files (a `plots/`
+        # linked to a shared folder, say) from the combined child with no error. A link that points
+        # at the directory being walked or at one of its ancestors is skipped, since following it
+        # would list the same files without end.
+        found: list[str] = []
+        for dirpath, dirs, files in os.walk(self.path, followlinks=True):
+            here = os.path.realpath(dirpath)
+            for name in list(dirs):
+                full = os.path.join(dirpath, name)
+                if os.path.islink(full):
+                    target = os.path.realpath(full)
+                    if here == target or here.startswith(target + os.sep):
+                        dirs.remove(name)
+            rel = Path(dirpath).relative_to(self.path)
+            found.extend((rel / name).as_posix() for name in files)
+        return sorted(found)
+
+    def read_bytes(self, name: str) -> bytes:
+        try:
+            return (self.path / name).read_bytes()
+        except FileNotFoundError as exc:
+            raise KeyError(name) from exc
+
+    def extract(self, dest: Path, members: list[str]) -> None:
+        # Directories are made serially and the copies run on threads: a bundle holds tens of
+        # thousands of small files, and creating them one after another is what bounds the copy.
+        for parent in sorted({(dest / name).parent for name in members}):
+            parent.mkdir(parents=True, exist_ok=True)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = [pool.submit(shutil.copyfile, self.path / name, dest / name) for name in members]
+            for future in futures:
+                future.result()
+
+
+class _ZipSource(_BundleSource):
+    """A bundle that is a member zip (the archive ``emit_bundle`` writes, bundle files at its root)."""
+
+    def names(self) -> list[str]:
+        with zipfile.ZipFile(self.path) as zf:
+            return [name for name in zf.namelist() if not name.endswith("/")]
+
+    def read_bytes(self, name: str) -> bytes:
+        with zipfile.ZipFile(self.path) as zf:
+            return zf.read(name)
+
+    def extract(self, dest: Path, members: list[str]) -> None:
+        extract_zip(self.path, dest, members=members)
+
+
+def _open_bundle_source(path: Path) -> _BundleSource:
+    """The ``_BundleSource`` for an input path: a directory, or a zip file; anything else is refused."""
+    if path.is_dir():
+        return _DirectorySource(path)
+    if path.is_file() and zipfile.is_zipfile(path):
+        return _ZipSource(path)
+    raise ConfigurationError(
+        field="bundle_paths",
+        message=f"{path} is neither a bundle directory nor a bundle zip file.",
+        config_path=None,
+    )
+
+
+def _refuse_metadata_only_source(source: _BundleSource) -> None:
+    """Refuse a bundle whose ROOT consolidated tree was carried without its chunk files.
+
+    A store carried metadata-only (zarr metadata documents and no chunk files) re-opens
+    cleanly and returns fill values for every data read, with no error. The combine reads
+    ``max_wlevel_m`` and ``max_flow_cms`` out of the root tree, so a metadata-only child would
+    yield ``identical: True, max_abs_diff: 0.0`` on every pair. The refusal reads the
+    bundle's own manifest, so it can run over every input before any file of any bundle is
+    written anywhere, and before the working folder exists.
+    """
+    try:
+        shallow = json.loads(source.read_bytes(BUNDLE_MANIFEST_FILENAME)).get("metadata_only_stores", []) or []
+    except (KeyError, ValueError):
+        return  # no manifest, or an unreadable one: the bundle loader reports it with its own message
+    carried = sorted(set(shallow) & set(ROOT_TREE_NAMES))
+    if carried:
+        raise ProcessingError(
+            operation="combine: child store carried metadata-only",
+            filepath=source.path,
+            reason=(
+                f"{source.path.name} names {carried[0]} in its {BUNDLE_MANIFEST_FILENAME} "
+                "'metadata_only_stores' list, so the bundle carries its zarr metadata "
+                "documents without any chunk files; reading it for data returns fill "
+                "values rather than raising. Re-emit the child from a tree whose reporting "
+                "set declares the store in full, or run the combine against the producer's "
+                "full analysis directory."
+            ),
+        )
+
+
+def _stage_sources(inputs: list[Path], crates_dir: Path) -> list[str]:
+    """Put each input's render set under ``crates_dir/{experiment_id}/``; return the ids in input order.
+
+    Inputs are taken one at a time: the source is opened, its render set is extracted, and
+    nothing of it stays open before the next input begins. The
+    extraction goes to a provisional folder first because the experiment id is read from the
+    extracted ``cfg_analysis.yaml`` by the same loader every later step uses, and that
+    loader needs a directory; the folder is then renamed (one rename, no copy) to the id.
+    A repeated id gets the input's index as a suffix, as the combined manifest expects.
+    """
+    crates_dir.mkdir(parents=True, exist_ok=True)
+    ids: list[str] = []
+    used: set[str] = set()
+    for i, path in enumerate(inputs):
+        source = _open_bundle_source(path)
+        names = source.names()
+        incoming = crates_dir / f".incoming_{i}"
+        source.extract(incoming, render_set(names))
+        eid = _experiment_id(incoming)
+        if eid in used:
+            eid = f"{eid}__{i}"
+        used.add(eid)
+        incoming.rename(crates_dir / eid)
+        ids.append(eid)
+    return ids
+
+
+def _check_root_tree(root: Path) -> None:
+    """Refuse a child that ships no root consolidated tree, and prove the tree's root group opens.
+
+    This replaces opening and stamping every child's whole tree (which the render never
+    read): the existence gate (``FileNotFoundError`` when the bundle ships none of the root
+    tree names) and a read of the root group alone.
+    """
+
+    store = _resolve_root_tree(root)
+    open_store(str(store), kind="dataset", group="/", chunks=None).close()
+
+
 def combine_bundle(
     bundle_paths: list[Path],
     output_path: Path | None = None,
     *,
     declare_solver_split: bool = False,
+    workdir: Path | None = None,
+    unzipped: bool = False,
 ) -> CombinedBundle:
     """Combine N completed render bundles into one standalone combined bundle.
 
-    Ingests two or more **completed, unpacked** render bundles from different
-    experiments and emits a single standalone bundle carrying one cross-experiment
-    report. The pipeline is: (1) check metadata compatibility across the bundles
-    and ABORT on any blocking divergence (an EXPERIMENT-identity field mismatch);
-    (2) merge each bundle's root consolidated tree into one DataTree-of-experiments,
-    keyed on a scalar ``experiment`` coordinate; (3) render the ``combined``
-    reporting set directly at emit time; (4) write a flat, ``hasPart``-by-reference
-    Provenance-Run-Crate over the N intact child crates.
+    Ingests two or more **completed** render bundles from different experiments, each
+    given as an unpacked bundle directory or as a bundle ``.zip`` file, and emits a single
+    standalone bundle carrying one cross-experiment report. The pipeline is: (1) refuse any
+    input whose root tree was carried metadata-only, then open each input in turn and extract
+    its render set (everything except raw solver output) into a private working folder under
+    ``child_crates/{experiment_id}/``; (2) check metadata compatibility across the extracted
+    bundles and ABORT on any blocking divergence (an EXPERIMENT-identity field mismatch),
+    then check solver provenance and that each ships a root consolidated tree; (3) write the
+    read-models and render the ``combined`` reporting set against the working folder; (4)
+    write the combined bundle at ``output_path``. No input is modified and the working folder
+    is removed on success, on failure and on SIGTERM.
+
+    The output is one zip by default (``{output_path}.zip``; an ``output_path`` that already ends
+    in ``.zip`` is used as given). It holds the root files (crate, read-models, manifest, report,
+    ``plots/``) and, per experiment, ``child_crates/{experiment_id}.zip`` plus the two re-rendered
+    child figures as ``child_crates/{experiment_id}.refreshed/{path}``. With ``unzipped=True`` the
+    output is a folder at ``output_path`` holding each experiment's full bundle under
+    ``child_crates/{experiment_id}/``. An existing output is replaced, and a failed or killed
+    combine leaves no loadable output.
 
     Both single-analysis bundles (which ship ``analysis_datatree.zarr`` at their
     root) and sensitivity-primary bundles (``sensitivity_datatree.zarr``) are
@@ -105,25 +294,35 @@ def combine_bundle(
     Parameters
     ----------
     bundle_paths : list of Path
-        Paths to at least two unpacked bundle DIRECTORIES (not ``.zip`` archives).
+        Paths to at least two bundles: unpacked bundle directories or bundle ``.zip`` files.
     output_path : Path, optional
         Destination directory for the combined bundle. When omitted, a sibling of
         the first bundle named ``combined_{N}bundles_{toolkit_git_sha}`` is used.
+    declare_solver_split : bool, optional
+        Accept bundles pinned to different solver versions on purpose.
+    workdir : Path, optional
+        Directory under which the private working folder is created. Defaults to the
+        system temporary directory.
+    unzipped : bool, optional
+        Write a folder instead of a zip.
 
     Returns
     -------
     CombinedBundle
-        Consume-side handle for the emitted combined bundle. Call
-        ``regenerate_report()`` on it to re-render locally.
+        Consume-side handle for the emitted combined bundle: ``root`` is the ``.zip`` path and
+        ``is_archive`` is true for a zipped output; ``root`` is the folder for ``unzipped=True``.
 
     Raises
     ------
     ConfigurationError
-        If fewer than two bundles are supplied, if the bundles carry a blocking
-        compatibility divergence (they do not describe the same experiment family), or if
-        bundles sharing one ``TRITONSWMM_branch_key`` carry differing ``triton_producing_sha``
-        or commit-date root attrs (one pin label would cover two builds). The last check has
-        no waiver; ``declare_solver_split`` does not apply to it.
+        If fewer than two bundles are supplied, if an input is neither a directory nor a
+        zip, if the bundles carry a blocking compatibility divergence (they do not describe
+        the same experiment family), or if bundles sharing one ``TRITONSWMM_branch_key``
+        carry differing ``triton_producing_sha`` or commit-date root attrs (one pin label
+        would cover two builds). The last check has no waiver; ``declare_solver_split`` does
+        not apply to it.
+    ProcessingError
+        If an input's root consolidated tree was carried metadata-only.
 
     Examples
     --------
@@ -131,64 +330,281 @@ def combine_bundle(
     >>> combined = combine_bundle([Path("bundle_a"), Path("bundle_b")])  # doctest: +SKIP
     >>> combined.regenerate_report()  # doctest: +SKIP
     """
-    roots = sorted(Path(p).resolve() for p in bundle_paths)
-    if len(roots) < 2:
+    inputs = sorted(Path(p).resolve() for p in bundle_paths)
+    if len(inputs) < 2:
         raise ConfigurationError(
             field="bundle_paths",
-            message=f"combine_bundle needs >=2 bundles, got {len(roots)}.",
+            message=f"combine_bundle needs >=2 bundles, got {len(inputs)}.",
             config_path=None,
         )
-    report = check_bundle_compatibility(roots, declare_solver_split=declare_solver_split)
-    if not report.is_compatible:
-        blocking = "; ".join(
-            f"{d.field_name} ({d.bucket}): {d.bundle_a}={d.value_a!r} vs {d.bundle_b}={d.value_b!r}"
-            for d in report.blocking
-        )
-        _hint = ""
-        if any(d.field_name == "TRITONSWMM_branch_key" for d in report.blocking):
-            _hint = (
-                "\n\nThese bundles were built at DIFFERENT pinned solver versions. If that is "
-                "deliberate — e.g. a clean arm at a fix's ancestor against a resume arm at the fix — "
-                "re-run with `hhemt combine --declare-solver-split` (or "
-                "`combine_bundle(..., declare_solver_split=True)`). The divergence is still reported "
-                "and still appears in the combined report; declaring it only stops it aborting the "
-                "combine. Do NOT pass it to silence a split you did not intend: two arms at different "
-                "solvers answer different questions, and combining them unknowingly publishes a "
-                "silently-wrong figure."
-            )
-        raise ConfigurationError(
-            field="bundle_paths",
-            message=f"Bundles are not combine-compatible (blocking divergences): {blocking}{_hint}",
-            config_path=None,
-        )
-    # Agreement gate, beside the compatibility gate and before ANY write to the output path: a
-    # disagreement is a property of the input bundles, decidable from their root-tree attrs alone.
-    # Placed here rather than in the read-model writer, which runs after the output directory exists
-    # and the children are copied and would leave a partly written bundle. No waiver flag.
-    _solver_provenance(roots)
-    merged = merge_experiment_trees(roots)  # consumed by the emit-time render step
+    # Refuse a metadata-only input before anything is written: one pass over every input's own
+    # manifest, ahead of the working folder, so a refused combine leaves no trace.
+    for path in inputs:
+        _refuse_metadata_only_source(_open_bundle_source(path))
+    # The prefix names the SLURM job when there is one, so a folder left behind by a killed job
+    # can be attributed to it.
+    job = os.environ.get("SLURM_JOB_ID") or "local"
+    unzipped = unzipped is True
     if output_path is None:
-        sha = _get_toolkit_git_sha(strict=False)
-        output_path = roots[0].parent / f"combined_{len(roots)}bundles_{sha}"
+        output_path = inputs[0].parent / f"combined_{len(inputs)}bundles_{_get_toolkit_git_sha(strict=False)}"
     output_path = Path(output_path)
-    _emit_combined_bundle(roots, merged, report, output_path)
-    return CombinedBundle.from_directory(output_path)
+    if not unzipped and output_path.suffix != ".zip":
+        output_path = output_path.with_name(output_path.name + ".zip")
+    _sweep_stale_working_folders(workdir)
+    working = Path(tempfile.mkdtemp(prefix=f"hhemt_combine_{job}_", dir=None if workdir is None else str(workdir)))
+    partial = output_path.with_name(output_path.name + ".partial")
+    previous = _install_sigterm_cleanup([working, partial])
+    try:
+        eids = _stage_sources(inputs, working / _CHILD_CRATES_SUBDIR)
+        roots = [working / _CHILD_CRATES_SUBDIR / eid for eid in eids]
+        report = check_bundle_compatibility(roots, declare_solver_split=declare_solver_split is True)
+        if not report.is_compatible:
+            blocking = "; ".join(
+                f"{d.field_name} ({d.bucket}): {d.bundle_a}={d.value_a!r} vs {d.bundle_b}={d.value_b!r}"
+                for d in report.blocking
+            )
+            _hint = ""
+            if any(d.field_name == "TRITONSWMM_branch_key" for d in report.blocking):
+                _hint = (
+                    "\n\nThese bundles were built at DIFFERENT pinned solver versions. If that is "
+                    "deliberate — e.g. a clean arm at a fix's ancestor against a resume arm at the fix — "
+                    "re-run with `hhemt combine --declare-solver-split` (or "
+                    "`combine_bundle(..., declare_solver_split=True)`). The divergence is still reported "
+                    "and still appears in the combined report; declaring it only stops it aborting the "
+                    "combine. Do NOT pass it to silence a split you did not intend: two arms at different "
+                    "solvers answer different questions, and combining them unknowingly publishes a "
+                    "silently-wrong figure."
+                )
+            raise ConfigurationError(
+                field="bundle_paths",
+                message=f"Bundles are not combine-compatible (blocking divergences): {blocking}{_hint}",
+                config_path=None,
+            )
+        # Agreement gate, beside the compatibility gate and before the output path is touched: a
+        # disagreement is a property of the input bundles, decidable from their root-tree attrs alone.
+        # Placed here rather than in the read-model writer, which runs after the read-models start to
+        # be written and would leave partly written files. No waiver flag.
+        _solver_provenance(roots)
+        for root in roots:
+            _check_root_tree(root)
+        member_zips = None if unzipped else _member_zips(inputs, eids, working)
+        names = [f"{_CHILD_CRATES_SUBDIR}/{eid}" if unzipped else f"{_CHILD_CRATES_SUBDIR}/{eid}.zip" for eid in eids]
+        _emit_combined_bundle(roots, None, report, working, child_names=names)
+        if unzipped:
+            _publish_folder(working, inputs, eids, output_path, partial)
+        else:
+            _publish_zip(working, eids, member_zips, output_path)
+    finally:
+        signal.signal(signal.SIGTERM, previous) if previous is not None else None
+        shutil.rmtree(working, ignore_errors=True)  # EXEMPT-DU: transient-intermediate
+    if unzipped:
+        return CombinedBundle.from_directory(output_path)
+    return CombinedBundle(output_path, is_archive=True)
+
+
+def _install_sigterm_cleanup(paths: list[Path]):
+    """Make SIGTERM remove ``paths`` and then take its normal course; return the previous handler.
+
+    SLURM sends SIGTERM at a job's time limit, and the default action ends the process with no
+    ``finally`` run, which would leave the working folder (a memory-backed ``/tmp`` on a compute
+    node) behind. The handler removes the folders, restores the previous handler and sends the
+    signal again, so the process still terminates as it would have. Returns ``None`` and installs
+    nothing off the main thread, where Python does not allow a handler.
+    """
+    import threading
+
+    if threading.current_thread() is not threading.main_thread():
+        return None
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def _handler(signum, _frame):
+        for path in paths:
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)  # EXEMPT-DU: transient-intermediate
+            else:
+                path.unlink(missing_ok=True)  # EXEMPT-DU: transient-intermediate
+        signal.signal(signal.SIGTERM, previous if previous is not None else signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    signal.signal(signal.SIGTERM, _handler)
+    return previous
+
+
+def _sweep_stale_working_folders(workdir: Path | None) -> None:
+    """Remove ``hhemt_combine_*`` folders left by combines that can no longer be running.
+
+    A folder is stale when its job id (the segment after the prefix) is not in ``squeue``, or,
+    for a folder with no SLURM job (``local``) or when ``squeue`` cannot be read, when it is
+    older than one day. A SIGKILL leaves a folder that no handler could remove, and this is
+    what removes it at the next combine.
+    """
+    base = Path(workdir) if workdir is not None else Path(tempfile.gettempdir())
+    prefix = "hhemt_combine_"
+    try:
+        candidates = [p for p in base.iterdir() if p.is_dir() and p.name.startswith(prefix)]
+    except OSError:
+        return
+    if not candidates:
+        return
+    live: set[str] | None
+    try:
+        out = subprocess.run(["squeue", "-h", "-o", "%i"], capture_output=True, text=True, timeout=10, check=True)
+        live = set(out.stdout.split())
+    except (OSError, subprocess.SubprocessError):
+        live = None
+    for path in candidates:
+        job = path.name[len(prefix) :].split("_", 1)[0]
+        if job.isdigit() and live is not None:
+            stale = job not in live
+        else:
+            try:
+                stale = time.time() - path.stat().st_mtime > 86400
+            except OSError:
+                continue
+        if stale:
+            shutil.rmtree(path, ignore_errors=True)  # EXEMPT-DU: transient-intermediate
+
+
+def _zip_is_under_policy(path: Path) -> bool:
+    """Whether every entry of the zip at ``path`` is compressed as the moderate policy says."""
+    with zipfile.ZipFile(path) as zf:
+        return all(
+            info.compress_type == MODERATE.compress_type_for(info.filename)
+            for info in zf.infolist()
+            if not info.is_dir()
+        )
+
+
+def _member_zips(inputs: list[Path], eids: list[str], working: Path) -> list[Path]:
+    """The zip that carries each member inside the combined zip: the input itself if it is a zip.
+
+    A directory input has no zip, so its full bundle is written as one under the moderate policy
+    (in a folder of the working folder that the published output skips), which makes every member
+    a zip and lets the combined zip hold them all the same way.
+    """
+    out: list[Path] = []
+    for path, eid in zip(inputs, eids, strict=True):
+        if path.is_file():
+            out.append(path)
+            continue
+        source = _DirectorySource(path)
+        dest = working / _MEMBER_ZIP_DIR / f"{eid}.zip"
+        dest.parent.mkdir(exist_ok=True)
+        write_zip(((name, path / name) for name in source.names()), dest)
+        out.append(dest)
+    return out
+
+
+class _StoredNamesPolicy(CompressionPolicy):
+    """The moderate policy, except that the named archive entries are STORED.
+
+    The named entries are member zips already compressed entry by entry; compressing them again
+    would cost CPU for nothing and change the bytes of the zip inside.
+    """
+
+    stored_names: frozenset[str] = frozenset()
+
+    def compress_type_for(self, arcname: str) -> int:
+        if arcname in self.stored_names:
+            return zipfile.ZIP_STORED
+        return super().compress_type_for(arcname)
+
+
+def _root_files(working: Path) -> list[Path]:
+    """Every file of the working folder that belongs at the output's root, sorted."""
+    skip = {_CHILD_CRATES_SUBDIR, _MEMBER_ZIP_DIR}
+    found: list[Path] = []
+    for dirpath, dirs, files in os.walk(working):
+        if Path(dirpath) == working:
+            dirs[:] = [d for d in dirs if d not in skip]
+        found.extend(Path(dirpath) / f for f in files)
+    return sorted(found)
+
+
+def _refreshed_figures(working: Path, eid: str) -> list[str]:
+    """The re-rendered child figures that exist for ``eid``, as paths relative to its folder."""
+    child = working / _CHILD_CRATES_SUBDIR / eid
+    return [rel for _module, rel in _PURE_DATA_CHILD_RENDERERS if (child / rel).is_file()]
+
+
+def _publish_zip(working: Path, eids: list[str], member_zips: list[Path], output_path: Path) -> None:
+    """Write the combined zip at ``output_path``; it replaces any existing file by rename on success."""
+    entries: list[tuple[str, Path]] = [(f.relative_to(working).as_posix(), f) for f in _root_files(working)]
+    stored: set[str] = set()
+    for eid, member in zip(eids, member_zips, strict=True):
+        arc = f"{_CHILD_CRATES_SUBDIR}/{eid}.zip"
+        entries.append((arc, member))
+        if _zip_is_under_policy(member):
+            stored.add(arc)
+        for rel in _refreshed_figures(working, eid):
+            entries.append(
+                (f"{_CHILD_CRATES_SUBDIR}/{eid}.refreshed/{rel}", working / _CHILD_CRATES_SUBDIR / eid / rel)
+            )
+    policy = _StoredNamesPolicy(level=MODERATE.level, store_zarr_chunks=MODERATE.store_zarr_chunks)
+    object.__setattr__(policy, "stored_names", frozenset(stored))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_zip(entries, output_path, policy=policy)
+
+
+def _copy_files(pairs: list[tuple[Path, Path]]) -> None:
+    """Copy each ``(source, destination)`` file with ``copyfile`` on eight threads."""
+    for parent in sorted({dest.parent for _src, dest in pairs}):
+        parent.mkdir(parents=True, exist_ok=True)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for future in [pool.submit(shutil.copyfile, src, dest) for src, dest in pairs]:
+            future.result()
+
+
+def _publish_folder(working: Path, inputs: list[Path], eids: list[str], output_path: Path, partial: Path) -> None:
+    """Write the combined folder at ``output_path`` through ``{output}.partial``, then rename it into place.
+
+    Each zip member is extracted whole into ``child_crates/{eid}/`` and each directory member is
+    copied whole; the re-rendered child figures are then laid over them. An existing output is
+    renamed aside before the new folder takes its name, and removed afterwards.
+    """
+    from hhemt.utils import fast_rmtree
+
+    if partial.exists():
+        fast_rmtree(partial)  # EXEMPT-DU: transient-intermediate
+    partial.mkdir(parents=True)
+    try:
+        _copy_files([(f, partial / f.relative_to(working)) for f in _root_files(working)])
+        for path, eid in zip(inputs, eids, strict=True):
+            dest = partial / _CHILD_CRATES_SUBDIR / eid
+            if path.is_file():
+                extract_zip(path, dest)
+            else:
+                names = _DirectorySource(path).names()
+                _copy_files([(path / n, dest / n) for n in names])
+            _copy_files(
+                [(working / _CHILD_CRATES_SUBDIR / eid / rel, dest / rel) for rel in _refreshed_figures(working, eid)]
+            )
+        aside = None
+        if output_path.exists():
+            aside = output_path.with_name(f"{output_path.name}.old_{os.getpid()}")
+            os.rename(output_path, aside)
+        os.rename(partial, output_path)
+        if aside is not None:
+            fast_rmtree(aside)  # EXEMPT-DU: bundle-root
+    except BaseException:
+        if partial.exists():
+            fast_rmtree(partial)  # EXEMPT-DU: transient-intermediate
+        raise
 
 
 def _combined_experiment_ids(roots: list[Path]) -> list[str]:
     """Stable, unique per-experiment ids for the combined bundle.
 
-    Uses the SAME identity source as the Phase-2 merge (``_combine_merge._experiment_id``
-    = each bundle's ``analysis_id``) with the same collision-suffix rule, so the
-    manifest's ``experiment_ids`` and the ``child_crates/{eid}`` directory names
-    line up with the merged tree's ``experiment_{eid}`` nodes.
+    Uses each bundle's ``analysis_id`` (``_combine_merge._experiment_id``) with the same
+    collision-suffix rule ``_stage_sources`` applies, so the manifest's ``experiment_ids``
+    and the ``child_crates/{eid}`` directory names agree.
     """
     ids: list[str] = []
     used: set[str] = set()
     for i, r in enumerate(roots):
         eid = _experiment_id(r)
         if eid in used:
-            eid = f"{eid}__{i}"  # collision-safe unique id (mirrors merge_experiment_trees)
+            eid = f"{eid}__{i}"  # collision-safe unique id (mirrors _stage_sources)
         used.add(eid)
         ids.append(eid)
     return ids
@@ -199,11 +615,18 @@ def _emit_combined_bundle(
     merged,
     report: CompatibilityReport,
     output_path: Path,
+    tree_cache: dict[str, object] | None = None,
+    child_names: list[str] | None = None,
 ) -> None:
-    """Emit the standalone combined bundle (flat hasPart-by-reference RO-Crate).
+    """Build the standalone combined bundle (flat hasPart-by-reference RO-Crate) in ``output_path``.
 
-    Copies each input bundle intact under output_path/child_crates/{experiment_id}/,
-    writes the combined ro-crate-metadata.json (root Dataset hasPart -> each child
+    ``combine_bundle`` calls this with the private working folder as ``output_path`` and
+    publishes the finished folder afterwards, so the combine's output path is touched only
+    after the render succeeds. A child already at ``output_path/child_crates/{experiment_id}``
+    (which is where the combine extracts it) is used in place; a child anywhere else is copied
+    there intact.
+
+    Writes the combined ro-crate-metadata.json (root Dataset hasPart -> each child
     crate by reference, NOT N mainEntity — cardinality-1, A8), persists the
     CompatibilityReport as a read-model (combined_compatibility.json) for the
     Phase-4 renderer, writes bundle_manifest.json via a dedicated
@@ -211,7 +634,11 @@ def _emit_combined_bundle(
     single-analysis-shaped — per CR5; the combined manifest carries experiment_ids /
     child_crates / bundle_schema_version / a deterministic combined_of and OMITS the
     volatile created_at_utc per CR4), and renders the combined report.
-    Reuses _emit_bundle_zip's determinism contract when a zip container is requested.
+    ``merged`` is unused and kept only so existing callers' positional arguments still line
+    up; pass ``None``. ``child_names`` are the archive-relative names the crate and manifest give
+    the children (``child_crates/{eid}.zip`` for a zipped output); the default names the folders.
+    The manifest is written after the report renders, so it never describes a bundle whose
+    render failed.
 
     RENDER DISPATCH (F-I #4, Phase 5; Option B): the combined figures are NEW (do not
     pre-exist), so ``_render_combined_report`` direct-renders them in-process with a
@@ -225,35 +652,41 @@ def _emit_combined_bundle(
     ``CombinedBundle.regenerate_report()`` re-invokes the same render path against the bundle
     root (the renderers read the on-disk read-models; the harvest re-globs ``child_crates/``,
     so there is no re-merge).
-
-    Phase-3 completes the copy + crate + read-model + manifest; the render is the
-    ``_render_combined_report`` seam wired in Phase 4.
     """
     output_path.mkdir(parents=True, exist_ok=True)
     experiment_ids = _combined_experiment_ids(roots)
+    # Each child is opened at most once across both read-model writers.
+    tree_cache = {} if tree_cache is None else tree_cache
 
-    # 1. Copy each input bundle intact under child_crates/{experiment_id}/ so each
-    #    child retains its own Workflow-Run-Crate (ADR-13 reconstitution; R7).
+    # 1. Each child sits intact under child_crates/{experiment_id}/ so it retains its own
+    #    Workflow-Run-Crate (ADR-13 reconstitution; R7).
     crates_dir = output_path / _CHILD_CRATES_SUBDIR
     child_crates: list[str] = []
     for eid, root in zip(experiment_ids, roots, strict=True):
         dest = crates_dir / eid
-        if dest.exists():
+        # The combine extracts each child straight to `dest`; copying a folder onto itself
+        # would delete it first, so a child already there is left alone.
+        if dest.exists() and dest.resolve() != Path(root).resolve():
             # EXEMPT-DU: bundle-root
             shutil.rmtree(dest)
-        shutil.copytree(root, dest)
+        if not dest.exists():
+            shutil.copytree(root, dest)
         child_crates.append(f"{_CHILD_CRATES_SUBDIR}/{eid}")
+    if child_names is not None:
+        child_crates = list(child_names)
 
     # 2. Combined crate + read-model + manifest (all byte-deterministic — CR4).
     _write_combined_rocrate(output_path, child_crates)
     _write_combined_compatibility(output_path, report)
-    _write_combined_intercomparison(output_path, roots)
+    _write_combined_intercomparison(output_path, roots, tree_cache)
     # The cross-solver read-model, and with it `distinct_solver_count` -- the count the combined
     # report's cross-solver figure is gated on, by both the report rules and the direct
     # render in `_render_combined_report`. Written BEFORE the render step below
     # so a consumer on the generation path finds it, and left on disk afterwards so
     # `regenerate_report()` re-renders from it with no re-merge.
-    _write_cross_solver_comparison(output_path, roots)
+    _write_cross_solver_comparison(output_path, roots, tree_cache)
+    # 3. Cross-experiment render (Phase-4 seam), then the manifest.
+    _render_combined_report(merged, report, output_path)
     _write_combined_bundle_manifest(
         output_path,
         experiment_ids=experiment_ids,
@@ -262,8 +695,27 @@ def _emit_combined_bundle(
         roots=roots,
     )
 
-    # 3. Cross-experiment render (Phase-4 seam).
-    _render_combined_report(merged, report, output_path)
+
+def _open_child_tree(source: Path, eid: str, cache: dict[str, object] | None = None):
+    """Open one child's ROOT consolidated tree (``source`` is the child's folder), once per combine.
+
+    Both read-model writers read child stores through this one function, so a store that
+    both need is opened a single time (they pass the same ``cache``), and the way a child's
+    store is reached is a single site to change. ``eid`` is the cache key and names the child
+    in an error. Returns the opened ``DataTree``, or ``None`` when the child ships no root tree.
+    """
+
+    from hhemt.utils import resolve_experiment_tree
+
+    store = resolve_experiment_tree(source)
+    if not store.exists():
+        return None
+    if cache is not None and eid in cache:
+        return cache[eid]
+    dt = open_store(str(store))
+    if cache is not None:
+        cache[eid] = dt
+    return dt
 
 
 def _write_combined_rocrate(output_path: Path, child_crates: list[str]) -> None:
@@ -410,7 +862,7 @@ def _bundle_role_from_status(root: Path) -> str:
 # site below.
 
 
-def _load_intercomparison_subs(root: Path) -> dict:
+def _load_intercomparison_subs(root: Path, cache: dict[str, object] | None = None) -> dict:
     """``{config_identity_str: {var_name: DataArray}}`` for one bundle's
     ``sensitivity_datatree.zarr``.
 
@@ -435,8 +887,6 @@ def _load_intercomparison_subs(root: Path) -> dict:
     Returns ``(subs, collapsed)`` where ``collapsed`` maps ``{config_identity_str:
     [discarded member_id, ...]}``, empty when no replicate was dropped.
     """
-    import xarray as xr
-
     from hhemt.eda.cross_sim_identity import config_identity_from_node_attrs
     from hhemt.utils import resolve_experiment_tree
 
@@ -470,7 +920,7 @@ def _load_intercomparison_subs(root: Path) -> dict:
                     "full analysis directory."
                 ),
             )
-    dt = xr.open_datatree(str(store), engine="zarr", consolidated=False)
+    dt = _open_child_tree(root, root.name, cache)
     for g in sorted(dt.groups):
         if g.count("/") != 1 or not g.startswith("/member_"):
             continue
@@ -496,7 +946,9 @@ def _load_intercomparison_subs(root: Path) -> dict:
     return out, collapsed
 
 
-def _write_combined_intercomparison(output_path: Path, roots: list[Path]) -> None:
+def _write_combined_intercomparison(
+    output_path: Path, roots: list[Path], cache: dict[str, object] | None = None
+) -> None:
     """Derive clean-vs-resume per-compute-config identity CROSS-BUNDLE into
     ``combined_intercomparison.json`` (the read-model the ``cross_experiment_intercomparison``
     renderer projects).
@@ -544,8 +996,8 @@ def _write_combined_intercomparison(output_path: Path, roots: list[Path]) -> Non
         _cl, _rs = _rr.get("clean", []), _rr.get("resume", [])
         if not (_cl and _rs):
             continue
-        clean_subs, clean_collapsed = _load_intercomparison_subs(_cl[0])
-        resume_subs, resume_collapsed = _load_intercomparison_subs(_rs[0])
+        clean_subs, clean_collapsed = _load_intercomparison_subs(_cl[0], cache)
+        resume_subs, resume_collapsed = _load_intercomparison_subs(_rs[0], cache)
         _clean_collapsed_all.update(clean_collapsed)
         _resume_collapsed_all.update(resume_collapsed)
         for cfg_key in sorted(set(clean_subs) & set(resume_subs)):
@@ -654,7 +1106,6 @@ def _root_provenance_attrs(root: Path) -> tuple[str | None, str | None]:
     before the capture existed, a container-mode bundle (no clone to read) and an intermittent
     capture miss, and callers treat it as "not captured", never as a value.
     """
-    import xarray as xr
 
     from hhemt.utils import resolve_experiment_tree
 
@@ -662,7 +1113,7 @@ def _root_provenance_attrs(root: Path) -> tuple[str | None, str | None]:
     if not store.exists():
         return None, None
     try:
-        attrs = dict(xr.open_dataset(str(store), engine="zarr", group="/", chunks=None, consolidated=False).attrs)
+        attrs = dict(open_store(str(store), kind="dataset", group="/", chunks=None).attrs)
     except Exception:  # noqa: BLE001 -- an unreadable root is "not captured", not a combine failure
         return None, None
     sha = str(attrs.get(_ROOT_SHA_ATTR) or "").strip() or None
@@ -773,7 +1224,9 @@ def _member_wallclock(dt, member_group: str) -> tuple[str, float | None]:
     return "", None
 
 
-def _write_cross_solver_comparison(output_path: Path, roots: list[Path]) -> None:
+def _write_cross_solver_comparison(
+    output_path: Path, roots: list[Path], cache: dict[str, object] | None = None
+) -> None:
     """Derive the cross-SOLVER read-model into ``cross_solver_comparison.json``.
 
     WHY A COMBINE-TIME READ-MODEL AND NOT A RENDER-TIME SCAN. The figure's question -- did the
@@ -843,9 +1296,7 @@ def _write_cross_solver_comparison(output_path: Path, roots: list[Path]) -> None
                 skipped.append({"bundle": root.name, "reason": "consolidated tree carried metadata-only"})
                 continue
 
-        import xarray as xr
-
-        dt = xr.open_datatree(str(store), engine="zarr", consolidated=False)
+        dt = _open_child_tree(root, root.name, cache)
         for g in sorted(dt.groups):
             if g.count("/") != 1 or not g.startswith("/member_"):
                 continue
@@ -1093,11 +1544,77 @@ def _render_combined_report(merged, report, output_path: Path, *, formats: tuple
     render_combined_report_via_snakemake(output_path, formats=formats)
 
 
+#: Record written beside an unpacked zip that says which zip it came from, so a repeat unpack can
+#: tell the same file (reuse what is there) from a different file of the same name (start over).
+_UNPACK_RECORD = ".hhemt_unpack_source.json"
+
+
+def _zip_identity(zip_path: Path) -> dict[str, int]:
+    """The size and modification time of ``zip_path``: what makes it the same file again."""
+    st = zip_path.stat()
+    return {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
+
+
+def _prepare_unpack_dir(zip_path: Path, unpack_dir: Path) -> bool:
+    """Decide whether ``unpack_dir`` can be reused for ``zip_path``; clear it when it cannot.
+
+    Reuse needs the record this module writes after an unpack and that record naming this exact
+    zip (size and mtime). A missing or unreadable record, or a record of another file, means
+    the folder's contents say nothing reliable about this zip (a replacement zip of the same
+    name would otherwise keep every old file of the same size), so the folder is removed.
+    Returns True when the folder is kept.
+    """
+    from hhemt.utils import fast_rmtree
+
+    record = unpack_dir / _UNPACK_RECORD
+    if unpack_dir.is_dir() and record.is_file():
+        try:
+            if json.loads(record.read_text()) == _zip_identity(zip_path):
+                return True
+        except (OSError, ValueError):
+            pass
+    if unpack_dir.exists():
+        fast_rmtree(unpack_dir)  # EXEMPT-DU: bundle-root
+    return False
+
+
+def _write_unpack_record(zip_path: Path, unpack_dir: Path) -> None:
+    """Record, in ``unpack_dir``, the identity of the zip it was unpacked from."""
+    (unpack_dir / _UNPACK_RECORD).write_text(json.dumps(_zip_identity(zip_path)))
+
+
+def unpack_member_zip(zip_path: Path) -> Path:
+    """Unpack a member bundle zip into ``{zip stem}/`` beside it and return that folder.
+
+    Files are created on eight threads. A repeat call into a folder this function unpacked from
+    the same zip re-extracts only files that are missing or whose size differs from the zip's;
+    a record absent, or a different zip of the same name, starts from an empty folder. The
+    record is written last, so a call that failed part way never counts as an unpack.
+    """
+    zip_path = Path(zip_path).resolve()
+    unpack = zip_path.parent / zip_path.stem
+    reuse = _prepare_unpack_dir(zip_path, unpack)
+    extract_zip(zip_path, unpack, only_missing_or_resized=reuse)
+    _write_unpack_record(zip_path, unpack)
+    return unpack
+
+
+def is_combined_manifest(manifest: dict) -> bool:
+    """Whether a parsed ``bundle_manifest.json`` is a combined bundle's (it carries ``child_crates``)."""
+    return "child_crates" in manifest
+
+
 class CombinedBundle:
     """Consume-side handle for a standalone combined bundle (mirrors Bundle)."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, is_archive: bool = False) -> None:
         self._root = root.resolve()
+        self._is_archive = is_archive
+
+    @property
+    def is_archive(self) -> bool:
+        """True when ``root`` is the combined ``.zip`` file rather than an unpacked folder."""
+        return self._is_archive
 
     @classmethod
     def from_directory(cls, path: Path | str) -> CombinedBundle:
@@ -1153,6 +1670,83 @@ class CombinedBundle:
             )
         return cls(root=root)
 
+    @classmethod
+    def from_zip(cls, path: Path | str) -> CombinedBundle:
+        """Unpack a combined ``.zip`` beside itself and return a handle on the unpacked folder.
+
+        The render set of the bundle is extracted into ``{zip stem}/`` next to the zip, the
+        place ``hhemt report-from-bundle`` unpacks a member zip: the root files, and for each
+        experiment the render set (everything but raw ``out_*/bin`` solver output) of its nested
+        member zip at ``child_crates/{experiment_id}/``, with the zip's
+        ``child_crates/{experiment_id}.refreshed/`` figures laid over it. A nested member
+        zip that was stored as one compressed entry is inflated to a temporary file first, and
+        that file is removed once its render set is out. A repeat call reuses what a previous
+        call extracted when the zip is the same file (size and modification time), restoring
+        any missing or resized file; a different zip of the same name starts from an empty folder.
+
+        Parameters
+        ----------
+        path : Path or str
+            A combined bundle zip written by ``hhemt combine``.
+
+        Returns
+        -------
+        CombinedBundle
+            A handle on the unpacked folder (``is_archive`` false); ``regenerate_report()``
+            on it re-renders in place.
+
+        Raises
+        ------
+        FileNotFoundError
+            ``path`` is not a file, or the zip has no ``bundle_manifest.json``.
+        BundleSchemaError
+            The combined manifest's ``bundle_schema_version`` differs from this toolkit's.
+        """
+        zip_path = Path(path).resolve()
+        if not zip_path.is_file():
+            raise FileNotFoundError(f"No combined bundle zip at {zip_path}.")
+        unpack = zip_path.parent / zip_path.stem
+        reuse = _prepare_unpack_dir(zip_path, unpack)
+        with zipfile.ZipFile(zip_path) as zf:
+            names = [n for n in zf.namelist() if not n.endswith("/")]
+        if BUNDLE_MANIFEST_FILENAME not in names:
+            raise FileNotFoundError(f"No {BUNDLE_MANIFEST_FILENAME} in {zip_path}.")
+        prefix = f"{_CHILD_CRATES_SUBDIR}/"
+        root_names = [n for n in names if not n.startswith(prefix)]
+        extract_zip(zip_path, unpack, members=root_names, only_missing_or_resized=reuse)
+        scratch = unpack / ".member_tmp"
+        try:
+            for arc in sorted(
+                n for n in names if n.startswith(prefix) and n.endswith(".zip") and "/" not in n[len(prefix) :]
+            ):
+                eid = arc[len(prefix) : -len(".zip")]
+                # One member at a time: the nested zip becomes a file (inflated if it was stored
+                # as a compressed entry), its render set is extracted, and the file is removed.
+                extract_zip(zip_path, scratch, members=[arc])
+                nested = scratch / arc
+                with zipfile.ZipFile(nested) as nz:
+                    nested_names = [n for n in nz.namelist() if not n.endswith("/")]
+                extract_zip(
+                    nested,
+                    unpack / _CHILD_CRATES_SUBDIR / eid,
+                    members=render_set(nested_names),
+                    only_missing_or_resized=reuse,
+                )
+                nested.unlink()  # EXEMPT-DU: transient-intermediate
+                refreshed = f"{prefix}{eid}.refreshed/"
+                with zipfile.ZipFile(zip_path) as zf:
+                    for name in (n for n in names if n.startswith(refreshed)):
+                        # The same confinement `extract_zip` applies: a name that climbs with `..` is
+                        # placed inside the child folder, never beside or above it.
+                        target = _confined_target(unpack / _CHILD_CRATES_SUBDIR / eid, name[len(refreshed) :])
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(zf.read(name))
+        finally:
+            if scratch.exists():
+                shutil.rmtree(scratch, ignore_errors=True)  # EXEMPT-DU: transient-intermediate
+        _write_unpack_record(zip_path, unpack)
+        return cls.from_directory(unpack)
+
     @property
     def root(self) -> Path:
         """Absolute path to the unpacked combined-bundle directory.
@@ -1173,6 +1767,12 @@ class CombinedBundle:
         """
         from hhemt.provenance import assert_plots_match_running_build
 
+        if self._is_archive:
+            # A combined zip is re-rendered from its unpacked render set, which `from_zip` lays
+            # beside the zip; the handle for that folder does the render.
+            return CombinedBundle.from_zip(self._root).regenerate_report(
+                format=format, declare_stale_plots=declare_stale_plots
+            )
         assert_plots_match_running_build(self._root, declare_stale_plots=declare_stale_plots)
         _render_combined_report(None, None, self._root, formats=(format,))
         report = self._root / f"analysis_report.{format}"

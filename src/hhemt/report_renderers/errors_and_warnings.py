@@ -126,6 +126,12 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
         "missing that record for some or all of its attempts and no alarm row in its "
         "resume-event record.",
     ),
+    "consolidated metadata current": (
+        "Consolidated metadata",
+        "Every zarr store the analysis owns carries a consolidated-metadata index that matches "
+        "the metadata documents on disk, node by node, so a reader that trusts the index sees "
+        "every group and attribute the store holds.",
+    ),
     "inflow node reduction": (
         "Inflow node reduction",
         "Lists each DEM cell whose inflow nodes the one-node-per-cell option reduced to a "

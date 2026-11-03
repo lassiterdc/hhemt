@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from hhemt.utils import open_store
+
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
 
@@ -338,7 +340,6 @@ def _iter_scope_stamps(analysis: TRITONSWMM_analysis):
     uniform common case) and falls back to ``read_producing_stamp`` under
     absence/divergence -- exactly the read model ``cf_conventions`` documents.
     """
-    import xarray as xr
 
     from hhemt.cf_conventions import read_producing_stamp
 
@@ -352,7 +353,7 @@ def _iter_scope_stamps(analysis: TRITONSWMM_analysis):
         if zarr_path is None or not zarr_path.exists():
             continue  # graceful-absent: scope not yet consolidated
         try:
-            tree = xr.open_datatree(zarr_path, engine="zarr", chunks="auto", consolidated=False)
+            tree = open_store(zarr_path, chunks="auto")
         except Exception:
             continue  # unreadable tree -> skip this scope (never crash the resolver)
         sha = tree.attrs.get("hhemt_producing_sha")

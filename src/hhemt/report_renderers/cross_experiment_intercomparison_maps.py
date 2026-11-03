@@ -139,7 +139,8 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         _heatmap,
         _hw_family_key,
         _load_conduit_geometry,
-        _load_subs,
+        _load_subs_from_tree,
+        _open_experiment_tree,
         _quantised_depth_cap,
         _signed_pct,
         _symmetric_diff_range,
@@ -303,6 +304,10 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     #      config_diff_maps cannot drift in which run they call the reference.
     crates = combined_root / "child_crates"
     _sub_cache: dict[tuple[str, int], dict] = {}
+    # One open tree per child, shared by every event of that child: each (child, event)
+    # used to open the whole tree again. A child whose tree cannot be opened is cached as
+    # None and yields no subs for any event, as a failed open did for each event before.
+    _tree_cache: dict[str, object | None] = {}
 
     def _subs_for(eid: str, evt: int) -> dict:
         if not eid:
@@ -310,7 +315,13 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         key = (eid, evt)
         if key not in _sub_cache:
             try:
-                _sub_cache[key] = _load_subs(crates / eid, event_iloc=evt)
+                if eid not in _tree_cache:
+                    try:
+                        _tree_cache[eid] = _open_experiment_tree(crates / eid)
+                    except Exception:
+                        _tree_cache[eid] = None
+                tree = _tree_cache[eid]
+                _sub_cache[key] = {} if tree is None else _load_subs_from_tree(tree, crates / eid, event_iloc=evt)
             except Exception:
                 _sub_cache[key] = {}
         return _sub_cache[key]

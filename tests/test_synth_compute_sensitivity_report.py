@@ -104,7 +104,7 @@ def test_r12_combined_report_assembles_from_two_sensitivity_masters(golden_sensi
     shutil.copytree(dir_a, dir_b, symlinks=True)
 
     out = tmp_path / "combined_sens"
-    combined = combine_bundle([dir_a, dir_b], output_path=out)
+    combined = combine_bundle([dir_a, dir_b], output_path=out, unzipped=True)
     assert isinstance(combined, CombinedBundle)
     report = out / "analysis_report.html"
     assert report.exists()

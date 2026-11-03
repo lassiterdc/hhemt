@@ -191,7 +191,8 @@ def extract_reprex_bundle(zip_path: Path) -> Path:
     while ``emit_bundle`` yields a zip; the emit-side facades call this so a reprex
     bundle is directly consumable."""
     import shutil
-    import zipfile
+
+    from hhemt.bundle._archive import extract_zip
 
     zip_path = Path(zip_path)
     dest = zip_path.with_suffix("")  # strip the trailing ".zip"
@@ -199,8 +200,10 @@ def extract_reprex_bundle(zip_path: Path) -> Path:
         # EXEMPT-DU: bundle-root
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
-    with zipfile.ZipFile(zip_path) as zf:
-        zf.extractall(dest)
+    # Threaded extract rather than ZipFile.extractall: a bundle holds tens of thousands of
+    # small entries and extractall creates them one after another, which is the cost that
+    # bounds this call on a shared file system. The files and bytes are the same.
+    extract_zip(zip_path, dest)
     return dest
 
 

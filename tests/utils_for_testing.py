@@ -214,6 +214,21 @@ def assert_system_setup(analysis: TRITONSWMM_analysis):
         pytest.fail(msg)
 
 
+def assert_consolidated_metadata_current(analysis: TRITONSWMM_analysis):
+    """Pytest wrapper around analysis_validation.check_consolidated_metadata.
+
+    Fails with the first stale or missing index, naming the store, node and field.
+    """
+    from hhemt.analysis_validation import check_consolidated_metadata
+
+    result = check_consolidated_metadata(analysis)
+    if not result.passed:
+        msg = result.summary
+        if result.details:
+            msg += "\n  " + "\n  ".join(f"- {d.get('detail', '')}" for d in result.details)
+        pytest.fail(msg)
+
+
 def assert_scenarios_setup(analysis: TRITONSWMM_analysis, verbose: bool = False):
     """Pytest wrapper around analysis_validation.check_scenarios_setup.
 

@@ -33,7 +33,7 @@ from hhemt.config.analysis import ClearRawValue, ForceRerunValue
 from hhemt.config.hpc_system import resolve_additional_modules, resolve_gpu_target
 from hhemt.exceptions import ConfigurationError
 from hhemt.scenario import TRITONSWMM_scenario
-from hhemt.utils import current_datetime_string, write_datatree_zarr
+from hhemt.utils import current_datetime_string, open_store, write_datatree_zarr
 from hhemt.validation import assert_configs_visible_cross_node
 from hhemt.workflow import (
     SensitivityAnalysisWorkflowBuilder,
@@ -1905,6 +1905,9 @@ class TRITONSWMM_sensitivity_analysis:
         _stamp_triton_provenance(tree, self.experiment)
         _stamp_coupled_resume_evidence(tree, self.experiment)
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
+        from hhemt.processing_analysis import _assert_store_index_current
+
+        _assert_store_index_current(fname_out, "consolidate_sensitivity_datatree")
         write_rocrate_sidecar(self.experiment.analysis_paths.analysis_dir, graph_json=_graph_json)
 
         # ARM REFRESH AT THE WRITE BOUNDARY -- the primary-arm twin of the
@@ -1978,7 +1981,7 @@ class TRITONSWMM_sensitivity_analysis:
         path = self.analysis_paths.sensitivity_datatree_zarr
         if path is None or not path.exists():
             raise ValueError("Sensitivity DataTree zarr not found. Run consolidate_sensitivity_datatree() first.")
-        return xr.open_datatree(path, engine="zarr", chunks="auto", consolidated=False)
+        return open_store(path, chunks="auto")
 
     def create_analysis_summaries(
         self,

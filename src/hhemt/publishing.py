@@ -26,13 +26,13 @@ import os
 import sys
 import tempfile
 import warnings
-import zipfile
 from datetime import date
 from pathlib import Path
 from typing import Literal
 
 import requests
 
+from hhemt.bundle._archive import MODERATE, write_zip
 from hhemt.exceptions import PublishError
 from hhemt.metadata import (
     _SPDX_LICENSE_TABLE,
@@ -402,10 +402,14 @@ def _resolve_upload(path: Path, staging: Path) -> tuple[Path, str]:
     """Return (upload_path, deposit_key). A directory (zarr store) is zipped into staging."""
     if path.is_dir():
         archive = staging / f"{path.name}.zip"
-        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
-            for sub in sorted(path.rglob("*")):
-                if sub.is_file():
-                    zf.write(sub, sub.relative_to(path.parent))
+        # write_zip under the moderate policy: zarr chunk files are stored (the toolkit has
+        # already compressed them) and every other entry is deflated at level 6, instead of
+        # deflating every entry at zlib's default.
+        write_zip(
+            ((sub.relative_to(path.parent).as_posix(), sub) for sub in path.rglob("*") if sub.is_file()),
+            archive,
+            policy=MODERATE,
+        )
         return archive, archive.name
     return path, path.name
 
@@ -819,8 +823,8 @@ def publish_analysis(
 
             NOTE the bundle is deposited as the ZIP that ``emit_bundle`` wrote, NOT via
             ``analysis.reprex_bundle()`` — that facade returns the EXTRACTED DIRECTORY, and
-            ``_resolve_upload`` would re-zip a directory with ZIP_DEFLATED and
-            ``relative_to(path.parent)`` arcnames, producing a non-deterministic archive
+            ``_resolve_upload`` would re-zip a directory under the moderate compression
+            policy with ``relative_to(path.parent)`` arcnames, producing an archive
             that extracts to a nested root, so the ingest side's ``Bundle.from_directory``
             would raise ``FileNotFoundError`` and the deposit-then-ingest round trip could
             not pass.

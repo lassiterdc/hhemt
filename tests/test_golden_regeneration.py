@@ -91,9 +91,10 @@ def _zarr_store_roots(listing: set[str]) -> set[str]:
     return roots
 
 
-# A name containing "datatree" is a consolidated tier: a hierarchical DataTree written without consolidated metadata,
-# so it is opened with consolidated=False (tests/goldens/SPEC.md section 8). Not established here: why the flat
-# stores are opened the same way, why chunks=None, and why warnings are silenced.
+# A name containing "datatree" is a consolidated tier: a hierarchical DataTree. Every store, this tier included,
+# carries a consolidated-metadata index since layout 27 (tests/goldens/SPEC.md section 8); this comparison opens it
+# with consolidated=False, which reads the documents directly and does not compare the index. Not established here:
+# why the flat stores are opened the same way, why chunks=None, and why warnings are silenced.
 def _open_store(path: Path):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

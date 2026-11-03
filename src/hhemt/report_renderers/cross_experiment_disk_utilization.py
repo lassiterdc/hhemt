@@ -56,18 +56,22 @@ def model_from_groups(groups: set[str]) -> str:
     return " + ".join(ordered) if ordered else MODEL_NOT_RECORDED
 
 
+def model_label_from_models(models: tuple[str, ...]) -> str:
+    """The label for the models an `ExperimentTreeSummary` reports: joined by " + ", or `MODEL_NOT_RECORDED`."""
+    return " + ".join(models) if models else MODEL_NOT_RECORDED
+
+
 def _child_model(child: Path) -> str:
-    """The experiment's model label (`model_from_groups`), or `MODEL_NOT_RECORDED` without a readable tree."""
-    from hhemt.utils import resolve_experiment_tree
+    """The experiment's model label (`model_label_from_models`), or `MODEL_NOT_RECORDED` without a readable tree."""
+    from hhemt.utils import experiment_tree_summary, resolve_experiment_tree
 
     store = resolve_experiment_tree(child)
     if not store.exists():
         return MODEL_NOT_RECORDED
     try:
-        import xarray as xr
-
-        dt = xr.open_datatree(str(store), engine="zarr", consolidated=False)
-        return model_from_groups(set(dt.groups))
+        # Metadata-only summary rather than a full open, which reads every node's zarr.json to
+        # answer a question that sits in the member directories. Same label as `model_from_groups`.
+        return model_label_from_models(experiment_tree_summary(store).models)
     except Exception:
         return MODEL_NOT_RECORDED
 

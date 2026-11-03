@@ -218,9 +218,10 @@ def _regenerate(
     process_simulation -> version_migration dependency.
     """
     from hhemt.process_simulation import _aggregate_perf_summary, _aggregate_perf_tseries
+    from hhemt.utils import write_zarr
 
     ds_tseries = _aggregate_perf_tseries(raw_perf_dir, resume_steps=resume_steps)
-    ds_tseries.to_zarr(perf_tseries_zarr, mode="w", consolidated=False)
+    write_zarr(ds_tseries, perf_tseries_zarr, chunks=None, encoding={})
 
     ds_summary = _aggregate_perf_summary(raw_perf_dir, resume_steps=resume_steps)
     ds_summary.attrs["units"] = "seconds"
@@ -232,7 +233,7 @@ def _regenerate(
         "checkpoint read, and post-last-checkpoint work that was discarded and recomputed "
         "-- the whole-process wall is wall_clock_ledger_s."
     )
-    ds_summary.to_zarr(sim_dir / "processed" / summary_name, mode="w", consolidated=False)
+    write_zarr(ds_summary, sim_dir / "processed" / summary_name, chunks=None, encoding={})
     logger.info("V0018: regenerated %s (resume_steps=%s)", perf_tseries_zarr, resume_steps)
 
 

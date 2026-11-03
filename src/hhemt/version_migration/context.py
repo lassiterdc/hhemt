@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 from collections.abc import Callable
@@ -376,16 +377,15 @@ class MigrationContext:
         old_name: str,
         new_name: str,
     ) -> None:
-        import xarray as xr
-        import zarr
+
+        from hhemt.utils import append_zarr, open_store
 
         path_arg = path_in_tree if path_in_tree else None
-        ds = xr.open_dataset(store, engine="zarr", group=path_arg, consolidated=False)
+        ds = open_store(store, kind="dataset", group=path_arg)
         if new_name in ds.variables and old_name not in ds.variables:
             return
         ds = ds.rename({old_name: new_name}).load()
-        ds.to_zarr(store, group=path_arg, mode="w")
-        zarr.consolidate_metadata(str(store))
+        append_zarr(ds, store, group=path_arg, mode="w")
 
     def zarr_set_attrs(
         self,
@@ -418,6 +418,8 @@ class MigrationContext:
     ) -> None:
         import zarr
 
+        from hhemt.utils import consolidate_zarr_store
+
         node = zarr.open(store)
         if path_in_tree:
             node = node[path_in_tree]
@@ -428,7 +430,7 @@ class MigrationContext:
         else:
             new_attrs = dict(attrs)
         node.attrs.put(new_attrs)
-        zarr.consolidate_metadata(str(store))
+        consolidate_zarr_store(store)
 
     def zarr_set_convention(
         self,
@@ -485,7 +487,8 @@ class MigrationContext:
     ) -> None:
         import numpy as np
         import xarray as xr
-        import zarr
+
+        from hhemt.utils import open_store, write_datatree_zarr
 
         if Path(output_store).exists():
             return
@@ -501,12 +504,7 @@ class MigrationContext:
                     input_path,
                 )
                 continue
-            ds = xr.open_dataset(
-                input_path,
-                engine="zarr",
-                consolidated=False,
-                chunks={},
-            )
+            ds = open_store(input_path, kind="dataset", chunks={})
             for vname, var in ds.data_vars.items():
                 if var.chunks is None:
                     continue
@@ -547,8 +545,7 @@ class MigrationContext:
             )
             return
         dt = xr.DataTree.from_dict(nodes)
-        dt.to_zarr(output_store, mode="w-", consolidated=False, encoding=encoding)
-        zarr.consolidate_metadata(str(output_store))
+        write_datatree_zarr(dt, Path(output_store), encoding=encoding)
 
     def zarr_unify_to_experiment_tree(
         self,
@@ -595,6 +592,8 @@ class MigrationContext:
         import xarray as xr
         import zarr
 
+        from hhemt.utils import append_zarr, deferred_consolidation
+
         store_path = Path(store)
         if not store_path.exists():
             return
@@ -609,12 +608,15 @@ class MigrationContext:
                 store_path,
             )
             return
-        zarr.open_group(str(dest), mode="w")
-        for name in children:
-            shutil.move(str(store_path / name), str(dest / name))
-        df = pd.DataFrame(parameters).set_index(index_name)
-        xr.Dataset.from_dataframe(df).to_zarr(store_path, group="parameters", mode="a", consolidated=False)
-        zarr.consolidate_metadata(str(store_path))
+        # The deferred block removes the store's index BEFORE the first change below, so a kill
+        # between the moves and the append leaves an unindexed store (read unindexed, every group
+        # visible) instead of an index that still lists the pre-move node list.
+        with deferred_consolidation(store_path):
+            zarr.open_group(str(dest), mode="w")
+            for name in children:
+                shutil.move(str(store_path / name), str(dest / name))
+            df = pd.DataFrame(parameters).set_index(index_name)
+            append_zarr(xr.Dataset.from_dataframe(df), store_path, group="parameters", consolidate=False)
 
     # ---- Config / CSV operations ----
 
@@ -842,7 +844,7 @@ class MigrationContext:
         )
 
     def _apply_clear_snakemake_metadata(self, backup_label: str) -> None:
-        """Clear `.snakemake/metadata/` under target_dir, retaining a backup copy.
+        """Clear `.snakemake/metadata/` under target_dir, retaining the records as a backup.
 
         Snakemake's `--rerun-triggers input` does set-comparison against
         `.snakemake/metadata/<rule>/...` records. A migration that renames a
@@ -863,8 +865,6 @@ class MigrationContext:
         can inspect or restore it if a downstream concern surfaces. The backup
         is intentionally not auto-deleted — it carries audit value.
         """
-        import shutil
-
         metadata_dir = self.target_dir / ".snakemake" / "metadata"
         if not metadata_dir.is_dir():
             return  # nothing to clear (e.g., never-run analysis)
@@ -873,9 +873,11 @@ class MigrationContext:
             # Subsequent migrate runs should not silently overwrite a prior
             # backup. Keep the first one; skip the clear on re-run.
             return
-        shutil.copytree(metadata_dir, backup_dir)
+        # One rename, not a copy followed by a delete: the two folders share a parent, so the
+        # records move with a single directory operation instead of one create and one unlink per
+        # file, and the end state (backup holds the files, `metadata/` absent) is the same.
         # EXEMPT-DU: migration-primitive
-        shutil.rmtree(metadata_dir)
+        os.rename(metadata_dir, backup_dir)
         logger.info(
             "[%s] cleared .snakemake/metadata/; backup at %s",
             self.migration_id,

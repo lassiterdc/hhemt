@@ -68,6 +68,8 @@ hhemt.bundle.BundleSchemaError
 hhemt.bundle.CombinedBundle
 hhemt.bundle.CombinedBundle.eda
 hhemt.bundle.CombinedBundle.from_directory
+hhemt.bundle.CombinedBundle.from_zip
+hhemt.bundle.CombinedBundle.is_archive
 hhemt.bundle.CombinedBundle.regenerate_report
 hhemt.bundle.CombinedBundle.root
 hhemt.bundle.combine_bundle

@@ -26,13 +26,13 @@ import re
 import shutil
 import tempfile
 import warnings
-import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from hhemt.bundle._archive import MODERATE, write_zip
 from hhemt.bundle._path_policy import (
     _PATH_FIELD_POLICY,
     _SELF_CONTAINED_POLICIES,
@@ -703,10 +703,13 @@ def _copy_reference_outputs(analysis: TRITONSWMM_analysis, staging: Path) -> Non
         for summ in sorted(processed.glob(f"*_summary.{out_type}")):
             dest = ref_root / rel / summ.name
             dest.parent.mkdir(parents=True, exist_ok=True)
+            # copyfile, not copy2: the bundle zip stamps every entry with a fixed date and
+            # mode, so the mtime and mode copy2 would carry are overwritten, and each
+            # copystat is extra metadata calls per file on the small-file create path.
             if summ.is_dir():
-                shutil.copytree(summ, dest, dirs_exist_ok=True)
+                shutil.copytree(summ, dest, dirs_exist_ok=True, copy_function=shutil.copyfile)
             else:
-                shutil.copy2(summ, dest)
+                shutil.copyfile(summ, dest)
 
 
 #: The two config files every deposit that carries configs writes, as ``(cfg attribute,
@@ -1111,7 +1114,9 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
         shutil.copy2(du_sentinel, staging / BUNDLE_STATUS_SUBDIR / "_du.json")
     plots_dir = analysis_dir / BUNDLE_PLOTS_SUBDIR
     if plots_dir.exists():
-        shutil.copytree(plots_dir, staging / BUNDLE_PLOTS_SUBDIR, dirs_exist_ok=True)
+        # copyfile for the same reason as the reference-output copy: the zip overwrites
+        # every stamp, so copy2's per-file copystat is cost with no effect on the bundle.
+        shutil.copytree(plots_dir, staging / BUNDLE_PLOTS_SUBDIR, dirs_exist_ok=True, copy_function=shutil.copyfile)
 
 
 #: Bundle-root filename for the scrubbed compute-config identity surface (combine-side).
@@ -1993,7 +1998,7 @@ def _write_bundle_manifest(
 
 
 def _emit_bundle_zip(staging: Path, output_path: Path, *, streamed: dict[str, Path] | None = None) -> None:
-    # Emit a deterministic uncompressed zip from staging PLUS the streamed plan.
+    # Emit a deterministic, moderately compressed zip from staging PLUS the streamed plan.
     #
     # `streamed` maps archive name -> on-disk source for the harvested sources, which
     # are never copied into staging (they are byte-identical to their originals and
@@ -2005,43 +2010,33 @@ def _emit_bundle_zip(staging: Path, output_path: Path, *, streamed: dict[str, Pa
     # (`_assert_archive_namespace`, and `_plan_harvest_entry` inside the harvest). First-wins
     # is therefore a dedupe, not a choice.
     #
-    # Determinism is achieved via two mechanisms applied jointly:
-    # (1) sorted entry ordering by PATH PARTS (`a.split("/")`), which is the ordering
-    #     `sorted(staging.rglob("*"))` produced before the streamed plan existed --
-    #     PurePath sorts by its parts, not by the joined string -- so an archive with
-    #     no streamed entries is byte-identical to the previous emitter's (measured);
-    # (2) fixed date_time on every ZipInfo entry — the value
-    #     (1980, 1, 1, 0, 0, 0) is the zipfile module's minimum
-    #     valid date, eliminating mtime variability from real
-    #     filesystem timestamps.
-    # Where the bytes are READ from is not a determinism input; ordering and stamping are.
+    # The bytes are written by `bundle._archive.write_zip` under the MODERATE policy
+    # (DEFLATE level 6 for every entry except zarr chunk files, which are STORED because
+    # the toolkit already compresses each chunk). Where the bytes are READ from is not a
+    # determinism input; the entry set, the order and the stamps are, and `write_zip` fixes
+    # all three: entries sorted by PATH PARTS (`a.split("/")`, the order
+    # `sorted(staging.rglob("*"))` gave before the streamed plan existed, so an archive with
+    # no streamed entries keeps its order), date 1980-01-01 (the zipfile module's minimum
+    # valid date, which removes real filesystem timestamps) and mode 0o644 on every entry,
+    # each entry streamed in 1 MiB blocks so no file is held whole in memory.
     #
-    # Compression: ZIP_STORED (uncompressed at the file-byte level).
-    # Same rationale as the prior tar format: zarr is the bulk of
-    # bundle size and is internally chunked-compressed; external zip
-    # compression adds CPU cost without size win.
+    # Determinism contract, restated for compression: the same entries, in the same order,
+    # with the same stamps and the same content bytes, always; the same ARCHIVE bytes
+    # whenever the same zlib build compresses them. DEFLATE output is not specified across
+    # zlib implementations, so two machines with different zlib builds can write archives
+    # that differ byte for byte while every entry's content is identical. The repeat-emission
+    # tests compare two emits in one process and so hold by construction. Deliberately NOT
+    # ZIP_STORED any more: a stored member zip carries the raw solver files at full size
+    # through every later copy and share of the bundle.
     #
-    # Bytes are STREAMED through zf.open(info, "w") rather than read whole: with
-    # info.file_size set from stat() first, this is exactly what ZipFile.writestr does
-    # internally (it sets zinfo.file_size = len(data) and calls open(zinfo, "w")), so the
-    # archive is byte-identical to the writestr form while never holding a file in memory.
-    fixed_date_time = (1980, 1, 1, 0, 0, 0)
+    # Directory entries are skipped by construction (files only below); zipfile
+    # reconstructs directory structure from file paths at extraction time.
     entries: dict[str, Path] = {
         entry.relative_to(staging).as_posix(): entry for entry in sorted(staging.rglob("*")) if not entry.is_dir()
     }
     for arcname, src in (streamed or {}).items():
         entries.setdefault(arcname, src)
-    with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_STORED) as zf:
-        # Directory entries are skipped by construction (files only above); zipfile
-        # reconstructs directory structure from file paths at extraction time.
-        for arcname in sorted(entries, key=lambda a: a.split("/")):
-            src = entries[arcname]
-            info = zipfile.ZipInfo(filename=arcname, date_time=fixed_date_time)
-            info.compress_type = zipfile.ZIP_STORED
-            info.external_attr = 0o644 << 16  # rw-r--r-- file mode
-            info.file_size = src.stat().st_size
-            with src.open("rb") as fh, zf.open(info, "w") as dest:
-                shutil.copyfileobj(fh, dest, 1 << 20)
+    write_zip(entries.items(), output_path, policy=MODERATE)
 
 
 def _toolkit_source_dir() -> Path:

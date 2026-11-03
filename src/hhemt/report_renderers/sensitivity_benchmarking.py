@@ -57,7 +57,7 @@ from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
 from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
 from hhemt.swmm_output_parser import parse_total_elapsed
-from hhemt.utils import EXPERIMENT_TREE_NAME
+from hhemt.utils import EXPERIMENT_TREE_NAME, open_store
 
 # COLOUR IS THE DECOMPOSITION AXIS. Hardware is carried by the COLUMN FACET and by
 # nothing else; colour and marker symbol are LOCKED one-to-one and both key the
@@ -673,7 +673,7 @@ def render(
         _nodes: list[str] = []
         _perf_vars: dict[str, list[str]] = {}
         if _dt_path is not None and _dt_path.exists():
-            _tree = xr.open_datatree(str(_dt_path), engine="zarr", consolidated=False)
+            _tree = open_store(str(_dt_path))
             _nodes = [p for p, _n in _tree.subtree_with_keys]
             for _m in _members:
                 _nd = _find_perf_node(_tree, _m)
@@ -1933,7 +1933,7 @@ def _collect_rows(experiment: TRITONSWMM_analysis, dependent_var: str) -> tuple[
     datatree_path = resolve_experiment_tree(experiment.analysis_paths.analysis_dir)
     tree: xr.DataTree | None = None
     if datatree_path is not None and datatree_path.exists():
-        tree = xr.open_datatree(str(datatree_path), engine="zarr", consolidated=False)
+        tree = open_store(str(datatree_path))
         source_paths.append(datatree_path)
 
     for member_id, analysis in sensitivity.members.items():

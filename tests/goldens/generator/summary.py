@@ -5,7 +5,8 @@ analysis object from it (``tests/goldens/SPEC.md`` section 1).
 
 Writes the per-scenario processed stores under ``sims/{event_id}/processed/`` and the
 consolidated tiers (``analysis_datatree.zarr``, ``experiment_datatree.zarr``) at the reduced
-dimensions of ``tests/goldens/SPEC.md`` section 2.
+dimensions of ``tests/goldens/SPEC.md`` section 2. Every store carries a consolidated-metadata index at its root,
+as a layout 27 toolkit writes it (SPEC.md section 8).
 
 Specification followed (SPEC.md section 8): the published data model
 ``docs/reference/output-data-model.md`` fixes the documented variables, their units and CF
@@ -449,13 +450,13 @@ def event_stores(arm: str, network: Network, dims: Dimensions) -> dict[str, xr.D
 
 
 def write_zarr(ds: xr.Dataset, path: Path) -> None:
-    """Write one store without consolidated metadata (the data model requires ``consolidated=False``)."""
+    """Write one store with a consolidated-metadata index at its root (layout 27, SPEC.md section 8)."""
     with warnings.catch_warnings():
         # Hides zarr's UnstableSpecificationWarning, which writing a fixed-width string array (the provenance
         # coordinates, the ids and ``type``) raises because that dtype has no Zarr V3 specification. Not established:
         # that this is the only warning the filter hides.
         warnings.simplefilter("ignore")
-        ds.to_zarr(path, mode="w", consolidated=False)
+        ds.to_zarr(path, mode="w", consolidated=True)
 
 
 def write_event_processed(
@@ -566,7 +567,7 @@ def write_analysis_datatree(
     with warnings.catch_warnings():
         # The same string-dtype warning as in ``write_zarr``, here raised by writing a tree.
         warnings.simplefilter("ignore")
-        tree.to_zarr(path, mode="w", consolidated=False)
+        tree.to_zarr(path, mode="w", consolidated=True)
 
 
 def write_experiment_datatree(
@@ -613,4 +614,4 @@ def write_experiment_datatree(
     with warnings.catch_warnings():
         # The same string-dtype warning as in ``write_zarr``, here raised by writing a tree.
         warnings.simplefilter("ignore")
-        tree.to_zarr(path, mode="w", consolidated=False)
+        tree.to_zarr(path, mode="w", consolidated=True)

@@ -2965,17 +2965,18 @@ def combine_command(
     bundles: list[Path] = typer.Argument(
         ...,
         exists=True,
-        file_okay=False,
+        file_okay=True,
         dir_okay=True,
         readable=True,
-        help="Two or more completed render-bundle directories to combine.",
+        help="Two or more completed render bundles to combine: bundle directories or bundle .zip files.",
     ),
     output: Path = typer.Option(
         None,
         "--output",
         "-o",
         help=(
-            "Target directory for the combined bundle. Defaults to {first_bundle}/../combined_{n}bundles_{git_sha}/."
+            "Target for the combined bundle: {output}.zip (a value ending .zip is used as given), or a "
+            "directory with --unzipped. Defaults to {first_bundle}/../combined_{n}bundles_{git_sha}."
         ),
     ),
     declare_solver_split: bool = typer.Option(
@@ -2987,20 +2988,46 @@ def combine_command(
             "combined report. Without this, a cross-sha combine is refused."
         ),
     ),
+    unzipped: bool = typer.Option(
+        False,
+        "--unzipped",
+        help=(
+            "Write the combined bundle as a folder at --output instead of as a zip. The folder holds each "
+            "experiment's full bundle under child_crates/{experiment_id}/."
+        ),
+    ),
+    workdir: Path = typer.Option(
+        None,
+        "--workdir",
+        file_okay=False,
+        dir_okay=True,
+        help=(
+            "Directory under which the combine makes its private working folder (the inputs' render "
+            "sets are extracted there, and it is removed when the combine ends). Defaults to the "
+            "system temporary directory."
+        ),
+    ),
 ) -> None:
     """Combine N completed render bundles into one cross-experiment report + standalone bundle.
 
-    Runs a metadata-compatibility check across the bundles (aborting on any
-    blocking divergence), merges their consolidated trees, renders one
-    cross-experiment report, and emits a standalone combined RO-Crate bundle into the
-    ``--output`` directory (by default a ``combined_{n}bundles_{git_sha}`` directory
-    beside the first bundle), then prints that directory's path. The combined
-    bundle's report can be regenerated later through the Python API
-    (``CombinedBundle.regenerate_report``).
+    Each input is a bundle directory or a bundle ``.zip`` file; neither is modified. The
+    combine extracts each input's render set (everything but raw solver output) into a
+    private working folder, runs a metadata-compatibility check across the bundles
+    (aborting on any blocking divergence), renders one cross-experiment report, and emits
+    a standalone combined RO-Crate bundle as one zip (``{output}.zip``, or a
+    ``combined_{n}bundles_{git_sha}.zip`` beside the first bundle; ``--unzipped`` writes a
+    folder instead), then prints its path. Re-rendering a combined bundle's report is not
+    yet available from the zip.
     """
     from hhemt.bundle import combine_bundle
 
-    cb = combine_bundle(bundles, output_path=output, declare_solver_split=declare_solver_split)
+    cb = combine_bundle(
+        bundles,
+        output_path=output,
+        declare_solver_split=declare_solver_split is True,
+        workdir=workdir if isinstance(workdir, Path) else None,
+        unzipped=unzipped is True,
+    )
     console.print(f"[green]Combined bundle emitted:[/green] {cb.root}")
 
 
@@ -3028,29 +3055,41 @@ def report_from_bundle_command(
     # cfg_analysis.yaml (cfg-controlled, default 'plotly'), so no
     # static_backend kwarg is threaded through the CLI.
     #
+    import json
     import zipfile
 
     from hhemt.bundle import Bundle, _get_toolkit_git_sha
+    from hhemt.bundle._combine import CombinedBundle, is_combined_manifest, unpack_member_zip
 
-    if bundle_path.is_file() and bundle_path.suffix == ".zip":
-        unpack_dir = bundle_path.parent / bundle_path.stem
-        unpack_dir.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(bundle_path) as zf:
-            zf.extractall(unpack_dir)
-        bundle_root = unpack_dir
-    elif bundle_path.is_dir():
-        bundle_root = bundle_path
-    else:
+    is_zip = bundle_path.is_file() and bundle_path.suffix == ".zip"
+    if not is_zip and not bundle_path.is_dir():
         raise CLIValidationError(
             argument="bundle_path",
             message=f"{bundle_path} is neither a .zip file nor a directory",
             fix_hint=("Pass a path to a bundle.zip produced by `hhemt bundle`, or to an unpacked bundle directory."),
         )
-
-    bundle = Bundle.from_directory(bundle_root)
+    # The manifest says which kind of bundle this is: a combined bundle (it carries child_crates) is
+    # re-rendered through CombinedBundle, a single-analysis bundle through Bundle.
+    try:
+        if is_zip:
+            with zipfile.ZipFile(bundle_path) as zf:
+                head = json.loads(zf.read("bundle_manifest.json"))
+        else:
+            head = json.loads((bundle_path / "bundle_manifest.json").read_text())
+    except (KeyError, OSError, ValueError):
+        head = {}
+    combined = is_combined_manifest(head)
+    if combined:
+        bundle = CombinedBundle.from_zip(bundle_path) if is_zip else CombinedBundle.from_directory(bundle_path)
+        bundle_root = bundle.root
+        bundle_manifest = json.loads((bundle_root / "bundle_manifest.json").read_text())
+    else:
+        bundle_root = unpack_member_zip(bundle_path) if is_zip else bundle_path
+        bundle = Bundle.from_directory(bundle_root)
+        bundle_manifest = bundle.manifest
 
     local_sha = _get_toolkit_git_sha(strict=False)
-    bundle_sha = bundle.manifest.get("toolkit_git_sha", "unknown")
+    bundle_sha = bundle_manifest.get("toolkit_git_sha", "unknown")
     if bundle_sha != "unknown" and local_sha != "unknown" and bundle_sha != local_sha:
         console.print(
             f"[yellow]Toolkit git SHA divergence:[/yellow] bundle={bundle_sha}, "

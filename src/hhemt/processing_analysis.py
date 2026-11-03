@@ -22,7 +22,9 @@ from hhemt.scenario import TRITONSWMM_scenario
 from hhemt.utils import (
     current_datetime_string,
     get_file_size_MiB,
+    open_store,
     write_datatree_zarr,
+    zarr_store_has_index,
 )
 
 if TYPE_CHECKING:
@@ -115,6 +117,21 @@ def describe_member_variable_sets(
                 "Cross-member statistics over those variables are computed on a subset."
             )
     return out
+
+
+def _assert_store_index_current(store, operation: str) -> None:
+    """Raise ``ProcessingError`` if the store just written does not carry a current consolidated-metadata index.
+
+    The end-of-step run of ``analysis_validation.check_consolidated_metadata_current``: the store was published
+    by ``write_datatree_zarr`` a moment ago, so a difference here is a defect in the write path and not a
+    legacy store, and it must stop the step rather than reach a reader that trusts the index.
+    """
+    from hhemt.analysis_validation import check_consolidated_metadata_current
+    from hhemt.exceptions import ProcessingError
+
+    verdict = check_consolidated_metadata_current(store)
+    if not verdict.passed:
+        raise ProcessingError(operation=operation, filepath=str(store), reason=verdict.summary)
 
 
 class TRITONSWMM_analysis_post_processing:
@@ -448,6 +465,7 @@ class TRITONSWMM_analysis_post_processing:
         _stamp_coupled_resume_evidence(tree, self._analysis, df_status=df_status)
 
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
+        _assert_store_index_current(fname_out, "consolidate_to_datatree")
 
         from hhemt.metadata import write_rocrate_sidecar
 
@@ -564,7 +582,7 @@ class TRITONSWMM_analysis_post_processing:
                 "DataTree zarr not present (log.datatree_consolidation_complete is "
                 "False or unset). Run consolidate_to_datatree() first."
             )
-        return xr.open_datatree(path, engine="zarr", chunks="auto", consolidated=False)
+        return open_store(path, chunks="auto")
 
     def _retrieve_combined_timeseries(self, ts_mode: str) -> xr.Dataset:
         """Load per-scenario TIMESERIES zarrs and concatenate them along event_iloc.
@@ -589,7 +607,7 @@ class TRITONSWMM_analysis_post_processing:
                 )
             open_kwargs = {"chunks": "auto", "engine": self._open_engine(), "decode_timedelta": False}
             if open_kwargs["engine"] == "zarr":
-                open_kwargs["consolidated"] = False
+                open_kwargs["consolidated"] = zarr_store_has_index(ts_file)
             # Stamp the CURRENT loop position as event_iloc, for the reason given in
             # _retrieve_combined_output's loader. A per-scenario timeseries store carries no
             # event_iloc today, so this adds an index coordinate equal to the positions the
@@ -697,7 +715,7 @@ class TRITONSWMM_analysis_post_processing:
                 "decode_timedelta": False,
             }
             if open_kwargs["engine"] == "zarr":
-                open_kwargs["consolidated"] = False
+                open_kwargs["consolidated"] = zarr_store_has_index(summary_file)
             ds = xr.open_dataset(summary_file, **open_kwargs)
             # event_iloc is POSITIONAL. A summary not reprocessed after an add/remove
             # still carries the position it was stamped with, so concat on the embedded

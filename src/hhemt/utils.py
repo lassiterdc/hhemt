@@ -19,12 +19,14 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from string import Template
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 import xarray as xr
 import yaml
@@ -178,6 +180,127 @@ def resolve_experiment_tree(root: str | Path, *, arm: bool | str | None = None) 
         if cand.exists():
             return cand
     return root / EXPERIMENT_TREE_NAME
+
+
+class ExperimentTreeSummary(NamedTuple):
+    """What a renderer needs from a root consolidated store without opening it whole.
+
+    Attributes:
+        attrs: the root group's attributes, as ``xr.DataTree.attrs`` reports them.
+        members: the ``/member_*`` group paths directly under the root, sorted, each with its
+            leading slash (``"/member_0"``), as ``sorted(dt.groups)`` filtered to those names gives.
+        tier: ``"tritonswmm"`` when the first member (in sorted order) that carries any tier carries
+            the coupled ``tritonswmm/triton`` node, ``"triton_only"`` when it carries
+            ``triton_only/triton``, ``None`` when no member carries either.
+        models: every distinct model any member runs, in the order ``TRITON``, ``TRITON-SWMM``,
+            ``SWMM`` (``triton_only/triton``, ``tritonswmm/triton`` and ``swmm_only`` groups), empty
+            when no member holds one. Unlike ``tier`` this looks at EVERY member and does not stop
+            at the first tier found.
+    """
+
+    attrs: dict[str, Any]
+    members: tuple[str, ...]
+    tier: str | None
+    models: tuple[str, ...] = ()
+
+
+#: The models a member can run, in label order, with the group path under the member that records
+#: each. Mirrors ``_MODEL_TIERS`` in ``report_renderers/cross_experiment_disk_utilization.py``
+#: (a test compares the two), which cannot be imported here without a cycle.
+_SUMMARY_MODEL_TIERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("TRITON", ("triton_only", "triton")),
+    ("TRITON-SWMM", ("tritonswmm", "triton")),
+    ("SWMM", ("swmm_only",)),
+)
+
+
+def _is_group_chain(base: Path, *names: str) -> bool:
+    """Whether each directory along ``names`` under ``base`` is a stored zarr group.
+
+    A directory is a group when it holds a ``zarr.json`` whose ``node_type`` is ``"group"``. A
+    missing, unreadable or array document makes the whole chain false, matching what a full
+    ``open_datatree`` lists.
+    """
+    node = base
+    for name in names:
+        node = node / name
+        doc = node / "zarr.json"
+        try:
+            if json.loads(doc.read_text()).get("node_type") != "group":
+                return False
+        except (OSError, ValueError):
+            return False
+    return True
+
+
+def experiment_tree_summary(store: str | Path) -> ExperimentTreeSummary:
+    """Read a root consolidated store's attributes, member groups and model tier from its metadata.
+
+    A full ``xr.open_datatree`` reads the ``zarr.json`` of EVERY node in the store, which is
+    thousands of small reads on a combine's child trees, to answer three questions that live in
+    the root document and in directory listings: the root attributes (the root ``zarr.json``),
+    the member groups (the top-level directories that carry a ``zarr.json`` and are named
+    ``member_*``) and the model tier (whether ``{member}/tritonswmm/triton/zarr.json`` or
+    ``{member}/triton_only/triton/zarr.json`` exists). Every member is inspected, because the first
+    sorted member can lack both tier paths while a later one has one.
+
+    A store with no root ``zarr.json`` (a zarr-format-2 tree, whose root holds ``.zgroup``, or a path
+    that is not a store at all) falls back to ``xr.open_datatree`` and derives the same three answers
+    from it, so the caller sees exactly what a full open shows, including the error a full open
+    raises for a path that cannot be opened.
+
+    ``models`` is the union over every member, so a coupled member beside a SWMM-only one reports both.
+
+    A member counts by the existence of its ``zarr.json``. A tier counts only when every directory
+    on its path (for example ``tritonswmm`` and ``triton``, or ``swmm_only``) holds a ``zarr.json``
+    whose ``node_type`` is ``"group"``, because a full open lists only groups and never reaches a
+    subtree under a directory that lost its own document.
+
+    Not established: a member's ``node_type`` is not read; the toolkit writes members as groups.
+    """
+    store = Path(store)
+    root_doc = store / "zarr.json"
+    if not root_doc.is_file():
+        dt = open_store(str(store))
+        groups = set(dt.groups)
+        members = tuple(sorted(g for g in groups if g.count("/") == 1 and g.startswith("/member_")))
+        tier = None
+        for member in members:
+            if f"{member}/tritonswmm/triton" in groups:
+                tier = "tritonswmm"
+                break
+            if f"{member}/triton_only/triton" in groups:
+                tier = "triton_only"
+                break
+        models = tuple(
+            model
+            for model, path in _SUMMARY_MODEL_TIERS
+            if any(f"{member}/{'/'.join(path)}" in groups for member in members)
+        )
+        return ExperimentTreeSummary(dict(dt.attrs), members, tier, models)
+    attrs = dict(json.loads(root_doc.read_text()).get("attributes") or {})
+    members = tuple(
+        sorted(
+            f"/{child.name}"
+            for child in store.iterdir()
+            if child.name.startswith("member_") and child.is_dir() and (child / "zarr.json").is_file()
+        )
+    )
+    tier = None
+    for member in members:
+        node = store / member.lstrip("/")
+        if _is_group_chain(node, "tritonswmm", "triton"):
+            tier = "tritonswmm"
+            break
+        if _is_group_chain(node, "triton_only", "triton"):
+            tier = "triton_only"
+            break
+    models = tuple(
+        model
+        for model, path in _SUMMARY_MODEL_TIERS
+        if any(_is_group_chain(store / member.lstrip("/"), *path) for member in members)
+    )
+    return ExperimentTreeSummary(attrs, members, tier, models)
 
 
 #: The member-node name vocabularies, BOTH of them, inside a root consolidated store.
@@ -364,6 +487,37 @@ class BatchJobSubmissionError(Exception):
         return "\n".join(indent + line for line in text.split("\n"))
 
 
+def _tree_file_bytes(root: Path) -> int:
+    """Sum the sizes of the regular files under the directory ``root`` in one ``os.scandir`` pass.
+
+    Each entry's own ``stat`` supplies its size, so a file costs one stat call where the walk
+    this replaces (``Path.rglob`` plus ``is_file`` plus ``stat``) cost two. The count is the same:
+    a file reached through a symlink counts its TARGET's size, a dangling symlink and any other
+    non-regular entry count zero, and only real directories are descended, so a symlink to a
+    directory is neither entered nor counted. An unreadable directory contributes nothing, as an
+    unreadable entry did before.
+    """
+    total = 0
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            pending.append(Path(entry.path))
+                            continue
+                        info = entry.stat()
+                        if stat.S_ISREG(info.st_mode):
+                            total += info.st_size
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+    return total
+
+
 def fast_rmtree(
     path: str | Path,
     *,
@@ -412,12 +566,7 @@ def fast_rmtree(
         except OSError:
             pass
     else:
-        for _f in path.rglob("*"):
-            try:
-                if _f.is_file():
-                    freed += _f.stat().st_size
-            except OSError:
-                pass
+        freed = _tree_file_bytes(path)
 
     if path.is_symlink() or path.is_file():
         path.unlink()
@@ -628,7 +777,7 @@ def verify_and_flag_chapter(store: Path, flag: Path, n_expected: int) -> None:
     """
     from hhemt.exceptions import ProcessingError
 
-    ds = xr.open_zarr(store, consolidated=False)
+    ds = open_store(store, kind="zarr")
     try:
         n = ds.sizes.get("timestep_min", 0)
         if n != n_expected:
@@ -686,7 +835,7 @@ def covered_timesteps(chapters: Path) -> set:
     """
     out = set()
     for store in completed_chapters(chapters).values():
-        ds = xr.open_zarr(store, consolidated=False)
+        ds = open_store(store, kind="zarr")
         try:
             out.update(ds["timestep_min"].values.tolist())
         finally:
@@ -710,6 +859,14 @@ def reap_unflagged_chapters(chapters: Path, *, scenario_dir: Path) -> None:
             from hhemt.du_sentinels import delete_and_account
 
             delete_and_account([store], scope_dir=scenario_dir, scope="scenario")
+    # A chapter is published by rename (`write_zarr`), so an interrupted write leaves a `.zarr.tmp`
+    # sibling that the glob above does not match. It is a partial store that was never promoted,
+    # flagged chapter or not (a flagged chapter's published store is untouched by a rewrite in flight).
+    for partial in sorted(chapters.glob("chapter_*.zarr.tmp")):
+        warnings.warn(f"Discarding interrupted chapter write {partial}.", stacklevel=2)
+        from hhemt.du_sentinels import delete_and_account
+
+        delete_and_account([partial], scope_dir=scenario_dir, scope="scenario")
 
 
 def clear_raw_for_timesteps(df_outputs, timesteps, *, scenario_dir: Path) -> int:
@@ -858,7 +1015,7 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) 
             ),
         )
     ds = xr.concat(
-        [xr.open_zarr(parts[k], consolidated=False) for k in sorted(parts)],
+        [open_store(parts[k], kind="zarr") for k in sorted(parts)],
         dim="timestep_min",
     )
     # LOUD, NOT REPAIRED. With the grid declared once per scenario, a divergence
@@ -885,7 +1042,7 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) 
     # branch reads to the next editor as a case that can happen.
     _spatial: dict[str, set[tuple]] = {}
     for _k in sorted(parts):
-        _chap = xr.open_zarr(parts[_k], consolidated=False)
+        _chap = open_store(parts[_k], kind="zarr")
         try:
             for _name, _var in _chap.data_vars.items():
                 _g = tuple(
@@ -931,18 +1088,35 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) 
     #
     # Derive from data_vars ONLY -- coords carry their own grids and would send every
     # case down the fallback branch, collapsing the time axis to a single chunk.
+    #
+    # SHARDED VARIABLES ARE LEFT OUT of that unification and handled one by one below. For a
+    # sharded array xarray reads `encoding["chunks"]` as the SHARD shape when it checks that
+    # dask chunks do not straddle a zarr chunk, so a dask grid sized to the inner chunk makes
+    # the write raise "would overlap multiple Dask chunks" -- measured on chapters written
+    # with `shards`, where today's unified write fails on the first sharded variable.
     _time_chunks = {
         int(_v.encoding["chunks"][_v.dims.index("timestep_min")])
         for _v in ds.data_vars.values()
-        if "timestep_min" in _v.dims and _v.encoding.get("chunks")
+        if "timestep_min" in _v.dims and _v.encoding.get("chunks") and not _v.encoding.get("shards")
     }
     if len(_time_chunks) == 1:
         ds = ds.chunk({"timestep_min": _time_chunks.pop()})
     elif _time_chunks:
         for _v in (*ds.variables.values(), *ds.coords.values()):
+            if _v.encoding.get("shards"):
+                continue
             _v.encoding.pop("chunks", None)
             _v.encoding.pop("preferred_chunks", None)
         ds = ds.chunk({"timestep_min": min(_time_chunks)})
+    # A sharded variable is written one whole shard per dask chunk on every axis, so its
+    # dask grid IS its shard shape; the shard shape itself is carried through unchanged.
+    _sharded = {
+        _n: _v.chunk(dict(zip(_v.dims, (int(_s) for _s in _v.encoding["shards"]), strict=True)))
+        for _n, _v in ds.data_vars.items()
+        if _v.encoding.get("shards")
+    }
+    if _sharded:
+        ds = ds.assign(_sharded)
     # PUBLISH ATOMICALLY. `_publish_store_crash_safe` guarantees that `final` is either
     # ABSENT or a COMPLETE store, never an incomplete one -- so "the directory exists"
     # means "the write finished", which is what every reader of this store already
@@ -960,7 +1134,17 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) 
     # runs with --nolock and the orchestrator gate refuses on a live DRIVER rather than
     # live WORKERS, so two publishers can still reach one store. That degrades to a loud
     # rename error, which is strictly better than the silent interleave it replaces.
-    _publish_store_crash_safe(lambda _dest: ds.to_zarr(_dest, mode="w", consolidated=False), final)
+    #
+    # THE MERGED STORE STATES ITS ENCODING instead of inheriting it. Each data variable's
+    # stored settings (chunk shape, shard shape when present, codecs, dtype, fill value) are
+    # passed to the writer explicitly, so a shard setting the chapters carry reaches the
+    # published store as a stated fact. `preferred_chunks` is a read-side hint the writer
+    # rejects when it is stated, so it is the one key left out. `chunks=None` because the
+    # dask grid was set above and an automatic rechunk would contradict it.
+    _merge_encoding = {
+        _n: {_k: _e for _k, _e in _v.encoding.items() if _k != "preferred_chunks"} for _n, _v in ds.data_vars.items()
+    }
+    write_zarr(ds, final, chunks=None, encoding=_merge_encoding)
     _publish_flag_crash_safe(flag)
     # STATE 6: chapters die ONLY now, after the unified flag.
     from hhemt.du_sentinels import delete_and_account
@@ -1832,54 +2016,284 @@ def zarr_size_bytes(zarr_path: Path) -> int:
     return sum(f.stat().st_size for f in zarr_path.rglob("*") if f.is_file())
 
 
+#: Message of the ZarrUserWarning zarr raises on every consolidated-metadata write at format 3.
+#: The index is deliberate in this toolkit (it is what lets a reader open a store from one
+#: document), so the warning carries no information at the write sites below.
+_ZARR_V3_CONSOLIDATED_WARNING = ".*Consolidated metadata is currently not part in the Zarr format 3 specification.*"
+_ZARR_V3_CODEC_WARNING = ".*does not have a Zarr V3 specification.*"
+
+
+def _silence_zarr_write_warnings() -> None:
+    """Install the two message-matched filters the zarr write helpers share.
+
+    Call inside ``warnings.catch_warnings()`` so the filters leave with the block. Each is
+    matched by message, never by category, because both warnings are plain ZarrUserWarning
+    and a category filter would also hide the warnings a write SHOULD still surface.
+    """
+    warnings.filterwarnings("ignore", message=_ZARR_V3_CODEC_WARNING, category=Warning)
+    warnings.filterwarnings("ignore", message=_ZARR_V3_CONSOLIDATED_WARNING, category=Warning)
+
+
+def consolidate_zarr_store(store) -> None:
+    """Rebuild the consolidated-metadata index at the root of ``store`` from its documents on disk.
+
+    The one place the toolkit calls ``zarr.consolidate_metadata``. A group or attribute
+    written by any route after the last consolidation is invisible to a reader that trusts
+    the index, with no error, so every writer that changes a store's metadata ends here.
+    """
+    import zarr
+
+    with warnings.catch_warnings():
+        _silence_zarr_write_warnings()
+        zarr.consolidate_metadata(str(store))
+
+
 def write_datatree_zarr(
     tree: "xr.DataTree",
     fname_out: Path,
     compression_level: int = 5,
+    *,
+    encoding: dict | None = None,
+    zarr_format: int | None = None,
 ) -> None:
-    """Write a DataTree to a hierarchical zarr store.
+    """Write a DataTree to a hierarchical zarr store, with consolidated metadata.
 
-    Builds per-group encoding dicts from `return_dic_zarr_encodings()`
-    applied to each populated leaf node's dataset.
+    ``encoding=None`` builds per-group encoding dicts from `return_dic_zarr_encodings()`
+    applied to each populated leaf node's dataset at ``compression_level``; a dict is passed
+    to xarray verbatim and ``compression_level`` is then ignored. ``zarr_format=None`` keeps
+    xarray's default. The store is published through ``_publish_store_crash_safe``.
     """
-    encoding: dict = {}
-    for path, node in tree.subtree_with_keys:
-        if node.has_data:
-            key = path if path.startswith("/") else f"/{path}"
-            encoding[key] = return_dic_zarr_encodings(node.dataset, compression_level)
+    if encoding is None:
+        encoding = {}
+        for path, node in tree.subtree_with_keys:
+            if node.has_data:
+                key = path if path.startswith("/") else f"/{path}"
+                encoding[key] = return_dic_zarr_encodings(node.dataset, compression_level)
+    extra: dict[str, Any] = {} if zarr_format is None else {"zarr_format": zarr_format}
     with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message=".*does not have a Zarr V3 specification.*",
-            category=Warning,
-        )
+        _silence_zarr_write_warnings()
         _publish_store_crash_safe(
-            lambda _dest: tree.to_zarr(_dest, mode="w", encoding=encoding, consolidated=False),
+            lambda _dest: tree.to_zarr(_dest, mode="w", encoding=encoding, consolidated=True, **extra),
             fname_out,
         )
 
 
-def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto"):
-    """Write a Dataset to a zarr store through the crash-safe publisher.
+def write_zarr(
+    ds,
+    fname_out,
+    compression_level: int = 5,
+    chunks: str | dict | None = "auto",
+    *,
+    encoding: dict | None = None,
+    zarr_format: int | None = None,
+):
+    """Write a Dataset to a zarr store, with consolidated metadata, through the crash-safe publisher.
 
     ``fname_out`` is either absent or complete afterwards, never partial (see
-    ``_publish_store_crash_safe``). Numeric variables are Blosc-compressed at
-    ``compression_level``; ``chunks="auto"`` lets dask size every dimension.
+    ``_publish_store_crash_safe``). With ``encoding=None`` numeric variables are
+    Blosc-compressed at ``compression_level``; a dict is passed to xarray verbatim (``{}``
+    meaning each variable's own ``.encoding``) and ``compression_level`` is then ignored.
+    ``chunks="auto"`` lets dask size every dimension, a dict sets them, and ``None`` leaves
+    the Dataset's chunking untouched -- the form a caller that states its own encoding uses,
+    because an automatic rechunk would contradict the encoding it stated. ``zarr_format=None``
+    keeps xarray's default.
     """
-    encoding = return_dic_zarr_encodings(ds, compression_level)
+    if encoding is None:
+        encoding = return_dic_zarr_encodings(ds, compression_level)
     if chunks == "auto":
         chunks = return_dic_autochunk(ds)
-    ds = ds.chunk(chunks)
+    if chunks is not None:
+        ds = ds.chunk(chunks)
+    extra: dict[str, Any] = {} if zarr_format is None else {"zarr_format": zarr_format}
     with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message=".*does not have a Zarr V3 specification.*",
-            category=Warning,
-        )
+        _silence_zarr_write_warnings()
         _publish_store_crash_safe(
-            lambda _dest: ds.to_zarr(_dest, mode="w", encoding=encoding, consolidated=False),
+            lambda _dest: ds.to_zarr(_dest, mode="w", encoding=encoding, consolidated=True, **extra),
             fname_out,
         )
+
+
+def _refuse_unaligned_shard_append(ds, store, group, append_dim: str) -> None:
+    """Raise unless every sharded array ``ds`` extends along ``append_dim`` grows by whole shards.
+
+    Appending a partial shard rewrites the shard's existing bytes under a concurrent reader,
+    so the extent must be a multiple of the shard length along ``append_dim``. A target that
+    does not exist yet, or an array that is not sharded, has nothing to refuse.
+    """
+    import zarr
+
+    from hhemt.exceptions import ProcessingError
+
+    try:
+        target = zarr.open_group(str(store), mode="r", path=group or "")
+    except (FileNotFoundError, zarr.errors.GroupNotFoundError):
+        return
+    for name, var in ds.data_vars.items():
+        if append_dim not in var.dims or name not in target:
+            continue
+        array = target[name]
+        shards = getattr(array, "shards", None)
+        if shards is None:
+            continue
+        shard_len = int(shards[var.dims.index(append_dim)])
+        extent = int(ds.sizes[append_dim])
+        if extent % shard_len:
+            raise ProcessingError(
+                operation="append_zarr",
+                filepath=str(store),
+                reason=(
+                    f"variable {name!r} is sharded with {shard_len} along {append_dim!r} and the append "
+                    f"adds {extent}, which is not a multiple of it; appending a partial shard rewrites "
+                    "the shard's existing bytes in place"
+                ),
+            )
+
+
+def zarr_store_has_index(path) -> bool:
+    """Whether the root of the zarr store at ``path`` carries a consolidated-metadata index.
+
+    Decided by reading ONE document: the root ``zarr.json``'s ``consolidated_metadata`` key for a
+    format 3 store, or the existence of the root ``.zmetadata`` for a format 2 store (whose index
+    document that is). A path that is not a directory, an unreadable root document and a store
+    with neither answer False, which is the safe direction: the caller then reads unindexed.
+    """
+    root = Path(path)
+    root_doc = root / "zarr.json"
+    if root_doc.is_file():
+        try:
+            return json.loads(root_doc.read_text(encoding="utf-8")).get("consolidated_metadata") is not None
+        except (OSError, ValueError):
+            return False
+    return (root / ".zmetadata").is_file()
+
+
+_UNSET: Any = object()
+
+
+def open_store(path, *, group: str | None = None, chunks: Any = _UNSET, kind: str = "datatree", **kwargs: Any):
+    """Open the zarr store at ``path`` lazily, through its consolidated index when it carries one.
+
+    ``consolidated=True`` when the store's root document carries an index (``zarr_store_has_index``),
+    ``consolidated=False`` otherwise. Decided by reading that one document, NEVER by xarray's
+    ``consolidated=None`` fallback, which warns on every open of an older store and silently ignores
+    a stale index. A store inside an open ``deferred_consolidation`` block has no index and is read
+    unindexed, which lists every group on disk. ``kind`` picks the xarray opener: ``"datatree"``
+    (``open_datatree``, the default), ``"dataset"`` (``open_dataset(engine="zarr")``) or ``"zarr"``
+    (``open_zarr``); ``group``, ``chunks`` (omitted means the opener's own default) and any further
+    keyword are passed through.
+    """
+    if chunks is not _UNSET:
+        kwargs["chunks"] = chunks
+    if group is not None:
+        kwargs["group"] = group
+    consolidated = Path(path).is_dir() and zarr_store_has_index(path)
+    if kind == "datatree":
+        return xr.open_datatree(path, engine="zarr", consolidated=consolidated, **kwargs)
+    if kind == "dataset":
+        return xr.open_dataset(path, engine="zarr", consolidated=consolidated, **kwargs)
+    if kind == "zarr":
+        return xr.open_zarr(path, consolidated=consolidated, **kwargs)
+    raise ValueError(f"open_store kind must be 'datatree', 'dataset' or 'zarr', got {kind!r}")
+
+
+#: Resolved root paths of the stores that have an open ``deferred_consolidation`` block.
+_DEFERRED_STORES: set[Path] = set()
+
+
+def invalidate_consolidated_index(store) -> None:
+    """Remove the consolidated-metadata index from the root ``zarr.json`` of ``store`` atomically.
+
+    The root document is rewritten without its ``consolidated_metadata`` key through a temporary
+    sibling and ``os.replace``, so an interruption leaves either the old document (whose index is
+    still true, because nothing has been appended yet) or the new one (no index). Only a format 3
+    root document carries an index in this key; a store with no root document is left alone. Call
+    it only from ``deferred_consolidation``: a store without an index is read unindexed, which is
+    why removing it first is what makes a batch of appends crash-safe.
+    """
+    root_doc = Path(store) / "zarr.json"
+    if not root_doc.is_file():
+        return
+    document = json.loads(root_doc.read_text(encoding="utf-8"))
+    if "consolidated_metadata" not in document:
+        return
+    del document["consolidated_metadata"]
+    partial = root_doc.with_name("zarr.json.partial")
+    partial.write_text(json.dumps(document), encoding="utf-8")
+    os.replace(partial, root_doc)
+
+
+@contextmanager
+def deferred_consolidation(store) -> Iterator[None]:
+    """Run a loop of appends into one store with the index removed, and rebuild it once at the end.
+
+    On entry the store's index is removed first (``invalidate_consolidated_index``), so from the
+    first append to the rebuild no reader can trust an index that lists fewer or more groups than
+    the store holds; inside, ``append_zarr(..., consolidate=False)`` is permitted for this store.
+    A NORMAL exit rebuilds the index once through ``consolidate_zarr_store`` (skipped when no store was
+    created). An exception leaves the store without an index and re-raises: an unindexed store is read unindexed and the
+    staleness check reports its absent index. Deliberately NOT a per-append consolidation, whose
+    cost grows with the square of the appends (xarray re-reads every metadata document of the
+    store on each consolidating write).
+    """
+    key = Path(store).resolve()
+    invalidate_consolidated_index(store)
+    _DEFERRED_STORES.add(key)
+    try:
+        yield
+    finally:
+        _DEFERRED_STORES.discard(key)
+    # A block that wrote nothing into a store that did not exist has no store to index.
+    if (Path(store) / "zarr.json").is_file():
+        consolidate_zarr_store(store)
+
+
+def append_zarr(
+    ds,
+    store,
+    *,
+    group: str | None,
+    consolidate: bool = True,
+    mode: Literal["a", "w", "w-", "r+", "a-"] = "a",
+    encoding: dict | None = None,
+    zarr_format: int | None = None,
+    **to_zarr_kwargs: Any,
+) -> None:
+    """Write ``ds`` into ``group`` of an existing (or new) store IN PLACE, with the store's index current.
+
+    The in-place counterpart of ``write_zarr``: no temporary store and no rename, because the
+    store holds other groups that must not move. With ``consolidate=True`` xarray consolidates
+    the store root after the write, which already lists a group added by this call; there is no
+    second consolidation here. ``consolidate=False`` writes without touching the index and is
+    allowed ONLY inside ``with deferred_consolidation(store):`` for the same store, which removed
+    the index first and rebuilds it once; outside a block it raises ``ProcessingError``. ``mode``
+    ``"a"`` adds or extends, ``"w"`` replaces ``group`` (the whole store when ``group`` is None).
+    ``encoding`` is passed through for a new group and ``to_zarr_kwargs`` (for example
+    ``append_dim``) are passed to xarray. ``consolidated`` is not accepted; use ``consolidate``.
+    With ``append_dim`` set, a sharded target array is extended only by whole shards.
+    """
+    if "consolidated" in to_zarr_kwargs:
+        raise TypeError("append_zarr takes `consolidate`, not `consolidated`")
+    if not consolidate and Path(store).resolve() not in _DEFERRED_STORES:
+        from hhemt.exceptions import ProcessingError
+
+        raise ProcessingError(
+            operation="append_zarr",
+            filepath=str(store),
+            reason=(
+                "consolidate=False writes without updating the store's index, which leaves a stale "
+                "index when the write is interrupted; run it inside `with deferred_consolidation(store):`"
+            ),
+        )
+    append_dim = to_zarr_kwargs.get("append_dim")
+    if append_dim is not None:
+        _refuse_unaligned_shard_append(ds, store, group, append_dim)
+    if encoding is not None:
+        to_zarr_kwargs["encoding"] = encoding
+    if zarr_format is not None:
+        to_zarr_kwargs["zarr_format"] = zarr_format
+    with warnings.catch_warnings():
+        _silence_zarr_write_warnings()
+        ds.to_zarr(store, group=group, mode=mode, consolidated=consolidate, **to_zarr_kwargs)
 
 
 def write_zarr_then_netcdf(ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"):
@@ -1895,13 +2309,7 @@ def write_zarr_then_netcdf(ds, fname_out, compression_level: int = 5, chunks: st
     # first write to zarr, then write to netcdf
     write_zarr(ds, f"{fname_out}.zarr", compression_level, chunks)
     # open and write
-    ds = xr.open_dataset(
-        f"{fname_out}.zarr",
-        engine="zarr",
-        chunks="auto",
-        consolidated=False,
-        decode_timedelta=False,
-    )
+    ds = open_store(f"{fname_out}.zarr", kind="dataset", chunks="auto", decode_timedelta=False)
     write_netcdf(ds, fname_out, compression_level, chunks)
     # delete zarr
     try:

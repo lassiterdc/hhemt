@@ -46,7 +46,7 @@ dependencies:
                   # the ONLY source of the runtime graph under `pip install -e . --no-deps`.
                   # Until 2026-08-26 this was held only by hsmodels' transitive pin.
   - pyyaml
-  - zarr
+  - zarr>=3.1.4
   - netcdf4
   - scipy
   - pydap
@@ -97,7 +97,7 @@ dependencies:
   # Ten module-level imports that pyproject declared nowhere until the D142 ruling.
   # numpy and pandas are already declared above as VALIDATION pins; the other eight
   # are added here because assertion (e) requires environment.yaml to be a superset.
-  - xarray>=2024.10
+  - xarray>=2026.2
   - packaging
   - rasterio
   - psutil

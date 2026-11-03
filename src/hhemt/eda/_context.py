@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from hhemt.utils import open_store
+
 if TYPE_CHECKING:
     import geopandas as gpd
     import pandas as pd
@@ -88,7 +90,6 @@ def load_eda_context(root: Path | str) -> EdaContext:
     import geopandas as gpd
     import pandas as pd
     import rioxarray as rxr
-    import xarray as xr
 
     from hhemt.config.analysis import analysis_config
     from hhemt.config.loaders import yaml_to_model
@@ -129,7 +130,7 @@ def load_eda_context(root: Path | str) -> EdaContext:
     from hhemt.utils import resolve_experiment_tree
 
     def _open_tree(p: Path) -> xr.DataTree | None:
-        return xr.open_datatree(str(p), engine="zarr", consolidated=False) if p.exists() else None
+        return open_store(str(p)) if p.exists() else None
 
     datatree = _open_tree(root / "analysis_datatree.zarr")
     sensitivity_datatree = (

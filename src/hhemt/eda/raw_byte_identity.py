@@ -36,6 +36,7 @@ from hhemt.analysis_validation import _TRITON_REPLAY_MARKER, _TRITON_SNAPSHOT_RE
 from hhemt.eda.cross_sim_identity import compare_variable_exact
 from hhemt.member_identity import resolve_member_id_column, warn_missing_member_id_column
 from hhemt.process_simulation import CANONICAL_TRITON_VARS, load_triton_output_w_xarray, return_fpath_wlevels
+from hhemt.utils import write_zarr
 
 #: TRITON raw per-timestep variables, in the order load_triton_output_w_xarray tags them
 #: (MH->max_wlevel_m, H->wlevel_m, QX->velocity_x_mps, QY->velocity_y_mps).
@@ -892,7 +893,7 @@ def check_raw_byte_identity(primary, *, cfg_analysis, eda_cfg):
     _encoding = {"identical": {"dtype": "float64"}}
     if "max_abs_diff" in ds:
         _encoding["max_abs_diff"] = {"dtype": "float64"}
-    ds.to_zarr(artifact, mode="w", consolidated=False, encoding=_encoding)
+    write_zarr(ds, artifact, chunks=None, encoding=_encoding)
     # DECLARE WHAT WAS READ. This check never opens analysis_datatree.zarr; it byte-compares
     # the RAW TRITON per-timestep rasters and nothing else. The file list is exactly what
     # return_fpath_wlevels globs -- the four MH/H/QX/QY prefixes named in the disclosed-

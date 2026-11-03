@@ -138,12 +138,14 @@ def test_capture_stamps_the_committer_date_whatever_the_author_date_and_machine_
     ],
 )
 def test_provenance_is_read_from_the_store_the_merge_opens(tmp_path, stores):
-    """Property: the provenance attrs come from the SAME root store ``merge_experiment_trees`` opens.
+    """Property: the provenance attrs come from the SAME root store the combine's root-tree check opens.
+
+    The check is ``_combine._check_root_tree``.
 
     Class: every root-store subset a bundle can carry, including the two-store roots on which two
     resolvers once disagreed. Shape row: Settlement 3 ("the tree ``_combine_merge._open_experiment_tree``
-    resolves"). Why required: a read from a different store than the merged data is a date and sha
-    that describe other data than the figure draws. Killed by: replacing the read's resolver with a
+    resolves"). Why required: a read from a different store than the one the combine checks and reads is a date
+    and sha that describe other data than the figure draws. Killed by: replacing the read's resolver with a
     fixed first-existing walk over a different name order. Second correct implementation: calling
     ``_combine_merge._resolve_root_tree`` directly instead of ``utils.resolve_experiment_tree``.
     Every store here carries a DISTINCT sha, so a read from the wrong store is visible.
@@ -270,15 +272,18 @@ def test_distinct_solver_count_counts_pins_and_is_blind_to_capture_state_and_lab
 def test_a_one_pin_two_builds_refusal_precedes_the_merge_and_every_write_and_no_flag_waives_it(
     tmp_path, monkeypatch, attr, declare_solver_split
 ):
-    """Property: a one-pin disagreement stops ``combine_bundle`` before the merge, before the emit, with no waiver.
+    """Property: a one-pin disagreement stops ``combine_bundle`` before the root-tree check and the emit.
+
+    No flag waives it.
 
     Class: disagreeing attribute (date or sha) crossed with ``declare_solver_split``. Shape row: Settlement 3
     ("sits in ``combine_bundle`` beside the compatibility gate ... before any write to the output path ... No
     flag waives it"). Why required: the emit's first write is the output directory, so a refusal that fires
     later leaves a partly written bundle, and a waiver would publish one series that mixes two builds.
-    Killed by: moving the agreement call after ``merge_experiment_trees`` or into the read-model writer, or
-    skipping it when ``declare_solver_split`` is true. Second correct implementation: running the agreement
-    call before ``check_bundle_compatibility``, which also leaves nothing reached and stays green.
+    Killed by: moving the agreement call after the root-tree check (``_check_root_tree``) or into the
+    read-model writer, or skipping it when ``declare_solver_split`` is true. Second correct
+    implementation: running the agreement call before ``check_bundle_compatibility``, which also leaves
+    nothing reached and stays green.
     Two-arm differential: the violating set (below) reaches neither step; the agreeing control set, positioned
     differently (one arm's attribute absent, not different), reaches both.
     Class: REGRESSION guard (a held test; adopted from the coder's scratch harness after evaluating that it
@@ -294,7 +299,9 @@ def test_a_one_pin_two_builds_refusal_precedes_the_merge_and_every_write_and_no_
         date=differing[1] if attr == "date" else "20260828",
     )
     reached: list[str] = []
-    monkeypatch.setattr(C, "merge_experiment_trees", lambda r: reached.append("merge") or "merged")
+    ids = iter(f"exp_{i}" for i in range(10))
+    monkeypatch.setattr(C, "_experiment_id", lambda root: next(ids))
+    monkeypatch.setattr(C, "_check_root_tree", lambda root: reached.append("root-check"))
     monkeypatch.setattr(C, "_emit_combined_bundle", lambda *a, **k: reached.append("emit"))
     monkeypatch.setattr(C.CombinedBundle, "from_directory", classmethod(lambda cls, p: "handle"))
     out = tmp_path / "combined_out"
@@ -310,7 +317,9 @@ def test_a_one_pin_two_builds_refusal_precedes_the_merge_and_every_write_and_no_
         date=None if attr == "date" else "20260828",
     )
     assert (
-        C.combine_bundle([first, absent], tmp_path / "control_out", declare_solver_split=declare_solver_split)
+        C.combine_bundle(
+            [first, absent], tmp_path / "control_out", declare_solver_split=declare_solver_split, unzipped=True
+        )
         == "handle"
     )
-    assert reached == ["merge", "emit"]
+    assert reached == ["root-check", "root-check", "emit"]

@@ -67,6 +67,7 @@ import yaml
 
 import hhemt.constants as cnst
 from hhemt.analysis import TRITONSWMM_analysis
+from hhemt.bundle._archive import extract_zip
 from hhemt.system import TRITONSWMM_system
 from hhemt.utils import (
     fast_rmtree,
@@ -1241,8 +1242,9 @@ class TRITON_SWMM_experiment:
                 hs = cls._connect_to_hydroshare(key)
             hs_resource = hs.resource(key)
             zip_path = Path(hs_resource.download(dest.parent))
-            with ZipFile(zip_path, "r") as z:
-                z.extractall(dest.parent)
+            # Threaded extract (same files and bytes as extractall) because a Bag holds many
+            # small files and creating them serially is the cost on a shared file system.
+            extract_zip(zip_path, dest.parent)
             with ZipFile(zip_path, "r") as z:
                 top_level_dirs = {Path(f).parts[0] for f in z.namelist() if Path(f).parts}
             if len(top_level_dirs) == 1:
