@@ -1099,11 +1099,17 @@ unpaired_allowlist:
       on the next real change to this file rather than on arrival.
   - renderer: cross_experiment_compatibility
     caption: src/hhemt/report_templates/captions/cross_experiment_compatibility.rst
-    renderer_sha256: bc60990be0c353fa53d73610389b44daa0841d602e084951485beacbf92c4356
+    renderer_sha256: aad9331b1ecaf4b0dbdc5bfd5665d910bd2b7d3de81e42a5cb3b77e4802c6ea2
     justification_2026_11_02_develop_integration: >-
       Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that the model label, the member count and the root attributes are read from `experiment_tree_summary` (metadata only, the union of models) instead of a full open, giving develop's label and count.
       Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
       This is a PAIRING discharge on a re-read, not a formatting exemption; the digest expires on the next change to this renderer.
+    justification_2026_11_03_arm_text: >-
+      The expected-divergence sentence for the model toggles and the sentence about pinned solvers say
+      experiment where they said arm, and the toggle sentence no longer names a rule. Caption RE-READ IN
+      FULL (5 lines): it quotes neither sentence and describes the page columns and the combine stop, which
+      these edits do not touch. Digest recorded after the last edit, so the exemption expires on the next
+      change to this renderer.
     justification: >-
       docs-and-experiment-system <- sidequest-clearing-08-30 merge. FORMATTING ONLY --
       discharged by measurement, not by judgement, and following the AST-equivalence

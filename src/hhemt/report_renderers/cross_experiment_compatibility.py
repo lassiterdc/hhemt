@@ -320,8 +320,8 @@ def _combine_provenance_rows(analysis_dir: Path) -> list[dict]:
 
 
 #: The model-toggle fields ALONE. Kept separate from the expected-set below because
-#: `_divergence_message`'s first branch is keyed on it and renders "these bundles are
-#: the two model arms of one experiment" -- a sentence that is TRUE only for a toggle.
+#: `_divergence_message`'s first branch is keyed on it and renders "these experiments
+#: run different models, so their model settings differ" -- a sentence that is TRUE only for a toggle.
 _MODEL_TOGGLE_FIELDS = frozenset({"toggle_triton_model", "toggle_tritonswmm_model", "toggle_swmm_model"})
 
 #: Identity fields whose divergence IS the combine's intended structure. The model
@@ -377,10 +377,7 @@ def _divergence_message(d: dict) -> str:
     # is true only of a model toggle, and every divergence -- toggles included -- carries
     # bucket=experiment/severity=warning, so branch order cannot separate them.
     if field in _MODEL_TOGGLE_FIELDS:
-        return (
-            "Expected: these bundles are the two model arms of one experiment; the toggle "
-            "divergence is what makes them arms. Admitted by the paired-model-arm rule."
-        )
+        return "Expected: these experiments run different models, so their model settings differ."
     if bucket == "hpc":
         return (
             "Expected: the bundles ran on different HPC systems or partitions. Compute "
@@ -397,7 +394,7 @@ def _divergence_message(d: dict) -> str:
     if field == "TRITONSWMM_branch_key":
         return (
             "Expected: the bundles run different pinned TRITON-SWMM solvers, declared at "
-            "combine time. Running one arm at a fix and the other at its ancestor is what "
+            "combine time. Running one experiment at a fix and the other at its ancestor is what "
             "makes a bit-identical result evidence for both."
         )
     if bucket == "experiment" and severity == "warning":

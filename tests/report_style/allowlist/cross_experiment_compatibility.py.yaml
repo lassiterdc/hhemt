@@ -9,14 +9,6 @@ entries:
   status: baseline
   reason: present when the style test was added
 - rule: number_word
-  string: 'Expected: these bundles are the two model arms of one experiment; the toggle divergence is what makes them arms. Admitted by the paired-model-arm rule.'
-  status: baseline
-  reason: present when the style test was added
-- rule: number_word
   string: 'Sensitivity-axis divergence: the two bundles sweep different rows or columns of the compute matrix.'
-  status: baseline
-  reason: present when the style test was added
-- rule: retired_word
-  string: 'Expected: these bundles are the two model arms of one experiment; the toggle divergence is what makes them arms. Admitted by the paired-model-arm rule.'
   status: baseline
   reason: present when the style test was added
