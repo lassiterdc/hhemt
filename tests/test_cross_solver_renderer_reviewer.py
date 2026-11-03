@@ -246,13 +246,55 @@ def test_a_not_run_figure_keeps_its_sentence_and_the_same_plot_area():
     fig, facts = _figure(payload)
     assert facts["not_run_cell_count"] == 1
     notes = " ".join(re.sub(r"<br>", " ", a.text or "") for a in fig.layout.annotations)
-    assert re.search(r"x marks a not_run cell", notes)
-    assert re.search(r"NOT a measured zero", notes)
+    assert re.search(r"x marks a solver that has no model run at that compute configuration", notes)
+    assert re.search(r"A missing model run is not a measured zero", notes)
     assert fig.layout.height - fig.layout.margin.t - fig.layout.margin.b == 368
 
     clean_cells = [c if c["status"] == "ok" else {**c, "status": "ok", "value": 5.0} for c in cells]
     clean = {**payload, "cells": clean_cells}
     fig2, facts2 = _figure(clean)
     assert facts2["not_run_cell_count"] == 0
-    assert "not_run" not in " ".join(a.text or "" for a in fig2.layout.annotations)
+    clean_notes = " ".join(a.text or "" for a in fig2.layout.annotations)
+    assert "measured zero" not in clean_notes
+    assert "no model run" not in clean_notes
     assert fig2.layout.height - fig2.layout.margin.t - fig2.layout.margin.b == 368
+
+
+_NOT_RUN_NOTE = (
+    "x marks a solver that has no model run at that compute configuration. "
+    "A missing model run is not a measured zero. "
+    "The compute configuration stays on the x axis, so the missing model run is visible."
+)
+
+
+@pytest.mark.parametrize("model_arms", [["triton"], ["triton", "tritonswmm"]])
+def test_the_not_run_note_reads_exactly_the_approved_three_sentences_at_every_figure_width(model_arms):
+    """The whole joined note is pinned, so the third sentence (the one with an antecedent) cannot regress unseen.
+
+    Invariant: with the line wraps normalised away, the note under a figure that has a missing cell is
+    exactly the approved three sentences. The coder's pins reach only sentences one and two, so a note
+    restoring ``so its absence is visible`` (no antecedent for ``its``) stays green there. A second correct
+    implementation that stays green: any wrap width, since only the unwrapped text is compared. The two
+    parametrised widths (one panel, two panels) wrap the note differently.
+    """
+    solvers = ["a" * 8 + "0" * 32, "b" * 8 + "0" * 32]
+    configs = ["run_mode=clean|n_mpi=1|n_omp=1|n_gpus=0", "run_mode=clean|n_mpi=4|n_omp=1|n_gpus=0"]
+    cells = [
+        {"solver": s, "model_arm": arm, "config": c, "value": 3.0, "status": "ok"}
+        for arm in model_arms
+        for s in solvers
+        for c in configs
+    ]
+    cells[-1] = {**cells[-1], "status": "not_run", "value": None}
+    payload = {
+        "metric": "wallclock_seconds",
+        "model_arms": model_arms,
+        "solvers": solvers,
+        "configs": configs,
+        "cells": cells,
+    }
+    fig, facts = _figure(payload)
+    assert facts["not_run_cell_count"] == 1
+    notes = [a.text for a in fig.layout.annotations if a.text and a.text.startswith("x marks")]
+    assert len(notes) == 1
+    assert re.sub(r"\s+", " ", notes[0].replace("<br>", " ")).strip() == _NOT_RUN_NOTE

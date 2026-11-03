@@ -545,9 +545,9 @@ def _build_figure(cells: list[_Cell], payload: dict[str, Any], prov: ProvenanceL
     if not_run_count:
         bottom_px = add_figure_caption(
             fig,
-            "x marks a not_run cell: that solver has no simulation at that config, which is "
-            "NOT a measured zero. A config missing from one solver is kept on the x axis so "
-            "its absence is visible.",
+            "x marks a solver that has no model run at that compute configuration. A missing "
+            "model run is not a measured zero. The compute configuration stays on the x axis, "
+            "so the missing model run is visible.",
             content_w_px=430 * n_cols - _MARGIN_L_PX - _MARGIN_R_PX,
             plot_h_px=_PLOT_H_PX,
             axis_band_px=_X_AXIS_BAND_PX,
