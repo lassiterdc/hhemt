@@ -75,7 +75,7 @@ from hhemt.provenance import producing_stamp
 from hhemt.utils import ROOT_TREE_NAMES, open_store
 from hhemt.version_migration.constants import (
     BUNDLE_MANIFEST_FILENAME,
-    BUNDLE_SCHEMA_VERSION,
+    COMBINED_BUNDLE_SCHEMA_VERSION,
 )
 
 # Combined-bundle layout constants.
@@ -1366,7 +1366,7 @@ def _write_combined_bundle_manifest(
     a single-analysis ``source_paths_by_renderer`` (neither fits an N-experiment
     bundle) AND a volatile ``created_at_utc`` wall-clock. This writer carries the
     N-experiment identity surface (``experiment_ids`` / ``child_crates`` /
-    ``combined_of``) at the same ``BUNDLE_SCHEMA_VERSION`` the local toolkit emits,
+    ``combined_of``) at the same ``COMBINED_BUNDLE_SCHEMA_VERSION`` the local toolkit emits,
     and OMITS ``created_at_utc`` so two combines are byte-identical (CR4). The
     deterministic ``combined_of`` list IS the provenance surface; child crates
     retain their own timestamps.
@@ -1374,7 +1374,7 @@ def _write_combined_bundle_manifest(
     from hhemt.bundle import _dependency  # function-local: avoids a top-level bundle import cycle
 
     manifest = {
-        "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
+        "bundle_schema_version": COMBINED_BUNDLE_SCHEMA_VERSION,
         "combined": True,
         "toolkit_git_sha": git_sha,
         # The three-field stamp, matching the single-bundle sibling. `toolkit_git_sha`
@@ -1642,11 +1642,12 @@ class CombinedBundle:
             No ``bundle_manifest.json`` under ``path``.
         BundleSchemaError
             The manifest's ``bundle_schema_version`` does not EXACTLY equal the
-            local ``BUNDLE_SCHEMA_VERSION``. Note this is stricter than
-            :meth:`Bundle.from_directory`, which admits older bundles: a
-            combined bundle must match exactly, so one emitted by any other
-            toolkit version must be re-combined from its children rather than
-            read here.
+            local ``COMBINED_BUNDLE_SCHEMA_VERSION``. This guard compares the combined
+            bundle's own version, not the member version: :meth:`Bundle.from_directory`
+            tests each member bundle against ``BUNDLE_SCHEMA_VERSION`` and refuses
+            older member bundles too, so both readers are exact-match and neither admits
+            an older bundle. A combined bundle emitted by any other toolkit version must
+            be re-combined from its children rather than read here.
 
         Notes
         -----
@@ -1663,10 +1664,10 @@ class CombinedBundle:
 
         manifest = json.loads(manifest_path.read_text())
         version = manifest.get("bundle_schema_version")
-        if version != BUNDLE_SCHEMA_VERSION:
+        if version != COMBINED_BUNDLE_SCHEMA_VERSION:
             raise BundleSchemaError(
                 f"Combined bundle {root} has bundle_schema_version={version} "
-                f"!= local BUNDLE_SCHEMA_VERSION={BUNDLE_SCHEMA_VERSION}."
+                f"!= local COMBINED_BUNDLE_SCHEMA_VERSION={COMBINED_BUNDLE_SCHEMA_VERSION}."
             )
         return cls(root=root)
 

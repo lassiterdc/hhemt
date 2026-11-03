@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 
 from hhemt.bundle._combine import CombinedBundle
-from hhemt.version_migration.constants import BUNDLE_SCHEMA_VERSION
+from hhemt.version_migration.constants import COMBINED_BUNDLE_SCHEMA_VERSION
 
 
 def _member_zip_bytes() -> bytes:
@@ -25,7 +25,7 @@ def _member_zip_bytes() -> bytes:
 
 
 def _combined_zip(path: Path, extra: dict[str, bytes] | None = None) -> Path:
-    manifest = {"bundle_schema_version": BUNDLE_SCHEMA_VERSION, "child_crates": ["child_crates/e1.zip"]}
+    manifest = {"bundle_schema_version": COMBINED_BUNDLE_SCHEMA_VERSION, "child_crates": ["child_crates/e1.zip"]}
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("bundle_manifest.json", json.dumps(manifest))
         zf.writestr("child_crates/e1.zip", _member_zip_bytes())

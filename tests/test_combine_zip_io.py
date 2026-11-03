@@ -33,7 +33,7 @@ import yaml
 
 from hhemt.bundle import _combine as C
 from hhemt.exceptions import ProcessingError
-from hhemt.version_migration.constants import BUNDLE_SCHEMA_VERSION
+from hhemt.version_migration.constants import BUNDLE_SCHEMA_VERSION, COMBINED_BUNDLE_SCHEMA_VERSION
 
 _CPU = {
     "run_mode": "clean",
@@ -113,7 +113,7 @@ def seams(monkeypatch):
         (output_path / "bundle_manifest.json").write_text(
             json.dumps(
                 {
-                    "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
+                    "bundle_schema_version": COMBINED_BUNDLE_SCHEMA_VERSION,
                     "experiment_ids": list(experiment_ids),
                     "child_crates": list(child_crates),
                 },

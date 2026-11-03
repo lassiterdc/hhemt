@@ -16,6 +16,7 @@ from hhemt.exceptions import ConfigurationError, ProcessingError
 from hhemt.version_migration.constants import (
     BUNDLE_MANIFEST_FILENAME,
     BUNDLE_SCHEMA_VERSION,
+    COMBINED_BUNDLE_SCHEMA_VERSION,
 )
 
 
@@ -56,9 +57,9 @@ def test_blocking_aborts(tmp_path, monkeypatch):
 def test_combinedbundle_from_directory(tmp_path):
     root = tmp_path / "combined"
     root.mkdir()
-    # NOTE: the manifest MUST carry the local bundle_schema_version — CombinedBundle
+    # NOTE: the manifest MUST carry the local combined schema version — CombinedBundle
     # .from_directory validates it (CR5), so an empty {} manifest raises BundleSchemaError.
-    (root / BUNDLE_MANIFEST_FILENAME).write_text(f'{{"bundle_schema_version": {BUNDLE_SCHEMA_VERSION}}}')
+    (root / BUNDLE_MANIFEST_FILENAME).write_text(f'{{"bundle_schema_version": {COMBINED_BUNDLE_SCHEMA_VERSION}}}')
     cb = CB.CombinedBundle.from_directory(root)
     assert cb.root == root.resolve()
 
@@ -68,7 +69,7 @@ def test_from_directory_rejects_wrong_schema_version(tmp_path):
 
     root = tmp_path / "combined_wrongver"
     root.mkdir()
-    (root / BUNDLE_MANIFEST_FILENAME).write_text(f'{{"bundle_schema_version": {BUNDLE_SCHEMA_VERSION + 1}}}')
+    (root / BUNDLE_MANIFEST_FILENAME).write_text(f'{{"bundle_schema_version": {COMBINED_BUNDLE_SCHEMA_VERSION + 1}}}')
     with pytest.raises(BundleSchemaError):
         CB.CombinedBundle.from_directory(root)
 

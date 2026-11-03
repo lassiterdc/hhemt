@@ -92,23 +92,23 @@ def test_a_directory_member_zip_has_bundle_relative_entry_names(tmp_path: Path) 
     assert not any(n.startswith("exp/") for n in names)
 
 
-def test_the_schema_version_is_one_above_the_previous_generation() -> None:
-    """Property: ``BUNDLE_SCHEMA_VERSION`` is 8, one above the 7 the combined layout started from.
+def test_the_member_and_combined_schema_versions_are_separate_constants() -> None:
+    """Property: member bundles are at 7 and combined bundles at 8, as two separate constants.
 
-    Input class: the single constant. Approved-shape row: section 5.1 row 1a.3
-    ("``BUNDLE_SCHEMA_VERSION`` bumped by one with the bump's reason in its comment") and section 5.1
-    gate facts ("bumped once, in 1a.3").
+    Input class: the two constants. Approved scope: change 1103-1104 (separate member and combined
+    schema constants; the member name kept and set back from 8 to 7).
 
-    Why required: the consume-side guard is an exact match, so a bump of two, or none, either strands
-    every bundle emitted at 7 for no reason or lets a v7 reader open a v8 layout.
+    Why required: both readers are exact-match, so one shared constant made the combined layout's
+    bump strand every schema-7 member bundle, which `hhemt combine` reads through the member reader.
 
-    Class: NEW CAPABILITY, held green. Plausible wrong implementation: 9, or 7 left in place; red
-    under either. Reachability: the constant is read at import. Both-states anchor: the check
-    compares with a literal and with the comment's own `v8` label. Invocation not isolatable from
-    this tree - discrimination shown instead: setting the constant to 9 reds it. Second correct
-    implementation: none; the value is fixed by the row.
+    Class: REGRESSION, red on the pre-change tree, where the member constant is 8 and the combined
+    constant does not exist. Plausible wrong implementation: the member constant left at 8 or the
+    combined one at 7; red under either. Both-states anchor: compares with literals and with the
+    comment's own `v8` label. Second correct implementation: any pair of distinct names holding 7 and 8
+    would pass an equivalent test, because the check turns on the values and the comment label.
     """
     import hhemt.version_migration.constants as K
 
-    assert K.BUNDLE_SCHEMA_VERSION == 8
+    assert K.BUNDLE_SCHEMA_VERSION == 7
+    assert K.COMBINED_BUNDLE_SCHEMA_VERSION == 8
     assert "v8" in Path(K.__file__).read_text()
