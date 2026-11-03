@@ -66,6 +66,7 @@ ACRONYMS = frozenset(
         "TRITON", "SWMM", "SLURM", "HTML", "JSON", "YAML", "CSV", "GPU", "GPUS", "MPI", "OPENMP",
         "NAVD", "EPSG", "DEM", "CRS", "CPU", "CPUS", "HPC", "SIF", "UTC", "URL", "HTTP", "HTTPS",
         "NVIDIA", "ZARR", "GIS", "ASCII", "UTF", "PNG", "SVG", "PDF", "RAM", "NOAA", "NASA", "ECDF", "DOCTYPE",
+        "EDA", "SHA", "ULP", "WSE", "TSV", "API", "CSS", "OMP", "RSS",
     }
 )  # fmt: skip
 
@@ -101,7 +102,7 @@ PROSE_RULES: dict[str, re.Pattern[str]] = {
     "filler_adverb": re.compile(rf"\b(?:{_FILLERS})\b", re.I),
     "planning_word": re.compile(rf"\b(?:{_PLANNING})\b", re.I),
 }
-CAPITALS = re.compile(r"\b[A-Z]{4,}\b")
+CAPITALS = re.compile(r"\b[A-Z]{3,}\b")
 RETIRED = re.compile(rf"(?<![A-Za-z0-9_])(?:{_RETIRED})(?![A-Za-z0-9_])", re.I)
 ALL_RULES = (*PROSE_RULES, "capitals", "retired_word")
 
@@ -351,6 +352,21 @@ I = "Sub-analysis label"
 def test_planted_source_returns_one_hit_per_rule() -> None:
     hits = scan_python(_PLANTED)
     assert sorted(Counter(rule for rule, _ in hits).items()) == sorted((rule, 1) for rule in ALL_RULES)
+
+
+@pytest.mark.parametrize("word", ["NOT", "ALL", "ARE"])
+def test_a_three_letter_word_in_capitals_is_caught(word: str) -> None:
+    """Class: a three-letter word set in capitals for emphasis (brief rule 8: bold carries emphasis).
+
+    Control: the same sentence with the word in lower case has no capitals hit.
+    """
+    assert "capitals" in [r for r, _ in scan_string(f"Do {word} change these here")]
+    assert "capitals" not in [r for r, _ in scan_string(f"Do {word.lower()} change these here")]
+
+
+def test_a_listed_three_letter_initialism_is_not_flagged() -> None:
+    """Class: initialisms the report prints. Deleting one from ACRONYMS reddens 28 EDA hits or the SHA label."""
+    assert "capitals" not in [r for r, _ in scan_string("The EDA report runs here")]
 
 
 def test_retired_word_in_a_two_word_label_is_caught() -> None:
