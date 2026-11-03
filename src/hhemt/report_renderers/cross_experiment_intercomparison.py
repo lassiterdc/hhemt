@@ -107,8 +107,8 @@ def _build_intercomparison_html(source: Path, report_cfg) -> str:
 
     if not pairs:
         body = (
-            "<p class='note'>This page is not shown: the combined experiments are not one clean and one "
-            "resume experiment with a compute configuration in common.</p>"
+            "<p class='note'>This page is not shown: no result of a clean experiment could be compared "
+            "with a result of a resume experiment.</p>"
         )
         return _plain_html(heading, body)
 

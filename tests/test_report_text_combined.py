@@ -277,6 +277,41 @@ def test_the_comparison_page_shows_a_table_with_pairs_and_a_notice_without(tmp_p
     assert "<p class='note'>" in without
 
 
+def test_the_empty_pair_notice_claims_no_cause_the_page_cannot_observe(tmp_path: Path) -> None:
+    """The renderer sees only the pair list, which five different causes leave empty.
+
+    Input class: the empty pair list. Plausible wrong implementation: a notice that names one cause
+    (the old text named a missing clean and resume pair and a shared compute configuration).
+    The assertion turns on the absence of that claim, which differs between the old and new text.
+    """
+    page = _intercomparison_page(tmp_path, [])
+    notice = re.search(r"<p class='note'>(.*?)</p>", page).group(1)
+
+    assert re.fullmatch(r"This page is not shown: [^.]+\.", notice)
+    assert "compute configuration" not in notice
+    assert "in common" not in notice
+
+
+def test_the_caption_bolds_only_names_the_comparison_page_prints(tmp_path: Path) -> None:
+    """Brief rule 9: every bold span of the caption is an element name the page prints.
+
+    Input class: a page with one pair for each key-result variable the combine step compares; the
+    variable names are read from `_INTERCOMPARISON_VARS` and never typed here. Control: the old
+    italic label `Clean vs resume` bolded is not printed by the page, so the harness reports it missing.
+    """
+    from tests.test_caption_page_kinds import CAPTIONS, bold_names, missing_names, page_text
+
+    caption = (CAPTIONS / "cross_experiment_intercomparison.rst").read_text(encoding="utf-8")
+    from hhemt.bundle._combine import _INTERCOMPARISON_VARS
+
+    pairs = [{**_PAIR, "variable": variable} for _children, variable in _INTERCOMPARISON_VARS]
+    text = page_text(_intercomparison_page(tmp_path, pairs))
+
+    assert bold_names(caption) == ["clean_vs_resume", "max_abs_diff"]
+    assert missing_names(caption, text) == []
+    assert missing_names("**Clean vs resume** reports", text) == ["Clean vs resume"]
+
+
 def test_the_compute_configuration_group_lists_every_field_the_table_splits_out(tmp_path: Path) -> None:
     """The caption says the compute configuration is split into columns, and the group text
     names no count. Plausible wrong implementation: a hand-written "six fields" that goes stale
