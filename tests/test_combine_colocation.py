@@ -11,6 +11,7 @@ composed page per (base-experiment, plot_id), carrying the figure's ORIGINAL cat
 from __future__ import annotations
 
 import json
+import re
 from pathlib import PurePosixPath
 
 from hhemt.bundle.combined_snakefile_generator import (
@@ -449,8 +450,8 @@ def test_composed_page_stem_humanizes_to_the_curated_label(tmp_path) -> None:
 #
 # The combined-report navigation shape has three candidate forms; the first is current:
 #
-#   base — child (current)       f"{base} — {child}" if child else base
-#   child — base                 f"{child} — {base}" if child else base
+#   base: child (current)        f"{base}: {child}" if child else base
+#   child: base                  f"{child}: {base}" if child else base
 #   child only                   child or base
 #
 # The ONE place that changes is the `"subcategory":` value in
@@ -510,3 +511,34 @@ def test_harvested_figures_sharing_a_group_carry_distinct_label_tuples(tmp_path)
             f"Colliding tuples render one row and the earlier figures are unreachable. "
             f"Members: {[stem for stem, _ in members]}"
         )
+
+
+def test_the_composed_page_title_joins_experiment_and_figure_with_a_colon() -> None:
+    """Brief rule 8: no em dash. Input class: a composed page for one experiment and one plot id.
+
+    The style test cannot see this title (each side of the join is one interpolation), so the title is
+    read by name. Fails against `fa98781e`, where the title is `myexp — Peak flood depth`.
+    """
+    page = _compose_model_pair_page("myexp", "peak_flood_depth", _TS_HTML, _TRI_HTML)
+    title = re.search(r"<title>(.*?)</title>", page).group(1)
+
+    assert title.startswith("myexp: ")
+    assert "\u2014" not in title
+
+
+def test_the_combined_generator_f_strings_carry_no_em_dash() -> None:
+    """The sidebar label and page title of the combined report use a colon. Control: before the edit
+    the scan returns the f-strings that start at lines 410 and 659."""
+    import ast
+    from pathlib import Path
+
+    import hhemt.bundle.combined_snakefile_generator as gen
+
+    tree = ast.parse(Path(gen.__file__).read_text(encoding="utf-8"))
+    bad = [
+        n.lineno
+        for n in ast.walk(tree)
+        if isinstance(n, ast.JoinedStr)
+        and any(isinstance(v, ast.Constant) and isinstance(v.value, str) and "\u2014" in v.value for v in n.values)
+    ]
+    assert bad == []

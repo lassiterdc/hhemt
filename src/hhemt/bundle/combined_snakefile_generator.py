@@ -408,7 +408,7 @@ def _compose_model_pair_page(
         body += _section("triton", tri_html)
     return (
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
-        f"<title>{_html.escape(base_eid)} — "
+        f"<title>{_html.escape(base_eid)}: "
         f"{_html.escape(humanize_plot_id(plot_id, member_labels, event_labels))}</title>"
         f"<style>{root_css_vars}\n{_MODEL_STACK_CSS}</style>"
         # Defined ONCE per composed page rather than inlined into each iframe's onload
@@ -649,14 +649,14 @@ def _harvest_per_experiment_rule_specs(bundle_root: Path) -> tuple[RuleSpec, ...
                         # labels, patterns, htmlindex)`, verified by introspection against the
                         # installed snakemake 9.15.0 -- so the user's three-level
                         # `Key Results -> synth_cc_resume -> Benchmarking` is unreachable. This
-                        # renders it as `Key Results -> [synth_cc_resume — Benchmarking]`: both
+                        # renders it as `Key Results -> [synth_cc_resume: Benchmarking]`: both
                         # tokens, in his order, one click instead of two.
                         #
                         # The `base`-only fallback is load-bearing, not defensive: several figures
                         # carry NO child subcategory (`_TMPL_SYSTEM_OVERVIEW` and
                         # `_TMPL_DISK_UTILIZATION` declare `category` and no `subcategory`), and an
-                        # unconditional compose would give them a trailing-em-dash label.
-                        "subcategory": f"{base} — {subcategory}" if subcategory else base,
+                        # unconditional compose would give them a trailing-colon label.
+                        "subcategory": f"{base}: {subcategory}" if subcategory else base,
                         # RETIRED CLAIM, kept because naming a retirement beats deleting it.
                         # A `figure` facet IS emitted here -- see `"labels"` below. What stood
                         # here said it must not be, and that claim is FALSE against the

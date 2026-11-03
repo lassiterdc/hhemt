@@ -135,7 +135,7 @@ def test_combine_pip2_roundtrip(golden_rendered, tmp_path):
     # ONE cohesive combined --report. It carries the fixed cross-experiment categories and,
     # for each child experiment, composed pages under paired_figures/{base}/, each filed
     # under the figure's ORIGINAL category with a subcategory naming the base experiment
-    # (`{base} — {child subcategory}`, or `{base}` alone). No index.html front door.
+    # (`{base}: {child subcategory}`, or `{base}` alone). No index.html front door.
     from hhemt.report_renderers._reporting_sets import get_reporting_set
 
     html_report = cb.root / "analysis_report.html"
