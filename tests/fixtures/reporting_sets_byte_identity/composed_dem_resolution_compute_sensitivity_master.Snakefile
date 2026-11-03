@@ -1022,7 +1022,7 @@ rule plot_eda_compute_sensitivity:
             "plots/eda/config_diff_maps.html",
             caption="report/captions/eda_compute_sensitivity.rst",
             category="Key Results",
-            subcategory="Compute-config EDA",
+            subcategory="Compute configuration EDA",
             labels={"figure": "Config-diff maps"},
         )
     params:

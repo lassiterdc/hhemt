@@ -1,6 +1,2 @@
 source: src/hhemt/report_renderers/_reporting_sets.py
-entries:
-- rule: retired_word
-  string: Compute-config EDA
-  status: baseline
-  reason: present when the style test was added
+entries: []

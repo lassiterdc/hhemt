@@ -274,12 +274,12 @@ def build_cross_experiment_diff_figure(combined_root: Path):
 
     if not models:
         caption_text += (
-            " No difference panels are drawn: the combined experiments hold no clean and resume pair to compare."
+            " Difference panels are not shown: the combined experiments hold no clean and resume pair to compare."
         )
     elif not diffs_present:
         caption_text += (
-            " No difference panels are drawn: every compared pair is bit-identical, so "
-            "resume minus clean is exactly zero everywhere and a difference map would "
+            " Difference panels are not shown: every compared pair is bit-identical, so "
+            "resume minus clean is zero everywhere and a difference map would "
             "carry no information. The reference panel below is the clean, uninterrupted "
             "run on each hardware family."
         )
@@ -482,7 +482,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             height=plot_h + _T_MARGIN + b_px,
             width=_FIG_W,
             margin=dict(t=_T_MARGIN, l=30, r=30, b=b_px),
-            title="Clean vs resume, spatial: child bundles unavailable at render time",
+            title="Clean vs resume, spatial: experiment bundles unavailable at render time",
             paper_bgcolor="white",
         )
         return fig

@@ -408,7 +408,7 @@ _TMPL_EDA_COMPUTE_SENSITIVITY = RuleSpecTemplate(
     report_kwargs={
         "caption": "report/captions/eda_compute_sensitivity.rst",
         "category": "Key Results",
-        "subcategory": "Compute-config EDA",
+        "subcategory": "Compute configuration EDA",
         "labels": '{"figure": "Config-diff maps"}',
     },
     wildcards=(),
