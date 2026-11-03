@@ -11,5 +11,5 @@ entries:
   count: 2
 - rule: retired_word
   string: sa_id
-  status: baseline
-  reason: present when the style test was added
+  status: permitted
+  reason: Dictionary key written by the validation layer, which forbids renaming it; the page prints the member id it holds, never the key.

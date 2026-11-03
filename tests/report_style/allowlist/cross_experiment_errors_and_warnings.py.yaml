@@ -2,13 +2,13 @@ source: src/hhemt/report_renderers/cross_experiment_errors_and_warnings.py
 entries:
 - rule: capitals
   string: <td class='fail' title='{}'>FAIL</td>
-  status: baseline
-  reason: present when the style test was added
+  status: permitted
+  reason: Status label of a check cell, a name the reader sees and not emphasis; the single-analysis page prints the same verdicts as marks, and harmonising the two pages is not required by the style brief.
 - rule: capitals
   string: <td class='pass-qualified' title='{}'>PASS*</td>
-  status: baseline
-  reason: present when the style test was added
+  status: permitted
+  reason: Status label of a check cell, a name the reader sees and not emphasis; the single-analysis page prints the same verdicts as marks, and harmonising the two pages is not required by the style brief.
 - rule: capitals
   string: 'e;width:100%;font-size:13px;}th,td{padding:6px 10px;border:1px solid #DADADA;text-align:left;}th{background:#232D4B;color:#fff;}td.pass{color:#1F7'
-  status: baseline
-  reason: present when the style test was added
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.

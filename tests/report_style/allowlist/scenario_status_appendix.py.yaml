@@ -2,5 +2,5 @@ source: src/hhemt/report_renderers/scenario_status_appendix.py
 entries:
 - rule: retired_word
   string: sa_id
-  status: baseline
-  reason: present when the style test was added
+  status: permitted
+  reason: Name in a set that classifies column names; no code writes a scenario status column with this name, so the page never prints it.

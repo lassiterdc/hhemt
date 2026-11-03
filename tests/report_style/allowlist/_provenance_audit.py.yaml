@@ -2,5 +2,5 @@ source: src/hhemt/report_renderers/_provenance_audit.py
 entries:
 - rule: hedge
   string: 'renderer {} declared sources it did not read (likely toggle-skipped panels):'
-  status: baseline
-  reason: present when the style test was added
+  status: permitted
+  reason: Python warning text for the maintainer; the page never prints it.

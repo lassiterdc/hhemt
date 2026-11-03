@@ -2,5 +2,5 @@ source: src/hhemt/report_renderers/disk_utilization.py
 entries:
 - rule: retired_word
   string: sims
-  status: baseline
-  reason: present when the style test was added
+  status: permitted
+  reason: Directory name the toolkit writes under the analysis directory, used to skip child directories; the page never prints it.
