@@ -3756,7 +3756,7 @@ def _wrap_html_doc(
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
         f"{tabulator_head}"
         f"<style>{inline_css}{_SUPPLEMENTAL_CSS}{frag_styles}</style></head><body>"
-        f"<h2>{_esc(page_title)} — {_esc(analysis_id)}</h2>"
+        f"<h2>{_esc(page_title)}: {_esc(analysis_id)}</h2>"
         f"{_jump_nav(section_titles)}"
         f"{body}"
         f"{frag_mounts}"

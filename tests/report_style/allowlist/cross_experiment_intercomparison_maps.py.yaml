@@ -1,13 +1,5 @@
 source: src/hhemt/report_renderers/cross_experiment_intercomparison_maps.py
 entries:
-- rule: em_dash
-  string: <b>Panel {}</b> — {}
-  status: baseline
-  reason: present when the style test was added
-- rule: em_dash
-  string: '{} — Clean vs resume spatial diff maps'
-  status: baseline
-  reason: present when the style test was added
 - rule: filler_adverb
   string: 'drawn: every compared pair is bit-identical, so resume minus clean is exactly zero everywhere and a difference map would carry no information. The'
   status: baseline

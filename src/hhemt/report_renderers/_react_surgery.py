@@ -144,7 +144,7 @@ function reportRenderGuardPanel(err, where) {
                             borderRadius: "4px", border: "1px solid #E0B4B4" } },
           String((err && err.name) || "Error") + ": " + String((err && err.message) || err)),
         e("div", { style: { marginTop: "8px", fontSize: "12px", color: "#1A1A1A" } },
-          "The rest of the report is unaffected \\u2014 use the sidebar to open another " +
+          "The rest of the report is unaffected. Use the sidebar to open another " +
           "category. Please copy the line above into a bug report.")
     );
 }

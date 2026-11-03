@@ -957,7 +957,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
             # overrun of the horizontal edges for an overrun of the vertical one. Font size is
             # the axis with slack. The floor is 8px — below that the label stops being legible
             # and the honest failure is a visibly small label rather than a silent overlap.
-            _label_text = f"<b>Panel {chr(ord('A') + _panel_ix[0])}</b> — {_class_descriptor(ctx, g_)}"
+            _label_text = f"<b>Panel {chr(ord('A') + _panel_ix[0])}</b>: {_class_descriptor(ctx, g_)}"
             _panel_px = max(1.0, (_p_top - _p_bot) * _layout.plot_h)
             _label_font = 13
             while _label_font > 8 and text_width_px(_label_text, font_px=_label_font) > _panel_px * 0.92:
@@ -973,7 +973,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                     textangle=-90,
                     showarrow=False,
                     font=dict(size=_label_font, color="#111"),
-                    # `<b>Panel X</b> — {descriptor}`, the format `_config_diff` uses. The
+                    # `<b>Panel X</b>: {descriptor}`, the format `_config_diff` uses. The
                     # descriptor names what the class CONTAINS, derived from the members the
                     # byte-identity partition actually produced -- so if a future dataset puts
                     # CPU and GPU configs in one class the label says so, rather than
@@ -1300,7 +1300,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         if _eid and _eid not in _bases:
             _bases.append(_eid)
     _span = " vs ".join(_bases)
-    _page_title = f"{_span} — Clean vs resume spatial diff maps" if _span else "Clean vs resume spatial diff maps"
+    _page_title = f"Clean vs resume spatial diff maps: {_span}" if _span else "Clean vs resume spatial diff maps"
     fig.update_layout(
         height=plot_h + _T_MARGIN + b_px,
         width=_FIG_W,

@@ -567,3 +567,57 @@ def test_the_sources_list_names_no_retired_column_of_the_sweep_definition_file()
     ]
     assert listed != []
     assert sorted(set(listed) & _RETIRED_ID_COLUMNS) == []
+
+
+def test_the_error_panel_sentence_has_no_escaped_em_dash() -> None:
+    """The style test skips constants named *_DEFS, so an escaped em dash in the injected error panel
+    is checked here by name. Control: the first assertion proves the constant read holds the sentence."""
+    from hhemt.report_renderers import _react_surgery
+
+    assert "Please copy the line above" in _react_surgery._GUARD_DEFS
+    assert "\\u2014" not in _react_surgery._GUARD_DEFS
+
+
+_EM_DASH_SPELLINGS = ("\u2014", "\\u2014", "&mdash;", "&#8212;", "&#x2014;")
+_ERROR_PANEL_ANCHOR = "Please copy the line above"
+
+
+def _em_dash_spellings_on_the_sentence_lines(guard_defs: str) -> list[str]:
+    """Return each em dash spelling found on the physical lines that carry the error-panel sentence.
+
+    The window is the line holding the sentence's last words and the two lines above it, because the
+    sentence is joined across source lines by ``+``. A JavaScript comment elsewhere in the constant is
+    outside the window, so a comment that quotes a dash does not fail this check.
+    """
+    lines = guard_defs.splitlines()
+    at = next(i for i, line in enumerate(lines) if _ERROR_PANEL_ANCHOR in line)
+    window = "\n".join(lines[max(0, at - 2) : at + 1])
+    return [spelling for spelling in _EM_DASH_SPELLINGS if spelling in window]
+
+
+def test_the_error_panel_sentence_carries_no_em_dash_in_any_spelling() -> None:
+    """The injected error-panel sentence prints no em dash, in any of its five spellings.
+
+    Property: no spelling of an em dash appears on the source lines that carry the sentence.
+    Class: the five spellings in ``_EM_DASH_SPELLINGS``. The sibling test above reads only the
+    six-character JS escape, and the style test skips constants named ``*_DEFS``, so the character
+    itself and the HTML entities are read by nothing else.
+    Why required: the constant is a non-raw string, so writing a single backslash before ``u2014``
+    in its source stores the character, and the sibling test stays green on it. The reader then
+    sees a dash that style brief rule 8 forbids.
+    What kills it: re-spelling the dash in the sentence as the character, ``&mdash;`` or a
+    numeric entity.
+    Second correct implementation: a comma, a colon, or a sentence split over three source lines
+    still passes, because only the dash spellings are asserted.
+    Control: the first loop proves the check fires on each spelling planted into a copy of the
+    sentence lines, so an empty result on the real constant is not an artifact of the matcher.
+    """
+    from hhemt.report_renderers import _react_surgery
+
+    guard_defs = _react_surgery._GUARD_DEFS
+    assert _ERROR_PANEL_ANCHOR in guard_defs
+    for spelling in _EM_DASH_SPELLINGS:
+        planted = guard_defs.replace(_ERROR_PANEL_ANCHOR, f"{spelling} {_ERROR_PANEL_ANCHOR}", 1)
+        assert planted != guard_defs, "the planted copy must differ from the real constant"
+        assert _em_dash_spellings_on_the_sentence_lines(planted) == [spelling]
+    assert _em_dash_spellings_on_the_sentence_lines(guard_defs) == []

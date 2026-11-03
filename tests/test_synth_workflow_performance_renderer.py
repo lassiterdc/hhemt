@@ -121,7 +121,7 @@ def test_page_title_and_jump_nav_cover_this_pages_sections(tmp_path):
     analysis_dir.mkdir()
     html, _ = _render(analysis_dir)
 
-    assert "<h2>Workflow Performance — A1</h2>" in html
+    assert "<h2>Workflow Performance: A1</h2>" in html
     for title in metadata._WORKFLOW_PERFORMANCE_SECTION_TITLES:
         assert f'href="#{metadata._anchor(title)}"' in html
     for title in metadata._SECTION_TITLES:

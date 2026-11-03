@@ -245,7 +245,7 @@ def test_renderer_emits_three_sections(tmp_path):
 def test_page_title_and_jump_nav(tmp_path):
     """<h2> page title plus a jump-nav anchoring each sub-section."""
     html, _, _ = _render(tmp_path, doc=_full_crate())
-    assert "<h2>Metadata — A1</h2>" in html
+    assert "<h2>Metadata: A1</h2>" in html
     for anchor in _ANCHORS:
         assert f'href="#{anchor}"' in html
 
