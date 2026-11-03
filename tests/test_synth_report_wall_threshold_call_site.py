@@ -33,12 +33,12 @@ _GROUP = "/triton_only/triton"
 
 
 class _Tree:
-    """The consolidated tree: one model group carrying the per-event peak water level."""
+    """The consolidated tree: one model group carrying the per-event peak flood depth."""
 
     groups = (_GROUP,)
 
     def __getitem__(self, group):
-        return SimpleNamespace(to_dataset=lambda: xr.Dataset({"max_wlevel_m": _DEPTH}))
+        return SimpleNamespace(to_dataset=lambda: xr.Dataset({"max_flood_depth": _DEPTH}))
 
 
 def _analysis(building, outside, buffer_m):

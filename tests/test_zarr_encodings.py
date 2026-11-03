@@ -3,7 +3,7 @@
 Verifies:
 - store_float32=True sets dtype float32 on float data-vars (and not on int/coord vars).
 - store_float32=False preserves float64 (no dtype override).
-- time_chunk sets the on-disk chunk size on the timestep_min axis; None declares no
+- time_chunk sets the on-disk chunk size on the timestep axis; None declares no
   chunks key at all, which leaves zarr's auto-chunker to size each store from its FULL
   shape -- so a chapter's spatial grid becomes a function of its time extent. That is
   the defect utils.resolve_chunk_grid exists to remove, and it is why the test below is
@@ -21,7 +21,7 @@ _CF_ATTRS = {
     "long_name": "water surface elevation",
     "standard_name": "sea_surface_height_above_geopotential_datum",
     "units": "m",
-    "cell_methods": "timestep_min: point",
+    "cell_methods": "timestep: point",
 }
 
 
@@ -30,8 +30,8 @@ def _make_ds(ntsteps: int = 6, ny: int = 4, nx: int = 5) -> xr.Dataset:
     data = rng.standard_normal((ntsteps, ny, nx)).astype(np.float64)
     da = xr.DataArray(
         data,
-        dims=["timestep_min", "y", "x"],
-        coords={"timestep_min": np.arange(ntsteps), "y": np.arange(ny), "x": np.arange(nx)},
+        dims=["timestep", "y", "x"],
+        coords={"timestep": np.arange(ntsteps), "y": np.arange(ny), "x": np.arange(nx)},
         attrs=dict(_CF_ATTRS),
     )
     return xr.Dataset({"wlevel": da})
@@ -52,7 +52,7 @@ def test_store_float32_false_preserves_float64():
 def test_time_chunk_sets_timestep_axis_chunk():
     ds = _make_ds(ntsteps=6, ny=4, nx=5)
     enc = return_dic_zarr_encodings(ds, time_chunk=2)
-    # timestep_min is axis 0 of (timestep_min, y, x)
+    # timestep is axis 0 of (timestep, y, x)
     assert enc["wlevel"]["chunks"] == (2, 4, 5)
 
 

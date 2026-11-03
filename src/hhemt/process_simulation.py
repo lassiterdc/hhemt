@@ -27,12 +27,13 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from hhemt.config.analysis import ClearRawValue
+from hhemt.cf_conventions import apply_cf_attributes, stamp_timestep_coordinate, timeseries_variable_attrs
+from hhemt.config.analysis import DEFAULT_FLOOD_VELOCITY_MIN_DEPTH_M, ClearRawValue
 from hhemt.exceptions import ProcessingError
 from hhemt.log import TRITONSWMM_model_log
 from hhemt.run_simulation import TRITONSWMM_run
 from hhemt.subprocess_utils import run_subprocess_with_tee
-from hhemt.swmm_output_parser import pollutant_time_of_max_conc_min, retrieve_SWMM_outputs_as_datasets
+from hhemt.swmm_output_parser import pollutant_time_of_max_conc, retrieve_SWMM_outputs_as_datasets
 from hhemt.utils import (
     _publish_flag_crash_safe,
     chapter_flag_for,
@@ -456,7 +457,7 @@ class TRITONSWMM_sim_post_processing:
                             "chapter build (raw output file missing between listing and read)",
                             filepath=f,
                             reason=(
-                                f"variable {varname!r} at timestep_min={tstep_min} was listed by "
+                                f"variable {varname!r} at timestep={tstep_min} was listed by "
                                 "return_fpath_wlevels but does not exist at read time. Refusing to "
                                 "skip it: a skipped cell yields a silently-incomplete flagged chapter."
                             ),
@@ -471,8 +472,8 @@ class TRITONSWMM_sim_post_processing:
                 # a skip that drops a whole variable is a worse survivor than the index guard
                 # this change removed, because it produces a flagged chapter missing that
                 # variable at every timestep of the chunk.
-                ds_var_chunk = xr.concat(lst_ds_timesteps, dim="timestep_min")
-                ds_var_chunk = ds_var_chunk.assign_coords(timestep_min=chunk_timesteps)
+                ds_var_chunk = xr.concat(lst_ds_timesteps, dim="timestep")
+                ds_var_chunk = ds_var_chunk.assign_coords(timestep=chunk_timesteps)
                 lst_ds_vars_chunk.append(ds_var_chunk)
 
                 # Clear per-variable temporaries
@@ -481,7 +482,7 @@ class TRITONSWMM_sim_post_processing:
 
             ds_chunk = xr.merge(lst_ds_vars_chunk)
             pending_chunks.append(ds_chunk)
-            pending_timesteps += ds_chunk.sizes["timestep_min"]
+            pending_timesteps += ds_chunk.sizes["timestep"]
 
             # Flush one zarr append per batch: trigger on the timestep count OR the
             # byte cap process_append_batch_memory_budget_mb (flush_budget_MiB), so the
@@ -489,11 +490,9 @@ class TRITONSWMM_sim_post_processing:
             # per_ts_MiB so the float64-width assumption stays single-sited.
             pending_bytes_MiB = pending_timesteps * per_ts_MiB
             if pending_timesteps >= append_batch_timesteps or pending_bytes_MiB >= flush_budget_MiB:
-                ds_batch = (
-                    xr.concat(pending_chunks, dim="timestep_min") if len(pending_chunks) > 1 else pending_chunks[0]
-                )
-                _n = ds_batch.sizes["timestep_min"]
-                _ts = list(ds_batch["timestep_min"].values)
+                ds_batch = xr.concat(pending_chunks, dim="timestep") if len(pending_chunks) > 1 else pending_chunks[0]
+                _n = ds_batch.sizes["timestep"]
+                _ts = list(ds_batch["timestep"].values)
                 _store = chapter_store_for(_chapters, _next_chapter)
                 _flag = chapter_flag_for(_chapters, _next_chapter)
                 encoding = return_dic_zarr_encodings(
@@ -505,6 +504,7 @@ class TRITONSWMM_sim_post_processing:
                 ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
                 ds_batch.attrs["output_creation_date"] = current_datetime_string()
                 ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
+                stamp_timestep_coordinate(ds_batch)
                 write_zarr(ds_batch, _store, chunks=None, encoding=encoding)
                 verify_and_flag_chapter(_store, _flag, _n)
                 if _clear_raw_ok:
@@ -522,9 +522,9 @@ class TRITONSWMM_sim_post_processing:
 
         # Flush any remaining pending timesteps (final partial batch)
         if pending_chunks:
-            ds_batch = xr.concat(pending_chunks, dim="timestep_min") if len(pending_chunks) > 1 else pending_chunks[0]
-            _n = ds_batch.sizes["timestep_min"]
-            _ts = list(ds_batch["timestep_min"].values)
+            ds_batch = xr.concat(pending_chunks, dim="timestep") if len(pending_chunks) > 1 else pending_chunks[0]
+            _n = ds_batch.sizes["timestep"]
+            _ts = list(ds_batch["timestep"].values)
             _store = chapter_store_for(_chapters, _next_chapter)
             _flag = chapter_flag_for(_chapters, _next_chapter)
             encoding = return_dic_zarr_encodings(
@@ -536,6 +536,7 @@ class TRITONSWMM_sim_post_processing:
             ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
             ds_batch.attrs["output_creation_date"] = current_datetime_string()
             ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
+            stamp_timestep_coordinate(ds_batch)
             write_zarr(ds_batch, _store, chunks=None, encoding=encoding)
             verify_and_flag_chapter(_store, _flag, _n)
             if _clear_raw_ok:
@@ -756,7 +757,7 @@ class TRITONSWMM_sim_post_processing:
             verbose=verbose,
             log_field=self.log.performance_timeseries_written,
             # `_tseries`-SUFFIXED, and the suffix is what keeps the summary's `cell_methods`
-            # off this artifact. The series has collapsed NEITHER `timestep_min` nor `Rank`,
+            # off this artifact. The series has collapsed NEITHER `timestep` nor `Rank`,
             # so the reduction string the summary carries would mislabel it. Not a
             # `processing_analysis._MODE_CONFIG` key, because the per-rank series is never
             # consolidated; it reaches only `cf_conventions._CF_VARIABLE_OVERRIDES_BY_MODE`.
@@ -826,8 +827,8 @@ class TRITONSWMM_sim_post_processing:
                 "Ensure the simulation completed successfully and wrote outputs to the expected location."
             )
 
-        reporting_interval_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
-        min_per_tstep = reporting_interval_s / 60
+        reporting_interval = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
+        min_per_tstep = reporting_interval / 60
         # Delegate parsing + per-rank diff aggregation to the module-level helper so
         # the V0008 migration and the regression test share one source of truth.
         # The helper raises FileNotFoundError if no performance{N}.txt files match.
@@ -848,7 +849,7 @@ class TRITONSWMM_sim_post_processing:
         # measured to fail under every reading of the across-member concat. Immediately
         # after expand_dims is the first moment the dimensioned form is available, and it
         # is before `_write_output`, so the record reaches disk on the per-scenario store
-        # and from there rides the summary reduction (which reduces over timestep_min and
+        # and from there rides the summary reduction (which reduces over timestep and
         # Rank, leaving an event_iloc coord intact) into the consolidated tree.
         ds = stamp_perf_column_set(ds)
 
@@ -1031,7 +1032,7 @@ class TRITONSWMM_sim_post_processing:
         # cell_methods string names. `<Col>_min` IS a reduction over the same domain and could
         # share the axis, but its descriptor is not supplied in this change, and a retained
         # axis with no documented method is worse than no axis at all.
-        _summed = ds.sum(dim="timestep_min", skipna=False)
+        _summed = ds.sum(dim="timestep", skipna=False)
         ds = _summed.max(dim="Rank", keepdims=True)
 
         # THE RANK-COHERENT AND MIN FAMILIES, plus the two scalars that name the selection.
@@ -1185,14 +1186,14 @@ class TRITONSWMM_sim_post_processing:
         raw_out_type = self._analysis.cfg_analysis.TRITON_raw_output_type
         fldr_out_triton = self._run.raw_triton_output_dir(model_type="tritonswmm")
 
-        reporting_interval_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
+        reporting_interval = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
         rds_dem = self._system.processed_dem_rds
 
         start_time = time.time()
 
         # Get output files
         df_outputs = triton_raw_frame_or_raise(
-            fldr_out_triton, reporting_interval_s, model_label="the TRITON-SWMM coupled model", fname_out=fname_out
+            fldr_out_triton, reporting_interval, model_label="the TRITON-SWMM coupled model", fname_out=fname_out
         )
 
         self._streaming_chunked_zarr_write(
@@ -1264,14 +1265,14 @@ class TRITONSWMM_sim_post_processing:
             raise FileNotFoundError("out_triton path is None. Ensure TRITON-only model is enabled in system config.")
         fldr_out_triton = out_triton / raw_out_type
 
-        reporting_interval_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
+        reporting_interval = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
         rds_dem = self._system.processed_dem_rds
 
         start_time = time.time()
 
         # Get output files
         df_outputs = triton_raw_frame_or_raise(
-            fldr_out_triton, reporting_interval_s, model_label="the TRITON-only model", fname_out=fname_out
+            fldr_out_triton, reporting_interval, model_label="the TRITON-only model", fname_out=fname_out
         )
 
         self._streaming_chunked_zarr_write(
@@ -1474,8 +1475,6 @@ class TRITONSWMM_sim_post_processing:
         verbose: bool,
         mode: str,
     ):
-        from hhemt.cf_conventions import apply_cf_attributes
-
         processed_out_type = self._analysis.cfg_analysis.target_processed_output_type
 
         if isinstance(ds, xr.Dataset):
@@ -1959,6 +1958,7 @@ class TRITONSWMM_sim_post_processing:
             self._scenario.event_iloc,
             target_dem_res,
             chunksize_mb=chunksize_mb,
+            flood_velocity_min_depth_m=self._analysis.cfg_analysis.flood_velocity_min_depth_m,
             verbose=verbose,
         )
 
@@ -2658,6 +2658,9 @@ def reclaim_scenario_scoped_classes(scen, classes, *, verbose: bool = False) -> 
             _captured = 0 if _ds is None else int(_ds.sizes.get("subcatchment_id", 0))
             if _ds is not None and _declared is not None and _captured == _declared:
                 _hydro_cap.parent.mkdir(parents=True, exist_ok=True)
+                # Written without the `_write_output` choke point, so the unit of every variable is stamped
+                # here: the store is a stored output like the others and a variable with no unit is a defect.
+                apply_cf_attributes(_ds, "hydrology_rpt_summary")
                 write_zarr(_ds, _hydro_cap, chunks=None, encoding={})
                 # A WRITE; the scenario's DU sentinel is re-derived at consolidate_scenario.
             elif verbose:
@@ -2896,13 +2899,13 @@ def _aggregate_perf_tseries(
     of corrected per-rank deltas.
 
     The diff fix vs the pre-V0008 implementation: prior code called ``pd.diff()`` on a
-    ``(timestep_min, Rank)`` MultiIndex frame, which crossed rank boundaries and produced
+    ``(timestep, Rank)`` MultiIndex frame, which crossed rank boundaries and produced
     inter-rank-skew rather than per-rank deltas. ``groupby(level='Rank').diff()`` keeps
     the diff within each rank's checkpoint sequence.
 
     Module-level so the V0008 migration and the production ``_export_performance_tseries``
     aggregator share one source of truth. The optional ``min_per_tstep`` argument lets
-    production preserve its prior coord-value semantics (``timestep_min = filename_int *
+    production preserve its prior coord-value semantics (``timestep = filename_int *
     min_per_tstep``); the default ``1.0`` matches V0008's prescription and the
     regression-test fixtures.
         ``resume_steps`` is REQUIRED and keyword-only, deliberately: it is the caller's
@@ -2922,7 +2925,7 @@ def _aggregate_perf_tseries(
         raise FileNotFoundError(f"Performance directory {raw_perf_dir} contains no performance{{N}}.txt files.")
 
     # Integer reporting-step index of every file actually parsed. The reset-row
-    # selection below joins on THIS, never on the `timestep_min` coord: that coord is
+    # selection below joins on THIS, never on the `timestep` coord: that coord is
     # `tstep_iloc * min_per_tstep` where `min_per_tstep = TRITON_reporting_timestep_s/60`,
     # which is not exactly representable when the reporting interval is not a clean
     # multiple of 60 s -- a float `.loc[]` lookup would then match nothing and drop the
@@ -2956,7 +2959,7 @@ def _aggregate_perf_tseries(
         tstep_iloc = int(m.group(1))
         # Parse BEFORE recording the iloc. Ordering is load-bearing: `tstep_ilocs_seen`
         # feeds the ledger-driven reset-row join below, which converts an iloc to a
-        # `timestep_min` coord and looks it up in `full.index`. Recording an iloc whose
+        # `timestep` coord and looks it up in `full.index`. Recording an iloc whose
         # file was then skipped yields a coord that is absent from the index, `idx`
         # comes back empty, and the resume correction is dropped SILENTLY -- the exact
         # failure the join's own comment was written to prevent. The 0-byte branch above
@@ -2975,8 +2978,8 @@ def _aggregate_perf_tseries(
             continue
         tstep_ilocs_seen.add(tstep_iloc)
         df_ranks = df_ranks.reset_index()
-        df_ranks["timestep_min"] = tstep_iloc * min_per_tstep
-        df_ranks = df_ranks.set_index(["timestep_min", "Rank"])
+        df_ranks["timestep"] = tstep_iloc * min_per_tstep
+        df_ranks = df_ranks.set_index(["timestep", "Rank"])
         dfs.append(df_ranks)
         df_labels.append(f.name)
         if (df_ranks < 0).any().any():
@@ -3058,7 +3061,7 @@ def _aggregate_perf_tseries(
     #
     # WHY NOT THE ARITHMETIC IDENTITY: `SWMM_XFER + SWMM_MPI + SWMM_STEP + SWMM_OTHER ==
     # SWMM` closes only on an emitted PER-RANK row. `_export_performance_summary` reduces
-    # with `.sum(dim="timestep_min").max(dim="Rank")`, and `max` applies PER VARIABLE, so
+    # with `.sum(dim="timestep").max(dim="Rank")`, and `max` applies PER VARIABLE, so
     # post-reduction the children OVERSHOOT their parent on every multi-rank member --
     # the identity fires where nothing is wrong, and in the mixed case it points the
     # other way. Names survive both reductions; the identity does not. The identity is
@@ -3094,7 +3097,7 @@ def _aggregate_perf_tseries(
     # Join: TRITON writes config_N.cfg 1-based contiguous and performance{N}.txt shares
     # that index, so a resume FROM step t produces its first post-restart checkpoint at
     # the smallest surviving index > t. Selection is on the INTEGER file index captured
-    # during the parse loop, NEVER on the `timestep_min` coord -- that coord is
+    # during the parse loop, NEVER on the `timestep` coord -- that coord is
     # `tstep_iloc * min_per_tstep` and is not exactly representable when the reporting
     # interval is not a clean multiple of 60 s, so a float `.loc[]` lookup would match
     # nothing and drop the correction silently.
@@ -3114,7 +3117,7 @@ def _aggregate_perf_tseries(
             )
     # Compare in the SAME space the index was built in. `reset_ilocs` holds raw
     # performance{N}.txt file indices, but `full.index`'s first level is
-    # `timestep_min = tstep_iloc * min_per_tstep` (the assignment in the parse loop above), so
+    # `timestep = tstep_iloc * min_per_tstep` (the assignment in the parse loop above), so
     # comparing `int(t)` against a file index silently matches NOTHING whenever
     # min_per_tstep != 1.0 -- and production passes TRITON_reporting_timestep_s / 60, which
     # is 1.0 only for a 60 s reporting interval, while every test
@@ -3163,7 +3166,7 @@ def _aggregate_perf_summary(
 ) -> xr.Dataset:
     """Reduce per-rank deltas to a slowest-rank wallclock summary.
 
-    Computes ``_aggregate_perf_tseries(...).sum(dim='timestep_min', skipna=False)
+    Computes ``_aggregate_perf_tseries(...).sum(dim='timestep', skipna=False)
     .max(dim='Rank')`` — the ``skipna=False`` is not incidental: it is what makes a
     column that only SOME allocations emitted reduce to NaN rather than to a finite,
     understated number. The max is deliberately left at its default; the asymmetry is
@@ -3198,7 +3201,7 @@ def _aggregate_perf_summary(
     # the two cannot drift as prose. This is the arm the V0008 and V0018 migrations call, so a
     # form applied to only one of the two would re-write the OTHER shape onto a tree those
     # migrations exist to repair.
-    _summed = ds.sum(dim="timestep_min", skipna=False)
+    _summed = ds.sum(dim="timestep", skipna=False)
     _out = _summed.max(dim="Rank", keepdims=True)
 
     # THE RANK-COHERENT AND MIN FAMILIES, DUPLICATED FROM `_export_performance_summary` FOR
@@ -3331,10 +3334,10 @@ def parse_performance_file(filepath):
 #: module imports nothing from `hhemt.eda` -- measured, 0 occurrences -- so defining it
 #: there and importing it here would invert the dependency and cycle.
 TRITON_RAW_VAR_BY_PREFIX: dict[str, str] = {
-    "MH": "max_wlevel_m",
-    "H": "wlevel_m",
-    "QX": "velocity_x_mps",
-    "QY": "velocity_y_mps",
+    "MH": "max_flood_depth",
+    "H": "flood_depth",
+    "QX": "unit_discharge_x",
+    "QY": "unit_discharge_y",
 }
 
 #: The four canonical variable names, in frame-column order. The required set for the
@@ -3363,15 +3366,15 @@ def return_filelist_by_tstep(fldr_out_triton: Path, fpattern_prefix, min_per_tst
         reporting_tstep_min = reporting_tstep_iloc * min_per_tstep
         lst_reporting_tstep_min.append(reporting_tstep_min)
     s_outputs = pd.Series(index=lst_reporting_tstep_min, data=lst_f_out)
-    s_outputs.index.name = "timestep_min"
+    s_outputs.index.name = "timestep"
     s_outputs.name = varname
     s_outputs = s_outputs.sort_index()
     return s_outputs
 
 
-def return_fpath_wlevels(fldr_out_triton: Path, reporting_interval_s: int | float):
+def return_fpath_wlevels(fldr_out_triton: Path, reporting_interval: int | float):
     ## retrive the reporting time interval from the cfg file
-    min_per_tstep = reporting_interval_s / 60
+    min_per_tstep = reporting_interval / 60
     # associate filepaths to timesteps
     lst_out = [
         return_filelist_by_tstep(fldr_out_triton, _prefix, min_per_tstep, _var)
@@ -3389,21 +3392,21 @@ def return_fpath_wlevels(fldr_out_triton: Path, reporting_interval_s: int | floa
     # variable that contributed zero files yields a bare unnamed `pd.Series()` from
     # `return_filelist_by_tstep`, and `pd.concat` then labels it POSITIONALLY -- an
     # integer-named all-NaN column describing nothing the solver wrote, which also drops
-    # the `timestep_min` index name. Naming it instead would relabel the fabrication; the
+    # the `timestep` index name. Naming it instead would relabel the fabrication; the
     # drop removes it, so an absent variable can produce no NaN cell at all and absence is
     # visible to a consumer as a missing column. Measured consequence that decided it: an
-    # estate consumer's `"max_wlevel_m" not in df.columns` check keeps working under the
+    # estate consumer's `"max_flood_depth" not in df.columns` check keeps working under the
     # drop and would have silently stopped firing under naming.
     # The empty-frame return is load-bearing, not defensive: `pd.concat([])` raises
     # ValueError, and `.empty` is the "no processable output" discriminator for BOTH
     # `triton_raw_frame_or_raise` and `compare_triton_raw_timeseries`.
     _present = [s for s in lst_out if len(s)]
     if not _present:
-        return pd.DataFrame(index=pd.Index([], name="timestep_min", dtype=float))
+        return pd.DataFrame(index=pd.Index([], name="timestep", dtype=float))
     return pd.concat(_present, axis=1)
 
 
-def triton_raw_frame_or_raise(fldr_out_triton, reporting_interval_s, *, model_label: str, fname_out=None):
+def triton_raw_frame_or_raise(fldr_out_triton, reporting_interval, *, model_label: str, fname_out=None):
     """The per-timestep raw-output frame, or a loud refusal naming which condition failed.
 
     ONE PREFLIGHT, SHARED BY BOTH TRITON EXPORTS, and the sharing is the point. The two
@@ -3433,7 +3436,7 @@ def triton_raw_frame_or_raise(fldr_out_triton, reporting_interval_s, *, model_la
             "Ensure the simulation completed and wrote outputs to the configured "
             "output directory."
         )
-    df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval_s)
+    df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval)
     if df_outputs.empty:
         # ARM 2, WIDENED. An empty frame has two causes that need opposite remedies:
         # nothing was ever produced, or the raw was CONSUMED by the chapter writer and
@@ -3486,7 +3489,7 @@ def triton_raw_frame_or_raise(fldr_out_triton, reporting_interval_s, *, model_la
                 "re-run. Refused here because nothing downstream fails on it -- the chapter "
                 "writer iterates whatever columns it is given, verify_and_flag_chapter "
                 "checks only the timestep count, xr.concat fills a missing variable with "
-                "NaN, and the summary RECONSTRUCTS max_wlevel_m from wlevel_m -- so an "
+                "NaN, and the summary RECONSTRUCTS max_flood_depth from flood_depth -- so an "
                 "absent variable would be written, flagged complete and merged with no "
                 "error raised anywhere."
             ),
@@ -3503,7 +3506,7 @@ def triton_raw_frame_or_raise(fldr_out_triton, reporting_interval_s, *, model_la
             filepath=fldr_out_triton,
             reason=(
                 "the four per-variable timestep index sets are NOT equal; short variable(s) and "
-                f"missing timestep_min values: {_missing}. This frame is refused rather than "
+                f"missing timestep values: {_missing}. This frame is refused rather than "
                 "joined, because an outer join would fabricate NaN cells the consumer treats as "
                 "paths (the AttributeError: 'float' object has no attribute 'exists' class). "
                 "Produced by an interrupted raw clear (MH deleted first) or an interrupted solver "
@@ -3563,7 +3566,7 @@ def publish_chapters_to_netcdf(chapters: Path, fname_out, *, scenario_dir: Path,
         tmp.unlink()  # EXEMPT-DU: transient-intermediate
     stores = [open_store(parts[k], kind="zarr") for k in sorted(parts)]
     try:
-        ds = xr.concat(stores, dim="timestep_min")
+        ds = xr.concat(stores, dim="timestep")
         try:
             write_netcdf(ds, tmp, compression_level)
         except BaseException:
@@ -3637,6 +3640,9 @@ def load_triton_output_w_xarray(rds_dem, f_triton_output, varname, raw_out_type)
         },
         name=varname,
         attrs={
+            # `units` first: the timeseries is written by `_streaming_chunked_zarr_write`, which does not call
+            # `apply_cf_attributes`, so this is the only place a timeseries variable gains its unit.
+            **timeseries_variable_attrs(varname),
             "source_file": str(f_triton_output),
             "format": raw_out_type,
         },
@@ -3664,7 +3670,7 @@ QUALITY_STATS_SNAPSHOT = "computed: resumed from a snapshot that carries SWMM wa
 #: Water-quality statistics set to NaN for an event that resumed from a snapshot (the continuity tables are
 #: matched by prefix in `_apply_quality_stats_rule`). Outfall volume and the concentration series are kept.
 _QUALITY_STATS_VARIABLES = frozenset(
-    {"pollutant_max_conc", "pollutant_time_of_max_conc_min", "outfall_total_load", "outfall_emc", "link_total_load"}
+    {"pollutant_max_conc", "pollutant_time_of_max_conc", "outfall_total_load", "outfall_emc", "link_total_load"}
 )
 
 
@@ -3706,10 +3712,10 @@ def summarize_swmm_simulation_results(ds, event_iloc, tstep_dimname="date_time")
         conc = ds["pollutant_conc"]
         ds["pollutant_max_conc"] = conc.max(dim=tstep_dimname, skipna=True)
         # The peak's time was measured when the report was parsed (the simulation start is known there) and rides
-        # as the declared variable `pollutant_time_of_max_conc_min`. A caller that supplies none gets it from
+        # as the declared variable `pollutant_time_of_max_conc`. A caller that supplies none gets it from
         # the first reported step.
-        if "pollutant_time_of_max_conc_min" not in ds.data_vars:
-            ds["pollutant_time_of_max_conc_min"] = pollutant_time_of_max_conc_min(conc, None, tstep_dimname)
+        if "pollutant_time_of_max_conc" not in ds.data_vars:
+            ds["pollutant_time_of_max_conc"] = pollutant_time_of_max_conc(conc, None, tstep_dimname)
     ds = ds.drop_vars(quality_series)
 
     for var in lst_time_variant_vars:
@@ -3752,12 +3758,12 @@ def _streaming_argmax_with_companions(
     primary_var : str
         Variable name whose max-along-``dim`` is computed. May be a name that is
         NOT in ``ds.data_vars`` if it is constructed by the caller and assigned
-        to ``ds`` before invocation (e.g., ``velocity_mps``).
+        to ``ds`` before invocation (e.g., ``unit_discharge_magnitude``).
     companion_vars : list[str]
         Names of variables to sample at the per-cell argmax timestep. Each name
         must exist in ``ds.data_vars`` and share ``dim``.
     dim : str
-        Name of the dimension to reduce along (typically ``"timestep_min"``).
+        Name of the dimension to reduce along (typically ``"timestep"``).
     chunksize_mb : float
         Target memory budget per chunk, in MiB. Used by
         ``estimate_timesteps_per_chunk`` to derive ``chunk_timesteps``.
@@ -3776,9 +3782,10 @@ def _streaming_argmax_with_companions(
 
     Examples
     --------
-    >>> # Helper call with primary='velocity_mps', companions=['velocity_x_mps','velocity_y_mps']:
-    >>> # result.keys() = {'max_velocity_mps', 'argmax_timestep_min',
-    >>> #                  'velocity_x_mps_at_argmax', 'velocity_y_mps_at_argmax'}
+    >>> # Helper call with primary='unit_discharge_magnitude',
+    >>> # companions=['unit_discharge_x','unit_discharge_y']:
+    >>> # result.keys() = {'max_unit_discharge_magnitude', 'argmax_timestep',
+    >>> #                  'unit_discharge_x_at_argmax', 'unit_discharge_y_at_argmax'}
 
     Notes
     -----
@@ -3883,12 +3890,13 @@ def summarize_triton_simulation_results(
     target_dem_resolution,
     *,
     chunksize_mb,
-    tstep_dimname="timestep_min",
+    flood_velocity_min_depth_m=DEFAULT_FLOOD_VELOCITY_MIN_DEPTH_M,
+    tstep_dimname="timestep",
     verbose=False,
 ):
     """
-    Summarize TRITON simulation results by computing max velocity, time of max
-    velocity, water level statistics, and final flood volume — using a streaming
+    Summarize TRITON simulation results by computing max unit discharge, time of max
+    unit discharge, flood depth statistics, and final flood volume — using a streaming
     chunked reduction that bounds peak working-set memory by ``chunksize_mb``.
 
     Replaces a prior lazy-dask implementation whose final ``.compute()``
@@ -3913,8 +3921,13 @@ def summarize_triton_simulation_results(
         ``_streaming_argmax_with_companions``. Typically sourced from
         ``cfg_analysis.process_append_batch_memory_budget_mb`` (the job-RAM budget),
         not the smaller per-LOAD-chunk guard ``process_output_target_chunksize_mb``.
+    flood_velocity_min_depth_m : float, optional
+        Wet-depth threshold (m): at a print where the same-print ``flood_depth`` is at or below
+        this value, or NaN, the flood velocity |q| / h is NaN (default
+        ``DEFAULT_FLOOD_VELOCITY_MIN_DEPTH_M``, which the ``flood_velocity_min_depth_m`` config
+        field also defaults to; the one production caller passes the configured value).
     tstep_dimname : str, optional
-        Name of timestep dimension (default: ``"timestep_min"``).
+        Name of timestep dimension (default: ``"timestep"``).
     verbose : bool, optional
         Print progress messages (default: ``False``).
 
@@ -3922,12 +3935,16 @@ def summarize_triton_simulation_results(
     -------
     xr.Dataset
         Summarized dataset with ``event_iloc`` coordinate and expanded dims.
-        Schema preserved verbatim from the prior implementation: variables
-        ``max_velocity_mps``, ``time_of_max_velocity_min``,
-        ``velocity_x_mps_at_time_of_max_velocity``,
-        ``velocity_y_mps_at_time_of_max_velocity``, ``max_wlevel_m``,
-        ``time_of_max_wlevel_min``, ``wlevel_m_last_tstep``,
-        ``final_surface_flood_volume_m3``.
+        Variables: ``max_flood_velocity``, ``time_of_max_flood_velocity``,
+        ``x_flood_velocity_at_time_of_max_flood_velocity``,
+        ``y_flood_velocity_at_time_of_max_flood_velocity`` (the maximum over prints of the
+        depth-averaged flood velocity |q| / h, NaN where it is never defined), plus the
+        unit-discharge and depth variables, whose schema is preserved from the prior implementation:
+        ``max_unit_discharge``, ``time_of_max_unit_discharge``,
+        ``unit_discharge_x_at_time_of_max_unit_discharge``,
+        ``unit_discharge_y_at_time_of_max_unit_discharge``, ``max_flood_depth``,
+        ``time_of_max_flood_depth``, ``flood_depth_last_tstep``,
+        ``final_surface_flood_volume``.
     """
     if verbose:
         print(
@@ -3937,87 +3954,147 @@ def summarize_triton_simulation_results(
 
     tsteps = ds[tstep_dimname].to_series()
 
-    ds_with_velocity = ds.assign(velocity_mps=(ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5)
+    # QX and QY are the solver's depth-integrated flow per metre of flow width (m2/s), so their
+    # magnitude is a unit discharge, not a velocity. It is assigned lazily because the streaming
+    # reduction needs a named variable of ``ds`` and the timeseries store does not hold it.
+    ds_with_magnitude = ds.assign(
+        unit_discharge_magnitude=(ds["unit_discharge_x"] ** 2 + ds["unit_discharge_y"] ** 2) ** 0.5
+    )
 
-    velocity_result = _streaming_argmax_with_companions(
-        ds=ds_with_velocity,
-        primary_var="velocity_mps",
-        companion_vars=["velocity_x_mps", "velocity_y_mps"],
+    discharge_result = _streaming_argmax_with_companions(
+        ds=ds_with_magnitude,
+        primary_var="unit_discharge_magnitude",
+        companion_vars=["unit_discharge_x", "unit_discharge_y"],
         dim=tstep_dimname,
         chunksize_mb=chunksize_mb,
         verbose=verbose,
     )
-    del ds_with_velocity
+    del ds_with_magnitude
+    gc.collect()
+
+    # Flood velocity = unit discharge / depth, with BOTH taken from the SAME print (QX, QY and H of one
+    # print come from one solver state; MH is a running maximum and is NOT the divisor). It is NaN, not 0,
+    # where the depth is at or below the threshold or NaN: the streaming reduction starts its running
+    # maximum at -inf and updates on a strict greater-than, so an always-dry cell filled with 0 would
+    # report a maximum of 0 at the FIRST print, a fabricated time, whereas NaN keeps argmax_idx == -1 and
+    # every output for that cell reads NaN. ``h_wet`` is the masked divisor, which also avoids a 0 / 0.
+    h_wet = ds["flood_depth"].where(ds["flood_depth"] > flood_velocity_min_depth_m)
+    ds_with_flood_velocity = ds.assign(
+        flood_velocity_magnitude=(ds["unit_discharge_x"] ** 2 + ds["unit_discharge_y"] ** 2) ** 0.5 / h_wet,
+        flood_velocity_h_wet=h_wet,
+    )
+    flood_velocity_result = _streaming_argmax_with_companions(
+        ds=ds_with_flood_velocity,
+        primary_var="flood_velocity_magnitude",
+        companion_vars=["unit_discharge_x", "unit_discharge_y", "flood_velocity_h_wet"],
+        dim=tstep_dimname,
+        chunksize_mb=chunksize_mb,
+        verbose=verbose,
+    )
+    del ds_with_flood_velocity, h_wet
     gc.collect()
 
     ds_summary = xr.Dataset()
     cell_dims = ("y", "x")
     cell_coords = {"y": ds["y"].values, "x": ds["x"].values}
 
-    ds_summary["max_velocity_mps"] = xr.DataArray(
-        velocity_result["max_velocity_mps"], dims=cell_dims, coords=cell_coords
+    ds_summary["max_unit_discharge"] = xr.DataArray(
+        discharge_result["max_unit_discharge_magnitude"], dims=cell_dims, coords=cell_coords
     )
-    ds_summary["time_of_max_velocity_min"] = xr.DataArray(
-        velocity_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords
+    ds_summary["time_of_max_unit_discharge"] = xr.DataArray(
+        discharge_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords
     )
-    ds_summary["velocity_x_mps_at_time_of_max_velocity"] = xr.DataArray(
-        velocity_result["velocity_x_mps_at_argmax"], dims=cell_dims, coords=cell_coords
+    ds_summary["unit_discharge_x_at_time_of_max_unit_discharge"] = xr.DataArray(
+        discharge_result["unit_discharge_x_at_argmax"], dims=cell_dims, coords=cell_coords
     )
-    ds_summary["velocity_y_mps_at_time_of_max_velocity"] = xr.DataArray(
-        velocity_result["velocity_y_mps_at_argmax"], dims=cell_dims, coords=cell_coords
+    ds_summary["unit_discharge_y_at_time_of_max_unit_discharge"] = xr.DataArray(
+        discharge_result["unit_discharge_y_at_argmax"], dims=cell_dims, coords=cell_coords
     )
 
-    if "max_wlevel_m" in ds.data_vars and tstep_dimname in ds.max_wlevel_m.dims:
-        ds_summary["max_wlevel_m"] = (
-            ds.max_wlevel_m.sel(timestep_min=ds.max_wlevel_m.timestep_min.to_series().max())
+    flood_velocity_comment = (
+        f"maximum over reported timesteps of sqrt(qx^2 + qy^2) / h, where q is the unit discharge and h the "
+        f"flood depth of the SAME timestep; NaN where h <= {flood_velocity_min_depth_m} m (the "
+        f"flood_velocity_min_depth_m threshold) or h is NaN. A maximum over output prints only: a peak "
+        f"between prints is not seen."
+    )
+    ds_summary["max_flood_velocity"] = xr.DataArray(
+        flood_velocity_result["max_flood_velocity_magnitude"], dims=cell_dims, coords=cell_coords
+    )
+    ds_summary["time_of_max_flood_velocity"] = xr.DataArray(
+        flood_velocity_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords
+    )
+    # Components are qx / h and qy / h at the time of the maximum, from the companions sampled there; where
+    # the cell never had a defined flood velocity every companion is NaN, so the components are NaN too.
+    h_at_max = flood_velocity_result["flood_velocity_h_wet_at_argmax"]
+    ds_summary["x_flood_velocity_at_time_of_max_flood_velocity"] = xr.DataArray(
+        flood_velocity_result["unit_discharge_x_at_argmax"] / h_at_max, dims=cell_dims, coords=cell_coords
+    )
+    ds_summary["y_flood_velocity_at_time_of_max_flood_velocity"] = xr.DataArray(
+        flood_velocity_result["unit_discharge_y_at_argmax"] / h_at_max, dims=cell_dims, coords=cell_coords
+    )
+    for _name in (
+        "max_flood_velocity",
+        "time_of_max_flood_velocity",
+        "x_flood_velocity_at_time_of_max_flood_velocity",
+        "y_flood_velocity_at_time_of_max_flood_velocity",
+    ):
+        ds_summary[_name].attrs["comment"] = flood_velocity_comment
+
+    if "max_flood_depth" in ds.data_vars and tstep_dimname in ds.max_flood_depth.dims:
+        ds_summary["max_flood_depth"] = (
+            ds.max_flood_depth.sel(timestep=ds.max_flood_depth.timestep.to_series().max())
             .reset_coords(drop=True)
             .compute()
         )
-        wlevel_argmax_result = _streaming_argmax_with_companions(
+        flood_depth_argmax_result = _streaming_argmax_with_companions(
             ds=ds,
-            primary_var="wlevel_m",
+            primary_var="flood_depth",
             companion_vars=[],
             dim=tstep_dimname,
             chunksize_mb=chunksize_mb,
             verbose=verbose,
         )
-        ds_summary["time_of_max_wlevel_min"] = xr.DataArray(
-            wlevel_argmax_result[f"argmax_{tstep_dimname}"],
+        ds_summary["time_of_max_flood_depth"] = xr.DataArray(
+            flood_depth_argmax_result[f"argmax_{tstep_dimname}"],
             dims=cell_dims,
             coords=cell_coords,
         )
-    elif "max_wlevel_m" in ds.data_vars:
-        ds_summary["max_wlevel_m"] = ds["max_wlevel_m"].compute()
-        wlevel_argmax_result = _streaming_argmax_with_companions(
+    elif "max_flood_depth" in ds.data_vars:
+        ds_summary["max_flood_depth"] = ds["max_flood_depth"].compute()
+        flood_depth_argmax_result = _streaming_argmax_with_companions(
             ds=ds,
-            primary_var="wlevel_m",
+            primary_var="flood_depth",
             companion_vars=[],
             dim=tstep_dimname,
             chunksize_mb=chunksize_mb,
             verbose=verbose,
         )
-        ds_summary["time_of_max_wlevel_min"] = xr.DataArray(
-            wlevel_argmax_result[f"argmax_{tstep_dimname}"],
+        ds_summary["time_of_max_flood_depth"] = xr.DataArray(
+            flood_depth_argmax_result[f"argmax_{tstep_dimname}"],
             dims=cell_dims,
             coords=cell_coords,
         )
     else:
-        wlevel_result = _streaming_argmax_with_companions(
+        flood_depth_result = _streaming_argmax_with_companions(
             ds=ds,
-            primary_var="wlevel_m",
+            primary_var="flood_depth",
             companion_vars=[],
             dim=tstep_dimname,
             chunksize_mb=chunksize_mb,
             verbose=verbose,
         )
-        ds_summary["max_wlevel_m"] = xr.DataArray(wlevel_result["max_wlevel_m"], dims=cell_dims, coords=cell_coords)
-        ds_summary["time_of_max_wlevel_min"] = xr.DataArray(
-            wlevel_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords
+        ds_summary["max_flood_depth"] = xr.DataArray(
+            flood_depth_result["max_flood_depth"], dims=cell_dims, coords=cell_coords
+        )
+        ds_summary["time_of_max_flood_depth"] = xr.DataArray(
+            flood_depth_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords
         )
 
-    ds_summary["wlevel_m_last_tstep"] = ds["wlevel_m"].sel(timestep_min=tsteps.max()).reset_coords(drop=True).compute()
-    ds_summary["wlevel_m_last_tstep"].attrs["notes"] = (
-        "this is the water level in the last reported time step for computing mass balance"
+    ds_summary["flood_depth_last_tstep"] = (
+        ds["flood_depth"].sel(timestep=tsteps.max()).reset_coords(drop=True).compute()
+    )
+    ds_summary["flood_depth_last_tstep"].attrs["notes"] = (
+        "this is the flood depth in the last reported time step for computing mass balance"
     )
 
     x_dim = ds.x.to_series().diff().mode().iloc[0]
@@ -4040,8 +4117,8 @@ def summarize_triton_simulation_results(
             f"Tolerance: {tolerance}m"
         )
 
-    ds_summary["final_surface_flood_volume_m3"] = (ds_summary["wlevel_m_last_tstep"] * abs(x_dim) * abs(y_dim)).sum()
-    ds_summary["final_surface_flood_volume_m3"].attrs["units"] = "m3"
+    ds_summary["final_surface_flood_volume"] = (ds_summary["flood_depth_last_tstep"] * abs(x_dim) * abs(y_dim)).sum()
+    ds_summary["final_surface_flood_volume"].attrs["units"] = "m3"
 
     ds_summary = ds_summary.assign_coords(coords=dict(event_iloc=event_iloc))
     ds_summary = ds_summary.expand_dims("event_iloc")

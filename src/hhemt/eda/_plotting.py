@@ -115,7 +115,7 @@ def _render_config_diff_maps(
     """Config-diff-maps EDA plot (redesign, /design-figure iteration 1).
 
     Reads the consolidated `{root}/sensitivity_datatree.zarr` directly (per-cell
-    max_wlevel_m + per-conduit max_flow_cms + per-sub compute-config attrs) plus one
+    max_flood_depth + per-conduit max_flow + per-sub compute-config attrs) plus one
     sub's hydraulics.inp for conduit geometry, and renders: a cross-config
     identity+absolute-diff table, and per byte-identical config group the SIGNED diff
     and percent-diff maps (DEM cells + SWMM conduits) vs the serial-CPU baseline with
@@ -298,29 +298,29 @@ def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_bound
     import numpy as np
     from plotly.subplots import make_subplots
 
-    # Q4b (iter-2): compare WATER LEVEL (wlevel_m = instantaneous H), NOT the AND of all four
-    # raw types (which includes max_wlevel_m + velocities). Select the wlevel_m raw type when
-    # present; fall back to the all-types AND only when wlevel_m is absent (older/partial data).
-    _RAW_WLEVEL = "wlevel_m"
-    if "raw_output_type" in getattr(da, "dims", ()) and _RAW_WLEVEL in [str(v) for v in da["raw_output_type"].values]:
-        z_all = da.sel(raw_output_type=_RAW_WLEVEL)
+    # Q4b (iter-2): compare FLOOD DEPTH (flood_depth = instantaneous H), NOT the AND of all four
+    # raw types (which includes max_flood_depth + velocities). Select the flood_depth raw type when
+    # present; fall back to the all-types AND only when flood_depth is absent (older/partial data).
+    _RAW_FLOOD_DEPTH = "flood_depth"
+    if "raw_output_type" in getattr(da, "dims", ()) and _RAW_FLOOD_DEPTH in [
+        str(v) for v in da["raw_output_type"].values
+    ]:
+        z_all = da.sel(raw_output_type=_RAW_FLOOD_DEPTH)
     else:
         z_all = da.min(dim="raw_output_type", skipna=True)  # fallback: 1 iff ALL raw types identical
-    x = [float(t) for t in z_all["timestep_min"].values]
+    x = [float(t) for t in z_all["timestep"].values]
     configs = [str(c) for c in z_all["compute_config"].values]
-    identical = np.asarray(z_all.transpose("compute_config", "timestep_min").values, dtype=float)
+    identical = np.asarray(z_all.transpose("compute_config", "timestep").values, dtype=float)
 
     mad = ds["max_abs_diff"] if (ds is not None and "max_abs_diff" in ds) else None
     if mad is not None and "raw_output_type" in getattr(mad, "dims", ()):
-        # Q4b: magnitude for the SAME variable the identity uses (wlevel_m), not the max over
-        # all raw types. Fall back to the all-types max only when wlevel_m is absent.
-        if _RAW_WLEVEL in [str(v) for v in mad["raw_output_type"].values]:
-            mad = mad.sel(raw_output_type=_RAW_WLEVEL)
+        # Q4b: magnitude for the SAME variable the identity uses (flood_depth), not the max over
+        # all raw types. Fall back to the all-types max only when flood_depth is absent.
+        if _RAW_FLOOD_DEPTH in [str(v) for v in mad["raw_output_type"].values]:
+            mad = mad.sel(raw_output_type=_RAW_FLOOD_DEPTH)
         else:
             mad = mad.max(dim="raw_output_type", skipna=True)
-    mad_vals = (
-        np.asarray(mad.transpose("compute_config", "timestep_min").values, dtype=float) if mad is not None else None
-    )
+    mad_vals = np.asarray(mad.transpose("compute_config", "timestep").values, dtype=float) if mad is not None else None
 
     label_by_cfg = _b4b_str_map(ds, "config_label")  # already deterministic (F2)
     family_by_cfg = _b4b_str_map(ds, "family")  # "cpu" / "gpu" (device class)
@@ -441,7 +441,7 @@ def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_bound
                 col=1,
             )
         if show_boundaries and ds is not None:
-            for k, t in enumerate(ds.attrs.get("resume_boundaries_min", []) or [], start=1):
+            for k, t in enumerate(ds.attrs.get("resume_boundaries", []) or [], start=1):
                 fig.add_vline(
                     x=float(t),
                     line_dash="dash",
@@ -551,7 +551,7 @@ def _render_b4b(
     show_boundaries: bool,
 ) -> Path:
     """Shared b4b render: reads eda/{stem}.zarr (written by
-    raw_byte_identity.check_raw_byte_identity) and emits a heatmap y=compute_config, x=timestep_min,
+    raw_byte_identity.check_raw_byte_identity) and emits a heatmap y=compute_config, x=timestep,
     z=all-raw-types-identical (AND-reduced over raw_output_type), or an explicit R10
     honest-degradation panel when the artifact's `degraded` attr is set. Declares its own
     eda/{stem}.zarr as the source (raw dirs fail _validate_source_path; the producer owns
@@ -633,7 +633,7 @@ def _render_raw_byte_identity(root: Path, *, cfg_analysis: analysis_config, eda_
     return _render_b4b(
         root,
         stem="raw_byte_identity",
-        title=("Per-timestep water-level byte-for-byte comparison vs the hardware-category reference"),
+        title=("Per-timestep flood-depth byte-for-byte comparison vs the hardware-category reference"),
         baseline_caption=(
             "Alternate configurations are compared against their hardware category's "
             "minimum-device reference (CPU → serial-CPU, GPU → 1-GPU). "

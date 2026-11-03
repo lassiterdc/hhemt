@@ -18,8 +18,8 @@ def test_render_cross_sim_identity_emits_master_rooted_with_source(
     BUNDLE-CARRIED data source (R3/D1 carriage guard). The redesigned plot reads the
     consolidated ROOT store directly -- whichever store resolve_experiment_tree selects,
     the unified name on a tree carrying more than one
-    (per-cell max_wlevel_m + per-conduit
-    max_flow_cms + per-sub compute-config attrs -- no smaller per-plot summary zarr
+    (per-cell max_flood_depth + per-conduit
+    max_flow + per-sub compute-config attrs -- no smaller per-plot summary zarr
     suffices), so it declares that tree (the primary consolidated output carried into
     every render bundle) rather than an eda/<plot_id>.zarr artifact."""
     analysis = synthetic_sensitivity_completed.experiment  # NOT the wrapper (D4)

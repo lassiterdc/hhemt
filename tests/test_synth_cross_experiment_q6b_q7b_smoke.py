@@ -44,7 +44,7 @@ def test_intercomparison_splits_by_model_q6b(tmp_path):
                 "pairs": [
                     {
                         "config": cfg,
-                        "variable": "max_wlevel_m",
+                        "variable": "max_flood_depth",
                         "event_iloc": 0,
                         "identical": True,
                         "max_abs_diff": 0.0,
@@ -52,7 +52,7 @@ def test_intercomparison_splits_by_model_q6b(tmp_path):
                     },
                     {
                         "config": cfg,
-                        "variable": "max_wlevel_m",
+                        "variable": "max_flood_depth",
                         "event_iloc": 0,
                         "identical": True,
                         "max_abs_diff": 0.0,
@@ -145,9 +145,9 @@ def test_intercomparison_top_of_page_carries_only_the_title_ic1_g1():
     """
     import tempfile
 
-    pairs = [_pair(i, "max_wlevel_m", "TRITON") for i in range(14)]
-    pairs += [_pair(i, "max_wlevel_m", "TRITON-SWMM") for i in range(14)]
-    pairs += [_pair(i, "max_flow_cms", "TRITON-SWMM") for i in range(14)]
+    pairs = [_pair(i, "max_flood_depth", "TRITON") for i in range(14)]
+    pairs += [_pair(i, "max_flood_depth", "TRITON-SWMM") for i in range(14)]
+    pairs += [_pair(i, "max_flow", "TRITON-SWMM") for i in range(14)]
 
     with tempfile.TemporaryDirectory() as td:
         html = _intercomparison_html(Path(td), pairs)

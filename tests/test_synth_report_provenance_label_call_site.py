@@ -36,7 +36,7 @@ class _StopAtDepthPanel(Exception):
 
 
 class _Tree:
-    """A consolidated tree with one group holding the peak water level of event 0."""
+    """A consolidated tree with one group holding the peak flood depth of event 0."""
 
     groups = (_GROUP,)
 
@@ -44,7 +44,7 @@ class _Tree:
         depth = xr.DataArray(
             np.full((1, 4, 4), 0.5), dims=("event_iloc", "y", "x"), coords={"event_iloc": [0], **_COORDS}
         )
-        return SimpleNamespace(to_dataset=lambda: xr.Dataset({"max_wlevel_m": depth}))
+        return SimpleNamespace(to_dataset=lambda: xr.Dataset({"max_flood_depth": depth}))
 
 
 def _analysis(tmp_path):

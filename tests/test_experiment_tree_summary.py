@@ -28,7 +28,7 @@ from hhemt.utils import EXPERIMENT_TREE_NAME, experiment_tree_summary
 _ROOT_ATTRS = {"triton_producing_sha": "abc123", "hhemt_producing_version": "0.1+test", "note": "root"}
 
 
-def _ds(shape=(1, 2, 2), name="max_wlevel_m", fill=1.0) -> xr.Dataset:
+def _ds(shape=(1, 2, 2), name="max_flood_depth", fill=1.0) -> xr.Dataset:
     dims = ("event_iloc", "y", "x")[: len(shape)]
     coords = {d: np.arange(n) for d, n in zip(dims, shape, strict=True)}
     return xr.Dataset({name: (dims, np.full(shape, fill, dtype="f4"))}, coords=coords)
@@ -67,7 +67,7 @@ def _assert_matches_oracle(store: Path) -> None:
 
 _COUPLED = {
     "/member_a/tritonswmm/triton": _ds(),
-    "/member_a/tritonswmm/swmm_link": _ds(name="max_flow_cms"),
+    "/member_a/tritonswmm/swmm_link": _ds(name="max_flow"),
     "/member_b/tritonswmm/triton": _ds(),
 }
 _PURE = {"/member_a/triton_only/triton": _ds(), "/member_b/triton_only/triton": _ds()}
@@ -245,13 +245,16 @@ def test_compatibility_rows_need_no_full_open_and_keep_their_values(tmp_path, mo
 
 def _two_event_tree(root: Path) -> None:
     ev = {
-        "max_wlevel_m": (("event_iloc", "y", "x"), np.stack([np.full((2, 2), 1.0), np.full((2, 2), 2.0)]).astype("f4")),
+        "max_flood_depth": (
+            ("event_iloc", "y", "x"),
+            np.stack([np.full((2, 2), 1.0), np.full((2, 2), 2.0)]).astype("f4"),
+        ),
     }
     coords = {"event_iloc": [0, 1], "y": [0, 1], "x": [0, 1]}
     wl = xr.Dataset(ev, coords=coords)
     fl = xr.Dataset(
         {
-            "max_flow_cms": (
+            "max_flow": (
                 ("event_iloc", "y", "x"),
                 np.stack([np.full((2, 2), 5.0), np.full((2, 2), 6.0)]).astype("f4"),
             )

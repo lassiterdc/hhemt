@@ -19,24 +19,28 @@
   "emitted_at_utc": "2026-05-11T19:09:21.035578+00:00",
   "renderer_data": {
     "event_iloc": 2,
-    "depth_m_max": 1.5008802971305162,
+    "depth_max": 1.5008802971305162,
     "valid_cell_count": 113,
-    "wse_m_range": [
+    "wse_range": [
       0.5033975709462929,
       2.000880297130516
     ],
-    "rainfall_max_mm_per_hr": 100.0,
-    "bc_water_level_range_m": [
+    "wse_range_units": "m",
+    "rainfall_max": 100.0,
+    "rainfall_max_units": "mm h-1",
+    "bc_water_level_range": [
       2.0,
       2.0
     ],
-    "depth_boundaries_m": [
+    "bc_water_level_range_units": "m",
+    "depth_boundaries": [
       0.01,
       0.05,
       0.1,
       0.5,
       1.0
-    ]
+    ],
+    "depth_boundaries_units": "m"
   },
   "artists": [
     {
@@ -48,13 +52,13 @@
           "channel": "z",
           "ref": {
             "source_path": "analysis_datatree.zarr",
-            "variable": "max_wlevel_m",
+            "variable": "max_flood_depth",
             "attrs": {
               "format": "bin",
-              "standard_name": "sea_surface_height_above_geoid",
-              "long_name": "Maximum water level over simulation",
+              "standard_name": "flood_water_thickness",
+              "long_name": "Maximum flood depth (solver running maximum of depth)",
               "units": "m",
-              "cell_methods": "timestep_min: maximum"
+              "cell_methods": "time: maximum"
             },
             "selection": {
               "event_iloc": 2
@@ -67,13 +71,13 @@
           "channel": "color",
           "ref": {
             "source_path": "analysis_datatree.zarr",
-            "variable": "max_wlevel_m",
+            "variable": "max_flood_depth",
             "attrs": {
               "format": "bin",
-              "standard_name": "sea_surface_height_above_geoid",
-              "long_name": "Maximum water level over simulation",
+              "standard_name": "flood_water_thickness",
+              "long_name": "Maximum flood depth (solver running maximum of depth)",
               "units": "m",
-              "cell_methods": "timestep_min: maximum"
+              "cell_methods": "time: maximum"
             },
             "selection": {
               "event_iloc": 2
@@ -129,13 +133,13 @@
           "channel": "z",
           "ref": {
             "source_path": "analysis_datatree.zarr",
-            "variable": "max_wlevel_m",
+            "variable": "max_flood_depth",
             "attrs": {
               "format": "bin",
-              "standard_name": "sea_surface_height_above_geoid",
-              "long_name": "Maximum water level over simulation",
+              "standard_name": "flood_water_thickness",
+              "long_name": "Maximum flood depth (solver running maximum of depth)",
               "units": "m",
-              "cell_methods": "timestep_min: maximum"
+              "cell_methods": "time: maximum"
             },
             "selection": {
               "event_iloc": 2
@@ -163,13 +167,13 @@
           "channel": "color",
           "ref": {
             "source_path": "analysis_datatree.zarr",
-            "variable": "max_wlevel_m",
+            "variable": "max_flood_depth",
             "attrs": {
               "format": "bin",
-              "standard_name": "sea_surface_height_above_geoid",
-              "long_name": "Maximum water level over simulation",
+              "standard_name": "flood_water_thickness",
+              "long_name": "Maximum flood depth (solver running maximum of depth)",
               "units": "m",
-              "cell_methods": "timestep_min: maximum"
+              "cell_methods": "time: maximum"
             },
             "selection": {
               "event_iloc": 2

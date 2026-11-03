@@ -44,6 +44,12 @@ from hhemt.config.report import report_config as _report_config_model
 # string literal is how the default and the check drift apart.
 WEATHER_EVENT_WINDOW_COLUMN_UNSPECIFIED = "unspecified"
 
+#: The depth (m) at or below which the TRITON flood velocity is undefined. The solver zeroes its
+#: unit discharge below its own ``hextra`` (0.001 m in every run measured), so |q| / h is 0 / 0
+#: there. Shared by the ``flood_velocity_min_depth_m`` config field and the summary function's
+#: default, so a caller that passes nothing gets the configured default and not a second number.
+DEFAULT_FLOOD_VELOCITY_MIN_DEPTH_M = 0.001
+
 ClearRawValue = Literal["all", "none"] | list[Literal["tritonswmm", "triton", "swmm"]]
 # Artifact-class vocabulary, ordered by REGENERATION COST rather than by filename.
 # The partition rule against `clear_raw`, stated so a future artifact classifies
@@ -1015,7 +1021,7 @@ class analysis_config(cfgBaseModel):
             "(6.6 MB vs 0.08 MB measured), would inflate a 28-scenario primary tree 7.9x, "
             "and is GB-scale per scenario on a production fine grid. It is excluded on "
             "COST, not for lack of a consumer — the clean-vs-resume over-time figure does "
-            "read wlevel_m from the per-scenario gridded store, via a documented "
+            "read flood_depth from the per-scenario gridded store, via a documented "
             "deployment-config reproduction script. What that figure consumes is a "
             "per-timestep max-over-(y,x) reduction (144 values/scenario), not the field; "
             "consolidating the reduction is the cheap, grid-independent extension. "
@@ -1068,10 +1074,24 @@ class analysis_config(cfgBaseModel):
             "argmax budget."
         ),
     )
+    flood_velocity_min_depth_m: float = Field(
+        DEFAULT_FLOOD_VELOCITY_MIN_DEPTH_M,
+        gt=0,
+        description=(
+            "Wet-depth threshold (m) for the TRITON flood velocity. The summary stores the maximum "
+            "over output prints of |q| / h, where q is the solver's unit discharge (QX, QY) and h is "
+            "the depth of the SAME print; at a print where h is at or below this value (or NaN) the "
+            "flood velocity is NaN, because the solver zeroes q below its own hextra and q / h is "
+            "then 0 / 0. The default 0.001 m equals the solver's hextra in every measured run; the "
+            "toolkit does not read hextra from the cfg, so raise this value yourself if a case study "
+            "sets a larger hextra. Read at summary time and stamped into each flood-velocity "
+            "variable's `comment` attribute."
+        ),
+    )
     process_store_float32: bool = Field(
         True,
         description=(
-            "Store per-scenario spatial timeseries (H/QX/QY/MH -> wlevel/velocity) as "
+            "Store per-scenario spatial timeseries (H/QX/QY/MH -> flood depth/unit discharge) as "
             "float32 in the processed zarr instead of float64, ~halving on-disk size and "
             "I/O. Default True. Set False for precision-sensitive analyses (e.g. tight "
             "mass-balance). Does NOT alter CF attributes — dtype lives in the zarr encoding "
@@ -1081,7 +1101,7 @@ class analysis_config(cfgBaseModel):
     process_timestep_chunk: int | None = Field(
         None,
         description=(
-            "Explicit on-disk `timestep_min` zarr chunk size for the per-scenario "
+            "Explicit on-disk `timestep` zarr chunk size for the per-scenario "
             "spatial timeseries. A READ-LOCALITY OVERRIDE AND NOTHING MORE: it replaces "
             "the TIME component of the grid utils.resolve_chunk_grid derives, leaving the "
             "spatial components derived, so no value here can re-introduce an "

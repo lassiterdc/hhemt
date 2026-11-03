@@ -11,7 +11,7 @@ from hhemt.bundle import _combine_merge as M
 def _write_stub_bundle(tmp: Path, name: str) -> Path:
     root = tmp / name
     root.mkdir(parents=True)
-    ds = xr.Dataset({"max_wlevel_m": ("event_iloc", [1.0, 2.0])})
+    ds = xr.Dataset({"max_flood_depth": ("event_iloc", [1.0, 2.0])})
     xr.DataTree(dataset=ds).to_zarr(root / M.CONSOLIDATED_TREE_NAME)
     return root
 

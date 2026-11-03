@@ -87,8 +87,8 @@ def _rpt(n_extra=0, quality_tables=False, groundwater_table=False, runoff_quanti
     return "".join(parts)
 
 
-NODE_VARS = {"inflow_flow_cms", "flooding_cms", "depth_m", "head_m"}
-LINK_VARS = {"flow_cms", "velocity_mps", "link_depth_m", "capacity_setting"}
+NODE_VARS = {"inflow_flow", "flooding", "depth", "head"}
+LINK_VARS = {"flow", "velocity", "link_depth", "capacity_setting"}
 
 
 def test_extra_pollutant_column_is_not_read():
@@ -109,7 +109,7 @@ def test_dataset_with_extra_column_equals_dataset_without_it():
 @pytest.mark.parametrize("n_extra", [0, 1, 2])
 def test_any_number_of_extra_columns_is_ignored(n_extra):
     ds_node, ds_link = _bulk_parse_tseries(_rpt(n_extra=n_extra))
-    assert float(ds_node["depth_m"].isel(node_id=0, date_time=0)) == pytest.approx(0.3)
+    assert float(ds_node["depth"].isel(node_id=0, date_time=0)) == pytest.approx(0.3)
     assert float(ds_link["capacity_setting"].isel(link_id=0, date_time=0)) == pytest.approx(4.0)
 
 
@@ -121,9 +121,9 @@ def test_flow_figures_come_from_the_flow_table(tmp_path, quality_tables):
     system_single = parse_rpt_single_pass(rpt)[3]
     system_scan = return_swmm_system_outputs(text.splitlines(keepends=True))
     for system in (system_single, system_scan):
-        assert system["flow_continuity_error_perc"] == pytest.approx(_FLOW)
-        assert system["system_flooding_10e6_ltr"] == pytest.approx(_FLOOD_FLOW)
-        assert system["runoff_continuity_error_perc"] == pytest.approx(_RUNOFF_QUANTITY)
+        assert system["flow_continuity_error"] == pytest.approx(_FLOW)
+        assert system["system_flooding"] == pytest.approx(_FLOOD_FLOW)
+        assert system["runoff_continuity_error"] == pytest.approx(_RUNOFF_QUANTITY)
 
 
 def test_runoff_error_comes_from_the_quantity_table_not_quality_or_groundwater(tmp_path):
@@ -131,8 +131,8 @@ def test_runoff_error_comes_from_the_quantity_table_not_quality_or_groundwater(t
     rpt = tmp_path / "hydraulics.rpt"
     rpt.write_text(text)
     for system in (parse_rpt_single_pass(rpt)[3], return_swmm_system_outputs(text.splitlines(keepends=True))):
-        assert system["runoff_continuity_error_perc"] == pytest.approx(_RUNOFF_QUANTITY)
-        assert system["flow_continuity_error_perc"] == pytest.approx(_FLOW)
+        assert system["runoff_continuity_error"] == pytest.approx(_RUNOFF_QUANTITY)
+        assert system["flow_continuity_error"] == pytest.approx(_FLOW)
 
 
 def test_report_without_quality_tables_keeps_its_values(tmp_path):
@@ -140,9 +140,9 @@ def test_report_without_quality_tables_keeps_its_values(tmp_path):
     rpt = tmp_path / "hydraulics.rpt"
     rpt.write_text(text)
     system = parse_rpt_single_pass(rpt)[3]
-    assert system["runoff_continuity_error_perc"] == pytest.approx(_RUNOFF_QUANTITY)
-    assert system["flow_continuity_error_perc"] == pytest.approx(_FLOW)
-    assert system["system_flooding_10e6_ltr"] == pytest.approx(_FLOOD_FLOW)
+    assert system["runoff_continuity_error"] == pytest.approx(_RUNOFF_QUANTITY)
+    assert system["flow_continuity_error"] == pytest.approx(_FLOW)
+    assert system["system_flooding"] == pytest.approx(_FLOOD_FLOW)
 
 
 def test_hydraulics_only_report_has_nan_runoff_error(tmp_path):
@@ -150,5 +150,5 @@ def test_hydraulics_only_report_has_nan_runoff_error(tmp_path):
     rpt = tmp_path / "hydraulics.rpt"
     rpt.write_text(text)
     system = parse_rpt_single_pass(rpt)[3]
-    assert np.isnan(system["runoff_continuity_error_perc"])
-    assert system["flow_continuity_error_perc"] == pytest.approx(_FLOW)
+    assert np.isnan(system["runoff_continuity_error"])
+    assert system["flow_continuity_error"] == pytest.approx(_FLOW)

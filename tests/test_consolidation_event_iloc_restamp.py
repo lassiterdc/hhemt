@@ -31,12 +31,12 @@ _STALE = {0: 0, 1: 2, 2: 2}
 def _write_store(path, stale_iloc, *, timeseries):
     if timeseries:
         ds = xr.Dataset(
-            {"flow_cms": (("event_iloc", "time", "node"), np.ones((1, 2, 2)))},
+            {"flow": (("event_iloc", "time", "node"), np.ones((1, 2, 2)))},
             coords={"event_iloc": [stale_iloc], "time": [0.0, 60.0], "node": ["J1", "J2"]},
         )
     else:
         ds = xr.Dataset(
-            {"max_wlevel_m": (("event_iloc", "y", "x"), np.ones((1, 2, 2)))},
+            {"max_flood_depth": (("event_iloc", "y", "x"), np.ones((1, 2, 2)))},
             coords={"event_iloc": [stale_iloc], "x": [0.0, 1.0], "y": [0.0, 1.0]},
         )
     ds.to_zarr(path, consolidated=False)

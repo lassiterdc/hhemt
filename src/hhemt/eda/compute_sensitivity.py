@@ -41,6 +41,7 @@ import numpy as np
 import xarray as xr
 
 from hhemt.analysis_validation import CheckResult, _iter_members_or_self
+from hhemt.cf_conventions import apply_cf_attributes
 from hhemt.eda._result import EdaResult
 from hhemt.eda.cross_sim_identity import (
     TRACKED_VARS,
@@ -58,7 +59,7 @@ if TYPE_CHECKING:
 
 #: The single peak-DEPTH field the magnitude metrics operate on (metres). NaN at
 #: nodata, finite ~0 at in-watershed dry cells, ``> dry_threshold_m`` = wet.
-_DEPTH_VAR = "max_wlevel_m"
+_DEPTH_VAR = "max_flood_depth"
 
 #: Default wetting predicate for the union-footprint abs metrics. Mirrors
 #: ``report.dry_threshold_m`` (per_sim_peak_flood_depth.py). DISTINCT from ``_TAU_M``.
@@ -120,13 +121,13 @@ def compute_magnitude(
     n_extent = int(extent_disagree.sum())
 
     if diff_wet.size == 0:
-        max_abs_diff_m = 0.0
-        rmse_wetted_m = 0.0
+        max_abs_depth_diff = 0.0
+        rmse_wetted_depth = 0.0
         p95_abs_diff_m = 0.0
         frac_extent = 0.0
     else:
-        max_abs_diff_m = float(diff_wet.max())
-        rmse_wetted_m = float(np.sqrt(np.mean(diff_wet**2)))
+        max_abs_depth_diff = float(diff_wet.max())
+        rmse_wetted_depth = float(np.sqrt(np.mean(diff_wet**2)))
         p95_abs_diff_m = float(np.percentile(diff_wet, 95))
         frac_extent = n_extent / n_union if n_union else 0.0
 
@@ -136,12 +137,12 @@ def compute_magnitude(
     with np.errstate(invalid="ignore", divide="ignore"):
         pct = (test[tau_mask] - base[tau_mask]) / base[tau_mask] * 100.0
     if pct.size:
-        pct_diff_p95 = float(np.nanpercentile(np.abs(pct), 95, method=_PCT_METHOD))
+        relative_depth_diff_p95 = float(np.nanpercentile(np.abs(pct), 95, method=_PCT_METHOD))
         pct_diff_median_signed = float(np.nanmedian(pct))
         pct_diff_p05_signed = float(np.nanpercentile(pct, 5, method=_PCT_METHOD))
         pct_diff_p95_signed = float(np.nanpercentile(pct, 95, method=_PCT_METHOD))
     else:
-        pct_diff_p95 = 0.0
+        relative_depth_diff_p95 = 0.0
         pct_diff_median_signed = 0.0
         pct_diff_p05_signed = 0.0
         pct_diff_p95_signed = 0.0
@@ -161,13 +162,13 @@ def compute_magnitude(
     csi = None if n_union == 0 else 1.0 - frac_extent
 
     return {
-        "max_abs_diff_m": max_abs_diff_m,
-        "rmse_wetted_m": rmse_wetted_m,
+        "max_abs_depth_diff": max_abs_depth_diff,
+        "rmse_wetted_depth": rmse_wetted_depth,
         "p95_abs_diff_m": p95_abs_diff_m,
         "n_wet_union": n_union,
         "n_extent_disagree": n_extent,
         "frac_extent_disagree": frac_extent,
-        "pct_diff_p95": pct_diff_p95,
+        "relative_depth_diff_p95": relative_depth_diff_p95,
         "pct_diff_median_signed": pct_diff_median_signed,
         "pct_diff_p05_signed": pct_diff_p05_signed,
         "pct_diff_p95_signed": pct_diff_p95_signed,
@@ -181,11 +182,11 @@ def compute_magnitude(
 
 
 def _aligned_depth_grids(ds_ref: xr.Dataset, ds_cmp: xr.Dataset, event_iloc: int) -> tuple[np.ndarray, np.ndarray]:
-    """Read+align ONE 2-D ``(event, max_wlevel_m)`` slice per run; fail-closed.
+    """Read+align ONE 2-D ``(event, max_flood_depth)`` slice per run; fail-closed.
 
     Materializes exactly one grid per run (``.to_numpy()``), never the full lazy
     graph — honors Gotcha-24's spirit (bounded RSS) without per-chunk streaming, since
-    ``max_wlevel_m`` is already a time-reduced 2-D field. Align the DataArray, NOT the
+    ``max_flood_depth`` is already a time-reduced 2-D field. Align the DataArray, NOT the
     Dataset (whose ``data_vars`` / ``event_id`` coord differ across runs).
     """
     da_r = ds_ref[_DEPTH_VAR].sel(event_iloc=event_iloc)
@@ -367,6 +368,8 @@ def _emit(primary: TRITONSWMM_analysis, renderer_kind: str, ds_vars: dict, sourc
     # is read across a bundle boundary. _artifact_vars builds all variables as float64
     # (identical is cast to float there); pin that so it is contractual, not incidental.
     ds = xr.Dataset(ds_vars)
+    # The artifact is written without `_write_output`, so its variables' units are stamped here.
+    apply_cf_attributes(ds, "eda_compute_sensitivity")
     encoding = {v: {"dtype": "float64"} for v in ds.data_vars}
     write_zarr(ds, artifact_path, chunks=None, encoding=encoding)
     # Declare the FLAT per-scenario summary files this member actually read
@@ -433,7 +436,13 @@ def _artifact_vars(labeled_records: list[tuple[str, list[dict]]]) -> dict[str, x
     )
     if identical is not None:
         ds_vars["identical"] = identical
-    for key in ("max_abs_diff_m", "rmse_wetted_m", "pct_diff_p95", "n_newly_wet", "n_extent_disagree"):
+    for key in (
+        "max_abs_depth_diff",
+        "rmse_wetted_depth",
+        "relative_depth_diff_p95",
+        "n_newly_wet",
+        "n_extent_disagree",
+    ):
         grid = _scalar_grid(labeled_records, key, from_magnitude=True)
         if grid is not None:
             ds_vars[key] = grid
@@ -552,7 +561,7 @@ def check_rank_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_cf
         details=details,
         # SELF-REPORTED from the path actually taken (`analysis_validation.py::CheckResult`):
         # this check compares the FLAT per-scenario summaries via _compare_pair, whose
-        # max_wlevel_m is stored float32 while the SWMM-side variables are float64, so
+        # max_flood_depth is stored float32 while the SWMM-side variables are float64, so
         # float32 eps is the coarsest floor across the variables actually compared.
         # Leaving these None is what stopped `errors_and_warnings._status_of` from
         # qualifying the pass. Never derive from cfg_analysis.clear_raw: that records
@@ -665,7 +674,7 @@ def check_resume_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_
         details=details,
         # SELF-REPORTED from the path actually taken (`analysis_validation.py::CheckResult`):
         # this check compares the FLAT per-scenario summaries via _compare_pair, whose
-        # max_wlevel_m is stored float32 while the SWMM-side variables are float64, so
+        # max_flood_depth is stored float32 while the SWMM-side variables are float64, so
         # float32 eps is the coarsest floor across the variables actually compared.
         # Leaving these None is what stopped `errors_and_warnings._status_of` from
         # qualifying the pass. Never derive from cfg_analysis.clear_raw: that records
@@ -737,8 +746,8 @@ def check_cross_hardware_magnitude(primary: TRITONSWMM_analysis, *, cfg_analysis
                     "partition": _partition(sub),
                     "event_iloc": rec["event_iloc"],
                     "variable": rec["variable"],
-                    "max_abs_diff_m": (mag or {}).get("max_abs_diff_m"),
-                    "pct_diff_p95": (mag or {}).get("pct_diff_p95"),
+                    "max_abs_depth_diff": (mag or {}).get("max_abs_depth_diff"),
+                    "relative_depth_diff_p95": (mag or {}).get("relative_depth_diff_p95"),
                     "n_newly_wet": (mag or {}).get("n_newly_wet"),
                 }
             )
@@ -748,9 +757,9 @@ def check_cross_hardware_magnitude(primary: TRITONSWMM_analysis, *, cfg_analysis
 
     # ADR-4: disclosed bounds ARE the verdict; passed=True regardless of magnitude.
     bounds = [
-        f"{d['sa_id']}@evt{d['event_iloc']}={d['max_abs_diff_m']:.6g}"
+        f"{d['sa_id']}@evt{d['event_iloc']}={d['max_abs_depth_diff']:.6g}"
         for d in details
-        if d.get("max_abs_diff_m") is not None and d["variable"] == _DEPTH_VAR
+        if d.get("max_abs_depth_diff") is not None and d["variable"] == _DEPTH_VAR
     ]
     n_gpu_compared = len(labeled)
     dropped_note = (
@@ -775,7 +784,7 @@ def check_cross_hardware_magnitude(primary: TRITONSWMM_analysis, *, cfg_analysis
         details=details,
         # SELF-REPORTED from the path actually taken (`analysis_validation.py::CheckResult`):
         # this check compares the FLAT per-scenario summaries via _compare_pair, whose
-        # max_wlevel_m is stored float32 while the SWMM-side variables are float64, so
+        # max_flood_depth is stored float32 while the SWMM-side variables are float64, so
         # float32 eps is the coarsest floor across the variables actually compared.
         # Leaving these None is what stopped `errors_and_warnings._status_of` from
         # qualifying the pass. Never derive from cfg_analysis.clear_raw: that records

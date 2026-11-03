@@ -17,6 +17,7 @@ from pyswmm import Output, Simulation
 from swmm.toolkit.shared_enum import NodeAttribute
 
 from hhemt._compile_venue import COMPILE_VENUE_ENV, swmm_execution_refused
+from hhemt.cf_conventions import apply_cf_attributes
 from hhemt.exceptions import ProcessingError
 from hhemt.utils import write_zarr
 
@@ -306,19 +307,20 @@ class SWMMRunoffModeler:
         volume_m3 = _trapz(inflow.astype("float64"), x=t_hr, axis=1) * 3600.0
         ds = xr.Dataset(
             data_vars={
-                "inflow_cms": (("node_id", "time_hr"), inflow),
-                "total_inflow_volume_m3": (("node_id",), volume_m3),
+                "inflow": (("node_id", "timestep"), inflow),
+                "total_inflow_volume": (("node_id",), volume_m3),
             },
             coords={
                 "node_id": np.asarray(node_ids, dtype=str),
-                "time_hr": t_hr.astype("float32"),
+                "timestep": t_hr.astype("float32"),
                 "dem_x_coord": (("node_id",), np.asarray([d_node_gridcell[n][0] for n in node_ids])),
                 "dem_y_coord": (("node_id",), np.asarray([d_node_gridcell[n][1] for n in node_ids])),
             },
             attrs={
-                # The unit the values were converted FROM; inflow_cms is always m3/s.
+                # The unit the values were converted FROM; inflow is always m3/s.
                 "flow_units": str(flow_units),
-                "system_total_inflow_volume_m3": float(volume_m3.sum()),
+                "system_total_inflow_volume": float(volume_m3.sum()),
+                "system_total_inflow_volume_units": "m3",
                 "n_gridcells": int(len({tuple(v) for v in d_node_gridcell.values()})),
                 "notes": (
                     "Per-NODE TOTAL_INFLOW captured pre-gridcell-sum from swmm/hydro.out, "
@@ -332,6 +334,8 @@ class SWMMRunoffModeler:
             },
         )
         ds = ds.assign_coords(event_iloc=self.scenario.event_iloc).expand_dims("event_iloc")
+        # Written without `_write_output`, so the unit of `inflow` and `total_inflow_volume` is stamped here.
+        apply_cf_attributes(ds, "hydrology_inflow_summary")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         write_zarr(ds, out_path, chunks=None, encoding={})
         # DN-3 / clause 2: a WRITE during scenario preparation needs no per-mutation
@@ -396,7 +400,7 @@ class SWMMRunoffModeler:
                             # .dt.seconds wraps on a >= 24 h gap; use total_seconds().
                             tseries = pd.Series(d_inflow.index).diff().dt.total_seconds() / 60 / 60
                             tseries.iloc[0] = 0
-                            d_time_series["time_hr"] = tseries.cumsum().values
+                            d_time_series["timestep"] = tseries.cumsum().values
                             need_to_create_time_series = False
                         # create dataframe with the flow of all nodes within the gridcell
                         if d_inflow.sum() > 0:
@@ -443,7 +447,7 @@ class SWMMRunoffModeler:
             self._write_node_inflow_capture(
                 d_node_capture,
                 d_node_gridcell,
-                d_time_series.get("time_hr"),
+                d_time_series.get("timestep"),
                 flow_units,
             )
             # verifying that all nodes are within the DEM

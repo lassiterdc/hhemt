@@ -131,7 +131,7 @@ def test_a_chapter_write_killed_at_any_point_leaves_no_store_a_reader_trusts_and
     chapters.mkdir()
     store = chapter_store_for(chapters, 0)
     flag = chapter_flag_for(chapters, 0)
-    ds = _small(n=4).rename({"t": "timestep_min"})
+    ds = _small(n=4).rename({"t": "timestep"})
 
     real_to_zarr = xr.Dataset.to_zarr
     real_replace = os.replace
@@ -139,7 +139,7 @@ def test_a_chapter_write_killed_at_any_point_leaves_no_store_a_reader_trusts_and
     if kill_point == "mid-write":
 
         def _partial_then_die(self, store_arg, *args, **kwargs):
-            real_to_zarr(self.isel(timestep_min=slice(0, 2)), store_arg, *args, **kwargs)
+            real_to_zarr(self.isel(timestep=slice(0, 2)), store_arg, *args, **kwargs)
             raise KeyboardInterrupt
 
         monkeypatch.setattr(xr.Dataset, "to_zarr", _partial_then_die)

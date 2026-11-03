@@ -23,7 +23,7 @@ Covers:
       so a future "simplification" to any of them fails here rather than silently in a
       campaign;
   (f) the site-1 -> site-2 propagation hop: the record survives the summary reduction
-      ``.sum(dim="timestep_min").max(dim="Rank")`` that stands between the two joins;
+      ``.sum(dim="timestep").max(dim="Rank")`` that stands between the two joins;
   (g) legacy normalization: a store predating the guard concats cleanly beside a stamped
       one and reads as the explicit sentinel rather than being backfilled with a verdict.
 
@@ -183,7 +183,7 @@ def test_site1_finding_names_the_absent_columns_and_the_short_file(tmp_path):
 
     # And the underlying data really is NaN-short at the pre-split checkpoint, which is
     # what makes the finding worth carrying rather than decorative.
-    assert bool(np.isnan(ds["SWMM_MPI"].sel(timestep_min=1.0).values).all())
+    assert bool(np.isnan(ds["SWMM_MPI"].sel(timestep=1.0).values).all())
 
 
 def test_site1_transported_attr_is_present_on_every_aggregation(tmp_path):
@@ -357,20 +357,20 @@ def test_a_post_concat_attr_carries_no_per_member_value():
 # ---------------------------------------------------------------------------
 def test_site1_record_survives_the_summary_reduction_between_the_two_joins():
     """``_export_performance_summary`` reduces the per-scenario timeseries with
-    ``.sum(dim="timestep_min").max(dim="Rank")`` before the member concat ever sees it.
+    ``.sum(dim="timestep").max(dim="Rank")`` before the member concat ever sees it.
 
     The record has to cross that reduction, and it does only because it is dimensioned on
-    ``event_iloc`` -- a coord on ``timestep_min`` or ``Rank`` would be reduced away. This
+    ``event_iloc`` -- a coord on ``timestep`` or ``Rank`` would be reduced away. This
     is the hop that makes a site-1 record reach the consolidated tree at all.
     """
     ds = xr.Dataset(
-        {"Total": (("event_iloc", "timestep_min", "Rank"), np.ones((1, 3, 2)))},
-        coords={"event_iloc": [4], "timestep_min": [1.0, 2.0, 3.0], "Rank": [0, 1]},
+        {"Total": (("event_iloc", "timestep", "Rank"), np.ones((1, 3, 2)))},
+        coords={"event_iloc": [4], "timestep": [1.0, 2.0, 3.0], "Rank": [0, 1]},
     )
     ds.attrs["_hhemt_perf_column_set_finding"] = "HETEROGENEOUS: carried across the reduction"
     stamped = stamp_perf_column_set(ds)
 
-    reduced = stamped.sum(dim="timestep_min").max(dim="Rank")
+    reduced = stamped.sum(dim="timestep").max(dim="Rank")
 
     assert PERF_COLUMN_SET_COORD in reduced.coords
     assert "event_iloc" in reduced[PERF_COLUMN_SET_COORD].dims

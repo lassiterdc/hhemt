@@ -12,14 +12,14 @@ from hhemt.figure_caption import (
 )
 
 _TEXT = (
-    "Identity column = byte-identity of the <b>max_wlevel_m PEAK water-level summary</b> "
+    "Identity column = byte-identity of the <b>max_flood_depth PEAK flood-depth summary</b> "
     "(max over time) vs each config's hardware-family minimum-device reference."
 )
 
 
 def test_markup_costs_no_horizontal_budget():
     """<b>/</b> render as zero glyphs, so a marked-up token measures as its text."""
-    assert visible_len("<b>max_wlevel_m</b>") == visible_len("max_wlevel_m")
+    assert visible_len("<b>max_flood_depth</b>") == visible_len("max_flood_depth")
 
 
 def test_wrap_respects_content_width():

@@ -77,11 +77,11 @@ def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
 
 
 #: The compared quantity, named on the figure so the reader cannot mistake it for a
-#: final-timestep snapshot. max_wlevel_m is a PEAK summary: the per-DEM-cell maximum
-#: water level over the WHOLE simulation.
+#: final-timestep snapshot. max_flood_depth is a PEAK summary: the per-DEM-cell maximum
+#: flood depth over the WHOLE simulation.
 _VARIABLE_GLOSS = {
-    "max_wlevel_m": "max_wlevel_m, per-cell peak flood depth (maximum over the whole simulation)",
-    "max_flow_cms": "max_flow_cms, per-link peak flow (maximum over the whole simulation)",
+    "max_flood_depth": "max_flood_depth, per-cell peak flood depth (maximum over the whole simulation)",
+    "max_flow": "max_flow, per-link peak flow (maximum over the whole simulation)",
 }
 
 #: Experiment-id suffix -> model label. Mirrors _combine._MODEL_BY_TOKEN so the renderer's
@@ -112,8 +112,8 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                    bit-identical this row IS the result -- no empty axes is emitted,
                    and the no-difference finding is stated with its pair count.
       rows 2..N    one 2-column panel per differing (model, config, event):
-                   col-1 max_wlevel_m depth diff raster (watershed-masked),
-                   col-2 max_flow_cms conduit diff, or an explicit pure-TRITON N/A.
+                   col-1 max_flood_depth depth diff raster (watershed-masked),
+                   col-2 max_flow conduit diff, or an explicit pure-TRITON N/A.
 
     Diff sign convention: resume MINUS clean; blue = resume HIGHER.
     """
@@ -166,7 +166,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
     # Coupled-arm predicate: only a combine carrying a TRITON-SWMM arm has SWMM link pairs,
     # so the SWMM-specific truncation caveat is categorically inapplicable to a pure-TRITON
     # combine and MUST NOT render (deterministic-only, F9).
-    has_coupled_arm = any(p.get("variable") == "max_flow_cms" for p in all_pairs)
+    has_coupled_arm = any(p.get("variable") == "max_flow" for p in all_pairs)
 
     # ---- per-model roles: with two model arms there are FOUR experiments, so clean/resume
     #      must be resolved WITHIN a model, never globally (the iter-2 defect: one model's
@@ -221,7 +221,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         ["max abs flow diff (cms)"] if has_coupled_arm else []
     )
 
-    # A pair that differs ONLY in max_flow_cms still earns a panel: group by (model, config,
+    # A pair that differs ONLY in max_flow still earns a panel: group by (model, config,
     # event) so the depth raster and the conduit diff share one row rather than each spawning
     # a half-empty panel.
     panel_keys: list[tuple[str, str, int]] = []
@@ -246,9 +246,9 @@ def build_cross_experiment_diff_figure(combined_root: Path):
 
     caption_text = (
         "Compared quantity: "
-        + _VARIABLE_GLOSS["max_wlevel_m"]
+        + _VARIABLE_GLOSS["max_flood_depth"]
         + ". "
-        + ("TRITON-SWMM additionally compares " + _VARIABLE_GLOSS["max_flow_cms"] + ". " if has_coupled_arm else "")
+        + ("TRITON-SWMM additionally compares " + _VARIABLE_GLOSS["max_flow"] + ". " if has_coupled_arm else "")
         + "Maps show resume minus clean; blue = resume higher. Colour bands are the fixed "
         f"{_CONFIG_DIFF_DEPTH_BAND_M} m / {_CONFIG_DIFF_FLOW_BAND_CMS} cms meaningful-difference "
         "thresholds, identical in both models, so one hue is one magnitude everywhere."
@@ -660,10 +660,12 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         _ps = [q for cid in sorted(_ids) for q in _pairs_by_cfg.get(cid, [])]
         _n_cfg = len({lbl for lbl in _grp["labels"]})
         _depth = [
-            q["max_abs_diff"] for q in _ps if q.get("variable") == "max_wlevel_m" and q.get("max_abs_diff") is not None
+            q["max_abs_diff"]
+            for q in _ps
+            if q.get("variable") == "max_flood_depth" and q.get("max_abs_diff") is not None
         ]
         _flow = [
-            q["max_abs_diff"] for q in _ps if q.get("variable") == "max_flow_cms" and q.get("max_abs_diff") is not None
+            q["max_abs_diff"] for q in _ps if q.get("variable") == "max_flow" and q.get("max_abs_diff") is not None
         ]
         _verdict = (
             "no comparable pair"
@@ -1016,7 +1018,7 @@ def build_cross_experiment_diff_figure(combined_root: Path):
                     colorscale=_REF_DEPTH,
                     # Iteration-11 item 4: this colorbar was UNBOUNDED -- no `zmin`, no
                     # `zmax` -- so plotly auto-scaled it per panel AND per render, and the
-                    # same YlGnBu hue denoted a different water level in every panel and in
+                    # same YlGnBu hue denoted a different flood depth in every panel and in
                     # the co-located config-diff figure, with no cue that it had moved.
                     # `_quantised_depth_cap` IS the config-diff family's assignment, now at
                     # module scope: a zero floor and a cap that is the watershed-masked

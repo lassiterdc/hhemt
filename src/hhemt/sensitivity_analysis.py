@@ -28,7 +28,7 @@ import yaml
 
 import hhemt.analysis as anlysis
 from hhemt import orchestrator_sentinels as _osent
-from hhemt.cf_conventions import apply_global_attributes
+from hhemt.cf_conventions import apply_global_attributes, stamp_parameter_units
 from hhemt.config.analysis import ClearRawValue, ForceRerunValue
 from hhemt.config.hpc_system import resolve_additional_modules, resolve_gpu_target
 from hhemt.exceptions import ConfigurationError
@@ -130,6 +130,15 @@ def _is_analysis_overlay_column(col: str) -> bool:
 
     field_name = col[len(_ANALYSIS_COLUMN_PREFIX) :]
     return field_name in analysis_config.model_fields
+
+
+def _parameter_column_field(col: str) -> str:
+    """The analysis_config field a `parameters` column names: the column itself, or its `analysis.` / `hpc.` target."""
+    if _is_analysis_overlay_column(col):
+        return col[len(_ANALYSIS_COLUMN_PREFIX) :]
+    if _is_hpc_overlay_column(col):
+        return _resolve_hpc_alias_to_analysis_field(col)
+    return col
 
 
 def _strip_system_prefix(col: str) -> str:
@@ -1682,7 +1691,11 @@ class TRITONSWMM_sensitivity_analysis:
             }
         )
 
-        tree_dict["parameters"] = xr.Dataset.from_dataframe(self.df_setup)
+        # `from_dataframe` stamps nothing, so each numeric column's unit is stamped from the analysis_config
+        # field it names (an `analysis.{field}` or `hpc.{alias}` overlay column resolves to its field first).
+        tree_dict["parameters"] = stamp_parameter_units(
+            xr.Dataset.from_dataframe(self.df_setup), _parameter_column_field
+        )
 
         for member_id, analysis in self.members.items():
             node_name = f"{self.member_prefix}{member_id}"

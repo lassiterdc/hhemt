@@ -52,14 +52,14 @@ def test_compute_magnitude_known_values():
 
     # abs metrics over diff_wet = [0, 0.05, 0.10, 0, 0.05, 0, 0.08].
     diff_wet = np.array([0.0, 0.05, 0.10, 0.0, 0.05, 0.0, 0.08])
-    assert m["max_abs_diff_m"] == pytest.approx(0.10)
-    assert m["rmse_wetted_m"] == pytest.approx(float(np.sqrt(np.mean(diff_wet**2))))
+    assert m["max_abs_depth_diff"] == pytest.approx(0.10)
+    assert m["rmse_wetted_depth"] == pytest.approx(float(np.sqrt(np.mean(diff_wet**2))))
     assert m["p95_abs_diff_m"] == pytest.approx(float(np.percentile(diff_wet, 95)))
 
     # τ-restricted %-diff over baseline-wet cells (base >= 0.03): 5 cells.
     assert m["n_baseline_wet"] == 5
     abs_pct = np.array([0.0, 25.0, 20.0, 0.0, 0.0])  # |(test-base)/base*100|
-    assert m["pct_diff_p95"] == pytest.approx(float(np.nanpercentile(abs_pct, 95, method="median_unbiased")))
+    assert m["relative_depth_diff_p95"] == pytest.approx(float(np.nanpercentile(abs_pct, 95, method="median_unbiased")))
     assert m["pct_diff_median_signed"] == pytest.approx(0.0)
 
     # dry->wet newly-flooded: [1,2] and [2,2] cross from <τ to >=τ.
@@ -79,12 +79,12 @@ def test_compute_magnitude_shape_mismatch_raises():
 def test_compute_magnitude_all_dry_returns_zeros():
     dry = np.zeros((4, 4), dtype="float64")  # all below dry_threshold and τ
     m = compute_magnitude(dry, dry, dry_threshold_m=0.0025, tau_m=0.03)
-    assert m["max_abs_diff_m"] == 0.0
-    assert m["rmse_wetted_m"] == 0.0
+    assert m["max_abs_depth_diff"] == 0.0
+    assert m["rmse_wetted_depth"] == 0.0
     assert m["n_wet_union"] == 0
     assert m["n_baseline_wet"] == 0
     assert m["n_newly_wet"] == 0
-    assert m["pct_diff_p95"] == 0.0
+    assert m["relative_depth_diff_p95"] == 0.0
 
 
 def test_compute_magnitude_tau_floor_excludes_below_tau():
@@ -95,7 +95,7 @@ def test_compute_magnitude_tau_floor_excludes_below_tau():
     m = compute_magnitude(base, test, dry_threshold_m=0.0025, tau_m=0.03)
     # Only the 0.50 cell qualifies (base >= τ); its %-diff = 10.0.
     assert m["n_baseline_wet"] == 1
-    assert m["pct_diff_p95"] == pytest.approx(10.0)
+    assert m["relative_depth_diff_p95"] == pytest.approx(10.0)
     # The 0.01→0.05 cell is a newly-wet dry→wet crossing, not a %-diff contributor.
     assert m["n_newly_wet"] == 1
 
@@ -110,7 +110,7 @@ def test_compute_magnitude_type8_method_is_used():
     m = compute_magnitude(base, test, dry_threshold_m=0.0025, tau_m=0.03)
     expected_t8 = float(np.nanpercentile(np.abs(pct_targets), 95, method="median_unbiased"))
     linear_t7 = float(np.nanpercentile(np.abs(pct_targets), 95, method="linear"))
-    assert m["pct_diff_p95"] == pytest.approx(expected_t8)
+    assert m["relative_depth_diff_p95"] == pytest.approx(expected_t8)
     assert expected_t8 != pytest.approx(linear_t7)  # the two conventions genuinely differ here
 
 
@@ -137,10 +137,10 @@ def test_member_skips_non_sensitivity(member):
 
 
 def _depth_ds(grid: np.ndarray) -> xr.Dataset:
-    """A minimal flat-summary Dataset: max_wlevel_m over one event_iloc."""
+    """A minimal flat-summary Dataset: max_flood_depth over one event_iloc."""
     ny, nx = grid.shape
     return xr.Dataset(
-        {"max_wlevel_m": (("event_iloc", "y", "x"), grid[None, :, :])},
+        {"max_flood_depth": (("event_iloc", "y", "x"), grid[None, :, :])},
         coords={"event_iloc": [0], "y": np.arange(ny), "x": np.arange(nx)},
     )
 
@@ -263,7 +263,7 @@ def test_rank_sensitivity_fails_on_divergent_flat_summaries(tmp_path):
 
     assert res.skipped is False
     assert res.verdict.passed is False
-    assert any(d.get("variable") == "max_wlevel_m" for d in res.verdict.details)
+    assert any(d.get("variable") == "max_flood_depth" for d in res.verdict.details)
 
 
 def test_rank_sensitivity_skips_family_without_rank1_reference(tmp_path):

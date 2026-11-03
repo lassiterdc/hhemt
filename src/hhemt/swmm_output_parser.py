@@ -124,6 +124,72 @@ def retrieve_swmm_performance_stats_from_rpt(
     return result
 
 
+def node_flooding_ponded_field(lines) -> str | None:
+    """The LAST field of the Node Flooding Summary's third header line: ``Depth`` or ``Volume``, else None.
+
+    SWMM heads the sixth column of that table ``Depth`` when the model is routed by Dynamic Wave and ``Volume``
+    otherwise (``statsrpt.c``, "Ponded"), so the column is a depth in metres under one routing method and a
+    ponded volume under the others. The header block is the lines between the table's two dashed rules; its
+    third line ends in that word. The WHOLE line is not tested for ``Volume``: the Dynamic-Wave line also
+    contains ``Volume`` (the flood-volume column's heading), which is why only its last field decides.
+    ``lines`` may be any iterable of report lines, including an open file, and is read only as far as the
+    header block."""
+    in_section = False
+    n_rules = 0
+    header: list[str] = []
+    for line in lines:
+        if not in_section:
+            in_section = "Node Flooding Summary" in line
+            continue
+        if "No nodes were flooded." in line:
+            return None
+        if "------------" in line:
+            n_rules += 1
+            if n_rules == 2:
+                break
+            continue
+        if n_rules == 1 and line.strip():
+            header.append(line)
+    if len(header) < 3 or not header[2].split():
+        return None
+    return header[2].split()[-1]
+
+
+def _apply_ponded_depth_rule(df_node_flood_summary: pd.DataFrame, ponded_field: str | None, rpt_name) -> None:
+    """Keep ``max_ponded_depth`` only where the report heads that column ``Depth``; else NaN and warn (in place)."""
+    if ponded_field == "Depth" or df_node_flood_summary.empty:
+        return
+    df_node_flood_summary["max_ponded_depth"] = np.nan
+    warnings.warn(
+        f"{rpt_name}: the Node Flooding Summary's last column is headed {ponded_field!r}, not 'Depth' "
+        "(SWMM prints a depth only under Dynamic Wave routing), so max_ponded_depth is NaN for every node.",
+        UserWarning,
+        stacklevel=2,
+    )
+
+
+def format_node_inflow_summary(lst_section_lines, lst_col_headers) -> pd.DataFrame:
+    """The Node Inflow Summary as a frame whose last field is split by the unit SWMM printed after it.
+
+    SWMM prints the node's flow balance error as a percent, or, where the node's outflow volume is below one
+    cubic foot, as an absolute error in litres followed by ``ltr`` (``statsrpt.c``). The shared section reader
+    drops that token, which leaves one column holding two units. Here each row's last value goes to
+    ``flow_balance_error`` (percent) where no ``ltr`` followed it and to ``flow_balance_error_volume`` (litres)
+    where one did, the other being NaN on that row."""
+    df = format_rpt_section_into_dataframe(lst_section_lines, lst_col_headers)
+    has_ltr = [
+        line.split()[-1] == "ltr" for line in lst_section_lines if [t for t in line.split(" ") if t and t != "ltr\n"]
+    ]
+    if len(has_ltr) != len(df):
+        raise ValueError(
+            f"Node Inflow Summary: {len(df)} parsed rows but {len(has_ltr)} report lines to read the unit from"
+        )
+    flag = pd.Series(has_ltr, index=df.index, dtype=bool)
+    df["flow_balance_error_volume"] = df["flow_balance_error"].where(flag)
+    df["flow_balance_error"] = df["flow_balance_error"].where(~flag)
+    return df
+
+
 def retrieve_SWMM_outputs_as_datasets(
     f_swmm_inp: Path,
     swmm_timeseries_result_file: Path,
@@ -152,6 +218,7 @@ def return_swmm_outputs(
     lst_node_fld_summary = []
     lst_node_flow_summary = []
     lst_link_flow_summary = []
+    rpt_lines = None
     if swmm_timeseries_result_file.name.split(".")[-1] == "rpt":
         use_rpt_for_tseries = True
     elif swmm_timeseries_result_file.name.split(".")[-1] == "out":
@@ -263,7 +330,13 @@ def return_swmm_outputs(
         lst_node_flow_summary = dict_section_lines.get("Node Inflow Summary", [])
         lst_link_flow_summary = dict_section_lines.get("Link Flow Summary", [])
     df_node_flood_summary = format_rpt_section_into_dataframe(lst_node_fld_summary, lst_col_headers_node_flood_summary)
-    df_node_flow_summary = format_rpt_section_into_dataframe(lst_node_flow_summary, lst_col_headers_node_flow_summary)
+    if use_rpt_for_tseries:
+        with open(swmm_timeseries_result_file, encoding="latin-1") as _rpt:
+            _ponded_field = node_flooding_ponded_field(_rpt)
+    else:
+        _ponded_field = node_flooding_ponded_field(rpt_lines) if rpt_lines is not None else None
+    _apply_ponded_depth_rule(df_node_flood_summary, _ponded_field, swmm_timeseries_result_file.with_suffix(".rpt").name)
+    df_node_flow_summary = format_node_inflow_summary(lst_node_flow_summary, lst_col_headers_node_flow_summary)
     df_link_flow_summary = format_rpt_section_into_dataframe(lst_link_flow_summary, lst_col_headers_link_flow_summary)
     # combine event summary dataframes into an xarray dataset
     df_node_flood_summary.set_index("node_id", inplace=True)
@@ -271,14 +344,16 @@ def return_swmm_outputs(
     #
     df_node_summaries = df_node_flood_summary.join(df_node_flow_summary, how="outer")
     # process time stuff
-    df_node_summaries["time_of_max_flood_min"] = convert_swmm_tdeltas_to_minutes(
+    df_node_summaries["time_of_max_flood"] = convert_swmm_tdeltas_to_minutes(
         df_node_summaries["time_of_max_flood_d_hr_mn"]
     )
-    df_node_summaries["time_of_max_flow_min"] = convert_swmm_tdeltas_to_minutes(
-        df_node_summaries["time_of_max_flow_d_hr_mn"]
+    df_node_summaries["time_of_max_total_inflow"] = convert_swmm_tdeltas_to_minutes(
+        df_node_summaries["time_of_max_total_inflow_d_hr_mn"]
     )
     #
-    df_node_summaries = df_node_summaries.drop(columns=["time_of_max_flood_d_hr_mn", "time_of_max_flow_d_hr_mn"])
+    df_node_summaries = df_node_summaries.drop(
+        columns=["time_of_max_flood_d_hr_mn", "time_of_max_total_inflow_d_hr_mn"]
+    )
     # remove spaces from node id column
     lst_node_ids = []
     for val in df_node_summaries.index.values:
@@ -290,7 +365,7 @@ def return_swmm_outputs(
     df_node_summaries.index = lst_node_ids
     df_node_summaries.index.name = "node_id"
     # process link stuff
-    df_link_flow_summary["time_of_max_flow_min"] = convert_swmm_tdeltas_to_minutes(
+    df_link_flow_summary["time_of_max_flow"] = convert_swmm_tdeltas_to_minutes(
         df_link_flow_summary["time_of_max_flow_d_hr_mn"]
     )
     df_link_flow_summary = df_link_flow_summary.drop(columns=["time_of_max_flow_d_hr_mn"])
@@ -344,7 +419,7 @@ def return_swmm_outputs(
         # The peak's time is measured here, where the simulation start is known, and stored as the declared
         # variable it is. The start itself is NOT stored: a dataset attribute carrying it would be persisted
         # in every quality-routed node store as a key the output data model does not declare.
-        ds_nodes["pollutant_time_of_max_conc_min"] = pollutant_time_of_max_conc_min(
+        ds_nodes["pollutant_time_of_max_conc"] = pollutant_time_of_max_conc(
             ds_nodes["pollutant_conc"], simulation_start
         )
     #
@@ -440,12 +515,13 @@ def _rpt_starting_date(text: str) -> str | None:
     return match.group(1) if match else None
 
 
-def pollutant_time_of_max_conc_min(conc, simulation_start, tstep_dimname="date_time"):
+def pollutant_time_of_max_conc(conc, simulation_start, tstep_dimname="date_time"):
     """Minutes from the simulation start to the first step at which each series reaches its maximum.
 
     ``conc`` is a concentration DataArray whose last-but-one axis is the time dimension; the result drops
     that dimension. ``simulation_start`` is the report's ``Starting Date`` text (``MM/DD/YYYY HH:MM:SS``);
-    when it is None the origin is the first reported step. The unit and origin match ``time_of_max_flow_min``.
+    when it is None the origin is the first reported step. The unit and origin match
+    ``time_of_max_total_inflow`` and ``time_of_max_flow``.
     The first occurrence of a tied maximum is used; a series with no value gives NaN.
     """
     times = conc[tstep_dimname].values
@@ -563,15 +639,15 @@ def parse_rpt_quality_summaries(lines, pollutants, *, include_runoff_quality, fi
 
     Returns ``{variable name: xr.DataArray}``, containing only the tables the report prints:
 
-    - ``outfall_total_load`` (node_id, pollutant), ``outfall_total_vol_10e6_ltr`` (node_id) and
+    - ``outfall_total_load`` (node_id, pollutant), ``outfall_total_vol`` (node_id) and
       ``outfall_emc`` (node_id, pollutant) from ``Outfall Loading Summary``. The event mean
       concentration is the total load over the total volume in the pollutant's concentration
       unit, and NaN where the volume is zero.
     - ``link_total_load`` (link_id, pollutant) from ``Link Pollutant Load Summary``.
     - ``washoff_total_load`` (subcatchment_id, pollutant) from ``Subcatchment Washoff Summary``.
-    - ``qual_routing_{term}`` and ``qual_routing_continuity_error_perc`` (pollutant) from
+    - ``qual_routing_{term}`` and ``qual_routing_continuity_error`` (pollutant) from
       ``Quality Routing Continuity``; and, when ``include_runoff_quality``,
-      ``runoff_qual_{term}`` and ``runoff_qual_continuity_error_perc`` from ``Runoff Quality
+      ``runoff_qual_{term}`` and ``runoff_qual_continuity_error`` from ``Runoff Quality
       Continuity``. Each is read from its own table (the continuity tables are header-scoped).
 
     Every mass value of a count pollutant is linearized (see ``_linearize_mass``); concentrations
@@ -594,7 +670,7 @@ def parse_rpt_quality_summaries(lines, pollutants, *, include_runoff_quality, fi
         volume = np.array([float(row[4]) for row in rows])
         loads = _linearize_mass(np.array([[float(v) for v in row[5:]] for row in rows]), pollutants)
         out["outfall_total_load"] = _two_d("node_id", ids, loads)
-        out["outfall_total_vol_10e6_ltr"] = xr.DataArray(volume, dims=("node_id",), coords={"node_id": ids})
+        out["outfall_total_vol"] = xr.DataArray(volume, dims=("node_id",), coords={"node_id": ids})
         emc = np.full(loads.shape, np.nan)
         for k, unit in enumerate(units):
             scale = {"mg/L": 1.0, "ug/L": 1000.0}.get(unit)
@@ -635,7 +711,7 @@ def parse_rpt_quality_summaries(lines, pollutants, *, include_runoff_quality, fi
                 mass = _linearize_mass(np.array(table[label]).reshape(1, n), pollutants)[0]
                 out[f"{prefix}_{stem}"] = xr.DataArray(mass, dims=("pollutant",), coords={"pollutant": names})
         if "Continuity Error (%)" in table:
-            out[f"{prefix}_continuity_error_perc"] = xr.DataArray(
+            out[f"{prefix}_continuity_error"] = xr.DataArray(
                 np.array(table["Continuity Error (%)"]), dims=("pollutant",), coords={"pollutant": names}
             )
 
@@ -960,13 +1036,13 @@ def _bulk_parse_tseries(content: str):
         node_section,
         kind_filter="Node",
         idx_colname="node_id",
-        value_cols=["inflow_flow_cms", "flooding_cms", "depth_m", "head_m"],
+        value_cols=["inflow_flow", "flooding", "depth", "head"],
     )
     ds_link_tseries = _bulk_parse_section(
         link_section,
         kind_filter="Link",
         idx_colname="link_id",
-        value_cols=["flow_cms", "velocity_mps", "link_depth_m", "capacity_setting"],
+        value_cols=["flow", "velocity", "link_depth", "capacity_setting"],
     )
     return ds_node_tseries, ds_link_tseries
 
@@ -1128,18 +1204,21 @@ def _build_system_results(
     flow_units = line_flw_units.split(".")[-1].split("\n")[0].split(" ")[-1].lower()
 
     if runoff_continuity_error_line is not None:
-        runoff_continuity_error_perc = float(runoff_continuity_error_line.split(" ")[-1].split("\n")[0])
+        runoff_continuity_error = float(runoff_continuity_error_line.split(" ")[-1].split("\n")[0])
     else:
-        runoff_continuity_error_perc = np.nan
-    flow_continuity_error_perc = float(flow_continuity_error_line.split(" ")[-1].split("\n")[0])
+        runoff_continuity_error = np.nan
+    flow_continuity_error = float(flow_continuity_error_line.split(" ")[-1].split("\n")[0])
     system_flooding = float(system_flood_loss_line.split(" ")[-1].split("\n")[0])
     analysis_end_datetime = _parse_analysis_end_line(analysis_end_line)
     dict_system_results = dict(
         analysis_end_datetime=str(analysis_end_datetime),
         flow_units=flow_units,
-        runoff_continuity_error_perc=runoff_continuity_error_perc,
-        flow_continuity_error_perc=flow_continuity_error_perc,
-        system_flooding_10e6_ltr=system_flooding,
+        runoff_continuity_error=runoff_continuity_error,
+        runoff_continuity_error_units="percent",
+        flow_continuity_error=flow_continuity_error,
+        flow_continuity_error_units="percent",
+        system_flooding=system_flooding,
+        system_flooding_units="10^6 L",
     )
     return dict_system_results
 
@@ -1150,15 +1229,15 @@ def _build_system_results(
 #: authored against a real file, never inferred from the header text.
 LST_COL_HEADERS_SUBCATCH_RUNOFF_SUMMARY = (
     "subcatchment_id",
-    "total_precip_mm",
-    "total_runon_mm",
-    "total_evap_mm",
-    "total_infil_mm",
-    "imperv_runoff_mm",
-    "perv_runoff_mm",
-    "total_runoff_mm",
-    "total_runoff_10e6_ltr",
-    "peak_runoff_cms",
+    "total_precip",
+    "total_runon",
+    "total_evap",
+    "total_infil",
+    "imperv_runoff",
+    "perv_runoff",
+    "total_runoff_depth",
+    "total_runoff_volume",
+    "peak_runoff",
     "runoff_coeff",
 )
 
@@ -1249,10 +1328,10 @@ def _build_tseries_datasets(dict_nodes, dict_links):
         dict_nodes,
         [
             "date_time",
-            "inflow_flow_cms",
-            "flooding_cms",
-            "depth_m",
-            "head_m",
+            "inflow_flow",
+            "flooding",
+            "depth",
+            "head",
         ],
         "node_id",
     )
@@ -1260,9 +1339,9 @@ def _build_tseries_datasets(dict_nodes, dict_links):
         dict_links,
         [
             "date_time",
-            "flow_cms",
-            "velocity_mps",
-            "link_depth_m",
+            "flow",
+            "velocity",
+            "link_depth",
             "capacity_setting",
         ],
         "link_id",
@@ -1448,7 +1527,7 @@ def return_node_time_series_results_from_outfile(f_outfile, f_inp=None, return_q
                 ),
             )
         # PROCESSING NODES
-        dic_dfs = dict(depth_m=[], head_m=[], inflow_flow_cms=[], flooding_cms=[])
+        dic_dfs = dict(depth=[], head=[], inflow_flow=[], flooding=[])
         for node_id in d_nodes.keys():
             ts_depth = NodeSeries(out)[node_id].invert_depth
             ts_head = NodeSeries(out)[node_id].hydraulic_head
@@ -1457,37 +1536,37 @@ def return_node_time_series_results_from_outfile(f_outfile, f_inp=None, return_q
             # create dataframes
             df_depth = convert_pyswmm_output_to_df(
                 pyswmm_tseries=ts_depth,
-                valname="depth_m",
+                valname="depth",
                 item_idx_name="node_id",
                 item_idx=node_id,
                 idx_name="date_time",
             )
             df_head = convert_pyswmm_output_to_df(
                 pyswmm_tseries=ts_head,
-                valname="head_m",
+                valname="head",
                 item_idx_name="node_id",
                 item_idx=node_id,
                 idx_name="date_time",
             )
             df_inflow = convert_pyswmm_output_to_df(
                 pyswmm_tseries=ts_inflow,
-                valname="inflow_flow_cms",
+                valname="inflow_flow",
                 item_idx_name="node_id",
                 item_idx=node_id,
                 idx_name="date_time",
             )
             df_flooding = convert_pyswmm_output_to_df(
                 pyswmm_tseries=ts_flooding,
-                valname="flooding_cms",
+                valname="flooding",
                 item_idx_name="node_id",
                 item_idx=node_id,
                 idx_name="date_time",
             )
             # add dataframes to dictionary
-            dic_dfs["depth_m"].append(df_depth)
-            dic_dfs["head_m"].append(df_head)
-            dic_dfs["inflow_flow_cms"].append(df_inflow)
-            dic_dfs["flooding_cms"].append(df_flooding)
+            dic_dfs["depth"].append(df_depth)
+            dic_dfs["head"].append(df_head)
+            dic_dfs["inflow_flow"].append(df_inflow)
+            dic_dfs["flooding"].append(df_flooding)
         #
         lst_dfs = []
         for key in dic_dfs.keys():
@@ -1497,7 +1576,7 @@ def return_node_time_series_results_from_outfile(f_outfile, f_inp=None, return_q
         ds_node_tseries = pd.concat(lst_dfs, axis=1).to_xarray()
         #
         # PROCESSING LINKS
-        dic_dfs = dict(flow_cms=[], velocity_mps=[], link_depth_m=[], capacity=[])
+        dic_dfs = dict(flow=[], velocity=[], link_depth=[], capacity=[])
         for link_id in d_links.keys():
             ts_fr = LinkSeries(out)[link_id].flow_rate
             ts_dpth = LinkSeries(out)[link_id].flow_depth
@@ -1506,21 +1585,21 @@ def return_node_time_series_results_from_outfile(f_outfile, f_inp=None, return_q
             # create dataframes
             df_fr = convert_pyswmm_output_to_df(
                 pyswmm_tseries=ts_fr,
-                valname="flow_cms",
+                valname="flow",
                 item_idx_name="link_id",
                 item_idx=link_id,
                 idx_name="date_time",
             )
             df_dpth = convert_pyswmm_output_to_df(
                 pyswmm_tseries=ts_dpth,
-                valname="link_depth_m",
+                valname="link_depth",
                 item_idx_name="link_id",
                 item_idx=link_id,
                 idx_name="date_time",
             )
             df_vel = convert_pyswmm_output_to_df(
                 pyswmm_tseries=ts_vel,
-                valname="velocity_mps",
+                valname="velocity",
                 item_idx_name="link_id",
                 item_idx=link_id,
                 idx_name="date_time",
@@ -1533,9 +1612,9 @@ def return_node_time_series_results_from_outfile(f_outfile, f_inp=None, return_q
                 idx_name="date_time",
             )
             # add dataframes to dictionary
-            dic_dfs["flow_cms"].append(df_fr)
-            dic_dfs["velocity_mps"].append(df_vel)
-            dic_dfs["link_depth_m"].append(df_dpth)
+            dic_dfs["flow"].append(df_fr)
+            dic_dfs["velocity"].append(df_vel)
+            dic_dfs["link_depth"].append(df_dpth)
             dic_dfs["capacity"].append(df_cap)
         #
         lst_dfs = []

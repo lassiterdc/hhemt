@@ -76,8 +76,8 @@ SWMM_CHILDREN = ["SWMM_XFER", "SWMM_MPI", "SWMM_STEP", "SWMM_OTHER"]
 def _summary_ds(var_names: list[str], value: float = 1.0) -> xr.Dataset:
     """A performance SUMMARY dataset: one value per variable on a RETAINED size-one `Rank`.
 
-    `_export_performance_summary` writes `ds.sum(dim="timestep_min").max(dim="Rank",
-    keepdims=True)`, so `timestep_min` is gone entirely while `Rank` survives at size one --
+    `_export_performance_summary` writes `ds.sum(dim="timestep").max(dim="Rank",
+    keepdims=True)`, so `timestep` is gone entirely while `Rank` survives at size one --
     it is the carrier for the `Rank` PAIR of the summary's two-pair CF `cell_methods`, which
     has no admissible name under the spelling `Rank` if the axis is fully collapsed. The TIME
     pair is spelled `time` and is admissible by CF 7.3.4's class 3 precisely BECAUSE no
@@ -95,14 +95,12 @@ def _summary_ds(var_names: list[str], value: float = 1.0) -> xr.Dataset:
 
 
 def _tseries_ds(var_names: list[str], value: float = 1.0) -> xr.Dataset:
-    """A performance TIMESERIES dataset: both `timestep_min` and `Rank` intact.
+    """A performance TIMESERIES dataset: both `timestep` and `Rank` intact.
 
     The artifact `_export_performance_tseries` writes. It has collapsed no axis, which is why
     no `cell_methods` may be stamped on it.
     """
-    return xr.Dataset(
-        {name: (("timestep_min", "Rank"), np.full((3, 2), value, dtype=np.float64)) for name in var_names}
-    )
+    return xr.Dataset({name: (("timestep", "Rank"), np.full((3, 2), value, dtype=np.float64)) for name in var_names})
 
 
 #: The two artifacts' mode strings, split so each can be addressed separately. The unsuffixed
@@ -245,7 +243,7 @@ def test_performance_tseries_columns_declare_no_cell_methods(mode):
     RE-TARGETED, NOT WEAKENED. This assertion previously ran on the two unsuffixed modes,
     because both performance artifacts shared one mode string and a `cell_methods` accurate
     for the summary would have been stamped onto the series. The mode strings are now split,
-    so the same claim is asserted where it is still true -- the per-(timestep_min, Rank)
+    so the same claim is asserted where it is still true -- the per-(timestep, Rank)
     series, which has collapsed NEITHER dim and to which no reduction applies -- and its
     complement is asserted for the summary modes in the sibling test below. The pair covers
     four modes where the single assertion covered two.
@@ -278,7 +276,7 @@ def test_performance_summary_columns_declare_the_rank_reduction(mode):
     per-pair oracle and imports nothing from `cf_conventions`, so a wrong rule cannot agree with
     itself at both ends.
 
-    THE CLASS SEQUENCE IS STRICTLY STRONGER THAN THE `timestep_min`-ABSENCE ASSERTION it
+    THE CLASS SEQUENCE IS STRICTLY STRONGER THAN THE `timestep`-ABSENCE ASSERTION it
     replaced. That assertion passed on any string lacking the token, `"foo: bar"` included;
     this one pins which of CF's four classes each name takes.
     """

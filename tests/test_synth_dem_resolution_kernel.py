@@ -96,7 +96,7 @@ def test_empty_domain_would_be_perfect_agreement_without_guard5():
     """Pins the mechanism guard 5 defends against, at the compute_magnitude layer."""
     empty = np.full((4, 4), np.nan)
     m = compute_magnitude(empty, empty)
-    assert m["max_abs_diff_m"] == 0.0 and m["rmse_wetted_m"] == 0.0
+    assert m["max_abs_depth_diff"] == 0.0 and m["rmse_wetted_depth"] == 0.0
     assert m["csi"] is None, "CSI must be None on an empty domain, never 1.0"
 
 
@@ -106,14 +106,14 @@ def test_additive_keys_are_present_and_signed():
     m = compute_magnitude(base, test)
     assert m["pct_diff_p95_signed"] < 0.0, "under-estimation must read NEGATIVE"
     assert m["pct_diff_p05_signed"] < 0.0
-    assert m["pct_diff_p95"] > 0.0, "the abs-summarized secondary stays positive"
+    assert m["relative_depth_diff_p95"] > 0.0, "the abs-summarized secondary stays positive"
     assert m["csi"] == pytest.approx(1.0)
 
 
 def test_existing_member_keys_are_unchanged():
     """R3 is additive-only: the fixed _artifact_vars allowlist must still resolve."""
     m = compute_magnitude(np.full((4, 4), 0.5), np.full((4, 4), 0.4))
-    for k in ("max_abs_diff_m", "rmse_wetted_m", "pct_diff_p95", "n_newly_wet", "n_extent_disagree"):
+    for k in ("max_abs_depth_diff", "rmse_wetted_depth", "relative_depth_diff_p95", "n_newly_wet", "n_extent_disagree"):
         assert k in m
 
 

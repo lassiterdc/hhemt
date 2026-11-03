@@ -123,14 +123,14 @@ def test_the_overlay_is_mode_scoped_and_declines_under_a_non_performance_mode():
         assert quantity_provenance("Total", mode=mode) is not None, f"{mode} must resolve the overlay"
         # The base table stays reachable under a performance mode -- the overlay shadows,
         # it does not replace.
-        assert quantity_provenance("max_wlevel_m", mode=mode) is not None
+        assert quantity_provenance("max_flood_depth", mode=mode) is not None
 
     # A non-performance mode: the generic names must NOT resolve.
     assert quantity_provenance("Total", mode="tritonswmm") is None, (
         "a performance descriptor resolved under a non-performance mode -- the overlay "
         "was merged flat into _QUANTITY_PROVENANCE instead of being mode-scoped"
     )
-    assert quantity_provenance("max_wlevel_m", mode="tritonswmm") is not None
+    assert quantity_provenance("max_flood_depth", mode="tritonswmm") is not None
 
 
 def test_the_tseries_modes_carry_no_overlay_because_the_reduction_is_false_of_them():
@@ -151,13 +151,13 @@ def test_the_tseries_modes_carry_no_overlay_because_the_reduction_is_false_of_th
 def test_each_performance_descriptor_names_both_reduced_axes(var_name):
     """`_PERF_SUMMARY_CELL_METHODS` names only `Rank`; this table owes the time sum too.
 
-    CF-1.13 section 7.3 admits no cell_methods name for the summed-away `timestep_min`,
+    CF-1.13 section 7.3 admits no cell_methods name for the summed-away `timestep`,
     so `cf_conventions`'s own header nominates this table as the channel carrying it.
     A descriptor that named only the rank reduction would leave the sum documented
     nowhere a reader looks.
     """
     entry = _PERF_QUANTITY_PROVENANCE[var_name]
-    assert "timestep_min" in entry["reduced_coordinate"], f"{var_name} does not name the summed time axis"
+    assert "timestep" in entry["reduced_coordinate"], f"{var_name} does not name the summed time axis"
     assert "Rank" in entry["reduced_coordinate"], f"{var_name} does not name the reduced rank axis"
 
 
@@ -190,23 +190,61 @@ def test_reader_returns_a_copy_and_none_for_unknown():
     The renderer reads this per row; a caller that mutated the returned dict would
     corrupt every subsequent row on the page.
     """
-    entry = quantity_provenance("max_wlevel_m")
+    entry = quantity_provenance("max_flood_depth")
     assert entry is not None
     entry["operation"] = "MUTATED"
-    assert _QUANTITY_PROVENANCE["max_wlevel_m"]["operation"] != "MUTATED"
+    assert _QUANTITY_PROVENANCE["max_flood_depth"]["operation"] != "MUTATED"
     assert quantity_provenance("no_such_variable") is None
 
 
 def test_last_timestep_variable_is_described_as_a_selection_not_a_reduction():
     """Regression guard for the defect that motivated this table.
 
-    `wlevel_m_last_tstep` carries `cell_methods="time: point"`, but `point`
+    `flood_depth_last_tstep` carries `cell_methods="time: point"`, but `point`
     in CF means the variable RETAINS the time dimension with no method applied. The
     computation (process_simulation.py, `summarize_triton_simulation_results`) is
-    `ds["wlevel_m"].sel(timestep_min=tsteps.max())` -- a selection. If the descriptor
+    `ds["flood_depth"].sel(timestep=tsteps.max())` -- a selection. If the descriptor
     ever drifts back to reduction language, the table has reacquired the error it was
     written to correct.
     """
-    entry = _QUANTITY_PROVENANCE["wlevel_m_last_tstep"]
+    entry = _QUANTITY_PROVENANCE["flood_depth_last_tstep"]
     assert "select" in entry["operation"].lower()
     assert "maximum" not in entry["operation"].lower()
+
+
+# --- the SWMM-tier descriptors state what a unit and a name alone cannot ------------------------------------------
+
+
+def test_every_time_of_max_descriptor_states_the_origin_of_its_minutes():
+    """`units: min` carries no origin, so each `time_of_max_*` descriptor says where its minutes start.
+
+    SWMM's `time_of_max_*` minutes are elapsed from the REPORT start (clamped at 0, one-minute resolution) and the
+    pollutant peak's from the report's Starting Date; the two coincide with the simulation start only when a
+    model's report start equals its start date. The TRITON `time_of_max_*` variables count from the simulation start
+    in `timestep` and name that coordinate instead.
+    """
+    from hhemt.cf_conventions import _CF_VARIABLE_MAP, _WQ_QUANTITY_PROVENANCE
+
+    swmm = ("time_of_max_flood", "time_of_max_total_inflow", "time_of_max_flow")
+    for name in swmm:
+        assert _CF_VARIABLE_MAP[name]["units"] == "min", name
+        assert "report start" in _QUANTITY_PROVENANCE[name]["operation"], name
+    assert "Starting Date" in _WQ_QUANTITY_PROVENANCE["pollutant_time_of_max_conc"]["operation"]
+
+
+def test_the_link_signed_maxima_are_told_apart_from_the_report_magnitude_maxima():
+    """`flow_max` and `velocity_max` are maxima of the SIGNED series, `max_flow` and
+    `max_velocity` the report's maxima of the MAGNITUDE; each descriptor says which."""
+    for name in ("flow_max", "velocity_max"):
+        assert "signed" in _QUANTITY_PROVENANCE[name]["operation"], name
+    for name in ("max_flow", "max_velocity"):
+        assert "MAGNITUDE" in _QUANTITY_PROVENANCE[name]["operation"].upper(), name
+        assert "signed" in _QUANTITY_PROVENANCE[name]["operation"], name
+
+
+def test_the_migrated_only_flow_balance_error_is_described_but_is_not_a_layout_27_variable():
+    """`flow_balance_error_unsplit` has a descriptor so a migrated store can be explained, and its descriptor
+    says the form it replaced."""
+    entry = _QUANTITY_PROVENANCE["flow_balance_error_unsplit"]
+    assert "migrated" in entry["operation"]
+    assert "percentage" in entry["operation"] and "litres" in entry["operation"]

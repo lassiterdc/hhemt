@@ -273,7 +273,13 @@ unpaired_allowlist:
       change to this renderer.
   - renderer: cross_experiment_intercomparison_maps
     caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison_maps.rst
-    renderer_sha256: 344e2247c897d2354eb63cf39536a84e1c3c2d7a9383241e00deb5a0af230f3e
+    renderer_sha256: 959c9b9300ce18de9b978bb3400d449279ad2b56b8e976314888542578adb8a1
+    justification_2026_11_03_develop_integration_bffe88b3: >-
+      Merge of origin/develop (bffe88b3), 2026-11-03: the renderer's one merge conflict (the sentence naming the
+      coupled comparison) is resolved to develop's wording with the variable name `max_flow`; the digest is recorded from the
+      merged renderer. The caption was not edited in the merge. Caption RE-READ in full by a reviewer who is not the
+      author and reads true. This entry is a PAIRING discharge on that re-read, and it expires on the next change to
+      this renderer.
     justification_2026_11_03_thresholds_text: >-
       The colour-band sentence says both models in place of both model arms, and the line naming the
       coupled comparison says TRITON-SWMM. Caption RE-READ IN FULL (5 lines): it quotes neither string and
@@ -329,7 +335,7 @@ unpaired_allowlist:
       exemption expires on the next change to this renderer.
   - renderer: errors_and_warnings
     caption: src/hhemt/report_templates/captions/errors_and_warnings.rst
-    renderer_sha256: 3aefdba7b3baf03af75d66fd4d85eb93757926fce80cdfe2c0a3ecbae485fbd3
+    renderer_sha256: 9416c1b58049f211aaa34a9343cd4378577cd2874638de271d6e1d267cde327e
     justification_2026_11_02_develop_integration: >-
       Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that one vocabulary entry is added for the consolidated-metadata check.
       Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
@@ -347,6 +353,12 @@ unpaired_allowlist:
       Caption RE-READ IN FULL (5 lines): it names no page title and says only that the page lists the
       validation check results, which this one string edit does not touch. Digest recorded after the last
       edit, so the exemption expires on the next change to this renderer.
+    justification_2026_11_03_develop_integration_bffe88b3: >-
+      Merge of origin/develop (bffe88b3), 2026-11-03: the merged renderer differs from each side's recorded
+      version by the other side's edits only, and this entry's digest is recorded from the merged renderer. The
+      caption has not been edited in the merge. Caption RE-READ in full by a reviewer who is not the author and
+      reads true. This entry is a PAIRING discharge on that re-read, and it expires on the next change
+      to this renderer.
     justification: >-
       docs-and-experiment-system merge. Caption re-read against a MEASURED diff
       rather than a read-through. The merge-authored delta to this renderer --
@@ -511,6 +523,25 @@ unpaired_allowlist:
       so no caption claim is reachable by the new entry. No section, column or unit moved.
       This is a pairing discharge on a re-read, not a formatting exemption; the digest
       expires on the next change to this renderer.
+    justification_2026_11_02_develop_merge: >-
+      Re-read 2026-11-02 against this renderer's diff on top of the merged origin/develop. The diff renames
+      the check "Cross-sim byte-identity" to "Byte identity across
+      compute configurations" in the check vocabulary (key and display name), makes the overall banner
+      return the empty string when no check applies (the omission note then stands alone), and renames a
+      variable name in a docstring. The caption (5 lines, read in full) says only that the page holds the
+      results of the validation checks run once the workflow completed and lists the sources; it names no
+      check, no banner and no count, so no clause is falsified, weakened or left ambiguous and there is no
+      caption edit to make.
+    justification_2026_11_02: >-
+      Re-read 2026-11-02 against this renderer's diff (git diff HEAD). The change is a rename of one stored variable in a docstring
+      (max_wlevel_m -> max_flood_depth) and one word in a finding message string ("peak water level"
+      -> "peak flood depth", the forcing tail influence description). No emitted column, unit, row
+      or panel moved. This caption was read in full: it describes the pass/fail banner, the
+      omission line and the four section kinds, and contains none of water.level, wlevel, flood
+      depth, peak, maximum, timestep or max_ (matcher: grep -c -i -E on those alternatives, unit
+      lines, result 0), so no clause is falsified, weakened or left ambiguous and there is no
+      caption edit to make. Digest recorded at the post-change renderer content, so this exemption
+      expires on the next change to the renderer.
   - renderer: cross_experiment_disk_utilization
     caption: src/hhemt/report_templates/captions/cross_experiment_disk_utilization.rst
     renderer_sha256: c4225448eeff9272075a91a6cde436b811348f24644bdc1b8132cc6ad85764d7
@@ -562,7 +593,7 @@ unpaired_allowlist:
       change, so the exemption expires on the next change to this renderer.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: b5b9932170f373d70b4d8fbba953178daa860b3b6378fa9f3c516ac7fc19f0f0
+    renderer_sha256: 282b9af3bd6ba2670c3964fba3f9da79fc2654f0dd54fc13cddc6cc54ad04073
     justification_2026_11_02_title_colon: >-
       The page title joins the page name and the analysis id with a colon in place of an em dash.
       Caption RE-READ IN FULL (20 lines): it names no page title, and it describes the three displayed
@@ -572,6 +603,12 @@ unpaired_allowlist:
       Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that the store opens go through `open_store`, with no change to any section or wording.
       Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
       This is a PAIRING discharge on a re-read, not a formatting exemption; the digest expires on the next change to this renderer.
+    justification_2026_11_03_develop_integration_bffe88b3: >-
+      Merge of origin/develop (bffe88b3), 2026-11-03: the merged renderer differs from each side's recorded
+      version by the other side's edits only, and this entry's digest is recorded from the merged renderer. The
+      caption has not been edited in the merge. Caption RE-READ in full by a reviewer who is not the author and
+      reads true. This entry is a PAIRING discharge on that re-read, and it expires on the next change
+      to this renderer.
     justification_2026_11_02_metadata_page_text: >-
       The Metadata page text follows the report style brief, and the caption is rewritten in the
       same change (so this entry is not what satisfies the pairing guard for this change; it
@@ -983,6 +1020,15 @@ unpaired_allowlist:
       This is a PAIRING discharge on a re-read, not a formatting exemption: the change
       is semantic, and the re-read found the caption's scope disjoint from it. Digest
       recorded after S7, so the exemption expires on the next change to this renderer.
+    justification_2026_11_02_develop_merge: >-
+      Re-read 2026-11-02 against this renderer's diff on top of the merged origin/develop.
+      The diff changes one word in a code comment (the caret-branch comment now names total_inflow_vol
+      instead of its suffixed name); nothing the page prints changes. The caption (20 lines, read
+      in full) describes the Provenance, Data Availability and Reproduction Guide sections and names no
+      variable, so no clause is falsified, weakened or left ambiguous and there is no caption edit to
+      make.
+    justification_2026_11_02_stored_names: >-
+      Re-read 2026-11-02 against this renderer's diff (git diff HEAD), which renames stored variable names it reads or advertises; here one docstring bullet naming the SWMM node total inflow volume (total_inflow_vol_10e6_ltr -> total_inflow_vol); no emitted column, unit, row or panel moved. This caption was read in full and contains none of max_flow, cms, unit, velocity, depth, m3, 10e6 or flooding (matcher: grep -c -i -E on those alternatives, unit lines, result 0), so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at the post-change renderer content, so this exemption expires on the next change to the renderer.
   - renderer: per_analysis_summary
     caption: src/hhemt/report_templates/captions/per_analysis_summary_table.rst
     renderer_sha256: 23eab4d358490fa4c6c7fdaddd3e034f241dd8203e9c36c5dac514d1a4a8d1ce
@@ -1169,7 +1215,7 @@ unpaired_allowlist:
 
   - renderer: per_sim_peak_flood_depth
     caption: src/hhemt/report_templates/captions/per_sim_peak_flood_depth.rst
-    renderer_sha256: 1f51f4da0826ed8e81e3a696c5de7624295967767388da7ec520afeed6683ae7
+    renderer_sha256: 1effb1547cad8dff7f58c9f7981091c75844de536b4b968490ecdf6a4f03f1c9
     justification_2026_10_18: >-
       Re-read 2026-10-18 (general watershed wording). Two caption sentences were
       false of this renderer and were rewritten: the per-cell maximum is taken by the
@@ -1193,6 +1239,21 @@ unpaired_allowlist:
       sources; none of that is reachable by reordering an import. Digest recorded
       AFTER the ruff-format pass riding this same commit, so the exemption expires
       on the next real change to this renderer rather than on arrival.
+    justification_2026_11_02_stored_names: >-
+      Re-read 2026-11-02 against this renderer's diff (git diff HEAD), which renames stored variable names it reads or advertises; here the renderer-data key depth_m_max -> depth_max in the two manifest_data dictionaries (a JSON key in the figure manifest, not a plotted quantity); no emitted figure, column, unit or panel moved. This caption was read in full and contains none of depth_max, max_flow, cms, unit, velocity, m3 or flooding (matcher: grep -c -i -E on those alternatives, unit lines, result 0), so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at the post-change renderer content, so this exemption expires on the next change to the renderer.
+    justification_2026_11_03_renderer_data_keys: >-
+      Re-read 2026-11-03 against this renderer's diff (git diff HEAD), which
+      renames four keys of the renderer data written into the figure manifest, in the two manifest_data
+      dictionaries (wse_m_range -> wse_range, rainfall_max_mm_per_hr -> rainfall_max, bc_water_level_range_m ->
+      bc_water_level_range, depth_boundaries_m -> depth_boundaries) and adds a units companion key for each; the
+      configuration field depth_boundaries_m keeps its name. These are JSON keys in the manifest, not plotted
+      quantities: no emitted figure, panel, colorbar, column or unit moved. The caption (11 lines) was read in
+      full by the coder and none of those keys, nor rainfall_max, wse_range or a units word, appears in it (matcher:
+      grep -c -i -E on the alternatives wse_|rainfall_max|bc_water_level_range|depth_boundaries|units, unit lines,
+      result 0), so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. This
+      entry pairs the caption with the current renderer content. Caption RE-READ in full by a reviewer who is not the author
+      and reads true. This is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded at the
+      post-change renderer content, so this exemption expires on the next change to the renderer.
 
   - renderer: workflow_performance
     caption: src/hhemt/report_templates/captions/workflow_performance.rst
@@ -1367,7 +1428,7 @@ unpaired_allowlist:
       content, so this exemption expires on the next change to the renderer.
   - renderer: cross_experiment_errors_and_warnings
     caption: src/hhemt/report_templates/captions/cross_experiment_errors_and_warnings.rst
-    renderer_sha256: f21f64573528580847c6d0fd4a62230be59b5b404f5068db80f0b103d5459e4b
+    renderer_sha256: ffc705d5da36ace171b55a10d5ca60086fd9c25dcb3af263fbc7e093f1cb9ad8
     justification_2026_10_28: >-
       Re-read 2026-10-28 against this renderer's diff. The change is whitespace and line wrapping
       only: one blank line before _INLINE_STYLE, two adjacent f-string literals in
@@ -1378,6 +1439,27 @@ unpaired_allowlist:
       derived-across-experiments rows, and none of those is touched by the diff, so no clause is
       falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at
       the post-change renderer content, so this exemption expires on the next change to the renderer.
+    justification_2026_11_02_develop_merge: >-
+      Re-read 2026-11-02 against this renderer's diff on top of the merged origin/develop.
+      The diff renames the stored variable names the renderer matches in the combined comparison records
+      (max_wlevel_m to max_flood_depth, max_flow_cms to max_flow) in code, two f-string findings and
+      comments; the table it emits is unchanged. The caption (one paragraph, read in full) describes one
+      experiment's result per check, hover text and the derived-across-experiments marker, and names
+      neither variable, so no clause is falsified, weakened or left ambiguous and there is no caption edit
+      to make.
+    justification_2026_11_02: >-
+      Re-read 2026-11-02 against this renderer's diff (git diff HEAD). The change renames the
+      stored variable it filters on (max_wlevel_m -> max_flood_depth) in one docstring, one
+      comprehension, one f-string and one comment; the comparison is by the stored name, so the
+      rename keeps the same pairs selected. No emitted column, unit, row or panel moved. This
+      caption was read in full: it describes the per-experiment pass/fail roll-up, hover text for
+      a FAIL and the derived-across-experiments rows, and contains none of water.level, wlevel,
+      flood depth, peak, maximum, timestep or max_ (matcher: grep -c -i -E on those alternatives,
+      unit lines, result 0), so no clause is falsified, weakened or left ambiguous and there is no
+      caption edit to make. Digest recorded at the post-change renderer content, so this exemption
+      expires on the next change to the renderer.
+    justification_2026_11_02_stored_names: >-
+      Re-read 2026-11-02 against this renderer's diff (git diff HEAD), which renames stored variable names it reads or advertises; here the SWMM link maximum flow (max_flow_cms -> max_flow) in a docstring, one comprehension and one f-string. The comparison is by the stored name, so the same pairs are selected. This caption was read in full: it describes the per-experiment pass/fail roll-up, hover text for a FAIL and the derived-across-experiments rows, and contains none of max_flow, cms, unit, velocity, depth, m3 or flooding (matcher: grep -c -i -E on those alternatives, unit lines, result 0), so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at the post-change renderer content, so this exemption expires on the next change to the renderer.
   - renderer: disk_utilization
     caption: src/hhemt/report_templates/captions/disk_utilization.rst
     renderer_sha256: 6e7de8ed6b77156e4736d3f78fad50ef8b9fb7a13212333a54f1fed5d3522315
@@ -1403,3 +1485,25 @@ unpaired_allowlist:
       strings, so no clause is falsified, weakened or left ambiguous and there is no caption edit to
       make. Digest recorded after the last edit, so this exemption expires on the next change to the
       renderer.
+  - renderer: per_sim_conduit_flow
+    caption: src/hhemt/report_templates/captions/per_sim_conduit_flow.rst
+    renderer_sha256: 1c9bbeec0e0d7ae1febff9a183dfc8e3bf6cb09933342f4daa83dddd7a87448c
+    justification_2026_11_02_develop_merge: >-
+      Re-read 2026-11-02 against this renderer's diff on top of the merged origin/develop (the SWMM link
+      maximum flow it reads is named max_flow, not max_flow_cms, in
+      four code lines and a comment; origin/develop reworded two hover notes, the bin text and the
+      watershed legend label). The caption (11 lines, read in full) calls Max / full flow the ratio of
+      maximum flow to full-pipe capacity and Peak flow the peak flow magnitude per conduit, names the
+      legend label watershed polygon, and the Flood Drivers rainfall and boundary-condition panels;
+      none of the changed lines alters those statements, so no clause is falsified, weakened or left
+      ambiguous and there is no caption edit to make.
+    justification_2026_11_03_renderer_data_keys: >-
+      Re-read 2026-11-03 against this renderer's diff (git diff HEAD), which
+      renames one key of the renderer data written into the figure manifest (peak_flow_max_cms -> peak_flow_max)
+      and adds the companion key peak_flow_max_units. It is a JSON key in the manifest, not a plotted quantity: no
+      emitted figure, panel, colorbar, column or unit moved. The caption (11 lines) was read in full;
+      it calls Peak flow the peak flow magnitude per conduit and names no manifest key (matcher: grep -c -i -E on
+      the alternatives peak_flow_max|_cms|_units, unit lines, result 0), so no clause is falsified, weakened or
+      left ambiguous and there is no caption edit to make. Caption RE-READ in full by a reviewer who is not the
+      author and reads true. This is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded
+      at the post-change renderer content, so this exemption expires on the next change to the renderer.

@@ -317,7 +317,7 @@ def test_the_peak_flood_depth_definition_is_one_wording_on_both_pages_and_names_
     Input class: the two captions, the renderer source and the solver-output mapping. Required because
     the per-member caption said the depth was "taken by the toolkit's post-processing" while the
     plotted variable is the TRITON solver's own maximum: `TRITON_RAW_VAR_BY_PREFIX["MH"]` is
-    `max_wlevel_m` and the per-member renderer reads `ds["max_wlevel_m"]`. Killed by restoring the
+    `max_flood_depth` and the per-member renderer reads `ds["max_flood_depth"]`. Killed by restoring the
     post-processing wording, by naming a different mapped variable, or by the two pages diverging. A
     second correct implementation words the definition differently while the two captions agree and
     state a solver maximum of the depth.
@@ -329,10 +329,10 @@ def test_the_peak_flood_depth_definition_is_one_wording_on_both_pages_and_names_
         _depth_definition(_caption_of("per_sim_peak_flood_depth")),
     )
 
-    assert TRITON_RAW_VAR_BY_PREFIX["MH"] == "max_wlevel_m"
-    assert 'ds["max_wlevel_m"]' in _renderer_source("per_sim_peak_flood_depth")
+    assert TRITON_RAW_VAR_BY_PREFIX["MH"] == "max_flood_depth"
+    assert 'ds["max_flood_depth"]' in _renderer_source("per_sim_peak_flood_depth")
     assert event == member
-    assert "maximum water depth" in member and "TRITON solver" in member
+    assert "running maximum of depth" in member and "the solver's MH" in member
     assert "post-processing" not in member
 
 
@@ -354,7 +354,7 @@ def test_the_definition_check_fires_on_the_two_old_wordings(event: str, member: 
 
 def test_the_mapping_check_fires_on_a_different_variable() -> None:
     """Must-fire control: a mapping that sends MH elsewhere fails the equality the test asserts."""
-    assert {"MH": "max_flow_cms"}["MH"] != "max_wlevel_m"
+    assert {"MH": "max_flow"}["MH"] != "max_flood_depth"
 
 
 _CUT_PHRASES = {

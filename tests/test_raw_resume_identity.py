@@ -93,12 +93,12 @@ def test_triton_raw_b4b_identical_and_divergent_at_boundary(tmp_path):
     _write_bin_raster(resume / "H1", base + 1 + 1e-9)  # <- byte-differs
     _write_bin_raster(resume / "MH1", base + 1)
 
-    res = compare_triton_raw_timeseries(clean, resume, reporting_interval_s=60.0)
-    wl = res["wlevel_m"][0]  # identical da (return is {var: (identical, max_abs_diff)})
-    assert bool(wl.sel(timestep_min=0.0)) is True
-    assert bool(wl.sel(timestep_min=1.0)) is False
+    res = compare_triton_raw_timeseries(clean, resume, reporting_interval=60.0)
+    wl = res["flood_depth"][0]  # identical da (return is {var: (identical, max_abs_diff)})
+    assert bool(wl.sel(timestep=0.0)) is True
+    assert bool(wl.sel(timestep=1.0)) is False
     assert first_divergent_timestep(wl) == 1.0
-    mh = res["max_wlevel_m"][0]  # MH identical throughout
+    mh = res["max_flood_depth"][0]  # MH identical throughout
     assert all(bool(b) for b in mh.values)
     assert first_divergent_timestep(mh) is None
 
@@ -336,7 +336,7 @@ def test_read_sub_resume_context_reads_an_ordinal_named_log_only_when_identity_i
 
 
 def test_resume_boundaries_from_schedule_unit_conversion():
-    # index -> minutes: timestep_min = index * reporting_interval_s / 60
+    # index -> minutes: timestep = index * reporting_interval / 60
     assert resume_boundaries_from_schedule((25, 50, 75), 60.0) == [25.0, 50.0, 75.0]
     assert resume_boundaries_from_schedule((25, 50, 75), 600.0) == [250.0, 500.0, 750.0]
     # clean-vs-clean / missing context -> no boundary, never raises
@@ -374,11 +374,11 @@ def test_build_binary_timestep_figure_k_vlines_and_clean_vs_clean():
     import xarray as xr
 
     b4b = {
-        "wlevel_m": xr.DataArray(
+        "flood_depth": xr.DataArray(
             np.array([True, True, True], dtype=bool),
-            dims=("timestep_min",),
-            coords={"timestep_min": np.array([0.0, 10.0, 20.0])},
-            name="wlevel_m",
+            dims=("timestep",),
+            coords={"timestep": np.array([0.0, 10.0, 20.0])},
+            name="flood_depth",
         )
     }
     # K=3 requested boundaries -> exactly 3 vline shapes (pure-TRITON arm: no marker needed)
@@ -499,13 +499,13 @@ def test_b4b_ref_key_prefers_fewer_devices_before_any_tiebreak():
 
 
 def _b4b_pair(timesteps, identical, mad):
-    """One (identical, max_abs_diff) DataArray pair on the timestep_min coord."""
+    """One (identical, max_abs_diff) DataArray pair on the timestep coord."""
     import xarray as xr
 
-    coords = {"timestep_min": np.asarray(timesteps, dtype=float)}
+    coords = {"timestep": np.asarray(timesteps, dtype=float)}
     return (
-        xr.DataArray(np.asarray(identical, dtype=bool), dims="timestep_min", coords=coords),
-        xr.DataArray(np.asarray(mad, dtype="float64"), dims="timestep_min", coords=coords),
+        xr.DataArray(np.asarray(identical, dtype=bool), dims="timestep", coords=coords),
+        xr.DataArray(np.asarray(mad, dtype="float64"), dims="timestep", coords=coords),
     )
 
 
@@ -536,8 +536,8 @@ def test_collapse_replicates_folds_worst_case_across_replicates():
 
     ts = [0.0, 10.0, 20.0]
     per_config = {
-        "serial_0_r1": {"wlevel_m": _b4b_pair(ts, [True, True, True], [0.0, 0.0, 0.0])},
-        "serial_0_r2": {"wlevel_m": _b4b_pair(ts, [True, True, False], [0.0, 0.0, 0.5])},
+        "serial_0_r1": {"flood_depth": _b4b_pair(ts, [True, True, True], [0.0, 0.0, 0.0])},
+        "serial_0_r2": {"flood_depth": _b4b_pair(ts, [True, True, False], [0.0, 0.0, 0.5])},
     }
     meta = {"serial_0_r1": _b4b_meta("serial"), "serial_0_r2": _b4b_meta("serial")}
 
@@ -546,7 +546,7 @@ def test_collapse_replicates_folds_worst_case_across_replicates():
     assert list(out_pc) == ["serial"], "two replicates must collapse to ONE labelled row"
     assert n_rep == {"serial": 2}
     assert set(out_meta) == {"serial"}
-    ident, mad = out_pc["serial"]["wlevel_m"]
+    ident, mad = out_pc["serial"]["flood_depth"]
     assert list(ident.values) == [True, True, False], "the diverging replicate wins the AND"
     assert list(mad.values) == [0.0, 0.0, 0.5], "max_abs_diff is the max over replicates"
 
@@ -569,13 +569,13 @@ def test_collapse_replicates_does_not_manufacture_divergence_at_a_base_only_time
 
     per_config = {
         # r1 reached t=30; r2 stopped at t=20.
-        "serial_0_r1": {"wlevel_m": _b4b_pair([0.0, 10.0, 20.0, 30.0], [True] * 4, [0.0] * 4)},
-        "serial_0_r2": {"wlevel_m": _b4b_pair([0.0, 10.0, 20.0], [True] * 3, [0.0] * 3)},
+        "serial_0_r1": {"flood_depth": _b4b_pair([0.0, 10.0, 20.0, 30.0], [True] * 4, [0.0] * 4)},
+        "serial_0_r2": {"flood_depth": _b4b_pair([0.0, 10.0, 20.0], [True] * 3, [0.0] * 3)},
     }
     meta = {"serial_0_r1": _b4b_meta("serial"), "serial_0_r2": _b4b_meta("serial")}
 
-    ident, mad = _collapse_replicates(per_config, meta)[0]["serial"]["wlevel_m"]
-    coords = [float(t) for t in ident["timestep_min"].values]
+    ident, mad = _collapse_replicates(per_config, meta)[0]["serial"]["flood_depth"]
+    coords = [float(t) for t in ident["timestep"].values]
 
     assert coords == [0.0, 10.0, 20.0], "the unshared timestep is out of the collapsed comparison"
     assert False not in list(ident.values), "no cell may report a divergence that was never measured"
@@ -617,7 +617,7 @@ def _b4b_two_configs(reps_per_label: dict[str, int]):
     for label, n in reps_per_label.items():
         for r in range(1, n + 1):
             member = f"{label}_r{r}"
-            per_config[member] = {"wlevel_m": _b4b_pair(ts, [True] * 3, [0.0] * 3)}
+            per_config[member] = {"flood_depth": _b4b_pair(ts, [True] * 3, [0.0] * 3)}
             meta[member] = _b4b_meta(label, is_reference=(label == "serial" and r == 1))
     return per_config, meta
 

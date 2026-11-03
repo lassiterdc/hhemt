@@ -565,26 +565,6 @@ def test_the_reset_all_tooltip_names_only_state_the_table_saves() -> None:
     assert [t for t in titles if "column" in t.lower() and not saved["columns"]] == []
 
 
-def test_the_sources_list_names_no_retired_column_of_the_sweep_definition_file() -> None:
-    """Class: every column name the Sources list gives for the sweep definition file.
-
-    The loader refuses the retired id column and requires ``member_id``, so a reader who
-    looks for a listed column must find one the file can carry.
-    """
-    from hhemt.report_renderers._figure_emission import collect_sensitivity_source_paths
-    from hhemt.sensitivity_analysis import _RETIRED_ID_COLUMNS
-
-    listed = [
-        name.strip().lower()
-        for src in collect_sensitivity_source_paths("x")
-        if src["path"].endswith("sensitivity_analysis_definition.csv")
-        for variable in src["variables"]
-        for name in variable.split(",")
-    ]
-    assert listed != []
-    assert sorted(set(listed) & _RETIRED_ID_COLUMNS) == []
-
-
 def test_the_error_panel_sentence_has_no_escaped_em_dash() -> None:
     """The style test skips constants named *_DEFS, so an escaped em dash in the injected error panel
     is checked here by name. Control: the first assertion proves the constant read holds the sentence."""

@@ -132,15 +132,15 @@ def test_hydrology_rpt_summary_captures_runoff_volume_and_continuity():
         / "hydro_runoff_summary.rpt"
     )
     ds = parse_hydrology_rpt_summary(Path(str(src)))
-    assert "total_runoff_10e6_ltr" in ds.data_vars
+    assert "total_runoff_volume" in ds.data_vars
     # Dim-NAME aware, and that is the point: parse_hydrology_rpt_summary's legal empty
     # return skips df.set_index, so the dimension is named `index` and a bare
     # ds.sizes["subcatchment_id"] raises KeyError instead of failing as an assertion.
     assert ds.sizes.get("subcatchment_id", 0) == 20, (
         f"expected the excerpt's 20 subcatchment rows, got dims {dict(ds.sizes)}"
     )
-    assert ds.attrs["runoff_continuity_error_perc"] == pytest.approx(-1.234)
-    assert ds.attrs["flow_continuity_error_perc"] == pytest.approx(100.0)
+    assert ds.attrs["runoff_continuity_error"] == pytest.approx(-1.234)
+    assert ds.attrs["flow_continuity_error"] == pytest.approx(100.0)
     assert ds.attrs["flow_units"] == "cms"
 
 
@@ -167,10 +167,10 @@ def test_per_node_capture_is_bit_identical_to_the_written_hydrograph(synth_prepa
     # chunks=None keeps this eager: a chunked groupby needs explicit `labels`,
     # and the arrays here are one scenario's worth.
     cap = xr.open_zarr(cap_path, chunks=None).squeeze("event_iloc", drop=True)
-    assert cap["inflow_cms"].dtype == np.dtype("float32")
+    assert cap["inflow"].dtype == np.dtype("float32")
 
     written = pd.read_csv(scen.scen_paths.hyg_timeseries, skiprows=2, header=None)
-    # column 0 is time_hr; the rest are gridcells in (x, y)-sorted order, which
+    # column 0 is timestep; the rest are gridcells in (x, y)-sorted order, which
     # is the order write_hydrograph_files' groupby produced.
     written_cells = written.iloc[:, 1:].to_numpy(dtype="float64")
 
@@ -181,7 +181,7 @@ def test_per_node_capture_is_bit_identical_to_the_written_hydrograph(synth_prepa
             "i": np.arange(cap.sizes["node_id"]),
         }
     )
-    inflow = cap["inflow_cms"].values.astype("float64")
+    inflow = cap["inflow"].values.astype("float64")
     rebuilt = np.column_stack([inflow[g["i"].to_numpy()].sum(axis=0) for _, g in df.groupby(["x", "y"], sort=True)])
 
     assert rebuilt.shape == written_cells.shape, (

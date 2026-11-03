@@ -1,7 +1,7 @@
 """Cross-sim byte-for-byte identity verification (ADR-9 first member).
 
-Verifies that key results — peak flood depth (``max_wlevel_m``) and conduit
-flow / over-full-flow / over-full-depth (``max_flow_cms`` /
+Verifies that key results — peak flood depth (``max_flood_depth``) and conduit
+flow / over-full-flow / over-full-depth (``max_flow`` /
 ``max_over_full_flow`` / ``max_over_full_depth``) — are bit-identical across all
 sims sharing an event iloc on a SENSITIVITY PRIMARY (members that vary only
 compute config must produce identical physics). On the strict path
@@ -34,6 +34,7 @@ import numpy as np
 import xarray as xr
 
 from hhemt.analysis_validation import CheckResult, _iter_members_or_self
+from hhemt.cf_conventions import apply_cf_attributes
 from hhemt.eda._result import EdaResult
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import emit_data_artifact_with_sources
@@ -53,15 +54,15 @@ if TYPE_CHECKING:
 #: without ever comparing conduit capacity. Verify any future edit against
 #: ``list(ds.data_vars)`` of a real summary zarr, never against cf_conventions.
 TRACKED_VARS: tuple[str, ...] = (
-    "max_wlevel_m",
-    "max_flow_cms",
+    "max_flood_depth",
+    "max_flow",
     "max_over_full_flow",
     "max_over_full_depth",
 )
 
 
 #: §8.7.2's pair-signature suffixes. ``summarize_swmm_simulation_results``
-#: (process_simulation.py:3510-3512) emits, for every time-variant var ``v``, BOTH
+#: (process_simulation.py:3722-3723) emits, for every time-variant var ``v``, BOTH
 #: ``v_max`` and ``v_last`` and then drops ``v``. A tree-wide grep returns exactly ONE
 #: emitter of a ``_max``-suffixed data_var and exactly ONE of a ``_last``-suffixed one and
 #: they are the SAME loop iteration, so the suffix PAIR is a signature of that loop and of
@@ -100,7 +101,7 @@ def derive_compared_columns(ds: xr.Dataset) -> tuple[frozenset[str], frozenset[s
     reports agreement.
 
     WHY THE ``_last`` CONJUNCT IS LOAD-BEARING RATHER THAN DECORATIVE. The same link summary
-    also carries ``max_flow_cms``, ``max_velocity_mps``, ``max_over_full_flow`` and
+    also carries ``max_flow``, ``max_velocity``, ``max_over_full_flow`` and
     ``max_over_full_depth`` — every one a ``.rpt`` report-header column using ``max`` as a
     PREFIX, and every one structurally immune to the resume defect. Requiring the ``_last``
     partner is what makes the predicate correct BY CONSTRUCTION rather than correct by the
@@ -152,7 +153,7 @@ def pair_rule_is_self_consistent(at_risk: frozenset[str], compared: frozenset[st
 
 #: The dimension pair that identifies the TRITON raster-summary family, and the reason it is
 #: a SIGNATURE rather than a convenience. ``summarize_triton_simulation_results`` reduces a
-#: gridded ``(timestep_min, y, x)`` raster, so its summary is the only one in the per-scenario
+#: gridded ``(timestep, y, x)`` raster, so its summary is the only one in the per-scenario
 #: `processed/` set carried on an ``x``/``y`` grid; `processing_analysis._MODE_CONFIG` encodes
 #: the same fact, listing ``["x", "y"]` as the concat dim for exactly the two TRITON modes
 #: (``tritonswmm_triton``, ``triton_only``) and a scalar or ``None`` for the other six.
@@ -200,11 +201,11 @@ def compared_columns_for(ds: xr.Dataset) -> tuple[tuple[str, ...], dict]:
     criterion was restated to escape — three are `.rpt` LINK FLOW SUMMARY columns written
     from ``TLinkStats``, the family that provably round-trips, and the fourth is the TRITON
     depth field — so unioning them in re-admitted the blindness at every artifact. On the
-    TRITON side the floor is not lost but SUBSUMED: all-vars admits ``max_wlevel_m`` by
+    TRITON side the floor is not lost but SUBSUMED: all-vars admits ``max_flood_depth`` by
     construction and compares seven further fields beside it, so the repair WIDENS
     peak-flood-depth coverage rather than regressing it. On the SWMM side the floor was pure
     over-comparison against §8.3.1's published ``|COMPARED| = 8`` and it also dragged in
-    ``max_velocity_mps``'s neighbours; dropping it is what makes the measured figure equal
+    ``max_velocity``'s neighbours; dropping it is what makes the measured figure equal
     the published one.
 
     MEASURED on the real stores, before and after, per member: link 11 -> 8, node 9 -> 8,
@@ -571,7 +572,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
     ``dataclasses.asdict(CheckResult)``); only the verdict's ``passed``/``summary``/
     ``details`` semantics branch on ``within_family``.
     """
-    name = "Cross-sim byte-identity"
+    name = "Byte identity across compute configurations"
     sub_items = list(_iter_members_or_self(analysis))
     # Non-sensitivity: _iter_members_or_self yields a single (None, analysis).
     if len(sub_items) == 1 and sub_items[0][0] is None:
@@ -801,12 +802,12 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
     # so produce it here from the SAME flat summaries (Gotcha 44 / the `eda bit identity check
     # reads flat summaries not consolidated tree` stipulation) via compare_variable_exact --
     # NEVER the consolidated tree. Two subs share a label iff byte-identical on the config-diff
-    # variables (max_wlevel_m from the depth mode, max_flow_cms from the link mode) at every
+    # variables (max_flood_depth from the depth mode, max_flow from the link mode) at every
     # present event. The label array is emitted over the artifact's OWN (non-reference) member_id
     # coord so the addition is purely additive (existing vars unchanged, no bool-dtype realign);
     # the reference's own label is carried in the `reference_group` attr for the reader to fold
     # back in.
-    _PARTITION_VARS = ("max_wlevel_m", "max_flow_cms")
+    _PARTITION_VARS = ("max_flood_depth", "max_flow")
 
     def _partition_signature(sub) -> dict | None:
         """{(var, event_iloc): DataArray} for the config-diff variables, or None when the sub
@@ -916,7 +917,7 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
         # SELF-REPORTED from the path actually taken: this check compares the FLAT
         # per-scenario summaries (`_retrieve_combined_output` above), never the raw
         # per-timestep rasters and never the consolidated tree. The floor is the
-        # COARSEST across the compared variables -- max_wlevel_m is stored float32
+        # COARSEST across the compared variables -- max_flood_depth is stored float32
         # while the SWMM-side variables are float64, so float32 eps bounds what this
         # verdict can see at all. Never derive this from cfg_analysis.clear_raw:
         # that records configured intent, not the path taken.
@@ -941,6 +942,10 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
             _encoding[_v] = {"dtype": "float64"}
         elif _v == "identity_group":
             _encoding[_v] = {"dtype": "int32"}
+    # Written without `_write_output`, so the artifact's variables' units are stamped here: `max_abs_diff__{v}` in
+    # the unit of `{v}`, `identity_group` a dimensionless label, and the boolean `identical__{v}` flags a
+    # long_name only.
+    apply_cf_attributes(artifact_ds, "eda_cross_sim_identity")
     write_zarr(artifact_ds, artifact_path, chunks=None, encoding=_encoding)
 
     # Source paths = every per-sub summary file the comparison consumed. Declared so

@@ -1,6 +1,2 @@
 source: src/hhemt/eda/_notebook.py
-entries:
-- rule: retired_word
-  string: '## Cross-sim byte-identity (source-analysis only) Available only on a live analysis directory (a transported bundle carries no source per-scenario summaries).'
-  status: baseline
-  reason: present when the style test was added
+entries: []

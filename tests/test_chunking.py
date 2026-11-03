@@ -124,15 +124,15 @@ def create_sensitivity_dataset(
     nonspatial_chunks = (1, 1, 1, 1, 1, 1)
 
     spatial_vars = [
-        "wlevel_m_last_tstep",
-        "max_velocity_mps",
-        "velocity_x_mps_at_time_of_max_velocity",
-        "max_wlevel_m",
-        "time_of_max_velocity_min",
-        "time_of_max_wlevel_min",
-        "velocity_y_mps_at_time_of_max_velocity",
+        "flood_depth_last_tstep",
+        "max_unit_discharge",
+        "unit_discharge_x_at_time_of_max_unit_discharge",
+        "max_flood_depth",
+        "time_of_max_unit_discharge",
+        "time_of_max_flood_depth",
+        "unit_discharge_y_at_time_of_max_unit_discharge",
     ]
-    nonspatial_vars = ["final_surface_flood_volume_m3"]
+    nonspatial_vars = ["final_surface_flood_volume"]
 
     data_vars = {
         name: (

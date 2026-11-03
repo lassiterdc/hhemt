@@ -101,9 +101,9 @@ _INPUT_FILE = {
     "encodingFormat": "image/tiff",
 }
 _VAR = {
-    "@id": "#var-max_wlevel_m",
+    "@id": "#var-max_flood_depth",
     "@type": "PropertyValue",
-    "name": "max_wlevel_m",
+    "name": "max_flood_depth",
     "description": "maximum water surface elevation",
     "unitText": "m",
     "propertyID": "water_surface_height_above_reference_datum",
@@ -115,7 +115,7 @@ _ZARR = {
     "name": "Consolidated analysis DataTree (zarr)",
     "encodingFormat": "application/x-zarr",
     "conformsTo": {"@id": "https://example.org/cf-profile"},
-    "variableMeasured": [{"@id": "#var-max_wlevel_m"}],
+    "variableMeasured": [{"@id": "#var-max_flood_depth"}],
 }
 _RUN = {
     "@id": "#run-none-evt0-triton",
@@ -343,7 +343,7 @@ def test_verifiability_anchors_and_chain_are_rendered(tmp_path):
     assert "deadbeefcafe" in html  # SIF sha256
     assert "f00dfeed" in html  # input digest
     assert "CC0-1.0" in html  # dataset license
-    assert "max_wlevel_m" in html  # CF data-dictionary row
+    assert "max_flood_depth" in html  # CF data-dictionary row
     assert "water_surface_height_above_reference_datum" in html
 
 

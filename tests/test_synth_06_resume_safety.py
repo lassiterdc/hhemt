@@ -107,7 +107,7 @@ def test_two_allocation_merge_recovers_full_wallclock(two_allocation_perf_dir):
     summary = _aggregate_perf_summary(two_allocation_perf_dir, resume_steps=[5])
 
     assert summary["Total"].item() == pytest.approx(160.0, rel=1e-6), (
-        "With both allocation batches preserved, max(Rank).sum(timestep_min)[Total] "
+        "With both allocation batches preserved, max(Rank).sum(timestep)[Total] "
         "must equal the true end-to-end wallclock (rank 1: 16·5 + 16·5 = 160)."
     )
 
@@ -151,7 +151,7 @@ def test_pre_resume_files_deleted_undercounts_wallclock(two_allocation_perf_dir)
         f"in a way that mints synthetic wallclock)."
     )
     assert truncated_total == pytest.approx(80.0, rel=1e-6), (
-        "With only the post-resume batch present, max(Rank).sum(timestep_min)[Total] "
+        "With only the post-resume batch present, max(Rank).sum(timestep)[Total] "
         "equals only the post-resume work (rank 1: 16·5 = 80); the 80s undercount "
         "vs full (160s) is the pre-resume wallclock lost to mid-workflow "
         "_clear_raw_TRITON_outputs."

@@ -190,7 +190,7 @@ class TRITONSWMM_analysis_post_processing:
 
     # Per-scenario TIMESERIES modes (opt-in via analysis_config.toggle_consolidate_timeseries).
     # Maps mode -> the scenario-path attr for the per-scenario timeseries zarr. SWMM node
-    # (wlevel(t)) + SWMM link (flow(t)) ONLY. The TRITON gridded (timestep_min, y, x) series
+    # (wlevel(t)) + SWMM link (flow(t)) ONLY. The TRITON gridded (timestep, y, x) series
     # is deliberately excluded, and the exclusion is load-bearing rather than incidental:
     # measured on synth_cc_clean (2026-07-21), the gridded store is 6.610 MB/scenario of
     # PAYLOAD against 0.079 MB for the SWMM node+link pair — an 83x ratio. (Measured as
@@ -207,9 +207,9 @@ class TRITONSWMM_analysis_post_processing:
     # "is NOT needed for the clean-vs-resume over-time figure." That was WRONG and is the
     # kind of error that survives by being repeated. That figure plots the resumed-minus-
     # clean difference against time for a clean/resumed pair of the same event, and its
-    # water-level panel reads wlevel_m from THIS store. SWMM node head is NOT a substitute
+    # water-level panel reads flood_depth from THIS store. SWMM node head is NOT a substitute
     # — different quantity, different solver — and the residuals under investigation are
-    # TRITON-side (14 of 15 pairs on max_wlevel_m). The exclusion stands on COST alone, not
+    # TRITON-side (14 of 15 pairs on max_flood_depth). The exclusion stands on COST alone, not
     # on absence of a consumer. No renderer in this package draws that figure: it is drawn
     # outside the toolkit by reading the per-scenario stores directly, which means a render
     # bundle cannot reproduce it — a BUNDLE-FIDELITY limitation, not evidence the data is
@@ -232,7 +232,7 @@ class TRITONSWMM_analysis_post_processing:
     # not landed here yet: it MUST NOT become a variable in the per-model SUMMARY Dataset.
     # process_simulation.summarize_triton_simulation_results builds ds_summary on
     # cell_dims = ("y", "x") and _retrieve_combined_output concatenates those summaries
-    # along event_iloc; a timestep_min-dimensioned variable makes that concat RAGGED across
+    # along event_iloc; a timestep-dimensioned variable makes that concat RAGGED across
     # events, which either NaN-pads to the duration union (silently enormous on a
     # 3,798-event ensemble) or fails on a coordinate mismatch. It would also change the
     # schema of an artifact inside _SUMMARY_STEMS_BY_MODEL -- the required preserve set that
@@ -243,7 +243,7 @@ class TRITONSWMM_analysis_post_processing:
     # The zero-I/O claim itself is VERIFIED and stands: _streaming_argmax_with_companions
     # materializes each (chunk_timesteps, ny, nx) block as a concrete numpy array
     # (`primary_chunk = ...values`), and three of its four call sites already pass
-    # primary_var="wlevel_m", so np.nanmax(primary_chunk, axis=(1, 2)) is a same-loop
+    # primary_var="flood_depth", so np.nanmax(primary_chunk, axis=(1, 2)) is a same-loop
     # addition against an array already in memory. Note the existing tritonswmm/triton
     # summary node is the ORTHOGONAL reduction (max over TIME per cell, dims (y, x)); the
     # two are not derivable from each other.
@@ -436,8 +436,8 @@ class TRITONSWMM_analysis_post_processing:
 
         # BOTH halves, from one pass. `emitted_attrs` is what makes the crate's descriptors
         # STORE-SOURCED; omitting it here leaves the crate on the static base map and therefore
-        # override-blind, which publishes `'Maximum flood velocity'` for a link-mode store that
-        # stamps `'Maximum conduit velocity'`. This is the only production call threading
+        # override-blind, which publishes the static base-map label for a mode whose store stamps a
+        # different `long_name`. This is the only production call threading
         # `emitted_attrs` into the analysis/member-tier crate; the experiment tier's own
         # call is in sensitivity_analysis.py.
         _emitted_vars, _emitted_attrs = emitted_vars_and_attrs(_ds for _p, _ds in tree_dict.items() if _p != "/")
@@ -889,18 +889,17 @@ def emitted_vars_and_attrs(node_datasets) -> tuple[set[str], dict[str, dict[str,
 
     THE CONFLICT POLICY, and it is a DECIDED choice rather than a fallthrough. A flat
     ``{name: attrs}`` mapping cannot express one name described two ways, and a tree MAY carry one
-    name in two nodes: ``max_velocity_mps`` is the measured case, carried by both
+    name in two nodes: ``max_velocity`` is the measured case, carried by both
     ``tritonswmm_swmm_link`` and ``swmm_only_link``. Where two nodes agree, the agreed descriptor
     is used. Where they DISAGREE, the name is OMITTED from the mapping so ``_descriptor`` falls
     back to its static entry -- because there is no single correct description, and publishing
     either one would be a false claim about the other node. That keeps this change MONOTONE in the
     sense ``_descriptor``'s own contract states: it can only replace a static descriptor with a
-    store descriptor that actually exists AND is unambiguous. Measured on the live tables, exactly
-    one variable's override diverges from its base entry (``max_velocity_mps``: base
-    ``'Maximum flood velocity'``, both link modes ``'Maximum conduit velocity'``) and the two
-    override modes carrying it are byte-identical, so the disagree branch is reachable only by a
-    future heterogeneous tree and is inert on the current corpus. An unstamped node contributes
-    nothing: ``_descriptor``'s predicate is a non-empty ``long_name``, so a node carrying none
+    store descriptor that actually exists AND is unambiguous. Measured on the live tables, no
+    variable's override diverges from its base entry (``max_velocity`` is now the SWMM conduit
+    in the base and in both link modes, which are byte-identical to it), so the disagree branch is
+    reachable only by a future heterogeneous tree and is inert on the current corpus. An unstamped
+    node contributes nothing: ``_descriptor``'s predicate is a non-empty ``long_name``, so a node carrying none
     leaves the name on its static entry regardless of what this returns.
     """
     emitted_vars: set[str] = set()
@@ -1224,8 +1223,8 @@ def return_lst_dic_of_unique_storm_idxs(ds):
     """Return one ``{coord: value}`` selector per unique storm in ``ds``.
 
     The storm coordinates are every coordinate except x, y, model, simtype, link_id and
-    node_id. The probe variable is the first of max_wlevel_m, max_flow_cms and
-    total_inflow_vol_10e6_ltr present; a dataset carrying none of them raises
+    node_id. The probe variable is the first of max_flood_depth, max_flow and
+    total_inflow_vol present; a dataset carrying none of them raises
     UnboundLocalError.
     """
     lst_coords = []
@@ -1241,15 +1240,15 @@ def return_lst_dic_of_unique_storm_idxs(ds):
             lst_coords.append(coord)
     # Read the unique non-spatial coordinate combinations -- one per storm -- off a single
     # probe element, selected by POSITION 1 along x and y, link_id, or node_id, of the
-    # first of max_wlevel_m / max_flow_cms / total_inflow_vol_10e6_ltr the dataset carries.
-    if "max_wlevel_m" in ds.data_vars:
-        datavar = "max_wlevel_m"
+    # first of max_flood_depth / max_flow / total_inflow_vol the dataset carries.
+    if "max_flood_depth" in ds.data_vars:
+        datavar = "max_flood_depth"
         idx_loc = dict(x=1, y=1)
-    elif "max_flow_cms" in ds.data_vars:
-        datavar = "max_flow_cms"
+    elif "max_flow" in ds.data_vars:
+        datavar = "max_flow"
         idx_loc = dict(link_id=1)
-    elif "total_inflow_vol_10e6_ltr" in ds.data_vars:
-        datavar = "total_inflow_vol_10e6_ltr"
+    elif "total_inflow_vol" in ds.data_vars:
+        datavar = "total_inflow_vol"
         idx_loc = dict(node_id=1)
     if "x" in ds.coords and "y" in ds.coords:
         idx_storms = ds.isel(idx_loc)[datavar].to_dataframe().reset_index().set_index(lst_coords).index.unique()

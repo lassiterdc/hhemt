@@ -54,7 +54,7 @@ class CheckResult:
        rasters from one computed from the derived summary tier. Those have
        different detection floors, so an identical-looking PASS means different
        things. Measured on the compute-sensitivity campaign: the summary tier
-       stores ``max_wlevel_m`` (the TRITON depth field, the one variable carrying
+       stores ``max_flood_depth`` (the TRITON depth field, the one variable carrying
        the coupled-resume perturbation) as FLOAT32 while every SWMM-side variable
        is float64. float32 eps is 1.1920928955078125e-07, so a true 2.4e-08
        difference quantizes UP to ~1.19e-07 and a true 1.68e-13 difference rounds
@@ -75,7 +75,7 @@ class CheckResult:
     ``detection_floor`` is the smallest absolute difference the instrument can
     resolve at unit magnitude -- the COARSEST floor across the variables actually
     compared, since that is the bound below which the verdict cannot see anything.
-    A summary-tier verdict touching ``max_wlevel_m`` therefore reports float32
+    A summary-tier verdict touching ``max_flood_depth`` therefore reports float32
     eps, not float64 eps, even though its SWMM-side variables are float64.
 
     All three fields are DEFAULTED so a ``validation_report.json`` written before
@@ -1786,7 +1786,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
     # missing scatter. Arms A and B are both silent on it by construction.
     #
     # Why it is INVISIBLE to the artifacts the existing arms read: measured on this
-    # campaign, max_flow_cms is identical on 14/14 coupled configs while max_wlevel_m
+    # campaign, max_flow is identical on 14/14 coupled configs while max_flood_depth
     # differs on 14/14, and SWMM's own hydraulics.rpt link/node maxima are unchanged at
     # reported precision because the interface error collapses from 1.45e+02 cfs to
     # 2.1e-03 within ~1000 steps. Only TRITON's own H/MH rasters carry it. No amount of
@@ -1815,7 +1815,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
                         "global_new_depth[] but never scatters them into the per-rank new_depth[], "
                         "so the first post-resume step evaluates every manhole at new_depth=0 and "
                         "writes a permanent perturbation into TRITON's depth field. TRITON-side "
-                        "max_wlevel_m / H / MH from this model run are invalid; SWMM-side max_flow_cms "
+                        "max_flood_depth / H / MH from this model run are invalid; SWMM-side max_flow "
                         "and hydraulics.rpt maxima are unaffected at reported precision and are "
                         "not evidence of validity. Re-run once the upstream scatter fix lands "
                         "(_PINNED_TRITON_SWMM_DEPTH_SCATTER_FIX_SHA)."
@@ -2023,7 +2023,7 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis, *, df_status=No
 
     (A) COUPLED (tritonswmm): reads the durable ``coupled_resume_replay_evidence`` stamp
         (``processing_analysis._stamp_coupled_resume_evidence``), which carries
-        ``resume_matches_schedule`` = ``resume_t >= schedule[-1] * reporting_interval_s``
+        ``resume_matches_schedule`` = ``resume_t >= schedule[-1] * reporting_interval``
         (coupled-only, unit-matched), where ``resume_t`` comes from WHICHEVER resume
         marker fired — snapshot restore or exchange replay. ``False`` -> the resume
         engaged but landed BEFORE the last scheduled boundary (schedule truncated / not
@@ -2370,7 +2370,7 @@ _RECLAIM_LOG_FIELDS: dict[str, str] = {
 #: The terminal TRITON snapshot lands ON the forced end by construction -- post-trim the
 #: simulation duration IS the forcing extent -- so the comparison is an equality case in
 #: the normal state and the strict ``>`` is what keeps a healthy run green. That leaves a
-#: one-ULP hazard: ``time_of_max_wlevel_min`` is an accumulation of reporting-step
+#: one-ULP hazard: ``time_of_max_flood_depth`` is an accumulation of reporting-step
 #: multiples and visibly carries float error (measured on the synth fixture: 24.666666666666664
 #: for an exact 24.666666666666668), so a terminal snapshot drifting one ULP the other way
 #: would fire on EVERY healthy analysis. This tolerance is bounded on both sides rather than
@@ -2477,8 +2477,8 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
                     indeterminate += 1
                     continue
                 zarr = open_store(summaries[0], kind="zarr")
-                tmx = zarr["time_of_max_wlevel_min"].isel(event_iloc=0).values.astype(float)
-                mx = zarr["max_wlevel_m"].isel(event_iloc=0).values.astype(float)
+                tmx = zarr["time_of_max_flood_depth"].isel(event_iloc=0).values.astype(float)
+                mx = zarr["max_flood_depth"].isel(event_iloc=0).values.astype(float)
             except Exception:
                 indeterminate += 1
                 continue

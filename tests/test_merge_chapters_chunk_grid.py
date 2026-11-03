@@ -38,14 +38,14 @@ def _write_chapters(root, specs, ny: int = 8, nx: int = 10) -> None:
     first = 0
     for index, (n_t, time_chunk) in enumerate(specs):
         ds = xr.Dataset(
-            {"wlevel_m": (("timestep_min", "y", "x"), np.zeros((n_t, ny, nx), dtype="float32"))},
+            {"flood_depth": (("timestep", "y", "x"), np.zeros((n_t, ny, nx), dtype="float32"))},
             coords={
-                "timestep_min": np.arange(first, first + n_t),
+                "timestep": np.arange(first, first + n_t),
                 "y": np.arange(ny),
                 "x": np.arange(nx),
             },
         )
-        ds["wlevel_m"].encoding["chunks"] = (time_chunk, ny, nx)
+        ds["flood_depth"].encoding["chunks"] = (time_chunk, ny, nx)
         # Use the module's OWN naming helpers rather than constructing the names.
         # `chapter_flag_for` emits `chapter_{k:05d}.done`; a hand-built
         # `{store}.done` still MATCHES `completed_chapters`' `chapter_*.done` glob,
@@ -79,8 +79,8 @@ def test_merged_store_keeps_the_inherited_time_chunk_grid(tmp_path, specs, expec
 
     assert unified_flag_for(final).exists(), "merge did not publish its completion flag"
     merged = xr.open_zarr(final, consolidated=False)
-    assert merged.sizes["timestep_min"] == total
-    grid = merged["wlevel_m"].chunks[0]
+    assert merged.sizes["timestep"] == total
+    grid = merged["flood_depth"].chunks[0]
     assert set(grid[:-1]) == {expected_time_chunk}, (
         f"interior time chunks {grid[:-1]} are not uniform at the inherited "
         f"{expected_time_chunk}; a non-uniform interior is what zarr refuses"
@@ -112,14 +112,14 @@ def test_merge_refuses_a_spatially_divergent_chapter_set(tmp_path):
     # measured production signature -- the short chapter is the coarser side.
     for index, (n_t, grid) in enumerate([(12, (6, 4, 5)), (4, (6, 8, 10))]):
         ds = xr.Dataset(
-            {"wlevel_m": (("timestep_min", "y", "x"), np.zeros((n_t, ny, nx), dtype="float32"))},
+            {"flood_depth": (("timestep", "y", "x"), np.zeros((n_t, ny, nx), dtype="float32"))},
             coords={
-                "timestep_min": np.arange(first, first + n_t),
+                "timestep": np.arange(first, first + n_t),
                 "y": np.arange(ny),
                 "x": np.arange(nx),
             },
         )
-        ds["wlevel_m"].encoding["chunks"] = grid
+        ds["flood_depth"].encoding["chunks"] = grid
         store = chapter_store_for(chapters, index)
         ds.to_zarr(store, mode="w", consolidated=False)
         chapter_flag_for(chapters, index).write_text("ok", encoding="utf-8")
@@ -132,7 +132,7 @@ def test_merge_refuses_a_spatially_divergent_chapter_set(tmp_path):
     # The MESSAGE is asserted, not merely the exception type. A refusal that does not
     # name the divergence is the opaque dask-position ValueError this replaces.
     assert "do not share one non-concat chunk grid" in str(excinfo.value)
-    assert "wlevel_m" in str(excinfo.value)
+    assert "flood_depth" in str(excinfo.value)
     # And the store must NOT have been published. Spec 13 makes the publish atomic, so
     # a refusal before it leaves nothing at the published path.
     assert not final.exists(), "a refused merge published a store"

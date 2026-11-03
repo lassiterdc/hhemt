@@ -180,7 +180,7 @@ def test_identity_cell_gpu_differs_reads_within_family_not_cross_family_bound():
 
     # Q1 (iter-2): a differing GPU group is measured against its OWN 1-GPU family reference, so
     # _identity_cell reads it as a within-family difference and NO LONGER emits a cross-family
-    # "bounded, disclosed" bound (the vs-serial magnitude lives in the max_wlevel_m abs-diff column).
+    # "bounded, disclosed" bound (the vs-serial magnitude lives in the max_flood_depth abs-diff column).
     g = _grp(["gpu"], "member_gpu_0_r1")
     serial = _grp(["serial"], "member_serial_6_r1")
     cell = _identity_cell(False, g, serial, 1.19e-07, 0.0)

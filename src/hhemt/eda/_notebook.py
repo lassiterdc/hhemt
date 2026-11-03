@@ -170,7 +170,7 @@ def emit_eda_notebook(
         cells.append(
             _tagged(
                 new_markdown_cell(
-                    "## Cross-sim byte-identity (source-analysis only)\n\n"
+                    "## Byte identity across compute configurations (source-analysis only)\n\n"
                     "Available only on a live analysis directory (a transported bundle "
                     "carries no source per-scenario summaries)."
                 )

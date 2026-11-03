@@ -23,7 +23,7 @@ _EXPERIMENTS = [
 ]
 
 
-def _pair(model, identical, variable="max_wlevel_m"):
+def _pair(model, identical, variable="max_flood_depth"):
     return {
         "config": "run_mode=serial|n_mpi=1|n_omp=1|n_gpus=0|n_nodes=1|partition=",
         "variable": variable,
@@ -82,7 +82,7 @@ def test_compared_variable_is_named_as_a_peak_not_a_final_timestep(tmp_path):
     fig = build_cross_experiment_diff_figure(root)
     text = " ".join(a.text or "" for a in fig.layout.annotations)
     assert_figure_invariants(fig)
-    assert "max_wlevel_m" in text
+    assert "max_flood_depth" in text
     assert "peak flood depth" in text and "maximum over the whole simulation" in text
 
 

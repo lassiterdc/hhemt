@@ -129,37 +129,92 @@ expected partial-completion state, not a corrupt store.
 A variable with no `standard_name` has no applicable CF standard name: the CF
 table does not cover it, and inventing one would be worse than leaving it unset.
 
+**The unit is stored, not spelled in the name.** Every stored numeric variable, at every
+tier, carries a `units` attribute, and no variable name carries a unit token: the SWMM node depth is `depth` with
+`units: m`, and a link's flow is `flow` with `units: m3 s-1`. A string-valued variable (`type`, `event_id`, the producing-stamp
+coordinates) has no unit and carries no `units` attribute. Two cases state no single unit
+and carry a `comment` saying why instead: a variable that holds different units along one
+dimension (the water-quality variables below, and the `max_abs_diff` difference of the raw
+byte-identity artifact), and `flow_balance_error_unsplit`, which exists only in a store
+migrated from layout 27 or below, where one variable held a percentage on some rows and
+an error in litres on the others and the store does not record which.
+
 ### 2D surface results (TRITON)
 
 | Variable | Units | `standard_name` | Meaning |
 |---|---|---|---|
-| `max_wlevel_m` | `m` | `sea_surface_height_above_geoid` | Maximum water level over the simulation |
-| `wlevel_m` | `m` | `sea_surface_height_above_geoid` | Water-level timeseries |
-| `wlevel_m_last_tstep` | `m` | `sea_surface_height_above_geoid` | Water level at the final timestep |
-| `max_velocity_mps` | `m s-1` | `sea_water_speed` | Maximum flood velocity |
-| `velocity_x_mps` | `m s-1` | `sea_water_x_velocity` | Flood-velocity x-component |
-| `velocity_y_mps` | `m s-1` | `sea_water_y_velocity` | Flood-velocity y-component |
-| `time_of_max_velocity_min` | `minutes` | n/a | Time at which maximum velocity occurred |
-| `final_surface_flood_volume_m3` | `m3` | n/a | Final surface flood volume |
+| `max_flood_depth` | `m` | `flood_water_thickness` | Maximum flood depth: the solver's running maximum of depth, updated every solver step (TRITON `MH` at the final print). In coupled runs at solver commits before `b3820a44` the SWMM exchange is applied after that update, so at a coupled manhole cell it can be below a printed depth |
+| `flood_depth` | `m` | `flood_water_thickness` | Flood-depth timeseries |
+| `flood_depth_last_tstep` | `m` | `flood_water_thickness` | Flood depth at the final timestep |
+| `time_of_max_flood_depth` | `min` | n/a | Time of the print at which the printed depth is largest |
+| `max_unit_discharge` | `m2 s-1` | n/a | Maximum unit discharge (flow rate per metre of flow width) |
+| `unit_discharge_x` | `m2 s-1` | n/a | Unit discharge x-component |
+| `unit_discharge_y` | `m2 s-1` | n/a | Unit discharge y-component |
+| `unit_discharge_x_at_time_of_max_unit_discharge` | `m2 s-1` | n/a | Unit discharge x-component at the time of maximum unit discharge |
+| `unit_discharge_y_at_time_of_max_unit_discharge` | `m2 s-1` | n/a | Unit discharge y-component at the time of maximum unit discharge |
+| `time_of_max_unit_discharge` | `min` | n/a | Time at which maximum unit discharge occurred |
+| `max_flood_velocity` | `m s-1` | `flood_water_speed` | Maximum over output timesteps of the flood velocity \|q\| / h, with q and h of the same timestep; NaN where h is at or below `flood_velocity_min_depth_m` (default 0.001 m) |
+| `time_of_max_flood_velocity` | `min` | n/a | Time at which the maximum flood velocity occurred |
+| `x_flood_velocity_at_time_of_max_flood_velocity` | `m s-1` | n/a | Flood-velocity x-component (q_x / h) at that time, along the grid x axis |
+| `y_flood_velocity_at_time_of_max_flood_velocity` | `m s-1` | n/a | Flood-velocity y-component (q_y / h) at that time, along the grid y axis |
+| `final_surface_flood_volume` | `m3` | n/a | Final surface flood volume |
 
-!!! warning "`max_velocity_mps` means two different things"
-    On a TRITON surface node it is the maximum 2D flood velocity, as above. On a
-    SWMM link node (`tritonswmm_swmm_link`, `swmm_only_link`) the same name and
-    the same `standard_name` carry **maximum conduit velocity** instead. The
-    `long_name` attribute on the variable is what distinguishes them; check it
-    before comparing this variable across nodes.
+!!! note "Unit discharge is not velocity"
+    The solver's `QX` and `QY` rasters are depth-integrated flow per metre of flow width
+    (`m2 s-1`), so the six rows above whose names contain `unit_discharge` are unit discharges
+    (or the time of their maximum). The CF standard-name table has no name for that quantity,
+    which is why those rows carry no `standard_name`; the flood-depth rows keep theirs. The TRITON tier
+    writes no variable named `max_velocity`: that name appears only on a SWMM link node
+    (`tritonswmm_swmm_link`, `swmm_only_link`), where it is the maximum conduit velocity.
+
+    The four `flood_velocity` rows are velocities: unit discharge divided by the depth of the same
+    output timestep. They are a maximum over output timesteps only, so a peak between two prints is
+    not seen, and they are NaN where the depth is at or below `flood_velocity_min_depth_m` or never
+    wet. Each carries a `comment` attribute stating the formula and the threshold used.
 
 ### Network results (SWMM)
 
 | Variable | Units | `standard_name` | Meaning |
 |---|---|---|---|
-| `total_inflow_vol_10e6_ltr` | `10^6 L` | n/a | Total inflow volume |
-| `max_flow_cms` | `m3 s-1` | n/a | Maximum flow rate |
+| `total_inflow_vol` | `10^6 L` | n/a | Total inflow volume |
+| `max_flow` | `m3 s-1` | n/a | Link tier: maximum flow magnitude (SWMM's Link Flow Summary "Maximum \|Flow\|") |
+| `time_of_max_flow` | `min` | n/a | Link tier: time of that maximum |
+| `max_velocity` | `m s-1` | n/a | Link tier: maximum conduit velocity |
+| `max_flood_rate` | `m3 s-1` | n/a | Node tier: maximum flooding rate (SWMM's Node Flooding Summary "Maximum Rate") |
+| `time_of_max_total_inflow` | `min` | n/a | Node tier: time of the maximum total inflow (SWMM's Node Inflow Summary "Time of Max Occurrence") |
+| `max_ponded_depth` | `m` | n/a | Node tier: maximum ponded depth; present only where SWMM headed the Node Flooding Summary's last column `Depth` (Dynamic Wave routing), NaN with a warning where it is `Volume` |
+| `flow_balance_error` | `percent` | n/a | Node tier: flow balance error where SWMM printed a percent; NaN on a row where it printed litres |
+| `flow_balance_error_volume` | `L` | n/a | Node tier: flow balance error where SWMM printed an absolute error followed by `ltr`; NaN on a row where it printed a percent |
 | `max_over_full_flow` | `1` | n/a | Maximum flow as a fraction of full-flow capacity |
 | `max_over_full_depth` | `1` | n/a | Maximum depth as a fraction of full depth |
+| `depth`, `head` | `m` | n/a | Node tier time series: water depth and hydraulic head at each report step |
+| `inflow_flow`, `flooding` | `m3 s-1` | n/a | Node tier time series: total inflow and flooding rate at each report step |
+| `flow`, `velocity` | `m3 s-1`, `m s-1` | n/a | Link tier time series: signed flow and velocity at each report step |
+| `link_depth` | `m` | n/a | Link tier time series: water depth at each report step |
+| `capacity` / `capacity_setting` | `1` | n/a | Link tier time series: SWMM's link capacity (a standalone SWMM run) or capacity-or-setting (a coupled run) at each report step |
+| `{series}_last`, `{series}_max` | the series' | n/a | For each of the series above: the value at the final report step, and the largest value over the report steps. A link's `flow_max` and `velocity_max` are the largest SIGNED values; `max_flow` and `max_velocity` are the report's largest magnitudes |
+| `max_lateral_inflow`, `max_total_inflow` | `m3 s-1` | n/a | Node tier: maximum lateral and total inflow (SWMM's Node Inflow Summary) |
+| `lateral_inflow_vol` | `10^6 L` | n/a | Node tier: total lateral inflow volume |
+| `hours_flooded` | `h` | n/a | Node tier: hours the node was flooded (SWMM's Node Flooding Summary) |
+| `time_of_max_flood` | `min` | n/a | Node tier: time of `max_flood_rate` |
+| `tot_flooded_vol` | `10^6 L` | n/a | Node tier: total flood volume |
+| `flow_balance_error_unsplit` | none | n/a | Node tier, migrated stores only: the flow balance error as layout 27 stored it, a percent on some rows and litres on others; carries a `comment` and no `units` |
 
 The two ratio variables are dimensionless, which CF expresses as units `1`. A
-value above 1 means the conduit exceeded its design capacity.
+value above 1 means the conduit exceeded its design capacity. Every `time_of_max_*` variable is in
+minutes elapsed from the SWMM REPORT start, clamped at 0 and at one-minute resolution;
+that equals the time since the simulation start only when the model's report start equals
+its start date.
+
+### Hydrology and runoff-model results
+
+The hydrology report summary (`processed/hydrology_rpt_summary.zarr`) holds the Subcatchment
+Runoff Summary of the hydrology model, one row per subcatchment, as SWMM printed it:
+`total_precip`, `total_runon`, `total_evap`, `total_infil`, `imperv_runoff`, `perv_runoff` and
+`total_runoff_depth` in `mm`; `total_runoff_volume` in `10^6 L`; `peak_runoff` in `m3 s-1`; and
+`runoff_coeff` in `1`. The runoff-model store (`processed/hydrology_inflow_summary.zarr`)
+holds `inflow` (`m3 s-1`) and `total_inflow_volume` (`m3`) per node. Each variable carries its `units`
+attribute.
 
 ### Water-quality results (SWMM, quality-routed models only)
 
@@ -176,16 +231,16 @@ the coordinate `pollutant_conc_units` gives each pollutant's declared concentrat
 | `pollutant_conc` | node, time, pollutant | per `pollutant_conc_units` | Node concentration at each report step (time-series file) |
 | `link_pollutant_conc` | link, time, pollutant | per `pollutant_conc_units` | Link concentration at each report step (time-series file) |
 | `pollutant_max_conc` | node, pollutant | per `pollutant_conc_units` | Maximum node concentration over the event |
-| `pollutant_time_of_max_conc_min` | node, pollutant | `minutes` | Minutes from the simulation start to the first step at the maximum |
+| `pollutant_time_of_max_conc` | node, pollutant | `min` | Minutes from the report's `Starting Date` to the first step at the maximum |
 | `outfall_total_load` | node, pollutant | `kg` (a count for `#/L`) | Total mass discharged at each outfall; NaN at other nodes |
-| `outfall_total_vol_10e6_ltr` | node | `1e6 L` | Total volume discharged at each outfall |
+| `outfall_total_vol` | node | `10^6 L` | Total volume discharged at each outfall |
 | `outfall_emc` | node, pollutant | per `pollutant_conc_units` | Event mean concentration: total load over total volume; NaN where the volume is zero |
 | `link_total_load` | link, pollutant | `kg` (a count for `#/L`) | Total mass carried by each link over the run |
 | `washoff_total_load` | subcatchment, pollutant | `kg` (a count for `#/L`) | Total washoff per subcatchment (in the hydrology summary; on the node dataset for a standalone model) |
 | `qual_routing_{term}` | pollutant | `kg` (a count for `#/L`) | One variable per row of SWMM's `Quality Routing Continuity` table: `dry_weather_inflow`, `wet_weather_inflow`, `groundwater_inflow`, `rdii_inflow`, `external_inflow`, `external_outflow`, `flooding_loss`, `exfiltration_loss`, `mass_reacted`, `initial_stored_mass`, `final_stored_mass` |
-| `qual_routing_continuity_error_perc` | pollutant | `percent` | That table's continuity error |
+| `qual_routing_continuity_error` | pollutant | `percent` | That table's continuity error |
 | `runoff_qual_{term}` | pollutant | `kg` (a count for `#/L`) | One variable per row of `Runoff Quality Continuity`: `initial_buildup`, `surface_buildup`, `wet_deposition`, `sweeping_removal`, `infiltration_loss`, `bmp_removal`, `surface_runoff`, `remaining_buildup` |
-| `runoff_qual_continuity_error_perc` | pollutant | `percent` | That table's continuity error |
+| `runoff_qual_continuity_error` | pollutant | `percent` | That table's continuity error |
 | `pollutant_stats_status` (coordinate, coupled summaries) | event | n/a | `computed`, `computed: resumed by exact replay`, `computed: resumed from a snapshot that carries SWMM water-quality state`, or the reason the statistics are withheld |
 
 SWMM prints the mass of a count pollutant (`#/L`) as a base-10 logarithm; the toolkit linearizes

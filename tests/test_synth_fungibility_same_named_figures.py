@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 # SWMM-specific source markers a pure-TRITON figure legitimately drops (and NOTHING else).
-_SWMM_MARKERS = ("swmm", "hydraulics.inp", "hydro.inp", "swmm_link", "max_flow_cms", ".rpt", ".out")
+_SWMM_MARKERS = ("swmm", "hydraulics.inp", "hydro.inp", "swmm_link", "max_flow", ".rpt", ".out")
 
 # Per-model status-flag sidecars, whose FILENAME embeds the model type by design:
 # `{c_run|d_process}_{model_type}_member-{member_id}_evt-{event_id}_complete.flag[.json]`

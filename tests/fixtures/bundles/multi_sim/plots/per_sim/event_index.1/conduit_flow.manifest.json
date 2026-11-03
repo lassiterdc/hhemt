@@ -266,7 +266,7 @@
           "channel": "color",
           "ref": {
             "source_path": "analysis_datatree.zarr",
-            "variable": "max_flow_cms",
+            "variable": "max_flow",
             "attrs": {
               "long_name": "Maximum flow rate",
               "units": "m3 s-1",
@@ -321,7 +321,7 @@
           "channel": "color",
           "ref": {
             "source_path": "analysis_datatree.zarr",
-            "variable": "max_flow_cms",
+            "variable": "max_flow",
             "attrs": {
               "long_name": "Maximum flow rate",
               "units": "m3 s-1",
@@ -376,7 +376,7 @@
           "channel": "color",
           "ref": {
             "source_path": "analysis_datatree.zarr",
-            "variable": "max_flow_cms",
+            "variable": "max_flow",
             "attrs": {
               "long_name": "Maximum flow rate",
               "units": "m3 s-1",
@@ -431,7 +431,7 @@
           "channel": "color",
           "ref": {
             "source_path": "analysis_datatree.zarr",
-            "variable": "max_flow_cms",
+            "variable": "max_flow",
             "attrs": {
               "long_name": "Maximum flow rate",
               "units": "m3 s-1",

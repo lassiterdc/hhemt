@@ -3,7 +3,7 @@ resume conditions and at BOTH reporting scales.
 
 Why this module exists, stated so it is not deleted as redundant: the reset-correction
 defect shipped to production while the entire behavioural suite was green, because
-``min_per_tstep`` defaults to ``1.0`` and at 1.0 the ``timestep_min`` coordinate EQUALS
+``min_per_tstep`` defaults to ``1.0`` and at 1.0 the ``timestep`` coordinate EQUALS
 the raw ``performance{N}.txt`` file index. The production exporter is the only caller
 that passes a non-1.0 value (``TRITON_reporting_timestep_s / 60 = 600 / 60 = 10.0``), so
 the one value where the two index spaces coincide was the only value under test.

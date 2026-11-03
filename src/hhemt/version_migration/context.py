@@ -50,6 +50,9 @@ OpKind = Literal[
     "invalidate_compile_artifacts",
     "regenerate_scenario_status_csv",
     "guarded_remove",
+    "zarr_rewrite",
+    "zarr_replace_string_values",
+    "netcdf_rewrite",
     "record_applied",
 ]
 
@@ -979,6 +982,96 @@ class MigrationContext:
                 f"guarded_remove post-verify failed: replacement {replacement} disappeared during removal"
             )
 
+    # ---- Store rewrite (rename variables, dimensions and attribute keys without touching the data) ----
+
+    def zarr_rewrite(self, store: Path, groups: dict[str, dict[str, Any]]) -> None:
+        """Plan a metadata-level rewrite of the groups of one zarr store.
+
+        ``groups`` maps a group path inside the store ("" for the root) to a spec with any of the keys
+        ``rename_arrays`` ({old: new}: the array's directory is renamed, so its chunks are untouched and its
+        values stay bit-for-bit), ``rename_dims`` ({old: new}, applied to every array's dimension names in the
+        group), ``array_attrs`` ({array: {"remove": [keys], "set": {key: value}}}), ``group_attrs``
+        ({"rename": {old: new}, "set": {key: value}, "json_rename": {attr: {old: new}}}). Every step is
+        conditional on the old state being present, so a second run changes nothing.
+        """
+        self.plan.append(PlannedOp("zarr_rewrite", {"store": str(store), "groups": groups}))
+
+    def _apply_zarr_rewrite(self, store: str, groups: dict[str, dict[str, Any]]) -> None:
+        root = Path(store)
+        for gpath in sorted(groups, key=lambda g: (g.count("/"), g)):
+            _rewrite_zarr_group(root, (root / gpath) if gpath else root, groups[gpath])
+        if (root / ".zmetadata").exists() or (
+            (root / "zarr.json").exists() and "consolidated_metadata" in json.loads((root / "zarr.json").read_text())
+        ):
+            from hhemt.utils import consolidate_zarr_store
+
+            consolidate_zarr_store(root)
+
+    def zarr_replace_string_values(self, store: Path, array_name: str, mapping: dict[str, str]) -> None:
+        """Plan a rewrite of the VALUES of one small string-valued array (the new strings may be longer, so the
+        store is rewritten through xarray into a sibling directory and swapped in)."""
+        self.plan.append(
+            PlannedOp(
+                "zarr_replace_string_values",
+                {"store": str(store), "array_name": array_name, "mapping": mapping},
+            )
+        )
+
+    def _apply_zarr_replace_string_values(self, store: str, array_name: str, mapping: dict[str, str]) -> None:
+        import numpy as np
+
+        from hhemt.utils import open_store, write_zarr
+
+        root = Path(store)
+        ds = open_store(root, kind="zarr", decode_cf=False, decode_times=False, chunks=None).load()
+        if array_name not in ds.variables:
+            return
+        old = np.asarray(ds[array_name].values)
+        new = np.array([mapping.get(str(v), str(v)) for v in old.ravel()], dtype=str).reshape(old.shape)
+        if all(str(a) == str(b) for a, b in zip(old.ravel(), new.ravel(), strict=True)):
+            return
+        ds[array_name] = ds[array_name].copy(data=new)
+        ds[array_name].encoding.pop("dtype", None)
+        tmp = root.with_name(root.name + ".v0028tmp")
+        if tmp.exists():
+            shutil.rmtree(tmp)  # EXEMPT-DU: migration-primitive
+        # Written through ``write_zarr`` (``encoding={}`` keeps each variable's own encoding), so the swapped-in
+        # store carries a current consolidated-metadata index: a reader that trusts the index of a store without
+        # one reads the replaced strings' old values (or none) with no error.
+        write_zarr(ds, tmp, chunks=None, encoding={})
+        mtime = root.stat().st_mtime
+        shutil.rmtree(root)  # EXEMPT-DU: migration-primitive
+        os.rename(tmp, root)
+        os.utime(root, (mtime, mtime))
+
+    def netcdf_rewrite(self, path: Path, spec: dict[str, Any]) -> None:
+        """Plan the same rewrite as ``zarr_rewrite`` for one NetCDF file: loaded, rewritten, written to a
+        temporary file beside it and moved over it with an atomic replace, keeping the file's mtime."""
+        self.plan.append(PlannedOp("netcdf_rewrite", {"path": str(path), "spec": spec}))
+
+    def _apply_netcdf_rewrite(self, path: str, spec: dict[str, Any]) -> None:
+        import xarray as xr
+
+        target = Path(path)
+        with xr.open_dataset(target, engine="h5netcdf") as opened:
+            ds = opened.load()
+        ren_vars = {
+            k: v for k, v in spec.get("rename_arrays", {}).items() if k in ds.variables and v not in ds.variables
+        }
+        ren_dims = {k: v for k, v in spec.get("rename_dims", {}).items() if k in ds.dims and v not in ds.dims}
+        if ren_vars or ren_dims:
+            ds = ds.rename({**ren_vars, **ren_dims})
+        for name, edit in spec.get("array_attrs", {}).items():
+            if name in ds.variables:
+                ds[name].attrs = _edited_attrs(dict(ds[name].attrs), edit)
+        gedit = spec.get("group_attrs", {})
+        ds.attrs = _edited_group_attrs(dict(ds.attrs), gedit)
+        tmp = target.with_name(target.name + ".v0028tmp")
+        ds.to_netcdf(tmp, engine="h5netcdf")
+        mtime = target.stat().st_mtime
+        os.utime(tmp, (mtime, mtime))
+        os.replace(tmp, target)
+
     # ---- Cross-cutting ----
 
     def record_applied(self, migration_id: str) -> None:
@@ -986,3 +1079,106 @@ class MigrationContext:
 
     def _apply_record_applied(self, migration_id: str) -> None:
         logger.info("[%s] applied", migration_id)
+
+
+# ---- Helpers of the store-rewrite primitives ----
+
+
+def _edited_attrs(attrs: dict[str, Any], edit: dict[str, Any]) -> dict[str, Any]:
+    """``attrs`` without the keys in ``edit["remove"]`` and with the keys of ``edit["set"]`` (a ``None`` value is
+    skipped, so an entry that has no value for a key leaves it removed)."""
+    for key in edit.get("remove", ()):
+        attrs.pop(key, None)
+    for key, value in edit.get("set", {}).items():
+        if value is not None:
+            attrs[key] = value
+    return attrs
+
+
+def _edited_group_attrs(attrs: dict[str, Any], edit: dict[str, Any]) -> dict[str, Any]:
+    for old, new in edit.get("rename", {}).items():
+        if old in attrs and new not in attrs:
+            attrs[new] = attrs.pop(old)
+    for attr, mapping in edit.get("json_rename", {}).items():
+        raw = attrs.get(attr)
+        if isinstance(raw, str):
+            try:
+                decoded = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(decoded, dict):
+                attrs[attr] = json.dumps({mapping.get(k, k): v for k, v in decoded.items()})
+    attrs.update(edit.get("set", {}))
+    return attrs
+
+
+def _edit_json_file(path: Path, edit_fn: Callable[[dict[str, Any]], None]) -> None:
+    """Rewrite one JSON metadata file in place and put its mtime back (a migration must not make a stored
+    artifact newer than the inputs the workflow compares it with)."""
+    stat = path.stat()
+    doc = json.loads(path.read_text())
+    before = json.dumps(doc, sort_keys=True)
+    edit_fn(doc)
+    if json.dumps(doc, sort_keys=True) == before:
+        return
+    path.write_text(json.dumps(doc, indent=2))
+    os.utime(path, (stat.st_atime, stat.st_mtime))
+
+
+def _array_dirs(gdir: Path) -> list[Path]:
+    out = []
+    for child in sorted(gdir.iterdir()):
+        if child.is_dir() and ((child / "zarr.json").exists() or (child / ".zarray").exists()):
+            if (child / ".zarray").exists():
+                out.append(child)
+            elif json.loads((child / "zarr.json").read_text()).get("node_type") == "array":
+                out.append(child)
+    return out
+
+
+def _rewrite_zarr_group(root: Path, gdir: Path, spec: dict[str, Any]) -> None:
+    """Apply one group's spec to the files of its directory, for zarr format 3 (``zarr.json``) and 2 (``.zattrs``)."""
+    if not gdir.is_dir():
+        return
+    dir_stat = gdir.stat()
+    ren_arrays = spec.get("rename_arrays", {})
+    ren_dims = spec.get("rename_dims", {})
+    for old, new in ren_arrays.items():
+        if (gdir / old).is_dir() and not (gdir / new).exists():
+            os.rename(gdir / old, gdir / new)
+    for adir in _array_dirs(gdir):
+        v3 = (adir / "zarr.json").exists()
+        meta = adir / ("zarr.json" if v3 else ".zattrs")
+        edit = spec.get("array_attrs", {}).get(adir.name)
+
+        def _edit(doc: dict[str, Any], v3: bool = v3, edit: dict[str, Any] | None = edit) -> None:
+            dims_key = "dimension_names" if v3 else "_ARRAY_DIMENSIONS"
+            if doc.get(dims_key):
+                doc[dims_key] = [ren_dims.get(d, d) for d in doc[dims_key]]
+            if edit is not None:
+                holder = doc.setdefault("attributes", {}) if v3 else doc
+                edited = _edited_attrs(dict(holder), edit)
+                if v3:
+                    doc["attributes"] = edited
+                else:
+                    doc.clear()
+                    doc.update(edited)
+
+        if meta.exists():
+            _edit_json_file(meta, _edit)
+    gedit = spec.get("group_attrs")
+    if gedit:
+        gmeta = gdir / ("zarr.json" if (gdir / "zarr.json").exists() else ".zattrs")
+        if gmeta.exists():
+            v3g = gmeta.name == "zarr.json"
+
+            def _gedit(doc: dict[str, Any], v3g: bool = v3g) -> None:
+                if v3g:
+                    doc["attributes"] = _edited_group_attrs(dict(doc.get("attributes", {})), gedit)
+                else:
+                    edited = _edited_group_attrs(dict(doc), gedit)
+                    doc.clear()
+                    doc.update(edited)
+
+            _edit_json_file(gmeta, _gedit)
+    os.utime(gdir, (dir_stat.st_atime, dir_stat.st_mtime))

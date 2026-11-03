@@ -167,18 +167,18 @@ def test_continuity_percentages_are_read_as_printed_for_every_pollutant(prefix):
     pattern from the mass rows.
     """
     out = parse_rpt_quality_summaries(_report_lines(), POLLUTANTS, include_runoff_quality=True, filepath="<fixture>")
-    got = out[f"{prefix}_continuity_error_perc"]
+    got = out[f"{prefix}_continuity_error"]
     assert got.sel(pollutant="TSS").item() == pytest.approx(ERROR_PCT[0])
     assert got.sel(pollutant="FC").item() == pytest.approx(ERROR_PCT[1])
 
 
 _WATER_QUALITY_NAMES = (
-    ["pollutant_conc", "link_pollutant_conc", "pollutant_max_conc", "pollutant_time_of_max_conc_min"]
-    + ["outfall_total_load", "outfall_total_vol_10e6_ltr", "outfall_emc", "link_total_load", "washoff_total_load"]
+    ["pollutant_conc", "link_pollutant_conc", "pollutant_max_conc", "pollutant_time_of_max_conc"]
+    + ["outfall_total_load", "outfall_total_vol", "outfall_emc", "link_total_load", "washoff_total_load"]
     + [f"qual_routing_{stem}" for stem in ROUTING_TERMS.values()]
-    + ["qual_routing_continuity_error_perc"]
+    + ["qual_routing_continuity_error"]
     + [f"runoff_qual_{stem}" for stem in RUNOFF_TERMS.values()]
-    + ["runoff_qual_continuity_error_perc"]
+    + ["runoff_qual_continuity_error"]
 )
 
 

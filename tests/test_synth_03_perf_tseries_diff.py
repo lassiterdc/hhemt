@@ -1,7 +1,7 @@
 """Phase 1 regression test — assert per-rank diff aggregation is correct.
 
 The pre-V0008 bug at ``process_simulation.py:435`` used ``pd.diff()`` on a
-``(timestep_min, Rank)`` MultiIndex without grouping by Rank, scrambling
+``(timestep, Rank)`` MultiIndex without grouping by Rank, scrambling
 per-rank deltas via inter-rank-boundary crossing.
 
 This test:
@@ -10,7 +10,7 @@ This test:
      per-rank cumulative values that grow monotonically.
   2. Runs the module-level ``_aggregate_perf_tseries`` / ``_aggregate_perf_summary``
      helpers (introduced in Phase 1 Spec 8) against the synthetic data.
-  3. Asserts that per-rank ``sum(timestep_min)`` of the corrected deltas equals
+  3. Asserts that per-rank ``sum(timestep)`` of the corrected deltas equals
      the final cumulative per rank — proving the diff stayed within each rank.
   4. Asserts that ``max(Rank)`` of the summary equals the slowest-rank
      cumulative — proving the aggregation is wallclock-semantic.
@@ -71,7 +71,7 @@ def test_zero_byte_perf_file_is_skipped(synthetic_perf_dir):
         ds = _aggregate_perf_tseries(synthetic_perf_dir, resume_steps=[])  # raises EmptyDataError pre-fix
 
     # The empty file is skipped: the series covers exactly the 10 valid checkpoints.
-    assert ds.sizes["timestep_min"] == 10
+    assert ds.sizes["timestep"] == 10
     # A UserWarning naming the skipped empty file(s) was emitted (mirrors the
     # existing perfs-with-negatives warning pattern).
     assert any(issubclass(w.category, UserWarning) and "empty" in str(w.message).lower() for w in caught)
@@ -124,10 +124,10 @@ def test_malformed_perf_file_is_skipped(synthetic_perf_dir):
 
     # Both malformed files are skipped: the series covers exactly the 10 valid
     # checkpoints built by the fixture.
-    assert ds.sizes["timestep_min"] == 10
+    assert ds.sizes["timestep"] == 10
     # The skipped checkpoints do not leak into the reset-row join's iloc set: the
     # per-rank sum still telescopes to the final cumulative of checkpoint 10.
-    assert ds["Total"].sum(dim="timestep_min").max(dim="Rank").item() == pytest.approx(160.0, rel=1e-6)
+    assert ds["Total"].sum(dim="timestep").max(dim="Rank").item() == pytest.approx(160.0, rel=1e-6)
     # A UserWarning naming the malformed file(s) was emitted, and it carries the
     # DIAGNOSIS (concurrent writers), not merely the fact of a skip -- this artifact is
     # the only place duplicate execution is visible, so a generic message would read as
@@ -141,7 +141,7 @@ def test_per_rank_diff_aggregation_is_correct(synthetic_perf_dir):
 
     Synthetic data: rank 0 cumulative grows 10s/checkpoint × 10 checkpoints = 100s
     Compute, 50s SWMM, 150s Total. Rank 1: 120s Compute, 40s SWMM, 160s Total.
-    ``max(Rank).sum(timestep_min)`` of correctly-diffed deltas selects the slowest
+    ``max(Rank).sum(timestep)`` of correctly-diffed deltas selects the slowest
     rank per column.
     """
     from hhemt.process_simulation import _aggregate_perf_summary
@@ -149,7 +149,7 @@ def test_per_rank_diff_aggregation_is_correct(synthetic_perf_dir):
     summary = _aggregate_perf_summary(synthetic_perf_dir, resume_steps=[])
 
     assert summary["Total"].item() == pytest.approx(160.0, rel=1e-6), (
-        "Rank-1 cumulative Total at checkpoint 10 is 160s; max(Rank).sum(timestep_min) "
+        "Rank-1 cumulative Total at checkpoint 10 is 160s; max(Rank).sum(timestep) "
         "of correctly-diffed deltas must equal this."
     )
     assert summary["Compute"].item() == pytest.approx(120.0, rel=1e-6), (
@@ -165,8 +165,8 @@ def test_corrected_reconstruction_matches_final_performance_txt(synthetic_perf_d
     from hhemt.process_simulation import _aggregate_perf_tseries
 
     ds = _aggregate_perf_tseries(synthetic_perf_dir, resume_steps=[])
-    rank0_total = ds["Total"].sel(Rank=0).sum(dim="timestep_min").item()
-    rank1_total = ds["Total"].sel(Rank=1).sum(dim="timestep_min").item()
+    rank0_total = ds["Total"].sel(Rank=0).sum(dim="timestep").item()
+    rank1_total = ds["Total"].sel(Rank=1).sum(dim="timestep").item()
     assert rank0_total == pytest.approx(150.0, rel=1e-6), (
         "rank-0 final Total at checkpoint 10 = 15s/checkpoint × 10 = 150s"
     )
@@ -224,15 +224,15 @@ def test_ledger_named_reset_row_is_corrected_despite_rising_init(synthetic_perf_
     # index above it -- checkpoint 10.
     ds = _aggregate_perf_tseries(synthetic_perf_dir, resume_steps=[9])
 
-    assert ds["Total"].sel(Rank=0, timestep_min=10).item() == pytest.approx(8.0, rel=1e-6), (
+    assert ds["Total"].sel(Rank=0, timestep=10).item() == pytest.approx(8.0, rel=1e-6), (
         "At a ledger-named reset row the absolute value IS the new cumulative. A result "
         "near -127 means the row was diffed against the pre-resume cumulative, i.e. the "
         "boundary was not honoured."
     )
-    assert ds["Total"].sel(Rank=1, timestep_min=10).item() == pytest.approx(8.0, rel=1e-6)
+    assert ds["Total"].sel(Rank=1, timestep=10).item() == pytest.approx(8.0, rel=1e-6)
     # Init is the column that defeats the retired predicate, so assert it explicitly:
     # the correction must take the absolute (0.5), NOT the +0.2 delta.
-    assert ds["Init"].sel(Rank=0, timestep_min=10).item() == pytest.approx(0.5, rel=1e-6), (
+    assert ds["Init"].sel(Rank=0, timestep=10).item() == pytest.approx(0.5, rel=1e-6), (
         "Init at the reset row must be the restarted attempt's absolute re-init cost "
         "(0.5), not the meaningless +0.2 delta against the previous attempt."
     )
@@ -253,7 +253,7 @@ def test_reset_is_not_corrected_when_the_ledger_is_empty(synthetic_perf_dir):
 
     ds = _aggregate_perf_tseries(synthetic_perf_dir, resume_steps=[])
 
-    assert ds["Total"].sel(Rank=0, timestep_min=10).item() == pytest.approx(-127.0, rel=1e-6), (
+    assert ds["Total"].sel(Rank=0, timestep=10).item() == pytest.approx(-127.0, rel=1e-6), (
         "With no ledger entry the row is a plain diff (8 - 135 = -127). A value of 8.0 "
         "here means a reset was inferred from the data despite an empty ledger."
     )

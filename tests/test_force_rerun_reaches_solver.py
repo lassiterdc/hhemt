@@ -27,7 +27,7 @@ from hhemt.process_simulation import return_fpath_wlevels, triton_raw_frame_or_r
 from hhemt.scenario import TRITONSWMM_scenario
 from hhemt.workflow import ResolvedForceRerunSpec
 
-_REPORTING_INTERVAL_S = 60.0  # 1 min per reporting step, so tstep index == timestep_min
+_REPORTING_INTERVAL_S = 60.0  # 1 min per reporting step, so tstep index == timestep
 
 
 def _seed_raw(out_dir: Path, counts: dict[str, int]) -> None:
@@ -77,7 +77,7 @@ def test_a_ragged_frame_is_refused_and_names_the_short_variable(tmp_path):
     with pytest.raises(ProcessingError) as excinfo:
         triton_raw_frame_or_raise(tmp_path, _REPORTING_INTERVAL_S, model_label="test")
     msg = str(excinfo.value)
-    assert "MH" in msg and "17" in msg  # the short variable and the missing timestep_min
+    assert "MH" in msg and "17" in msg  # the short variable and the missing timestep
     assert "'H'" not in msg.replace("MH", "")  # the long variables are not named as short
 
 
@@ -101,7 +101,7 @@ def test_a2_ragged_frame_is_RETURNED_by_the_enumerator_not_refused(tmp_path):
     so a reader can see that the condition did not change -- only who refuses it."""
     _seed_raw(tmp_path, {"MH": 16, "H": 17, "QX": 17, "QY": 17})
     df = return_fpath_wlevels(tmp_path, _REPORTING_INTERVAL_S)
-    assert list(df.columns) == ["max_wlevel_m", "wlevel_m", "velocity_x_mps", "velocity_y_mps"]
+    assert list(df.columns) == ["max_flood_depth", "flood_depth", "unit_discharge_x", "unit_discharge_y"]
     assert df.isna().any().any()  # the raggedness is PRESERVED, not repaired
     assert int(df.isna().sum().sum()) == 1  # exactly the one MH cell, not a widened hole
 
@@ -113,12 +113,12 @@ def test_a3_absent_variable_is_dropped_not_fabricated(tmp_path):
     rejected NAME alternative (which would yield four columns with NaN). The column-list
     equality is what discriminates the two arms -- a NaN-count assertion alone would pass
     under NAME for the wrong reason. The index-name assertion pins the second half of the
-    fabrication defect: an unnamed empty Series also drops `timestep_min` from the index."""
+    fabrication defect: an unnamed empty Series also drops `timestep` from the index."""
     _seed_raw(tmp_path, {"MH": 2, "H": 2})
     df = return_fpath_wlevels(tmp_path, _REPORTING_INTERVAL_S)
-    assert list(df.columns) == ["max_wlevel_m", "wlevel_m"]
+    assert list(df.columns) == ["max_flood_depth", "flood_depth"]
     assert not df.isna().any().any()  # an absent variable can produce NO NaN cell
-    assert df.index.name == "timestep_min"
+    assert df.index.name == "timestep"
 
 
 def test_a4_directory_with_no_recognised_raw_yields_an_empty_frame(tmp_path):
@@ -153,9 +153,9 @@ def test_a5_consumer_refuses_a_frame_whose_variable_was_dropped(tmp_path):
     WHY THE CENSUS SAYS THIS BRANCH IS THE ONLY FAST FAILURE THERE IS. Nothing downstream
     fails on a dropped column: the chapter writer ITERATES df_outputs.columns rather than
     indexing by name, verify_and_flag_chapter checks only the timestep count, xr.concat
-    fills a missing variable with NaN, and the summary RECONSTRUCTS max_wlevel_m from
-    wlevel_m. A KeyError exists at exactly one site, four stages later, for three of the
-    four variables -- and for max_wlevel_m there is no failure anywhere at all.
+    fills a missing variable with NaN, and the summary RECONSTRUCTS max_flood_depth from
+    flood_depth. A KeyError exists at exactly one site, four stages later, for three of the
+    four variables -- and for max_flood_depth there is no failure anywhere at all.
 
     SOLVER-FREE BY DEPENDENCY CHAIN, confirmed at source rather than asserted: this test
     requests only `tmp_path`, a pytest builtin, so it pulls in no project fixture; the sole
@@ -168,14 +168,14 @@ def test_a5_consumer_refuses_a_frame_whose_variable_was_dropped(tmp_path):
 
     # The producer DROPS what the solver never wrote, and does not fabricate it.
     df = return_fpath_wlevels(tmp_path, _REPORTING_INTERVAL_S)
-    assert "velocity_x_mps" not in df.columns
-    assert "velocity_y_mps" not in df.columns
+    assert "unit_discharge_x" not in df.columns
+    assert "unit_discharge_y" not in df.columns
 
     # The consumer then REFUSES it. This is the fail-fast.
     with pytest.raises(ProcessingError) as excinfo:
         triton_raw_frame_or_raise(tmp_path, _REPORTING_INTERVAL_S, model_label="test")
     msg = str(excinfo.value)
-    assert "velocity_x_mps" in msg and "velocity_y_mps" in msg  # names WHAT is absent
+    assert "unit_discharge_x" in msg and "unit_discharge_y" in msg  # names WHAT is absent
     assert "print_option" in msg  # and points at the cfg, which is the actual cause
     # ...and must NOT carry the ragged remedy. This assertion is what proves the predicate
     # SPLIT produced two different remedies rather than one message wearing two hats: the

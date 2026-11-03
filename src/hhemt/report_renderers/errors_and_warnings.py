@@ -143,8 +143,8 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
         "Every EDA figure enumerated as a report target has a corresponding verdict "
         "artifact, so the calculation actually runs rather than degrading to a placeholder.",
     ),
-    "Cross-sim byte-identity": (
-        "Cross-sim byte-identity",
+    "Byte identity across compute configurations": (
+        "Byte identity across compute configurations",
         "Members differing only in compute configuration produce bit-identical tracked "
         "variables within each hardware family.",
     ),
@@ -232,6 +232,11 @@ def _render_overall_banner(report: ValidationReport) -> str:
     # in the omission caption directly beneath this banner, and stating it here as well
     # would print the same figure twice.
     applicable = [c for c in report.checks if getattr(c, "applicable", True)]
+    if not applicable:
+        # No check applies, so neither "0 of 0 applicable checks passed" nor "... failed" says anything. The page
+        # states the omission once, in the note `render()` places where this banner would be; a record that holds no
+        # checks at all keeps its own missing-record notice.
+        return ""
     n_passed = sum(1 for c in applicable if c.passed)
     n_qualified = sum(1 for c in applicable if c.passed and getattr(c, "instrument", None) not in (None, "raw_rasters"))
     if report.overall_passed:
@@ -258,7 +263,7 @@ def _status_of(c: CheckResult) -> tuple[str, str, str]:
     """(css_class, glyph, qualifier) for one check. Four outcomes, not two.
 
     A pass from a derived tier discloses its detection floor inline, because at
-    float32 (max_wlevel_m) a true 2.4e-08 difference quantizes to ~1.19e-07 and a
+    float32 (max_flood_depth) a true 2.4e-08 difference quantizes to ~1.19e-07 and a
     true 1.68e-13 rounds to exactly 0.0 -- so "identical" there means "identical to
     within float32 rounding", which is not what an unqualified green tick says.
 

@@ -115,7 +115,7 @@ def render(
     proc = analysis._retrieve_sim_run_processing_object(event_iloc)
 
     # Read from the consolidated analysis DataTree. The link group carries
-    # `max_over_full_flow`, `max_flow_cms`, and `link_id` for every event_iloc.
+    # `max_over_full_flow`, `max_flow`, and `link_id` for every event_iloc.
     link_summary_path = analysis.analysis_paths.analysis_datatree_zarr
     # Consumer-side defense-in-depth (R6): a partial-completion render soft-skips
     # with a VISIBLE labeled placeholder (which still writes output_path) rather
@@ -132,7 +132,7 @@ def render(
         raise AssertionError(f"consolidated tree missing expected group {link_group}; available: {sorted(tree.groups)}")
     ds_links = tree[link_group].to_dataset()
     max_over_full_da = ds_links["max_over_full_flow"].sel(event_iloc=event_iloc)
-    peak_flow_da = ds_links["max_flow_cms"].sel(event_iloc=event_iloc)
+    peak_flow_da = ds_links["max_flow"].sel(event_iloc=event_iloc)
     max_over_full = max_over_full_da.values
     peak_flow = peak_flow_da.values
     link_ids = ds_links["link_id"].values
@@ -490,11 +490,11 @@ def _shared_peak_flow_vmax(analysis, cfg, model_types=None) -> float | None:
     collected: list[np.ndarray] = []
     for _group in groups:
         ds_links = tree[_group].to_dataset()
-        if "max_flow_cms" not in ds_links:
+        if "max_flow" not in ds_links:
             continue
         for _ev in analysis.df_sims.index:
             try:
-                vals = ds_links["max_flow_cms"].sel(event_iloc=int(_ev)).values
+                vals = ds_links["max_flow"].sel(event_iloc=int(_ev)).values
             except KeyError:
                 continue
             if hasattr(vals, "compute"):
@@ -659,7 +659,7 @@ def _build_conduit_flow_figure(
         raise AssertionError(f"consolidated tree missing expected group {link_group}; available: {sorted(tree.groups)}")
     ds_links = tree[link_group].to_dataset()
     max_over_full_da = ds_links["max_over_full_flow"].sel(event_iloc=event_iloc)
-    peak_flow_da = ds_links["max_flow_cms"].sel(event_iloc=event_iloc)
+    peak_flow_da = ds_links["max_flow"].sel(event_iloc=event_iloc)
     max_over_full = max_over_full_da.values
     peak_flow = peak_flow_da.values
     link_ids = ds_links["link_id"].values
@@ -1242,7 +1242,8 @@ def _render_plotly_branch(
         manifest_data={
             "event_iloc": int(event_iloc),
             "max_over_full_max": float(np.nanmax(max_over_full)),
-            "peak_flow_max_cms": float(np.nanmax(peak_flow)),
+            "peak_flow_max": float(np.nanmax(peak_flow)),
+            "peak_flow_max_units": "m3 s-1",
             "conduit_count": int(len(coords_by_id)),
             "binned_traces_per_panel": int(N_BINS),
         },

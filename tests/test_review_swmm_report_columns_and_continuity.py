@@ -5,8 +5,8 @@ Runoff Quantity, Runoff Quality, Groundwater, Flow Routing, Quality Routing -- a
 carry a `Continuity Error (%)` line while two carry a `Flooding Loss` line. Which tables appear
 depends on the model: quality tables only when it declares pollutants and routes quality, the
 groundwater table only when it has aquifers and groundwater area, the runoff table only when it
-has subcatchments. The toolkit's system-level attributes (`runoff_continuity_error_perc`,
-`flow_continuity_error_perc`, `system_flooding_10e6_ltr`) must come from the Runoff Quantity and
+has subcatchments. The toolkit's system-level attributes (`runoff_continuity_error`,
+`flow_continuity_error`, `system_flooding`) must come from the Runoff Quantity and
 Flow Routing tables on every one of those reports, and the two scans that read them
 (`return_swmm_system_outputs` and the single-pass reader behind `parse_rpt_single_pass`) must agree.
 
@@ -189,8 +189,8 @@ def test_each_continuity_figure_comes_from_its_own_table_in_both_scans(case, tmp
 
     expect_runoff = RUNOFF_QUANTITY_ERR if case["runoff"] and not case["runoff_from_file"] else np.nan
     for system in (scanned, single_pass):
-        assert system["flow_continuity_error_perc"] == pytest.approx(FLOW_ERR)
-        assert system["system_flooding_10e6_ltr"] == pytest.approx(FLOW_FLOOD_LOSS)
-        assert system["runoff_continuity_error_perc"] == pytest.approx(expect_runoff, nan_ok=True)
-    for key in ("runoff_continuity_error_perc", "flow_continuity_error_perc", "system_flooding_10e6_ltr"):
+        assert system["flow_continuity_error"] == pytest.approx(FLOW_ERR)
+        assert system["system_flooding"] == pytest.approx(FLOW_FLOOD_LOSS)
+        assert system["runoff_continuity_error"] == pytest.approx(expect_runoff, nan_ok=True)
+    for key in ("runoff_continuity_error", "flow_continuity_error", "system_flooding"):
         assert scanned[key] == pytest.approx(single_pass[key], nan_ok=True)

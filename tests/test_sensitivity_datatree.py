@@ -24,7 +24,7 @@ class _FakeProcess:
 
 def _leaf_ds() -> xr.Dataset:
     return xr.Dataset(
-        data_vars={"max_wlevel_m": (("event_iloc", "y", "x"), np.zeros((1, 2, 2)))},
+        data_vars={"max_flood_depth": (("event_iloc", "y", "x"), np.zeros((1, 2, 2)))},
         coords={
             "event_iloc": [0],
             "y": [0.0, 1.0],
@@ -75,7 +75,7 @@ def test_build_sensitivity_datatree_structure(tmp_path):
     assert "parameters" in tree
     assert "member_0" in tree
     assert "member_1" in tree
-    assert tree["member_0/tritonswmm/triton"].dataset["max_wlevel_m"].shape == (1, 2, 2)
+    assert tree["member_0/tritonswmm/triton"].dataset["max_flood_depth"].shape == (1, 2, 2)
     assert tree["member_0"].attrs["run_mode"] == "gpu"
     assert tree["member_1"].attrs["n_mpi_procs"] == 2
     df = tree["parameters"].dataset.to_dataframe()

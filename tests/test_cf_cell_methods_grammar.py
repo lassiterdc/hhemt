@@ -157,7 +157,7 @@ def test_class_3_is_refused_when_a_coordinate_of_that_name_exists_on_another_var
 
 def test_an_unknown_name_takes_no_class():
     ds = _summary_like()
-    assert cell_methods_name_class("timestep_min", ds["Total"], ds) is None
+    assert cell_methods_name_class("timestep", ds["Total"], ds) is None
 
 
 def test_the_class_3_vocabulary_is_an_explicit_enumeration():
@@ -199,7 +199,7 @@ def test_the_class_sequence_discriminates_a_renamed_dimension_from_the_shipped_v
 def test_an_unresolvable_pair_fails_with_the_offending_name_in_the_message():
     ds = _summary_like()
     with pytest.raises(AssertionError, match="none of CF-1.13"):
-        cell_methods_classes("timestep_min: sum Rank: maximum", ds["Total"], ds, where="Total")
+        cell_methods_classes("timestep: sum Rank: maximum", ds["Total"], ds, where="Total")
 
 
 def test_the_oracle_imports_nothing_from_the_module_it_audits():

@@ -353,7 +353,7 @@ def build_dem_resolution_cost_error_figure(root: Path) -> go.Figure:
         recs.append(
             {
                 "res_m": _res_m(node_name),
-                "wlevel": tri["max_wlevel_m"].isel(event_iloc=0),  # (y, x)
+                "wlevel": tri["max_flood_depth"].isel(event_iloc=0),  # (y, x)
                 "wall_s": total_s,  # TRITON's own performance.Total wall-clock, seconds
                 "compute_hr": total_s / 3600.0,  # x n_devices (=1, serial sweep)
             }
@@ -604,8 +604,8 @@ def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
         lnk = dt[f"/{node_name}/tritonswmm/swmm_link"]
         recs[res] = {
             "res_m": res,
-            "wlevel": tri["max_wlevel_m"].isel(event_iloc=0),  # (y, x) DataArray w/ coords
-            "flow": lnk["max_flow_cms"].isel(event_iloc=0),  # (link_id,)
+            "wlevel": tri["max_flood_depth"].isel(event_iloc=0),  # (y, x) DataArray w/ coords
+            "flow": lnk["max_flow"].isel(event_iloc=0),  # (link_id,)
         }
 
     order = sorted(recs)  # finest first
@@ -1137,7 +1137,7 @@ def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | 
         if any(r["res_m"] == res for r in recs):
             continue
         tri = dt[f"/{node_name}/tritonswmm/triton"].ds
-        recs.append({"res_m": res, "wlevel": tri["max_wlevel_m"].isel(event_iloc=0)})
+        recs.append({"res_m": res, "wlevel": tri["max_flood_depth"].isel(event_iloc=0)})
     recs.sort(key=lambda r: r["res_m"])  # finest first (vs-finest enumeration)
     fine_da = recs[0]["wlevel"]
     finest_res = recs[0]["res_m"]
@@ -1379,7 +1379,10 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
         node_by_res[res] = node_name
         tri = dt[f"/{node_name}/tritonswmm/triton"]
         lnk = dt[f"/{node_name}/tritonswmm/swmm_link"]
-        recs[res] = {"wlevel": tri["max_wlevel_m"].isel(event_iloc=0), "flow": lnk["max_flow_cms"].isel(event_iloc=0)}
+        recs[res] = {
+            "wlevel": tri["max_flood_depth"].isel(event_iloc=0),
+            "flow": lnk["max_flow"].isel(event_iloc=0),
+        }
 
     order = sorted(recs)
     finest_res = order[0]
@@ -1469,8 +1472,8 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
         "DEM resolution (m)",
         "Cells",
         "Coupling junctions",
-        "Peak depth max_wlevel_m (m)",
-        "Peak flow max_flow_cms (cms)",
+        "Peak depth max_flood_depth (m)",
+        "Peak flow max_flow (cms)",
         "max overestimate Δ depth (m)",
         "max underestimate Δ depth (m)",
         "max overestimate Δ flow (cms)",

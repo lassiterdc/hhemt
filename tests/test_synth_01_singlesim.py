@@ -320,9 +320,9 @@ def test_hydrology_variant_local_runoff_invariant(synth_all_models_analysis_cach
     with open(hydro_rpt) as f:
         rpt_lines = f.readlines()
     sys_out = return_swmm_system_outputs(rpt_lines)
-    assert abs(sys_out["flow_continuity_error_perc"]) < 5.0, (
+    assert abs(sys_out["flow_continuity_error"]) < 5.0, (
         f"hydrology-variant flow-routing continuity error "
-        f"{sys_out['flow_continuity_error_perc']}% >= 5.0% -- routing likely "
+        f"{sys_out['flow_continuity_error']}% >= 5.0% -- routing likely "
         f"reverted to DYNWAVE on a conduit-free network (see "
         f"swmm_template._options_df)"
     )

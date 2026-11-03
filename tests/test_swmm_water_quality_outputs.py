@@ -318,11 +318,9 @@ def test_peak_concentration_and_its_minute(tmp_path):
     summary = summarize_swmm_simulation_results(ds_nodes, 0)
     assert "pollutant_conc_max" not in summary and "pollutant_conc_last" not in summary
     peak = summary["pollutant_max_conc"].isel(event_iloc=0).sel(node_id="N1")
-    when = summary["pollutant_time_of_max_conc_min"].isel(event_iloc=0).sel(node_id="N1")
+    when = summary["pollutant_time_of_max_conc"].isel(event_iloc=0).sel(node_id="N1")
     assert peak.sel(pollutant="TSS") == 4.5 and when.sel(pollutant="TSS") == 20.0
-    out_when = (
-        summary["pollutant_time_of_max_conc_min"].isel(event_iloc=0).sel(node_id="OUT1", pollutant="Coliform_ABC")
-    )
+    out_when = summary["pollutant_time_of_max_conc"].isel(event_iloc=0).sel(node_id="OUT1", pollutant="Coliform_ABC")
     assert out_when == 20.0
     assert "swmm_simulation_start" not in summary.attrs
     assert "swmm_simulation_start" not in ds_nodes.attrs, "the start must not be persisted as an undeclared attribute"
@@ -346,7 +344,7 @@ def test_outfall_load_volume_emc_and_zero_volume(tmp_path):
     load = ds_nodes["outfall_total_load"].sel(node_id="OUT1")
     assert load.sel(pollutant="TSS") == 10.0
     assert load.sel(pollutant="Coliform_ABC") == pytest.approx(100.0)
-    assert float(ds_nodes["outfall_total_vol_10e6_ltr"].sel(node_id="OUT1")) == 4.0
+    assert float(ds_nodes["outfall_total_vol"].sel(node_id="OUT1")) == 4.0
     emc = ds_nodes["outfall_emc"].sel(node_id="OUT1")
     assert emc.sel(pollutant="TSS") == pytest.approx(2.5)
     assert emc.sel(pollutant="Coliform_ABC") == pytest.approx(100.0 / 4.0e6)
@@ -395,7 +393,7 @@ def test_six_pollutants_concatenate_groups_and_linearize_every_mass_row(tmp_path
     inflow = ds_nodes["qual_routing_external_inflow"]
     assert inflow.sel(pollutant="PCOUNT") == pytest.approx(1000.0)
     assert inflow.sel(pollutant="P0") == pytest.approx(routing["External Inflow"][0])
-    assert ds_nodes["qual_routing_continuity_error_perc"].sel(pollutant="PCOUNT") == 0.5
+    assert ds_nodes["qual_routing_continuity_error"].sel(pollutant="PCOUNT") == 0.5
     assert ds_nodes["qual_routing_final_stored_mass"].sizes["pollutant"] == 6
 
 
@@ -440,7 +438,7 @@ def test_hydrology_report_gets_washoff_and_runoff_quality(tmp_path):
     assert ds["washoff_total_load"].sel(subcatchment_id="S1", pollutant="Coliform_ABC") == pytest.approx(100.0)
     assert ds["runoff_qual_initial_buildup"].sizes["pollutant"] == 2
     # the quality error is the QUALITY table's (1 + 8 + p for the last row), not the quantity table's 0.111
-    assert float(ds["runoff_qual_continuity_error_perc"].sel(pollutant="TSS")) == pytest.approx(9.0)
+    assert float(ds["runoff_qual_continuity_error"].sel(pollutant="TSS")) == pytest.approx(9.0)
     inp2, rpt2 = _write(_mk(tmp_path / "h2"), pollutants, hydro_text(gate="NO"), name="hydro")
     ds_off = parse_hydrology_rpt_summary(rpt2, f_inp=inp2)
     assert "pollutant" not in ds_off.dims and ds_off.sizes["subcatchment_id"] == 1
@@ -451,7 +449,7 @@ def _summary(n_events=1, pollutants=TWO):
     ds = xr.Dataset(
         {
             "pollutant_max_conc": (("event_iloc", "node_id", "pollutant"), np.ones((n_events, 1, len(pollutants)))),
-            "pollutant_time_of_max_conc_min": (
+            "pollutant_time_of_max_conc": (
                 ("event_iloc", "node_id", "pollutant"),
                 np.full((n_events, 1, len(pollutants)), 5.0),
             ),
@@ -459,7 +457,7 @@ def _summary(n_events=1, pollutants=TWO):
                 ("event_iloc", "node_id", "pollutant"),
                 np.full((n_events, 1, len(pollutants)), 3.0),
             ),
-            "outfall_total_vol_10e6_ltr": (("event_iloc", "node_id"), np.full((n_events, 1), 4.0)),
+            "outfall_total_vol": (("event_iloc", "node_id"), np.full((n_events, 1), 4.0)),
             "qual_routing_external_inflow": (("event_iloc", "pollutant"), np.full((n_events, len(pollutants)), 2.0)),
         },
         coords={"event_iloc": list(range(n_events)), "node_id": ["OUT1"], "pollutant": [p[0] for p in pollutants]},
@@ -506,7 +504,7 @@ def test_a2_withholds_statistics_after_a_snapshot_resume(tmp_path, monkeypatch):
     out = apply(_summary())
     assert np.isnan(out["pollutant_max_conc"]).all() and np.isnan(out["outfall_total_load"]).all()
     assert np.isnan(out["qual_routing_external_inflow"]).all()
-    assert (out["outfall_total_vol_10e6_ltr"] == 4.0).all()
+    assert (out["outfall_total_vol"] == 4.0).all()
     assert out["pollutant_stats_status"].values.tolist() == [
         "withheld: resumed from a snapshot; SWMM water-quality state is not carried across a snapshot resume"
     ]
@@ -650,14 +648,12 @@ def test_compared_column_set_is_the_same_with_and_without_water_quality(tmp_path
         {
             "pollutant_conc_max": ("n", [1.0]),
             "pollutant_conc_last": ("n", [1.0]),
-            "depth_m_max": ("n", [1.0]),
-            "depth_m_last": ("n", [1.0]),
+            "depth_max": ("n", [1.0]),
+            "depth_last": ("n", [1.0]),
         }
     )
     assert "pollutant_conc_max" in derive_compared_columns(violating)[2]
-    satisfying = xr.Dataset(
-        {"pollutant_max_conc": ("n", [1.0]), "depth_m_max": ("n", [1.0]), "depth_m_last": ("n", [1.0])}
-    )
+    satisfying = xr.Dataset({"pollutant_max_conc": ("n", [1.0]), "depth_max": ("n", [1.0]), "depth_last": ("n", [1.0])})
     assert "pollutant_max_conc" not in derive_compared_columns(satisfying)[2]
 
 
@@ -828,9 +824,9 @@ def _per_scenario_node_ds(pollutants=TWO):
     return xr.Dataset(
         {
             "pollutant_conc": (("date_time", "node_id", "pollutant"), np.ones((3, 1, n))),
-            "pollutant_time_of_max_conc_min": (("node_id", "pollutant"), np.full((1, n), 5.0)),
+            "pollutant_time_of_max_conc": (("node_id", "pollutant"), np.full((1, n), 5.0)),
             "outfall_total_load": (("node_id", "pollutant"), np.full((1, n), 3.0)),
-            "outfall_total_vol_10e6_ltr": (("node_id",), np.full((1,), 4.0)),
+            "outfall_total_vol": (("node_id",), np.full((1,), 4.0)),
             "outfall_emc": (("node_id", "pollutant"), np.full((1, n), 0.75)),
             "qual_routing_external_inflow": (("pollutant",), np.full((n,), 2.0)),
         },
@@ -929,14 +925,14 @@ def test_a2_withholds_the_per_scenario_node_and_link_stores_after_a_snapshot_res
     """
     nodes, links = _export(_mk(tmp_path / "snap"), monkeypatch, [{"path": "snapshot"}])
     for name in (
-        "pollutant_time_of_max_conc_min",
+        "pollutant_time_of_max_conc",
         "outfall_total_load",
         "outfall_emc",
         "qual_routing_external_inflow",
     ):
         assert np.isnan(nodes[name]).all(), name
     assert np.isnan(links["link_total_load"]).all()
-    assert (nodes["outfall_total_vol_10e6_ltr"] == 4.0).all()
+    assert (nodes["outfall_total_vol"] == 4.0).all()
     assert (nodes["pollutant_conc"] == 1.0).all() and (links["link_pollutant_conc"] == 1.0).all()
     assert nodes["pollutant_stats_status"].ndim == 0 and links["pollutant_stats_status"].ndim == 0
     assert str(nodes["pollutant_stats_status"].values) == _WITHHELD_TEXT
@@ -946,7 +942,7 @@ def test_a2_withholds_the_per_scenario_node_and_link_stores_after_a_snapshot_res
     assert (nodes_r["outfall_total_load"] == 3.0).all() and (links_r["link_total_load"] == 6.0).all()
     assert str(nodes_r["pollutant_stats_status"].values) == "computed: resumed by exact replay"
     nodes_n, links_n = _export(_mk(tmp_path / "none"), monkeypatch, None)
-    assert (nodes_n["pollutant_time_of_max_conc_min"] == 5.0).all()
+    assert (nodes_n["pollutant_time_of_max_conc"] == 5.0).all()
     assert str(links_n["pollutant_stats_status"].values) == "computed"
 
     both = xr.concat(
@@ -978,7 +974,7 @@ def test_washoff_descriptor_states_its_subcatchment_geometry_and_outfall_sources
     assert table["outfall_total_load"]["source_variables"] == (
         "SWMM report, Outfall Loading Summary, column Total {pollutant}"
     )
-    assert table["outfall_total_vol_10e6_ltr"]["source_variables"] == (
+    assert table["outfall_total_vol"]["source_variables"] == (
         "SWMM report, Outfall Loading Summary, column Total Volume"
     )
     assert table["link_total_load"]["source_variables"] == "SWMM report, Link Pollutant Load Summary, row per link"

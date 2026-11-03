@@ -216,7 +216,7 @@ def test_variable_measured_advertises_only_emitted_variables():
     )
 
     # Gated branch: advertise the intersection with the store's real variables ONLY.
-    real = {"max_wlevel_m", "max_flow_cms"}
+    real = {"max_flood_depth", "max_flow"}
     gated = _advertised_var_names(_build(emitted_vars=real))
     assert gated == real & set(_CF_VARIABLE_MAP), f"gated advertisement wrong: {sorted(gated)}"
     assert gated < legacy, "the gated advertisement must SHRINK relative to the whole map"
@@ -326,26 +326,31 @@ def test_the_descriptor_is_sourced_from_the_deposited_store_when_supplied():
     carried the override's. The static table cannot see the mode; the store is already
     mode-resolved by the time it is deposited.
 
-    THE OVERRIDE'S `long_name` IS THE DISCRIMINATOR AND `cell_methods` IS NOT. Both now read
-    `time: maximum`, by convergence on the conformant spelling rather than by derivation, so a
-    test keyed on `cell_methods` would be satisfied whether or not the store was read. Keying on
-    `long_name` is what makes this test able to fail.
+    THE STORE'S `long_name` IS THE DISCRIMINATOR AND `cell_methods` IS NOT. Both read
+    `time: maximum`, so a test keyed on `cell_methods` would be satisfied whether or not the store
+    was read. Keying on `long_name` is what makes this test able to fail.
+
+    THE STORE FIXTURE IS HAND-BUILT TO DIFFER FROM THE BASE ENTRY. Until the TRITON tier stopped
+    writing `max_velocity`, the live link-mode override differed from the base entry and the
+    fixture used it; the base now describes the conduit too, so the live tables no longer diverge and
+    the fixture's `long_name` is a deliberately different string. The test then fails if the crate
+    publishes the static label instead of the store's.
     """
     store = {
-        "max_velocity_mps": {
-            "long_name": "Maximum conduit velocity",
+        "max_velocity": {
+            "long_name": "Maximum conduit velocity as stamped by the deposited store",
             "units": "m s-1",
             "standard_name": "sea_water_speed",
             "cell_methods": "time: maximum",
         }
     }
-    base = _advertised_props(_build(emitted_vars={"max_velocity_mps"}))["max_velocity_mps"]
-    sourced = _advertised_props(_build(emitted_vars={"max_velocity_mps"}, emitted_attrs=store))["max_velocity_mps"]
+    base = _advertised_props(_build(emitted_vars={"max_velocity"}))["max_velocity"]
+    sourced = _advertised_props(_build(emitted_vars={"max_velocity"}, emitted_attrs=store))["max_velocity"]
 
-    assert base["description"] == "Maximum flood velocity", (
-        "fixture precondition: the static table is the grid-cell entry"
+    assert base["description"] == "Maximum conduit velocity", (
+        "fixture precondition: the static table is the base conduit entry"
     )
-    assert sourced["description"] == "Maximum conduit velocity", (
+    assert sourced["description"] == "Maximum conduit velocity as stamped by the deposited store", (
         "the advertised description must come from the store's own attrs, not from the static table"
     )
     assert base["description"] != sourced["description"], "this test cannot discriminate unless the two differ"
@@ -357,7 +362,7 @@ def test_omitting_emitted_attrs_is_byte_identical_to_before():
     `emitted_attrs=None` is the state the two production call sites are in today, so a change in
     this branch's bytes would be a silent change to every deposited crate.
     """
-    real = {"max_wlevel_m", "max_flow_cms"}
+    real = {"max_flood_depth", "max_flow"}
     assert metadata.canonical_jsonld(_build(emitted_vars=real)) == metadata.canonical_jsonld(
         _build(emitted_vars=real, emitted_attrs=None)
     )
@@ -374,8 +379,12 @@ def test_an_unstamped_store_node_falls_back_to_the_static_descriptor():
     carry no `long_name` must not publish an empty descriptor. The fallback predicate is
     `long_name` for that reason, and not mere key presence.
     """
-    props = _advertised_props(_build(emitted_vars={"max_wlevel_m"}, emitted_attrs={"max_wlevel_m": {}}))["max_wlevel_m"]
-    assert props["description"] == "Maximum water level over simulation"
+    from hhemt.cf_conventions import _CF_VARIABLE_MAP
+
+    props = _advertised_props(_build(emitted_vars={"max_flood_depth"}, emitted_attrs={"max_flood_depth": {}}))[
+        "max_flood_depth"
+    ]
+    assert props["description"] == _CF_VARIABLE_MAP["max_flood_depth"]["long_name"]
     assert props["unitText"] == "m"
 
 
@@ -388,8 +397,10 @@ def test_unit_text_is_guarded_symmetrically_with_its_two_siblings():
     store-sourced descriptor read off a node that declares none -- cannot publish a `unitText`
     null into the deposited record, which is what an unguarded subscription did.
     """
-    store = {"max_wlevel_m": {"long_name": "Water level", "units": None, "standard_name": None, "cell_methods": None}}
-    props = _advertised_props(_build(emitted_vars={"max_wlevel_m"}, emitted_attrs=store))["max_wlevel_m"]
+    store = {
+        "max_flood_depth": {"long_name": "Water level", "units": None, "standard_name": None, "cell_methods": None}
+    }
+    props = _advertised_props(_build(emitted_vars={"max_flood_depth"}, emitted_attrs=store))["max_flood_depth"]
 
     assert props["description"] == "Water level"
     assert "unitText" not in props, "a None units must OMIT the key, exactly as propertyID and measurementTechnique do"
@@ -397,10 +408,9 @@ def test_unit_text_is_guarded_symmetrically_with_its_two_siblings():
     assert "measurementTechnique" not in props
 
     # And the guard is not a blanket omission: a real value still publishes.
-    store["max_wlevel_m"]["units"] = "m"
-    assert (
-        _advertised_props(_build(emitted_vars={"max_wlevel_m"}, emitted_attrs=store))["max_wlevel_m"]["unitText"] == "m"
-    )
+    store["max_flood_depth"]["units"] = "m"
+    props = _advertised_props(_build(emitted_vars={"max_flood_depth"}, emitted_attrs=store))["max_flood_depth"]
+    assert props["unitText"] == "m"
 
 
 def test_emit_provenance_carries_emitted_attrs_through_to_the_crate():

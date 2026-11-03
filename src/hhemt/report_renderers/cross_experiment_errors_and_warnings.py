@@ -68,8 +68,8 @@ def _derived_block_html(derived: dict) -> str:
 def _swmm_invisible_divergence_finding(combined_root: Path) -> dict | None:
     """The TRITON-visible / SWMM-invisible clean-vs-resume signature, as a warning row.
 
-    Measured on the pure-TRITON campaign: max_wlevel_m differs on 14/14 coupled configs
-    while max_flow_cms is identical on 14/14. That asymmetry is the FINGERPRINT of the
+    Measured on the pure-TRITON campaign: max_flood_depth differs on 14/14 coupled configs
+    while max_flow is identical on 14/14. That asymmetry is the FINGERPRINT of the
     SWMM node-depth scatter defect — the interface error collapses from 1.45e+02 cfs to
     2.1e-03 within ~1000 steps, so SWMM-side maxima are unchanged at reported precision
     while TRITON's own depth field carries a permanent perturbation. A reader looking at
@@ -86,8 +86,8 @@ def _swmm_invisible_divergence_finding(combined_root: Path) -> dict | None:
     except (OSError, ValueError):
         return None
     coupled = [p for p in pairs if str(p.get("model", "")) == "TRITON-SWMM"]
-    depth = [p for p in coupled if p.get("variable") == "max_wlevel_m"]
-    flow = [p for p in coupled if p.get("variable") == "max_flow_cms"]
+    depth = [p for p in coupled if p.get("variable") == "max_flood_depth"]
+    flow = [p for p in coupled if p.get("variable") == "max_flow"]
     if not depth or not flow:
         return None
     n_depth_diff = sum(1 for p in depth if not p.get("identical", True))
@@ -99,8 +99,8 @@ def _swmm_invisible_divergence_finding(combined_root: Path) -> dict | None:
         "level": "aggregate",
         "passed": False,
         "summary": (
-            f"Every coupled compute configuration's max_wlevel_m differs clean-vs-resume "
-            f"({n_depth_diff}/{len(depth)}) while every compute configuration's max_flow_cms is identical "
+            f"Every coupled compute configuration's max_flood_depth differs clean-vs-resume "
+            f"({n_depth_diff}/{len(depth)}) while every compute configuration's max_flow is identical "
             f"(0/{len(flow)} differ). This asymmetry is the signature of the SWMM node-depth "
             "scatter defect on the resume path: the replayed depths never reach the per-rank "
             "new_depth[], the first post-resume step forces the Case-1 exchange branch at every "
@@ -280,7 +280,7 @@ def _render_rollup_html(child_reports: list[tuple[str, list[dict]]], *, derived:
                 else:
                     # QUALIFIED pass. The one producer of this state today is the EDA
                     # cross-sim identity verdict (eda/cross_sim_identity.py:458,
-                    # instrument="summary_tier"), and the summary tier stores max_wlevel_m --
+                    # instrument="summary_tier"), and the summary tier stores max_flood_depth --
                     # the variable carrying the coupled-resume perturbation -- as float32.
                     # float32 eps is 1.19e-07, so a true 1.68e-13 difference rounds to
                     # EXACTLY 0.0 and manufactures a false bit-identical control. Rendering

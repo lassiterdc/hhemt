@@ -6,7 +6,7 @@ Answers two questions for a compute-config sensitivity primary:
      spatial difference (per DEM cell + per SWMM conduit) vs serial CPU?
 
 Reads the consolidated ``sensitivity_datatree.zarr`` directly (per-cell
-``max_wlevel_m`` (y,x) + per-conduit ``max_flow_cms`` (link_id)) plus one sub's
+``max_flood_depth`` (y,x) + per-conduit ``max_flow`` (link_id)) plus one sub's
 ``hydraulics.inp`` for conduit geometry — all present in a render bundle, so the
 figure re-renders locally via ``Bundle.eda(plots_only=True)`` with no HPC re-emit.
 
@@ -110,7 +110,7 @@ def _quantised_depth_cap(masked) -> float | None:
 
     Rounding UP never clips, which matters because plotly's Heatmap has no `set_over`
     triangle to disclose a clip with. Two panels whose masked peaks share a 0.25 m bin get
-    the SAME cap, which is what makes one hue mean one water level across panels and across
+    the SAME cap, which is what makes one hue mean one flood depth across panels and across
     the two figure families rather than only within one render.
     """
     arr = np.asarray(masked, dtype=float)
@@ -202,7 +202,7 @@ def _identity_cell(identical, g: dict, serial_grp: dict, wad: float, fad: float)
     hardware-family minimum-device reference (CPU -> serial-CPU, GPU -> 1-GPU), matching
     raw_byte_identity — so a False verdict is ALWAYS a within-family difference (decomposition
     / rank FP non-associativity), never a cross-hardware claim. The vs-serial magnitude still
-    appears in the 'max_wlevel_m abs diff' column (a distinct quantity)."""
+    appears in the 'max_flood_depth abs diff' column (a distinct quantity)."""
     if identical is None:
         return "unknown (identity artifact absent)"
     if identical:
@@ -435,7 +435,7 @@ def _load_subs_from_tree(dt: xr.DataTree, root: Path, *, event_iloc: int) -> dic
         if g.count("/") != 1 or not g.startswith("/member_"):
             continue
         node = dt[g]
-        # Model-aware node resolution: coupled primaries store max_wlevel_m under
+        # Model-aware node resolution: coupled primaries store max_flood_depth under
         # tritonswmm/triton; a pure-TRITON primary stores it under triton_only/triton
         # (processing_analysis.py NODE_PATHS). The SWMM link (flow) tier is coupled-only —
         # absent for pure-TRITON, so it loads as None and the flow panel/columns are dropped
@@ -459,8 +459,8 @@ def _load_subs_from_tree(dt: xr.DataTree, root: Path, *, event_iloc: int) -> dic
             "label": _derive_config_label(node.attrs),
             "run_mode": str(node.attrs.get("run_mode", "")),
             "n_resumes": int(n_res.get(member_id, 0)),  # b5
-            "wlevel": tri["max_wlevel_m"].isel(event_iloc=event_iloc),  # (y, x) with x/y coords
-            "flow": (lnk["max_flow_cms"].isel(event_iloc=event_iloc) if lnk is not None else None),  # coupled-only
+            "wlevel": tri["max_flood_depth"].isel(event_iloc=event_iloc),  # (y, x) with x/y coords
+            "flow": (lnk["max_flow"].isel(event_iloc=event_iloc) if lnk is not None else None),  # coupled-only
         }
     return subs
 
@@ -481,7 +481,7 @@ def _group_by_identity(subs: dict[str, dict], root: Path) -> list[dict]:
             filepath=None,
             reason=(
                 f"config_diff_maps requires a UNIFORM grid across members; got "
-                f"max_wlevel_m shapes {shapes}. This figure subtracts members "
+                f"max_flood_depth shapes {shapes}. This figure subtracts members "
                 f"cell-wise and clusters them by byte-identity, both of which assume "
                 f"one grid. A mixed-resolution primary needs the dem-resolution "
                 f"reporting set (which regrids), not config_diff_maps -- set "
@@ -637,7 +637,7 @@ def _cfg_system_watershed_path(root: Path) -> Path | None:
 
 def _watershed_mask(poly, xd, yd) -> np.ndarray | None:
     """Boolean (ny, nx) mask — True where a DEM cell center falls INSIDE the watershed
-    polygon. Restricts the displayed water level AND the depth colorbar range to the
+    polygon. Restricts the displayed flood depth AND the depth colorbar range to the
     drainage area (north of the sea wall), matching the report's watershed-masking
     convention (``utils.create_mask_from_shapefile`` / ``per_sim_peak_flood_depth``)."""
     if poly is None:
@@ -1040,22 +1040,22 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             "Panel",
             "# compute configurations in group",
             "byte-identical to family ref (peak summary)?",
-            "max_flow_cms abs diff (vs serial)",
-            "max_wlevel_m abs diff (vs serial)",
+            "max_flow abs diff (vs serial)",
+            "max_flood_depth abs diff (vs serial)",
         ]
         if has_flow
         else [
             "Panel",
             "# compute configurations in group",
             "byte-identical to family ref (peak summary)?",
-            "max_wlevel_m abs diff (vs serial)",
+            "max_flood_depth abs diff (vs serial)",
         ]
     )
     fig.add_trace(
         go.Table(
             # iter 12 items {2}/{3} — header SPELLING and ALIGNMENT come from
-            # `_table_presentation`; `humanize_header` is what makes `max_flow_cms` and
-            # `max_wlevel_m` wrappable. Item {1}: the WIDTHS now come from the same module.
+            # `_table_presentation`; `humanize_header` is what makes `max_flow` and
+            # `max_flood_depth` wrappable. Item {1}: the WIDTHS now come from the same module.
             # The prior hand-tuned vector was retained on the ground that it was "already
             # proportioned"; measured, it gave the 44-character header weight 1.2 -- LESS
             # than the 33-character headers at 1.4 -- which is the clipping the item reports.
@@ -1157,7 +1157,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         d0, d1 = row_ydom[r]
         return (d0 + d1) / 2.0
 
-    # Watershed (north of the sea wall): mask displayed water level + depth colorbar range
+    # Watershed (north of the sea wall): mask displayed flood depth + depth colorbar range
     # to the drainage area (excludes the coastal storm-tide extreme), and overlay its
     # boundary on every map labeled 'watershed extent (bbox)'.
     wpoly = _watershed_polygon(root)
@@ -1265,14 +1265,14 @@ def build_config_diff_figure(root: Path) -> go.Figure:
 
     # ---- Panel A: serial-CPU reference (absolute magnitudes, report palettes) ----
     fmax = _abs_ref_range(np.nanmax(np.abs(base_f))) if has_flow else None
-    # Serial depth reference: displayed water level AND the colorbar vmax are restricted to
+    # Serial depth reference: displayed flood depth AND the colorbar vmax are restricted to
     # the watershed mask (north of the sea wall) — the coastal storm-tide extreme south of
     # the wall is excluded, so the inland floodplain signal is visible (item: vmax based on
     # the region NORTH of the sea wall, via the geodataframe polygon mask).
     base_w_disp = _apply_mask(base_w, wmask)
     # G3 fungibility: the Panel-A cap is QUANTIZED UP to a shared ladder rather than set to
-    # the raw masked maximum. max_wlevel_m is the same TRITON quantity in both model arms, so
-    # a per-arm cap makes one YlGnBu hue mean two different water levels in the two same-named
+    # the raw masked maximum. max_flood_depth is the same TRITON quantity in both model arms, so
+    # a per-arm cap makes one YlGnBu hue mean two different flood depths in the two same-named
     # figures. A FIXED constant is the wrong instrument here (no physical anchor exists for an
     # ABSOLUTE level the way 3 cm anchors a DIFFERENCE, and plotly's Heatmap has no set_over
     # triangle, so a clipped cap saturates silently). Rounding up to _DEPTH_CAP_STEP_M is
@@ -1584,7 +1584,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
             )
         )
 
-    # Q1 (iter-2): disclose that the identity column is a PEAK-water-level max-over-time SUMMARY
+    # Q1 (iter-2): disclose that the identity column is a PEAK-flood-depth max-over-time SUMMARY
     # (which washes out the per-timestep divergence the b4b figure catches) and cross-ref the b4b
     # figure. Data-viz Round-2 tunes the exact y/px placement.
     # Caption layout is owned by hhemt.figure_caption (ONE deterministic module for every
@@ -1604,7 +1604,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     _caption_b_px = add_figure_caption(
         fig,
         (
-            "Identity column = byte-identity of the <b>peak flood depth summary (max_wlevel_m)</b>, "
+            "Identity column = byte-identity of the <b>peak flood depth summary (max_flood_depth)</b>, "
             "evaluated after the max over time, vs each compute configuration's hardware-family "
             "minimum-device reference (CPU → serial-CPU, GPU → 1-GPU). The difference and percent "
             "maps below are vs the serial-CPU minimum-device reference. "

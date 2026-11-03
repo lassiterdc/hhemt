@@ -67,27 +67,27 @@ UNREGENERABLE_ANALYSIS_SUBTREES: tuple[str, ...] = (
 LST_COL_HEADERS_NODE_FLOOD_SUMMARY = [
     "node_id",
     "hours_flooded",
-    "max_flow_cms",
+    "max_flood_rate",
     "time_of_max_flood_d_hr_mn",
-    "tot_flooded_vol_10e6_ltr",
-    "max_ponded_depth_m",
+    "tot_flooded_vol",
+    "max_ponded_depth",
 ]
 LST_COL_HEADERS_NODE_FLOW_SUMMARY = [
     "node_id",
     "type",
-    "max_lateral_inflow_cms",
-    "max_total_inflow_cms",
-    "time_of_max_flow_d_hr_mn",
-    "lateral_inflow_vol_10e6_ltr",
-    "total_inflow_vol_10e6_ltr",
-    "flow_balance_error_percent",
+    "max_lateral_inflow",
+    "max_total_inflow",
+    "time_of_max_total_inflow_d_hr_mn",
+    "lateral_inflow_vol",
+    "total_inflow_vol",
+    "flow_balance_error",
 ]
 LST_COL_HEADERS_LINK_FLOW_SUMMARY = [
     "link_id",
     "type",
-    "max_flow_cms",
+    "max_flow",
     "time_of_max_flow_d_hr_mn",
-    "max_velocity_mps",
+    "max_velocity",
     "max_over_full_flow",
     "max_over_full_depth",
 ]

@@ -33,13 +33,14 @@ import xarray as xr
 import yaml
 
 from hhemt.analysis_validation import _TRITON_REPLAY_MARKER, _TRITON_SNAPSHOT_RESTORE_MARKER
+from hhemt.cf_conventions import apply_cf_attributes
 from hhemt.eda.cross_sim_identity import compare_variable_exact
 from hhemt.member_identity import resolve_member_id_column, warn_missing_member_id_column
 from hhemt.process_simulation import CANONICAL_TRITON_VARS, load_triton_output_w_xarray, return_fpath_wlevels
 from hhemt.utils import write_zarr
 
 #: TRITON raw per-timestep variables, in the order load_triton_output_w_xarray tags them
-#: (MH->max_wlevel_m, H->wlevel_m, QX->velocity_x_mps, QY->velocity_y_mps).
+#: (MH->max_flood_depth, H->flood_depth, QX->unit_discharge_x, QY->unit_discharge_y).
 #: ALIAS, not a second list. The definition is process_simulation.CANONICAL_TRITON_VARS,
 #: beside the enumerator that produces the columns these names index. Re-declaring the
 #: literal here would be a second source that a rename in the enumerator cannot reach.
@@ -85,21 +86,21 @@ def compare_triton_raw_timeseries(
     base_bin: Path,
     test_bin: Path,
     *,
-    reporting_interval_s: float = 60.0,
+    reporting_interval: float = 60.0,
     raw_out_type: str = "bin",
 ) -> dict[str, tuple[xr.DataArray, xr.DataArray]]:
     """Per-timestep b4b for one base/test ``out_tritonswmm/<raw_out_type>`` pair.
 
     The pairing is base-vs-test, NOT clean-vs-resume: the same kernel serves the clean run's
     config-vs-config comparison and the clean-vs-resume comparison. Returns
-    ``{varname: DataArray(dims=('timestep_min',), dtype=bool)}`` where True == the raw
+    ``{varname: DataArray(dims=('timestep',), dtype=bool)}`` where True == the raw
     raster is byte-for-byte identical (decoded value equality, ``equal_nan=True``) at that
     reporting timestep. Reuses return_fpath_wlevels (enumeration) + load_triton_output_w_xarray
     (decode, index-coord stub DEM) + compare_variable_exact (kernel). Compares only the shared
     timestep index; a timestep present in one arm but not the other is out of the comparison.
     """
-    df_base = return_fpath_wlevels(base_bin, reporting_interval_s)
-    df_test = return_fpath_wlevels(test_bin, reporting_interval_s)
+    df_base = return_fpath_wlevels(base_bin, reporting_interval)
+    df_test = return_fpath_wlevels(test_bin, reporting_interval)
     if df_base.empty or df_test.empty:
         return {}
     dem = _stub_index_dem(base_bin, raw_out_type)
@@ -123,20 +124,20 @@ def compare_triton_raw_timeseries(
             _mad = cmp["max_abs_diff"]
             mads.append(float("nan") if _mad != _mad else float(_mad))
             ts.append(float(t))
-        _coords = {"timestep_min": np.asarray(ts, dtype=float)}
+        _coords = {"timestep": np.asarray(ts, dtype=float)}
         out[var] = (
-            xr.DataArray(np.asarray(flags, dtype=bool), dims=("timestep_min",), coords=_coords, name=var),
-            xr.DataArray(np.asarray(mads, dtype="float64"), dims=("timestep_min",), coords=_coords, name=var),
+            xr.DataArray(np.asarray(flags, dtype=bool), dims=("timestep",), coords=_coords, name=var),
+            xr.DataArray(np.asarray(mads, dtype="float64"), dims=("timestep",), coords=_coords, name=var),
         )
     return out
 
 
 def first_divergent_timestep(b4b: xr.DataArray) -> float | None:
-    """The smallest ``timestep_min`` at which ``b4b`` is False, or None if all-identical."""
+    """The smallest ``timestep`` at which ``b4b`` is False, or None if all-identical."""
     if b4b.size == 0:
         return None
     diff = b4b.where(~b4b, drop=True)
-    return float(diff["timestep_min"].values.min()) if diff.size else None
+    return float(diff["timestep"].values.min()) if diff.size else None
 
 
 def compare_swmm_raw(base_out_tritonswmm: Path, test_out_tritonswmm: Path) -> dict[str, object]:
@@ -230,7 +231,7 @@ def parse_resume_timestep(model_log: Path) -> float | None:
     return None
 
 
-def resume_boundaries_from_schedule(schedule: Sequence[int] | None, reporting_interval_s: float | None) -> list[float]:
+def resume_boundaries_from_schedule(schedule: Sequence[int] | None, reporting_interval: float | None) -> list[float]:
     """The K REQUESTED resume boundaries, in reporting-timestep MINUTES.
 
     Model-agnostic and K-complete, unlike ``parse_resume_timestep`` (its coupled-only
@@ -241,17 +242,17 @@ def resume_boundaries_from_schedule(schedule: Sequence[int] | None, reporting_in
     not the K boundaries). ``resume_interruption_schedule`` holds exactly K absolute checkpoint
     indices (``config/analysis.py`` validator: strictly increasing, ``>= 1``), so it yields
     exactly K boundaries for a K-resume sim on EITHER arm. Each index N maps to the figure's
-    ``timestep_min`` x-axis by ``N * reporting_interval_s / 60`` -- the same
-    ``reporting_tstep_iloc * (reporting_interval_s / 60)`` that
+    ``timestep`` x-axis by ``N * reporting_interval / 60`` -- the same
+    ``reporting_tstep_iloc * (reporting_interval / 60)`` that
     ``process_simulation.return_filelist_by_tstep`` assigns each raster (``config_N.cfg`` and
     raster ``N`` share TRITON's ``print_id``, written together at ``output.h:705``). These are
     the REQUESTED boundaries; the realized kill lands at ``>= schedule[k]`` (poll granularity,
     arm-dependent), disclosed in the figure caption. Returns ``[]`` when the schedule or the
     interval is None (a clean-vs-clean pair -> no vline).
     """
-    if not schedule or reporting_interval_s is None:
+    if not schedule or reporting_interval is None:
         return []
-    return [float(n) * float(reporting_interval_s) / 60.0 for n in schedule]
+    return [float(n) * float(reporting_interval) / 60.0 for n in schedule]
 
 
 def read_sub_resume_context(
@@ -269,7 +270,7 @@ def read_sub_resume_context(
     AND ``resume_interruption_schedule``, so ONE read resolves the resume-marker log path (log dir
     + the FILENAME, taken from ``run_simulation.model_logfile_name`` so this reader cannot
     re-type the grammar — see ``_model_log_candidates`` for the event-identity form and the
-    legacy ordinal candidate), the reporting interval that sets the ``timestep_min`` axis /
+    ordinal fallback), the reporting interval that sets the ``timestep`` axis /
     vline scale (a wrong interval mis-scales both), and the K REQUESTED resume-boundary
     indices (the durable, K-complete, model-agnostic vline source -- the surviving cfg set is
     NOT one; see ``resume_boundaries_from_schedule``). Tolerant: missing yaml / key / log ->
@@ -283,7 +284,7 @@ def read_sub_resume_context(
     if not isinstance(cfg, dict):
         return None, None, None
     interval = cfg.get("TRITON_reporting_timestep_s")
-    reporting_interval_s = float(interval) if interval is not None else None
+    reporting_interval = float(interval) if interval is not None else None
     _sched = cfg.get("resume_interruption_schedule")
     schedule = tuple(int(n) for n in _sched) if _sched else None
     primary = cfg.get("experiment_cfg_yaml")
@@ -326,7 +327,7 @@ def read_sub_resume_context(
     _names = _model_log_candidates(cfg, member_id, event_iloc, base_dir=Path(analysis_dir))
     _candidates = [root / name for name in _names for root in _roots]
     log_path = next((c for c in _candidates if c.exists()), None)
-    return log_path, reporting_interval_s, schedule
+    return log_path, reporting_interval, schedule
 
 
 def _model_log_candidates(cfg: dict, member_id: str, event_iloc: int, *, base_dir: Path) -> list[str]:
@@ -405,7 +406,7 @@ def build_binary_timestep_figure(
     config_label: str,
     resume_timesteps_min: Sequence[float] = (),
 ):
-    """Binary-per-timestep heatmap for one config: rows = TRITON output-type, x = timestep_min,
+    """Binary-per-timestep heatmap for one config: rows = TRITON output-type, x = timestep,
     z = identical(1=green)/differ(0=red); one dashed black vline per REQUESTED resume boundary,
     short-labelled r1..rK. ``resume_timesteps_min`` is the FULL K-element boundary list ALREADY
     in reporting-timestep MINUTES (produced by ``resume_boundaries_from_schedule``), so the figure
@@ -421,7 +422,7 @@ def build_binary_timestep_figure(
     rows = [v for v in TRITON_VARS if v in triton_b4b and triton_b4b[v].size]
     if not rows:
         return go.Figure()
-    x = [float(t) for t in triton_b4b[rows[0]]["timestep_min"].values]
+    x = [float(t) for t in triton_b4b[rows[0]]["timestep"].values]
     z = [[1 if bool(b) else 0 for b in triton_b4b[v].values] for v in rows]
     fig = go.Figure(
         _heatmap(
@@ -629,7 +630,7 @@ def _b4b_dataset(
     n_replicates: dict[str, int] | None = None,
 ) -> xr.Dataset:
     """Stack {config: {var: (identical_da, mad_da)}} into the b4b DATA CONTRACT Dataset:
-    `identical` + `max_abs_diff` on (compute_config, raw_output_type, timestep_min), plus
+    `identical` + `max_abs_diff` on (compute_config, raw_output_type, timestep), plus
     per-compute_config 1-D vars (config_label / family / is_reference / run_mode /
     hpc_partition / n_gpus / n_mpi / n_omp / n_nodes) and the dataset attrs data-viz reads."""
     import json as _json
@@ -650,11 +651,9 @@ def _b4b_dataset(
         ds = xr.Dataset({"identical": xr.DataArray(np.array(np.nan, dtype="float64"))})
     else:
         cc = xr.DataArray(labels, dims="compute_config", name="compute_config")
-        identical = xr.concat(id_das, dim=cc, join="outer").transpose(
-            "compute_config", "raw_output_type", "timestep_min"
-        )
+        identical = xr.concat(id_das, dim=cc, join="outer").transpose("compute_config", "raw_output_type", "timestep")
         max_abs_diff = xr.concat(mad_das, dim=cc, join="outer").transpose(
-            "compute_config", "raw_output_type", "timestep_min"
+            "compute_config", "raw_output_type", "timestep"
         )
         ds = xr.Dataset({"identical": identical, "max_abs_diff": max_abs_diff})
 
@@ -688,14 +687,18 @@ def _b4b_dataset(
             "degraded": int(bool(degraded)),
             "degraded_reason": str(degraded_reason or ""),
             "raw_output_type": raw_out_type,
-            "reporting_interval_s": interval,
-            "resume_boundaries_min": [float(b) for b in boundaries],
+            "reporting_interval": interval,
+            "reporting_interval_units": "s",
+            "resume_boundaries": [float(b) for b in boundaries],
+            "resume_boundaries_units": "min",
             "units_by_raw_output_type": _json.dumps(
-                {"max_wlevel_m": "m", "wlevel_m": "m", "velocity_x_mps": "m/s", "velocity_y_mps": "m/s"}
+                {"max_flood_depth": "m", "flood_depth": "m", "unit_discharge_x": "m2/s", "unit_discharge_y": "m2/s"}
             ),
             "reference_config_by_family": _json.dumps(reference_config_by_family),
         }
     )
+    # The artifact is written without `_write_output`, so the unit of every numeric variable is stamped here.
+    apply_cf_attributes(ds, "eda_raw_byte_identity")
     return ds
 
 
@@ -713,7 +716,7 @@ def _collapse_replicates(per_config: dict, meta: dict) -> tuple[dict, dict, dict
         to the reference only if EVERY replicate of it is. An OR would let one lucky
         replicate launder a real divergence.
       * `max_abs_diff` -> max across replicates (worst case), matching the AND.
-    Both are elementwise over (raw_output_type, timestep_min). Returns
+    Both are elementwise over (raw_output_type, timestep). Returns
     (per_label, meta_by_label, n_replicates_by_label); the caller MUST surface the
     replicate denominator in the caption per the Gate-0 count-don't-eyeball rule.
 
@@ -755,12 +758,12 @@ def _collapse_replicates(per_config: dict, meta: dict) -> tuple[dict, dict, dict
             mads = [per_config[s][var][1] for s in sas if var in per_config[s]]
             if not ids:
                 continue
-            shared = _ft.reduce(_np.intersect1d, [d["timestep_min"].values for d in ids])
-            id_da = ids[0].sel(timestep_min=shared)
-            mad_da = mads[0].sel(timestep_min=shared)
+            shared = _ft.reduce(_np.intersect1d, [d["timestep"].values for d in ids])
+            id_da = ids[0].sel(timestep=shared)
+            mad_da = mads[0].sel(timestep=shared)
             for extra_id, extra_mad in zip(ids[1:], mads[1:], strict=False):
-                id_da = id_da & extra_id.sel(timestep_min=shared)
-                mad_da = _np.fmax(mad_da, extra_mad.sel(timestep_min=shared))
+                id_da = id_da & extra_id.sel(timestep=shared)
+                mad_da = _np.fmax(mad_da, extra_mad.sel(timestep=shared))
             merged[var] = (id_da, mad_da)
         out_pc[label] = merged
     return out_pc, out_meta, n_rep
@@ -845,9 +848,7 @@ def check_raw_byte_identity(primary, *, cfg_analysis, eda_cfg):
         ref_meta = _meta_for(ref, family, True)
         reference_config_by_family[family] = ref_meta["config_label"]
         # the reference row itself (self-compare -> all-identical baseline marker, F3c)
-        ref_self = compare_triton_raw_timeseries(
-            ref[3], ref[3], reporting_interval_s=interval, raw_out_type=raw_out_type
-        )
+        ref_self = compare_triton_raw_timeseries(ref[3], ref[3], reporting_interval=interval, raw_out_type=raw_out_type)
         if ref_self:
             per_config[ref[0]] = ref_self
             meta[ref[0]] = ref_meta
@@ -855,7 +856,7 @@ def check_raw_byte_identity(primary, *, cfg_analysis, eda_cfg):
         for s in members:
             if s is ref:
                 continue
-            tri = compare_triton_raw_timeseries(ref[3], s[3], reporting_interval_s=interval, raw_out_type=raw_out_type)
+            tri = compare_triton_raw_timeseries(ref[3], s[3], reporting_interval=interval, raw_out_type=raw_out_type)
             if tri:
                 per_config[s[0]] = tri
                 meta[s[0]] = _meta_for(s, family, False)

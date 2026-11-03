@@ -72,7 +72,7 @@ def _stub_bundle(root: Path, eid: str, *, resumes: int, shallow: bool = False, w
         "/member_0": xr.Dataset(attrs=_CPU),
         "/member_0/tritonswmm": xr.Dataset(),
         "/member_0/tritonswmm/triton": xr.Dataset(
-            {"max_wlevel_m": ("event_iloc", np.asarray([wlevel, wlevel + 1.0]))},
+            {"max_flood_depth": ("event_iloc", np.asarray([wlevel, wlevel + 1.0]))},
             coords={"event_iloc": [0, 1]},
         ),
         "/member_0/tritonswmm/performance": xr.Dataset({"Total": ("Rank", np.asarray([10.0]))}),

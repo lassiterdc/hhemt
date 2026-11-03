@@ -5,7 +5,7 @@ two-bundle fixtures (one all-clean, one all-resume single-arm master), with NO H
 real analysis. Validates the North-Star derivation: classify each bundle clean/resume from its
 bundled ``scenario_status.csv`` ``n_resumes``, pair each compute-config present in BOTH by the
 run_mode/n_mpi/n_omp/n_gpus/n_nodes/partition identity, compare the key-result summaries
-(``max_wlevel_m`` + ``max_flow_cms``) per event via ``compare_variable_exact``, and write real
+(``max_flood_depth`` + ``max_flow``) per event via ``compare_variable_exact``, and write real
 ``pairs`` into ``combined_intercomparison.json`` — NOT harvested from any per-arm verdict.
 """
 
@@ -27,11 +27,11 @@ def _sub_nodes(member_id: str, attrs: dict, wlevel: np.ndarray, flow: np.ndarray
     return {
         member_id: xr.Dataset(attrs=attrs),
         f"{member_id}/tritonswmm/triton": xr.Dataset(
-            {"max_wlevel_m": (("event_iloc", "y", "x"), wlevel)},
+            {"max_flood_depth": (("event_iloc", "y", "x"), wlevel)},
             coords={"event_iloc": [0], "y": [0, 1], "x": [0, 1]},
         ),
         f"{member_id}/tritonswmm/swmm_link": xr.Dataset(
-            {"max_flow_cms": (("event_iloc", "link_id"), flow)},
+            {"max_flow": (("event_iloc", "link_id"), flow)},
             coords={"event_iloc": [0], "link_id": ["L0", "L1"]},
         ),
     }
@@ -96,7 +96,7 @@ def test_bundle_role_from_status(tmp_path):
 def test_cross_bundle_intercomparison_pairs(tmp_path, _stub_experiment_ids):
     clean, resume, out = tmp_path / "clean", tmp_path / "resume", tmp_path / "combined"
     out.mkdir()
-    # clean member_1 vs resume member_1: max_wlevel_m differs by 0.5 at one cell; flow identical.
+    # clean member_1 vs resume member_1: max_flood_depth differs by 0.5 at one cell; flow identical.
     clean_w = np.array([[[5.0, 6.0], [7.0, 8.0]]])
     resume_w = np.array([[[5.0, 6.0], [7.0, 8.5]]])  # +0.5 at [1,1]
     flow = np.array([[30.0, 40.0]])
@@ -116,25 +116,25 @@ def test_cross_bundle_intercomparison_pairs(tmp_path, _stub_experiment_ids):
     # Both compute-configs (serial member_0, mpi-8 member_1) pair on identity; both key-result vars present.
     serial_key = "run_mode=serial|n_mpi=1|n_omp=1|n_gpus=0|n_nodes=1|partition=standard"
     mpi_key = "run_mode=mpi|n_mpi=8|n_omp=1|n_gpus=0|n_nodes=1|partition=standard"
-    assert (serial_key, "max_wlevel_m") in by_key
-    assert (mpi_key, "max_wlevel_m") in by_key
+    assert (serial_key, "max_flood_depth") in by_key
+    assert (mpi_key, "max_flood_depth") in by_key
     # member_0 (serial) is byte-identical across arms.
-    assert by_key[(serial_key, "max_wlevel_m")]["identical"] is True
-    assert by_key[(serial_key, "max_wlevel_m")]["max_abs_diff"] == 0.0
+    assert by_key[(serial_key, "max_flood_depth")]["identical"] is True
+    assert by_key[(serial_key, "max_flood_depth")]["max_abs_diff"] == 0.0
     # member_1 (mpi-8) depth differs by 0.5; flow identical.
-    assert by_key[(mpi_key, "max_wlevel_m")]["identical"] is False
-    assert by_key[(mpi_key, "max_wlevel_m")]["max_abs_diff"] == pytest.approx(0.5)
-    assert by_key[(mpi_key, "max_flow_cms")]["identical"] is True
+    assert by_key[(mpi_key, "max_flood_depth")]["identical"] is False
+    assert by_key[(mpi_key, "max_flood_depth")]["max_abs_diff"] == pytest.approx(0.5)
+    assert by_key[(mpi_key, "max_flow")]["identical"] is True
 
 
 def _sub_nodes_triton_only(member_id: str, attrs: dict, wlevel: np.ndarray) -> dict:
-    """One /member_{id} node for a PURE-TRITON master: max_wlevel_m under triton_only/triton and
-    NO swmm_link tier (max_flow_cms is coupled-only) — the second candidate node-path in
+    """One /member_{id} node for a PURE-TRITON master: max_flood_depth under triton_only/triton and
+    NO swmm_link tier (max_flow is coupled-only) — the second candidate node-path in
     _INTERCOMPARISON_VARS."""
     return {
         member_id: xr.Dataset(attrs=attrs),
         f"{member_id}/triton_only/triton": xr.Dataset(
-            {"max_wlevel_m": (("event_iloc", "y", "x"), wlevel)},
+            {"max_flood_depth": (("event_iloc", "y", "x"), wlevel)},
             coords={"event_iloc": [0], "y": [0, 1], "x": [0, 1]},
         ),
     }
@@ -207,11 +207,11 @@ def test_cross_bundle_intercomparison_pairs_within_each_model(tmp_path, _stub_ex
     by = {(p["model"], p["config"], p["variable"]): p for p in pairs}
     # Each model's mpi-8 config is compared WITHIN its own arm — different diffs prove the
     # pairing did not cross models.
-    assert by[("TRITON-SWMM", mpi_key, "max_wlevel_m")]["max_abs_diff"] == pytest.approx(0.5)
-    assert by[("TRITON", mpi_key, "max_wlevel_m")]["max_abs_diff"] == pytest.approx(0.25)
-    # max_flow_cms is coupled-only: present for TRITON-SWMM, absent for pure-TRITON.
-    assert ("TRITON-SWMM", mpi_key, "max_flow_cms") in by
-    assert ("TRITON", mpi_key, "max_flow_cms") not in by
+    assert by[("TRITON-SWMM", mpi_key, "max_flood_depth")]["max_abs_diff"] == pytest.approx(0.5)
+    assert by[("TRITON", mpi_key, "max_flood_depth")]["max_abs_diff"] == pytest.approx(0.25)
+    # max_flow is coupled-only: present for TRITON-SWMM, absent for pure-TRITON.
+    assert ("TRITON-SWMM", mpi_key, "max_flow") in by
+    assert ("TRITON", mpi_key, "max_flow") not in by
 
 
 def test_cross_bundle_intercomparison_empty_when_not_clean_resume(tmp_path, _stub_experiment_ids):
@@ -250,11 +250,19 @@ def _diff_fig_caveat_present(out) -> bool:
 
 
 def test_f9_truncation_caveat_omitted_for_pure_triton_empty(tmp_path):
-    """Pure-TRITON combine (no max_flow_cms pair), all identical -> empty branch, no SWMM caveat."""
+    """Pure-TRITON combine (no max_flow pair), all identical -> empty branch, no SWMM caveat."""
     out = tmp_path / "combined"
     _write_intercomparison_json(
         out,
-        [{"config": "serial", "variable": "max_wlevel_m", "identical": True, "max_abs_diff": 0.0, "event_iloc": 0}],
+        [
+            {
+                "config": "serial",
+                "variable": "max_flood_depth",
+                "identical": True,
+                "max_abs_diff": 0.0,
+                "event_iloc": 0,
+            }
+        ],
     )
     assert _diff_fig_caveat_present(out) is False
 
@@ -264,19 +272,33 @@ def test_f9_truncation_caveat_omitted_for_pure_triton_differing(tmp_path):
     out = tmp_path / "combined"
     _write_intercomparison_json(
         out,
-        [{"config": "mpi8", "variable": "max_wlevel_m", "identical": False, "max_abs_diff": 0.5, "event_iloc": 0}],
+        [
+            {
+                "config": "mpi8",
+                "variable": "max_flood_depth",
+                "identical": False,
+                "max_abs_diff": 0.5,
+                "event_iloc": 0,
+            }
+        ],
     )
     assert _diff_fig_caveat_present(out) is False
 
 
 def test_f9_truncation_caveat_shown_for_coupled(tmp_path):
-    """Coupled combine (a max_flow_cms pair present) -> SWMM truncation caveat renders."""
+    """Coupled combine (a max_flow pair present) -> SWMM truncation caveat renders."""
     out = tmp_path / "combined"
     _write_intercomparison_json(
         out,
         [
-            {"config": "serial", "variable": "max_wlevel_m", "identical": True, "max_abs_diff": 0.0, "event_iloc": 0},
-            {"config": "serial", "variable": "max_flow_cms", "identical": True, "max_abs_diff": 0.0, "event_iloc": 0},
+            {
+                "config": "serial",
+                "variable": "max_flood_depth",
+                "identical": True,
+                "max_abs_diff": 0.0,
+                "event_iloc": 0,
+            },
+            {"config": "serial", "variable": "max_flow", "identical": True, "max_abs_diff": 0.0, "event_iloc": 0},
         ],
     )
     assert _diff_fig_caveat_present(out) is True

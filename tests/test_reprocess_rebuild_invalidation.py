@@ -511,7 +511,7 @@ def test_append_batch_decoupled_from_load_chunk(tmp_path, monkeypatch):
     # canonical variable names. The prefix spelling was invisible only because
     # load_triton_output_w_xarray is patched in the same helper, so nothing consumed the
     # names semantically; triton_raw_frame_or_raise's required-set check does consume them.
-    columns = ["max_wlevel_m", "wlevel_m", "velocity_x_mps", "velocity_y_mps"]
+    columns = ["max_flood_depth", "flood_depth", "unit_discharge_x", "unit_discharge_y"]
     df_outputs = pd.DataFrame(
         {col: [src_file] * n_timesteps for col in columns},
         index=list(range(n_timesteps)),
@@ -567,7 +567,7 @@ def test_append_batch_decoupled_from_load_chunk(tmp_path, monkeypatch):
     # No data loss: every timestep present in the store.
     ds = xr.open_zarr(fname_out)
     try:
-        assert ds.sizes["timestep_min"] == n_timesteps
+        assert ds.sizes["timestep"] == n_timesteps
     finally:
         ds.close()
 
@@ -619,7 +619,7 @@ def test_missing_source_file_raises_rather_than_skipping(tmp_path, monkeypatch):
     fname_out = tmp_path / "out.zarr"
 
     # CANONICAL NAMES, not the raw glob prefixes -- see the sibling stand-in above.
-    columns = ["max_wlevel_m", "wlevel_m", "velocity_x_mps", "velocity_y_mps"]
+    columns = ["max_flood_depth", "flood_depth", "unit_discharge_x", "unit_discharge_y"]
     df_outputs = pd.DataFrame(
         {col: [missing_file] * n_timesteps for col in columns},
         index=list(range(n_timesteps)),

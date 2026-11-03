@@ -100,7 +100,7 @@ class PerSimMapConfig(cfgBaseModel):
         0.0025,
         description=(
             "Within-watershed depth-mask threshold in meters. Cells with "
-            "max_wlevel_m < this value render as `dry_fill_color` (neutral "
+            "max_flood_depth < this value render as `dry_fill_color` (neutral "
             "grey) rather than as wet-color or transparent. Default 0.0025 m "
             "= 2.5 mm (a standard puddle-vs-sheen threshold)."
         ),
@@ -444,7 +444,7 @@ class PerSimMapInteractiveConfig(cfgBaseModel):
         True,
         description=(
             "Render flood-depth raster as a Plotly animation with frames over "
-            "the time dim of max_wlevel_m + slider/play. False preserves the "
+            "the time dim of max_flood_depth + slider/play. False preserves the "
             "legacy 'max-over-time' single-frame static map."
         ),
     )

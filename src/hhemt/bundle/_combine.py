@@ -193,7 +193,7 @@ def _refuse_metadata_only_source(source: _BundleSource) -> None:
 
     A store carried metadata-only (zarr metadata documents and no chunk files) re-opens
     cleanly and returns fill values for every data read, with no error. The combine reads
-    ``max_wlevel_m`` and ``max_flow_cms`` out of the root tree, so a metadata-only child would
+    ``max_flood_depth`` and ``max_flow`` out of the root tree, so a metadata-only child would
     yield ``identical: True, max_abs_diff: 0.0`` on every pair. The refusal reads the
     bundle's own manifest, so it can run over every input before any file of any bundle is
     written anywhere, and before the working folder exists.
@@ -820,13 +820,13 @@ _COMBINED_INTERCOMPARISON_FILENAME = "combined_intercomparison.json"
 #: eda.cross_sim_identity.TRACKED_VARS): peak flood depth + peak conduit flow. Each var
 #: maps to a TUPLE of candidate child node-paths tried in order — the coupled tier
 #: (tritonswmm/*) first, the pure-TRITON tier (triton_only/triton) as fallback — because a
-#: pure-TRITON primary stores max_wlevel_m under triton_only/triton, NOT tritonswmm/triton
-#: (processing_analysis.py NODE_PATHS). max_flow_cms is coupled-only (no SWMM link tier on a
+#: pure-TRITON primary stores max_flood_depth under triton_only/triton, NOT tritonswmm/triton
+#: (processing_analysis.py NODE_PATHS). max_flow is coupled-only (no SWMM link tier on a
 #: pure-TRITON primary), so its candidate tuple has the single coupled path and is simply
 #: absent — and correctly skipped — for a pure-TRITON primary.
 _INTERCOMPARISON_VARS: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("tritonswmm/triton", "triton_only/triton"), "max_wlevel_m"),
-    (("tritonswmm/swmm_link",), "max_flow_cms"),
+    (("tritonswmm/triton", "triton_only/triton"), "max_flood_depth"),
+    (("tritonswmm/swmm_link",), "max_flow"),
 )
 
 
@@ -897,7 +897,7 @@ def _load_intercomparison_subs(root: Path, cache: dict[str, object] | None = Non
         return out, collapsed
     # A child store carried SHALLOWLY (zarr metadata documents only, no chunk files) re-opens
     # cleanly and returns FILL VALUES for every data read -- measured, no raise. This function
-    # reads max_wlevel_m/max_flow_cms out of the store below, so a shallow child would yield
+    # reads max_flood_depth/max_flow out of the store below, so a shallow child would yield
     # `identical: True, max_abs_diff: 0.0` on every pair with no error and no warning. REFUSE
     # rather than skip: a skipped child yields an EMPTY pair list, which the roll-up renders as
     # "no pairs" -- the same false-clean shape the refusal exists to prevent.
@@ -957,7 +957,7 @@ def _write_combined_intercomparison(
     one all-clean (``n_resumes==0``), one all-resume (``n_resumes>0``). Classify each bundle
     from its bundled ``scenario_status.csv``, pair each compute-config present in BOTH (keyed on
     the run_mode/n_mpi/n_omp/n_gpus/n_nodes/partition identity), and compare each key-result
-    summary (``max_wlevel_m`` + ``max_flow_cms``) per event via ``compare_variable_exact`` (the
+    summary (``max_flood_depth`` + ``max_flow``) per event via ``compare_variable_exact`` (the
     Phase-1 compliant kernel: ``xr.align`` exact + transpose + dtype gate + ``equal_nan``; the
     primary Assumption establishes consolidation is value-preserving, so reading the consolidated
     tree here is stipulation-compliant). Records ``{config, variable, event_iloc, identical,
@@ -1199,7 +1199,7 @@ def _member_wallclock(dt, member_group: str) -> tuple[str, float | None]:
     """``(model arm, wall-clock seconds)`` for one member node, or ``("", None)``.
 
     ``Total`` is REDUCED BY MAX over whatever dims survive. The performance summary is already
-    summed over ``timestep_min`` by ``_export_performance_summary``, so a member carrying one
+    summed over ``timestep`` by ``_export_performance_summary``, so a member carrying one
     simulation has nothing left to reduce and the max is the identity. A member carrying
     several events would otherwise have their wall-clocks SUMMED, which reports the number of
     events as cost; max answers "the slowest single simulation at this config", which is the

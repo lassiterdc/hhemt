@@ -27,12 +27,12 @@ def create_test_dataset():
 
     ds = xr.Dataset(
         {
-            "wlevel_m": (["timestep_min", "y", "x"], np.random.rand(n_timesteps, n_y, n_x)),
-            "velocity_x_mps": (["timestep_min", "y", "x"], np.random.rand(n_timesteps, n_y, n_x)),
-            "velocity_y_mps": (["timestep_min", "y", "x"], np.random.rand(n_timesteps, n_y, n_x)),
+            "flood_depth": (["timestep", "y", "x"], np.random.rand(n_timesteps, n_y, n_x)),
+            "unit_discharge_x": (["timestep", "y", "x"], np.random.rand(n_timesteps, n_y, n_x)),
+            "unit_discharge_y": (["timestep", "y", "x"], np.random.rand(n_timesteps, n_y, n_x)),
         },
         coords={
-            "timestep_min": timesteps,
+            "timestep": timesteps,
             "x": x,
             "y": y,
         },

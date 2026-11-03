@@ -40,6 +40,16 @@ retired_tokens:
   - "sa_*"
   - "sa-"
   - sa_id
+  # Layout 28 (V0028): the TRITON water-level and velocity names, and the time-axis names, that a
+  # sweep must not reach inside the migrations that read layout-27 stores. The SWMM old names are NOT
+  # listed: four of them are substrings of new names (a short old SWMM name inside a longer new one), and this gate tests
+  # substrings, so their absence is a word-boundary census in the Definition of Done instead.
+  - wlevel_m
+  - velocity_x_mps
+  - velocity_y_mps
+  - time_of_max_velocity_min
+  - timestep_min
+  - time_hr
 
 frozen:
   src/hhemt/version_migration/versions/V0001__rename_scenario_dirs.py:
@@ -169,6 +179,26 @@ frozen:
       EXECUTES its retired token.
     tokens:
       - '_RETIRED_MEMBER_PREFIX = "sa_"'
+
+  src/hhemt/version_migration/versions/V0008__fix_per_rank_diff_aggregation.py:
+    reason: >-
+      Rewrites layout-8 performance stores, whose time axis is `timestep_min`; the token is
+      read from those historical stores and from the module docstring that documents them.
+    tokens:
+      - timestep_min
+
+  src/hhemt/version_migration/versions/V0028__flood_depth_and_unit_discharge_names.py:
+    reason: >-
+      Reads layout-27 stores and renames their variables, so it carries every retired name as
+      the OLD side of its rename tables. Sweeping them would make the migration look for the
+      layout-28 names it is meant to produce and plan nothing, with the checker green.
+    tokens:
+      - '"wlevel_m"'
+      - '"velocity_x_mps"'
+      - '"velocity_y_mps"'
+      - '"time_of_max_velocity_min"'
+      - '"timestep_min"'
+      - '"time_hr"'
 
 # Fixture trees. A vN fixture is a RECORD of what a vN tree looked like, so renaming
 # a directory inside one makes the vN-1 -> vN golden pair assert a shape that never

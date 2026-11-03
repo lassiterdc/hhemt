@@ -144,7 +144,7 @@ def _child_with_root_tree(parent: Path, *, shallow: list[str] | None) -> Path:
     root = parent / "child"
     root.mkdir(parents=True)
     store = resolve_experiment_tree(root)
-    xr.Dataset({"max_wlevel_m": ("a", [1.0, 2.0])}).to_zarr(store)
+    xr.Dataset({"max_flood_depth": ("a", [1.0, 2.0])}).to_zarr(store)
     manifest: dict = {"bundle_schema_version": BUNDLE_SCHEMA_VERSION}
     if shallow is not None:
         manifest["metadata_only_stores"] = shallow

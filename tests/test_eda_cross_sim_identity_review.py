@@ -40,23 +40,23 @@ from hhemt.eda.cross_sim_identity import NOT_EVALUATED, check_cross_sim_identity
 _MODE = "stub_mode"
 
 #: The eight data_vars of the real `TRITONSWMM_TRITON_summary`, measured on the local run
-#: cache. Exactly ONE of the eight (`max_wlevel_m`) was reachable by the retired hand-named
+#: cache. Exactly ONE of the eight (`max_flood_depth`) was reachable by the hand-named
 #: floor; the other seven are what the all-vars derivation newly admits, and three of those
 #: seven are argmax-derived and therefore tie-break candidates across compute configurations.
 _TRITON_VARS = (
-    "final_surface_flood_volume_m3",
-    "max_velocity_mps",
-    "max_wlevel_m",
-    "time_of_max_velocity_min",
-    "time_of_max_wlevel_min",
-    "velocity_x_mps_at_time_of_max_velocity",
-    "velocity_y_mps_at_time_of_max_velocity",
-    "wlevel_m_last_tstep",
+    "final_surface_flood_volume",
+    "max_unit_discharge",
+    "max_flood_depth",
+    "time_of_max_unit_discharge",
+    "time_of_max_flood_depth",
+    "unit_discharge_x_at_time_of_max_unit_discharge",
+    "unit_discharge_y_at_time_of_max_unit_discharge",
+    "flood_depth_last_tstep",
 )
 
 #: The seven the hand-named floor could never reach. Membership is derived rather than
 #: transcribed so that adding a variable to `_TRITON_VARS` cannot silently leave it untested.
-_NEWLY_ADMITTED = tuple(v for v in _TRITON_VARS if v != "max_wlevel_m")
+_NEWLY_ADMITTED = tuple(v for v in _TRITON_VARS if v != "max_flood_depth")
 
 
 class _Cfg:
@@ -97,8 +97,8 @@ def _pair_summary(bump: float = 0.0) -> xr.Dataset:
     """
     return xr.Dataset(
         {
-            "flow_cms_max": (("event_iloc", "link_id"), np.array([[1.0 + bump, 2.0]], dtype="float64")),
-            "flow_cms_last": (("event_iloc", "link_id"), np.array([[3.0, 4.0]], dtype="float64")),
+            "flow_max": (("event_iloc", "link_id"), np.array([[1.0 + bump, 2.0]], dtype="float64")),
+            "flow_last": (("event_iloc", "link_id"), np.array([[3.0, 4.0]], dtype="float64")),
         },
         coords={"event_iloc": [0], "link_id": ["c1", "c2"]},
     )
@@ -308,7 +308,7 @@ def test_the_all_vars_widening_stays_inside_one_hardware_family(tmp_path, variab
 
     Why it is required, as a consequence a reader can check against the code: the repair takes
     the TRITON compared set from one variable to eight, and three of the seven it adds are
-    argmax-derived (``time_of_max_*``, ``velocity_*_at_time_of_max_velocity``) and therefore
+    argmax-derived (``time_of_max_*``, ``unit_discharge_*_at_time_of_max_unit_discharge``) and therefore
     tie-break candidates across compute configurations. The module's own docstring states that a
     GPU-versus-serial-CPU float32 difference at one eps is EXPECTED PHYSICS rather than a
     reproducibility failure, and that the comparison is anchored per family for exactly that

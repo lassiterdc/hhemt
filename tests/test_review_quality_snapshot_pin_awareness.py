@@ -160,7 +160,7 @@ def _summary(n_events=1):
         {
             "pollutant_max_conc": (("event_iloc", "node_id", "pollutant"), np.ones(shape)),
             "outfall_total_load": (("event_iloc", "node_id", "pollutant"), np.full(shape, 3.0)),
-            "outfall_total_vol_10e6_ltr": (("event_iloc", "node_id"), np.full((n_events, 1), 4.0)),
+            "outfall_total_vol": (("event_iloc", "node_id"), np.full((n_events, 1), 4.0)),
             "qual_routing_external_inflow": (("event_iloc", "pollutant"), np.full((n_events, len(pollutants)), 2.0)),
         },
         coords={"event_iloc": list(range(n_events)), "node_id": ["OUT1"], "pollutant": pollutants},
@@ -339,7 +339,7 @@ def test_statistics_are_kept_or_withheld_by_route_and_build_in_every_store_kind(
     for name in _WITHHELD_VARIABLES[store_name]:
         assert bool(np.isnan(out[name]).all()) is withheld, (store_name, name)
     if store_name == "summary":
-        assert (out["outfall_total_vol_10e6_ltr"] == 4.0).all(), "a hydraulic quantity is never withheld"
+        assert (out["outfall_total_vol"] == 4.0).all(), "a hydraulic quantity is never withheld"
 
 
 # --------------------------------------------------------------------------- build-sha reader (arm d, signature)

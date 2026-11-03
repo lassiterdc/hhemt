@@ -46,7 +46,7 @@ def _stamp(ds: xr.Dataset, sha: str, semver: str) -> xr.Dataset:
 def _summary(event_iloc: int, sha: str, semver: str = _VER) -> xr.Dataset:
     """A minimal FLAT per-scenario summary (event_iloc dim size 1), stamped."""
     ds = xr.Dataset(
-        {"max_wlevel_m": (("event_iloc", "cell"), np.array([[1.0, 2.0, 3.0]]))},
+        {"max_flood_depth": (("event_iloc", "cell"), np.array([[1.0, 2.0, 3.0]]))},
         coords={"event_iloc": [event_iloc]},
     )
     return _stamp(ds, sha, semver)
@@ -202,7 +202,7 @@ def test_reproducing_same_checkout_is_byte_stable(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 def test_read_producing_stamp_legacy_absent_returns_none() -> None:
     legacy = xr.Dataset(
-        {"max_wlevel_m": (("event_iloc", "cell"), np.array([[1.0, 2.0, 3.0]]))},
+        {"max_flood_depth": (("event_iloc", "cell"), np.array([[1.0, 2.0, 3.0]]))},
         coords={"event_iloc": [0]},
     )
     assert read_producing_stamp(legacy) is None
@@ -234,7 +234,7 @@ def test_mixed_stamped_unstamped_concat_normalizes_without_fabrication() -> None
     legacy flat summary, so no historical provenance is fabricated."""
     stamped = _summary(0, _SHA_A)
     legacy = xr.Dataset(
-        {"max_wlevel_m": (("event_iloc", "cell"), np.array([[4.0, 5.0, 6.0]]))},
+        {"max_flood_depth": (("event_iloc", "cell"), np.array([[4.0, 5.0, 6.0]]))},
         coords={"event_iloc": [1]},
     )
     lst = []

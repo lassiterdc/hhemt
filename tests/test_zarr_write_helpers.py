@@ -245,15 +245,15 @@ def _write_sharded_chapters(root: Path, n_chapters: int = 2, n_t: int = 4, ny: i
         first = index * n_t
         ds = xr.Dataset(
             {
-                "wlevel_m": (
-                    ("timestep_min", "y", "x"),
+                "flood_depth": (
+                    ("timestep", "y", "x"),
                     np.random.default_rng(index).random((n_t, ny, nx)).astype("float32"),
                 )
             },
-            coords={"timestep_min": np.arange(first, first + n_t), "y": np.arange(ny), "x": np.arange(nx)},
+            coords={"timestep": np.arange(first, first + n_t), "y": np.arange(ny), "x": np.arange(nx)},
         )
-        encoding = {"wlevel_m": {"chunks": (2, 4, 5), "shards": (4, 8, 10)}}
-        ds.chunk({"timestep_min": n_t, "y": ny, "x": nx}).to_zarr(
+        encoding = {"flood_depth": {"chunks": (2, 4, 5), "shards": (4, 8, 10)}}
+        ds.chunk({"timestep": n_t, "y": ny, "x": nx}).to_zarr(
             chapter_store_for(root, index), mode="w", encoding=encoding, consolidated=False
         )
         chapter_flag_for(root, index).write_text("ok", encoding="utf-8")
@@ -274,19 +274,19 @@ def test_a_chapter_set_written_with_shards_merges_to_a_store_with_the_same_chunk
     """
     chapters = tmp_path / "tseries.zarr.chapters"
     _write_sharded_chapters(chapters)
-    chapter_grid = _grid(chapter_store_for(chapters, 0), "wlevel_m")
+    chapter_grid = _grid(chapter_store_for(chapters, 0), "flood_depth")
     assert chapter_grid == ((2, 4, 5), (4, 8, 10)), "the fixture did not write a sharded chapter"
     final = tmp_path / "tseries.zarr"
 
     merge_chapters_to_unified(chapters, final, scenario_dir=chapters.parent)
 
-    assert _grid(final, "wlevel_m") == chapter_grid, (
-        f"merged grid {_grid(final, 'wlevel_m')} differs from the chapters' {chapter_grid}"
+    assert _grid(final, "flood_depth") == chapter_grid, (
+        f"merged grid {_grid(final, 'flood_depth')} differs from the chapters' {chapter_grid}"
     )
     merged = xr.open_zarr(final, consolidated=True)
-    assert merged.sizes["timestep_min"] == 8
+    assert merged.sizes["timestep"] == 8
     expected = np.concatenate([np.random.default_rng(i).random((4, 8, 10)).astype("float32") for i in range(2)])
-    np.testing.assert_array_equal(merged["wlevel_m"].values, expected)
+    np.testing.assert_array_equal(merged["flood_depth"].values, expected)
     assert _indexed_nodes(final) == _on_disk_nodes(final)
 
 
@@ -304,17 +304,17 @@ def test_the_comparison_used_above_detects_a_merge_that_drops_shards(tmp_path):
     """
     chapters = tmp_path / "chapters"
     _write_sharded_chapters(chapters)
-    chapter_grid = _grid(chapter_store_for(chapters, 0), "wlevel_m")
+    chapter_grid = _grid(chapter_store_for(chapters, 0), "flood_depth")
 
     chapter = xr.open_zarr(chapter_store_for(chapters, 0), consolidated=False)
     dropped = tmp_path / "dropped.zarr"
-    chapter.chunk({"timestep_min": 2, "y": 4, "x": 5}).to_zarr(
-        dropped, mode="w", encoding={"wlevel_m": {"chunks": (2, 4, 5)}}, consolidated=False
+    chapter.chunk({"timestep": 2, "y": 4, "x": 5}).to_zarr(
+        dropped, mode="w", encoding={"flood_depth": {"chunks": (2, 4, 5)}}, consolidated=False
     )
-    assert _grid(dropped, "wlevel_m") == ((2, 4, 5), None)
-    assert _grid(dropped, "wlevel_m") != chapter_grid
+    assert _grid(dropped, "flood_depth") == ((2, 4, 5), None)
+    assert _grid(dropped, "flood_depth") != chapter_grid
 
-    old_way = chapter.chunk({"timestep_min": 2})
+    old_way = chapter.chunk({"timestep": 2})
     with pytest.raises(ValueError, match="overlap multiple Dask chunks"):
         old_way.to_zarr(tmp_path / "old_way.zarr", mode="w", consolidated=False)
 
@@ -333,29 +333,29 @@ def test_merge_of_unsharded_chapters_states_the_chunks_it_inherits(tmp_path):
     chapters.mkdir()
     for index in range(2):
         ds = xr.Dataset(
-            {"wlevel_m": (("timestep_min", "y", "x"), np.zeros((4, 8, 10), dtype="float32"))},
-            coords={"timestep_min": np.arange(index * 4, index * 4 + 4), "y": np.arange(8), "x": np.arange(10)},
+            {"flood_depth": (("timestep", "y", "x"), np.zeros((4, 8, 10), dtype="float32"))},
+            coords={"timestep": np.arange(index * 4, index * 4 + 4), "y": np.arange(8), "x": np.arange(10)},
         )
-        ds["wlevel_m"].encoding["chunks"] = (2, 4, 5)
+        ds["flood_depth"].encoding["chunks"] = (2, 4, 5)
         ds.to_zarr(chapter_store_for(chapters, index), mode="w", consolidated=False)
         chapter_flag_for(chapters, index).write_text("ok", encoding="utf-8")
     final = tmp_path / "tseries.zarr"
 
     merge_chapters_to_unified(chapters, final, scenario_dir=chapters.parent)
 
-    assert _grid(final, "wlevel_m") == ((2, 4, 5), None)
+    assert _grid(final, "flood_depth") == ((2, 4, 5), None)
     assert _indexed_nodes(final) == _on_disk_nodes(final)
 
 
 def _sharded_target(tmp_path: Path) -> Path:
-    """A store with one array sharded 4 along ``timestep_min`` and four timesteps already written."""
+    """A store with one array sharded 4 along ``timestep`` and four timesteps already written."""
     store = tmp_path / "sharded.zarr"
     ds = xr.Dataset(
-        {"v": (("timestep_min", "y"), np.zeros((4, 8), dtype="float32"))},
-        coords={"timestep_min": np.arange(4), "y": np.arange(8)},
+        {"v": (("timestep", "y"), np.zeros((4, 8), dtype="float32"))},
+        coords={"timestep": np.arange(4), "y": np.arange(8)},
     )
     write_zarr(
-        ds.chunk({"timestep_min": 4, "y": 8}),
+        ds.chunk({"timestep": 4, "y": 8}),
         store,
         chunks=None,
         encoding={"v": {"chunks": (2, 4), "shards": (4, 8)}},
@@ -366,9 +366,9 @@ def _sharded_target(tmp_path: Path) -> Path:
 
 def _next_block(start: int, n: int) -> xr.Dataset:
     return xr.Dataset(
-        {"v": (("timestep_min", "y"), np.ones((n, 8), dtype="float32"))},
-        coords={"timestep_min": np.arange(start, start + n), "y": np.arange(8)},
-    ).chunk({"timestep_min": n, "y": 8})
+        {"v": (("timestep", "y"), np.ones((n, 8), dtype="float32"))},
+        coords={"timestep": np.arange(start, start + n), "y": np.arange(8)},
+    ).chunk({"timestep": n, "y": 8})
 
 
 def test_append_along_a_dimension_into_a_sharded_array_needs_a_whole_number_of_shards(tmp_path):
@@ -387,11 +387,11 @@ def test_append_along_a_dimension_into_a_sharded_array_needs_a_whole_number_of_s
     before = _indexed_nodes(store)
 
     with pytest.raises(ProcessingError, match="'v'.*not a multiple"):
-        append_zarr(_next_block(4, 3), store, group=None, append_dim="timestep_min")
+        append_zarr(_next_block(4, 3), store, group=None, append_dim="timestep")
     assert zarr.open_group(str(store), mode="r")["v"].shape == (4, 8)
     assert _indexed_nodes(store) == before
 
-    append_zarr(_next_block(4, 4), store, group=None, append_dim="timestep_min")
+    append_zarr(_next_block(4, 4), store, group=None, append_dim="timestep")
     assert zarr.open_group(str(store), mode="r")["v"].shape == (8, 8)
     assert _grid(store, "v") == ((2, 4), (4, 8))
 

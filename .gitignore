@@ -237,6 +237,10 @@ __marimo__/
 # bounded by the 5 MB fixture-dir budget.
 !tests/fixtures/legacy_layouts/**/*.zarr
 !tests/fixtures/legacy_layouts/**/*.zarr/**
+# The SWMM parser reference stores are tracked fixtures that regeneration rewrites, so the
+# blanket *.zarr rule must not hide the files a regeneration adds.
+!test_data/swmm_refactoring_reference/**/*.zarr
+!test_data/swmm_refactoring_reference/**/*.zarr/**
 
 # TRITON-SWMM toolkit custom
 *_archive*

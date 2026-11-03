@@ -1,7 +1,7 @@
 """The performance summary's RETAINED size-one ``Rank`` axis, and what it is retained FOR.
 
 THE DEFECT THIS PINS, and it is a defect of an ANNOTATION rather than of a number. The
-summary's thirteen published columns are ``sum(dim="timestep_min").max(dim="Rank")``, and the
+summary's thirteen published columns are ``sum(dim="timestep").max(dim="Rank")``, and the
 CF construct that documents a reduction is ``cell_methods``. CF-1.13 section 7.3 constrains
 what a ``cell_methods`` name may be -- "In the specification of this attribute, name can be a
 dimension of the variable, a scalar coordinate variable, a valid standard name, or the word
@@ -174,8 +174,8 @@ def test_both_reduction_sites_retain_rank_as_a_size_one_dimension(two_rank_perf_
         assert out.sizes.get("Rank") == 1, f"the {label} site did not retain Rank at size one"
         for col in _BASE_COLS:
             assert out[col].dims == ("Rank",), f"the {label} site's {col} carries dims {out[col].dims}"
-        assert "timestep_min" not in out.dims and "timestep_min" not in out.coords, (
-            f"the {label} site retained timestep_min, which nothing annotates and which "
+        assert "timestep" not in out.dims and "timestep" not in out.coords, (
+            f"the {label} site retained timestep, which nothing annotates and which "
             "cf_conventions deliberately does not name"
         )
 
@@ -190,7 +190,7 @@ def test_retaining_the_axis_changes_no_published_value(two_rank_perf_dir, tmp_pa
     from hhemt.process_simulation import _aggregate_perf_summary, _aggregate_perf_tseries
 
     tseries = _aggregate_perf_tseries(two_rank_perf_dir, resume_steps=[])
-    collapsed = tseries.sum(dim="timestep_min", skipna=False).max(dim="Rank")
+    collapsed = tseries.sum(dim="timestep", skipna=False).max(dim="Rank")
     retained = _aggregate_perf_summary(two_rank_perf_dir, resume_steps=[])
 
     for col in _BASE_COLS:
@@ -460,15 +460,15 @@ def test_a_differently_positioned_satisfying_value_produces_no_finding():
     """ARM (b) -- a DIFFERENTLY-POSITIONED satisfying input, and it is a real corpus value.
 
     The predicate was written against the class-3 + class-1 sequence. A value occupying a
-    DIFFERENT correct state must produce no finding, and ``final_surface_flood_volume_m3``'s
+    DIFFERENT correct state must produce no finding, and ``final_surface_flood_volume``'s
     ``"area: sum"`` is one: a single pair taking class 4. This arm is what proves the predicate is
     a four-class disjunction rather than a hard-coded two-pair sequence. A predicate that pinned
     the sequence would pass arm (a) and FAIL here, and arm (a) alone cannot see that.
     """
     ds = apply_cf_attributes(
-        xr.Dataset({"final_surface_flood_volume_m3": ((), 0.0)}),
+        xr.Dataset({"final_surface_flood_volume": ((), 0.0)}),
         "tritonswmm_triton",
     )
-    cm = ds["final_surface_flood_volume_m3"].attrs["cell_methods"]
+    cm = ds["final_surface_flood_volume"].attrs["cell_methods"]
     assert cm == "area: sum"
-    assert cell_methods_classes(cm, ds["final_surface_flood_volume_m3"], ds, where="area exemplar") == ["area"]
+    assert cell_methods_classes(cm, ds["final_surface_flood_volume"], ds, where="area exemplar") == ["area"]

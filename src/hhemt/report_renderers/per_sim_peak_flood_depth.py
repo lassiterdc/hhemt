@@ -133,7 +133,7 @@ def _shared_depth_max(analysis, target_crs, map_cfg=None, model_types=None):
     for _group, _ev in _pairs:
         ds_all = _ds_by_group[_group]
         try:
-            da_ev = ds_all["max_wlevel_m"].sel(event_iloc=int(_ev))
+            da_ev = ds_all["max_flood_depth"].sel(event_iloc=int(_ev))
             if da_ev.rio.crs is not None and da_ev.rio.crs != target_crs:
                 da_ev = da_ev.rio.reproject(target_crs)
             if da_ev.rio.crs is not None and watershed_gdf.crs is not None and watershed_gdf.crs != da_ev.rio.crs:
@@ -250,7 +250,7 @@ def _shared_wse_range(analysis, target_crs, dem_da, map_cfg=None, model_types=No
     for _group, _ev in _pairs:
         ds_all = _ds_by_group[_group]
         try:
-            da_ev = ds_all["max_wlevel_m"].sel(event_iloc=int(_ev))
+            da_ev = ds_all["max_flood_depth"].sel(event_iloc=int(_ev))
             if da_ev.rio.crs is not None and da_ev.rio.crs != target_crs:
                 da_ev = da_ev.rio.reproject(target_crs)
             if da_ev.rio.crs is not None and watershed_gdf.crs is not None and watershed_gdf.crs != da_ev.rio.crs:
@@ -400,11 +400,11 @@ def render(
             f"consolidated tree missing expected group {triton_group}; available: {sorted(tree.groups)}"
         )
     ds = tree[triton_group].to_dataset()
-    da = ds["max_wlevel_m"].sel(event_iloc=event_iloc)
+    da = ds["max_flood_depth"].sel(event_iloc=event_iloc)
     if da.rio.crs is not None and da.rio.crs != target_crs:
         da = da.rio.reproject(target_crs)
-    wlevel_attrs = dict(da.attrs)
-    wlevel_name = da.name
+    flood_depth_attrs = dict(da.attrs)
+    flood_depth_name = da.name
 
     # ---- DEM raster -----------------------------------------------------
     dem_da = rxr.open_rasterio(sys_paths.dem_processed).squeeze()
@@ -542,8 +542,8 @@ def render(
     # colorbar shares its range across all per-event figures.
     depth_ref = ProvenanceRef(
         source_path=triton_summary_rel,
-        variable=str(wlevel_name) if wlevel_name is not None else "max_wlevel_m",
-        attrs=wlevel_attrs,
+        variable=str(flood_depth_name) if flood_depth_name is not None else "max_flood_depth",
+        attrs=flood_depth_attrs,
         selection={"event_iloc": int(event_iloc)},
         transform="masked to watershed and depth>0",
     )
@@ -689,8 +689,8 @@ def render(
 
     wse_ref_depth = ProvenanceRef(
         source_path=triton_summary_rel,
-        variable=str(wlevel_name) if wlevel_name is not None else "max_wlevel_m",
-        attrs=wlevel_attrs,
+        variable=str(flood_depth_name) if flood_depth_name is not None else "max_flood_depth",
+        attrs=flood_depth_attrs,
         selection={"event_iloc": int(event_iloc)},
         transform="depth, summed with DEM elevation",
     )
@@ -793,7 +793,7 @@ def render(
         Path(weather_path),
     ]
     max_obj = da_masked.max()
-    wlevel_m_max = max_obj.compute() if hasattr(max_obj, "compute") else max_obj
+    flood_depth_max = max_obj.compute() if hasattr(max_obj, "compute") else max_obj
     cell_count_obj = da_masked.notnull().sum()
     valid_cell_count = cell_count_obj.compute() if hasattr(cell_count_obj, "compute") else cell_count_obj
     return emit_plot_with_sources(
@@ -807,12 +807,16 @@ def render(
         emit_preview=(static_cfg is None),
         manifest_data={
             "event_iloc": int(event_iloc),
-            "depth_m_max": float(wlevel_m_max),
+            "depth_max": float(flood_depth_max),
             "valid_cell_count": int(valid_cell_count),
-            "wse_m_range": [wse_min, wse_max],
-            "rainfall_max_mm_per_hr": float(np.nanmax(rainfall)),
-            "bc_water_level_range_m": [bc_min, bc_max],
-            "depth_boundaries_m": list(map_cfg.depth_boundaries_m),
+            "wse_range": [wse_min, wse_max],
+            "wse_range_units": "m",
+            "rainfall_max": float(np.nanmax(rainfall)),
+            "rainfall_max_units": "mm h-1",
+            "bc_water_level_range": [bc_min, bc_max],
+            "bc_water_level_range_units": "m",
+            "depth_boundaries": list(map_cfg.depth_boundaries_m),
+            "depth_boundaries_units": "m",
         },
         provenance=prov,
     )
@@ -871,11 +875,11 @@ def _build_peak_flood_depth_figure(
             f"consolidated tree missing expected group {triton_group}; available: {sorted(tree.groups)}"
         )
     ds = tree[triton_group].to_dataset()
-    da = ds["max_wlevel_m"].sel(event_iloc=event_iloc)
+    da = ds["max_flood_depth"].sel(event_iloc=event_iloc)
     if da.rio.crs is not None and da.rio.crs != target_crs:
         da = da.rio.reproject(target_crs)
-    wlevel_attrs = dict(da.attrs)
-    wlevel_name = da.name
+    flood_depth_attrs = dict(da.attrs)
+    flood_depth_name = da.name
 
     dem_da = rxr.open_rasterio(sys_paths.dem_processed).squeeze()
     if dem_da.rio.crs is not None and dem_da.rio.crs != target_crs:
@@ -1047,7 +1051,7 @@ def _build_peak_flood_depth_figure(
         )
         depth_agg = canvas.raster(
             da_masked,
-            agg=ds_reductions.max("max_wlevel_m"),
+            agg=ds_reductions.max("max_flood_depth"),
         )
         wse_agg = canvas.raster(
             wse_masked,
@@ -1134,8 +1138,8 @@ def _build_peak_flood_depth_figure(
     # ---- Depth panel ----------------------------------------------------
     depth_ref = ProvenanceRef(
         source_path=triton_summary_rel,
-        variable=str(wlevel_name) if wlevel_name is not None else "max_wlevel_m",
-        attrs=wlevel_attrs,
+        variable=str(flood_depth_name) if flood_depth_name is not None else "max_flood_depth",
+        attrs=flood_depth_attrs,
         selection={"event_iloc": int(event_iloc)},
         transform=_depth_transform,
     )
@@ -1196,7 +1200,7 @@ def _build_peak_flood_depth_figure(
         },
         transform=(
             "within-watershed background fill; wet Heatmap overlays on top "
-            "for cells where max_wlevel_m > dry_threshold_m; remaining "
+            "for cells where max_flood_depth > dry_threshold_m; remaining "
             "watershed cells show through this dry_fill_color polygon"
         ),
     )
@@ -1257,8 +1261,8 @@ def _build_peak_flood_depth_figure(
     # ---- WSE panel ------------------------------------------------------
     wse_ref_depth = ProvenanceRef(
         source_path=triton_summary_rel,
-        variable=str(wlevel_name) if wlevel_name is not None else "max_wlevel_m",
-        attrs=wlevel_attrs,
+        variable=str(flood_depth_name) if flood_depth_name is not None else "max_flood_depth",
+        attrs=flood_depth_attrs,
         selection={"event_iloc": int(event_iloc)},
         transform=_wse_transform,
     )
@@ -1688,7 +1692,7 @@ def _render_plotly_branch(
         Path(hydraulics_inp),
     ]
     max_obj = da_masked.max()
-    wlevel_m_max = max_obj.compute() if hasattr(max_obj, "compute") else max_obj
+    flood_depth_max = max_obj.compute() if hasattr(max_obj, "compute") else max_obj
     valid_cell_count = cell_count
     bc_min = float(np.nanmin(bc_water_level))
     bc_max = float(np.nanmax(bc_water_level))
@@ -1718,12 +1722,16 @@ def _render_plotly_branch(
         output_format="html",
         manifest_data={
             "event_iloc": int(event_iloc),
-            "depth_m_max": float(wlevel_m_max),
+            "depth_max": float(flood_depth_max),
             "valid_cell_count": int(valid_cell_count),
-            "wse_m_range": [wse_min, wse_max],
-            "rainfall_max_mm_per_hr": float(np.nanmax(rainfall)),
-            "bc_water_level_range_m": [bc_min, bc_max],
-            "depth_boundaries_m": list(map_cfg.depth_boundaries_m),
+            "wse_range": [wse_min, wse_max],
+            "wse_range_units": "m",
+            "rainfall_max": float(np.nanmax(rainfall)),
+            "rainfall_max_units": "mm h-1",
+            "bc_water_level_range": [bc_min, bc_max],
+            "bc_water_level_range_units": "m",
+            "depth_boundaries": list(map_cfg.depth_boundaries_m),
+            "depth_boundaries_units": "m",
             "datashader_used": bool(use_datashader),
         },
         provenance=prov,

@@ -256,7 +256,7 @@ def _intercomparison_page(tmp_path: Path, pairs: list[dict]) -> str:
 
 _PAIR = {
     "config": "run_mode=mpi|n_mpi=2|n_omp=1|n_gpus=0|n_nodes=1|partition=standard",
-    "variable": "max_wlevel_m",
+    "variable": "max_flood_depth",
     "event_iloc": 0,
     "identical": True,
     "max_abs_diff": 0.0,

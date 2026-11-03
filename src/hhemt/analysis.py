@@ -182,7 +182,7 @@ def _column_set_cell(ds) -> dict[str, str | None]:
     assertions to admit a value they are right to reject.
 
     GUARDED READ, same shape and same reason as the ``PERF_VARS`` guard one function up. The
-    coordinate rides the summary reduction (which reduces over ``timestep_min`` and
+    coordinate rides the summary reduction (which reduces over ``timestep`` and
     ``Rank``, leaving the ``event_iloc`` coord intact), but a member consolidated before the
     coordinate shipped does not carry it, and the toolkit is a library pointed at arbitrary
     trees. Membership is tested before the subscript; an absent coord yields ``None``.

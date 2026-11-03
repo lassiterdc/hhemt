@@ -118,6 +118,7 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "dem_building_height": "experiment",
     "dem_outside_watershed_height": "experiment",
     "eda": "experiment",
+    "flood_velocity_min_depth_m": "experiment",
     "force_rerun": "experiment",
     "hydraulic_timestep_s": "experiment",
     "is_experiment_member": "experiment",

@@ -148,25 +148,53 @@ _PERF_COLUMNS = ("Compute", "MPI", "IO", "Resize", "SWMM", "Other", "Simulation"
 
 
 def _triton_field(prefix: str, step: int, dims: Dimensions, scale: float) -> np.ndarray:
-    """Closed-form water-level / momentum fields; ``MH`` is the running maximum of ``H``.
+    """Closed-form flood-depth / unit-discharge fields; ``MH`` is the running maximum of ``H``.
 
-    At the default 12 steps ``H`` rises at every step, so ``MH`` equals ``H`` in the written files;
-    the running maximum only differs from ``H`` once ``n_steps`` is large enough for ``H`` to fall."""
+    Most cells rise smoothly, but a few are shaped on purpose so that a wrong derivation of the flood velocity
+    (q divided by the running maximum of depth, or by the last step's depth, an ``abs`` of the x component, no
+    dry mask, a peak assumed at the last step) would DIFFER from the right one on the golden. The shapes, at
+    the default 6 x 4 grid and 12 steps:
+
+    * cell (0, 0) dries at steps 5 to 7 and re-wets at a quarter of its earlier depth, so its depth falls
+      below its own running maximum;
+    * cell (5, 3) stays at 0.0005 m, at or below the 0.001 m wet-depth threshold, at every step;
+    * row 1 deepens fast after step 6 while its speed decays after step 6, so its velocity peaks at step 6
+      and its discharge peaks later;
+    * column 2 flows toward negative x throughout, and column 1 reverses its x flow after step 8.
+    """
     r = np.arange(dims.rows, dtype=np.float64)[:, None]
     c = np.arange(dims.cols, dtype=np.float64)[None, :]
     shape = 1.0 + 0.1 * r + 0.05 * c
+    row1 = np.broadcast_to(r == 1, (dims.rows, dims.cols))
+    cell00 = np.broadcast_to((r == 0) & (c == 0), (dims.rows, dims.cols))
+    always_dry = np.broadcast_to((r == 5) & (c == 3), (dims.rows, dims.cols))
 
     def h_at(k: int) -> np.ndarray:
-        return scale * shape * 0.01 * k * (1.0 + 0.05 * math.sin(0.5 * k))
+        h = scale * shape * 0.01 * k * (1.0 + 0.05 * math.sin(0.5 * k))
+        h = np.where(row1, h * (1.0 + 0.5 * max(0, k - 6)), h)
+        if 5 <= k <= 7:
+            h = np.where(cell00, 0.0, h)
+        elif k >= 8:
+            h = np.where(cell00, 0.25 * h, h)
+        return np.where(always_dry, 0.0005, h)
+
+    def speed_at(k: int) -> np.ndarray:
+        decay = max(0.1, 1.0 - 0.15 * max(0, k - 6))
+        return np.where(row1, (1.0 + 0.1 * k) * decay, 1.0 + 0.1 * k)
 
     if prefix == "H":
         return h_at(step)
     if prefix == "MH":
         return np.maximum.reduce([h_at(k) for k in range(1, step + 1)])
+    # QX and QY are unit discharge, depth times velocity (SPEC.md section 7.1), so a golden's flood velocity
+    # q / h is a known field: the written discharge is the velocity below times the SAME step's depth.
     if prefix == "QX":
-        return 0.001 * scale * shape * step
+        sign = np.where(np.broadcast_to(c == 2, (dims.rows, dims.cols)), -1.0, 1.0)
+        if step > 8:
+            sign = np.where(np.broadcast_to(c == 1, (dims.rows, dims.cols)), -1.0, sign)
+        return h_at(step) * 0.2 * speed_at(step) * (1.0 + 0.05 * c) * sign
     if prefix == "QY":
-        return -0.0005 * scale * shape * step
+        return -h_at(step) * 0.1 * speed_at(step) * (1.0 + 0.05 * r)
     raise ValueError(prefix)
 
 

@@ -288,7 +288,7 @@ def test_the_compute_and_byte_identity_figures_print_no_ascii_dash_primary_or_b4
 # ---- 3e.2: the DEM-resolution figures, the EDA notebook, the promote notices, the local surface ----
 
 _3E2_MODULES = ("_dem_resolution_plots", "_plotting", "_promote", "_notebook", "_local_surface")
-_HELD_NAME_STRING = "## Cross-sim byte-identity"  # Decision 3 with the developer: not renamed here
+_HELD_NAME_STRING = "## Byte identity across compute configurations"  # the check name
 _3E2_BAD = re.compile(
     r"—| -- |\w\(s\)|DRAFT|\bADR-\d|\bOD-\d|reporting-system_|\bb4b\b|\bNOT\b|\bENUMERATED\b|\bINERT\b|\bDISPLAYED\b"
     r"|\bSUMMARY\b|\bRED =|\bEVERY\b|\bANY\b|\bprimary\b|\bmay\b|\bwhich\b|compute-config|compute configs?\b"
@@ -364,9 +364,9 @@ def test_the_seeded_notebook_is_valid_python_names_the_figure_count_by_its_plura
 
     Input class: a notebook emitted for a stub analysis, both as a source analysis and as a bundle.
     Required because the seed cell was edited (lowercase comments, no planning identifier, a plural
-    that takes the count's form) and Decision 3 keeps the "Cross-sim byte-identity" heading. Killed by
-    a seed cell that fails to compile, by restoring `figure(s)`, or by dropping the held heading. A
-    second correct implementation inflects through other code while it prints "1 EDA figure".
+    that takes the count's form) and the check heading carries the text "Byte identity across compute
+    configurations". Killed by a seed cell that fails to compile, by restoring `figure(s)`, or by dropping the held
+    heading. A second correct implementation inflects through other code while it prints "1 EDA figure".
     """
     import nbformat
 
@@ -384,7 +384,7 @@ def test_the_seeded_notebook_is_valid_python_names_the_figure_count_by_its_plura
     seed = next(s for s in code if "rendered inline above" in s)
     assert "figure(s)" not in seed and '"figure" if len(_figs) == 1 else "figures"' in seed
     assert "ADR-" not in seed and "—" not in markdown and "NEW notebook" not in markdown
-    assert "## Cross-sim byte-identity (source-analysis only)" in markdown
+    assert "## Byte identity across compute configurations (source-analysis only)" in markdown
 
 
 def test_the_local_surface_skeleton_bodies_are_valid_python_without_planning_identifiers() -> None:

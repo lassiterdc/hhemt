@@ -1185,7 +1185,7 @@ def _unit_factor_html(tok: str) -> str:
 
     Two branches, both load-bearing against real entries in `_CF_VARIABLE_MAP`:
 
-    * The caret branch exists for `10^6 L` (`total_inflow_vol_10e6_ltr`). Without it, a
+    * The caret branch exists for `10^6 L` (`total_inflow_vol`). Without it, a
       trailing-digit rule renders `1` raised to `0`.
     * The alphabetic-base guard exists for `1`, CF's dimensionless unit. Without it, the
       same rule produces an empty base carrying a superscript.

@@ -34,7 +34,7 @@ BOTH must return.
 coarse model never computed, so the map's spatial frequency exceeds the data's
 information content.
 
-DISCLOSED CAVEAT (D12): ``max_wlevel_m`` is depth above local bed, not WSE. Restating
+DISCLOSED CAVEAT: ``max_flood_depth`` is depth above local bed, not WSE. Restating
 depth piecewise-constantly on the fine grid implies a non-flat water surface and floods
 fine cells whose bed sits above the coarse block's mean + d. This is a property of the
 coarse run's own coarseness -- the thing under study -- so it is disclosed in the figure

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Byte-identity verification for a compute-config sensitivity master (D5 ground truth).
 
-Compares each member's FLAT per-scenario summaries (max_wlevel_m over (y,x);
-max_flow_cms over (link_id,)) against a reference sub, for one shared event, using:
+Compares each member's FLAT per-scenario summaries (max_flood_depth over (y,x);
+max_flow over (link_id,)) against a reference sub, for one shared event, using:
   * COMPLIANT  = xr.align(join="exact") + transpose + dtype gate + np.array_equal(equal_nan=True)
   * POSITIONAL = bare np.array_equal on raw .values (mimics eda/_config_diff.py)
 If COMPLIANT says identical but POSITIONAL says differs -> reporting-calc ARTIFACT
@@ -27,8 +27,8 @@ import xarray as xr
 # cross-checked against -- a divergence confined to a ratio variable would otherwise be
 # invisible to the branch decision, and the SUMMARY line IS the branch selector).
 _VARS = {
-    "TRITONSWMM_TRITON_summary": ("max_wlevel_m",),
-    "TRITONSWMM_SWMM_link_summary": ("max_flow_cms", "max_full_flow_ratio", "max_full_depth_ratio"),
+    "TRITONSWMM_TRITON_summary": ("max_flood_depth",),
+    "TRITONSWMM_SWMM_link_summary": ("max_flow", "max_full_flow_ratio", "max_full_depth_ratio"),
 }
 
 

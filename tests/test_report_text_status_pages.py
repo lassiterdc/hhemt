@@ -582,7 +582,7 @@ def test_no_check_description_carries_a_retired_term_table_phrase() -> None:
     single-word retired set is read by `test_no_check_description_carries_a_retired_word_or_an_em_dash`
     and by the style test; neither reads a phrase. Required because brief rule 2 applies to every string
     a report reader sees. Killed by `forcing tail influence` printing "peak water level" for the
-    `max_wlevel_m` value the check reads. A second correct implementation words it "peak flood depth"
+    `max_flood_depth` value the check reads. A second correct implementation words it "peak flood depth"
     or "maximum depth" and passes.
     """
     from hhemt.report_renderers.errors_and_warnings import _CHECK_VOCABULARY
@@ -762,8 +762,8 @@ def test_the_caption_check_fires_on_the_cut_sentences(text: str) -> None:
 def _p16_derived_finding(tmp_path: Path) -> dict:
     from hhemt.report_renderers.cross_experiment_errors_and_warnings import _swmm_invisible_divergence_finding
 
-    pairs = [{"model": "TRITON-SWMM", "variable": "max_wlevel_m", "identical": False} for _ in range(3)]
-    pairs += [{"model": "TRITON-SWMM", "variable": "max_flow_cms", "identical": True} for _ in range(3)]
+    pairs = [{"model": "TRITON-SWMM", "variable": "max_flood_depth", "identical": False} for _ in range(3)]
+    pairs += [{"model": "TRITON-SWMM", "variable": "max_flow", "identical": True} for _ in range(3)]
     (tmp_path / "combined_intercomparison.json").write_text(json.dumps({"pairs": pairs}), encoding="utf-8")
     finding = _swmm_invisible_divergence_finding(tmp_path)
     assert finding is not None

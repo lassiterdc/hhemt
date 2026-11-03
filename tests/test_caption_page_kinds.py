@@ -213,6 +213,20 @@ def test_rendering_reaches_its_page_kind(pk: PageKind, tmp_path: Path) -> None:
     assert _MARKERS[pk.id] in render_page(pk, tmp_path)
 
 
+def test_a_page_with_no_applicable_check_prints_no_banner_and_states_the_omission(tmp_path: Path) -> None:
+    """P07-all_not_applicable: no check applies, so the page says so once and prints no pass or fail tally.
+
+    Input class: the `all_not_applicable` page kind (two checks, none applicable). Required because "0 of 0 applicable
+    checks passed." and "0 of 0 applicable checks failed." state nothing. Killed by restoring either banner branch.
+    A second correct implementation words the omission note differently while printing no tally.
+    Must-fire control: before the banner returned the empty string for an empty `applicable` list, this page rendered
+    "0 of 0 applicable checks" and this assertion failed.
+    """
+    html = render_page(_by_id("P07-all_not_applicable"), tmp_path)
+    assert "applicable checks" not in html
+    assert "they do not apply to this analysis" in html
+
+
 # ---- Must-fire control: a bold element that exists on one page kind only -----------------
 
 _R_PS1 = (

@@ -39,6 +39,9 @@ from hhemt.config.analysis import analysis_config
 # Import from production package
 from hhemt.experiments import TRITON_SWMM_experiment
 from hhemt.system import TRITONSWMM_system
+from hhemt.version_migration import constants as _version_constants
+from hhemt.version_migration.exceptions import VersionFileUnreadableError
+from hhemt.version_migration.state import read_version_file
 from tests.fixtures import _triton_source_cache, worktree_slug
 from tests.fixtures._triton_source_cache import (
     TRITON_GIT_URL,
@@ -289,6 +292,27 @@ from tests.fixtures.synthetic_model import (  # noqa: E402
 )
 
 
+def _discard_if_layout_stale(system_directory: Path) -> bool:
+    """Remove ``system_directory`` when its ``_version.json`` records a layout other than the current one.
+
+    A reused tree is only valid at the layout it was stamped with; removing it makes the caller rebuild it at the
+    current layout exactly as a wipe would. The analysis directory sits inside the system directory, so one
+    removal covers both. A directory with no stamp, or a stamp that does not parse, is left alone: the first is an
+    unstamped tree the toolkit stamps itself, and the second is a broken record that the toolkit's own readers
+    report by name, which a silent removal here would hide. Returns True when the tree was removed.
+    """
+    if not system_directory.exists():
+        return False
+    try:
+        state = read_version_file(system_directory)
+    except VersionFileUnreadableError:
+        return False
+    if state is None or state.layout_version == _version_constants.LAYOUT_VERSION:
+        return False
+    ut.fast_rmtree(system_directory)
+    return True
+
+
 class retrieve_synth_TRITON_SWMM_test_case:
     """Synthetic-model variant of retrieve_TRITON_SWMM_test_case.
 
@@ -412,6 +436,8 @@ class retrieve_synth_TRITON_SWMM_test_case:
             self.system_directory = runs_root / analysis_name
         if start_from_scratch and self.system_directory.exists():
             ut.fast_rmtree(self.system_directory)
+        elif not start_from_scratch:
+            _discard_if_layout_stale(self.system_directory)
         self.system_directory.mkdir(parents=True, exist_ok=True)
         runs_root.mkdir(parents=True, exist_ok=True)
         # Evict any pre-existing cross-worktree symlink so we never inherit a
@@ -560,6 +586,10 @@ class retrieve_synth_TRITON_SWMM_test_case:
         with, and a tree whose GPU axis is expressed through ``hpc_system_config_yaml``
         contributes nothing to it.
 
+        The on-disk layout version is part of ``case_params_digest``'s ``params`` (as
+        ``layout_version``): a tree stamped at one layout version is not valid at another, so a
+        layout bump makes every cached tree stale.
+
         ``additional_analysis_configs`` is deliberately NOT among these terms -- it is an
         ADDRESSING concern, per the tier-1 key's own statement, so a per-call analysis overlay
         changes where a tree is looked up and not what it is.
@@ -577,7 +607,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
                 # timestep it writes into the analysis config, taken from ``params`` below.
                 n_reporting_tsteps_per_sim=None,
                 triton_reporting_timestep_s=float(self._params.reporting_timestep_s),
-                params=dataclasses.asdict(self._params),
+                params={**dataclasses.asdict(self._params), "layout_version": _version_constants.LAYOUT_VERSION},
                 additional_system_configs=self._additional_system_configs,
             ),
         }

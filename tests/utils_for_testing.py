@@ -912,12 +912,12 @@ def _time_dim(da) -> str | None:
 
     Zarrs emitted by different toolkit code paths use different time-dim
     names: SWMM per-node/link timeseries use ``date_time``; TRITON 2D
-    timeseries use ``timestep_min``; some legacy code paths use ``time``.
+    timeseries use ``timestep``; some code paths use ``time``.
     Per-link or per-node summary variables with no time dim at all return
     None — callers should skip them rather than reduce.
     """
     for d in da.dims:
-        if d in ("date_time", "timestep_min", "time"):
+        if d in ("date_time", "timestep", "time"):
             return d
     return None
 
@@ -1019,8 +1019,8 @@ def assert_hydraulic_components_exercised(analysis) -> None:
 def _assert_triton_depth(triton_ts, event_iloc, model_type: str, failures: list[str]) -> None:
     """Verify that TRITON emitted a time-varying 2D water field.
 
-    The toolkit's TRITON-output zarr uses ``wlevel_m`` (water level at cell
-    center) with dims ``(timestep_min, y, x)``; ``depth`` is an older naming
+    The toolkit's TRITON-output zarr uses ``flood_depth`` (flood depth at cell
+    center) with dims ``(timestep, y, x)``; ``depth`` is an older naming
     that no longer appears. Accept either as the depth proxy.
     """
     import xarray as xr
@@ -1030,11 +1030,11 @@ def _assert_triton_depth(triton_ts, event_iloc, model_type: str, failures: list[
         return
     ds = xr.open_zarr(triton_ts)
     depth_var = next(
-        (v for v in ("wlevel_m", "depth") if v in ds.data_vars),
+        (v for v in ("flood_depth", "depth") if v in ds.data_vars),
         None,
     )
     if depth_var is None:
-        failures.append(f"event {event_iloc} {model_type}: no water-level var (wlevel_m / depth) in {triton_ts}")
+        failures.append(f"event {event_iloc} {model_type}: no flood-depth var (flood_depth / depth) in {triton_ts}")
         return
     # Reduce over every dim except the time dim so we get one value per
     # timestep, then count timesteps where the field is positive somewhere.

@@ -779,7 +779,7 @@ def verify_and_flag_chapter(store: Path, flag: Path, n_expected: int) -> None:
 
     ds = open_store(store, kind="zarr")
     try:
-        n = ds.sizes.get("timestep_min", 0)
+        n = ds.sizes.get("timestep", 0)
         if n != n_expected:
             raise ProcessingError(
                 operation="verify_and_flag_chapter",
@@ -815,7 +815,7 @@ def completed_chapters(chapters: Path) -> dict:
 
 
 def covered_timesteps(chapters: Path) -> set:
-    """The set of timestep_min VALUES already published by flagged chapters.
+    """The set of timestep VALUES already published by flagged chapters.
 
     A SET OF COORDINATE VALUES, never a COUNT. The loop that consumes this skips
     timesteps on three paths (a missing raw file, a variable that loaded nothing, a
@@ -827,7 +827,7 @@ def covered_timesteps(chapters: Path) -> set:
     of order.
 
     DEPENDENCY THIS RESTS ON, named because nothing protects it: exact set membership
-    requires that `timestep_min` round-trips through zarr UNENCODED. return_dic_zarr_encodings
+    requires that `timestep` round-trips through zarr UNENCODED. return_dic_zarr_encodings
     does not encode it today -- its float32 branch iterates ds.data_vars and its coordinate
     loop handles only Unicode -- but NO test pins the property, so a one-line edit there
     would silently break resume by making
@@ -837,7 +837,7 @@ def covered_timesteps(chapters: Path) -> set:
     for store in completed_chapters(chapters).values():
         ds = open_store(store, kind="zarr")
         try:
-            out.update(ds["timestep_min"].values.tolist())
+            out.update(ds["timestep"].values.tolist())
         finally:
             ds.close()
     return out
@@ -929,7 +929,7 @@ def resolve_chunk_grid(
     byte_target: int = CHUNK_BYTE_TARGET_BYTES,
     override_t: int | None = None,
 ) -> tuple[int, int, int]:
-    """The (timestep_min, y, x) zarr chunk grid for a per-scenario spatial timeseries.
+    """The (timestep, y, x) zarr chunk grid for a per-scenario spatial timeseries.
 
     THE INPUT SET IS THE WHOLE POINT. Every argument is constant across a scenario BY
     CONSTRUCTION -- `ny`/`nx` come from the processed DEM, `itemsize` from the stored
@@ -1016,7 +1016,7 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) 
         )
     ds = xr.concat(
         [open_store(parts[k], kind="zarr") for k in sorted(parts)],
-        dim="timestep_min",
+        dim="timestep",
     )
     # LOUD, NOT REPAIRED. With the grid declared once per scenario, a divergence
     # arriving here means something upstream broke -- a partially-migrated chapter set,
@@ -1046,7 +1046,7 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) 
         try:
             for _name, _var in _chap.data_vars.items():
                 _g = tuple(
-                    int(_c) for _c, _d in zip(_var.encoding["chunks"], _var.dims, strict=True) if _d != "timestep_min"
+                    int(_c) for _c, _d in zip(_var.encoding["chunks"], _var.dims, strict=True) if _d != "timestep"
                 )
                 _spatial.setdefault(str(_name), set()).add(_g)
         finally:
@@ -1095,19 +1095,19 @@ def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) 
     # the write raise "would overlap multiple Dask chunks" -- measured on chapters written
     # with `shards`, where today's unified write fails on the first sharded variable.
     _time_chunks = {
-        int(_v.encoding["chunks"][_v.dims.index("timestep_min")])
+        int(_v.encoding["chunks"][_v.dims.index("timestep")])
         for _v in ds.data_vars.values()
-        if "timestep_min" in _v.dims and _v.encoding.get("chunks") and not _v.encoding.get("shards")
+        if "timestep" in _v.dims and _v.encoding.get("chunks") and not _v.encoding.get("shards")
     }
     if len(_time_chunks) == 1:
-        ds = ds.chunk({"timestep_min": _time_chunks.pop()})
+        ds = ds.chunk({"timestep": _time_chunks.pop()})
     elif _time_chunks:
         for _v in (*ds.variables.values(), *ds.coords.values()):
             if _v.encoding.get("shards"):
                 continue
             _v.encoding.pop("chunks", None)
             _v.encoding.pop("preferred_chunks", None)
-        ds = ds.chunk({"timestep_min": min(_time_chunks)})
+        ds = ds.chunk({"timestep": min(_time_chunks)})
     # A sharded variable is written one whole shard per dask chunk on every axis, so its
     # dask grid IS its shard shape; the shard shape itself is carried through unchanged.
     _sharded = {
@@ -1618,10 +1618,10 @@ def return_dic_zarr_encodings(
     store_float32 : bool, default=False
         Store floating-point data variables as float32; integer variables are unaffected.
     time_chunk : int or None
-        Chunk length along ``timestep_min`` for numeric variables that carry that axis;
+        Chunk length along ``timestep`` for numeric variables that carry that axis;
         every other axis keeps its full extent. Ignored when ``chunk_grid`` is given.
-    chunk_grid : tuple of (timestep_min, y, x) lengths, or None
-        Chunk lengths for numeric variables that carry ``timestep_min``, matched to the
+    chunk_grid : tuple of (timestep, y, x) lengths, or None
+        Chunk lengths for numeric variables that carry ``timestep``, matched to the
         dims BY NAME; an axis it does not name keeps its full extent, and no length is
         clamped to the variable's own extent. Takes precedence over ``time_chunk``.
 
@@ -1648,17 +1648,17 @@ def return_dic_zarr_encodings(
             enc = {"compressors": compressor}
             if store_float32 and dtype_kind == "f":
                 enc["dtype"] = "float32"
-            if chunk_grid is not None and "timestep_min" in ds[var].dims:
+            if chunk_grid is not None and "timestep" in ds[var].dims:
                 # A DECLARED grid wins. The dims are matched BY NAME, never by
                 # position, so a variable whose axis order differs still receives the
                 # intended per-axis lengths; an axis the grid does not name keeps its
                 # full extent. No length is clamped to the variable's own extent:
                 # zarr accepts a chunk LARGER than the extent, and relying on that is
                 # what lets a short final chapter carry the same grid as its siblings.
-                _named = dict(zip(("timestep_min", "y", "x"), chunk_grid, strict=True))
+                _named = dict(zip(("timestep", "y", "x"), chunk_grid, strict=True))
                 enc["chunks"] = tuple(_named.get(d, s) for d, s in zip(ds[var].dims, ds[var].shape, strict=True))
-            elif time_chunk is not None and "timestep_min" in ds[var].dims:
-                ax = ds[var].dims.index("timestep_min")
+            elif time_chunk is not None and "timestep" in ds[var].dims:
+                ax = ds[var].dims.index("timestep")
                 chunks = list(ds[var].shape)
                 chunks[ax] = time_chunk
                 enc["chunks"] = tuple(chunks)

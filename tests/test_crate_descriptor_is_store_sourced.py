@@ -22,9 +22,12 @@ THE TWO ARMS ARE BLIND TO DIFFERENT THINGS AND NEITHER SUBSTITUTES FOR THE OTHER
 
 The assertion in the behaviour arm is anchored on a property that EXISTS IN BOTH the pre-fix and
 post-fix worlds -- the string value of `description` -- rather than on anything introduced by the
-fix. Measured against the pre-threading code it fails with the base-map label
-`'Maximum flood velocity'` where the store stamps `'Maximum conduit velocity'`; that divergence
-is the only one in the live tables, which is why `max_velocity_mps` is the probe.
+fix. Measured against the pre-threading code it fails by publishing the base-map label where the
+store stamps a different `long_name`. Until the TRITON tier stopped
+writing `max_velocity`, the link-mode override diverged from the base entry (the only such case
+in the live tables), which made `max_velocity` the probe; the base now describes the conduit
+too, so no live variable diverges and the `diverging_link_override` fixture installs a diverging
+override on the probe for the duration of each test that needs the divergence.
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ import pathlib
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import xarray as xr
 
 from hhemt import metadata
@@ -45,11 +49,24 @@ from hhemt.cf_conventions import (
 )
 from hhemt.processing_analysis import emitted_vars_and_attrs
 
-#: The one variable whose link-mode override `long_name` diverges from its base-map entry. It is
-#: the probe BECAUSE it diverges: a name whose override agrees with its base entry cannot
-#: discriminate a store-sourced descriptor from a static one.
-_PROBE = "max_velocity_mps"
+#: The probe variable. A name whose override agrees with its base entry cannot discriminate a
+#: store-sourced descriptor from a static one, so the `diverging_link_override` fixture below gives
+#: this one a link-mode override that differs from its base-map entry.
+_PROBE = "max_velocity"
 _LINK_MODE = "tritonswmm_swmm_link"
+_DIVERGENT_LONG_NAME = "Maximum conduit velocity (link-mode override probe)"
+
+
+@pytest.fixture
+def diverging_link_override(monkeypatch):
+    """Install a link-mode override for the probe whose `long_name` differs from the base-map entry."""
+    base_entry = _CF_VARIABLE_MAP[_PROBE]
+    diverged = {**base_entry, "long_name": _DIVERGENT_LONG_NAME}
+    monkeypatch.setitem(
+        _CF_VARIABLE_OVERRIDES_BY_MODE,
+        _LINK_MODE,
+        {**_CF_VARIABLE_OVERRIDES_BY_MODE.get(_LINK_MODE, {}), _PROBE: diverged},
+    )
 
 
 def _link_node() -> xr.Dataset:
@@ -80,20 +97,19 @@ def _crate_descriptions(emitted_vars, emitted_attrs) -> dict[str, str | None]:
     return {e["name"]: e.get("description") for e in doc["@graph"] if e.get("@type") == "PropertyValue" and "name" in e}
 
 
-def test_the_probe_variable_actually_diverges_between_store_and_base_map():
+def test_the_probe_variable_actually_diverges_between_store_and_base_map(diverging_link_override):
     """The discriminator precondition. Without it the behaviour arm is vacuously green."""
     base = _CF_VARIABLE_MAP[_PROBE]["long_name"]
     override = _CF_VARIABLE_OVERRIDES_BY_MODE[_LINK_MODE][_PROBE]["long_name"]
     assert base != override, (
-        f"{_PROBE} no longer diverges between the base map ({base!r}) and the {_LINK_MODE} "
-        "override: this module's behaviour arm can no longer discriminate a store-sourced "
-        "descriptor from a static one. Re-point the probe at a variable that does diverge, or "
-        "state in this module why no such variable remains."
+        f"{_PROBE} does not diverge between the base map ({base!r}) and the {_LINK_MODE} "
+        "override even with the fixture installed: this module's behaviour arm cannot discriminate "
+        "a store-sourced descriptor from a static one."
     )
     assert _link_node()[_PROBE].attrs["long_name"] == override
 
 
-def test_the_crate_publishes_the_store_long_name_not_the_base_map_label():
+def test_the_crate_publishes_the_store_long_name_not_the_base_map_label(diverging_link_override):
     """THE POST-CONDITION: `description == store long_name`, through the production path."""
     ds = _link_node()
     stored = ds[_PROBE].attrs["long_name"]
@@ -111,7 +127,7 @@ def test_the_crate_publishes_the_store_long_name_not_the_base_map_label():
     )
 
 
-def test_omitting_the_mapping_reproduces_the_pre_fix_divergence():
+def test_omitting_the_mapping_reproduces_the_pre_fix_divergence(diverging_link_override):
     """The violating arm: with no mapping the crate publishes the base-map label.
 
     This is what the two production call sites were doing. It is asserted rather than merely
@@ -124,13 +140,13 @@ def test_omitting_the_mapping_reproduces_the_pre_fix_divergence():
     assert descriptions[_PROBE] != ds[_PROBE].attrs["long_name"]
 
 
-def test_two_nodes_describing_one_name_differently_fall_back_to_the_static_entry():
+def test_two_nodes_describing_one_name_differently_fall_back_to_the_static_entry(diverging_link_override):
     """The DECIDED conflict policy, asserted so it is a contract rather than an accident.
 
     A flat mapping cannot express one name described two ways, so the helper omits a disagreeing
     name and `_descriptor` falls back to its static entry. Inert on the current corpus (the two
-    override modes carrying `max_velocity_mps` are byte-identical); reachable by a future
-    heterogeneous tree.
+    override modes carrying `max_velocity` are byte-identical and equal to the base entry);
+    reachable by a future heterogeneous tree.
     """
     agreed = _link_node()
     divergent = _link_node()

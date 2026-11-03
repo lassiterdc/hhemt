@@ -798,8 +798,8 @@ def test_hydrographs_and_the_node_capture_are_converted_to_cms(tmp_path, monkeyp
     assert lines[1] == "%Time(hr) Discharge (m3/s)"
     assert float(lines[2].split(",")[1]) == pytest.approx(cms, rel=1e-6)
     capture = xr.open_zarr(tmp_path / "sim" / "processed" / "hydrology_inflow_summary.zarr")
-    assert float(capture["inflow_cms"].values.max()) == pytest.approx(cms, rel=1e-6)
-    assert float(capture["total_inflow_volume_m3"].values.max()) == pytest.approx(cms * 2 * 3600, rel=1e-6)
+    assert float(capture["inflow"].values.max()) == pytest.approx(cms, rel=1e-6)
+    assert float(capture["total_inflow_volume"].values.max()) == pytest.approx(cms * 2 * 3600, rel=1e-6)
     assert capture.attrs["flow_units"] == units
 
 
@@ -1144,7 +1144,7 @@ def test_a_standalone_output_not_in_cms_is_refused_when_read(tmp_path, monkeypat
             return_node_time_series_results_from_outfile(out)
     else:
         ds_nodes, _ = return_node_time_series_results_from_outfile(out)
-        assert float(ds_nodes["inflow_flow_cms"].values.max()) == 2.0
+        assert float(ds_nodes["inflow_flow"].values.max()) == 2.0
 
 
 def _coupled_rpt(path: Path, unit: str) -> Path:

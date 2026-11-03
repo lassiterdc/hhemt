@@ -57,8 +57,8 @@ def _write_chapters(root, lengths, ny: int = 5, nx: int = 6) -> None:
             "float64"
         )
         ds = xr.Dataset(
-            {name: (("timestep_min", "y", "x"), data + offset) for offset, name in enumerate(_VARS)},
-            coords={"timestep_min": t, "y": np.arange(ny), "x": np.arange(nx)},
+            {name: (("timestep", "y", "x"), data + offset) for offset, name in enumerate(_VARS)},
+            coords={"timestep": t, "y": np.arange(ny), "x": np.arange(nx)},
         )
         ds.to_zarr(chapter_store_for(root, index), mode="w", consolidated=False)
         chapter_flag_for(root, index).write_text("ok", encoding="utf-8")
@@ -76,7 +76,7 @@ def _open_like_production(path):
 def test_nc_tail_publishes_a_netcdf_file_equal_to_the_chapter_concatenation(tmp_path):
     """Property: under ``nc`` the published artifact is a NetCDF FILE at the ``.nc`` path
     that the production reader opens, and its values and timestep coordinate equal the
-    chapters concatenated along ``timestep_min``; the completion flag is written and the
+    chapters concatenated along ``timestep``; the completion flag is written and the
     chapters are gone.
 
     The plausible wrong implementation is the tail that calls
@@ -103,7 +103,7 @@ def test_nc_tail_publishes_a_netcdf_file_equal_to_the_chapter_concatenation(tmp_
     _write_chapters(chapters, [4, 3, 2])
     expected = xr.concat(
         [xr.open_zarr(chapter_store_for(chapters, k), consolidated=False) for k in range(3)],
-        dim="timestep_min",
+        dim="timestep",
     ).load()
     final = tmp_path / "TRITON_only_tseries.nc"
 
@@ -114,7 +114,7 @@ def test_nc_tail_publishes_a_netcdf_file_equal_to_the_chapter_concatenation(tmp_
     assert not chapters.exists(), "chapters must be deleted once the flag certifies the file"
     with _open_like_production(final) as got:
         got = got.load()
-    np.testing.assert_array_equal(got["timestep_min"].values, expected["timestep_min"].values)
+    np.testing.assert_array_equal(got["timestep"].values, expected["timestep"].values)
     for name in _VARS:
         np.testing.assert_array_equal(got[name].values, expected[name].values)
 
@@ -226,5 +226,5 @@ def test_nc_synthetic_run_publishes_netcdf_from_both_gridded_exports(golden_extr
         path = processed / tseries
         assert path.is_file(), f"{path} is not a NetCDF file"
         with _open_like_production(path) as ds:
-            assert ds.sizes["timestep_min"] > 0
+            assert ds.sizes["timestep"] > 0
         assert (processed / summary).is_file(), f"{processed / summary} was not written"

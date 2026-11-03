@@ -867,7 +867,7 @@ def test_armc_fires_on_postfix_replayed_without_scatter(monkeypatch, tmp_path):
     assert res.passed is False
     assert len(res.details) == 1
     assert "lacks the SWMM node-depth scatter" in res.details[0]["detail"]
-    assert "max_wlevel_m / H / MH from this model run are invalid" in res.details[0]["detail"]
+    assert "max_flood_depth / H / MH from this model run are invalid" in res.details[0]["detail"]
     assert "lacking the SWMM node-depth scatter" in res.summary
 
 

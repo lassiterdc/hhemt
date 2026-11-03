@@ -61,7 +61,7 @@ _BASE_COLS = ("Compute", "MPI", "IO", "Resize", "SWMM", "Other", "Simulation", "
 def _tseries_summing_to(total, compute, *, nan_ranks=()):
     """A per-rank TIMESERIES whose time-sum lands the requested per-rank pattern.
 
-    The reduction under test sums over ``timestep_min`` with ``skipna=False`` FIRST, so a
+    The reduction under test sums over ``timestep`` with ``skipna=False`` FIRST, so a
     NaN class on the rank axis is produced by placing a NaN at one timestep of the ranks that
     should go short -- which is exactly the shape ``deltas.to_xarray()`` produces when a
     member's allocations ran different rank counts, or when a column is genuinely short.
@@ -79,10 +79,10 @@ def _tseries_summing_to(total, compute, *, nan_ranks=()):
         tot[0, r] = np.nan
     return xr.Dataset(
         {
-            "Total": (("timestep_min", "Rank"), tot),
-            "Compute": (("timestep_min", "Rank"), com),
+            "Total": (("timestep", "Rank"), tot),
+            "Compute": (("timestep", "Rank"), com),
         },
-        coords={"timestep_min": np.arange(steps, dtype=float), "Rank": np.arange(n_rank)},
+        coords={"timestep": np.arange(steps, dtype=float), "Rank": np.arange(n_rank)},
     )
 
 
@@ -150,7 +150,7 @@ def test_partial_nan_selects_the_highest_valid_rank_not_the_nan_rank(tmp_path):
     ds = _tseries_summing_to([1.0, 3.0, 2.0], [9.0, 5.0, 7.0], nan_ranks=(1,))
     out = _run_inline_site(ds, tmp_path)
 
-    summed = ds.sum(dim="timestep_min", skipna=False)
+    summed = ds.sum(dim="timestep", skipna=False)
     assert math.isnan(float(summed["Total"].isel(Rank=1))), (
         "rank 1 must be the NaN rank AND the one that would have won on value (3.0 > 2.0), "
         "or the two selector forms would agree and this test would not discriminate"
@@ -182,7 +182,7 @@ def test_all_nan_degrades_to_nan_exactly_as_the_sibling_max_does(tmp_path):
 
     # CONTROL -- the guard is load-bearing, not decorative: unguarded, this input raises.
     with pytest.raises(ValueError, match="All-NaN slice"):
-        ds.sum(dim="timestep_min", skipna=False)["Total"].argmax(dim="Rank")
+        ds.sum(dim="timestep", skipna=False)["Total"].argmax(dim="Rank")
 
 
 # --------------------------------------------------------------------------------------
@@ -300,7 +300,7 @@ def test_no_published_variable_name_or_value_moves(two_rank_perf_dir):
     """Strict additivity: every pre-existing name keeps the value it had."""
     from hhemt.process_simulation import _aggregate_perf_summary, _aggregate_perf_tseries
 
-    summed = _aggregate_perf_tseries(two_rank_perf_dir, resume_steps=[]).sum(dim="timestep_min", skipna=False)
+    summed = _aggregate_perf_tseries(two_rank_perf_dir, resume_steps=[]).sum(dim="timestep", skipna=False)
     legacy = summed.max(dim="Rank")  # the pre-change reduction, verbatim
     out = _aggregate_perf_summary(two_rank_perf_dir, resume_steps=[])
 

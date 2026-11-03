@@ -1,7 +1,7 @@
 """VMS-S4: the TRITON-visible / SWMM-invisible clean-vs-resume signature.
 
 The finding fires on a PATTERN, not on a mere non-identity: every coupled config's
-`max_wlevel_m` differs clean-vs-resume while every config's `max_flow_cms` is identical.
+`max_flood_depth` differs clean-vs-resume while every config's `max_flow` is identical.
 That asymmetry is the fingerprint of the SWMM node-depth scatter defect on the resume path,
 and it is invisible to every SWMM-side artifact.
 
@@ -32,8 +32,8 @@ def _pair(model, variable, identical):
 
 def test_fires_on_the_depth_differs_flow_identical_signature(tmp_path):
     """VIOLATING input: 14/14 depth differ, 0/14 flow differ -> the finding."""
-    pairs = [_pair("TRITON-SWMM", "max_wlevel_m", False) for _ in range(14)]
-    pairs += [_pair("TRITON-SWMM", "max_flow_cms", True) for _ in range(14)]
+    pairs = [_pair("TRITON-SWMM", "max_flood_depth", False) for _ in range(14)]
+    pairs += [_pair("TRITON-SWMM", "max_flow", True) for _ in range(14)]
     finding = _swmm_invisible_divergence_finding(_write(tmp_path, pairs))
 
     assert finding is not None
@@ -50,25 +50,25 @@ def test_silent_when_both_variables_differ(tmp_path):
     Both variables differing is an ordinary clean-vs-resume divergence. An implementation
     keyed on 'depth differs' alone would fire here and misattribute it to the scatter defect.
     """
-    pairs = [_pair("TRITON-SWMM", "max_wlevel_m", False) for _ in range(14)]
-    pairs += [_pair("TRITON-SWMM", "max_flow_cms", False) for _ in range(14)]
+    pairs = [_pair("TRITON-SWMM", "max_flood_depth", False) for _ in range(14)]
+    pairs += [_pair("TRITON-SWMM", "max_flow", False) for _ in range(14)]
     assert _swmm_invisible_divergence_finding(_write(tmp_path, pairs)) is None
 
 
 def test_silent_when_both_variables_are_identical(tmp_path):
     """Differently-positioned satisfying input: a clean reproduction owes no finding."""
-    pairs = [_pair("TRITON-SWMM", "max_wlevel_m", True) for _ in range(14)]
-    pairs += [_pair("TRITON-SWMM", "max_flow_cms", True) for _ in range(14)]
+    pairs = [_pair("TRITON-SWMM", "max_flood_depth", True) for _ in range(14)]
+    pairs += [_pair("TRITON-SWMM", "max_flow", True) for _ in range(14)]
     assert _swmm_invisible_divergence_finding(_write(tmp_path, pairs)) is None
 
 
 def test_silent_on_a_pure_triton_only_payload(tmp_path):
     """Differently-positioned satisfying input: no coupled flow variable exists at all.
 
-    A pure-TRITON run has no SWMM conduits, so max_flow_cms is absent by construction and
+    A pure-TRITON run has no SWMM conduits, so max_flow is absent by construction and
     the asymmetry is not even expressible — the finding must not fire on half a pattern.
     """
-    pairs = [_pair("TRITON", "max_wlevel_m", False) for _ in range(14)]
+    pairs = [_pair("TRITON", "max_flood_depth", False) for _ in range(14)]
     assert _swmm_invisible_divergence_finding(_write(tmp_path, pairs)) is None
 
 

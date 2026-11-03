@@ -54,11 +54,11 @@ def test_validate_analysis_graceful_absent(synthetic_multisim_completed):
     Uses the built (post-consolidate) multisim fixture because validate_analysis
     runs the 7 core checks (check_system_setup reads the DEM); the merge of EDA
     verdicts is graceful-absent when no eda/ dir exists, so the report carries no
-    Cross-sim byte-identity row."""
+    Byte identity across compute configurations row."""
     from hhemt.analysis_validation import validate_analysis
 
     report = validate_analysis(synthetic_multisim_completed)
-    assert not any(c.name == "Cross-sim byte-identity" for c in report.checks)
+    assert not any(c.name == "Byte identity across compute configurations" for c in report.checks)
 
 
 def test_compare_variable_exact_identical_and_divergent():
@@ -175,10 +175,10 @@ def test_sensitivity_master_identical_passes(synthetic_sensitivity_completed):
     verdict_json = result.artifact_path.parent / f"{result.plot_id}.verdict.json"
     assert verdict_json.exists()
     vp = json.loads(verdict_json.read_text())
-    assert vp["name"] == "Cross-sim byte-identity"
+    assert vp["name"] == "Byte identity across compute configurations"
     assert vp["passed"] is True
     # This check is the one PRECISION-BEARING verdict in the suite: it compares the
-    # FLAT per-scenario summaries, where max_wlevel_m is float32. It must declare
+    # FLAT per-scenario summaries, where max_flood_depth is float32. It must declare
     # that, or the renderer shows an unqualified green tick meaning "identical to
     # within float32 rounding" -- the defect that shipped. An unstamped check renders
     # a plain pass by design, so losing this stamp fails SILENTLY; that is precisely
@@ -205,7 +205,7 @@ def test_sensitivity_master_across_family_characterizes(synthetic_sensitivity_co
     # Across-family, a disclosed divergence is a PASS: the bound is the result, not a failure.
     assert result.verdict.passed is True, result.verdict.summary
     assert "haracterized divergence" in result.verdict.summary
-    assert result.verdict.name == "Cross-sim byte-identity"
+    assert result.verdict.name == "Byte identity across compute configurations"
     assert result.artifact_path is not None and result.artifact_path.exists()
     # The persisted verdict JSON round-trips the (passed=True) across-family verdict.
     verdict_json = result.artifact_path.parent / f"{result.plot_id}.verdict.json"
@@ -223,7 +223,7 @@ def test_verdict_surfaces_in_validate_analysis(synthetic_sensitivity_completed):
     analysis = synthetic_sensitivity_completed.experiment
     check_cross_sim_identity(analysis)
     report = validate_analysis(analysis)
-    eda_checks = [c for c in report.checks if c.name == "Cross-sim byte-identity"]
+    eda_checks = [c for c in report.checks if c.name == "Byte identity across compute configurations"]
     assert len(eda_checks) == 1
     assert eda_checks[0].level == "aggregate"
 
@@ -414,17 +414,17 @@ _ULP32 = float(np.finfo(np.float32).eps)
 def _summaries(depth_bump: float = 0.0):
     """The flat per-scenario summaries a sub returns, optionally perturbed by `depth_bump`.
 
-    Two modes so the partition signature (_PARTITION_VARS = max_wlevel_m, max_flow_cms) is fully
-    populated. max_wlevel_m is float32 to match the on-disk dtype the detection floor is derived
+    Two modes so the partition signature (_PARTITION_VARS = max_flood_depth, max_flow) is fully
+    populated. max_flood_depth is float32 to match the on-disk dtype the detection floor is derived
     from; the link-mode var is float64, as in the real pipeline.
     """
     base = np.array([[1.0, 2.0], [3.0, 4.0]], dtype="float32")
     depth = xr.Dataset(
-        {"max_wlevel_m": (("event_iloc", "y", "x"), (base + np.float32(depth_bump))[None, :, :])},
+        {"max_flood_depth": (("event_iloc", "y", "x"), (base + np.float32(depth_bump))[None, :, :])},
         coords={"event_iloc": [0], "y": [0, 1], "x": [0, 1]},
     )
     link = xr.Dataset(
-        {"max_flow_cms": (("event_iloc", "link_id"), np.array([[5.0, 6.0]], dtype="float64"))},
+        {"max_flow": (("event_iloc", "link_id"), np.array([[5.0, 6.0]], dtype="float64"))},
         coords={"event_iloc": [0], "link_id": ["c1", "c2"]},
     )
     return {_DEPTH_MODE: depth, _LINK_MODE: link}
@@ -585,13 +585,13 @@ def test_within_family_cpu_divergence_still_fails(tmp_path):
     result = check_cross_sim_identity(master)
     assert result.skipped is False
     assert result.verdict.passed is False, result.verdict.summary
-    rows = [d for d in result.verdict.details if d.get("variable") == "max_wlevel_m"]
+    rows = [d for d in result.verdict.details if d.get("variable") == "max_flood_depth"]
     assert rows, result.verdict.details
     assert {r["sa_id"] for r in rows} == {"mpi_8_r1"}
     # The divergent row names the family reference it was measured against, not just a member_id.
     assert {r["ref_member_id"] for r in rows} == {"serial_0_r1"}
     ds = xr.open_zarr(result.artifact_path, consolidated=False)
-    mad = float(np.max(ds["max_abs_diff__max_wlevel_m"].sel(sa_id="mpi_8_r1").values))
+    mad = float(np.max(ds["max_abs_diff__max_flood_depth"].sel(sa_id="mpi_8_r1").values))
     assert mad == pytest.approx(_ULP32)
 
 
@@ -623,8 +623,8 @@ def test_cross_family_gpu_divergence_no_longer_fails(tmp_path):
     ds = xr.open_zarr(result.artifact_path, consolidated=False)
     member_ids = {str(s) for s in np.atleast_1d(ds["sa_id"].values)}
     assert "gpu_0_r1" in member_ids
-    assert bool(np.all(ds["identical__max_wlevel_m"].sel(sa_id="gpu_0_r1").values))
-    assert float(np.max(ds["max_abs_diff__max_wlevel_m"].sel(sa_id="gpu_0_r1").values)) == 0.0
+    assert bool(np.all(ds["identical__max_flood_depth"].sel(sa_id="gpu_0_r1").values))
+    assert float(np.max(ds["max_abs_diff__max_flood_depth"].sel(sa_id="gpu_0_r1").values)) == 0.0
 
 
 def test_artifact_member_id_coord_excludes_only_the_primary_reference(tmp_path):
@@ -682,7 +682,7 @@ def test_across_family_path_keeps_one_global_reference(tmp_path):
     assert "haracterized divergence" in result.verdict.summary
     ds = xr.open_zarr(result.artifact_path, consolidated=False)
     assert json.loads(ds.attrs["reference_member_id_by_family"]) == {"all": "serial_0_r1"}
-    bounds = [d for d in result.verdict.details if d.get("variable") == "max_wlevel_m"]
+    bounds = [d for d in result.verdict.details if d.get("variable") == "max_flood_depth"]
     assert bounds and bounds[0]["max_abs_diff"] > 0.0
 
 
@@ -735,8 +735,8 @@ _PIN_P = "b1ff26892d95"
 _PIN_OTHER = "e53c2fa01a64"
 
 #: The real link summary's data_var set, split by whether the pair rule admits it.
-_AT_RISK_BASES = ("capacity_setting", "flow_cms", "link_depth_m", "velocity_mps")
-_IMMUNE_COLS = ("max_flow_cms", "max_over_full_depth", "max_over_full_flow", "max_velocity_mps")
+_AT_RISK_BASES = ("capacity_setting", "flow", "link_depth", "velocity")
+_IMMUNE_COLS = ("max_flow", "max_over_full_depth", "max_over_full_flow", "max_velocity")
 
 
 def _link_summary(*, truncate: str | None = None, drop_pair: str | None = None) -> xr.Dataset:
@@ -772,17 +772,17 @@ def _link_summary(*, truncate: str | None = None, drop_pair: str | None = None) 
 
 #: The real TRITON summary's eight data_vars, measured on
 #: ~/.cache/hhemt/.../processed/TRITONSWMM_TRITON_summary.zarr. NONE of them pairs: the
-#: `_last`-shaped column is `wlevel_m_last_tstep`, which ends `_last_tstep` and not `_last`,
-#: and there is no `wlevel_m_max`. Exactly ONE of the eight is a `TRACKED_VARS` member.
+#: `_last`-shaped column is `flood_depth_last_tstep`, which ends `_last_tstep` and not `_last`,
+#: and there is no `flood_depth_max`. Exactly ONE of the eight is a `TRACKED_VARS` member.
 _TRITON_VARS = (
-    "final_surface_flood_volume_m3",
-    "max_velocity_mps",
-    "max_wlevel_m",
-    "time_of_max_velocity_min",
-    "time_of_max_wlevel_min",
-    "velocity_x_mps_at_time_of_max_velocity",
-    "velocity_y_mps_at_time_of_max_velocity",
-    "wlevel_m_last_tstep",
+    "final_surface_flood_volume",
+    "max_unit_discharge",
+    "max_flood_depth",
+    "time_of_max_unit_discharge",
+    "time_of_max_flood_depth",
+    "unit_discharge_x_at_time_of_max_unit_discharge",
+    "unit_discharge_y_at_time_of_max_unit_discharge",
+    "flood_depth_last_tstep",
 )
 
 
@@ -790,7 +790,7 @@ def _triton_summary(*, perturb: str | None = None) -> xr.Dataset:
     """A TRITON summary shaped like the real one: eight vars on the `(y, x)` raster grid.
 
     ``perturb`` names ONE variable to shift. Its DEFAULT CALLER perturbs a variable that is
-    NOT `max_wlevel_m`, which is the whole point: `max_wlevel_m` is the only one of the eight
+    NOT `max_flood_depth`, which is the whole point: `max_flood_depth` is the only one of the eight
     the hand-named floor reached, so a divergence anywhere else is invisible to the
     pre-repair instrument and visible to the repaired one.
     """
@@ -876,7 +876,7 @@ def test_enumerated_instrument_is_BLIND_to_the_truncation_the_derived_one_catche
     from hhemt.eda.cross_sim_identity import TRACKED_VARS, compared_columns_for
 
     ref = _link_summary()
-    truncated = _link_summary(truncate="flow_cms")
+    truncated = _link_summary(truncate="flow")
 
     # (1) The enumerated instrument is BLIND: every one of today's four names that is PRESENT
     #     on this artifact is bitwise equal across the truncated pair.
@@ -892,7 +892,7 @@ def test_enumerated_instrument_is_BLIND_to_the_truncation_the_derived_one_catche
     columns, prov = compared_columns_for(ref)
     assert prov["n_at_risk"] == 4 and prov["n_derived"] == 8, prov
     differing = [v for v in columns if not compare_variable_exact(ref[v], truncated[v])["identical"]]
-    assert differing == ["flow_cms_max"], f"the derived set must catch exactly the truncated reduction, got {differing}"
+    assert differing == ["flow_max"], f"the derived set must catch exactly the truncated reduction, got {differing}"
 
 
 def test_compare_arms_DISAGREES_on_a_truncated_member(tmp_path):
@@ -900,13 +900,13 @@ def test_compare_arms_DISAGREES_on_a_truncated_member(tmp_path):
     from hhemt.eda.cross_sim_identity import compare_arms
 
     clean = _write_arm(tmp_path / "cleanPR", "members", pin=_PIN_P)
-    resumed = _write_arm(tmp_path / "resumePS", "members", pin=_PIN_P, truncate_on=("flow_cms", "1"))
+    resumed = _write_arm(tmp_path / "resumePS", "members", pin=_PIN_P, truncate_on=("flow", "1"))
 
     res = compare_arms(arm_root=resumed, arm_layout="members", reference_root=clean, reference_layout="members")
     assert res.verdict == "DISAGREE", f"{res.verdict}: {res.reason}"
     assert res.n_compared > 0 and res.n_members_compared == 2
     bad = [d for d in res.details if d.get("verdict") == "DISAGREE"]
-    assert {d["variable"] for d in bad} == {"flow_cms_max"}, bad
+    assert {d["variable"] for d in bad} == {"flow_max"}, bad
     assert {d["member"] for d in bad} == {"1"}, "only the truncated member may disagree"
     # `G1` requires the compared-set figures be published OUTPUTS, not assumptions — assert them.
     assert all(p["n_at_risk"] == 4 for p in res.provenance)
@@ -1001,7 +1001,7 @@ def test_empty_derived_and_empty_member_sets_are_not_evaluated(tmp_path):
 
     # G1: an artifact carrying neither a pair nor a named-floor member yields nothing.
     barren = xr.Dataset(
-        {"time_of_max_flow_min": (("event_iloc", "link_id"), np.array([[1.0, 2.0]]))},
+        {"time_of_max_flow": (("event_iloc", "link_id"), np.array([[1.0, 2.0]]))},
         coords={"event_iloc": [0], "link_id": ["c1", "c2"]},
     )
     cols, prov = compared_columns_for(barren)
@@ -1019,7 +1019,7 @@ def test_a_variable_present_on_the_reference_and_absent_on_the_member_is_DISCLOS
 
     Property: for every variable the derivation admits on the reference and that the member
     does not carry, `check_cross_sim_identity` emits a NOT-EVALUATED row naming it —
-    quantified over one-sided variables, instantiated here on `max_wlevel_m`.
+    quantified over one-sided variables, instantiated here on `max_flood_depth`.
 
     Class: NEW CAPABILITY. The plausible wrong implementation is the shipped bare `continue`,
     which skips the variable with no row at all; this test is red under it at the row
@@ -1057,7 +1057,9 @@ def test_a_variable_present_on_the_reference_and_absent_on_the_member_is_DISCLOS
 
     res = check_cross_sim_identity(master)
     assert res.skipped is False
-    rows = [d for d in res.verdict.details if d.get("variable") == "max_wlevel_m" and d.get("verdict") == NOT_EVALUATED]
+    rows = [
+        d for d in res.verdict.details if d.get("variable") == "max_flood_depth" and d.get("verdict") == NOT_EVALUATED
+    ]
     assert rows, f"a one-sided variable must be disclosed, got details={res.verdict.details!r}"
     assert rows[0]["sa_id"] == "mpi_8_r1"
     assert "narrowed" in rows[0]["detail"]
@@ -1074,7 +1076,7 @@ def test_a_variable_present_on_the_reference_and_absent_on_the_member_is_DISCLOS
     )
     res_whole = check_cross_sim_identity(whole)
     # Scoped to the SYMMETRIC class — rows naming a VARIABLE. The control cannot assert "no
-    # NOT-EVALUATED row at all", because this stub's link-mode summary carries `max_flow_cms`
+    # NOT-EVALUATED row at all", because this stub's link-mode summary carries `max_flow`
     # alone, which is neither a `_max`/`_last` pair nor a raster grid, so it routes to the
     # fail-closed branch and legitimately emits a per-MODE `G1` row in BOTH arms. Asserting
     # over the union would make the control fire on a correct implementation, which is the
@@ -1135,7 +1137,7 @@ def test_the_triton_family_takes_the_all_vars_derivation(tmp_path):
     data_var — quantified over the family, not over this fixture's particular eight.
     Class: NEW CAPABILITY. The plausible wrong implementation is the shipped
     one-rule-for-all union `sorted(derived | present_named)`, which on this artifact yields
-    `AT_RISK = {}` and a compared set of the single name `max_wlevel_m`; this test is red
+    `AT_RISK = {}` and a compared set of the single name `max_flood_depth`; this test is red
     under it at the first assertion (1 != 8).
     Why required: a compared set of one over an eight-variable artifact is the blindness this
     derivation removes — seven fields of the family that serves as the CONTROL proving the
@@ -1151,13 +1153,13 @@ def test_the_triton_family_takes_the_all_vars_derivation(tmp_path):
     ds = _triton_summary()
     cols, prov = compared_columns_for(ds)
     # BOTH-STATES ANCHOR: membership of the returned tuple is a property of both the pre-
-    # and post-change code (pre-change it is the single name `max_wlevel_m`), so the red
+    # and post-change code (pre-change it is the single name `max_flood_depth`), so the red
     # lands on the compared set and not on the new `derivation` key, which is asserted last.
     assert set(cols) == {str(v) for v in ds.data_vars}, "all-vars means ALL of them"
     assert len(cols) == 8 and prov["g1_non_empty"] is True
     # MEMBERSHIP, not just cardinality: the seven the floor could never reach are in.
-    assert "max_wlevel_m" in cols, "the floor's one member is SUBSUMED, never dropped"
-    for beyond in ("wlevel_m_last_tstep", "final_surface_flood_volume_m3", "time_of_max_wlevel_min"):
+    assert "max_flood_depth" in cols, "the floor's one member is SUBSUMED, never dropped"
+    for beyond in ("flood_depth_last_tstep", "final_surface_flood_volume", "time_of_max_flood_depth"):
         assert beyond in cols, f"{beyond} is reachable only by all-vars"
     assert prov["derivation"] == "all-vars"
 
@@ -1230,9 +1232,9 @@ def test_a_triton_divergence_away_from_the_floor_is_MISSED_by_the_union_and_CAUG
 
     Property: a divergence in any TRITON summary variable reaches the verdict — quantified
     over the seven variables outside the hand-named floor, instantiated here at
-    `time_of_max_wlevel_min`.
+    `time_of_max_flood_depth`.
     Class: REGRESSION end-to-end through `compare_arms`. Under the shipped union the TRITON
-    compared set is `{max_wlevel_m}` alone, that variable is IDENTICAL across this pair, and
+    compared set is `{max_flood_depth}` alone, that variable is IDENTICAL across this pair, and
     the verdict is AGREE — this test is red under it at the final assertion.
     Why required: the TRITON family is in the gate as the CONTROL proving the
     solver's own series survived while SWMM's did not. A control that reports AGREE on a
@@ -1245,12 +1247,12 @@ def test_a_triton_divergence_away_from_the_floor_is_MISSED_by_the_union_and_CAUG
     from hhemt.eda.cross_sim_identity import TRACKED_VARS, compare_arms, compared_columns_for
 
     ref = _triton_summary()
-    moved = _triton_summary(perturb="time_of_max_wlevel_min")
+    moved = _triton_summary(perturb="time_of_max_flood_depth")
 
     # (1) THE BLINDNESS: every floor member PRESENT on this artifact is bitwise equal, so an
     #     instrument keyed on the floor reports agreement on a divergent pair.
     floor_present = [v for v in TRACKED_VARS if v in ref.data_vars]
-    assert floor_present == ["max_wlevel_m"], f"fixture must exercise the floor, got {floor_present}"
+    assert floor_present == ["max_flood_depth"], f"fixture must exercise the floor, got {floor_present}"
     for v in floor_present:
         assert compare_variable_exact(ref[v], moved[v])["identical"], (
             f"{v} differs — the fixture no longer reproduces the blindness signature"
@@ -1259,16 +1261,16 @@ def test_a_triton_divergence_away_from_the_floor_is_MISSED_by_the_union_and_CAUG
     # (2) THE CATCH: the derived set reaches exactly the perturbed variable.
     cols, _prov = compared_columns_for(ref)
     differing = [v for v in cols if not compare_variable_exact(ref[v], moved[v])["identical"]]
-    assert differing == ["time_of_max_wlevel_min"], f"all-vars must catch exactly the perturbation, got {differing}"
+    assert differing == ["time_of_max_flood_depth"], f"all-vars must catch exactly the perturbation, got {differing}"
 
     # (3) END TO END: the same pair through compare_arms, same pin on both sides.
-    clean = _write_arm(tmp_path / "cleanPR", "members", pin=_PIN_P, triton_perturb_on=("time_of_max_wlevel_min",))
+    clean = _write_arm(tmp_path / "cleanPR", "members", pin=_PIN_P, triton_perturb_on=("time_of_max_flood_depth",))
     moved_arm = _write_arm(
-        tmp_path / "movedPS", "members", pin=_PIN_P, triton_perturb_on=("time_of_max_wlevel_min", "1")
+        tmp_path / "movedPS", "members", pin=_PIN_P, triton_perturb_on=("time_of_max_flood_depth", "1")
     )
     res = compare_arms(arm_root=moved_arm, arm_layout="members", reference_root=clean, reference_layout="members")
     assert res.verdict == "DISAGREE", f"PRE-FIX this returned AGREE. got {res.verdict}: {res.reason}"
-    assert any(d.get("variable") == "time_of_max_wlevel_min" for d in res.details), res.details
+    assert any(d.get("variable") == "time_of_max_flood_depth" for d in res.details), res.details
 
 
 # ---- Four refusals the instrument did not previously make, and one accepted residual ----
@@ -1296,7 +1298,7 @@ def test_a_one_sided_derived_set_REFUSES_rather_than_narrowing(tmp_path):
 
     clean = _write_arm(tmp_path / "cleanPR", "members", pin=_PIN_P)
     # The arm's summaries carry one FEWER at-risk pair than the reference's.
-    resumed = _write_arm(tmp_path / "resumePS", "members", pin=_PIN_P, drop_pair="velocity_mps")
+    resumed = _write_arm(tmp_path / "resumePS", "members", pin=_PIN_P, drop_pair="velocity")
 
     res = compare_arms(arm_root=resumed, arm_layout="members", reference_root=clean, reference_layout="members")
     assert res.verdict == NOT_EVALUATED, (
@@ -1306,7 +1308,7 @@ def test_a_one_sided_derived_set_REFUSES_rather_than_narrowing(tmp_path):
     assert "asymmetric compared set" in res.reason, res.reason
     # The refusal names BOTH sides' cardinalities and the symmetric difference, so a reader
     # can tell an asymmetry from an empty set without re-deriving either.
-    assert "velocity_mps_max" in res.reason and "velocity_mps_last" in res.reason, res.reason
+    assert "velocity_max" in res.reason and "velocity_last" in res.reason, res.reason
 
 
 def test_an_absent_pin_is_not_evaluated_even_when_pin_identity_is_waived(tmp_path):

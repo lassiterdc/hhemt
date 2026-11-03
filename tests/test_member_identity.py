@@ -145,7 +145,7 @@ def _member_node_group(member_id):
 def _build_member_tree(root, member_id, *, with_attrs):
     """A producer-shaped sensitivity_datatree.zarr plus its scenario_status.csv row."""
     ds = xr.Dataset(
-        {"max_wlevel_m": (("event_iloc", "y", "x"), np.ones((1, 2, 2), dtype="f4"))},
+        {"max_flood_depth": (("event_iloc", "y", "x"), np.ones((1, 2, 2), dtype="f4"))},
         coords={"event_iloc": [0], "y": [0, 1], "x": [0, 1]},
     )
     node = _member_node_group(member_id)

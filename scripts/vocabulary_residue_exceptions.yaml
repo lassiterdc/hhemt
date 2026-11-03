@@ -23,6 +23,31 @@
   # *.Snakefile is the completeness check for every other surface, and must return zero
   # outside the frozen legacy_layouts tree.
 exceptions:
+  - path: src/hhemt/scenario_inputs.py
+    token: time_hr
+    reason: >-
+      `time_hr` is the index of the storm-tide boundary frame that is written into SWMM input text and is
+      never stored in a zarr or NetCDF store, so the layout-28 time-axis rename (`timestep`) does not reach it
+      (approved shape of run hhemt_11-01_1916_qx-velocity-label-fix, sections 1.4 and 9).
+  - path: tests/test_cf_conventions.py
+    token: "*"
+    reason: >-
+      Asserts that the retired TRITON names are ABSENT from `_CF_VARIABLE_MAP`, so it must name them.
+  - path: tests/test_review_flood_depth_relabel.py
+    token: "*"
+    reason: >-
+      Reviewer census and absence tests for the depth rename; they name the retired names in order to assert
+      none is left in the tree or the stores.
+  - path: tests/test_review_unit_discharge_relabel.py
+    token: "*"
+    reason: >-
+      Reviewer census and absence tests for the unit-discharge rename; they name the retired names in order to
+      assert none is left in the tree or the stores.
+  - path: tests/test_review_units_attributes.py
+    token: "*"
+    reason: >-
+      Reviewer test of the time-axis rename; it names `timestep_min` in order to assert that no golden array
+      or namelist entry still carries it.
   - path: environment-lock.yaml
     token: "sa-"
     reason: >-
