@@ -2943,7 +2943,7 @@ def check_consolidated_metadata_current(store: Path, *, index_required: bool = T
         name=CONSOLIDATED_METADATA_CHECK,
         level="system",
         passed=True,
-        summary=f"Store {store.name}: index matches its {len(disk)} metadata document(s) node by node.",
+        summary=f"Store {store.name}: index matches its {_count(len(disk), 'metadata document')} node by node.",
     )
 
 
@@ -2994,7 +2994,7 @@ def check_consolidated_metadata(analysis: TRITONSWMM_analysis) -> CheckResult:
         name=CONSOLIDATED_METADATA_CHECK,
         level="system",
         passed=True,
-        summary=f"{sum(r.applicable for r in results)} store(s): every index matches its metadata documents.",
+        summary=f"{_count(sum(r.applicable for r in results), 'store')}: every index matches its metadata documents.",
     )
 
 
