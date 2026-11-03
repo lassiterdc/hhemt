@@ -273,7 +273,12 @@ unpaired_allowlist:
       change to this renderer.
   - renderer: cross_experiment_intercomparison_maps
     caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison_maps.rst
-    renderer_sha256: 0a49530638f5ec0c057e0bdef79640bed5a506267b0227ca20ea52939e5241d5
+    renderer_sha256: 344e2247c897d2354eb63cf39536a84e1c3c2d7a9383241e00deb5a0af230f3e
+    justification_2026_11_03_thresholds_text: >-
+      The colour-band sentence says both models in place of both model arms, and the line naming the
+      coupled comparison says TRITON-SWMM. Caption RE-READ IN FULL (5 lines): it quotes neither string and
+      describes the panels, the verdict table and the colour direction, which these two edits do not touch.
+      Digest recorded after the last edit, so the exemption expires on the next change to this renderer.
     justification_2026_11_02_title_colon: >-
       The figure title and the panel heading join their parts with a colon in place of an em dash, and
       the figure title now puts the figure name before the experiment pair. Caption RE-READ IN FULL

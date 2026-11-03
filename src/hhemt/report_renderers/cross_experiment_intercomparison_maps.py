@@ -248,10 +248,10 @@ def build_cross_experiment_diff_figure(combined_root: Path):
         "Compared quantity: "
         + _VARIABLE_GLOSS["max_wlevel_m"]
         + ". "
-        + ("Coupled arm additionally compares " + _VARIABLE_GLOSS["max_flow_cms"] + ". " if has_coupled_arm else "")
+        + ("TRITON-SWMM additionally compares " + _VARIABLE_GLOSS["max_flow_cms"] + ". " if has_coupled_arm else "")
         + "Maps show resume minus clean; blue = resume higher. Colour bands are the fixed "
         f"{_CONFIG_DIFF_DEPTH_BAND_M} m / {_CONFIG_DIFF_FLOW_BAND_CMS} cms meaningful-difference "
-        "thresholds, identical in both model arms, so one hue is one magnitude everywhere."
+        "thresholds, identical in both models, so one hue is one magnitude everywhere."
         + (" " + _TRUNCATION_CAVEAT if has_coupled_arm else "")
     )
 
