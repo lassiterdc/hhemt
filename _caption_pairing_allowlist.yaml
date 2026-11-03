@@ -324,7 +324,7 @@ unpaired_allowlist:
       exemption expires on the next change to this renderer.
   - renderer: errors_and_warnings
     caption: src/hhemt/report_templates/captions/errors_and_warnings.rst
-    renderer_sha256: 706b11fd30019f797177c8d6ec11d698bd94cba337a69f947bf25e7aab7037fe
+    renderer_sha256: 3aefdba7b3baf03af75d66fd4d85eb93757926fce80cdfe2c0a3ecbae485fbd3
     justification_2026_11_02_develop_integration: >-
       Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that one vocabulary entry is added for the consolidated-metadata check.
       Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
@@ -337,6 +337,11 @@ unpaired_allowlist:
       validate_analysis, so the new row is covered by those sentences and none is falsified, weakened or left
       ambiguous; there is no caption edit to make. Digest recorded at the post-change renderer, so this
       exemption expires on the next change to the renderer.
+    justification_2026_11_02_title_colon: >-
+      The page title joins the page name and the analysis id with a colon in place of an em dash.
+      Caption RE-READ IN FULL (5 lines): it names no page title and says only that the page lists the
+      validation check results, which this one string edit does not touch. Digest recorded after the last
+      edit, so the exemption expires on the next change to this renderer.
     justification: >-
       docs-and-experiment-system merge. Caption re-read against a MEASURED diff
       rather than a read-through. The merge-authored delta to this renderer --

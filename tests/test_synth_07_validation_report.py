@@ -288,7 +288,7 @@ def test_renders_full_html_doc(tmp_path):
 
     assert out_path.exists() and out_path.stat().st_size > 0
     html = out_path.read_text()
-    assert "Errors and Warnings — demo_failing_synth" in html
+    assert "Errors and Warnings: demo_failing_synth" in html
     assert "System-Level Checks" in html
     assert "Aggregate Per-Scenario Checks" in html
     assert "Granular Per-Scenario Failures" in html

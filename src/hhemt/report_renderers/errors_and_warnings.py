@@ -504,7 +504,7 @@ def _wrap_html_doc(body: str, analysis_id: str, inline_css: str) -> str:
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
         f"<style>{inline_css}</style></head><body>"
-        f"<h2>Errors and Warnings — {analysis_id}</h2>"
+        f"<h2>Errors and Warnings: {analysis_id}</h2>"
         f"{body}"
         "</body></html>"
     )
