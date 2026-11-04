@@ -18,7 +18,7 @@ def test_mask_excludes_the_seaward_extreme_from_the_cap():
     assert np.nanmax(_apply_mask(z, mask)) == 0.6
 
 
-def test_cap_is_identical_across_arms_whose_peaks_differ_by_centimetres():
+def test_cap_is_identical_across_arms_whose_peaks_differ_by_centimeters():
     """G3: a pure-TRITON and a coupled render of the same domain must not produce two
     different colorbars for the same TRITON quantity."""
     assert _quantize(0.61) == _quantize(0.6349)

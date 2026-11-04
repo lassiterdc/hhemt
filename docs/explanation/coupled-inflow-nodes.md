@@ -158,14 +158,14 @@ uses is not known to read it. In native mode the TRITON clone's
 added it; in container mode the image's recorded TRITON commit must match
 `TRITONSWMM_branch_key` and be one of the commits known to read it.
 
-The surface hydrographs are converted to cubic metres per second from the
+The surface hydrographs are converted to cubic meters per second from the
 hydrology model's own flow unit before TRITON reads them, so an `LPS` or `MLD`
 model's runoff reaches the surface in the right units. The per-node inflow record
 kept beside the hydrographs is converted the same way and names the unit it was
 converted from.
 
 The hydraulics model and the standalone model must use `CMS`. Their flows are read
-from SWMM's report and output files as cubic metres per second with no conversion,
+from SWMM's report and output files as cubic meters per second with no conversion,
 and SWMM writes those files in the model's own unit, so a model in `LPS` would be
 read 1000 times too large and one in `MLD` 86.4 times. A `FLOW_UNITS` value is read
 the way SWMM reads it: the last line that carries a value wins, and the unit word is

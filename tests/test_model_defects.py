@@ -394,7 +394,7 @@ _COUPLED_ENTRIES = (
     (
         "TRITON-COUPLED-US-UNIT-RIM",
         "A US-unit coupled model's node rims (and, with the DEM-rim option, its inverts) reached "
-        "TRITON in feet and were used as metres",
+        "TRITON in feet and were used as meters",
     ),
     (
         "TRITON-COUPLED-LIST-MISALIGNED",

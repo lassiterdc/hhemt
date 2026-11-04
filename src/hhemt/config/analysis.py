@@ -1153,7 +1153,7 @@ class analysis_config(cfgBaseModel):
     )
     manhole_diameter: float = Field(
         ...,
-        description="Manhole diameter of TRITON-SWMM interaction nodes.",
+        description="Manhole diameter of TRITON-SWMM interaction nodes, in meters.",
     )
     manhole_loss_coefficient: float = Field(
         ...,

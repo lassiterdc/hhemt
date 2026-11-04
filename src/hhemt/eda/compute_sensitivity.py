@@ -57,7 +57,7 @@ from hhemt.utils import write_zarr
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
 
-#: The single peak-DEPTH field the magnitude metrics operate on (metres). NaN at
+#: The single peak-DEPTH field the magnitude metrics operate on (meters). NaN at
 #: nodata, finite ~0 at in-watershed dry cells, ``> dry_threshold_m`` = wet.
 _DEPTH_VAR = "max_flood_depth"
 

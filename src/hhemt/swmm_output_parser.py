@@ -128,7 +128,7 @@ def node_flooding_ponded_field(lines) -> str | None:
     """The LAST field of the Node Flooding Summary's third header line: ``Depth`` or ``Volume``, else None.
 
     SWMM heads the sixth column of that table ``Depth`` when the model is routed by Dynamic Wave and ``Volume``
-    otherwise (``statsrpt.c``, "Ponded"), so the column is a depth in metres under one routing method and a
+    otherwise (``statsrpt.c``, "Ponded"), so the column is a depth in meters under one routing method and a
     ponded volume under the others. The header block is the lines between the table's two dashed rules; its
     third line ends in that word. The WHOLE line is not tested for ``Volume``: the Dynamic-Wave line also
     contains ``Volume`` (the flood-volume column's heading), which is why only its last field decides.
@@ -1518,7 +1518,7 @@ def return_node_time_series_results_from_outfile(f_outfile, f_inp=None, return_q
                 operation="return_node_time_series_results_from_outfile",
                 filepath=Path(f_outfile),
                 reason=(
-                    f"SWMM outputs are not in cubic metres per second (flow unit reported: "
+                    f"SWMM outputs are not in cubic meters per second (flow unit reported: "
                     f"{units['flow']!r}, unit system {units['system']!r}). The toolkit reads the "
                     "standalone model's flows as m3/s without conversion, so its [OPTIONS] "
                     "FLOW_UNITS must be CMS; an ABSENT FLOW_UNITS line defaults to CFS. Fix it "

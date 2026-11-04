@@ -82,7 +82,7 @@ _HORIZONTAL_UNIT_SHORT_NAMES: dict[str, str] = {
 def _crs_horizontal_unit_label(crs_epsg: int | None) -> str:
     """Short label of the horizontal axis unit of EPSG `crs_epsg`.
 
-    Metres give "m" and both foot definitions give "ft"; any other axis unit
+    Meters give "m" and both foot definitions give "ft"; any other axis unit
     (for example "degree") is returned under its pyproj name. Falls back to "m"
     when `crs_epsg` is None or pyproj cannot resolve the code.
     """

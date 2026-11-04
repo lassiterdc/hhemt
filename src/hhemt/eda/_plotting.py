@@ -289,7 +289,7 @@ def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_bound
     by max |Δ| vs the per-family baseline on a white->vermillion colorbar anchored to [0, τ].
     Reads the SETTLED per-compute_config DataArray contract directly: `config_label` (already
     _derive_config_label'd) as the y-label, `family` for panel grouping, `is_reference` to mark
-    the baseline row, `max_abs_diff` (metres) for magnitude. Caption is built from the dataset
+    the baseline row, `max_abs_diff` (meters) for magnitude. Caption is built from the dataset
     attr `reference_config_by_family`. Degrades to a binary identical/differs encoding + raw
     labels + a single panel when max_abs_diff / config_label / family are absent. Positions and
     margins are nominal — smoke-render and nudge if needed."""

@@ -3,7 +3,7 @@
 * Flow balance error: the Node Inflow Summary's last field is a percent where SWMM printed a number alone and an
   absolute error in litres where it printed the number followed by `ltr`. The parser stores them in `flow_balance_error`
   (percent) and `flow_balance_error_volume` (litres), the other NaN on that row.
-* Ponded depth: the Node Flooding Summary's sixth column is a depth in metres under Dynamic Wave routing and a ponded
+* Ponded depth: the Node Flooding Summary's sixth column is a depth in meters under Dynamic Wave routing and a ponded
   volume otherwise, and SWMM says which in the LAST field of the table's third header line (`Depth` or
   `Volume`). The parser stores `max_ponded_depth` only for `Depth`; otherwise NaN and a warning.
 * Tier names: the node-tier maximum flooding rate and the time of the maximum total inflow are `max_flood_rate` and
@@ -105,7 +105,7 @@ def test_d15_the_last_field_of_the_third_header_line_decides_and_the_word_volume
     """Property: `Depth` as the last field stores the value; `Volume` as the last field gives NaN and a warning.
 
     Class: REGRESSION. Why required: under Kinematic Wave the sixth column is a ponded VOLUME, so reading it
-    as metres mislabels it; and a test for the word `Volume` anywhere on the line is wrong, because the
+    as meters mislabels it; and a test for the word `Volume` anywhere on the line is wrong, because the
     Dynamic-Wave line also contains `Volume` (the flood-volume column's heading).
     Kills it: a rule testing the whole line for `Volume` (NaN on the Dynamic-Wave form), a rule that never
     checks (a value on the Kinematic-Wave form), reading the wrong header line.

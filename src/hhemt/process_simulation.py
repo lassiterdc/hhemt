@@ -3954,7 +3954,7 @@ def summarize_triton_simulation_results(
 
     tsteps = ds[tstep_dimname].to_series()
 
-    # QX and QY are the solver's depth-integrated flow per metre of flow width (m2/s), so their
+    # QX and QY are the solver's depth-integrated flow per meter of flow width (m2/s), so their
     # magnitude is a unit discharge, not a velocity. It is assigned lazily because the streaming
     # reduction needs a named variable of ``ds`` and the timeseries store does not hold it.
     ds_with_magnitude = ds.assign(

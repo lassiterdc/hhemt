@@ -79,7 +79,7 @@ _CONFIG_DIFF_PCT_BAND = 0.1
 
 #: Quantization step (m) for the Panel-A serial-reference depth cap. The cap is the
 #: watershed-masked maximum ROUNDED UP to this step, so two model arms whose masked peaks
-#: differ by millimetres-to-centimetres land on the SAME cap and their sequential colorbars
+#: differ by millimeters-to-centimeters land on the SAME cap and their sequential colorbars
 #: are identical — G3 fungibility for the reference panel, which the fixed diverging bands
 #: above already give the diff panels. Rounding up never clips, so no out-of-range
 #: disclosure is owed (plotly Heatmap has no set_over triangle to carry one).
@@ -545,7 +545,7 @@ def _symmetric_diff_range(arrays: list, *, floor: float, percentile: float = 99.
     two co-located model arms COINCIDE whenever their percentiles share a bin -- which is
     what preserves the cross-arm fungibility the fixed band existed to protect, now that
     the range is data-driven. The ladder is decade-relative so one rule is scale-free
-    across depth in metres, flow in cms, and percent.
+    across depth in meters, flow in cms, and percent.
 
     Returns ``floor`` when no finite value exists or the percentile is non-positive.
     """

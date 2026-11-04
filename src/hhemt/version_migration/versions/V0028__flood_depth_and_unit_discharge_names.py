@@ -482,7 +482,7 @@ _ATTRS: dict[str, dict[str, str | None]] = {
     },
     "max_unit_discharge": {
         "standard_name": None,
-        "long_name": "Maximum unit discharge (flow rate per metre of flow width)",
+        "long_name": "Maximum unit discharge (flow rate per meter of flow width)",
         "units": "m2 s-1",
         "cell_methods": "time: maximum",
     },
@@ -779,7 +779,7 @@ _ATTRS: dict[str, dict[str, str | None]] = {
     },
     "unit_discharge_x": {
         "standard_name": None,
-        "long_name": "Unit discharge x-component (flow rate per metre of flow width)",
+        "long_name": "Unit discharge x-component (flow rate per meter of flow width)",
         "units": "m2 s-1",
         "cell_methods": None,
     },
@@ -791,7 +791,7 @@ _ATTRS: dict[str, dict[str, str | None]] = {
     },
     "unit_discharge_y": {
         "standard_name": None,
-        "long_name": "Unit discharge y-component (flow rate per metre of flow width)",
+        "long_name": "Unit discharge y-component (flow rate per meter of flow width)",
         "units": "m2 s-1",
         "cell_methods": None,
     },

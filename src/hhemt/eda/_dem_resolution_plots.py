@@ -378,9 +378,9 @@ def build_dem_resolution_cost_error_figure(root: Path) -> go.Figure:
             ref_xy = (r["compute_hr"] * _u_factor, 0.0)
         else:
             m = compare_resolution_pair(r["wlevel"], fine_da, horizontal_epsg=epsg, dry_threshold_m=_TAU_M)
-            # Headline = p95 of |coarse − fine| in metres over union-wet cells. This IS the y = 0.95
+            # Headline = p95 of |coarse − fine| in meters over union-wet cells. This IS the y = 0.95
             # crossing of figure 2's depth-error ECDF for this resolution, so this plot is "fig-2's
-            # p95, plotted against cost" -- one coherent family in metres (handle-friction, user Option 1).
+            # p95, plotted against cost" -- one coherent family in meters (handle-friction, user Option 1).
             headline = float(m["p95_abs_diff_m"])
         xs.append(r["compute_hr"] * _u_factor)
         ys.append(headline)

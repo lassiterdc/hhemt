@@ -4555,3 +4555,19 @@ non_breaking_allowlist:
     layout_signature: dd28b7f7b7147c1920e6b212b8635191422024ec356f3ce6f4499cc2112e7263
     justification: |-
       NON-BREAKING. src/hhemt/scenario.py, TRITONSWMM_scenario._generate_TRITON_SWMM_cfg: the coupled-only validations (require_triton_couples_the_listed_nodes, and require_dem_rim_capable_triton beside it) now run only for a system with toggle_tritonswmm_model on. Both are validation calls that return None and write nothing, so no on-disk layout changes: no file is added, renamed, removed or re-keyed, no JSON key, LogField, zarr attr or path convention moves, and every cfg byte the function writes is unchanged (held by the byte-identity test in tests/test_triton_only_coupling_guard_reviewer.py). It repairs a FileNotFoundError that stopped scenario preparation of the TRITON-only arm on a solver that does not read swmm_coupling_nodes. No migration is owed.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 41989e8da8149eae0029ba055294bd1ccdc7538282c52d3a35a22dad49a2ad4c
+    justification: |-
+      The manhole_diameter field description states its unit (meters); text only, no field, default or stored value changes.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: d9a2e8cd7e106e88a9403127bc582da803ba5427be091029fe4fcac957adba7a
+    justification: |-
+      Spelling of meters in comments and in the long_name text of the three unit-discharge variables; text only, no key or stored value changes.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 08bf9bafe544b8586ea4f00af2dfa8bd02612e153d972c19ff707a14ae53caed
+    justification: |-
+      One comment spells meters; no statement changes.
+  - path: src/hhemt/version_migration/versions/V0028__flood_depth_and_unit_discharge_names.py
+    layout_signature: 6f1792f384eec77eea39dab546a783c02e5a7cb06d4b6854308bb6164ca02411
+    justification: |-
+      Spelling of meters in the frozen long_name text of the three unit-discharge variables, kept equal to the live table; no key, value or mapping changes.

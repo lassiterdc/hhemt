@@ -31,7 +31,7 @@ def test_apply_cf_sets_standard_name_for_known_vars():
     # CF 7.3.4 class 3: `time` is a valid standard_name and is NOT a dimension or coordinate of
     # this variable, which is the PRECONDITION the class-3 form requires rather than a defect.
     assert ds["max_flood_depth"].attrs["cell_methods"] == "time: maximum"
-    # The solver's QX and QY are flow per metre of width (m2/s), and the CF table has no name for that, so the
+    # The solver's QX and QY are flow per meter of width (m2/s), and the CF table has no name for that, so the
     # quantity carries no standard_name; a velocity name here would mislabel it, which is the defect fixed.
     assert "standard_name" not in ds["max_unit_discharge"].attrs
     assert ds["max_unit_discharge"].attrs["units"] == "m2 s-1"

@@ -33,6 +33,7 @@ REPO = Path(__file__).resolve().parents[1]
 MERGE_BASE = "fa98781e"  # the merge base of this branch and origin/develop
 DEVELOP_TIP = "bffe88b3"  # origin/develop as merged
 RUN_TIP = "c3167536"  # the first parent of that merge: this branch before it took in origin/develop
+MERGE_COMMIT = "f16e0f12"  # the merge itself: the tree the develop-line check reads
 V0028_STEM = "V0028__flood_depth_and_unit_discharge_names"
 
 
@@ -50,7 +51,8 @@ def _have(commit: str) -> bool:
 
 
 needs_history = pytest.mark.skipif(
-    not (_have(MERGE_BASE) and _have(DEVELOP_TIP) and _have(RUN_TIP)), reason="branch history not in this clone"
+    not (_have(MERGE_BASE) and _have(DEVELOP_TIP) and _have(RUN_TIP) and _have(MERGE_COMMIT)),
+    reason="branch history not in this clone",
 )
 
 #: The 24 bases of the real layout-27 identity artifact (read from Rivanna) and the names they migrate to.
@@ -566,7 +568,7 @@ def test_every_line_origin_develop_added_to_src_is_still_there_or_is_the_rename_
     file, unless the line holds a unit-token name this branch replaces (4 lines when written).
 
     Class: the `+` lines (stripped, 25 characters or more) of `git diff {merge base} {develop tip} -- src`,
-    1,410 when written, compared with the working file of the same path.
+    1,410 when written, compared with the same path at the merge commit.
     Why required: this branch's side of a conflict can overwrite a behaviour develop added (the write helper calls,
     the shard re-chunk block, the stamps); only a whole-line comparison over develop's additions sees it.
     Kills it: a dropped `write_zarr(` call or `shards` branch; a stamp lost.
@@ -578,13 +580,12 @@ def test_every_line_origin_develop_added_to_src_is_still_there_or_is_the_rename_
     assert len(files) >= 40, len(files)
     dropped = {}
     for rel in files:
-        path = REPO / rel
-        text = path.read_text(errors="replace") if path.is_file() else ""
+        text = _git("show", f"{MERGE_COMMIT}:{rel}")
         if hit := _dropped_develop_lines(rel, text):
             dropped[rel] = hit
     assert dropped == {}
     probe = "src/hhemt/utils.py"
-    text = (REPO / probe).read_text()
+    text = _git("show", f"{MERGE_COMMIT}:{probe}")
     added = [
         ln[1:]
         for ln in _git("diff", "-U0", MERGE_BASE, DEVELOP_TIP, "--", probe).splitlines()

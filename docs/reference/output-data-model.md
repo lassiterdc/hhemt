@@ -147,7 +147,7 @@ an error in litres on the others and the store does not record which.
 | `flood_depth` | `m` | `flood_water_thickness` | Flood-depth timeseries |
 | `flood_depth_last_tstep` | `m` | `flood_water_thickness` | Flood depth at the final timestep |
 | `time_of_max_flood_depth` | `min` | n/a | Time of the print at which the printed depth is largest |
-| `max_unit_discharge` | `m2 s-1` | n/a | Maximum unit discharge (flow rate per metre of flow width) |
+| `max_unit_discharge` | `m2 s-1` | n/a | Maximum unit discharge (flow rate per meter of flow width) |
 | `unit_discharge_x` | `m2 s-1` | n/a | Unit discharge x-component |
 | `unit_discharge_y` | `m2 s-1` | n/a | Unit discharge y-component |
 | `unit_discharge_x_at_time_of_max_unit_discharge` | `m2 s-1` | n/a | Unit discharge x-component at the time of maximum unit discharge |
@@ -160,7 +160,7 @@ an error in litres on the others and the store does not record which.
 | `final_surface_flood_volume` | `m3` | n/a | Final surface flood volume |
 
 !!! note "Unit discharge is not velocity"
-    The solver's `QX` and `QY` rasters are depth-integrated flow per metre of flow width
+    The solver's `QX` and `QY` rasters are depth-integrated flow per meter of flow width
     (`m2 s-1`), so the six rows above whose names contain `unit_discharge` are unit discharges
     (or the time of their maximum). The CF standard-name table has no name for that quantity,
     which is why those rows carry no `standard_name`; the flood-depth rows keep theirs. The TRITON tier

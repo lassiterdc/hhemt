@@ -803,7 +803,7 @@ REGISTRY: tuple[ModelDefect, ...] = (
         defect_id="TRITON-COUPLED-US-UNIT-RIM",
         title=(
             "A US-unit coupled model's node rims (and, with the DEM-rim option, its inverts) reached "
-            "TRITON in feet and were used as metres"
+            "TRITON in feet and were used as meters"
         ),
         fixed_in=SHA_CURATED_US_UNIT_LENGTH_FIX,
         known_absent_in=frozenset(

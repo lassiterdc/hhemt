@@ -27,7 +27,7 @@ layout constants both arms share, never from a branch gated on ``has_flow``).
 CONTENT RULES (carried over from the retired ``_add_caption`` docstring; user,
 iterates 2-3, generalised to every figure):
   - carry nothing already legible from an axis label, a legend entry, or a column header
-  - "meters", never "metres"
+  - spell the unit "meters" (American spelling)
   - never reference another figure by number (each figure stands alone)
   - no experiment-specific commentary (fixture scale, toy-domain caveats)
   - state what IS. Never state what a thing is not, and never describe something

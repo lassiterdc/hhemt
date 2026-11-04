@@ -37,24 +37,24 @@ _CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = {
         "units": "m",
         "cell_methods": "time: maximum",
     },
-    # TRITON's QX and QY are depth-integrated flow per metre of flow width (m2/s), NOT velocities, and the
+    # TRITON's QX and QY are depth-integrated flow per meter of flow width (m2/s), NOT velocities, and the
     # CF standard-name table (version 95) has no name for a per-unit-width discharge, so these six carry
     # no standard_name rather than a velocity name that would mislabel the quantity.
     "max_unit_discharge": {
         "standard_name": None,
-        "long_name": "Maximum unit discharge (flow rate per metre of flow width)",
+        "long_name": "Maximum unit discharge (flow rate per meter of flow width)",
         "units": "m2 s-1",
         "cell_methods": "time: maximum",
     },
     "unit_discharge_x": {
         "standard_name": None,
-        "long_name": "Unit discharge x-component (flow rate per metre of flow width)",
+        "long_name": "Unit discharge x-component (flow rate per meter of flow width)",
         "units": "m2 s-1",
         "cell_methods": None,
     },
     "unit_discharge_y": {
         "standard_name": None,
-        "long_name": "Unit discharge y-component (flow rate per metre of flow width)",
+        "long_name": "Unit discharge y-component (flow rate per meter of flow width)",
         "units": "m2 s-1",
         "cell_methods": None,
     },
@@ -1863,7 +1863,7 @@ _COORD_ATTRS: dict[str, dict[str, str]] = {
 #: field, built by `xr.Dataset.from_dataframe(df_setup)`, which stamps nothing). One table, one lookup
 #: (`stamp_parameter_units`). Units are read from each field's name and `Field` description in
 #: `config/analysis.py`; spelled `min`, `s`, `MB`, `GB`, and `1` for counts and coefficients.
-#: `manhole_diameter` is in metres although its `Field` description states no unit: the repository establishes it
+#: `manhole_diameter` is in meters, as its `Field` description states, and the repository agrees
 #: (`synthetic_model/_build.py` names the same quantity `manhole_diameter_m` and calls 1.2 the "toolkit default
 #: 1.2 m"; `test_data/norfolk_coastal_flooding/template_analysis_config.yaml` and
 #: `test_data/TRITON_SWMM_test_model/TRITONSWMM.cfg` carry 1.2; the TRITON architecture note says a diameter larger

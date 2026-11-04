@@ -328,7 +328,7 @@ def test_docs_table_rows_for_the_depth_variables():
     assert "running maximum" in meaning and "b3820a44" in meaning and "below a printed depth" in meaning, meaning
 
 
-def test_eda_units_map_names_the_depth_rows_in_metres():
+def test_eda_units_map_names_the_depth_rows_in_meters():
     """Property: the EDA byte-identity dataset's units attribute maps the new depth names to `m`.
 
     Class: `_b4b_dataset` built over the four canonical rows by the real function.

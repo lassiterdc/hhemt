@@ -352,7 +352,7 @@ def test_the_raw_byte_identity_artifact_variables_each_receive_a_unit():
         reference_config_by_family={"gpu": "cfg"},
     )
     # ``max_abs_diff`` is the one numeric variable that states no single unit: along ``raw_output_type`` it is
-    # metres for the depths and m2 s-1 for the unit discharges, and CF allows one unit per variable, so it carries a
+    # meters for the depths and m2 s-1 for the unit discharges, and CF allows one unit per variable, so it carries a
     # ``comment`` pointing at the ``units_by_raw_output_type`` attribute (the water-quality variables' form).
     assert violations(ds) == [("max_abs_diff", "numeric variable without units")]
     assert "comment" in ds["max_abs_diff"].attrs and "units_by_raw_output_type" in ds.attrs

@@ -22,6 +22,8 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 #: The commit whose source still writes the unit-token keys and holds the earlier wording.
 BEFORE = "9b644fc1"
+#: The last commit of the plot-data and history-text sweep: the end of the range the executable-statement test reads.
+AFTER = "f0ec9a81"
 
 #: unit-token key -> (unit-free key, unit value of its companion).
 KEY_MAP = {
@@ -51,7 +53,9 @@ def _have(rev: str) -> bool:
     )
 
 
-needs_before = pytest.mark.skipif(not _have(BEFORE), reason="the earlier commit is not in this clone")
+needs_before = pytest.mark.skipif(
+    not (_have(BEFORE) and _have(AFTER)), reason="the sweep commits are not in this clone"
+)
 
 
 def _manifest_dicts(source: str) -> list[ast.Dict]:
@@ -211,16 +215,16 @@ def _public_names(source: str) -> list[str]:
 
 
 def _changed_python_sources() -> list[str]:
-    changed = _git("diff", "--name-only", BEFORE, "--", "src").split()
-    return [p for p in changed if p.endswith(".py") and (REPO / p).is_file()]
+    changed = _git("diff", "--name-only", "--diff-filter=AM", BEFORE, AFTER, "--", "src").split()
+    return [p for p in changed if p.endswith(".py")]
 
 
 @needs_before
 def test_no_changed_source_module_moved_an_executable_statement_or_a_public_name():
-    """Property: for every Python module under `src` that differs from the earlier commit, the syntax tree without
-    docstrings is identical (comments never enter a syntax tree), except for the entries of the `manifest_data`
-    dicts of the two renderers, whose entries the first test compares; and the sorted list of function, class and
-    module-level names is identical.
+    """Property: for every Python module under `src` that differs between the two sweep commits, the syntax tree
+    without docstrings is identical (comments never enter a syntax tree), except for the entries of the
+    `manifest_data` dicts of the two renderers, whose entries the first test compares; and the sorted list of
+    function, class and module-level names is identical.
 
     Class: every changed `.py` file under `src` (5 when written).
     Why required: a text change must not alter behaviour; comparing syntax trees proves it for all the code at once
@@ -234,13 +238,13 @@ def test_no_changed_source_module_moved_an_executable_statement_or_a_public_name
     assert len(changed) >= 3, changed
     for rel in changed:
         drop = rel in {DEPTH_RENDERER, FLOW_RENDERER}
-        before_src, after_src = _git("show", f"{BEFORE}:{rel}"), (REPO / rel).read_text()
+        before_src, after_src = _git("show", f"{BEFORE}:{rel}"), _git("show", f"{AFTER}:{rel}")
         assert _executable_dump(before_src, drop_manifest_dicts=drop) == _executable_dump(
             after_src, drop_manifest_dicts=drop
         ), rel
         if not drop:
             assert _public_names(before_src) == _public_names(after_src), rel
-    probe = (REPO / changed[0]).read_text()
+    probe = _git("show", f"{AFTER}:{changed[0]}")
     planted = probe.replace("return ", "return not ", 1) if "return " in probe else probe + "\nx = 1\n"
     assert _executable_dump(planted, drop_manifest_dicts=False) != _executable_dump(probe, drop_manifest_dicts=False)
 

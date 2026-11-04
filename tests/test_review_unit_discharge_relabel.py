@@ -1,6 +1,6 @@
 """Reviewer tests for TRITON's `QX` and `QY`: they are unit discharges, not velocities.
 
-The solver writes `QX` and `QY` as depth-integrated flow per metre of flow width (m2/s). The toolkit stores them
+The solver writes `QX` and `QY` as depth-integrated flow per meter of flow width (m2/s). The toolkit stores them
 under six unit-discharge names, with attributes that say what they are, and the SWMM link's maximum conduit
 velocity (a real conduit velocity) is the only holder of the name `max_velocity`. These tests hold that from the
 outside: each one names the input class it quantifies over, why the property is required, and the change to
