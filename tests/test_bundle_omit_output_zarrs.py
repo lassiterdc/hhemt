@@ -156,7 +156,7 @@ def test_combine_refuses_a_bundle_whose_manifest_came_from_the_writer(tmp_path):
     root = tmp_path / "child"
     root.mkdir()
     store = resolve_experiment_tree(root)
-    xr.Dataset({"max_wlevel_m": ("a", [1.0, 2.0])}).to_zarr(store)
+    xr.Dataset({"max_flood_depth": ("a", [1.0, 2.0])}).to_zarr(store)
     store_rel = store.relative_to(root).as_posix()
     _write_bundle_manifest(
         root,

@@ -21,6 +21,7 @@ attribute read on its path; the non-sensitivity stand-in carries
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import warnings
 from pathlib import Path
@@ -47,6 +48,11 @@ GOLDEN_PIN = "495bf92b"
 FLAG = "--allow-stale-figures"
 
 runner = CliRunner()
+
+
+def _plain(text: str) -> str:
+    """Help text with ANSI styling removed: under forced color Rich splits a flag into styled fragments."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
 def _golden_text() -> str:
@@ -648,6 +654,12 @@ def test_only_the_bundle_verb_lists_the_flag():
     Second correct implementation: declaring the option on `bundle` through a shared option object that those verbs
         do not use.
     """
-    assert FLAG in runner.invoke(app, ["bundle", "--help"]).output
-    assert FLAG not in runner.invoke(app, ["publish", "--help"]).output
-    assert FLAG not in runner.invoke(app, ["reprex", "emit", "--help"]).output
+    bundle_help = _plain(runner.invoke(app, ["bundle", "--help"]).output)
+    publish_help = _plain(runner.invoke(app, ["publish", "--help"]).output)
+    reprex_help = _plain(runner.invoke(app, ["reprex", "emit", "--help"]).output)
+    # Controls: the two negatives below only mean something if real help text was captured.
+    assert "--help" in publish_help
+    assert "--help" in reprex_help
+    assert FLAG in bundle_help
+    assert FLAG not in publish_help
+    assert FLAG not in reprex_help
