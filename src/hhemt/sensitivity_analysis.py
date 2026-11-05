@@ -640,7 +640,13 @@ class TRITONSWMM_sensitivity_analysis:
         # render floor destroyed the user's figures. Measured 2026-08-25 against that
         # pre-f8c47ec3 state, not against any current behaviour: 7 figures -> 2 on a
         # preview. On a dry run ALL figures survive, not only `plots/eda/`.
-        self.experiment._apply_force_rerun(overrides.force_rerun, dry_run=dry_run)
+        #
+        # The deletion runs BEFORE the master Snakefile below is written, so it must follow
+        # the clear-raw value that Snakefile will be generated under: this run's override,
+        # which `_apply_force_rerun` resolves to the config when there is none.
+        self.experiment._apply_force_rerun(
+            overrides.force_rerun, dry_run=dry_run, override_clear_raw=overrides.clear_raw, for_reprocess=False
+        )
 
         # Driver-start orchestrator-liveness sentinel, keyed on the
         # PRIMARY analysis_dir. This is the sensitivity-primary submit path and
@@ -852,7 +858,8 @@ class TRITONSWMM_sensitivity_analysis:
         # processing-log records, both filesystem mutations the dry-run
         # no-destructive-mutation contract forbids.
         if not dry_run:
-            self.experiment._apply_force_rerun(override_force_rerun)
+            # The sensitivity reprocess generator reads the config's clear-raw alone.
+            self.experiment._apply_force_rerun(override_force_rerun, override_clear_raw=None, for_reprocess=True)
 
         # Resolve invalidation target set. ``None`` → all members; explicit
         # list → subset. String-cast preserves alignment with members dict
@@ -1213,7 +1220,7 @@ class TRITONSWMM_sensitivity_analysis:
         assert_plots_match_running_build(
             primary_dir,
             declare_stale_plots=declare_stale_plots,
-            report_rule_stems=report_rule_figure_stems(self),
+            report_rule_stems=report_rule_figure_stems(self, for_reprocess=reprocess),
         )
         snakefile_name = "Snakefile.reprocess" if reprocess else "Snakefile"
         snakefile = primary_dir / snakefile_name

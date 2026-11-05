@@ -9,4 +9,4 @@ entries:
   string: sim
   status: permitted
   reason: Name of a provenance stage, a dictionary key; the page never prints it.
-  count: 2
+  count: 3

@@ -69,7 +69,7 @@ from hhemt.summary_paths import (
 from hhemt.summary_paths import (  # noqa: F401  (re-export shim under the historical private name)
     scenario_summaries_present as _scenario_summaries_present,
 )
-from hhemt.utils import fast_rmtree, select_regenerable_figures
+from hhemt.utils import fast_rmtree, select_regenerable_figures, write_resolved_clear_raw_record
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -437,9 +437,30 @@ def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
         ]
     else:
         sp = list(spec.source_paths)
+        # Snakemake reads a plain string in a ``params:`` value, including each entry
+        # of a plain list, as a wildcard reference (a string held inside a dict is
+        # not read, but the RST param carries it as text), so a recorded source
+        # holding a brace token (the bundle's
+        # regeneration Snakefile carries ``{hhemt_home}``-style tokens) raises
+        # WildcardError when the DAG is built. A callable is not expanded and
+        # delivers the literal text. Deliberately NOT a literal for every spec:
+        # the brace-free form is what every self-generated Snakefile carries,
+        # and rewriting it would change their bytes for no benefit.
+        pending: list = list(sp)
+        holds_brace = False
+        while pending and not holds_brace:
+            item = pending.pop()
+            if isinstance(item, str):
+                holds_brace = "{" in item or "}" in item
+            elif isinstance(item, dict):
+                pending.extend(item.values())
+            elif isinstance(item, (list, tuple)):
+                pending.extend(item)
+        source_paths_value = f"{'lambda w: ' if holds_brace else ''}{sp!r}"
+        source_paths_rst_value = f"{'lambda w: ' if holds_brace else ''}{format_sources_rst(sp)!r}"
         params_lines = [
-            f"        source_paths = {sp!r},",
-            f"        source_paths_rst = {format_sources_rst(sp)!r},",
+            f"        source_paths = {source_paths_value},",
+            f"        source_paths_rst = {source_paths_rst_value},",
         ]
     for name, value in spec.extra_params:
         params_lines.append(f"        {name} = {value},")
@@ -773,6 +794,56 @@ _COMMENT_RULE_PREFIXES: tuple[str, ...] = ("rule_run_", "rule_simulation_member_
 # importing this Snakemake-builder surface.
 
 
+#: Where the toolkit-build stamp lives, relative to the directory of the generated
+#: Snakefile that declares it as an input (every generated Snakefile is written into the
+#: analysis directory, which is also the working directory of every launch). The name
+#: deliberately does not end ``.flag`` or ``.flag.json`` so no flag sweep and no
+#: ``workflow_performance`` glob over ``_status/`` ever reads it as a rule's completion record.
+_TOOLKIT_BUILD_STAMP_REL = "_status/toolkit_build.stamp"
+
+
+def _write_toolkit_build_stamp(snakefile_dir: Path) -> Path:
+    """Compare-and-write the toolkit-build stamp beside a generated Snakefile.
+
+    The stamp is the compact JSON of ``hhemt.provenance.producing_stamp()``, so its
+    CONTENT changes exactly when the running toolkit build (sha, version or dirty flag)
+    changes. Rules that declare the stamp as an input are re-fired by Snakemake on that
+    content change and on nothing else. The file is rewritten only when the bytes differ,
+    so a resume of an unchanged build leaves its bytes and ``st_mtime_ns`` untouched and
+    schedules nothing new -- a plain unconditional write would bump the mtime on every
+    submit and re-fire the read-model rule on every resume.
+
+    ``producing_stamp`` is imported at call time, not at module import, because
+    ``hhemt.provenance`` pulls in the RO-Crate machinery that this module must not load
+    at import.
+    """
+    import json
+    import os
+    import tempfile
+
+    from hhemt.provenance import producing_stamp
+
+    stamp_path = Path(snakefile_dir) / _TOOLKIT_BUILD_STAMP_REL
+    text = json.dumps(producing_stamp(), sort_keys=True, separators=(",", ":"))
+    try:
+        if stamp_path.read_text() == text:
+            return stamp_path
+    except OSError:
+        pass  # absent or unreadable: fall through to the write
+    stamp_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(stamp_path.parent), prefix=stamp_path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+        # EXEMPT-DU: status-flag
+        os.replace(tmp_name, stamp_path)
+    except BaseException:
+        # EXEMPT-DU: transient-intermediate
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+    return stamp_path
+
+
 def _write_snakefile_atomic(path: Path, content: str) -> Path:
     """Write a generated Snakefile atomically, preserving the displaced one.
 
@@ -810,12 +881,24 @@ def _write_snakefile_atomic(path: Path, content: str) -> Path:
     ``render_report(reprocess=True)`` runs ``snakemake --report`` against
     ``Snakefile.reprocess``, so a clobber there reaches a RENDERED REPORT rather
     than only an operator's diagnosis.
+
+    BUILD STAMP -- when ``content`` declares ``_TOOLKIT_BUILD_STAMP_REL`` as an input, the
+    stamp is compare-and-written (``_write_toolkit_build_stamp``) BEFORE the Snakefile, so
+    every launch of a Snakefile that declares it is preceded by the write that makes it
+    resolvable, on the guarded and unguarded launch paths alike and on a dry run's
+    ``Snakefile.dryrun`` too. The condition is the need itself -- the delete and static
+    Snakefiles do not declare the stamp and so write none -- which is why no list of call
+    sites is kept. Stamp first rather than last: a failure between the two writes then
+    leaves a stamp no Snakefile has consumed (one spurious re-fire), where the opposite
+    order would leave a Snakefile whose declared input does not exist.
     """
     import os
     import tempfile
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if _TOOLKIT_BUILD_STAMP_REL in content:
+        _write_toolkit_build_stamp(path.parent)
     if path.exists():
         try:
             path.replace(path.with_name(path.name + ".prev"))
@@ -2452,6 +2535,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         spec: ResolvedForceRerunSpec,
         *,
         dry_run: bool = False,
+        override_clear_raw: ClearRawValue | None = None,
+        for_reprocess: bool = False,
     ) -> None:
         """Pre-delete `_status/*.flag` markers so Snakemake's MTIME trigger
         re-fires the dependent rules on the next workflow invocation.
@@ -2472,6 +2557,15 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         spec : ResolvedForceRerunSpec
             Pre-resolved (scope, tokens) target set. ``scope == "none"``
             short-circuits with no filesystem touch.
+        override_clear_raw : ClearRawValue | None
+            The clear-raw value the Snakefile this caller is about to write is generated
+            under, passed through to ``utils.report_rule_figure_stems`` so the render
+            floor deletes exactly the ``plots/eda/`` figures that Snakefile has rules for.
+            ``None`` lets the stems read the production record, then the config.
+        for_reprocess : bool
+            True when the Snakefile about to run is ``Snakefile.reprocess``, whose
+            generator reads the config's clear-raw alone; the override and the record are
+            then ignored.
         """
         if spec.scope == "none":
             return
@@ -2599,7 +2693,9 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                 self.analysis_paths.analysis_dir,
                 self.analysis_paths.analysis_dir / "plots",
                 on_select=lambda p: logger.info("force_rerun[stage=render]: deleting figure %s", p),
-                report_rule_stems=report_rule_figure_stems(self.analysis),
+                report_rule_stems=report_rule_figure_stems(
+                    self.analysis, override_clear_raw=override_clear_raw, for_reprocess=for_reprocess
+                ),
             )
             # ONE accounting call for every figure + sidecar; delete_and_account does the
             # O(1) DU-sentinel decrement for them.
@@ -3121,6 +3217,10 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             },
             resources_yaml="mem_mb=1000, time_min=5",
             log_path_template="logs/plots/metadata.log",
+            # Declared so a re-fire of export_scenario_status (stamp content changed)
+            # reaches this page: it reads both products, and an undeclared read gives
+            # Snakemake no edge to schedule the re-render along.
+            additional_inputs=("scenario_status.csv", "validation_report.json"),
         )
         return _emit_plot_rule(spec, ctx)
 
@@ -3166,6 +3266,10 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             },
             resources_yaml="mem_mb=1000, time_min=5",
             log_path_template="logs/plots/workflow_performance.log",
+            # Declared for the same reason as plot_metadata's: this page reads the
+            # status CSV, and only a declared input is re-rendered when the rule that
+            # writes it re-fires.
+            additional_inputs=("scenario_status.csv",),
         )
         return _emit_plot_rule(spec, ctx)
 
@@ -4212,6 +4316,15 @@ rule render_report:
 
         ``input_flag`` defaults to the regular multisim consolidation flag;
         the sensitivity-master Snakefile passes the master flag instead.
+
+        The rule's second input is the toolkit-build stamp
+        (``_TOOLKIT_BUILD_STAMP_REL``). Its content changes exactly when the running
+        build changes, which re-fires this rule -- and through the declared readers
+        the pages and the report -- on a render-only re-run after a toolkit upgrade,
+        when no consolidation flag has moved. ``_write_snakefile_atomic`` writes the
+        stamp for any Snakefile whose content names it, so a Snakefile emitted from
+        here must be written through that function. A hand-written copy placed in a
+        tree without the stamp fails at DAG build with a MissingInputException naming it.
         """
         log_dir = self.analysis.analysis_paths.analysis_dir / "logs"
         log_dir_str = str(log_dir)
@@ -4229,7 +4342,9 @@ rule render_report:
 localrules: export_scenario_status
 
 rule export_scenario_status:
-    input: "{input_flag}"
+    input:
+        "{input_flag}",
+        "{_TOOLKIT_BUILD_STAMP_REL}",
     output:
         csv = "scenario_status.csv",
         md  = "workflow_summary.md",
@@ -4252,7 +4367,9 @@ rule export_scenario_status:
         # SCOPE, stated so this is not over-read: declaring the output is a real fix for a
         # real defect. It is NOT established as the cause of the 2026-08-13 failures --
         # run 3's job stats ("all 1, render_report 1, total 2") show this rule never ran,
-        # so something else wrote the read-model at 01:44:50 and is still unidentified.
+        # so something else wrote the read-model at 01:44:50, and that writer is
+        # analysis.eda(), which calls persist_validation_report in-process, outside the
+        # workflow.
         read_model = "validation_report.json",
     log: "{log_dir_str}/export_scenario_status.log"
     conda: "{conda_env_path}"
@@ -10886,6 +11003,34 @@ ILOC_BY_EVENT_ID_BY_MEMBER = {iloc_by_event_id_by_member!r}
             tokens = [f"simulation_member_{member_id}_evt-{event_id}" for event_id in event_ids]
             self._base_builder._write_queued_sentinels(tokens, alloc_jobid, sub.analysis_paths.analysis_dir)
 
+    def _write_master_snakefile(
+        self,
+        snakefile_path: Path,
+        content: str,
+        *,
+        override_clear_raw: ClearRawValue | None,
+    ) -> None:
+        """Write the master Snakefile and, for the production one, record its clear-raw value.
+
+        ``utils.report_rule_figure_stems`` has to know which ``plots/eda/`` figures the
+        production ``Snakefile`` has rules for, and a ``render_report`` that runs as a
+        separate process never holds this run's ``override_clear_raw``. So the value the
+        generator resolved (the override, else the config) is persisted to
+        ``_status/resolved_clear_raw.json`` beside the Snakefile it describes.
+
+        Only a write of the production ``Snakefile`` records. ``_resolve_snakefile_path``
+        sends a rehearsal to ``Snakefile.dryrun`` once a production file exists; recording
+        that write would make the record describe a Snakefile nobody will run, so a
+        ``--dry-run`` under a different clear-raw would change what the next
+        ``render_report`` believes. The Snakefile is written first, so a failed write
+        leaves the previous record, which still describes the previous Snakefile.
+        """
+        _write_snakefile_atomic(snakefile_path, content)
+        analysis_dir = self.experiment.analysis_paths.analysis_dir
+        if snakefile_path == Path(analysis_dir) / "Snakefile":
+            resolved = override_clear_raw if override_clear_raw is not None else self.experiment.cfg_analysis.clear_raw
+            write_resolved_clear_raw_record(analysis_dir, resolved)
+
     def submit_workflow(
         self,
         mode: Literal["local", "slurm", "auto"] = "auto",
@@ -11073,7 +11218,9 @@ ILOC_BY_EVENT_ID_BY_MEMBER = {iloc_by_event_id_by_member!r}
             master_snakefile_path = _resolve_snakefile_path(
                 self.experiment.analysis_paths.analysis_dir, dry_run=dry_run
             )
-            _write_snakefile_atomic(master_snakefile_path, master_snakefile_content)
+            self._write_master_snakefile(
+                master_snakefile_path, master_snakefile_content, override_clear_raw=override_clear_raw
+            )
 
             if verbose:
                 print(
@@ -11148,7 +11295,9 @@ ILOC_BY_EVENT_ID_BY_MEMBER = {iloc_by_event_id_by_member!r}
             master_snakefile_path = _resolve_snakefile_path(
                 self.experiment.analysis_paths.analysis_dir, dry_run=dry_run
             )
-            _write_snakefile_atomic(master_snakefile_path, master_snakefile_content)
+            self._write_master_snakefile(
+                master_snakefile_path, master_snakefile_content, override_clear_raw=override_clear_raw
+            )
 
             if verbose:
                 print(
@@ -11236,7 +11385,9 @@ ILOC_BY_EVENT_ID_BY_MEMBER = {iloc_by_event_id_by_member!r}
         )
 
         master_snakefile_path = _resolve_snakefile_path(self.experiment.analysis_paths.analysis_dir, dry_run=dry_run)
-        _write_snakefile_atomic(master_snakefile_path, master_snakefile_content)
+        self._write_master_snakefile(
+            master_snakefile_path, master_snakefile_content, override_clear_raw=override_clear_raw
+        )
 
         if verbose:
             print(

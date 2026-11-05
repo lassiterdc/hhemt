@@ -1398,8 +1398,14 @@ class analysis_config(cfgBaseModel):
             "load cleanly with the strict-safe (delete-nothing) default."
         ),
     )
+    # `validate_default=True`, because pydantic does not validate a default and this field's
+    # `mode="before"` coercion is what turns the literal "none" into a ForceRerunSpec.
+    # Without it an omitted `force_rerun` holds the raw string in a field typed as a spec,
+    # and every `model_dump` of the config emits a serializer warning. Deliberately NOT a
+    # `default_factory`: the JSON-schema default the config reference renders stays "none".
     force_rerun: ForceRerunValue = Field(
         "none",
+        validate_default=True,
         description=(
             'Force-rerun policy. "all" re-runs everything. "none" runs no '
             'forced re-runs. A dict with exactly one key — "sa_id" (sensitivity '

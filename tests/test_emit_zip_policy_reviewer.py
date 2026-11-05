@@ -183,7 +183,7 @@ def test_an_interrupt_mid_emit_leaves_the_old_destination_and_no_partial(tmp_pat
             _emit_bundle_zip(staging, out, streamed={arcname: fifo})
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
+        signal.signal(signal.SIGALRM, previous if previous is not None else signal.SIG_DFL)
     assert out.read_bytes() == b"OLD DESTINATION"
     assert not (tmp_path / "bundle.zip.partial").exists()
 

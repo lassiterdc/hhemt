@@ -157,7 +157,7 @@ result = Bundle.from_directory(bundle_dir).reprex(my_reprex, my_hpc_profile)
    | `sif_reference_present` | `True` when the crate carries a SIF entity. `False` does **not** imply a native run (see step 1) |
    | `sif_verified` | `True` when the digest matched. Also `True`, ambiguously, when no SIF entity is present and the bundle does not announce container mode: that covers a genuinely native run **and** a container bundle whose `bundle_manifest.json` carries no `sif_manifests` list, is missing, or is unreadable. `None` is the one unambiguous state: the bundle does announce container mode and carries no digest, so nothing was checked. `False` is unreachable, because a mismatch raises rather than returns |
    | `sif_signature_ok` | **always `None`.** Retained for schema stability; the toolkit does not sign SIFs and runs no `apptainer verify`, so this field never carries a result and its value distinguishes nothing |
-   | `zero_user_info_leaks` | informational. One entry per producer token still present in the bundle; on an install where no blocklist carrier is reachable it instead carries the gate's own diagnosis (see below) |
+   | `zero_user_info_leaks` | informational. At most one entry, whose text names every match of the generic patterns or of your private list in the bundle you hold; when `$HHEMT_REPREX_BLOCKLIST` is set to something unusable the one entry is the gate's own diagnosis (see below) |
 
    ```python
    if not result.runnable:
@@ -173,31 +173,76 @@ inputs you fetched into the bundle) with
 
 ## Zero-user-info status
 
-**Treat a reprex bundle as not-yet-guaranteed-private before sharing it widely.**
-The design goal is that a shared bundle carries **zero** producer-specific
-information, but that is not yet enforced at emit time.
+An emit refuses to write a bundle that still names the machine and person that produced it. Before the
+archive is moved into place, every text member is scanned with three layers, and a match in any member
+raises `ProcessingError` and leaves no archive at the output path. The message names each offending
+member, the layer that fired and either a class label or the position of the matched value in its list.
+It never prints the value itself. A bundle that was emitted has therefore passed the layers that ran,
+which its manifest records; the notes at the end of this section say what that does not cover.
 
-??? note "What the zero-user-info gate does and does not currently catch"
-    The property is proven by a positive blocklist scan over the emitted tree, and
-    that gate currently runs **consume-side and informationally**: `reprex()`
-    populates `result.zero_user_info_leaks` but does not fail. Hard emit-time
-    enforcement is deferred to an emit-hardening pass. The producer's absolute paths
-    can still appear in other deposited files, for example the harvested SWMM `.inp`
-    files, `Snakefile.source`, the baseline report and plot pages,
-    `scenario_status.csv` and the zarr metadata, surfaces the config-field scrub does
-    not cover.
+Each text member is first rewritten, so that the scan runs on what is actually written into the archive.
+The producer's directories, interpreter, home directory, login name and SLURM account are replaced by a
+closed set of tokens: `{hhemt_analysis_dir}`, `{hhemt_system_dir}`, `{hhemt_toolkit_dir}`,
+`{hhemt_package_dir}`, `{hhemt_python}`, `{hhemt_conda_env}`, `{hhemt_home}`, `{hhemt_user}`,
+`{hhemt_slurm_account}` and `{hhemt_producer_path}`. The last stands for the whole of a producer path: an
+absolute path under the login segment that no other token covers, or a relative path that climbs three or
+more levels (one or two levels are kept). The login name is replaced only where it is plainly a user
+name: a whole path segment, the local part of an address, or the value after `--user`, `-u` or `user=`. A
+value shorter than four characters is never replaced. Declared inputs are not rewritten, so every
+recorded digest of an input stays true; they are scanned like any other text member, and one that
+carries a producer value refuses the emit.
 
-    Four further things about the gate. Its blocklist carrier comes from
-    `$HHEMT_REPREX_BLOCKLIST` when that variable is set, and from the source checkout's
-    `scripts/reprex_blocklist.txt` only when it is not. The override is terminal rather
-    than the first step of a fallback chain: if it is set and does not point at an
-    existing file, resolution stops there and the source-checkout copy is never
-    consulted. There is deliberately no packaged-data copy, because a wheel could ship
-    either the real private tokens or synthetic ones that would certify a pass it never
-    performed. When no carrier is reachable (the usual case for a PyPI install), the gate
-    raises a diagnosed `ProcessingError` which `reprex()` catches and records: the
-    diagnosis lands in `result.zero_user_info_leaks` as a finding rather than crashing
-    the round-trip. So a non-empty `zero_user_info_leaks` is not automatically a list of
-    leaks. Read the entries. Note also that the gate is producer-local by design. It can
-    only find tokens it was given, so pointing the override at a list you wrote yourself
-    buys a pass the gate never earned.
+The three layers:
+
+1. **Generic patterns.** An email address, and an absolute path under a per-user or per-project root
+   (`/home/`, `/Users/`, `/scratch/`, `/project/`, `/lustre/orion/`, the Windows home directory in its
+   backslash, forward-slash and JSON-escaped forms, and the other cluster roots the pattern lists). A
+   brace-led segment such as `/scratch/{your-allocation}/sifs` names no user and does not fire. The
+   toolkit's own published author address is exempt, as is a closed list of nine addresses that
+   vendored JavaScript puts in the license headers of the baseline report page; any other address
+   refuses.
+2. **Values read from what you are publishing.** Every absolute path held by the system, analysis and
+   (when present) HPC-system configs of the analysis being emitted, the directory directly under a
+   per-user root in each of them, the HPC config's `default_account` and `login_node`, and the running
+   login name in the contexts above. This layer reads the same configs the rewrite reads.
+3. **Your private list (optional).** Specific identifiers that no pattern can describe, such as an
+   institution's allocation name, go in a plain text file that you keep in your own private storage,
+   never in a public repository and never in a package. Point `$HHEMT_REPREX_BLOCKLIST` at it. It holds
+   one entry per line, matched as a whole word without regard to case; blank lines and `#` comment lines
+   are ignored; a `# min-tokens: N` line sets how many distinct entries the file must hold (four when it
+   is absent). There is no default location, no copy inside the toolkit and no fallback: a variable that
+   names a missing file, a directory, an unreadable file or a file below its entry count refuses the
+   emit, because a mistyped path must not read as "no list".
+
+`bundle_manifest.json` records what ran under `zero_user_info`: `pattern_rules` and `config_values` are
+`checked`, and `private_list` is `checked` when the variable named a usable list, `not configured` when
+it is unset, and `set but empty` when it is set to an empty string. With no list, the emit still runs the
+first two layers and warns once. A reproducer rehydrates a rewritten member with
+`hhemt.experiment_definition.rehydrate_placeholders(path, values=None, *, dest_dir=None)`, which puts the
+reproducer's own values back for the tokens and writes a resolved copy named `rehydrated_{name}` under `dest_dir`, or under the scratch or temporary directory when none is given. The defaults
+are the bundle root (the nearest directory above the member that holds `bundle_manifest.json`) for the
+analysis and system directory tokens, `sys.executable` for `{hhemt_python}`, the reproducer's home
+directory for `{hhemt_home}` and the installed package directory for `{hhemt_package_dir}`.
+`{hhemt_toolkit_dir}` has a default only when the installed package sits under `src/`. A token with
+neither a supplied value nor a default (a directory token on a member outside any bundle, say) is refused
+rather than left in place. `{hhemt_conda_env}`, `{hhemt_user}`, `{hhemt_slurm_account}` and
+`{hhemt_producer_path}` stay as the token unless you supply a value.
+
+??? note "What the zero-user-info check does not cover"
+    - **Binary members are neither rewritten nor scanned.** The emit copies zarr chunks and declared
+      binary inputs (a DEM, a land-use raster, a weather NetCDF) through unchanged, so a producer value
+      inside one survives. No other binary member is carried: the baseline report is kept only as
+      `bundle_baseline/analysis_report.html`, and the archive version of it that used to nest inside the
+      bundle, and carried producer values in its compressed entries, is no longer written.
+    - **The second layer shares its source with the rewrite.** Both read the same configs, so a value
+      that is in neither those configs nor a generic pattern is caught only by your private list.
+    - **A private list is only as good as its owner.** The check can find only the entries it is given,
+      so pointing the variable at a list you wrote yourself certifies nothing beyond that list.
+    - **History is not rewritten.** The public repository keeps any value that was committed before the
+      check existed.
+
+    On the consume side, `reprex()` repeats the generic patterns and your private list over the bundle
+    you hold and reports them in `result.zero_user_info_leaks` as one entry whose text names every match, without failing. A consumer holds
+    no producer configs, so the second layer does not run there. When the variable is set to something
+    unusable, the entry is the diagnosis rather than a match, so read the entries before treating a
+    non-empty list as a list of leaks.

@@ -793,6 +793,63 @@ _PROVENANCE_STAGES = (
     "report",
 )
 
+#: WHY a stage is unstamped, one row per member of `_VALIDATED_STAGES` (a CLOSED domain:
+#: the test `tests/test_provenance_completeness_absence_categories.py` pins that the keys
+#: equal that tuple, so a counted stage added to it without a row reds there). The plots and
+#: report stages have no row because the check does not count them: they are stamped after
+#: the validation report is written, so their absence is never a finding of this check.
+#: Each value is
+#: ``(category, sentence)``. The category names are the grouping keys of
+#: `_absence_clause`; the sentence is the text a summary arm states for that category and
+#: is NEVER a verdict: the build comparison in `check_provenance_completeness` is untouched
+#: by this table, and an absent stage still contributes no stamp to it.
+#:
+#: Regenerating the two "no site" rows (they hold only while no capture site exists):
+#:   grep -n "producing_stamp\|append_stage_provenance" \
+#:       src/hhemt/run_simulation_runner.py src/hhemt/setup_workflow.py   # returns nothing
+#:   grep -n 'append_stage_provenance(.*"report")' src/hhemt/provenance.py  # the report site,
+#:                                                      # the matcher's must-fire control
+#: The test reds if a capture site appears for `setup` or `sim`, so this table cannot go
+#: stale silently.
+_CATEGORY_NO_SITE = "no site in this toolkit"
+_CATEGORY_UNDECIDABLE = "not decidable from the tree"
+
+_SENTENCE_NO_SITE = "no capture site exists for this stage in this toolkit build"
+_SENTENCE_UNDECIDABLE = (
+    "either this analysis predates the stage's capture site, or the site existed and did not "
+    "fire; the tree cannot tell these apart, and no value is inferred"
+)
+
+_PROVENANCE_ABSENCE_TABLE: dict[str, tuple[str, str]] = {
+    "setup": (_CATEGORY_NO_SITE, _SENTENCE_NO_SITE),
+    "sim": (_CATEGORY_NO_SITE, _SENTENCE_NO_SITE),
+    "processing": (_CATEGORY_UNDECIDABLE, _SENTENCE_UNDECIDABLE),
+    "consolidate": (_CATEGORY_UNDECIDABLE, _SENTENCE_UNDECIDABLE),
+}
+
+
+def _absence_clause(missing: list[str]) -> str:
+    """Group the unstamped stages under the absence categories present, one clause each.
+
+    Used by EVERY summary arm that lists missing stages (dirty, build disagreement,
+    missing), so the three arms cannot drift apart on what an absence means. Categories
+    appear in the table's own order, stages within a category in the order given. A stage
+    with no table row is stated as uncategorised rather than dropped or guessed: the
+    domain is closed and the test pins it, but a summary that silently omits a stage it
+    was handed would understate the absence.
+    """
+    grouped: dict[str, tuple[str, list[str]]] = {}
+    for stage in _PROVENANCE_ABSENCE_TABLE:
+        if stage in missing:
+            category, sentence = _PROVENANCE_ABSENCE_TABLE[stage]
+            grouped.setdefault(category, (sentence, []))[1].append(stage)
+    parts = [f"{category} ({', '.join(stages)}): {sentence}" for category, (sentence, stages) in grouped.items()]
+    unlisted = [s for s in missing if s not in _PROVENANCE_ABSENCE_TABLE]
+    if unlisted:
+        parts.append(f"no absence category recorded ({', '.join(unlisted)})")
+    return "; ".join(parts) if parts else "none"
+
+
 #: The stages `check_provenance_completeness` counts: those that have produced their stamp
 #: by the time the validation report is written, at consolidation. The plots and report
 #: stages run after that write, so they cannot be stamped when the count is taken and are
@@ -1009,7 +1066,7 @@ def check_provenance_completeness(analysis) -> CheckResult:
                 f"toolkit checkout carrying uncommitted tracked changes "
                 f"({', '.join(dirty)}). Dirty-state undetermined: {len(undetermined)} "
                 f"({', '.join(undetermined) or 'none'}); not captured: {len(missing)} "
-                f"({', '.join(missing) or 'none'}); no value is inferred for either group. "
+                f"({_absence_clause(missing)}); no value is inferred for either group. "
                 f"The recorded sha does not identify the code that ran for the dirty stages. "
                 f"Whether this product would be reproduced is not established here: this "
                 f"check reads toolkit source only, and does not observe the environment, "
@@ -1029,7 +1086,7 @@ def check_provenance_completeness(analysis) -> CheckResult:
                 f"({n_excluded} excluded as unresolved, {n_legacy} read from a legacy "
                 f"scalar carrier and therefore a partial capture): "
                 f"{', '.join(sorted(builds))}. Not captured: {len(missing)} "
-                f"({', '.join(missing) or 'none'}); dirty-state undetermined: "
+                f"({_absence_clause(missing)}); dirty-state undetermined: "
                 f"{len(undetermined)} ({', '.join(undetermined) or 'none'}); no value is "
                 f"inferred for either group. At least one stage was produced by different "
                 f"toolkit code than the others, so no single sha identifies the code that "
@@ -1044,9 +1101,8 @@ def check_provenance_completeness(analysis) -> CheckResult:
             level="aggregate",
             passed=True,
             summary=(
-                f"{len(captured)}/{len(stages)} stages stamped; not captured: {', '.join(missing)}. "
-                "This is not a failure: an analysis produced before a stage gained its "
-                "capture site legitimately has no stamp there, and no value is inferred for it."
+                f"{len(captured)}/{len(stages)} stages stamped; not captured: {_absence_clause(missing)}. "
+                "Informational, not a failure; no value is inferred for any absent stage."
                 f"{_PROVENANCE_NOT_COUNTED_NOTE}"
             ),
             details=details,
@@ -3103,10 +3159,16 @@ def persist_validation_report(analysis: TRITONSWMM_analysis, *, df_status=None) 
     import json
     from dataclasses import asdict
 
+    from hhemt.provenance import producing_stamp
+
     analysis_dir = Path(analysis.analysis_paths.analysis_dir)
     report = validate_analysis(analysis, df_status=df_status)
     out = analysis_dir / _VALIDATION_REPORT_FILENAME
-    payload = {"checks": [asdict(c) for c in report.checks]}
+    # `producing_stamp` records the toolkit build that WROTE this read-model, minted here at
+    # write time from the running process (the single minter, never a constant or a value
+    # carried from another stage). A read-model written before this key existed carries
+    # none and stays unverifiable; `load_validation_report` ignores unknown keys.
+    payload = {"checks": [asdict(c) for c in report.checks], "producing_stamp": producing_stamp()}
     tmp = out.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, indent=2))
     tmp.replace(out)  # atomic

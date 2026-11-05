@@ -1,9 +1,9 @@
   # The retired member-vocabulary alternation, versioned.
   #
   # WHY A DATA FILE AND NOT A MODULE. scripts/ has no __init__.py and no checker
-  # imports a sibling; anonymization_blocklist.txt, reprex_blocklist.txt,
-  # vocabulary_freeze.yaml and vocabulary_residue_exceptions.yaml are all read and
-  # none is imported. A cross-repo consumer (the plan-anchor gate lives in a
+  # imports a sibling; anonymization_exemptions.yaml, vocabulary_freeze.yaml and
+  # vocabulary_residue_exceptions.yaml are all read and none is imported.
+  # A cross-repo consumer (the plan-anchor gate lives in a
   # different repository) can read a file and can never import a module here.
   #
   # WHY VERSIONED. The enumeration widened three times in three review rounds, each

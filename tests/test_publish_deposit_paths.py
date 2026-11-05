@@ -1072,43 +1072,6 @@ def test_the_census_scans_same_named_members_after_a_leak_without_colliding(tmp_
     assert _census_leaking_files(unpacked, tmp_path / "scan") == ["x/0", "z/0"]
 
 
-def test_the_deposit_as_uploaded_carries_no_producer_token(tmp_path, monkeypatch):
-    """Property: no token of the producer's layout survives in any member of the deposit.
-
-    Class: the list ``_deposit_set`` returns -- the staged config pair, the crate and the zarr store --
-    scanned member by member. Why required: the scrub is correct by construction and this is the
-    falsifiable proof, with a carrier independent of the scrub. The world's directories carry the token
-    ``acme_private_site``. The must-fire arm is this body on the parent's output, which leaks it from
-    both config files.
-    """
-    carrier = _put(tmp_path / "carrier.txt", "# min-tokens: 1\nacme_private_site\n")
-    monkeypatch.setenv("HHEMT_REPREX_BLOCKLIST", str(carrier))
-    world = _acme_world(tmp_path)
-    _write_crate(world.ad)
-    staging = tmp_path / "staging"
-    staging.mkdir()
-    deposit = _call_deposit_set(world.analysis, staging)
-    assert {p.name for p in deposit} == {"ro-crate-metadata.json", "analysis_datatree.zarr", *CFG_FILES}
-    leaks = _scan_member_by_member(deposit, tmp_path / "scratch")
-    assert not leaks, f"the deposit as uploaded leaks the producer's layout: {leaks}"
-
-
-def _acme_world(tmp_path: Path) -> SimpleNamespace:
-    """A world whose directories sit under ``acme_private_site``: the token the census looks for."""
-    base_name = "acme_private_site"
-    base = tmp_path / base_name
-    sd, ad, out = base / "system", base / "analysis", base / "outside"
-    return _world(
-        tmp_path,
-        base_name=base_name,
-        system_over={
-            "landuse_lookup_file": str(_put(sd / "gis" / "lu.csv")),
-            "DEM_fullres": str(_put(out / "dem.tif")),
-        },
-        analysis_over={"weather_timeseries": str(_put(ad / "in" / "weather.nc"))},
-    )
-
-
 def test_a_real_emit_carries_no_producer_token(tmp_path, monkeypatch):
     """Property: the unpacked runnable deposit of a minimal real emit leaks no token of its producer's layout.
 

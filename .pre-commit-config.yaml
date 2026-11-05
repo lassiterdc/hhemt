@@ -208,8 +208,12 @@ repos:
         always_run: true
 
   # Anonymization guard (scripts/check_anonymization.py)
-  # Fails if any tracked file contains a genuinely-private identifier listed in
-  # scripts/anonymization_blocklist.txt (ADR-14).
+  # Fails if any tracked file carries a private identifier (ADR-14): the generic pattern
+  # classes (email address, per-user absolute path) held in the script, minus the closed
+  # table scripts/anonymization_exemptions.yaml, plus the producer-specific list reached
+  # through $HHEMT_ANONYMIZATION_BLOCKLIST or `git config --local hhemt.blocklistPath PATH`
+  # (kept in a private location outside this repository; this repository carries no copy). With neither configured
+  # the guard runs the pattern classes alone and prints one notice.
   #
   # The pre-commit FRAMEWORK is installed (environment.yaml:106) — what is not yet run in
   # this clone is `pre-commit install`, so `.git/hooks/` is empty and no hook here fires.

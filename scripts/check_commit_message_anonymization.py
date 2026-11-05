@@ -7,11 +7,18 @@ in this repository's history carry blocklisted tokens, and one of them is a REME
 commit that re-leaked the token into its own subject line while removing it from a file.
 
 A message is rewritable only before the commit object exists, so the commit-msg stage is
-the only venue that can prevent this. Ground truth is the same hand-authored blocklist the
-file guard reads (ADR-14 independence invariant); this module imports the loader from that
-guard rather than re-implementing it, so both venues share one parse and one carrier.
+the only venue that can prevent this. Ground truth is the same two layers the
+file guard reads (ADR-14 independence invariant): the generic pattern classes (email address,
+per-user absolute path) and the producer-specific carrier. This module imports the resolver,
+the loader and the patterns from that guard rather than re-implementing them, so both venues
+share one parse, one carrier and one carrier-resolution rule (CR, stated in that module).
 
-Exit 0 = clean, 1 = >=1 hit.
+With NO carrier configured the guard degrades like the file guard: the pattern classes run,
+one notice is printed, and the exit status follows the pattern hits. A carrier that is
+configured but unusable REFUSES (non-zero, naming the tier and the path, never a token).
+A producer-specific value is never printed: a hit names the token's index and length.
+
+Exit 0 = clean, 1 = >=1 hit or a refusal.
 """
 
 from __future__ import annotations
@@ -23,10 +30,31 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from check_anonymization import (  # noqa: E402
-    _resolve_blocklist_path,
+    _CLASS_LABEL,
+    PATTERN_CLASSES,
+    _resolve_carrier,
     compile_patterns,
     load_blocklist,
+    no_carrier_notice,
+    pattern_class_hits,
+    token_label,
+    toolkit_author_addresses,
 )
+
+# Under `git commit -v` (or commit.verbose) git appends this line and then the staged diff, and
+# discards everything from it onward before it records the message. Text above it, including
+# `#` lines written with `-m`, is kept by git and so stays scanned.
+SCISSORS_LINE = "# " + "-" * 24 + " >8 " + "-" * 24
+
+
+def scanned_text(message: str) -> str:
+    """The part of the message file that git will record: everything above the scissors line."""
+    kept: list[str] = []
+    for line in message.splitlines():
+        if line.rstrip() == SCISSORS_LINE:
+            break
+        kept.append(line)
+    return "\n".join(kept)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -38,18 +66,25 @@ def main(argv: list[str] | None = None) -> int:
     if not msg_path.is_file():
         print(f"check_commit_message_anonymization: no such file {msg_path}", file=sys.stderr)
         return 1
-    text = msg_path.read_text(encoding="utf-8", errors="replace")
-    patterns = compile_patterns(load_blocklist(_resolve_blocklist_path(REPO_ROOT)))
-    hits = [
-        (lineno, token)
-        for lineno, line in enumerate(text.splitlines(), start=1)
-        for token, pat in patterns
-        if pat.search(line)
-    ]
+    text = scanned_text(msg_path.read_text(encoding="utf-8", errors="replace"))
+    resolution = _resolve_carrier(REPO_ROOT)
+    if resolution.path is None:
+        print(no_carrier_notice(resolution.empty_tiers), file=sys.stderr)
+        patterns = []
+    else:
+        patterns = compile_patterns(load_blocklist(resolution.path, resolution.tier or "the carrier"))
+    allowed_emails = toolkit_author_addresses(REPO_ROOT)
+    hits: list[tuple[int, str]] = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        for cls in pattern_class_hits(line, frozenset(PATTERN_CLASSES), allowed_emails):
+            hits.append((lineno, _CLASS_LABEL[cls]))
+        for index, (token, pat) in enumerate(patterns, start=1):
+            if pat.search(line):
+                hits.append((lineno, token_label(index, token)))
     if hits:
-        print("Commit message REJECTED (blocklisted identifier in the message):", file=sys.stderr)
-        for lineno, token in hits:
-            print(f"  message line {lineno}: blocklisted token {token!r}", file=sys.stderr)
+        print("Commit message REJECTED (private identifier in the message):", file=sys.stderr)
+        for lineno, label in hits:
+            print(f"  message line {lineno}: {label}", file=sys.stderr)
         print(
             "\nRewrite the message. A commit message is immutable once the object exists, "
             "and the file guard does not scan messages.",

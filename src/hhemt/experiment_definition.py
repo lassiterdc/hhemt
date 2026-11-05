@@ -17,8 +17,12 @@ This module MUST NOT import from ``tests`` or ``scripts`` — a ``src -> tests``
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
+import sys
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -167,6 +171,162 @@ def expand_config_vars(cfg_path: str | Path, *, dest_dir: str | Path | None = No
     root.mkdir(parents=True, exist_ok=True)
     resolved = root / f"resolved_{cfg_path.name}"
     resolved.write_text(resolved_text, encoding="utf-8")
+    return resolved
+
+
+#: Sentinel returned by ``_default_rehydration_value`` for a token whose documented default is to
+#: stay as the token, so "no default exists" (None) and "the default is the token" stay distinct.
+_LEAVE_AS_TOKEN = object()
+
+
+def _own_package_dir() -> Path:
+    """The running install's ``hhemt`` package directory (present on a source checkout and an installed copy)."""
+    import hhemt
+
+    return Path(hhemt.__file__).resolve().parent
+
+
+def _own_checkout_root() -> Path | None:
+    """The running install's checkout root, or None when its package does not sit under ``src/``."""
+    package_dir = _own_package_dir()
+    return package_dir.parent.parent if package_dir.parent.name == "src" else None
+
+
+def _nearest_bundle_root(member: Path) -> Path | None:
+    """The nearest ancestor of ``member`` that holds ``bundle_manifest.json``, or None outside any bundle."""
+    from hhemt.version_migration.constants import BUNDLE_MANIFEST_FILENAME
+
+    for ancestor in member.resolve().parents:
+        if (ancestor / BUNDLE_MANIFEST_FILENAME).is_file():
+            return ancestor
+    return None
+
+
+def _default_rehydration_value(token: str, member: Path) -> object:
+    """A closed token's documented default: a string, ``_LEAVE_AS_TOKEN``, or None when no default exists."""
+    from hhemt.bundle import _placeholders as ph
+
+    if token in (ph.TOKEN_ANALYSIS_DIR, ph.TOKEN_SYSTEM_DIR):
+        root = _nearest_bundle_root(member)
+        return None if root is None else str(root)
+    if token == ph.TOKEN_TOOLKIT_DIR:
+        checkout = _own_checkout_root()
+        return None if checkout is None else str(checkout)
+    if token == ph.TOKEN_PACKAGE_DIR:
+        return str(_own_package_dir())
+    if token == ph.TOKEN_PYTHON:
+        return sys.executable
+    if token == ph.TOKEN_HOME:
+        return str(Path.home())
+    return _LEAVE_AS_TOKEN
+
+
+def rehydrate_placeholders(
+    path: str | Path,
+    values: Mapping[str, str | os.PathLike[str]] | None = None,
+    *,
+    dest_dir: str | Path | None = None,
+) -> Path:
+    """Put a consumer's own values back for the ``{hhemt_*}`` tokens in a bundle member, and return a resolved copy.
+
+    An emitted bundle replaces the producer's directories, interpreter, home directory, login name and
+    SLURM account with the closed tokens of ``hhemt.bundle._placeholders.PLACEHOLDER_TOKENS``. A reader
+    that parses such a member as a path calls this first and reads the returned copy. The source member is
+    never modified.
+
+    ``values`` maps token (braces included, e.g. ``"{hhemt_slurm_account}"``) to the consumer's value and
+    wins over the default. Defaults, per token:
+
+    * ``{hhemt_analysis_dir}`` and ``{hhemt_system_dir}``: the bundle root, taken as the nearest ancestor of
+      ``path`` that holds ``bundle_manifest.json``. Outside any bundle there is no default.
+    * ``{hhemt_toolkit_dir}``: this install's checkout root, only when its package sits under ``src/``;
+      otherwise there is no default and the token is refused until the caller supplies a value.
+      ``{hhemt_package_dir}``: this install's ``hhemt`` package directory.
+    * ``{hhemt_python}``: ``sys.executable``. ``{hhemt_home}``: ``Path.home()``.
+    * ``{hhemt_conda_env}``, ``{hhemt_user}``, ``{hhemt_slurm_account}`` and ``{hhemt_producer_path}``: left as
+      the token, because the consumer has no value of the producer's kind to give.
+
+    Raises ``ConfigurationError`` (CLI exit 2), before writing anything, when the member holds a token that has
+    neither a supplied value nor a default, or when ``values`` names a token outside the closed set. An unresolved
+    token is refused rather than left in place because a directory token left in a path that is then opened
+    produces a ``FileNotFoundError`` that names the token and not the missing value.
+
+    The copy is ``rehydrated_{name}`` (the prefix means it can never be the source, even in the source's own
+    directory) under ``dest_dir``, or under ``$SCRATCH_DIR`` (else the platform tempdir)
+    in ``rehydrated_members/{digest of the source path}/``. The digest subdirectory is there because two bundle
+    members routinely share a file name (every sensitivity ``zarr.json``), and a shared directory would let the
+    second call overwrite the first call's copy while its caller still holds the path.
+
+    Deliberately NOT ``expand_config_vars``: that function runs ``os.path.expandvars``, which expands every
+    ``${...}`` and would rewrite the shell references (``${CONDA_PREFIX}``) a bundled Snakefile legitimately
+    carries. This function matches only the ten closed token names, in one pass, so a substituted value is
+    never scanned again.
+
+    Not established: the as-given and resolved spellings of a directory share one token, so a single value
+    cannot restore which spelling a given occurrence had. A
+    percent-encoded path (``%2Fscratch%2F...``) matched no placeholder row at emit time and is not touched
+    here. The member is read whole, so this is for text members.
+    """
+    from hhemt.bundle._placeholders import PLACEHOLDER_TOKENS
+
+    member = Path(path)
+    supplied = dict(values or {})
+    unknown = sorted(set(supplied) - set(PLACEHOLDER_TOKENS))
+    if unknown:
+        raise ConfigurationError(
+            field=member.name,
+            message=(
+                f"{member.name}: unknown placeholder token(s) {unknown}; the closed set is {list(PLACEHOLDER_TOKENS)}."
+            ),
+            config_path=member,
+        )
+
+    for token, supplied_value in supplied.items():
+        if not os.fspath(supplied_value):
+            raise ConfigurationError(
+                field=member.name,
+                message=f"{member.name}: the supplied value for {token} is empty.",
+                config_path=member,
+            )
+
+    data = member.read_bytes()
+    replacements: dict[bytes, bytes] = {}
+    unresolved: list[str] = []
+    for token in PLACEHOLDER_TOKENS:
+        raw_token = token.encode()
+        if raw_token not in data:
+            continue
+        value: object = supplied.get(token)
+        if value is None:
+            value = _default_rehydration_value(token, member)
+        if value is None:
+            unresolved.append(token)
+        elif value is _LEAVE_AS_TOKEN:
+            replacements[raw_token] = raw_token
+        else:
+            replacements[raw_token] = os.fspath(value).encode()  # type: ignore[arg-type]
+    if unresolved:
+        raise ConfigurationError(
+            field=member.name,
+            message=(
+                f"{member.name}: unresolved placeholder token(s) {unresolved}. Pass values={{token: value}}, "
+                "or rehydrate a member that sits inside a bundle (a directory holding bundle_manifest.json), "
+                "whose root is the default for the two directory tokens."
+            ),
+            config_path=member,
+        )
+
+    if dest_dir is not None:
+        root = Path(dest_dir)
+    else:
+        digest = hashlib.sha256(str(member.resolve()).encode()).hexdigest()[:12]
+        root = Path(os.environ.get("SCRATCH_DIR") or tempfile.gettempdir()) / "rehydrated_members" / digest
+    root.mkdir(parents=True, exist_ok=True)
+    resolved = root / f"rehydrated_{member.name}"
+    if replacements:
+        pattern = re.compile(b"|".join(re.escape(raw) for raw in replacements))
+        data = pattern.sub(lambda match: replacements[match.group(0)], data)
+    resolved.write_bytes(data)
     return resolved
 
 

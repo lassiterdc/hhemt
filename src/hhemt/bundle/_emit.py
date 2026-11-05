@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -41,6 +42,15 @@ from hhemt.bundle._path_policy import (
     enumerate_path_fields,
     rebase_bundle_relative_paths,
 )
+from hhemt.bundle._placeholders import (
+    SNIFF_BYTES,
+    PlaceholderTable,
+    build_placeholder_table,
+    is_zarr_chunk_member_by_name,
+    prefix_is_text,
+    rewrite_producer_paths,
+)
+from hhemt.bundle._reprex_gate import ZeroUserInfoScanner
 from hhemt.report_renderers._figure_emission import (
     harvest_metadata_only_sources,
     harvest_source_paths,
@@ -368,12 +378,148 @@ def _crate_license_finding(analysis, staging: Path) -> str | None:
     return None
 
 
+#: The directory prefix, under ``plots/``, of a sensitivity analysis's per-member figures.
+_MEMBER_FIGURE_PREFIX = ("sensitivity", "per_sim")
+
+#: One flag name read by the refusal's fix hint, the override warning and the CLI help.
+_ALLOW_STALE_FIGURES_FLAG = "--allow-stale-figures"
+
+
+def _live_member_ids(obj: Any) -> frozenset[str]:
+    """The member ids the experiment's setup table currently lists, as strings.
+
+    ``emit_bundle`` receives one of two shapes. The sensitivity wrapper carries ``df_setup``
+    on itself; the sensitivity master (a plain analysis, which is what ``hhemt bundle`` passes)
+    carries it at ``.sensitivity.df_setup``. A non-sensitivity analysis carries neither, and
+    ``self.sensitivity`` is unset unless the sensitivity toggle is on. No member set (neither
+    resolves, or the index is empty) is an empty set: nothing can be stale against it.
+
+    Ids are compared as strings because ``df_setup.index`` is the setup table's ``member_id``
+    column, which the toolkit compares as ``astype(str)`` elsewhere.
+    """
+    df_setup = getattr(obj, "df_setup", None)
+    if df_setup is None:
+        df_setup = getattr(getattr(obj, "sensitivity", None), "df_setup", None)
+    if df_setup is None:
+        return frozenset()
+    return frozenset(str(i) for i in df_setup.index)
+
+
+def _stale_member_of(plots_dir: Path, figure: Path, live: frozenset[str]) -> str | None:
+    """The member id of ``figure`` when it sits under a member directory NOT in ``live``."""
+    parts = figure.relative_to(plots_dir).parts
+    if len(parts) < len(_MEMBER_FIGURE_PREFIX) + 2 or parts[: len(_MEMBER_FIGURE_PREFIX)] != _MEMBER_FIGURE_PREFIX:
+        return None
+    member_dir = parts[len(_MEMBER_FIGURE_PREFIX)]
+    if not member_dir.startswith("member-"):
+        return None
+    member_id = member_dir[len("member-") :]
+    return None if member_id in live else member_id
+
+
+def _check_stale_figures(analysis: Any, analysis_dir: Path, plots_dir: Path, allow_stale_figures: bool) -> list[str]:
+    """Refuse a sensitivity analysis holding stale figures, or (with the override) report them.
+
+    A STALE FIGURE is a regenerable figure file under ``plots/sensitivity/per_sim/member-{N}/``
+    whose ``N`` is not in the live member set (``_live_member_ids``). Selection goes through
+    ``select_regenerable_figures``, the toolkit's one walk for figure eligibility, with a
+    ``keep`` predicate; that selector DELETES NOTHING and this check hands its result to no
+    deleter, so the analysis tree is byte-identical whatever this returns or raises. A figure
+    whose family no plot rule declares (``_declared_figure_stems``, the prune's own test) is the
+    separate ``_prune_undeclared_figures`` case: the prune deletes it next, so it is not counted,
+    warned about or listed here, even under a member directory.
+
+    Returns the stale figures' analysis-relative paths (empty when none). Raises
+    ``ConfigurationError(field="bundle_stale_figures")`` when there are some and
+    ``allow_stale_figures`` is False. With the override it issues ONE warning naming the count
+    and returns the paths, which ``emit_bundle`` records as ``stale_figures_included``.
+    """
+    live = _live_member_ids(analysis)
+    if not live:
+        return []
+    # A stale member figure whose family no plot rule declares is the prune's case, not this
+    # check's: `_prune_undeclared_figures` deletes it next, so it never reaches the bundle and must
+    # not be counted, warned about or listed. The test is the prune's own (`_declared_figure_stems`
+    # and `_figure_stem`), so the two cannot disagree. No Snakefile (None) means the prune skips, so
+    # every stale figure survives into the bundle and is counted.
+    declared = _declared_figure_stems(analysis_dir)
+    stale: list[Path] = []
+    by_member: dict[str, int] = {}
+
+    def _record(figure: Path) -> None:
+        member_id = _stale_member_of(plots_dir, figure, live)
+        if member_id is not None:
+            stale.append(figure)
+            by_member[member_id] = by_member.get(member_id, 0) + 1
+
+    select_regenerable_figures(
+        analysis_dir,
+        plots_dir,
+        keep=lambda p: (
+            _stale_member_of(plots_dir, p, live) is None
+            or (declared is not None and _figure_stem(p.name) not in declared)
+        ),
+        on_select=_record,
+    )
+    if not stale:
+        return []
+    relative = [str(p.relative_to(analysis_dir)) for p in stale]
+    if allow_stale_figures:
+        _warn_stale_figures_included(len(relative))
+        return relative
+
+    from hhemt.exceptions import ConfigurationError
+
+    member_ids = sorted(by_member, key=lambda m: (not m.isdigit(), int(m) if m.isdigit() else 0, m))
+    setup_file = getattr(getattr(analysis, "cfg_analysis", None), "sensitivity_analysis", None)
+    per_member = "\n".join(
+        f"    plots/sensitivity/per_sim/member-{m}/   ({by_member[m]} figure files)" for m in member_ids
+    )
+    raise ConfigurationError(
+        field="bundle_stale_figures",
+        message=(
+            f"This sensitivity analysis holds {len(relative)} stale figure file(s) for "
+            f"{len(member_ids)} member(s) that are no longer in the setup table above: "
+            f"member(s) {', '.join(member_ids)}. They are under:\n{per_member}\n"
+            "  A stale figure shows a member this experiment no longer contains, and the data it was "
+            "drawn from may be gone (the harvest warning names any declared source that is absent). "
+            "Bundling it would put figures with no data behind them into the bundle and into any "
+            "deposit made from it. Nothing was written or deleted."
+        ),
+        config_path=setup_file,
+        fix_hint=(
+            "re-render the figures for the current setup table with `hhemt run` (or `hhemt run-experiment`) "
+            'and --override-force-rerun \'{"subject": "all", "stage": "render"}\', which deletes and '
+            "rebuilds every regenerable figure; or put the member(s) back in the setup table. To bundle "
+            f"anyway, re-run `hhemt bundle` with {_ALLOW_STALE_FIGURES_FLAG}, which bundles the stale "
+            "figures as they are and lists them under stale_figures_included in bundle_manifest.json; "
+            "from Python, pass allow_stale_figures=True to emit_bundle. `hhemt reprex emit` and "
+            "`hhemt publish --reprex-bundle` take no such flag: clear the stale figures first."
+        ),
+    )
+
+
+def _warn_stale_figures_included(count: int) -> None:
+    """ONE warning naming how many stale figures the override carried (same form as W1)."""
+    warnings.warn_explicit(
+        message=(
+            f"Bundle: {count} stale figure file(s) included by {_ALLOW_STALE_FIGURES_FLAG}; see stale_figures_included"
+        ),
+        category=UserWarning,
+        filename=_HARVEST_WARNING_LABEL,
+        lineno=0,
+        module="hhemt.bundle._emit",
+    )
+
+
 def emit_bundle(
     analysis: TRITONSWMM_analysis,
     output_path: Path | None = None,
     exclude_config: Path | BundleExcludeConfig | None = None,
     container_defs: list[Path] | None = None,  # RETIRED: any non-empty value raises
     #   ConfigurationError below; kept in the signature only so callers get that message.
+    omit_output_zarrs: bool = False,
+    allow_stale_figures: bool = False,
 ) -> Path:
     """Emit a portable render bundle from a completed HPC analysis.
 
@@ -383,8 +529,14 @@ def emit_bundle(
     refs), harvested from *.manifest.json sidecars under
     {analysis_dir}/plots/ and {analysis_dir}/eda/, together with every
     cfg-declared input not excluded. Configs are rewritten to relative paths.
-    The HPC-baseline analysis_report.{html,zip} are preserved under
-    bundle_baseline/.
+    The HPC-baseline analysis_report.html is preserved under bundle_baseline/; the
+    baseline zip is not carried.
+
+    Every text member of the archive (generated and harvested alike) has the
+    producer's directories, interpreter, login name and SLURM account replaced by
+    the closed ``{hhemt_*}`` tokens of ``_placeholders`` as it is written into the
+    zip. Declared inputs (the files ``_copy_declared_inputs`` carries) and binary
+    members are copied through byte for byte.
 
     Parameters
     ----------
@@ -394,6 +546,20 @@ def emit_bundle(
         emits an ``input_deposit`` by-reference block into ``bundle_manifest.json`` and
         a URL-bearing ``File`` part into the crate instead. Omit it, the default, and
         the bundle is self-contained: every config-declared input is carried.
+    omit_output_zarrs : bool
+        When True, every harvested ``.zarr`` store is carried SHALLOWLY (zarr metadata
+        documents only, no chunk files) and named in BOTH ``metadata_only_stores`` and
+        ``omitted_output_zarrs`` in ``bundle_manifest.json``. ``combine`` refuses such a
+        bundle (it refuses every ``metadata_only_stores`` entry), and the bundle's
+        regeneration Snakefile refuses a plot rule that declared an omitted store in full.
+        Default False: the emit is unchanged.
+    allow_stale_figures : bool
+        A sensitivity analysis holding figures of members no longer in its setup table is
+        REFUSED by default (``ConfigurationError``, field ``bundle_stale_figures``), before
+        anything is deleted or staged. When True the emit proceeds, carries those figures as
+        they are, issues one warning naming their count, and records their analysis-relative
+        paths under ``stale_figures_included`` in ``bundle_manifest.json``. Nothing is ever
+        deleted from the analysis tree on account of a stale figure.
     """
     # ARGUMENT validation, so it precedes every read of the tree: a caller passing a retired
     # parameter is told before a single stat.
@@ -420,6 +586,12 @@ def emit_bundle(
             f"Bundle emission requires a completed render_report(). "
             f"Run analysis.render_report() on HPC first."
         )
+
+    # Stale-figure refusal. Placed with the other shipping-time refusals, AFTER the
+    # manifest-presence check and BEFORE the container-manifest step and the prune below: the
+    # prune DELETES from the live analysis tree, so a refusal must precede it for the tree to
+    # be untouched when the emit stops. Selection is read-only.
+    stale_figures_included = _check_stale_figures(analysis, analysis_dir, plots_dir, allow_stale_figures)
 
     # A container-mode bundle carries the PRODUCER MANIFEST of the image the
     # SIMULATIONS RAN IN -- the CARRIED identity source from_doi consumes. Recipes are package
@@ -475,6 +647,15 @@ def emit_bundle(
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Built once per emit, before anything is staged, from the analysis being emitted. It reads
+    # nothing from the tree, so it is placed with the other per-emit inputs rather than inside the
+    # staging block it is applied from.
+    placeholders = build_placeholder_table(analysis)
+    # The zero-user-info check is built here, beside the table and for the same reason, and BEFORE
+    # anything is staged: a configured private list that cannot be used refuses the emit now rather
+    # than after the archive has been written.
+    scanner = ZeroUserInfoScanner.for_emit(analysis)
+
     # Function-local import: config/bundle_exclude.py imports hhemt.bundle._path_policy
     # (a leaf), and reprex_taxonomy.py documents the invariant that no module reachable
     # from hhemt.bundle.__init__ may import hhemt.config.* at module scope. Same discipline
@@ -496,8 +677,18 @@ def emit_bundle(
         # because a full declaration under one root must defeat a qualifier under the
         # other (harvest_metadata_only_sources).
         metadata_only = harvest_metadata_only_sources((plots_dir, analysis_dir / "eda"), analysis_dir)
+        declared_sources_unresolved_outside_tree: list[str] = []
         streamed, declared_sources_absent, metadata_only_stores = _harvest_sources(
-            sources_by_renderer, analysis_dir, metadata_only=metadata_only
+            sources_by_renderer,
+            analysis_dir,
+            metadata_only=metadata_only,
+            omit_output_zarrs=omit_output_zarrs,
+            unresolved_outside=declared_sources_unresolved_outside_tree,
+        )
+        # The omitted set is the shallow `.zarr` stores of THIS harvest under the flag: every
+        # harvested `.zarr` source is shallow under it, so the filter selects exactly those.
+        omitted_output_zarrs = (
+            [store for store in metadata_only_stores if store.endswith(".zarr")] if omit_output_zarrs else None
         )
         _copy_bundle_baseline(analysis_dir, staging)
         _copy_reference_outputs(analysis, staging)
@@ -529,8 +720,33 @@ def emit_bundle(
             crate_license_finding=_crate_license_finding(analysis, staging),
             metadata_only_stores=metadata_only_stores,
             analysis_dir=analysis_dir,
+            omitted_output_zarrs=omitted_output_zarrs,
+            stale_figures_included=stale_figures_included,
+            declared_sources_unresolved_outside_tree=declared_sources_unresolved_outside_tree,
+            zero_user_info=scanner.manifest_record(),
         )
-        _emit_bundle_zip(staging, output_path, streamed=streamed)
+        # The declared inputs are the one member class the table never rewrites: leaving their
+        # bytes alone keeps every recorded input digest true. Taken from the plan made above, so
+        # what is exempt is exactly what `_copy_declared_inputs` wrote.
+        declared_arcnames = frozenset(name for name, _src in _declared_destinations(planned_inputs))
+        # The archive is written under a temporary name and renamed into place only after the
+        # zero-user-info check has passed on every text member, so a refusal leaves nothing at
+        # `output_path` that was written by this emit. The `finally` also removes the temporary
+        # file when the zip writer fails for any other reason.
+        partial_archive = output_path.with_name(f".{output_path.name}.partial")
+        try:
+            _emit_bundle_zip(
+                staging,
+                partial_archive,
+                streamed=streamed,
+                placeholders=placeholders,
+                declared_arcnames=declared_arcnames,
+                scanner=scanner,
+            )
+            os.replace(partial_archive, output_path)
+        finally:
+            # EXEMPT-DU: transient-intermediate
+            partial_archive.unlink(missing_ok=True)
 
     return output_path
 
@@ -552,19 +768,49 @@ def _source_rel(resolved: Path, analysis_root: Path, *, name: str | None = None)
         return Path("external") / (name if name is not None else resolved.name)
 
 
+def _hold_identical_bytes(paths: list[Path]) -> bool:
+    """Whether every path is a regular file and all of them hold the same bytes.
+
+    Two claimants of one archive name at DIFFERENT resolved paths are still one file when their
+    content is identical: the archive keeps one copy and loses nothing. Sizes are compared first,
+    so a pair of different sizes never reads a byte; the sha256 (``_sha256_file``, streaming) is
+    taken only when the sizes agree. The callers invoke this only for a name that already has
+    more than one resolved claimant, so a full-carry store of hundreds of thousands of entries
+    claimed once costs nothing.
+
+    Returns False, never raises, for a claimant that is a directory or that cannot be read when
+    compared, whether it vanished since the plan was made or is unreadable. The callers turn
+    False into their ``ConfigurationError`` refusal, so a caller of ``emit_bundle`` sees the same exception
+    type as before and never a bare ``OSError``.
+
+    Deliberately NOT a recursive content comparison of directory claimants: a directory has no
+    single digest, and the members of two directories already collide per file at their own
+    names, where this function is called on each member.
+    """
+    try:
+        if not all(p.is_file() for p in paths):
+            return False
+        if len({p.stat().st_size for p in paths}) != 1:
+            return False
+        return len({_sha256_file(p) for p in paths}) == 1
+    except OSError:
+        return False
+
+
 def _plan_harvest_entry(entries: dict[str, Path], arcname: str, source: Path) -> None:
     """Record ``arcname -> source``, refusing when a DIFFERENT file already holds the name.
 
     Replaces ``entries.setdefault``, which kept the first source and silently discarded the
     second: after that call the loser is gone from the plan, so no check over the RETURNED
     plan can see it, and the archive dropped a declared file without a word. The same file
-    reached twice (two renderers, or a symlink) is one file and is planned once.
+    reached twice (two renderers, or a symlink) is one file and is planned once, and so is a
+    byte-identical file at another path, per ``_hold_identical_bytes``: the plan keeps the first.
     """
     held = entries.get(arcname)
     if held is None:
         entries[arcname] = source
         return
-    if held.resolve() != source.resolve():
+    if held.resolve() != source.resolve() and not _hold_identical_bytes([held, source]):
         from hhemt.exceptions import ConfigurationError
 
         raise ConfigurationError(
@@ -583,6 +829,8 @@ def _harvest_sources(
     analysis_dir: Path,
     *,
     metadata_only: frozenset[Path] = frozenset(),
+    omit_output_zarrs: bool = False,
+    unresolved_outside: list[str] | None = None,
 ) -> tuple[dict[str, Path], list[str], list[str]]:
     """PLAN the archive entries for every declared source path -- copy nothing.
 
@@ -592,14 +840,30 @@ def _harvest_sources(
     file ``_emit_bundle_zip`` streams from. Each resolved path is walked ONCE however
     many figures declare it: the retired copy loop re-``copytree``'d a directory once
     per declaring figure, and ``harvest_source_paths`` dedupes only within a key.
+    ``omit_output_zarrs`` forces every directory source whose name ends ``.zarr`` into the
+    shallow set whether or not a sidecar qualified it (DR-3, C1(e)); False, the default,
+    leaves the shallow set exactly ``metadata_only``.
+    ``unresolved_outside`` is a list the caller owns. When it is given, a declared source that
+    is ABSENT and whose resolved path lies OUTSIDE ``analysis_dir`` is appended to it as
+    ``os.path.relpath(resolved, analysis_root)`` (the sidecar's own ``../`` spelling, which
+    carries no producer root) and is NOT put in ``declared_absent``. A tree that was moved or
+    copied to another depth resolves such a ``../`` path to nowhere, and recording it as a
+    missing ``external/{name}`` file would contradict the declared-input copy, which carries a
+    file under that archive name. Entries the list already held are kept; it leaves the call
+    de-duplicated and sorted (``sorted(set(...))``). The sources THIS harvest found are
+    announced by a second aggregated warning
+    (``_warn_declared_sources_unresolved_outside_tree``) issued immediately after the in-tree
+    one, and only when this harvest found any. When it is None the function behaves as it did
+    before this keyword existed.
     A directory whose resolved path is in ``metadata_only`` contributes only its zarr
     metadata documents (``_zarr_metadata_filenames``); its bundle-root-relative path is
     returned in ``metadata_only_stores`` so the manifest can name it. Measured on the
     delivered 3,798-event campaign: the consolidated tree alone was 326,747 chunk files
     against a few hundred metadata documents.
 
-    A declared source that does not exist on disk is SKIPPED (with a warning),
-    not fatal. Renderers are allowed to declare an expected source unconditionally,
+    A declared source that does not exist on disk is SKIPPED (with ONE aggregated
+    warning issued after the loop, ``_warn_declared_sources_absent``), not fatal.
+    Renderers are allowed to declare an expected source unconditionally,
     even when it is legitimately absent — e.g. ``disk_utilization`` declares
     ``_status/_du.json`` and renders a "re-run processing to populate" placeholder
     when the sentinel is missing (a normal state for a sensitivity primary, whose
@@ -614,11 +878,12 @@ def _harvest_sources(
     # carries the record of it. Without this the only trace is a warnings.warn on stderr
     # inside a Snakemake rule log, which is lost by the time anyone reads the bundle.
     declared_absent: list[str] = []
+    outside_unresolved: list[str] = []
     entries: dict[str, Path] = {}
     shallow_stores: list[str] = []
     seen: set[Path] = set()
     analysis_root = analysis_dir.resolve()
-    metadata_names = _zarr_metadata_filenames() if metadata_only else frozenset()
+    metadata_names = _zarr_metadata_filenames() if (metadata_only or omit_output_zarrs) else frozenset()
     for paths in sources_by_renderer.values():
         for src in paths:
             resolved = src.resolve()
@@ -627,18 +892,13 @@ def _harvest_sources(
             seen.add(resolved)
             rel = _source_rel(resolved, analysis_root, name=src.name)
             if not src.exists():
-                declared_absent.append(str(rel))
-                warnings.warn(
-                    f"Bundle harvest: declared source {rel} does not exist on disk; "
-                    f"skipping it (ADR-6 D3 permits renderers to declare an expected "
-                    f"source unconditionally even when absent, e.g. _status/_du.json "
-                    f"on a sensitivity primary). If this source was expected to be "
-                    f"present, it may have been removed after render_report().",
-                    stacklevel=2,
-                )
+                if unresolved_outside is not None and not resolved.is_relative_to(analysis_root):
+                    outside_unresolved.append(os.path.relpath(resolved, analysis_root))
+                else:
+                    declared_absent.append(str(rel))
                 continue
             if src.is_dir():
-                shallow = resolved in metadata_only
+                shallow = resolved in metadata_only or (omit_output_zarrs and src.name.endswith(".zarr"))
                 if shallow:
                     shallow_stores.append(rel.as_posix())
                 for member in sorted(src.rglob("*")):
@@ -647,7 +907,74 @@ def _harvest_sources(
                     _plan_harvest_entry(entries, (rel / member.relative_to(src)).as_posix(), member)
             else:
                 _plan_harvest_entry(entries, rel.as_posix(), src)
+    if declared_absent:
+        _warn_declared_sources_absent(sorted(set(declared_absent)))
+    if unresolved_outside is not None:
+        found = sorted(set(outside_unresolved))
+        unresolved_outside.extend(found)
+        unresolved_outside[:] = sorted(set(unresolved_outside))
+        if found:
+            _warn_declared_sources_unresolved_outside_tree(found)
     return entries, sorted(set(declared_absent)), sorted(shallow_stores)
+
+
+#: The label ``_warn_declared_sources_absent`` prints where a warning prints a source file.
+#: ONE name read by the issuer and asserted on by its test (F-D W1 / DR-4).
+_HARVEST_WARNING_LABEL = "hhemt bundle emit"
+
+
+def _warn_declared_sources_absent(absent: list[str]) -> None:
+    """Issue ONE warning for every declared-but-absent source of a harvest (F-D W1, DR-4).
+
+    ``warnings.warn_explicit`` with ``filename=_HARVEST_WARNING_LABEL`` and ``lineno=0``
+    prints ``hhemt bundle emit:0: UserWarning: ...`` and NO source line, on every entry
+    point. ``warnings.warn(..., stacklevel=n)`` cannot: whichever frame it attributes to
+    is echoed (a Typer dispatcher's ``return callback(**use_params)`` on the CLI, a
+    tuple-unpacking line in a toolkit caller otherwise), and that unrelated line is the
+    defect this replaces. ``warn_explicit`` still raises a ``UserWarning`` under ``-W
+    error`` and is still seen by ``pytest.warns``/``catch_warnings``. No ``registry`` is
+    passed, so each harvest shows its warning rather than the once-per-location default
+    deduplicating a loop over sweep members.
+    """
+    listing = ", ".join(absent)
+    warnings.warn_explicit(
+        message=(
+            f"Bundle harvest: {len(absent)} declared source(s) do not exist on disk and "
+            f"were skipped: {listing}. They are recorded under the manifest key "
+            f"'declared_sources_absent'. A renderer may declare a source that is "
+            f"legitimately absent (ADR-6 D3, e.g. _status/_du.json on a sensitivity "
+            f"primary); whether each path above is legitimate is decided by its "
+            f"declaring renderer's absent branch. A source that was expected to be "
+            f"present may have been removed after render_report()."
+        ),
+        category=UserWarning,
+        filename=_HARVEST_WARNING_LABEL,
+        lineno=0,
+        module="hhemt.bundle._emit",
+    )
+
+
+def _warn_declared_sources_unresolved_outside_tree(unresolved: list[str]) -> None:
+    """Issue ONE warning for every out-of-tree declared source that did not resolve.
+
+    The sibling of ``_warn_declared_sources_absent`` in the same ``warn_explicit`` form
+    (``filename=_HARVEST_WARNING_LABEL``, ``lineno=0``, no ``registry``), for the other set:
+    a source recorded as a ``../``-relative path that lands nowhere from THIS tree's location.
+    Each of the two warnings names only its own set.
+    """
+    listing = ", ".join(unresolved)
+    warnings.warn_explicit(
+        message=(
+            f"Bundle harvest: {len(unresolved)} declared source(s) outside the analysis directory "
+            f"did not resolve from this tree's location ({listing}); see "
+            f"declared_sources_unresolved_outside_tree. The tree may have been moved, or copied "
+            f"to another depth, since its figures were rendered."
+        ),
+        category=UserWarning,
+        filename=_HARVEST_WARNING_LABEL,
+        lineno=0,
+        module="hhemt.bundle._emit",
+    )
 
 
 def _zarr_metadata_filenames() -> frozenset[str]:
@@ -669,10 +996,12 @@ def _zarr_metadata_filenames() -> frozenset[str]:
 def _copy_bundle_baseline(analysis_dir: Path, staging: Path) -> None:
     baseline = staging / BUNDLE_BASELINE_SUBDIR
     baseline.mkdir(parents=True, exist_ok=True)
-    for fmt in ("html", "zip"):
-        src = analysis_dir / f"analysis_report.{fmt}"
-        if src.exists():
-            shutil.copy2(src, baseline / src.name)
+    # The html page only. The zip is a binary member that a text rewrite cannot reach and that
+    # the zero-user-info scan cannot read (its entries are deflated), and nothing in the toolkit
+    # opens it; the html page is the one baseline the bundle's own tooling compares against.
+    src = analysis_dir / "analysis_report.html"
+    if src.exists():
+        shutil.copy2(src, baseline / src.name)
 
 
 def _copy_reference_outputs(analysis: TRITONSWMM_analysis, staging: Path) -> None:
@@ -1405,10 +1734,13 @@ def _assert_archive_namespace(
     ``_copy_declared_inputs`` writes, and the archive names ``_harvest_sources`` plans (merged
     at ``_emit_bundle_zip``, where staging wins). Each of the three is a place the parent
     commit silently kept one file and dropped the other. Two fields naming the same file
-    are ONE file and not a collision.
+    are ONE file and not a collision, and neither are claimants at different paths whose bytes
+    are identical (``_hold_identical_bytes``). A claimant that is a directory, or that cannot be
+    read when compared, is never identical and is refused here with the same error.
 
-    Sources are resolved LAZILY, only for a name with more than one claimant: the harvest plan of
-    a full-carry store is hundreds of thousands of entries, nearly all of them claimed once.
+    Sources are resolved, and their bytes compared, LAZILY, only for a name with more than one
+    claimant: the harvest plan of a full-carry store is hundreds of thousands of entries, nearly
+    all of them claimed once.
     """
     from hhemt.exceptions import ConfigurationError
 
@@ -1432,7 +1764,7 @@ def _assert_archive_namespace(
         by_source: dict[Path, str] = {}
         for source, producer in claimants:
             by_source.setdefault(source.resolve(), producer)
-        if len(by_source) > 1:
+        if len(by_source) > 1 and not _hold_identical_bytes(list(by_source)):
             clashes[name] = by_source
     if clashes:
         detail = "; ".join(
@@ -1913,6 +2245,10 @@ def _write_bundle_manifest(
     crate_license_finding: str | None = None,
     metadata_only_stores: list[str] | None = None,
     analysis_dir: Path | None = None,
+    omitted_output_zarrs: list[str] | None = None,
+    stale_figures_included: list[str] | None = None,
+    declared_sources_unresolved_outside_tree: list[str] | None = None,
+    zero_user_info: dict[str, str] | None = None,
 ) -> None:
     """Write ``bundle_manifest.json`` into ``staging``.
 
@@ -1961,6 +2297,12 @@ def _write_bundle_manifest(
         # empty) when every declared source resolved, so a clean bundle's manifest is
         # byte-identical to what it was before this key existed.
         manifest["declared_sources_absent"] = declared_sources_absent
+    if declared_sources_unresolved_outside_tree:
+        # Out-of-tree sources a sidecar declared that did not resolve from THIS tree's
+        # location (a moved or re-depthed tree): spelled as the sidecar's own ``../`` path, never as an
+        # ``external/`` archive name, because the declared-input copy may carry the file under
+        # that name. Absent (not empty) when none, as declared_sources_absent is.
+        manifest["declared_sources_unresolved_outside_tree"] = declared_sources_unresolved_outside_tree
     if crate_license_finding:
         # The staged crate's license disagrees with the carried cfg_analysis.yaml, or the
         # crate's root could not be resolved to check. Non-fatal HERE and refused only at
@@ -1994,11 +2336,36 @@ def _write_bundle_manifest(
         # so the manifest names them. Absent (not empty) when no store is shallow, so a
         # full-carry manifest is byte-identical to what it was before this key existed.
         manifest["metadata_only_stores"] = metadata_only_stores
+    if omitted_output_zarrs:
+        # The stores `--omit-output-zarrs` left out (a subset of metadata_only_stores, which
+        # also names them so `combine` refuses). The regeneration Snakefile reads THIS key to
+        # refuse a plot rule that declared one in full. Absent (not empty) without the flag,
+        # so a default manifest is byte-identical to what it was before this key existed.
+        manifest["omitted_output_zarrs"] = omitted_output_zarrs
+    if stale_figures_included:
+        # The analysis-relative paths of the stale figures (figures of members no longer in the
+        # setup table) that `--allow-stale-figures` carried into this bundle. Absent (not
+        # empty) when none were carried, so a clean manifest is byte-identical to what it was
+        # before this key existed.
+        manifest["stale_figures_included"] = stale_figures_included
+    if zero_user_info is not None:
+        # What the emit-time check ran, layer by layer, so a reader of the shipped manifest can tell a
+        # bundle certified by the generic patterns and the configs' own values alone (`private_list`
+        # is `not configured`) from one that was also searched for a private list's tokens.
+        manifest["zero_user_info"] = zero_user_info
     (staging / BUNDLE_MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2))
 
 
-def _emit_bundle_zip(staging: Path, output_path: Path, *, streamed: dict[str, Path] | None = None) -> None:
-    # Emit a deterministic, moderately compressed zip from staging PLUS the streamed plan.
+def _emit_bundle_zip(
+    staging: Path,
+    output_path: Path,
+    *,
+    streamed: dict[str, Path] | None = None,
+    placeholders: PlaceholderTable | None = None,
+    declared_arcnames: frozenset[str] = frozenset(),
+    scanner: ZeroUserInfoScanner | None = None,
+) -> None:
+    # Emit a deterministic zip from staging PLUS the streamed plan.
     #
     # `streamed` maps archive name -> on-disk source for the harvested sources, which
     # are never copied into staging (they are byte-identical to their originals and
@@ -2029,14 +2396,63 @@ def _emit_bundle_zip(staging: Path, output_path: Path, *, streamed: dict[str, Pa
     # ZIP_STORED any more: a stored member zip carries the raw solver files at full size
     # through every later copy and share of the bundle.
     #
-    # Directory entries are skipped by construction (files only below); zipfile
-    # reconstructs directory structure from file paths at extraction time.
+    # Bytes are STREAMED through zf.open(info, "w") rather than read whole: with
+    # info.file_size set from stat() first, this is exactly what ZipFile.writestr does
+    # internally (it sets zinfo.file_size = len(data) and calls open(zinfo, "w")), so the
+    # archive is byte-identical to the writestr form while never holding a file in memory.
+    #
+    # With a `placeholders` table the one exception is a TEXT member, which is read whole,
+    # rewritten, and archived at the size of the rewritten bytes. That work is the `transform`
+    # handed to `write_zip`, which calls it with the open handle of each path source. Each member
+    # is opened exactly once: the text sniff reads its prefix from the SAME handle `write_zip`
+    # then rewinds and streams when the transform answers None, because a bundle holds on the
+    # order of 350,000 harvested files and a second open per member would bring back the
+    # per-file cost this streamed emit exists to avoid. A member is left byte for byte alone when
+    # it is a declared input (`declared_arcnames`) or a zarr chunk (classed binary by its name,
+    # so its prefix is never read); it is still compressed as the policy says, as is every
+    # rewritten member. With no table and no scanner there is no transform at all, which is the
+    # unchanged emitter `_combine` relies on.
+    #
+    # With a `scanner` every text member is also checked, AFTER the rewrite, from the same bytes
+    # that are written (declared inputs included: they are not rewritten, so a producer value in one
+    # is exactly what the check exists to find). A zarr chunk, classed binary by name, and a
+    # NUL-prefixed member are not scanned. Hits accumulate across the whole archive and the
+    # refusal is raised once, after the zip is closed, so the message names every offending member.
     entries: dict[str, Path] = {
         entry.relative_to(staging).as_posix(): entry for entry in sorted(staging.rglob("*")) if not entry.is_dir()
     }
     for arcname, src in (streamed or {}).items():
         entries.setdefault(arcname, src)
-    write_zip(entries.items(), output_path, policy=MODERATE)
+    rewrite = placeholders is not None and not placeholders.is_empty
+    transform = None
+    if rewrite or scanner is not None:
+        # Looked up only when a member can be inspected: it imports zarr, which an emit with no table
+        # and no scanner (`_combine`) never needed.
+        metadata_names = _zarr_metadata_filenames()
+
+        def rewrite_and_scan(arcname: str, handle) -> bytes | None:
+            """The text rewrite and scan of one member: the bytes to archive, or None to archive the file as is."""
+            if (scanner is None and arcname in declared_arcnames) or is_zarr_chunk_member_by_name(
+                arcname, metadata_names
+            ):
+                return None
+            prefix = handle.read(SNIFF_BYTES)
+            if not prefix_is_text(prefix):
+                return None
+            data = prefix + handle.read()
+            if rewrite and arcname not in declared_arcnames:
+                # The whole-path rule runs on the table's output, inside the same guard: a declared
+                # input is archived byte for byte, so a token-shaped path in one is not rewritten.
+                data = rewrite_producer_paths(placeholders.apply(data))
+            if scanner is not None:
+                scanner.record(arcname, data)
+            return data
+
+        transform = rewrite_and_scan
+
+    write_zip(entries.items(), output_path, policy=MODERATE, transform=transform)
+    if scanner is not None:
+        scanner.raise_if_hits(None, "bundle emit zero-user-info check")
 
 
 def _toolkit_source_dir() -> Path:

@@ -81,7 +81,13 @@ def generate_regeneration_snakefile(
         render_report_targets=render_report_targets,
         ctx=ctx,
     )
-    plot_rule_blocks = "".join(_emit_plot_rule(spec, ctx) for spec in rule_specs)
+    refused = _rule_names_declaring_omitted_zarrs(bundle_root, rule_specs)
+    plot_rule_blocks = "".join(
+        _refuse_rule_shell(_emit_plot_rule(spec, ctx), refused[spec.rule_name])
+        if spec.rule_name in refused
+        else _emit_plot_rule(spec, ctx)
+        for spec in rule_specs
+    )
     render_report_block = _emit_render_report_rule(
         plot_output_paths=plot_output_paths,
         ctx=ctx,
@@ -115,6 +121,82 @@ def write_regeneration_snakefile(
     out = bundle_root / "Snakefile"
     out.write_text(text + "\n")
     return out
+
+
+def _omitted_output_zarrs(bundle_root: Path) -> list[str]:
+    """The stores ``emit_bundle(omit_output_zarrs=True)`` left out, read from the bundle's own
+    ``bundle_manifest.json`` (``omitted_output_zarrs``). ``[]`` when the manifest is absent,
+    unreadable, or lacks the key -- a default bundle, for which nothing here changes."""
+    from hhemt.version_migration.constants import BUNDLE_MANIFEST_FILENAME
+
+    manifest = bundle_root / BUNDLE_MANIFEST_FILENAME
+    if not manifest.is_file():
+        return []
+    try:
+        return list(json.loads(manifest.read_text()).get("omitted_output_zarrs", []) or [])
+    except (OSError, ValueError):
+        return []
+
+
+def _rule_names_declaring_omitted_zarrs(bundle_root: Path, rule_specs: tuple[RuleSpec, ...]) -> dict[str, list[str]]:
+    """Map each rule name whose figure family declared an omitted store IN FULL to those stores.
+
+    A rule re-run inside a bundle that omitted a store would open it for data and read the
+    array's FILL VALUE rather than raise (measured, zarr 3.1.5), drawing a figure of fill
+    values without an error; the rule therefore refuses instead. A sidecar that qualifies the
+    store metadata-only is not a full declarant. The match is by sidecar stem (the rule's
+    ``output_path_template`` with ``__OUTPUT_EXT__`` read as ``.manifest.json``, wildcards
+    globbed), so a rule is refused when ANY sidecar of its family declares an omitted store in
+    full. Empty when no store was omitted, so a default bundle's Snakefile is unchanged.
+    """
+    import re as _re
+
+    from hhemt.report_renderers._figure_emission import _iter_manifest_declarations
+
+    omitted = _omitted_output_zarrs(bundle_root)
+    plots_dir = bundle_root / "plots"
+    if not omitted or not plots_dir.is_dir():
+        return {}
+    root_resolved = bundle_root.resolve()
+    omitted_by_resolved = {(bundle_root / store).resolve(): store for store in omitted}
+    full_declarants: dict[str, set[str]] = {}
+    for stem, declared, qualified in _iter_manifest_declarations(plots_dir, bundle_root):
+        for path in set(declared) - qualified:
+            # A declaration outside the bundle root keeps its emit-time spelling in the sidecar
+            # (``../outside/x.zarr``) while the emit carried the store as ``external/{name}``
+            # (``_emit._source_rel``), so it is matched through that entry as well.
+            candidates = [path]
+            if not path.is_relative_to(root_resolved):
+                candidates.append((root_resolved / "external" / path.name).resolve())
+            for candidate in candidates:
+                if candidate in omitted_by_resolved:
+                    full_declarants.setdefault(stem, set()).add(omitted_by_resolved[candidate])
+    out: dict[str, list[str]] = {}
+    for spec in rule_specs:
+        glob_pat = _re.sub(r"\{[^{}]+\}", "*", spec.output_path_template.replace("__OUTPUT_EXT__", ".manifest.json"))
+        stores: set[str] = set()
+        for sidecar in bundle_root.glob(glob_pat):
+            stores |= full_declarants.get(sidecar.name.removesuffix(".manifest.json"), set())
+        if stores:
+            out[spec.rule_name] = sorted(stores)
+    return out
+
+
+def _refuse_rule_shell(rule_block: str, stores: list[str]) -> str:
+    """Replace a plot rule's ``shell:`` body with a refusal that exits non-zero.
+
+    The message names ``--omit-output-zarrs`` and each omitted store. It carries no ``{`` or
+    ``}`` (Snakemake formats the shell string) and no single quote (it sits in single quotes).
+    """
+    head, sep, _tail = rule_block.partition('    shell:\n        """\n')
+    assert sep, "plot rule block has no shell section to replace"
+    message = (
+        "REFUSED: this bundle was emitted with --omit-output-zarrs, so the store(s) "
+        + ", ".join(stores)
+        + " carry no chunk data and this figure would be drawn from fill values. "
+        "Re-emit the bundle without --omit-output-zarrs to re-render it."
+    )
+    return head + sep + f"        echo '{message}' >&2\n        exit 1\n" + '        """\n'
 
 
 def _bundle_arm_label(bundle_root: Path) -> str:

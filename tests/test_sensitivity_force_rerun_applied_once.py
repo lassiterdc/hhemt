@@ -58,7 +58,7 @@ class _AnalysisStandIn(SimpleNamespace):
 
 
 def _analysis_stand_in(*, sensitivity: bool, calls: list):
-    def record(value, *, dry_run=False):
+    def record(value, *, dry_run=False, **_keywords):
         calls.append((value, dry_run))
 
     analysis = _AnalysisStandIn(
@@ -80,7 +80,7 @@ def _analysis_stand_in(*, sensitivity: bool, calls: list):
             _acquire_submit_driver_claim=lambda *_a, **_k: None,
             submit_workflow=_stop,
         ),
-        _reconcile_build_stamp_force=lambda value, dry_run=False: value,
+        _reconcile_build_stamp_force=lambda value, dry_run=False, **_keywords: value,
         _apply_force_rerun=record,
     )
     if sensitivity:

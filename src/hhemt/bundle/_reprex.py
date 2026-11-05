@@ -16,12 +16,11 @@
 4. Emit per-field graduated experiment amendments: **validated** where a deterministic
    ``PartitionSpec`` lookup pins the target value (the partition selectors resolve to a
    declared target partition); **advisory-with-named-reason** otherwise.
-5. Run a consume-side **informational** zero-user-info scan. The HARD emit-time gate is
-   deferred to the emit-hardening follow-up (ADR-9): the emit tree still carries the
-   producer's absolute paths through ``bundle_manifest.json`` / harvested ``.inp`` /
-   ``validation_report.json`` — surfaces the config-field scrub does not cover — so a
-   hard full-tree gate over an emitted bundle would fail on a real leak the plan
-   deferred fixing. Here the scan is reported (``zero_user_info_leaks``), never fatal.
+5. Run a consume-side **informational** zero-user-info scan. The HARD gate runs at emit time: the
+   emit refuses to write a bundle whose text members hold producer user-info
+   (``hhemt.bundle._reprex_gate.ZeroUserInfoScanner``). This scan runs the generic patterns and the
+   private list only, because a consumer holds no producer configs, and it is reported
+   (``zero_user_info_leaks``), never fatal.
 
 Config->bundle acyclicity: any emit-time field/column bucketing uses a FUNCTION-LOCAL
 import of ``hhemt.config.reprex_taxonomy`` (never module-top — see reprex_taxonomy's
@@ -171,12 +170,26 @@ def _verify_sif(sif_root: Path, expected_sha256: str) -> tuple[bool, bool | None
 
 def _scan_zero_user_info(bundle_root: Path) -> list[str]:
     """Consume-side INFORMATIONAL scan for producer user-info leaks (ADR-9). Non-fatal:
-    returns the leak list rather than raising. Hard emit-time enforcement is deferred to
-    the emit-hardening follow-up (the emit tree still leaks producer absolute paths
-    through bundle_manifest.json / harvested .inp / validation_report.json). The scan
-    matches against the LOCAL blocklist, so it is meaningful in a same-machine reprex
-    (the producer's tokens are present) and best-effort across machines."""
-    from hhemt.bundle._reprex_gate import assert_bundle_zero_user_info
+    returns the leak list rather than raising. Producer user-info is refused at emit time by
+    hhemt.bundle._reprex_gate.ZeroUserInfoScanner; this consume-side scan runs the generic
+    patterns and the private list only, because a consumer holds no producer configs."""
+    import os
+    import warnings
+
+    from hhemt.bundle._reprex_gate import _ENV_OVERRIDE, assert_bundle_zero_user_info
+
+    # A scan that did not search the private list is not a clean result, and the leak list cannot say so:
+    # putting the state in it would make `reprex()` report a leak this scan did not find. So the state is
+    # a warning, worded as the emit's own warning is. A set, non-empty variable is not warned about here:
+    # a usable carrier is searched, and an unusable one is diagnosed in the leak list by the except below.
+    carrier = os.environ.get(_ENV_OVERRIDE)
+    if not carrier:
+        warnings.warn(
+            f"zero-user-info check: ${_ENV_OVERRIDE} is {'not set' if carrier is None else 'set but empty'}, "
+            "so the private list was not searched; only the generic patterns were.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     try:
         assert_bundle_zero_user_info(bundle_root)
@@ -273,7 +286,7 @@ def reprex(bundle_root: Path, reprex_cfg, target_hpc_profile) -> ReprexResult:
     # 4. Per-field graduated experiment amendments.
     amendments = _emit_amendments(cfg_analysis, reprex_cfg, target_hpc_profile, problem_pairs)
 
-    # 5. Informational zero-user-info scan (hard emit gate deferred — ADR-9 follow-up).
+    # 5. Informational zero-user-info scan; the emit itself already refuses a bundle with producer user-info.
     leaks = _scan_zero_user_info(bundle_root)
 
     return ReprexResult(

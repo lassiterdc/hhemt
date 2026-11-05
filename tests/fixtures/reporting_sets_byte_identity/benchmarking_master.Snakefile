@@ -720,6 +720,8 @@ rule plot_disk_utilization:
 
 rule plot_metadata:
     input:
+        "scenario_status.csv",
+        "validation_report.json",
         consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
@@ -744,6 +746,7 @@ rule plot_metadata:
 
 rule plot_workflow_performance:
     input:
+        "scenario_status.csv",
         consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
@@ -769,7 +772,9 @@ rule plot_workflow_performance:
 localrules: export_scenario_status
 
 rule export_scenario_status:
-    input: "_status/f_consolidate_experiment_complete.flag"
+    input:
+        "_status/f_consolidate_experiment_complete.flag",
+        "_status/toolkit_build.stamp",
     output:
         csv = "scenario_status.csv",
         md  = "workflow_summary.md",
@@ -792,7 +797,9 @@ rule export_scenario_status:
         # SCOPE, stated so this is not over-read: declaring the output is a real fix for a
         # real defect. It is NOT established as the cause of the 2026-08-13 failures --
         # run 3's job stats ("all 1, render_report 1, total 2") show this rule never ran,
-        # so something else wrote the read-model at 01:44:50 and is still unidentified.
+        # so something else wrote the read-model at 01:44:50, and that writer is
+        # analysis.eda(), which calls persist_validation_report in-process, outside the
+        # workflow.
         read_model = "validation_report.json",
     log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/export_scenario_status.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"

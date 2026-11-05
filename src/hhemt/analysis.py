@@ -67,7 +67,12 @@ from hhemt.snakemake_snakefile_parsing import (
 from hhemt.swmm_output_parser import (
     retrieve_swmm_performance_stats_from_rpt,
 )
-from hhemt.utils import fast_rmtree, parse_triton_log_file, select_regenerable_figures
+from hhemt.utils import (
+    clear_raw_for_next_snakefile,
+    fast_rmtree,
+    parse_triton_log_file,
+    select_regenerable_figures,
+)
 from hhemt.validation import ValidationResult, assert_configs_visible_cross_node, preflight_validate, running_identity
 from hhemt.wipe_guard import assert_wipe_is_deliberate
 from hhemt.workflow import (
@@ -1226,8 +1231,8 @@ class TRITONSWMM_analysis:
         ``plots/`` (with any ``add_channel`` source refs as a secondary channel).
         The sidecars are written when the plot rules render the figures, not by
         ``render_report()``. The zip also carries the configs with relative paths,
-        the Snakefile, and the HPC-baseline analysis_report.{html,zip} under
-        bundle_baseline/.
+        the Snakefile, and the HPC-baseline analysis_report.html (the HTML report
+        only, no zip) under bundle_baseline/.
 
         Parameters
         ----------
@@ -3918,7 +3923,7 @@ class TRITONSWMM_analysis:
         assert_plots_match_running_build(
             self.analysis_paths.analysis_dir,
             declare_stale_plots=declare_stale_plots,
-            report_rule_stems=report_rule_figure_stems(self),
+            report_rule_stems=report_rule_figure_stems(self, for_reprocess=reprocess),
         )
 
         snakefile_name = "Snakefile.reprocess" if reprocess else "Snakefile"
@@ -4538,9 +4543,16 @@ class TRITONSWMM_analysis:
             # at their own site.
             # Build-stamp reconciliation MUST precede the pre-delete: it can replace the
             # force-rerun value, and _apply_force_rerun is what acts on it.
-            override_force_rerun = self._reconcile_build_stamp_force(override_force_rerun, dry_run=dry_run)
+            override_force_rerun = self._reconcile_build_stamp_force(
+                override_force_rerun, dry_run=dry_run, override_clear_raw=override_clear_raw, for_reprocess=False
+            )
             if not self.cfg_analysis.toggle_sensitivity_analysis:
-                self._apply_force_rerun(override_force_rerun, dry_run=dry_run)
+                self._apply_force_rerun(
+                    override_force_rerun,
+                    dry_run=dry_run,
+                    override_clear_raw=override_clear_raw,
+                    for_reprocess=False,
+                )
 
             # Fold the six kept override_* kwargs into one carrier at this facade
             # boundary; the builder and sensitivity layers take only the carrier.
@@ -5005,8 +5017,12 @@ class TRITONSWMM_analysis:
         if not dry_run:
             # Same reconciliation as the submit_workflow site. `dry_run=False` is correct
             # and not a shortcut: this statement is already inside `if not dry_run:`.
-            override_force_rerun = self._reconcile_build_stamp_force(override_force_rerun, dry_run=False)
-            self._apply_force_rerun(override_force_rerun)
+            # The reprocess Snakefile's generator reads the config's clear-raw alone, so
+            # for_reprocess=True makes the stems follow it and no override is passed.
+            override_force_rerun = self._reconcile_build_stamp_force(
+                override_force_rerun, dry_run=False, override_clear_raw=None, for_reprocess=True
+            )
+            self._apply_force_rerun(override_force_rerun, override_clear_raw=None, for_reprocess=True)
 
         # Processed-output deletion. The per-model PROCESSING-LOG
         # clear (what makes _already_written return False) is CHEAP
@@ -5235,7 +5251,7 @@ class TRITONSWMM_analysis:
                 from hhemt.utils import report_rule_figure_stems
 
                 _targets += select_regenerable_figures(
-                    analysis_dir, plots_dir, report_rule_stems=report_rule_figure_stems(self)
+                    analysis_dir, plots_dir, report_rule_stems=report_rule_figure_stems(self, for_reprocess=True)
                 )
             # The report shell stays OUTSIDE the guard -- deleting it is the mtime trigger
             # that puts the render in the dry-run DAG -- while the DU sentinel is never
@@ -5515,7 +5531,14 @@ class TRITONSWMM_analysis:
             )
         )
 
-    def _reconcile_build_stamp_force(self, override_force_rerun, *, dry_run: bool = False):
+    def _reconcile_build_stamp_force(
+        self,
+        override_force_rerun,
+        *,
+        dry_run: bool = False,
+        override_clear_raw: ClearRawValue | None = None,
+        for_reprocess: bool = False,
+    ):
         """Escalate the force-rerun STAGE to 'render' when the figure tier was built by
         a different toolkit build than the one now running. Returns the (possibly
         replaced) force-rerun value; callers MUST use the return value.
@@ -5560,6 +5583,14 @@ class TRITONSWMM_analysis:
         `render_report` stays UNCHANGED as the fail-closed backstop for paths that bypass both
         call sites (`Bundle.regenerate_report`, `CombinedBundle.regenerate_report`, a direct
         `render_report()`).
+
+        ``override_clear_raw`` and ``for_reprocess`` are forwarded to
+        ``utils.report_rule_figure_stems`` so the stamp comparison counts the ``plots/eda/``
+        figures of the Snakefile the caller is about to run: its clear-raw value, or the
+        config's alone when that Snakefile is the reprocess one. Both callers run before
+        their Snakefile is written, so a submit caller that passes no override is resolved
+        to the config value here; the production record describes the previous run and
+        is for ``render_report``, which holds nothing else.
         """
         import logging  # function-local, matching this module's idiom
 
@@ -5584,7 +5615,12 @@ class TRITONSWMM_analysis:
         from hhemt.utils import report_rule_figure_stems
 
         _keys, _n = collect_plot_stamps(
-            self.analysis_paths.analysis_dir, report_rule_stems=report_rule_figure_stems(self)
+            self.analysis_paths.analysis_dir,
+            report_rule_stems=report_rule_figure_stems(
+                self,
+                override_clear_raw=clear_raw_for_next_snakefile(self, override_clear_raw, for_reprocess),
+                for_reprocess=for_reprocess,
+            ),
         )
         _run = producing_stamp()
         _mine = (
@@ -5642,7 +5678,14 @@ class TRITONSWMM_analysis:
             return ForceRerunSpec(subject="all", stage="render")
         return override_force_rerun
 
-    def _apply_force_rerun(self, override_force_rerun, *, dry_run: bool = False) -> None:
+    def _apply_force_rerun(
+        self,
+        override_force_rerun,
+        *,
+        dry_run: bool = False,
+        override_clear_raw: ClearRawValue | None = None,
+        for_reprocess: bool = False,
+    ) -> None:
         """Resolve, validate and apply the force-rerun override on the login node.
 
         Called from ``submit_workflow`` (which ``run`` reaches by delegation) and from
@@ -5667,12 +5710,20 @@ class TRITONSWMM_analysis:
         On a dry run the flag deletion still happens, because it is what makes the
         dry-run DAG preview non-empty; the render-stage figure deletion, the log clear
         and the chapter-set deletion each skip themselves at their own site.
+
+        ``override_clear_raw`` and ``for_reprocess`` reach only the render-stage figure
+        deletion, which must delete exactly the ``plots/eda/`` figures the Snakefile about
+        to run has rules for (see ``utils.report_rule_figure_stems``). A submit caller
+        passes its ``override_clear_raw`` (``None`` when the run has none, which resolves
+        to the config here); a reprocess caller passes ``for_reprocess=True``.
         """
         resolved = override_force_rerun if override_force_rerun is not None else self.cfg_analysis.force_rerun
-        # SINGLE COERCION BOUNDARY. Pydantic's mode="before" coercion fires only on
-        # assignment to the force_rerun config FIELD, which the override path never
-        # touches, so a raw str/dict arrives here from both the CLI (json.loads) and the
-        # programmatic API. This is the one point BOTH consumers funnel through
+        # SINGLE COERCION BOUNDARY. Pydantic's mode="before" coercion fires on the
+        # force_rerun config FIELD when a config is loaded and, since the field sets
+        # validate_default=True, on its default too. It never fires on the
+        # `override_force_rerun` argument, which is not a field value, so a raw str/dict
+        # arrives here from both the CLI (json.loads) and the programmatic API.
+        # This is the one point BOTH consumers funnel through
         # (analysis.submit_workflow and sensitivity_analysis's primary delegation), and it
         # already owns validate + resolve — so coercing anywhere else leaves one path raw.
         #
@@ -5707,7 +5758,12 @@ class TRITONSWMM_analysis:
         # simulate/process/consolidate floor it is the sole signal that makes the dry-run DAG
         # preview non-empty, which is the same reason the completion-flag unlinks stay
         # outside `reprocess`'s dry-run guard.
-        self._workflow_builder._delete_flags_for_force_rerun(spec, dry_run=dry_run)
+        self._workflow_builder._delete_flags_for_force_rerun(
+            spec,
+            dry_run=dry_run,
+            override_clear_raw=clear_raw_for_next_snakefile(self, override_clear_raw, for_reprocess),
+            for_reprocess=for_reprocess,
+        )
         # STAGE-GATED. _invalidate_processing_log_for_force_rerun clears
         # processing_log.outputs AND resets both raw_*_outputs_cleared markers, so calling
         # it under a consolidate/render floor re-arms the clear-raw step and re-runs

@@ -370,7 +370,7 @@ class Bundle:
         ``analysis_report.zip`` BEFORE calling ``regenerate_report``, so a raise here
         leaves those two files deleted. Pre-existing rather than introduced -- that flow
         destroyed the same two files and then raised ``FileNotFoundError`` from
-        ``load_brand_theme`` -- and ``bundle_baseline/`` retains the HPC copies. Moving
+        ``load_brand_theme`` -- and ``bundle_baseline/`` retains the HPC html copy. Moving
         this check to ``from_directory`` or to the CLI verb ahead of its unlink is what
         would extend the property; neither is done here. NOTE the ordinal: a future edit
         that inserts a side effect into either of the two preceding calls, or between

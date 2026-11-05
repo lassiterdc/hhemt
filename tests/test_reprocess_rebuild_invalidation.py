@@ -228,6 +228,15 @@ def test_reprocess_generator_emits_rebuild_after_invalidation(synth_sensitivity_
 
     assert member_event_pairs, "fixture must construct at least one (member, event) pair"
 
+    # The reprocess master's export_scenario_status rule declares the toolkit-build stamp as
+    # an input. This test writes the generated Snakefile with write_text() below -- NOT through
+    # _write_snakefile_atomic, which is the writer that creates the stamp -- so nothing else
+    # would put it there, and the dry run would stop on a MissingInputException naming it
+    # (the same reason the per-member fingerprint is seeded above). Seeded here, beside the
+    # flags, rather than by calling the stamp writer, so this test keeps asserting on the
+    # generator's text alone.
+    (status_dir / "toolkit_build.stamp").write_text("{}")
+
     content = builder.generate_reprocess_master_snakefile_content(start_with="process")
 
     # A process rebuild rule per (member, event) — the generator emits

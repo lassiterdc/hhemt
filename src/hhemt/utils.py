@@ -26,11 +26,14 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from string import Template
-from typing import Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 import xarray as xr
 import yaml
 from platformdirs import user_data_dir
+
+if TYPE_CHECKING:
+    from hhemt.config.analysis import ClearRawValue
 
 #: Root consolidated-store names, in RESOLUTION PRIORITY order. V0021 unified BOTH prior
 #: root stores -- a regular analysis's ``analysis_datatree.zarr`` and a sensitivity
@@ -2425,7 +2428,70 @@ def figure_exists_for(sidecar: Path) -> bool:
     return any(p for p in sidecar.parent.glob(stem + ".*") if not p.name.endswith(".manifest.json"))
 
 
-def report_rule_figure_stems(analysis) -> frozenset[str]:
+#: Analysis-directory-relative path of the record the sensitivity-master writer leaves for
+#: the clear-raw value its production ``Snakefile`` was generated under. A separate
+#: process that runs ``render_report`` never holds the run's ``override_clear_raw``, so
+#: this file is the only way it can learn which ``plots/eda/`` figures that Snakefile has
+#: rules for. Only the production ``Snakefile`` writes it (not ``Snakefile.dryrun``, not
+#: ``Snakefile.reprocess``): a rehearsal or a reprocess generated under a different value
+#: must not change what the production Snakefile on disk says.
+RESOLVED_CLEAR_RAW_RECORD = "_status/resolved_clear_raw.json"
+
+
+def read_resolved_clear_raw_record(analysis_dir: Path) -> "ClearRawValue | None":
+    """The clear-raw value the production master ``Snakefile`` was generated under, or None.
+
+    None means "no usable record": the file is absent, is not JSON, or holds a value that
+    is not a ``ClearRawValue`` (``"all"``, ``"none"`` or a list of model names). An
+    unreadable record is treated as absent, so the caller reads the config value, which
+    is what every analysis did before the record existed.
+    """
+    record = Path(analysis_dir) / RESOLVED_CLEAR_RAW_RECORD
+    try:
+        value = load_json(record)["clear_raw"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if value in ("all", "none") or (isinstance(value, list) and all(isinstance(m, str) for m in value)):
+        return value
+    return None
+
+
+def write_resolved_clear_raw_record(analysis_dir: Path, clear_raw: "ClearRawValue") -> bool:
+    """Persist ``clear_raw`` for the production master Snakefile; True when the file changed.
+
+    Compare-and-write: a record that already holds ``clear_raw`` is left untouched, bytes
+    and modification time, so a write that changes nothing is not observable as one.
+    """
+    if read_resolved_clear_raw_record(analysis_dir) == clear_raw:
+        return False
+    write_json({"clear_raw": clear_raw}, Path(analysis_dir) / RESOLVED_CLEAR_RAW_RECORD)
+    return True
+
+
+def clear_raw_for_next_snakefile(
+    analysis, override_clear_raw: "ClearRawValue | None", for_reprocess: bool
+) -> "ClearRawValue | None":
+    """The clear-raw value a pre-delete helper hands ``report_rule_figure_stems``.
+
+    ``_reconcile_build_stamp_force`` and ``_apply_force_rerun`` run before the Snakefile of
+    their launch is written. On a submit with no override that Snakefile follows the
+    config, but ``report_rule_figure_stems`` given ``None`` would read
+    ``_status/resolved_clear_raw.json``, which holds the PREVIOUS run's value, so ``None``
+    is replaced by the config value. A reprocess is passed through unchanged because the
+    stems ignore every override for it. An analysis carrying no ``clear_raw`` yields
+    ``None``, which leaves the stems to their own fallbacks.
+    """
+    if for_reprocess or override_clear_raw is not None:
+        return override_clear_raw
+    return getattr(getattr(analysis, "cfg_analysis", None), "clear_raw", None)
+
+
+def report_rule_figure_stems(
+    analysis,
+    *,
+    override_clear_raw: "ClearRawValue | None" = None,
+    for_reprocess: bool = False,
+) -> frozenset[str]:
     """The figures the analysis's active reporting set writes through its plot rules.
 
     Each entry is a rule's output path relative to the analysis directory with its
@@ -2465,11 +2531,20 @@ def report_rule_figure_stems(analysis) -> frozenset[str]:
     the config reads as false, so its templates are omitted. None of those templates
     lies under ``plots/eda/``, where this set is consulted.
 
-    Not established: the sensitivity-master generator reads ``has_preserved_raw_outputs``
-    from a run-time ``override_clear_raw`` when one is passed, which neither the build
-    check nor the deleting callers hold. A forced render run with a clear-raw override
-    that differs from the config can therefore disagree with that Snakefile about the
-    ``compute_config_byte_identity`` set's two ``plots/eda/`` figures.
+    The clear-raw value behind ``has_preserved_raw_outputs`` must be the one the Snakefile
+    the caller is about to run (or has run) was generated under, because the
+    sensitivity-master generator takes it from a run-time ``override_clear_raw`` while the
+    sensitivity reprocess generator takes it from the config alone. It resolves as
+    follows. With ``for_reprocess=True`` it is ``cfg_analysis.clear_raw`` and nothing
+    else: the override and the record are ignored. Otherwise a passed
+    ``override_clear_raw`` wins, then the value recorded in ``_status/resolved_clear_raw.json``
+    by the production master writer, then ``cfg_analysis.clear_raw``. A caller that
+    deletes figures before it writes its Snakefile must pass the value that Snakefile
+    will be generated under (the override, else the config), because the record then
+    describes the previous run.
+
+    Not established: that the record matches the production ``Snakefile`` on disk when a
+    tool other than the master writer replaced that Snakefile.
     """
     from hhemt.config.eda import eda_config
     from hhemt.config.report import resolve_active_reporting_set
@@ -2498,6 +2573,14 @@ def report_rule_figure_stems(analysis) -> frozenset[str]:
     disabled = list(getattr(cfg_report, "disabled_renderers", None) or ())
     has_eda_artifact = bool((getattr(cfg_analysis, "eda", None) or eda_config()).enabled_plots)
     clear_raw = getattr(cfg_analysis, "clear_raw", None)
+    if not for_reprocess:
+        if override_clear_raw is not None:
+            clear_raw = override_clear_raw
+        else:
+            analysis_dir = getattr(getattr(analysis, "analysis_paths", None), "analysis_dir", None)
+            recorded = read_resolved_clear_raw_record(analysis_dir) if analysis_dir is not None else None
+            if recorded is not None:
+                clear_raw = recorded
     has_preserved_raw_outputs = clear_raw == "none"
     if isinstance(clear_raw, list):
         holder = getattr(analysis, "experiment", analysis)

@@ -24,11 +24,12 @@ from __future__ import annotations
 import os
 import shutil
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
+from typing import BinaryIO
 
 __all__ = [
     "MODERATE",
@@ -57,6 +58,10 @@ _ZARR_METADATA_NAMES = frozenset({"zarr.json", ".zarray", ".zgroup", ".zattrs", 
 
 # A zip source is a file path, the bytes themselves, or one entry of an already open zip.
 ZipSource = Path | bytes | tuple[zipfile.ZipFile, str]
+
+# A per-member hook for ``write_zip``: given the archive name and the open binary handle of a PATH
+# source, return the bytes the entry should hold, or ``None`` to archive the file as it is.
+ZipTransform = Callable[[str, BinaryIO], bytes | None]
 
 
 def is_zarr_chunk(name: str) -> bool:
@@ -123,14 +128,8 @@ def _stream_source(source: ZipSource, destination) -> None:
             shutil.copyfileobj(reader, destination, _BLOCK_BYTES)
 
 
-def _write_entry(
-    zf: zipfile.ZipFile,
-    arcname: str,
-    source: ZipSource,
-    compress_type: int,
-    level: int,
-) -> None:
-    """Write one entry with the fixed date and mode, streaming ``source`` into it."""
+def _entry_info(arcname: str, compress_type: int, level: int, size: int) -> zipfile.ZipInfo:
+    """The ``ZipInfo`` of one entry: fixed date and mode, ``compress_type`` at ``level``, ``size`` bytes."""
     info = zipfile.ZipInfo(filename=arcname, date_time=_FIXED_DATE_TIME)
     info.compress_type = compress_type
     # ZipFile.open() applies the ZipFile's own `compresslevel` only to a name it builds
@@ -140,9 +139,64 @@ def _write_entry(
     info.external_attr = _FILE_MODE << 16
     # file_size set from the source up front is what lets zipfile stream the entry and
     # still choose the zip64 form correctly for a file over 2 GiB.
-    info.file_size = _source_size(source)
+    info.file_size = size
+    return info
+
+
+def _write_entry(
+    zf: zipfile.ZipFile,
+    arcname: str,
+    source: ZipSource,
+    compress_type: int,
+    level: int,
+    transform: ZipTransform | None = None,
+) -> None:
+    """Write one entry with the fixed date and mode, streaming ``source`` into it.
+
+    With a ``transform``, a path source is opened once and handed to the transform before
+    its entry is begun, because the entry's size has to be known when it is opened. Bytes
+    and ``(ZipFile, name)`` sources never reach the transform.
+    """
+    if transform is not None and not isinstance(source, bytes | bytearray | tuple):
+        _write_path_entry_through(zf, arcname, Path(source), compress_type, level, transform)
+        return
+    info = _entry_info(arcname, compress_type, level, _source_size(source))
     with zf.open(info, "w") as destination:
         _stream_source(source, destination)
+
+
+def _write_path_entry_through(
+    zf: zipfile.ZipFile,
+    arcname: str,
+    path: Path,
+    compress_type: int,
+    level: int,
+    transform: ZipTransform,
+) -> None:
+    """Open ``path`` once, ask ``transform`` what the entry holds, and write that.
+
+    A ``None`` answer means the file as it is: the same handle is rewound to its start and
+    streamed, so whatever the transform read from it is not lost. Opening the file a second
+    time instead would double the opens on a bundle of hundreds of thousands of members.
+    Any other answer must be bytes and becomes the entry, sized by its own length.
+    """
+    with path.open("rb") as handle:
+        replacement = transform(arcname, handle)
+        if replacement is None:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(0)
+            info = _entry_info(arcname, compress_type, level, size)
+            with zf.open(info, "w") as destination:
+                shutil.copyfileobj(handle, destination, _BLOCK_BYTES)
+            return
+    if not isinstance(replacement, bytes | bytearray):
+        raise TypeError(
+            f"a write_zip transform must return bytes or None, got {type(replacement).__name__} for {arcname!r}"
+        )
+    info = _entry_info(arcname, compress_type, level, len(replacement))
+    with zf.open(info, "w") as destination:
+        destination.write(replacement)
 
 
 def write_zip(
@@ -150,6 +204,7 @@ def write_zip(
     dest: Path,
     *,
     policy: CompressionPolicy = MODERATE,
+    transform: ZipTransform | None = None,
 ) -> Path:
     """Write ``entries`` as one reproducible zip at ``dest`` and return ``dest``.
 
@@ -158,6 +213,15 @@ def write_zip(
     are written in the order of their path PARTS (``"a/b"`` before ``"a-b/x"``, which is
     the order a directory walk gives), each with the date 1980-01-01 and mode 0o644, and
     each compressed as ``policy`` says.
+
+    ``transform`` lets the caller change what a FILE entry holds without a second pass
+    over the files. For each path source the file is opened once and ``transform(arcname,
+    handle)`` is called with the open binary handle. Returning ``None`` archives the file
+    as it is (the handle is rewound and streamed, however much the transform read);
+    returning ``bytes`` archives those bytes instead, sized by their length. Bytes and
+    ``(ZipFile, name)`` sources are not passed to it. An exception raised by the transform
+    ends the write like any other failure. With ``transform=None``, every byte written is
+    what the call without the keyword writes.
 
     The zip is built at ``dest`` plus a ``.partial`` suffix and renamed over ``dest``
     only after it is complete, so a failure or an interrupt leaves ``dest`` exactly as
@@ -175,7 +239,7 @@ def write_zip(
     try:
         with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_STORED) as zf:
             for arcname, source in ordered:
-                _write_entry(zf, arcname, source, policy.compress_type_for(arcname), policy.level)
+                _write_entry(zf, arcname, source, policy.compress_type_for(arcname), policy.level, transform)
         os.replace(partial, dest)
     except BaseException:
         partial.unlink(missing_ok=True)  # EXEMPT-DU: transient-intermediate

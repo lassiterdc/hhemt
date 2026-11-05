@@ -2658,13 +2658,34 @@ def bundle_command(
             "bundle's experiment identity. Images are carried by manifest (ADR-21); no .def is needed."
         ),
     ),
+    omit_output_zarrs: bool = typer.Option(
+        False,
+        "--omit-output-zarrs",
+        help=(
+            "Carry every output .zarr store without its chunk files (metadata documents only). "
+            "`combine` refuses the resulting bundle, and re-running a data figure inside it is "
+            "refused. Report regeneration from the bundled figures still works."
+        ),
+    ),
+    allow_stale_figures: bool = typer.Option(
+        False,
+        "--allow-stale-figures",
+        help=(
+            "Bundle a sensitivity analysis even though it holds figures of members no longer in its "
+            "setup table. By default the emit is refused. With this flag the stale figures are carried "
+            "as they are and listed under stale_figures_included in bundle_manifest.json."
+        ),
+    ),
 ) -> None:
     """Emit a portable render bundle for local renderer iteration.
 
     Walks *.manifest.json provenance sidecars under {analysis_dir}/plots/
     and streams the union of declared source paths into a self-contained
     zip with relative-path configs and the HPC-baseline
-    analysis_report.{html,zip} under bundle_baseline/.
+    analysis_report.html under bundle_baseline/ (the baseline zip is not
+    carried). Producer directories, the interpreter path, the login name and
+    the SLURM account in the archive's text files are replaced by {hhemt_*}
+    placeholders; declared inputs and binary files are copied unchanged.
 
     Requires render_report() to have been invoked at least once on the
     target analysis (so manifest sidecars exist). Raises FileNotFoundError
@@ -2677,27 +2698,38 @@ def bundle_command(
     session rather than under an sbatch with a guessed time limit; if you must submit
     it, size the limit from the declared-file count, not from the analysis size.
     """
-    from hhemt.analysis import TRITONSWMM_analysis
-    from hhemt.system import TRITONSWMM_system
+    try:
+        from hhemt.analysis import TRITONSWMM_analysis
+        from hhemt.system import TRITONSWMM_system
 
-    system = TRITONSWMM_system(system_config)
-    analysis = TRITONSWMM_analysis(
-        analysis_config,
-        system,
-        hpc_system_config_yaml=hpc_system_config,
-        case_manifest_yaml=case_manifest,
-    )
-    from hhemt.bundle import emit_bundle
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(
+            analysis_config,
+            system,
+            hpc_system_config_yaml=hpc_system_config,
+            case_manifest_yaml=case_manifest,
+        )
+        from hhemt.bundle import emit_bundle
 
-    if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
-        target = analysis.sensitivity.experiment
-    else:
-        target = analysis
-    bundle_path = emit_bundle(target, output, exclude_config=exclude_config)
-    if exclude_config is None:
-        console.print(f"[green]Bundle emitted (self-contained):[/green] {bundle_path}")
-    else:
-        console.print(f"[green]Bundle emitted (with by-reference inputs):[/green] {bundle_path}")
+        if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
+            target = analysis.sensitivity.experiment
+        else:
+            target = analysis
+        bundle_path = emit_bundle(
+            target,
+            output,
+            exclude_config=exclude_config,
+            omit_output_zarrs=omit_output_zarrs,
+            allow_stale_figures=allow_stale_figures,
+        )
+        if exclude_config is None:
+            console.print(f"[green]Bundle emitted (self-contained):[/green] {bundle_path}")
+        else:
+            console.print(f"[green]Bundle emitted (with by-reference inputs):[/green] {bundle_path}")
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _exit_on_error(exc)
 
 
 def _require_build_host(build_host, build_hpc_config: Path) -> None:

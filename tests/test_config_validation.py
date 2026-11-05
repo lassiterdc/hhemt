@@ -904,7 +904,7 @@ def test_force_rerun_defaults_to_none(tmp_path: Path):
     cfg = _minimal_analysis_config_dict(tmp_path)
     del cfg["force_rerun"]
     loaded = analysis_config.model_validate(cfg)
-    assert loaded.force_rerun == "none"
+    assert loaded.force_rerun.subject == "none"
 
 
 @pytest.mark.parametrize(
