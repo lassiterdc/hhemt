@@ -65,8 +65,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import xml.etree.ElementTree as ET
 from collections import defaultdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 #: pytest exit codes that mean the session did not deliver a verdict.
@@ -110,6 +112,20 @@ STRUCTURAL_SKIP_REASONS: tuple[str, ...] = (
 KILLED_STATES = {"TIMEOUT", "PREEMPTED", "CANCELLED", "NODE_FAIL", "OUT_OF_MEMORY"}
 
 
+#: The suffix pytest-xdist's ``--dist loadgroup`` appends to a test's reported name: ``@{xdist_group name}``. The group
+#: text has no ``@``, no bracket and no whitespace (it holds letters, digits, ``:``, ``+``, ``_``, ``-``, ``.``).
+_XDIST_GROUP_SUFFIX = re.compile(r"@[^@\[\]\s]+$")
+
+
+def _strip_group_suffix(name: str) -> str:
+    """Drop a trailing xdist ``@{group}`` suffix from a junit test name, and nothing else.
+
+    Only a suffix AFTER the last character of the name matters: an ``@`` inside a parametrised id's brackets
+    (``test_x[a@b]``) is part of the id and is kept, because the pattern excludes a bracket after the ``@``. A name
+    with no suffix is returned unchanged."""
+    return _XDIST_GROUP_SUFFIX.sub("", name)
+
+
 def _node_id(tc) -> tuple[str, bool]:
     """Reconstruct the pytest node id from a junit testcase element.
 
@@ -125,7 +141,7 @@ def _node_id(tc) -> tuple[str, bool]:
     failure this function exists to end.
     """
     f = tc.get("file") or ""
-    name = tc.get("name") or ""
+    name = _strip_group_suffix(tc.get("name") or "")
     cls = tc.get("classname") or ""
     if not f:
         return name, False
@@ -146,15 +162,18 @@ def parse_junit(path: Path) -> dict[str, str]:
         node_id, _ = _node_id(tc)
         kinds = {c.tag for c in tc}
         if "error" in kinds:
-            outcomes[node_id] = "UNEVALUATED"
+            outcome = "UNEVALUATED"
         elif "failure" in kinds:
-            outcomes[node_id] = "FAILED"
+            outcome = "FAILED"
         elif "skipped" in kinds:
             sk = tc.find("skipped")
             msg = (sk.get("message") or "") if sk is not None else ""
-            outcomes[node_id] = "SKIPPED_STRUCTURAL" if msg in STRUCTURAL_SKIP_REASONS else "SKIPPED_INCIDENTAL"
+            outcome = "SKIPPED_STRUCTURAL" if msg in STRUCTURAL_SKIP_REASONS else "SKIPPED_INCIDENTAL"
         else:
-            outcomes[node_id] = "PASSED"
+            outcome = "PASSED"
+        # A test can appear twice in one file once the group suffix is stripped (once suffixed, once plain, e.g. a
+        # retry): fold the two by the cross-chunk rule, which keeps the more severe evaluated outcome.
+        merge_outcomes(outcomes, {node_id: outcome}, problems=[])
     return outcomes
 
 
@@ -258,11 +277,67 @@ def classify_slug_entry(rec: dict) -> str:
     return ENTRY_ANALYSIS_TREE if stamp else ENTRY_SHARED_BY_DESIGN
 
 
+def _parse_instant(value) -> datetime | None:
+    """A recorded ISO-8601 instant as an aware datetime, or None when absent or unparseable."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _tail_ran_after(manifest: dict, statuses: dict, tail_cid: int) -> bool:
+    """True when the tail chunk's recorded `started_at` is not before the `ended_at` of EVERY array chunk.
+
+    The estate's single-chunk re-run submits with no dependency, so dispatch order is not a property of the run
+    directory; the only order evidence is each chunk's recorded wall-clock bounds. The comparison is
+    `tail.started_at >= array.ended_at` over the CURRENT status of each array chunk, with NO clock-skew tolerance (a
+    skew that inverts the order keeps the tail in the joins, the loud direction), so equal instants exempt the tail.
+    An array chunk re-run after the tail has overwritten its status with a later `ended_at`, which reads as an
+    overlap: conservative and loud, and the operator re-runs the tail afterwards. A chunk with no status, or a status
+    lacking either time, gives the tail no exemption.
+    """
+    tail_status = statuses.get(tail_cid) or {}
+    tail_start = _parse_instant(tail_status.get("started_at"))
+    if tail_start is None or _parse_instant(tail_status.get("ended_at")) is None:
+        return False
+    for c in manifest["chunks"]:
+        if c["chunk_id"] == tail_cid:
+            continue
+        st = statuses.get(c["chunk_id"]) or {}
+        ended = _parse_instant(st.get("ended_at"))
+        if ended is None or _parse_instant(st.get("started_at")) is None or tail_start < ended:
+            return False
+    return True
+
+
+def skipped_non_xfail_nodes(junit: Path) -> set[str]:
+    """Node ids whose junit testcase is SKIPPED by a skip that is not an xfail.
+
+    pytest writes `<skipped type="pytest.skip">` for a skip and `<skipped type="pytest.xfail">` for an xfail-marked
+    test, and it reports an xfail-marked test whose FIXTURE failed setup the same way as any xfail. So the `type`
+    attribute, not the presence of `<skipped>`, separates "pytest declined to run this test" from "this test's
+    fixture failed and the marker hid it". A testcase that also carries an error or a failure is not counted."""
+    nodes: set[str] = set()
+    for tc in ET.parse(junit).getroot().iter("testcase"):
+        kinds = {c.tag for c in tc}
+        sk = tc.find("skipped")
+        if sk is None or kinds & {"error", "failure"}:
+            continue
+        if sk.get("type") != "pytest.xfail":
+            nodes.add(_node_id(tc)[0])
+    return nodes
+
+
 def classify_chunk(
     status: dict | None,
     junit: Path | None,
     pinned_sha: str,
     expected_fixtures: list[str] | None = None,
+    expected_fixture_holders: dict[str, list[str]] | None = None,
+    advisories: list[str] | None = None,
 ) -> tuple[str, list[str]]:
     if status is None:
         return "MISSING", ["no status sidecar for a chunk the manifest declares"]
@@ -273,8 +348,26 @@ def classify_chunk(
     # lost PRECONDITION, so the chunk is VOID and the response is to re-run it. A
     # test whose own function-scoped fixture raised is a defect, so the chunk stays
     # FAIL and the run is NOT-GREEN through the UNEVALUATED set instead.
+    #
+    # ONE EXCEPTION, because a skipped holder never asks for the fixture: a dead fixture EVERY one of whose
+    # recorded holders the junit reports skipped by a skip that is not an xfail lost no precondition (pytest skipped
+    # the test before fixture setup), so it is reported through `advisories` and not as a VOID reason. Any holder not
+    # so skipped, no recorded holders, or a manifest without `expected_fixture_holders` (a run planned before the
+    # field existed) keeps the VOID exactly.
     ok = set(status.get("session_fixtures_ok") or [])
     dead = sorted(set(expected_fixtures or []) - ok)
+    if dead and expected_fixture_holders and junit is not None and junit.exists():
+        skipped = skipped_non_xfail_nodes(junit)
+        excused = [
+            fx for fx in dead if expected_fixture_holders.get(fx) and set(expected_fixture_holders[fx]) <= skipped
+        ]
+        for fx in excused:
+            if advisories is not None:
+                advisories.append(
+                    f"expected session fixture {fx} did not complete setup, and every holder was skipped "
+                    f"(not xfail): {sorted(expected_fixture_holders[fx])}"
+                )
+        dead = [fx for fx in dead if fx not in excused]
     if dead:
         reasons.append(f"expected session fixture(s) did not complete setup: {dead}")
     if status.get("source_sha_start") != pinned_sha:
@@ -783,6 +876,17 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
                 "a suite-level claim. Scope forced to triage."
             )
         scope = "triage"
+    # A TIER-RESTRICTED run is bound the same way: a plan that collected only the solver-bearing tier covers
+    # a subset of the suite, so no invocation can turn it into scope=union or a whole-suite ledger entry.
+    select_tier = manifest.get("select_tier") or "all"
+    if select_tier != "all" and scope != "tier":
+        if scope == "union":
+            scope_problems.append(
+                f"caller asked for scope=union on a manifest declaring select_tier={select_tier}; a run "
+                "restricted to that tier covers only part of the suite and can never support a suite-level "
+                "claim. Scope forced to tier."
+            )
+        scope = "tier"
     collected = set(manifest["collected"])
 
     chunk_rows = []
@@ -803,7 +907,15 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
         jp = run_dir / f"chunk-{cid:02d}.junit.xml"
         status = json.loads(sp.read_text(encoding="utf-8")) if sp.exists() else None
         statuses[cid] = status or {}
-        state, why = classify_chunk(status, jp if jp.exists() else None, pinned, c.get("expected_fixtures"))
+        chunk_advisories: list[str] = []
+        state, why = classify_chunk(
+            status,
+            jp if jp.exists() else None,
+            pinned,
+            c.get("expected_fixtures"),
+            c.get("expected_fixture_holders"),
+            chunk_advisories,
+        )
         if jp.exists():
             merge_outcomes(outcomes, parse_junit(jp), problems=merge_problems)
             for k, v in unevaluated_reasons(jp).items():
@@ -829,6 +941,7 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
                 "kind": c["kind"],
                 "state": state,
                 "reasons": why,
+                "advisories": chunk_advisories,
                 "diagnostics": (status or {}).get("diagnostics"),
             }
         )
@@ -939,8 +1052,13 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     entry_evidence: dict[str, dict] = {}
     have_entries = False
     legacy_chunks: list[int] = []
+    # THE TAIL IS LEFT OUT OF THE JOINS ONLY WHEN THE RECORDED TIMES SAY IT RAN AFTER THE ARRAY (see `_tail_ran_after`).
+    tail_cid = manifest.get("tail_chunk")
+    tail_exempt = tail_cid is not None and _tail_ran_after(manifest, statuses, tail_cid)
+    tail_written: set[str] = set()
     for c in manifest["chunks"]:
         st = statuses.get(c["chunk_id"], {})
+        in_joins = not (tail_exempt and c["chunk_id"] == tail_cid)
         entries = st.get("reach_entries") or {}
         if entries:
             have_entries = True
@@ -959,6 +1077,8 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
             for key, rec in entries.items():
                 ev = entry_evidence.setdefault(key, {})
                 ev.setdefault("write_samples_by_chunk", {})
+                ev.setdefault("replace_samples_by_chunk", {})
+                ev.setdefault("coordination_writes_by_chunk", {})
                 ev.setdefault("votes", {})
                 ev["label"] = rec.get("label") or os.path.basename(key)
                 ev["root_shape"] = rec.get("root_shape")
@@ -977,23 +1097,57 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
                     ev[k] = cur if prior is None else (bool(prior) or bool(cur) if cur is not None else prior)
                 if rec.get("write_samples"):
                     ev["write_samples_by_chunk"][str(c["chunk_id"])] = rec["write_samples"]
-                if rec.get("read"):
+                # Additive reach schema: a record written before the observer saw renames has neither key and reads
+                # as an empty list and 0.
+                if rec.get("replace_samples"):
+                    ev["replace_samples_by_chunk"][str(c["chunk_id"])] = rec["replace_samples"]
+                if rec.get("replace_cap_bound"):
+                    ev["replace_cap_bound"] = True
+                if rec.get("coordination_writes"):
+                    ev["coordination_writes_by_chunk"][str(c["chunk_id"])] = rec["coordination_writes"]
+                if rec.get("read") and in_joins:
                     observed_by.setdefault(key, set()).add(c["chunk_id"])
                 if rec.get("written"):
-                    written_by.setdefault(key, set()).add(c["chunk_id"])
+                    if in_joins:
+                        written_by.setdefault(key, set()).add(c["chunk_id"])
+                    else:
+                        tail_written.add(key)
         else:
             if st.get("observed_trees"):
                 legacy_chunks.append(c["chunk_id"])
             for tree in st.get("observed_trees") or []:
-                observed_by.setdefault(tree, set()).add(c["chunk_id"])
+                if in_joins:
+                    observed_by.setdefault(tree, set()).add(c["chunk_id"])
             for tree in st.get("written_trees") or []:
-                written_by.setdefault(tree, set()).add(c["chunk_id"])
+                if in_joins:
+                    written_by.setdefault(tree, set()).add(c["chunk_id"])
+                else:
+                    tail_written.add(tree)
 
     entry_class = {
         n: (classify_slug_entry(entry_evidence[n]) if n in entry_evidence else ENTRY_UNKNOWN)
         for n in sorted(set(observed_by) | set(written_by))
     }
     observed_cross = {t: sorted(ids) for t, ids in sorted(observed_by.items()) if len(ids) > 1}
+    # What the tail wrote, recorded rather than joined: sequential by the recorded times, so not a race, but the
+    # compiled tier's rebuild is the tail's purpose and a reader should see it named.
+    tail_writes = {
+        k: {
+            "label": (entry_evidence.get(k) or {}).get("label") or os.path.basename(k),
+            "class": classify_slug_entry(entry_evidence[k]) if k in entry_evidence else ENTRY_UNKNOWN,
+            "write_samples": ((entry_evidence.get(k) or {}).get("write_samples_by_chunk") or {}).get(str(tail_cid), []),
+            "replace_samples": ((entry_evidence.get(k) or {}).get("replace_samples_by_chunk") or {}).get(
+                str(tail_cid), []
+            ),
+            "coordination_writes": ((entry_evidence.get(k) or {}).get("coordination_writes_by_chunk") or {}).get(
+                str(tail_cid), 0
+            ),
+        }
+        for k in sorted(tail_written)
+    }
+    tail_state = (
+        next((r["state"] for r in chunk_rows if r["chunk_id"] == tail_cid), "none") if tail_cid is not None else "none"
+    )
 
     # THE JOIN. A cross-chunk reach alone does not say what KIND of race it is, and that
     # distinction cost a full round to reconstruct by hand: two chunks READING one tree
@@ -1006,6 +1160,9 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
                 "readers": observed_cross[t],
                 "writers": sorted(written_by.get(t, set())),
                 "write_samples_by_chunk": (entry_evidence.get(t) or {}).get("write_samples_by_chunk", {}),
+                "replace_samples_by_chunk": (entry_evidence.get(t) or {}).get("replace_samples_by_chunk", {}),
+                "coordination_writes_by_chunk": (entry_evidence.get(t) or {}).get("coordination_writes_by_chunk", {}),
+                "replace_cap_bound": bool((entry_evidence.get(t) or {}).get("replace_cap_bound")),
             }
             for t in names
             if t in observed_cross and written_by.get(t)
@@ -1130,6 +1287,8 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     # instrument, which is a different thing from the instrument reporting on itself.
     advisories: list[str] = list(entry_advisories)
     for r in chunk_rows:
+        advisories.extend(f"chunk {r['chunk_id']:02d}: {a}" for a in r["advisories"])
+    for r in chunk_rows:
         if r["state"] != "PASS":
             problems.append(f"chunk {r['chunk_id']:02d} is {r['state']}: {'; '.join(r['reasons']) or 'see junit'}")
     if failed:
@@ -1194,24 +1353,47 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
                 if any(s in other for oc, other in _payload.items() if oc != cid)
             }
         )
-        # FAIL CLOSED ON ABSENT EVIDENCE. A writer with no recorded sample cannot be
-        # exonerated: the whole predicate above reasons from WHAT was written, so a writer
-        # that contributed nothing to reason from is unclassified, not benign. Without this
-        # clause an empty `write_samples_by_chunk` makes `_collided` empty and the entry
-        # reads ADVISORY -- measured 2026-09-04, `[[]] * 4` returned GREEN.
+        # FAIL CLOSED ON ABSENT EVIDENCE. A writer with no recorded witness of any kind cannot be exonerated: the
+        # whole predicate above reasons from WHAT was written, so a writer that contributed nothing to reason from
+        # is unclassified, not benign. Without this clause an empty `write_samples_by_chunk` makes `_collided` empty
+        # and the entry reads ADVISORY -- measured 2026-09-04, `[[]] * 4` returned GREEN.
         #
-        # NOT REACHABLE TODAY, and that is stated rather than hidden so the next reader does
-        # not waste an afternoon constructing it: `_runner.py`'s audit hook (`_reach_hook`)
-        # appends a sample on the FIRST write, so `written=True` implies at least one sample,
-        # and the LEGACY reach shape keys `written_by` on the bare NAME while the modern shape keys
-        # on the ABSOLUTE PATH -- measured, they never join, so a legacy writer cannot
-        # attach to a SHARED_BY_DESIGN entity. This clause is therefore a CONTRACT test on
-        # an undocumented cross-module invariant (a hook in `_runner.py` guaranteeing an
-        # input property this consumer relies on), not a regression test on an observed
-        # failure. It is kept because that invariant is undocumented, lives in a different
-        # module from its consumer, and would break silently: a future hook that records a
-        # write without a path turns a concurrent build into an advisory.
-        _unwitnessed = sorted(c for c in d["writers"] if not _by_chunk.get(str(c)))
+        # The witnesses are three: a payload write sample, a replace sample (an atomic write is a rename and the
+        # observer records its destination), and a coordination write (a dot-prefixed open, counted and not
+        # sampled). A writer holding none of the three is still BLOCKING.
+        #
+        # REACHABLE SINCE THE OBSERVER SAW RENAMES. Before then `_reach_hook` appended a sample on the FIRST write, so
+        # `written=True` implied a sample and this clause was a contract test on a cross-module invariant. Now a
+        # dot-prefixed write sets `written` while incrementing `coordination_writes` and appending nothing, and a
+        # rename sets `written` and appends to `replace_samples`; the invariant is "at least one of the three", which
+        # lives in `_runner.py::_reach_hook`, a different module from this consumer. The LEGACY reach shape keys
+        # `written_by` on the bare NAME while the modern shape keys on the ABSOLUTE PATH -- measured, they never join,
+        # so a legacy writer cannot attach to a SHARED_BY_DESIGN entity.
+        _replace_by_chunk = d.get("replace_samples_by_chunk") or {}
+        _coord_by_chunk = d.get("coordination_writes_by_chunk") or {}
+        _unwitnessed = sorted(
+            c
+            for c in d["writers"]
+            if not _by_chunk.get(str(c)) and not _replace_by_chunk.get(str(c)) and not _coord_by_chunk.get(str(c))
+        )
+        # A truncating open of a path another chunk replaces is what a reader of the replaced file can meet.
+        _opened_and_replaced = sorted(
+            {
+                s
+                for cid, ss in _payload.items()
+                for s in ss
+                if any(s in other for oc, other in _replace_by_chunk.items() if oc != cid)
+            }
+        )
+        # Replaced by two or more chunks and opened for write by none: atomic on both sides.
+        _opened_any = set().union(*_payload.values()) if _payload else set()
+        _replaced_by: dict[str, list[int]] = {}
+        for cid, ss in _replace_by_chunk.items():
+            for s in ss:
+                _replaced_by.setdefault(s, []).append(int(cid))
+        _atomic_only = {
+            s: sorted(ids) for s, ids in sorted(_replaced_by.items()) if len(ids) > 1 and s not in _opened_any
+        }
         _sbd = (
             f"shared-by-design entry written by chunk(s) {d['writers']} (touched by "
             f"{d['readers']}): {_disp(t_)} -- shared across chunks by construction, so NOT an "
@@ -1219,12 +1401,14 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
             "the compiled tier is written ONCE, by the warm build step that runs before the chunk array). "
             f"Samples: {d['write_samples_by_chunk'] or '(none recorded)'}"
         )
-        if _collided or _unwitnessed:
+        if _collided or _opened_and_replaced or _unwitnessed:
             _why = (
                 f"two or more chunks wrote the SAME non-coordination path(s) {_collided}"
                 if _collided
-                else f"chunk(s) {_unwitnessed} are recorded as writers with NO write sample, "
-                "so this entry cannot be shown to be lock acquisition"
+                else f"one chunk opened for write a path another chunk replaced: {_opened_and_replaced}"
+                if _opened_and_replaced
+                else f"chunk(s) {_unwitnessed} are recorded as writers with NO write, replace or coordination "
+                "evidence, so this entry cannot be shown to be lock acquisition"
             )
             problems.append(
                 f"[concurrent-build] {_sbd} BLOCKING: {_why} under a tier written once, by the warm build step "
@@ -1237,6 +1421,14 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
                 "writes rather than a concurrent build. NOTE: `write_samples` is capped at "
                 "5 per chunk and records no flag when the cap binds, so a collision beyond "
                 "the cap is not visible here."
+            )
+        for _path, _ids in _atomic_only.items():
+            advisories.append(
+                f'[atomic-replace] "{_path}" replaced atomically by chunks {_ids}; identity of content not '
+                "checked. This is not a clearance: a reader never meets a partial file, but the last writer's "
+                "content wins. Before shape iteration 29 this observer could not see a rename, and a path written "
+                "this way by two chunks produced no entry at all; a truncating open of the same path by two chunks "
+                "is still BLOCKING." + (" (replace samples capped)" if d.get("replace_cap_bound") else "")
             )
     # DEMOTED VISIBLY, and the visibility is the point rather than a courtesy. Arm B is the
     # run's ONLY detector of an under-connected partition, so demoting it removes a real
@@ -1352,9 +1544,10 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
         advisories.append(f"[disclosure] {_violation}")
     return {
         "scope": scope,
+        "tier": select_tier,
         "disclosure": disclosure,
         "verdict_line": (
-            f"verdict={verdict} scope={scope} run_id={manifest['run_id']} "
+            f"verdict={verdict} scope={scope} tier={select_tier} run_id={manifest['run_id']} "
             f"covered={len(passed)} structurally_excluded={len(structural)} "
             f"failed={len(failed)} unevaluated={len(uneval)} absent={len(absent)} "
             f"collected={len(collected)} "
@@ -1368,8 +1561,11 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
             f"{_FIELD_UNSIGNALLED}={_fmt_signal_count(_unsig_count)} "
             f"signal_completeness={_completeness} "
             f"advisories={len(advisories)} "
-            f"mechanism={'readable' if mechanism_readable else 'UNREADABLE'}"
+            f"mechanism={'readable' if mechanism_readable else 'UNREADABLE'} "
+            f"tail={tail_state}"
         ),
+        "tail": tail_state,
+        "tail_writes": tail_writes,
         "mechanism_readable": mechanism_readable,
         "non_reporting_chunks": non_reporting,
         "run_id": manifest["run_id"],
@@ -1447,7 +1643,8 @@ def render_verdict_line(result: dict) -> str:
     """
     c = result["counts"]
     return (
-        f"verdict={result['verdict']} scope={result['scope']} run_id={result['run_id']} "
+        f"verdict={result['verdict']} scope={result['scope']} tier={result.get('tier', 'all')} "
+        f"run_id={result['run_id']} "
         f"covered={c['covered']} structurally_excluded={c['structurally_excluded']} "
         f"failed={c['failed']} unevaluated={c['unevaluated']} absent={c['absent']} "
         f"collected={c['collected']} "
@@ -1456,7 +1653,8 @@ def render_verdict_line(result: dict) -> str:
         f"{_FIELD_UNSIGNALLED}={_fmt_signal_count(c[_FIELD_UNSIGNALLED])} "
         f"signal_completeness={c['signal_completeness']} "
         f"advisories={len(result.get('advisories') or [])} "
-        f"mechanism={'readable' if result.get('mechanism_readable', True) else 'UNREADABLE'}"
+        f"mechanism={'readable' if result.get('mechanism_readable', True) else 'UNREADABLE'} "
+        f"tail={result.get('tail', 'none')}"
     )
 
 

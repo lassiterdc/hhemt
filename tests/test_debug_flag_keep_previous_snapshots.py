@@ -319,11 +319,23 @@ def _sensitivity_builder():
     return SensitivityAnalysisWorkflowBuilder(TRITONSWMM_sensitivity_analysis(tc.analysis))
 
 
-@pytest.mark.parametrize("which", ["multisim", "sensitivity"])
-def test_both_builders_emit_debug_on_every_run_shell_exactly_when_debug(which):
+def _assert_debug_on_every_run_shell_exactly_when_debug(generate) -> None:
+    """Render one generator with debug on and off and check the ``--debug`` flag on every run-simulation shell.
+
+    `generate` is the Snakefile generator of one builder, called with ``debug=``. Shared by the two public tests
+    below, which each name exactly one builder so that the fixture-tree each test writes is visible to the
+    suite's shared-runs-root scan; a builder picked inside this helper would hide that tree."""
+    on = _runner_blocks(generate(debug=True))
+    off = _runner_blocks(generate(debug=False))
+    assert on and len(on) == len(off)
+    assert all("--debug" in block for block in on)
+    assert not any("--debug" in block for block in off)
+
+
+def test_multisim_builder_emits_debug_on_every_run_shell_exactly_when_debug():
     """Property: every run-simulation rule shell carries ``--debug`` under debug and none does otherwise.
 
-    Class: both Snakefile generators, each rendered with debug True and False.
+    Class: the multi-sim Snakefile generator, rendered with debug True and False.
 
     Why required, checkable against the code: the runner is the only process that writes the
     base cfg line, and it learns the flag only from its own command line.
@@ -333,13 +345,23 @@ def test_both_builders_emit_debug_on_every_run_shell_exactly_when_debug(which):
     A second correct implementation under which it still passes: one that places ``--debug``
     elsewhere in the shell's argument list.
     """
-    builder = _multisim_builder() if which == "multisim" else _sensitivity_builder()
-    gen = builder.generate_snakefile_content if which == "multisim" else builder.generate_master_snakefile_content
-    on = _runner_blocks(gen(debug=True))
-    off = _runner_blocks(gen(debug=False))
-    assert on and len(on) == len(off)
-    assert all("--debug" in block for block in on)
-    assert not any("--debug" in block for block in off)
+    _assert_debug_on_every_run_shell_exactly_when_debug(_multisim_builder().generate_snakefile_content)
+
+
+def test_sensitivity_builder_emits_debug_on_every_run_shell_exactly_when_debug():
+    """Property: every run-simulation rule shell carries ``--debug`` under debug and none does otherwise.
+
+    Class: the sensitivity master Snakefile generator, rendered with debug True and False.
+
+    Why required, checkable against the code: the runner is the only process that writes the
+    base cfg line, and it learns the flag only from its own command line.
+
+    What kills it: threading the flag into one generator only, or dropping it from the shell.
+
+    A second correct implementation under which it still passes: one that places ``--debug``
+    elsewhere in the shell's argument list.
+    """
+    _assert_debug_on_every_run_shell_exactly_when_debug(_sensitivity_builder().generate_master_snakefile_content)
 
 
 _FAILED_REPLAY_LINE = "swmm_snapshot_failed_replay=1"

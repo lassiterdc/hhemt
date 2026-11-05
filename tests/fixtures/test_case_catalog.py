@@ -15,6 +15,7 @@ Each method returns a retrieve_synth_TRITON_SWMM_test_case instance with:
 
 import os
 import re
+import uuid
 from pathlib import Path
 
 import pandas as pd
@@ -576,5 +577,33 @@ class Local_TestCases:
         assert all(re.fullmatch(r"[A-Za-z0-9_.]+", str(s)) for s in df["member_id"]), (
             "member_id values must match ^[A-Za-z0-9_.]+$"
         )
-        df.to_csv(csv_path, index=False)
+        # ATOMIC: every array element on every node writes the SAME path (the slug root is shared), and `to_csv`
+        # truncates its target before it writes, so a reader (`sensitivity_analysis.py` reads this CSV with
+        # `pandas.read_csv`) that opens it between the truncation and the write sees an empty file and raises
+        # `EmptyDataError`. Write a complete temporary file in the same directory and `os.replace` it onto the target:
+        # the target is always a whole file, old or new. The temporary name starts with `.` (so the suite's
+        # write-surface classifier reads it as a coordination file, not a payload collision), does not end in `.csv`
+        # (nothing that lists `*.csv` sees it) and carries the process id and a random token, so two writers never
+        # share one. Not established: that this is the cause of the setup `EmptyDataError` seen in counted array 1;
+        # the trace could not reproduce it.
+        #
+        # WRITE ONLY WHEN THE BYTES DIFFER. Every caller of one `analysis_name` passes the same frame, so after the
+        # first writer the target already holds these bytes and a replace per call only churns a path others read.
+        # The bytes are built in memory with the same parameters the file is written with, so what is compared is what
+        # would be written. A target that cannot be read (absent, a directory, no permission, any `OSError`) counts as
+        # different and takes the write path below unchanged. The compare may meet a concurrent replace and then sees
+        # the old or the new whole file, never a partial one, because every writer replaces.
+        payload = df.to_csv(index=False, lineterminator="\n").encode("utf-8")
+        try:
+            if csv_path.is_file() and csv_path.read_bytes() == payload:
+                return csv_path
+        except OSError:
+            pass
+        tmp_path = dest_dir / f".{csv_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+        try:
+            df.to_csv(tmp_path, index=False, lineterminator="\n", encoding="utf-8")
+            os.replace(tmp_path, csv_path)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
         return csv_path

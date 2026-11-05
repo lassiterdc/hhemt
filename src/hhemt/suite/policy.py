@@ -42,6 +42,38 @@ from typing import Any
 #: The ledger file, one JSON object per line, inside the runs root.
 LEDGER_NAME = "_ledger.jsonl"
 
+#: The TAIL (ruling R-A, DR-9 option 1): the node ids that leave every array chunk and run as ONE last chunk, after
+#: the array. Each one rebuilds the compiled tier the array chunks read, so running it beside them is a write/read race
+#: on shared state (defect A). Owned by the harness, not by the test file: a rename fails the plan loudly instead of
+#: returning a destructive test to an array chunk.
+TAIL_NODE_IDS: tuple[str, ...] = (
+    "tests/test_synth_00_compile_models.py::test_compile_swmm",
+    "tests/test_synth_00_compile_models.py::test_compile_tritonswmm",
+    "tests/test_synth_00_compile_models.py::test_compile_triton_only",
+)
+
+#: Names a file holding the tail instead of `TAIL_NODE_IDS`: one node id per line, blank lines and `#` comments
+#: ignored, and an EMPTY list there meaning no tail (a stand-in project planned through `plan` opts out this way).
+TAIL_NODE_IDS_FILE_ENV = "HHEMT_SUITE_TAIL_NODE_IDS_FILE"
+
+
+def tail_node_ids(environ: dict[str, str] | None = None) -> tuple[list[str], str]:
+    """(ids, source): the tail's node ids and where they came from, for the manifest to record.
+
+    The source is the file path when `HHEMT_SUITE_TAIL_NODE_IDS_FILE` names a readable file (an unreadable one is an
+    error, never a silent fall-back to the built-in list), else the literal `"TAIL_NODE_IDS"`.
+    """
+    env = os.environ if environ is None else environ
+    named = env.get(TAIL_NODE_IDS_FILE_ENV, "")
+    if not named:
+        return list(TAIL_NODE_IDS), "TAIL_NODE_IDS"
+    path = Path(named)
+    if not path.is_file():
+        raise FileNotFoundError(f"{TAIL_NODE_IDS_FILE_ENV} names {named!r}, which is not a file")
+    ids = [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines()]
+    return [ln for ln in ids if ln and not ln.startswith("#")], str(path)
+
+
 #: The record's field set, CLOSED. Every member is computable from something the run has
 #: already written; nothing here is a summary of a summary.
 #:

@@ -10,6 +10,7 @@ Laptop-safe: no solver compiled or executed, no network, no `uv sync`; every pat
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -74,7 +75,7 @@ def _seed_log(logdir: Path, *, event_slug: str | None, ordinal: int | None, body
 # ---------------------------------------------------------------------------
 
 
-def test_the_three_files_the_shape_declared_out_of_scope_are_green():
+def test_the_three_files_the_shape_declared_out_of_scope_are_green(tmp_path):
     """Property: the chunk leaves the suite green in the files its change makes reachable.
 
     Class: the TEST IDS of `tests/test_resume_verdict_disclosed_denominator.py`,
@@ -111,8 +112,8 @@ def test_the_three_files_the_shape_declared_out_of_scope_are_green():
     both arms pasted in the reviewer's scratch).
 
     ONE NAMED EXEMPTION, and it is an ENVIRONMENTAL red rather than a code one.
-    `test_both_builders_emit_debug_on_every_run_shell_exactly_when_debug[multisim]` and
-    `[sensitivity]` fail on any DIRTY checkout with
+    `test_multisim_builder_emits_debug_on_every_run_shell_exactly_when_debug` and
+    `test_sensitivity_builder_emits_debug_on_every_run_shell_exactly_when_debug` fail on any DIRTY checkout with
     `ConfigurationError: Configuration error in field 'hhemt_sha'` raised at
     `src/hhemt/analysis.py:592` ("the running toolkit checkout is at 13e6045b but has modified
     tracked files"). Both reach `TRITONSWMM_analysis.__init__` through
@@ -131,13 +132,16 @@ def test_the_three_files_the_shape_declared_out_of_scope_are_green():
     #: Known ENVIRONMENTAL reds: the dirty-tree `hhemt_sha` guard refuses analysis construction.
     allowed_environmental = {
         "tests/test_debug_flag_keep_previous_snapshots.py::"
-        "test_both_builders_emit_debug_on_every_run_shell_exactly_when_debug[multisim]",
+        "test_multisim_builder_emits_debug_on_every_run_shell_exactly_when_debug",
         "tests/test_debug_flag_keep_previous_snapshots.py::"
-        "test_both_builders_emit_debug_on_every_run_shell_exactly_when_debug[sensitivity]",
+        "test_sensitivity_builder_emits_debug_on_every_run_shell_exactly_when_debug",
     }
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", *files, "-q", "--tb=no", "-p", "no:cacheprovider"],
         cwd=_REPO_ROOT,
+        # The child builds synthetic cases, so it gets its own runs root: inheriting the parent's would write
+        # them under the shared free runs root the parent's guard watches.
+        env={**os.environ, "HHEMT_TEST_RUNS_ROOT_OVERRIDE": str(tmp_path)},
         capture_output=True,
         text=True,
     )

@@ -19,11 +19,17 @@ exact symbol a STRICT derivation loses.
 
 from __future__ import annotations
 
+import hashlib
+import importlib.metadata
 import importlib.util
+import os
+import pickle
 import sys
 from pathlib import Path
 
 import pytest
+
+from hhemt._filelock_compat import resolve_filelock
 
 _REPO = Path(__file__).resolve().parent.parent
 _SCRIPT = _REPO / "scripts" / "check_docs_content.py"
@@ -39,6 +45,174 @@ def _load():
 
 
 cdc = _load()
+
+_REAL_RENDERED = cdc.rendered_docstrings
+_REAL_SPANS = cdc.published_source_lines
+#: The helpers a monkeypatching test replaces and that change what ``rendered_docstrings`` returns.
+_GUARDED = ("_passes_filters", "_handler_options", "_handler_paths", "_module_file", "public_modules")
+_ORIGINALS = {name: getattr(cdc, name) for name in _GUARDED}
+_LIVE_KEY = (cdc.SRC_ROOT, cdc.API_PAGE)
+
+
+#: Environment variable naming a file the memo appends one line to per LIVE derivation (the name of the derivation).
+MEMO_LOG_ENV = "HHEMT_DOCS_MEMO_DERIVATION_LOG"
+_MEMO_DIR_NAME = "check_docs_content_memo"
+_MEMO_DISTRIBUTIONS = ("griffe", "griffelib", "mkdocstrings", "mkdocstrings-python")
+_MISS = object()
+
+
+def _memo_key(root: Path, name: str) -> str:
+    """The digest a stored derivation is valid for: every input the two derivations read, and the derivation's name.
+
+    Inputs: every file under ``src/hhemt`` and ``docs`` (the renderer reads the page and the source), the gate script,
+    each ``SHIPPED_METADATA`` file, ``mkdocs.yml`` (read by the handler-option and handler-path readers), this test
+    file, the installed versions of the renderer libraries, the Python version and the working directory. Bytecode
+    caches are excluded: they change between runs without changing any input, and an unstable key is a silent miss."""
+    files: dict[str, Path] = {}
+    for sub in ("src/hhemt", "docs"):
+        for path in (root / sub).rglob("*"):
+            if path.is_file() and "__pycache__" not in path.parts and path.suffix not in (".pyc", ".pyo"):
+                files[path.relative_to(root).as_posix()] = path
+    for rel in (
+        "scripts/check_docs_content.py",
+        *cdc.SHIPPED_METADATA,
+        "mkdocs.yml",
+        "tests/test_check_docs_content.py",
+    ):
+        if (root / rel).is_file():
+            files[rel] = root / rel
+    digest = hashlib.sha256()
+    for rel in sorted(files):
+        data = files[rel].read_bytes()
+        digest.update(f"{rel}\0{len(data)}\0".encode())
+        digest.update(data)
+    versions = []
+    for dist in _MEMO_DISTRIBUTIONS:
+        try:
+            versions.append(f"{dist}={importlib.metadata.version(dist)}")
+        except importlib.metadata.PackageNotFoundError:
+            versions.append(f"{dist}=absent")
+    digest.update("\0".join([*versions, sys.version, os.getcwd(), name]).encode())
+    return digest.hexdigest()
+
+
+def _memo_fetch(directory: Path, key: str, name: str, derive, shape_ok):
+    """Return the stored value for ``(key, name)``, deriving and publishing it once across processes on a miss.
+
+    A reader sees no entry or a whole one (a temporary file is ``os.replace``d onto the final name). A corrupt or
+    wrong-shaped entry is a miss that is re-derived and republished; it is never an error."""
+    final = directory / f"{key}.{name}.pkl"
+
+    def read():
+        try:
+            value = pickle.loads(final.read_bytes())
+        except Exception:
+            return _MISS
+        return value if shape_ok(value) else _MISS
+
+    value = read()
+    if value is not _MISS:
+        return value
+    with resolve_filelock(directory / f"{key}.{name}.lock"):
+        value = read()
+        if value is not _MISS:
+            return value
+        value = derive()
+        log = os.environ.get(MEMO_LOG_ENV)
+        if log:
+            with open(log, "a", encoding="utf-8") as fh:
+                fh.write(f"{name}\n")
+        tmp = directory / f".{key}.{name}.{os.getpid()}.tmp"
+        tmp.write_bytes(pickle.dumps(value))
+        os.replace(tmp, final)
+        return value
+
+
+def _rendered_shape_ok(value) -> bool:
+    return isinstance(value, list) and all(isinstance(row, tuple) and len(row) == 4 for row in value)
+
+
+def _spans_shape_ok(value) -> bool:
+    return isinstance(value, dict) and all(isinstance(lines, dict) for lines in value.values())
+
+
+def _memo_directory(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One directory per pytest session, shared by its xdist workers (their common parent), removed with the session."""
+    base = tmp_path_factory.getbasetemp()
+    parent = base.parent if os.environ.get("PYTEST_XDIST_WORKER") else base
+    directory = parent / _MEMO_DIR_NAME
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _memoised_live_population(tmp_path_factory):
+    """Derive the LIVE rendered-docstring population once per session instead of once per test or per worker.
+
+    Profiled cost: every call walks the whole ``src/hhemt`` tree with ``griffe`` (about 2,100 modules, 9
+    loads, most of it in ``compile`` and the AST visitor), 22 to 33 s per call. Two derivations do it,
+    ``rendered_docstrings`` and ``published_source_lines`` (its own second walk), and every live test paid one
+    or both. The wrappers answer from the memo ONLY when the call is the live one (``src`` and ``api_page`` are the
+    module's original ``SRC_ROOT`` and ``API_PAGE``), and none of the helpers a test monkeypatches (``_GUARDED``)
+    has been replaced; any other call runs the real derivation. The memo is a per-process dict in front of a
+    cross-process file memo (``_memo_fetch``) keyed on a digest of every input, so under xdist the first worker to
+    need a derivation computes it and the others load it. Each hit returns a fresh copy, so a test cannot mutate
+    another's value. Restored at module teardown.
+    """
+    directory = _memo_directory(tmp_path_factory)
+    cache: dict[str, list] = {}
+
+    def wrapper(src=None, api_page=None):
+        live = (
+            (src, api_page) == _LIVE_KEY
+            and all(getattr(cdc, name) is _ORIGINALS[name] for name in _GUARDED)
+            and cdc.SRC_ROOT == _LIVE_KEY[0]
+            and cdc.API_PAGE == _LIVE_KEY[1]
+        )
+        if not live:
+            return _REAL_RENDERED(src, api_page)
+        key = os.getcwd()
+        if key not in cache:
+            name = "rendered_docstrings"
+            cache[key] = _memo_fetch(
+                directory,
+                _memo_key(_REPO, name),
+                name,
+                lambda: _REAL_RENDERED(src, api_page),
+                _rendered_shape_ok,
+            )
+        return list(cache[key])
+
+    spans_cache: dict[str, dict] = {}
+
+    def spans_wrapper(src=cdc.SRC_ROOT, api_page=cdc.API_PAGE, **kw):
+        live = (
+            not kw
+            and (src, api_page) == _LIVE_KEY
+            and all(getattr(cdc, name) is _ORIGINALS[name] for name in _GUARDED)
+            and cdc.SRC_ROOT == _LIVE_KEY[0]
+            and cdc.API_PAGE == _LIVE_KEY[1]
+        )
+        if not live:
+            return _REAL_SPANS(src, api_page, **kw)
+        key = os.getcwd()
+        if key not in spans_cache:
+            name = "published_source_lines"
+            spans_cache[key] = _memo_fetch(
+                directory,
+                _memo_key(_REPO, name),
+                name,
+                lambda: _REAL_SPANS(src, api_page),
+                _spans_shape_ok,
+            )
+        return {path: dict(lines) for path, lines in spans_cache[key].items()}
+
+    patch = pytest.MonkeyPatch()
+    patch.setattr(cdc, "rendered_docstrings", wrapper)
+    patch.setattr(cdc, "published_source_lines", spans_wrapper)
+    yield
+    patch.undo()
+
 
 #: Symbols whose docstrings carry a bare `path:line` citation.
 #: `assert_coupling_nodes_distinct` is the one a `__all__`-keyed (STRICT) derivation

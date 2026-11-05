@@ -45,7 +45,7 @@ def synth_1job_analysis():
     return analysis
 
 
-def test_1job_dry_run_does_not_submit(synth_1job_analysis):
+def test_1job_dry_run_does_not_submit(synth_1job_analysis, monkeypatch):
     """
     Test that dry-run with 1_job_many_srun_tasks does NOT submit SBATCH.
 
@@ -56,6 +56,11 @@ def test_1job_dry_run_does_not_submit(synth_1job_analysis):
     4. Result indicates success
     5. Result mode is 'single_job'
     """
+    # The node-local config guard refuses a tree under the system temp dir, which is where an exported runs-root
+    # override puts it (a harness chunk's isolation root). A dry run submits nothing, so the
+    # acknowledgement is set here, inside the test, and never in `synth_1job_analysis` or another shared builder:
+    # `tests/test_node_local_config_guard.py` consumes those builders and needs the guard armed.
+    monkeypatch.setenv("HHEMT_ALLOW_NODE_LOCAL_CONFIGS", "1")
     analysis = synth_1job_analysis
 
     result = analysis.submit_workflow(

@@ -82,6 +82,43 @@ def _tree_under_test_sha() -> str:
 # Mirrors the existing HHEMT_TEST_NON_INTERACTIVE_LOCK_CLEAR test-env-var pattern.
 _TEST_RUNS_ROOT_OVERRIDE_ENV = "HHEMT_TEST_RUNS_ROOT_OVERRIDE"
 
+# The value the variable had when this module was first imported. `tests/conftest.py` imports this module at its
+# top, before any fixture runs, so this is the value the PROCESS was started with: the harness chunk wrapper exports
+# one node-local isolation root for the whole pytest process, while a fixture that sets the variable does so later,
+# around one construction, and to a different directory. Comparing the two tells the cases apart by who set them.
+_PROCESS_LEVEL_RUNS_ROOT_OVERRIDE = os.environ.get(_TEST_RUNS_ROOT_OVERRIDE_ENV)
+
+
+def _select_runs_root(
+    slug_runs_root_path: Path,
+    *,
+    start_from_scratch: bool,
+    share_scratch_root: bool,
+    runs_root_override: Path | None,
+) -> Path:
+    """Choose the runs root a case builds under: the override's, a private scratch root, or the slug root.
+
+    Three overrides exist and only one is privatised. An explicit `runs_root_override=` argument and a value a
+    fixture set around one construction (any value other than the process-level one) are used as given, because the
+    caller built that directory for this build and later readers look in it. The process-level value (the harness's
+    exported isolation root, shared by every worker of the chunk) is treated like the slug root: a
+    `start_from_scratch=True` build under it would delete a tree other workers are reading, so it gets a private
+    `mkdtemp` root, as it does with no override at all. `share_scratch_root=True` opts out of that privatisation.
+    A fixture cannot be mistaken for the harness here because it sets a different value than the one recorded at
+    import; the one residual is a fixture that sets exactly the process-level value, which no fixture does."""
+    environment_override = os.environ.get(_TEST_RUNS_ROOT_OVERRIDE_ENV)
+    effective = runs_root_override or environment_override
+    harness_level = (
+        runs_root_override is None
+        and environment_override is not None
+        and environment_override == _PROCESS_LEVEL_RUNS_ROOT_OVERRIDE
+    )
+    if start_from_scratch and not share_scratch_root and (effective is None or harness_level):
+        return Path(tempfile.mkdtemp(prefix="hhemt-scratch-")) / "synthetic_test_runs"
+    if effective is not None:
+        return Path(effective) / "synthetic_test_runs"
+    return slug_runs_root_path
+
 
 class retrieve_TRITON_SWMM_test_case:
     """
@@ -386,11 +423,12 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # out from under the reaper's, which is a delete-the-wrong-tree bug, not
         # a style problem.
         _slug_runs_root = slug_runs_root(worktree_slug())
-        _runs_root_override = runs_root_override or os.environ.get(_TEST_RUNS_ROOT_OVERRIDE_ENV)
-        if _runs_root_override is not None:
-            runs_root = Path(_runs_root_override) / "synthetic_test_runs"
-        else:
-            runs_root = _slug_runs_root
+        runs_root = _select_runs_root(
+            _slug_runs_root,
+            start_from_scratch=start_from_scratch,
+            share_scratch_root=share_scratch_root,
+            runs_root_override=runs_root_override,
+        )
         self.system_directory = runs_root / analysis_name
         # _software is a per-worktree REAL directory (NOT a symlink to a shared
         # cross-worktree cache). The build tier MUST NOT be shared across
@@ -430,10 +468,8 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # `_software_root` is pinned to the slug path above, OUTSIDE the if/else that
         # chooses runs_root, so the one-borrow/one-compile invariants are untouched.
         # Opt out with share_scratch_root=True only when a LATER reader must see the tree
-        # this build produces.
-        if start_from_scratch and _runs_root_override is None and not share_scratch_root:
-            runs_root = Path(tempfile.mkdtemp(prefix="hhemt-scratch-")) / "synthetic_test_runs"
-            self.system_directory = runs_root / analysis_name
+        # this build produces. The branch itself is `_select_runs_root`, which also privatises a build under the
+        # harness's process-level override (a shared tree other workers read); see its docstring.
         if start_from_scratch and self.system_directory.exists():
             ut.fast_rmtree(self.system_directory)
         elif not start_from_scratch:

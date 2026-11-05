@@ -370,6 +370,9 @@ def _render() -> str:
     from hhemt.config.sif_build import sif_build_config
     from hhemt.config.system import system_config
 
+    # Resolve every forward reference before ANY table is rendered: the walk calls model_rebuild(), and a table
+    # rendered earlier prints an unresolved annotation as ForwardRef('...') (hpc_system_config.container).
+    _closure_models()
     marker = _load_lint().GENERATED_MARKER
     sections = [
         f"<!-- {marker} -->",

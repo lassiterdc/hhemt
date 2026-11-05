@@ -42,6 +42,8 @@ import fnmatch
 import hashlib
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -212,19 +214,31 @@ def _either(cand: dict, field: str) -> bool | None:
     return bool(a) or bool(b)
 
 
-def _reach_hook(event, args):  # pragma: no cover - audit hook
-    if event != "open" or not args:
-        return
-    p = args[0]
-    if not isinstance(p, str) or SHARED_CACHE_MARK not in p:
-        return
+#: Renames are sampled apart from opens, with the same chosen cap (not measured): an atomic write is a rename whose
+#: source is a unique temporary, and the destination is the path another chunk can meet.
+_REPLACE_SAMPLE_CAP = 5
+
+
+def _is_coordination_basename(path: str) -> bool:
+    """Whether `path`'s basename starts with `.`: the first clause of `aggregate._is_coordination_path`.
+
+    Repeated here because this module imports nothing from its sibling modules; `tests/test_suite_reach_rename.py` pins
+    the two copies against each other over several names."""
+    return os.path.basename(path).startswith(".")
+
+
+def _reach_record_for(p: str):
+    """The reach record for an absolute path under `SHARED_CACHE_MARK`, created on first sight; None when `p` is not
+    under the mark or is too shallow to name an entry."""
+    if SHARED_CACHE_MARK not in p:
+        return None
     parts = p.split(os.sep)
     try:
         i = parts.index(SHARED_CACHE_MARK)
     except ValueError:
-        return
+        return None
     if len(parts) <= i + 2:
-        return
+        return None
     # BOTH candidates, no offset assumption. p1 is the entity under a slugless override
     # root; p2 is the entity under the slugged shared root. Which one is resolved at
     # session end from the layout stamp.
@@ -244,15 +258,53 @@ def _reach_hook(event, args):  # pragma: no cover - audit hook
             "read": False,
             "written": False,
             "write_samples": [],
+            "replace_samples": [],
+            "replace_cap_bound": False,
+            "coordination_writes": 0,
             "candidates": {
                 "p1": {"path": p1, "dir_first": d1, "stamp_first": s1, "dir_end": None, "stamp_end": None},
                 "p2": {"path": p2, "dir_first": d2, "stamp_first": s2, "dir_end": None, "stamp_end": None},
             },
         }
+    return rec
+
+
+def _reach_hook(event, args):  # pragma: no cover - audit hook
+    if event == "os.rename":
+        # Both `os.rename` and `os.replace` raise this event with (src, dst, src_dir_fd, dst_dir_fd); CPython
+        # normalises a `pathlib.Path` argument to `str` before the event, and leaves `bytes` as `bytes`. Only the
+        # DESTINATION is recorded: it is the path another chunk can meet; the source is a private temporary.
+        if len(args) < 2 or not isinstance(args[1], str):
+            return
+        dst = args[1]
+        rec = _reach_record_for(dst)
+        if rec is None:
+            return
+        rec["written"] = True
+        samples = rec["replace_samples"]
+        if dst not in samples:
+            if len(samples) < _REPLACE_SAMPLE_CAP:
+                samples.append(dst)
+            else:
+                rec["replace_cap_bound"] = True
+        return
+    if event != "open" or not args:
+        return
+    p = args[0]
+    if not isinstance(p, str):
+        return
+    rec = _reach_record_for(p)
+    if rec is None:
+        return
     rec["read"] = True
     mode, flags = (args[1] if len(args) > 1 else None), (args[2] if len(args) > 2 else 0)
     if (isinstance(mode, str) and mode != "r") or (mode is None and (flags & _WRITE_FLAGS)):
         rec["written"] = True
+        if _is_coordination_basename(p):
+            # A unique temporary or a dot-file lock: counted, not sampled, so temporaries cannot crowd payload paths
+            # out of the five slots.
+            rec["coordination_writes"] += 1
+            return
         samples = rec["write_samples"]
         if p not in samples and len(samples) < _WRITE_SAMPLE_CAP:
             samples.append(p)
@@ -294,6 +346,7 @@ def _finalize_reach_entries() -> dict[str, dict]:
         cur = merged.get(key)
         if cur is None:
             rec["write_samples"] = _relativize(rec["write_samples"], key)
+            rec["replace_samples"] = _relativize(rec["replace_samples"], key)
             merged[key] = rec
             continue
         # Several p2 keys resolve to ONE entity under the override shape
@@ -303,6 +356,15 @@ def _finalize_reach_entries() -> dict[str, dict]:
         for s in _relativize(rec["write_samples"], key):
             if s not in cur["write_samples"] and len(cur["write_samples"]) < _WRITE_SAMPLE_CAP:
                 cur["write_samples"].append(s)
+        for s in _relativize(rec["replace_samples"], key):
+            if s in cur["replace_samples"]:
+                continue
+            if len(cur["replace_samples"]) < _REPLACE_SAMPLE_CAP:
+                cur["replace_samples"].append(s)
+            else:
+                cur["replace_cap_bound"] = True
+        cur["replace_cap_bound"] = cur["replace_cap_bound"] or rec["replace_cap_bound"]
+        cur["coordination_writes"] += rec["coordination_writes"]
     return merged
 
 
@@ -390,11 +452,12 @@ def _logreport_emit(out, payload):  # noqa: D103 - internal writer
     # unreadable at the only moment it matters. flush() is what survives a scancel --
     # measured, a SIGKILLed session left a flush-only file fully parseable while its junit
     # was absent entirely -- because killing the PROCESS does not reclaim bytes already in
-    # the kernel page cache. fsync() buys node-level durability on top, and it is
-    # affordable here ONLY because the record is scoped to non-passing reports plus one
-    # per passing call: measured 3.263 ms per fsynced record against 0.024 ms flush-only,
-    # a 136x ratio that would be prohibitive at three records per test and is about three
-    # seconds per thousand-test chunk at this scope.
+    # the kernel page cache. fsync() buys node-level durability on top, and every record
+    # gets it: setup, call and teardown alike (shape item 1d.1; developer ruling of
+    # 2026-11-02, fsync on all three phases). The cost is measured per record, not per
+    # test: 3.263 ms per fsynced record against 0.024 ms flush-only, a 136x ratio, so three
+    # records per test is about ten seconds per thousand-test chunk (arithmetic over that
+    # measured figure: 3 x 3.263 ms x 1000), where one record per passing call was about three.
     global _LOGREPORT_FAILED
     if _LOGREPORT_FAILED:
         return
@@ -434,20 +497,38 @@ def pytest_sessionstart(session):  # noqa: D103 - pytest hook
     )
 
 
+def _xdist_worker_id(report):
+    """The xdist worker that ran ``report``'s phase, or ``None`` when the session is not under xdist.
+
+    Inside a worker process the plugin sees ``PYTEST_XDIST_WORKER``; on the controller the report
+    arrives carrying ``node.workerinput['workerid']``. Both name the same ``gwN``."""
+    wid = os.environ.get("PYTEST_XDIST_WORKER")
+    if wid:
+        return wid
+    workerinput = getattr(getattr(report, "node", None), "workerinput", None)
+    if isinstance(workerinput, dict):
+        return workerinput.get("workerid")
+    return None
+
+
 def pytest_runtest_logreport(report):  # noqa: D103 - pytest hook
-    # Scoped to the COMPLEMENT of what is already durable. The chunk's `-v` stdout is
-    # unbuffered and already carries identity and outcome for every test as it lands, so
-    # duplicating the green setup/teardown phases here buys nothing. What no existing
-    # surface carries is (a) the failure reason -- pytest renders `longrepr` only in the
-    # end-of-run summary, so a killed chunk has none of it -- and (b) the per-test
-    # duration, which `--durations=0` also renders only in that summary. The second is the
-    # one with the larger consequence: submit_suite_uva.sh records that the duration
-    # ranking "yields ONLY from a chunk that completes" and is the input the
-    # fixture-closure re-partition needs, and two runs have now died reaching for it.
+    # What the ledger carries beyond `-v`: (a) the failure reason -- pytest renders
+    # `longrepr` only in the end-of-run summary, so a killed chunk has none of it -- and
+    # (b) the per-test duration of EVERY phase, which `--durations=0` also renders only in
+    # that summary. The second is the one with the larger consequence:
+    # submit_suite_uva.sh records that the duration ranking "yields ONLY from a chunk that
+    # completes" and is the input the fixture-closure re-partition needs, and two runs
+    # have now died reaching for it. Setup and teardown are recorded for PASSING tests too
+    # (shape item 1d.1), because a session fixture's build cost is paid in the setup
+    # phase of the first test that requests it and a duration table that omits that phase
+    # balances a split on call time alone. Each record names the xdist worker that ran the
+    # phase (``worker``, null outside xdist).
     out = os.environ.get(LOGREPORT_ENV)
     if not out:
         return
-    if report.outcome == "passed" and report.when != "call":
+    if not os.environ.get("PYTEST_XDIST_WORKER") and getattr(report, "node", None) is not None:
+        # The xdist controller receives a copy of every report a worker already wrote (it carries the worker's
+        # node); only the worker that ran the phase writes it, so each phase has exactly one record.
         return
     rec = {
         "t": datetime.now(UTC).isoformat(timespec="milliseconds"),
@@ -456,6 +537,7 @@ def pytest_runtest_logreport(report):  # noqa: D103 - pytest hook
         "when": report.when,
         "outcome": report.outcome,
         "duration": round(getattr(report, "duration", 0.0), 4),
+        "worker": _xdist_worker_id(report),
     }
     if report.outcome != "passed":
         # `when` is retained above precisely so a reader can separate a test whose
@@ -470,10 +552,53 @@ def pytest_runtest_logreport(report):  # noqa: D103 - pytest hook
     _logreport_emit(out, rec)
 
 
+def _merge_reach_entries(into: dict[str, dict], other: dict[str, dict]) -> None:
+    """Fold the reach ``other`` entries (one worker's) into ``into`` by entity path: union of what was read,
+    written and sampled, and the logical OR of the existence observations."""
+    for key, rec in other.items():
+        cur = into.get(key)
+        if cur is None:
+            into[key] = rec
+            continue
+        for flag in ("read", "written", "is_dir", "has_version_stamp", "existed_at_first_open", "exists_at_end"):
+            cur[flag] = bool(cur.get(flag)) or bool(rec.get(flag))
+        for sample in rec.get("write_samples") or []:
+            if sample not in cur.setdefault("write_samples", []) and len(cur["write_samples"]) < _WRITE_SAMPLE_CAP:
+                cur["write_samples"].append(sample)
+        for sample in rec.get("replace_samples") or []:
+            if sample in cur.setdefault("replace_samples", []):
+                continue
+            if len(cur["replace_samples"]) < _REPLACE_SAMPLE_CAP:
+                cur["replace_samples"].append(sample)
+            else:
+                cur["replace_cap_bound"] = True
+        cur["replace_cap_bound"] = bool(cur.get("replace_cap_bound")) or bool(rec.get("replace_cap_bound"))
+        cur["coordination_writes"] = int(cur.get("coordination_writes") or 0) + int(rec.get("coordination_writes") or 0)
+
+
+def _worker_sidecars(path: str) -> list[Path]:
+    """The per-worker sidecars ``{path}.gwN`` an xdist worker wrote beside the controller's ``path``."""
+    base = Path(path)
+    return sorted(base.parent.glob(base.name + ".gw*"))
+
+
 def pytest_sessionfinish(session, exitstatus):  # noqa: D103 - pytest hook
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
     reach_out = os.environ.get(REACH_ENV)
     if reach_out:
         entries = _finalize_reach_entries()
+        if worker:
+            # A worker writes its own sidecar; the controller merges them (it sees none of the worker's I/O).
+            Path(f"{reach_out}.{worker}").write_text(json.dumps(entries) + "\n", encoding="utf-8")
+            reach_out = None
+        else:
+            for sidecar in _worker_sidecars(reach_out):
+                try:
+                    _merge_reach_entries(entries, json.loads(sidecar.read_text(encoding="utf-8")))
+                except (OSError, ValueError):
+                    continue
+                sidecar.unlink(missing_ok=True)  # EXEMPT-DU: outside-analysis-tree
+    if reach_out:
         # The flat `observed`/`written` lists are RETAINED so a pre-fix reader and a
         # pre-fix run dir both keep working -- carrying LABELS, which is what those lists
         # always meant. `entries` is keyed on the ABSOLUTE entity path, because that is
@@ -492,8 +617,17 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: D103 - pytest hook
     out = os.environ.get(FIXTURES_ENV)
     if not out:
         return
-    names = sorted(getattr(session, "_hhemt_suite_fixtures_ok", set()))
-    Path(out).write_text(json.dumps(names) + "\n", encoding="utf-8")
+    names = set(getattr(session, "_hhemt_suite_fixtures_ok", set()))
+    if worker:
+        Path(f"{out}.{worker}").write_text(json.dumps(sorted(names)) + "\n", encoding="utf-8")
+        return
+    for sidecar in _worker_sidecars(out):
+        try:
+            names |= set(json.loads(sidecar.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            continue
+        sidecar.unlink(missing_ok=True)  # EXEMPT-DU: outside-analysis-tree
+    Path(out).write_text(json.dumps(sorted(names)) + "\n", encoding="utf-8")
 
 
 try:  # the plugin half needs pytest; the driver half must import without it
@@ -532,11 +666,29 @@ def _pytest_cmd(python: str) -> list[str]:
     return [python, "-m", "pytest", "-p", "no:cacheprovider"]
 
 
+#: The tiers a plan can select: the whole suite, or only the solver-bearing (``compile_tier``-marked) tests.
+SELECT_TIERS = ("all", "compile_tier")
+
+
+def _tier_args(select_tier: str) -> list[str]:
+    """The pytest arguments that restrict collection to ``select_tier`` (none for the whole suite)."""
+    if select_tier not in SELECT_TIERS:
+        raise SystemExit(f"--select-tier must be one of {SELECT_TIERS}, got {select_tier!r}")
+    return [] if select_tier == "all" else ["-m", select_tier]
+
+
 # --------------------------------------------------------------------------
 # drive mode
 # --------------------------------------------------------------------------
-def collect(repo: Path, python: str) -> tuple[list[str], dict[str, list[str]], dict[str, list[str]], list[str]]:
+def collect(
+    repo: Path, python: str, select_tier: str = "all"
+) -> tuple[list[str], dict[str, list[str]], dict[str, list[str]], list[str]]:
     """Return (node ids, fixture closures, per-test marks, declared complement).
+
+    ``select_tier`` ``"compile_tier"`` adds ``-m compile_tier`` to the collection, so the plan covers only the
+    solver-bearing tier; the closures, marks and declared complement are then filtered to the collected node
+    ids (the collect-time plugin may see tests that pytest's own marker deselection drops afterwards). At the
+    default ``"all"`` the collection command is unchanged.
 
     The DECLARED COMPLEMENT is the set of node ids whose DECLARED skipif reasons include
     a STRUCTURAL_SKIP_REASONS member -- every gate, not the one that wins at runtime.
@@ -556,7 +708,7 @@ def collect(repo: Path, python: str) -> tuple[list[str], dict[str, list[str]], d
     _harness = str(Path(__file__).resolve().parent)
     env["PYTHONPATH"] = f"{_harness}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else _harness
     proc = subprocess.run(
-        [*_pytest_cmd(python), "--collect-only", "-q", "-p", "_runner"],
+        [*_pytest_cmd(python), "--collect-only", "-q", "-p", "_runner", *(_tier_args(select_tier))],
         cwd=repo,
         capture_output=True,
         text=True,
@@ -585,6 +737,11 @@ def collect(repo: Path, python: str) -> tuple[list[str], dict[str, list[str]], d
     from hhemt.suite.aggregate import STRUCTURAL_SKIP_REASONS
 
     declared_complement = sorted(n for n, rs in reasons.items() if any(r in STRUCTURAL_SKIP_REASONS for r in rs))
+    if select_tier != "all":
+        keep = set(node_ids)
+        closures = {n: v for n, v in closures.items() if n in keep}
+        marks = {n: v for n, v in marks.items() if n in keep}
+        declared_complement = [n for n in declared_complement if n in keep]
     return node_ids, closures, marks, declared_complement
 
 
@@ -680,8 +837,16 @@ def _assert_external_warm(warm_log: str, warm_result: str = "", expect_pin: str 
     }
 
 
-def _file_durations(run_dir: Path) -> dict[str, float]:
+def _file_durations(run_dir: Path, only_node_ids: set[str] | None = None) -> dict[str, float]:
     """file -> summed reported duration, from a prior run's per-test JSONL records.
+
+    The figure for a file is the sum of the ``duration`` of EVERY ``kind == "report"`` row naming one of its
+    tests: ``setup`` + ``call`` + ``teardown``, not ``call`` alone, so a session fixture's build cost (paid in the
+    setup phase of the first test that requests it) counts toward the file that triggered it and a heavy split
+    balances fixture cost. A ledger written before the plugin recorded passing setup and teardown rows holds
+    ``call`` and non-passing rows only, and sums to that smaller figure. Rows are summed as written;
+    the plugin writes each phase once (a worker's report is not rewritten by the xdist controller), so a chunk
+    run under xdist is not double counted.
 
     Reads `chunk-*.reports.jsonl`, which is the ONE sidecar written AS THE SESSION RUNS --
     every other per-chunk artifact is a pytest_sessionfinish product and is simply ABSENT
@@ -689,6 +854,9 @@ def _file_durations(run_dir: Path) -> dict[str, float]:
     cost source: measured on 20260904T074157Z_cd4d8f6d9a91, chunk 0 left 572 records and no
     junit at all. Coverage is therefore PARTIAL by construction; build_manifest records
     which files were covered, and split_heavy_component imputes the rest at a stated rate.
+
+    ``only_node_ids`` (a tier-restricted plan) credits a file with the durations of the node ids the plan selects
+    in it, not the file's total; ``None`` (the default, the whole suite) credits every row.
     """
     out: dict[str, float] = {}
     for p in sorted(run_dir.glob("chunk-*.reports.jsonl")):
@@ -701,6 +869,8 @@ def _file_durations(run_dir: Path) -> dict[str, float]:
             except ValueError:
                 continue
             if rec.get("kind") != "report" or "nodeid" not in rec:
+                continue
+            if only_node_ids is not None and rec["nodeid"] not in only_node_ids:
                 continue
             out[rec["nodeid"].split("::")[0]] = out.get(rec["nodeid"].split("::")[0], 0.0) + float(
                 rec.get("duration") or 0.0
@@ -796,6 +966,27 @@ def _compile_precondition(args: argparse.Namespace, node_ids: list[str], marks: 
     }
 
 
+def _now_ms() -> str:
+    """The current UTC instant as ISO-8601 with milliseconds, the form the aggregator compares."""
+    return datetime.now(UTC).isoformat(timespec="milliseconds")
+
+
+def kept_whole_lines(manifest: dict) -> list[str]:
+    """The plan's two kept-whole lines: the costliest kept-whole file, and each one over the part budget B.
+
+    Printed by `plan` and not by `partition.py`, which is a library and must not write into the plan's stdout. Empty
+    when the plan kept no file whole.
+    """
+    kept = manifest.get("kept_whole") or []
+    if not kept:
+        return []
+    lines = [f"kept_whole_max_s={max(k['cost_s'] for k in kept)}"]
+    budget = manifest.get("heavy_split_budget_s")
+    if budget is not None:
+        lines += [f"kept_whole_over_budget={k['file']}:{k['cost_s']}" for k in kept if k["cost_s"] > budget]
+    return lines
+
+
 def plan(args: argparse.Namespace) -> int:
     repo = Path(args.toolkit).resolve()
     sha, dirty = _sha_and_dirty(repo)
@@ -852,7 +1043,8 @@ def plan(args: argparse.Namespace) -> int:
             "runs a chunk."
         )
 
-    node_ids, closures, marks, declared_complement = collect(repo, args.python)
+    select_tier = getattr(args, "select_tier", "all") or "all"
+    node_ids, closures, marks, declared_complement = collect(repo, args.python, select_tier)
     compile_precondition = _compile_precondition(args, node_ids, marks)
     # LAZY, and load-bearing. This module is loaded as a pytest PLUGIN in the child
     # (`-p _runner`), and a plugin module is imported BEFORE the toolkit's repo-root
@@ -861,7 +1053,9 @@ def plan(args: argparse.Namespace) -> int:
     # the guard can point it at the checkout under test, and the guard then exits 99 on
     # every chunk whose --toolkit differs from the installed toolkit. Keep it in here.
     from hhemt.suite import partition as _partition
+    from hhemt.suite import policy as _policy
 
+    tail_ids, tail_source = _policy.tail_node_ids()
     manifest = _partition.build_manifest(
         repo_root=repo,
         node_ids=node_ids,
@@ -872,10 +1066,21 @@ def plan(args: argparse.Namespace) -> int:
         declared_complement=declared_complement,
         cheap_bins=args.cheap_bins,
         heavy_split_budget_s=(None if args.heavy_split_budget_min is None else args.heavy_split_budget_min * 60.0),
-        durations=_file_durations(Path(args.durations_from)) if args.durations_from else None,
+        durations=(
+            _file_durations(Path(args.durations_from), None if select_tier == "all" else set(node_ids))
+            if args.durations_from
+            else None
+        ),
         tree_isolation_per_chunk=bool(args.isolate_trees_per_chunk),
+        tail_node_ids=tail_ids or None,
     )
+    manifest["tail_source"] = tail_source
     manifest["warm"] = warm_provenance
+    manifest["select_tier"] = select_tier
+    if int(getattr(args, "chunk_workers", 1) or 1) < 1:
+        raise SystemExit("--chunk-workers must be at least 1")
+    manifest["chunk_workers"] = int(getattr(args, "chunk_workers", 1) or 1)
+    manifest["keep_failed_trees"] = bool(getattr(args, "keep_failed_trees", False))
     manifest["compile_precondition"] = compile_precondition
     # The ADDRESS the run's caches live under, recorded at plan time because it is the one
     # moment this process holds the checkout root. A disclosure without it reads as a claim
@@ -891,6 +1096,9 @@ def plan(args: argparse.Namespace) -> int:
     print(f"run_id={run_id}")
     print(f"run_dir={run_dir}")
     print(f"chunk_count={n}")
+    print(f"tail_chunk={manifest['tail_chunk'] if 'tail_chunk' in manifest else 'none'}")
+    for line in kept_whole_lines(manifest):
+        print(line)
     print(f"cheap_bins={args.cheap_bins}")
     print(f"tree_isolation_per_chunk={bool(args.isolate_trees_per_chunk)}")
     print(f"collected={len(node_ids)}")
@@ -917,6 +1125,19 @@ def _chunk_basetemp(run_id: str, cid: int) -> Path:
     return Path(tmp) / f"hhemt-suite-{run_id}-{cid:02d}"
 
 
+def _chunk_isolation_root(run_id: str, cid: int) -> Path:
+    """The per-chunk analysis-tree root exported as ``HHEMT_TEST_RUNS_ROOT_OVERRIDE`` under isolation.
+
+    NODE-LOCAL, a sibling of the chunk's pytest basetemp (same parent, so under the system temp directory and
+    never under the run directory). The trees a chunk builds are scratch that no later reader needs on a
+    passing chunk, and building thousands of small files on shared storage was the cost this location removes.
+    It is a SIBLING and not a child of the basetemp because pytest removes an explicit basetemp that already
+    exists. The chunk wrapper removes it on every exit path it survives; a SIGKILL or a SLURM KillWait expiry
+    leaves it to the node's job-end temporary-directory cleanup.
+    """
+    return _chunk_basetemp(run_id, cid).parent / f"hhemt-suite-{run_id}-{cid:02d}-trees"
+
+
 def _truncate(raw: bytes, limit: int) -> bytes:
     """Keep the head and the tail, with an explicit marker naming what was dropped."""
     half = limit // 2
@@ -928,8 +1149,12 @@ def _truncate(raw: bytes, limit: int) -> bytes:
     return raw[:half] + marker + raw[-half:]
 
 
-def _harvest_diagnostics(basetemp: Path, dest: Path) -> dict:
-    """Copy failure diagnostics out of a node-local basetemp, under caps.
+def _harvest_diagnostics(basetemp: Path, dest: Path, extra_roots: tuple[Path, ...] = ()) -> dict:
+    """Copy failure diagnostics out of a node-local basetemp and any ``extra_roots``, under caps.
+
+    ``extra_roots`` (the chunk's isolation root) is walked with the same globs, priority and caps as the
+    basetemp, and its files are named ``isolation_root__...`` in the bundle so they cannot collide with the
+    basetemp's.
 
     Never raises into the chunk result: a diagnostics failure must not change the
     verdict of the run it is diagnosing. Every cap that binds is RECORDED -- a
@@ -938,6 +1163,7 @@ def _harvest_diagnostics(basetemp: Path, dest: Path) -> dict:
     """
     manifest: dict = {
         "basetemp": str(basetemp),
+        "isolation_roots": [str(r) for r in extra_roots],
         "globs": list(HARVEST_GLOBS),
         "priority_order": list(HARVEST_PRIORITY),
         "caps": {
@@ -952,13 +1178,15 @@ def _harvest_diagnostics(basetemp: Path, dest: Path) -> dict:
         "total_bytes_written": 0,
     }
     try:
-        if not basetemp.is_dir():
+        present = [r for r in (basetemp, *extra_roots) if r.is_dir()]
+        if not present:
             manifest["note"] = "basetemp absent; pytest may have died before creating it"
             return manifest
 
         found: list[Path] = []
-        for g in HARVEST_GLOBS:
-            found.extend(basetemp.rglob(g))
+        for root in present:
+            for g in HARVEST_GLOBS:
+                found.extend(root.rglob(g))
 
         def _rank(f: Path) -> tuple[int, float, str]:
             # noqa justified: `i` is not used in the loop BODY but escapes it -- the
@@ -983,7 +1211,13 @@ def _harvest_diagnostics(basetemp: Path, dest: Path) -> dict:
                 size = src.stat().st_size
             except OSError:
                 continue
-            rel = src.relative_to(basetemp) if src.is_relative_to(basetemp) else Path(src.name)
+            rel = Path(src.name)
+            for root in present:
+                if src.is_relative_to(root.resolve()):
+                    rel = src.relative_to(root.resolve())
+                    if root is not basetemp:
+                        rel = Path("isolation_root") / rel
+                    break
             flat = str(rel).replace(os.sep, "__")
 
             if len(manifest["harvested"]) >= HARVEST_MAX_FILES:
@@ -1242,6 +1476,87 @@ def _sibling_resolution(repo: Path, python: str) -> str:
     return proc.stdout.strip() if proc.returncode == 0 else f"IMPORT-FAILED: {proc.stderr.strip()}"
 
 
+class _ChunkTerminated(BaseException):
+    """Raised by the wrapper's SIGTERM handler outside the pytest child's run, to unwind to the cleanup."""
+
+
+def _raise_chunk_terminated(signum, frame):  # noqa: ANN001, ARG001 - signal handler signature
+    """SIGTERM handler for the wrapper's phases other than the pytest child's run."""
+    raise _ChunkTerminated
+
+
+#: faulthandler dump timeout of a harness chunk (seconds). Gate B and local runs keep the project's 300 s; a
+#: chunk's long phases (the longest observed is 621 s) must not dump, and a hung chunk still dumps after 30 minutes.
+CHUNK_FAULTHANDLER_TIMEOUT_S = 1800
+
+
+def _chunk_pytest_cmd(python: str, junit: Path, basetemp: Path, node_ids: list[str], workers: int = 1) -> list[str]:
+    """The pytest command line of one chunk.
+
+    Every chunk passes the ``faulthandler_timeout`` override; ``workers`` above 1 adds ``-n {workers} --dist
+    loadgroup`` (tests of one ``xdist_group`` stay on one worker), and 1 adds nothing else."""
+    xdist = ["-n", str(workers), "--dist", "loadgroup"] if workers > 1 else []
+    return [
+        *_pytest_cmd(python),
+        "-v",
+        *JUNIT_ARGS,
+        f"--junitxml={junit}",
+        f"--basetemp={basetemp}",
+        "-o",
+        f"faulthandler_timeout={CHUNK_FAULTHANDLER_TIMEOUT_S}",
+        *xdist,
+        "-p",
+        "_runner",
+        "--durations=0",
+        *node_ids,
+    ]
+
+
+def _run_pytest_child(cmd: list[str], cwd: Path, env: dict[str, str], *, term_grace_s: float = 30.0) -> int:
+    """Run the chunk's pytest child to its end and return its exit code, surviving a SIGTERM to this wrapper.
+
+    A SIGTERM delivered to the wrapper is forwarded to the child as a SIGTERM, and the wrapper keeps waiting so
+    its caller can still harvest and clean up; a child that ignores it is killed after ``term_grace_s``. A child
+    that exits 0 after the wrapper was terminated is reported as 143 so a terminated chunk never reads as a pass.
+    The previous handler is restored on every path. Off the main thread no handler can be installed and the
+    wrapper simply waits.
+    """
+    term_at: list[float] = []
+    proc_box: list[subprocess.Popen] = []
+
+    def _on_term(signum, frame):  # noqa: ANN001, ARG001 - signal handler signature
+        if not term_at:
+            term_at.append(time.monotonic())
+        if proc_box and proc_box[0].poll() is None:
+            proc_box[0].terminate()
+
+    # The handler is installed BEFORE the child is spawned, so a SIGTERM arriving between the spawn and the
+    # first wait is forwarded below and never orphans the child.
+    try:
+        previous = signal.signal(signal.SIGTERM, _on_term)
+    except ValueError:
+        previous = None
+    try:
+        proc = subprocess.Popen(cmd, cwd=cwd, env=env)
+        proc_box.append(proc)
+        if term_at:
+            proc.terminate()
+        while True:
+            try:
+                rc = proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                if term_at and time.monotonic() - term_at[0] > term_grace_s:
+                    proc.kill()
+                continue
+            return rc if rc != 0 or not term_at else 128 + int(signal.SIGTERM)
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGTERM, previous)
+        if proc_box and proc_box[0].poll() is None:
+            proc_box[0].kill()
+            proc_box[0].wait()
+
+
 def run_chunk(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir).resolve()
 
@@ -1342,10 +1657,17 @@ def run_chunk(args: argparse.Namespace) -> int:
     # gate on _marker_state, which is never "complete" against a fresh root, so each isolated
     # chunk pays its own analysis.run() / submit_workflow(). Upper bound measured at 2570 s for
     # the whole setup tier of chunk 0 (20535 s wall minus 17964.7 s of reported call duration).
+    #
+    # WHERE the root lives: node-local, beside the chunk's basetemp (``_chunk_isolation_root``), and not in the
+    # run directory on shared storage, so a chunk's tree builds cost local disk. The wrapper removes it below on
+    # every exit path it survives, and a failed chunk's whole trees are copied into the run directory only when
+    # the plan was made with ``--keep-failed-trees``.
+    iso_root: Path | None = None
     if manifest.get("tree_isolation_per_chunk"):
-        _iso = run_dir / "tree_isolation" / f"chunk-{cid:02d}"
-        _iso.mkdir(parents=True, exist_ok=True)
-        env["HHEMT_TEST_RUNS_ROOT_OVERRIDE"] = str(_iso)
+        # The directory is CREATED inside the ``try`` below, as its first statement, so that creation and the
+        # ``finally`` that removes it cover each other with no gap.
+        iso_root = _chunk_isolation_root(manifest["run_id"], cid)
+        env["HHEMT_TEST_RUNS_ROOT_OVERRIDE"] = str(iso_root)
     else:
         # Absent isolation the chunk must not inherit one from the submitting shell either:
         # a stray override would silently move this chunk's trees off the root every OTHER
@@ -1365,26 +1687,68 @@ def run_chunk(args: argparse.Namespace) -> int:
     sibling = _sibling_resolution(repo, args.python)
 
     basetemp = _chunk_basetemp(manifest["run_id"], cid)
-    cmd = [
-        *_pytest_cmd(args.python),
-        "-v",
-        *JUNIT_ARGS,
-        f"--junitxml={junit}",
-        f"--basetemp={basetemp}",
-        "-p",
-        "_runner",
-        "--durations=0",
-        *node_ids,
-    ]
-    proc = subprocess.run(cmd, cwd=repo, env=env)
-    rc = proc.returncode
-
-    # Failure-only harvest. The reason a chunk failed lives in a node-local log that
-    # dies with the node; copying it out on rc != 0 is what makes the reason reachable
-    # from the run dir. A passing chunk pays nothing at all -- not a walk, not a stat.
+    # A chunk that carries its own `workers` (the tail: 1) runs at that; every other chunk at the manifest's.
+    own_workers = next((c.get("workers") for c in manifest.get("chunks") or [] if c["chunk_id"] == cid), None)
+    cmd = _chunk_pytest_cmd(
+        args.python, junit, basetemp, node_ids, int(own_workers or manifest.get("chunk_workers") or 1)
+    )
     harvest = None
-    if rc != 0:
-        harvest = _harvest_diagnostics(basetemp, run_dir / f"chunk-{cid:02d}.diagnostics")
+    kept_trees = None
+    kept_trees_error = None
+    rc = None
+    started_at = ended_at = None
+    phase = "start"
+    previous_term = None
+    try:
+        # From here until the ``finally`` a SIGTERM to this wrapper unwinds to the cleanup instead of killing the
+        # process (``_ChunkTerminated`` is a BaseException so no ``except Exception`` in the harvest swallows it).
+        # While the pytest child runs, ``_run_pytest_child`` installs its own handler that forwards the signal.
+        try:
+            previous_term = signal.signal(signal.SIGTERM, _raise_chunk_terminated)
+        except ValueError:  # not the main thread: no handler can be installed
+            previous_term = None
+        if iso_root is not None:
+            iso_root.mkdir(parents=True, exist_ok=True)
+        phase = "pytest"
+        started_at = _now_ms()
+        rc = _run_pytest_child(cmd, repo, env)
+        ended_at = _now_ms()
+        phase = "harvest"
+
+        # Failure-only harvest. The reason a chunk failed lives in a node-local log that
+        # dies with the node; copying it out on rc != 0 is what makes the reason reachable
+        # from the run dir. A passing chunk pays nothing at all -- not a walk, not a stat.
+        # The isolation root is walked too: it holds the analysis trees whose logs explain
+        # a failure in a heavy fixture.
+        if rc != 0:
+            harvest = _harvest_diagnostics(
+                basetemp,
+                run_dir / f"chunk-{cid:02d}.diagnostics",
+                extra_roots=(iso_root,) if iso_root is not None else (),
+            )
+            # The whole trees are large; they are copied only when the plan asked for them.
+            if iso_root is not None and iso_root.is_dir() and manifest.get("keep_failed_trees"):
+                phase = "kept-trees copy"
+                _kept = run_dir / "tree_isolation_failed" / f"chunk-{cid:02d}"
+                try:
+                    shutil.copytree(iso_root, _kept, symlinks=True, dirs_exist_ok=True)
+                    kept_trees = str(_kept)
+                except (OSError, shutil.Error) as exc:
+                    kept_trees_error = f"{type(exc).__name__}: {exc}"
+    except _ChunkTerminated:
+        # The chunk was terminated before, between or after its pytest child. It is reported as a terminated
+        # chunk in the existing status fields: a non-zero ``pytest_exit`` (143 when pytest had not already
+        # failed) and the reason in the free-text ``kept_failed_trees_error``; no new status field is added.
+        kept_trees_error = f"terminated by SIGTERM during the {phase} phase"
+        if not rc:
+            rc = 128 + int(signal.SIGTERM)
+    finally:
+        # Every exit path this process survives: pytest's own exit, pytest killed, SIGTERM to
+        # this wrapper in any phase (before the child, while it runs, during the harvest or the copy).
+        if previous_term is not None:
+            signal.signal(signal.SIGTERM, previous_term)
+        if iso_root is not None:
+            shutil.rmtree(iso_root, ignore_errors=True)
 
     sha_end, dirty_end = _sha_and_dirty(repo)
     pytest_res = ""
@@ -1412,6 +1776,11 @@ def run_chunk(args: argparse.Namespace) -> int:
         "chunk_id": cid,
         "run_id": manifest["run_id"],
         "pytest_exit": rc,
+        # Wall-clock bounds of the pytest child (UTC ISO-8601, milliseconds), the only record of run order the
+        # aggregator has: it exempts the tail chunk from the cross-chunk joins only when the tail started at or
+        # after every array chunk ended. None when the child never ran (terminated before it).
+        "started_at": started_at,
+        "ended_at": ended_at,
         "node_count": len(node_ids),
         "source_sha_start": sha_start,
         "source_sha_end": sha_end,
@@ -1428,6 +1797,8 @@ def run_chunk(args: argparse.Namespace) -> int:
         "slurm_state": os.environ.get("HHEMT_SUITE_SLURM_STATE", ""),
         "basetemp": str(basetemp),
         "runs_root_override": env.get("HHEMT_TEST_RUNS_ROOT_OVERRIDE", ""),
+        "kept_failed_trees": kept_trees,
+        "kept_failed_trees_error": kept_trees_error,
         "diagnostics": (
             None
             if harvest is None
@@ -1485,6 +1856,27 @@ def build_parser() -> argparse.ArgumentParser:
         "NOTE: the FIRST run using this is not red-set-comparable "
         "to an earlier one -- isolation flips the *_completed session fixtures from adopt to "
         "REBUILD, so a new red needs a second isolated run before it is a regression.",
+    )
+    p.add_argument(
+        "--select-tier",
+        choices=SELECT_TIERS,
+        default="all",
+        help="which tests the plan covers: the whole suite (default) or only the solver-bearing `compile_tier` "
+        "tests; recorded in the manifest, and a run that is not `all` can never report scope=union",
+    )
+    p.add_argument(
+        "--chunk-workers",
+        type=int,
+        default=1,
+        help="xdist workers inside each chunk (`-n K --dist loadgroup`); recorded in the manifest, default 1 "
+        "runs a chunk as one serial pytest session",
+    )
+    p.add_argument(
+        "--keep-failed-trees",
+        action="store_true",
+        help="with --isolate-trees-per-chunk, copy a FAILED chunk's whole isolation-root trees to "
+        "{run_dir}/tree_isolation_failed/chunk-NN before the node-local root is removed; recorded in the "
+        "manifest and off by default (the trees are large; the harvested logs are always kept)",
     )
     p.add_argument(
         "--declare-non-compile-bearing",

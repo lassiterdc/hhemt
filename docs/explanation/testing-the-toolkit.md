@@ -26,25 +26,78 @@ recipe could gate on different sets of tests without either of them knowing.
 
 The two tiers run in two places, and the venue is a rule rather than a convenience.
 
-**The laptop tier** is everything that is not `compile_tier`. The `test-laptop` recipe in the
-repository's `justfile` runs it as two pytest invocations, each with `HHEMT_FORBID_COMPILE=1`
-so that a test which reaches for the solver is refused instead of building it:
+**The laptop tier** is everything that is neither `compile_tier` nor `requires_snakemake_subprocess`. The
+`test-laptop` recipe in the repository's `justfile` runs it as one pytest invocation with `HHEMT_FORBID_COMPILE=1`, so
+that a test which reaches for the solver is refused instead of building it. The invocation selects
+`not compile_tier and not requires_snakemake_subprocess` and spreads the selected tests over every core with xdist
+(`-n` equal to the core count, `--dist loadgroup`). `loadgroup` keeps each `xdist_group` on one worker: the tests
+derived as sharing the free runs root run together on one worker, and the rest are handed out one at a time, which
+leaves no tail of consecutive batches. The recipe runs under the conda environment with the `docs` extra installed and
+with `VIRTUAL_ENV` removed, so the interpreter that runs the documentation-content tests is the one that has the
+documentation handlers.
 
-1. an xdist invocation over every core, selecting `not compile_tier and not requires_snakemake_subprocess`;
-2. a serial invocation selecting `not compile_tier and requires_snakemake_subprocess`.
+The 96 tests that carry `requires_snakemake_subprocess` (they start Snakemake as a child process) are not in the laptop
+tier: run serially they cost far more than the rest of the tier together (the measured figures are below). They run in every whole-suite
+Rivanna array, and a `--select-tier compile_tier` Rivanna run leaves them out because they are not `compile_tier`. A
+second recipe in the `justfile`, `test-snakemake-subprocess`, runs them locally and serially when you want them. `just`
+is not installed on every machine; each recipe is one shell command, and the `justfile` holds its exact text, so it can
+be run directly.
 
-The serial invocation exists because the tests that carry `requires_snakemake_subprocess`
-start Snakemake as a child process, and a child scheduler under xdist is nested
-parallelism. The tier needs no solver: tests that need a finished analysis tree start from
-a committed golden tree (a small, generator-built, finished analysis) and reprocess it, so
-the laptop never compiles TRITON-SWMM. Which tests build a private tree of their own is a
-committed, reviewed list, compared against the build-request census by a test, so a new
-test of that kind cannot appear unseen.
+The tier needs no solver: tests that need a finished analysis tree start from a committed
+golden tree (a small, generator-built, finished analysis) and reprocess it, so the laptop never
+compiles TRITON-SWMM. Which tests build a private tree of their own is a committed, reviewed
+list, compared against the build-request census by a test, so a new test of that kind cannot
+appear unseen.
 
-The tier is green. Its latest recorded timing, measured on the laptop, is 389.5 s for the
-xdist invocation and 1032.3 s for the serial one, about 23.7 minutes in total. `just` is not
-installed on every machine; the recipe is two shell commands, and the `justfile` holds
-their exact text, so they can be run directly.
+**What has been measured on the laptop.** Four runs exist, each named by its run id. The first used the
+selection the recipe now has, run by hand from the recipe's body, and the fourth used that selection plus
+the 14 tests of `tests/test_check_docs_content_memo.py`; no run through the recipe itself has been
+recorded. The first and second were made as separate selections, so their sum is not a run of the recipe.
+The pool runs of the first and third had failures, so this page does not call the tier green; the fourth
+passed all of its tests but did not meet the target.
+
+- `laptop-20261104T172458Z-11ac40f5`: the pool with the 96 `requires_snakemake_subprocess`
+  tests deselected, 12 workers, 354.57 s, `3 failed, 5916 passed, 12 skipped, 1 xfailed`. That
+  is 1.18 times the 300 s target. The three failures are stray-process assertions in
+  `tests/test_suite_isolation_root_node_local.py`. State at the start: HEAD `11ac40f5` with a
+  clean tree, MemAvailable 21,279 MiB, swap 4,777 of 8,191 MiB used, load average 4.14, and one
+  core held for the whole run by a stuck `git grep` process of another session's worktree (a
+  confound: 99.4 to 99.5 % CPU in every state snapshot). Sampled every second: peak session PSS
+  10.47 GiB, minimum MemAvailable 11.08 GiB, peak swap used 4.93 GiB of 8.00 GiB, headroom
+  against MemTotal 30.72 - 10.47 = 20.25 GiB, memory-pressure stall 2.19 s (the difference of
+  the `some` total between the first and last sample). Control: a known allocation of 2 GiB held
+  for 20 s under the same sampler was read as a peak of 2.004 GiB against 2.000 GiB.
+- `laptop-20261104T173100Z-11ac40f5`: the 96 `requires_snakemake_subprocess` tests run
+  serially, 1,498.28 s, `95 passed, 1 skipped`. State at the start: HEAD `11ac40f5`,
+  MemAvailable 22,026 MiB, swap 5,037 of 8,191 MiB used, load average 18.68 (the previous
+  run had just ended), the same stuck process. Peak session PSS 2.00 GiB, peak swap used
+  4.92 GiB. Together with the pool above (`laptop-20261104T172458Z-11ac40f5`) the two take
+  1,852.85 s.
+- `laptop-20261104T064202Z-47e1074a`: the pool with the 96 inside, 12 workers, 843.49 s,
+  `4 failed, 6008 passed, 13 skipped, 1 xfailed, 2 errors`. State at the start: HEAD `47e1074a`,
+  MemAvailable 15,803 MiB, swap 5,630 of 8,191 MiB used, load average 2.88 at the first sample;
+  whether the stuck process was present was not recorded.
+
+- `laptop-20261105T033340Z-cfd68f2a`: the pool again, 12 workers, 428.16 s, `5959 passed, 12 skipped, 1 xfailed`,
+  no failure, 1.43 times the 300 s target: the target was NOT met. State at the start: HEAD `cfd68f2a` with a clean
+  tree, MemAvailable 17,920 MiB, swap 5,512 of 8,191 MiB used, load average 3.98, and the stuck `git grep` process of
+  the earlier runs was in the snapshot (99.5 % CPU). Sampled every second: peak session PSS 8.11 GiB, minimum
+  MemAvailable 10.96 GiB, peak swap used 7.99 GiB of 8.00 GiB, memory-pressure stall 13.88 s, and a load average
+  rising to a maximum of 24.99, with one to three other pytest or snakemake processes outside the session in every
+  five-second sample (the sampler counts them and does not identify them). Control: a known allocation of 2 GiB held for 20 s
+  under the same sampler was read as a peak of 2.004 GiB against 2.000 GiB. The run was memory-pressured, with swap
+  nearly full and a stall several times the first run's. Observed, with no cause claimed: it took 73.59 s (20.8 %)
+  longer, its summed call time was 3,508.2 s against 3,026.1 s, its peak session PSS 8.11 GiB against 10.47 GiB, and
+  its swap use peaked at 7.99 GiB against 4.93 GiB, all against the pool of `laptop-20261104T172458Z-11ac40f5`
+  (354.57 s).
+
+**How many local sessions fit.** The estimate is floor((MemAvailable at start - R) / peak use),
+with R the larger of 2 GiB and 10% of MemTotal. From `laptop-20261104T172458Z-11ac40f5`:
+MemAvailable at start 20.78 GiB, MemTotal 30.72 GiB, R 3.07 GiB, peak use 10.47 GiB, so
+floor((20.78 - 3.07) / 10.47) = 1: serialised, at most one local hhemt pytest session at a
+time. This is an estimate from one run. It does not cover the two limits memory does not
+cover: two sessions never share one worktree's build cache, and every session takes one
+worker per core.
 
 **The Rivanna tier** is the `compile_tier` tests, run through the pytest harness kept with
 the private companion repository. Solver compiles and solver runs belong to Rivanna scratch and never to

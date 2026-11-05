@@ -390,6 +390,92 @@ def shared_tree_exposure(repo_root: Path, chunks: list[dict]) -> list[dict]:
 #: whose real cost is unmeasured and is under-counted here.
 _IMPUTED_SECONDS_PER_NODE = 0.17
 
+#: The `covers` value of the tail chunk (the third, beside "array" and "complement"; absent means "array").
+TAIL_COVERS = "tail"
+
+
+def _fixture_scope(deco: ast.expr) -> str | None:
+    """The scope a ``@pytest.fixture`` decorator declares ("function" when it names none), or None for a non-fixture."""
+    target = deco.func if isinstance(deco, ast.Call) else deco
+    name = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", None)
+    if name != "fixture":
+        return None
+    if isinstance(deco, ast.Call):
+        for kw in deco.keywords:
+            if kw.arg == "scope" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                return kw.value.value
+    return "function"
+
+
+def chain_builders(repo_root: Path) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """(reusing, wiping): fixture name -> the ``retrieve_*`` builders it calls, over the whole support layer.
+
+    A REUSING builder is a FUNCTION-scoped fixture whose body calls ``retrieve_*(start_from_scratch=False)``: it hands
+    each test the tree a sibling test of the same file may have just written, so those tests depend on each other's
+    output. A WIPING builder calls ``retrieve_*(start_from_scratch=True)`` (any scope). A session-, module-, class- or
+    package-scoped builder is NOT a chain builder: it brings its tree to a defined state itself, under a lock, so no
+    consumer depends on a sibling test's output. Recognised from the fixture source of every ``conftest.py`` and every
+    file under ``tests/fixtures/`` (``_iter_support_files``), by AST, never from a hand-kept list.
+    """
+    reusing: dict[str, set[str]] = {}
+    wiping: dict[str, set[str]] = {}
+    for p in _iter_support_files(repo_root):
+        try:
+            tree = ast.parse(p.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            scopes = [sc for sc in (_fixture_scope(d) for d in node.decorator_list) if sc is not None]
+            if not scopes:
+                continue
+            for call in (c for c in ast.walk(node) if isinstance(c, ast.Call)):
+                callee = call.func.attr if isinstance(call.func, ast.Attribute) else getattr(call.func, "id", "")
+                if not callee.startswith("retrieve_"):
+                    continue
+                for kw in call.keywords:
+                    if kw.arg != "start_from_scratch" or not isinstance(kw.value, ast.Constant):
+                        continue
+                    if kw.value.value is True:
+                        wiping.setdefault(node.name, set()).add(callee)
+                    elif kw.value.value is False and scopes[0] == "function":
+                        reusing.setdefault(node.name, set()).add(callee)
+    return reusing, wiping
+
+
+def chain_kept_whole(
+    files: list[str],
+    by_file: dict[str, list[str]],
+    closures: dict[str, list[str]],
+    repo_root: Path,
+) -> dict[str, str]:
+    """file -> reason, for each file whose tests depend on each other's tree output (R-B2).
+
+    A file is kept whole when two or more of its nodes hold, in their fixture closures, the same function-scoped
+    tree-REUSING builder, or when one node holds a tree-WIPING builder and a DIFFERENT node holds a reusing builder of
+    the same ``retrieve_*`` tree. Splitting such a file puts a consumer in a chunk that never ran its producer.
+    """
+    reusing, wiping = chain_builders(repo_root)
+    out: dict[str, str] = {}
+    for f in files:
+        nodes = by_file.get(f) or []
+        if len(nodes) < 2:
+            continue
+        held = {n: set(closures.get(n) or ()) for n in nodes}
+        shared = sorted(b for b in reusing if sum(b in h for h in held.values()) >= 2)
+        if shared:
+            out[f] = f"shared reusing builder {shared[0]}"
+            continue
+        for n, h in held.items():
+            wipe_trees = {t for b in wiping if b in h for t in wiping[b]}
+            if wipe_trees and any(
+                m != n and wipe_trees & reusing[b] for m, hm in held.items() for b in reusing if b in hm
+            ):
+                out[f] = "wiping + reusing builder of one tree"
+                break
+    return out
+
 
 def node_split_candidates(
     files: list[str],
@@ -407,6 +493,9 @@ def node_split_candidates(
        split without guessing. `file_trees` already treats this token as a self-identifying
        incompleteness marker; this is the same token used for the same reason.
     2. For every node in the file, `_fixtures_used(file) <= set(closures[node])`.
+
+    A third condition, applied first, is `chain_kept_whole`: a file whose tests depend on each other's tree output
+    (a shared function-scoped reusing builder, or a wiping and a reusing builder of one tree) is never node-split.
 
     Why (2) is not optional. `_fixtures_used` is a WHOLE-FILE substring scan, so both parts
     of a split file inherit the union of every RECORDED_FIXTURES name the file mentions. If
@@ -432,7 +521,10 @@ def node_split_candidates(
     magnitude larger than the ~22% the cancelled run implied.
     """
     out: set[str] = set()
+    chained = chain_kept_whole(files, by_file, closures, repo_root)
     for f in files:
+        if f in chained:
+            continue
         try:
             txt = (repo_root / f).read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -457,6 +549,12 @@ def split_heavy_component(
 ) -> list[list[str]]:
     """Split ONE connected component into time-balanced parts, returning NODE ID lists.
 
+    Each part lists its ids in COLLECTED order, never alphabetical: a chain file's tests depend on each other's tree
+    output and pytest runs the ids it is handed in the order it is handed them, so a part sorted by name runs
+    `test_process_sim` before `test_run_sim` (counted array 1). The rank of an id is its position when `by_file` is
+    read in its own order, file by file; `build_manifest` builds `by_file` in first-appearance order of the collected
+    list, so that rank is the id's index in the list it received, across files as well as within one.
+
     Returns node ids, not files, because `run_chunk` is ALREADY node-granular: it reads
     `chunks/NN.txt` line by line (run_suite.py:984) and passes them to pytest verbatim
     (:1036). Nothing downstream of the manifest has to change for the unit to be a node.
@@ -476,6 +574,12 @@ def split_heavy_component(
     if budget_s <= 0:
         raise PartitionDriftError(f"heavy split budget must be > 0 s, got {budget_s}")
     node_split = node_split or set()
+    rank = {n: i for i, n in enumerate(n for f in by_file for n in by_file[f])}
+
+    def collected(ids) -> list[str]:
+        """`ids` in collected order (rank), the node id itself breaking a tie between ids with no rank."""
+        return sorted(ids, key=lambda n: (rank.get(n, len(rank)), n))
+
     units: dict[str, list[str]] = {}
     cost: dict[str, float] = {}
     for f in files:
@@ -497,14 +601,14 @@ def split_heavy_component(
     total = sum(cost.values())
     k = max(1, min(len(units), int(-(-total // budget_s))))
     if k == 1:
-        return [sorted(n for u in units.values() for n in u)]
+        return [collected(n for u in units.values() for n in u)]
     bins: list[list[str]] = [[] for _ in range(k)]
     load = [0.0] * k
     for key in sorted(units, key=lambda p: (-cost[p], p)):
         i = load.index(min(load))
         bins[i].extend(units[key])
         load[i] += cost[key]
-    return [sorted(b) for b in bins if b]
+    return [collected(b) for b in bins if b]
 
 
 def build_manifest(
@@ -520,6 +624,7 @@ def build_manifest(
     heavy_split_budget_s: float | None = None,
     durations: dict[str, float] | None = None,
     tree_isolation_per_chunk: bool = False,
+    tail_node_ids: list[str] | None = None,
 ) -> dict:
     if not node_ids:
         raise PartitionDriftError("collected universe is empty; refusing to partition")
@@ -562,16 +667,38 @@ def build_manifest(
             "proxy for this corpus. Pass --durations-from {run_dir} naming a COMPLETED run."
         )
 
-    files = sorted({node_file(n) for n in node_ids})
-    components = heavy_components(repo_root, files, file_trees(repo_root, closures))
+    # THE TAIL (R-A). The named destructive tests leave every array chunk and run as ONE last chunk, after the array.
+    # The array is planned over the collected ids WITHOUT them, exactly as it would be planned if they did not exist;
+    # `_assert_covers` below still takes the FULL list, so a tail id dropped from both is caught.
+    tail = list(dict.fromkeys(tail_node_ids or []))
+    if tail:
+        not_collected = [n for n in tail if n not in set(node_ids)]
+        if not_collected:
+            raise PartitionDriftError(
+                f"{len(not_collected)} tail node id(s) are not in the collected universe, first "
+                f"{not_collected[0]!r}. A renamed or removed tail test would silently return to an array chunk; "
+                "refusing to plan. A fixture project that has no such tests plans with HHEMT_SUITE_TAIL_NODE_IDS_FILE "
+                "naming a file that lists its own tail ids (an empty file means no tail)."
+            )
+    tail_set = set(tail)
+    array_ids = [n for n in node_ids if n not in tail_set]
+    array_closures = {n: c for n, c in closures.items() if n not in tail_set}
+    if not array_ids:
+        raise PartitionDriftError("the tail holds every collected node id; nothing is left for the array")
+
+    files = sorted({node_file(n) for n in array_ids})
+    components = heavy_components(repo_root, files, file_trees(repo_root, array_closures))
     heavy_files = {f for comp in components for f in comp}
     cheap_files = [f for f in files if f not in heavy_files]
 
-    by_file: dict[str, list[str]] = {f: [] for f in files}
-    for n in node_ids:
-        by_file[node_file(n)].append(n)
+    # First-appearance order of the collected list, NOT the sorted `files` order: `split_heavy_component` ranks a part's
+    # ids by reading this dict in its own order, so the collection's file order survives into the part.
+    by_file: dict[str, list[str]] = {}
+    for n in array_ids:
+        by_file.setdefault(node_file(n), []).append(n)
 
     chunks: list[dict] = []
+    kept_whole: list[dict] = []
     for comp in components:
         if heavy_split_budget_s is None:
             chunks.append({"kind": "heavy", "files": comp})
@@ -581,7 +708,16 @@ def build_manifest(
         # that inherited a fixture it does not use would report a lost precondition and
         # aggregate.py would VOID it -- which is why node_split_candidates gates on exactly
         # that condition rather than on the file being "small enough to split".
-        splittable = node_split_candidates(comp, by_file, closures, repo_root)
+        splittable = node_split_candidates(comp, by_file, array_closures, repo_root)
+        for f, reason in sorted(chain_kept_whole(comp, by_file, array_closures, repo_root).items()):
+            kept_whole.append(
+                {
+                    "file": f,
+                    "nodes": len(by_file[f]),
+                    "cost_s": round((durations or {}).get(f, len(by_file[f]) * _IMPUTED_SECONDS_PER_NODE), 3),
+                    "reason": reason,
+                }
+            )
         for part in split_heavy_component(comp, by_file, durations or {}, heavy_split_budget_s, node_split=splittable):
             # node_ids is set HERE because a part may be a strict subset of a file's nodes;
             # the enrichment loop below must not re-derive it from `files`.
@@ -603,6 +739,23 @@ def build_manifest(
         if b:
             chunks.append({"kind": "cheap", "files": sorted(b)})
 
+    # The tail chunk is appended HERE, after the array and before the enrichment loop, so the loop gives it the last
+    # chunk_id, closure-derived `expected_fixtures` and the dynamic-lookup scan like every chunk. `node_ids` is set
+    # explicitly (the loop's `setdefault` then leaves it alone), and every array chunk's `node_ids` excludes the tail
+    # ids because `by_file` was built from `array_ids`. `workers: 1`: the tail's tests rebuild shared state and must
+    # not run side by side. `covers: "tail"` is neither "array" nor "complement", so the union guard never reads the
+    # tail as complement evidence.
+    if tail:
+        chunks.append(
+            {
+                "kind": "heavy",
+                "files": sorted({node_file(n) for n in tail}),
+                "node_ids": tail,
+                "workers": 1,
+                "covers": TAIL_COVERS,
+            }
+        )
+
     # HOISTED: pure in repo_root and invariant across chunks; rebuilding it per iteration
     # cost a measured 931 ms x chunk_count on the interactive plan step.
     _sym = support_symbol_trees(repo_root)
@@ -613,7 +766,11 @@ def build_manifest(
         # re-merge the split -- every part would reclaim the whole file, _assert_covers would
         # then see each of those nodes in more than one chunk, and PartitionDriftError would
         # fire naming duplicates rather than the re-derivation that caused them.
-        c.setdefault("node_ids", [n for f in c["files"] for n in by_file[f]])
+        # An explicit test, NOT `setdefault`: `dict.setdefault(key, default)` evaluates `default` first, and for the
+        # tail chunk (whose `node_ids` are set and whose file may hold no array node, so is not a key of `by_file`)
+        # that evaluation raised KeyError before `setdefault` could leave the key alone.
+        if "node_ids" not in c:
+            c["node_ids"] = [n for f in c["files"] for n in by_file[f]]
         # CLOSURE-DERIVED, not scanned. `_fixtures_used` is a whole-file SUBSTRING scan
         # answering "does this file MENTION the fixture"; `expected_fixtures` needs "does any
         # node in this chunk REQUEST it". Those diverge the moment a test file's SUBJECT is
@@ -683,12 +840,22 @@ def build_manifest(
                 continue
             expected |= set(resolve_dynamic_literals(txt, _sym)) & set(RECORDED_FIXTURES)
         c["expected_fixtures"] = sorted(expected)
+        # WHO HOLDS EACH EXPECTED FIXTURE, from the same closures that derived the set. A holder pytest skips before
+        # fixture setup (a `skipif` test) never completes the fixture, so `classify_chunk` needs the holders to tell
+        # "every holder was skipped" (no precondition was lost) from "a holder's setup failed". A fixture admitted
+        # only through the dynamic-lookup route has no holder in any closure and maps to an empty list, which excuses
+        # nothing.
+        c["expected_fixture_holders"] = {
+            fx: sorted(n for n in c["node_ids"] if fx in closures[n]) for fx in c["expected_fixtures"]
+        }
 
     assigned = [n for c in chunks for n in c["node_ids"]]
     _assert_covers(collected=node_ids, assigned=assigned)
 
-    exposure = shared_tree_exposure(repo_root, chunks)
-    return {
+    # Over the ARRAY chunks only: the tail runs after every array element, so it is never concurrent with one.
+    exposure = shared_tree_exposure(repo_root, [c for c in chunks if c.get("covers") != TAIL_COVERS])
+    tail_chunk = next((c["chunk_id"] for c in chunks if c.get("covers") == TAIL_COVERS), None)
+    manifest = {
         "shared_tree_exposure": exposure,
         "run_id": run_id,
         "source_sha": source_sha,
@@ -719,8 +886,13 @@ def build_manifest(
         "heavy_split_imputed_seconds_per_node": (None if heavy_split_budget_s is None else _IMPUTED_SECONDS_PER_NODE),
         "heavy_split_durations_covered": (None if durations is None else sorted(durations)),
         "tree_isolation_per_chunk": tree_isolation_per_chunk,
+        "kept_whole": kept_whole,
         "chunks": chunks,
     }
+    # Present only when a tail was planned, so a plan with no tail is byte for byte the manifest it always was.
+    if tail_chunk is not None:
+        manifest["tail_chunk"] = tail_chunk
+    return manifest
 
 
 def _assert_covers(*, collected: list[str], assigned: list[str]) -> None:

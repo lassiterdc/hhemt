@@ -205,3 +205,102 @@ def test_nonuniform_file_is_not_node_split(corpus_with_nonuniform_file):
         "the gate-PASSING file must still be node-split; it landed in "
         f"{len(heavy_chunks)} chunk(s), so the split is disabled"
     )
+
+
+# ---------------------------------------------------------------------------
+# The duration table sums setup, call and teardown per file (chunk ledger rows).
+# ---------------------------------------------------------------------------
+
+
+def _write_ledger(run_dir: Path, name: str, rows: list[tuple[str, str, float]]) -> None:
+    """Write a chunk ledger of ``(nodeid, when, duration)`` report rows, each carrying a ``worker`` key."""
+    import json
+
+    run_dir.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps({"kind": "session_start", "pid": 1})]
+    for nodeid, when, duration in rows:
+        rec = {"kind": "report", "nodeid": nodeid, "when": when, "outcome": "passed", "duration": duration}
+        lines.append(json.dumps({**rec, "worker": None}))
+    (run_dir / name).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _three_phase_ledger(run_dir: Path) -> None:
+    """Two ledgers: file A (two tests, three phases each, spread over both) and files B and C (call rows only)."""
+    _write_ledger(
+        run_dir,
+        "chunk-00.reports.jsonl",
+        [
+            ("tests/test_a.py::test_one", "setup", 3.0),
+            ("tests/test_a.py::test_one", "call", 1.0),
+            ("tests/test_a.py::test_one", "teardown", 0.5),
+            ("tests/test_b.py::test_one", "call", 2.0),
+        ],
+    )
+    _write_ledger(
+        run_dir,
+        "chunk-01.reports.jsonl",
+        [
+            ("tests/test_a.py::test_two", "setup", 0.25),
+            ("tests/test_a.py::test_two", "call", 0.5),
+            ("tests/test_a.py::test_two", "teardown", 0.25),
+            ("tests/test_c.py::test_one", "call", 2.0),
+        ],
+    )
+
+
+def test_file_duration_is_the_sum_of_setup_call_and_teardown(tmp_path):
+    """The per-file figure equals the sum of every phase row of every test in the file.
+
+    Input class: a ledger whose passing tests carry setup, call and teardown rows across more than one chunk
+    file, plus files that carry call rows only. Required because a heavy split balances on this figure and a
+    session fixture's build cost sits in the setup row. Killed by a table that sums only ``call`` rows (file A
+    would read 1.5 s, not 5.5 s) or reads one chunk file only. A second correct implementation passes: any sum
+    over all report rows.
+    """
+    from hhemt.suite import _runner as R
+
+    _three_phase_ledger(tmp_path)
+    table = R._file_durations(tmp_path)
+    assert table["tests/test_a.py"] == pytest.approx(3.0 + 1.0 + 0.5 + 0.25 + 0.5 + 0.25)
+    assert table["tests/test_b.py"] == pytest.approx(2.0)
+    assert table["tests/test_c.py"] == pytest.approx(2.0)
+    # Must-fire control: the same ledger summed over call rows alone gives a different figure for file A, so
+    # the fixture can tell the two implementations apart.
+    call_only = 1.0 + 0.5
+    assert table["tests/test_a.py"] != pytest.approx(call_only)
+
+
+def test_legacy_ledger_without_setup_and_teardown_rows_still_sums(tmp_path):
+    """A ledger holding call rows only sums to the call time, so a cancelled older run stays a cost source.
+
+    Input class: a ledger written before passing setup and teardown rows were recorded, with no ``worker``
+    key. Required because the table is read from prior runs of either vintage. Killed by a reader that demands a
+    setup row or a worker key. A second correct implementation passes: any reader that tolerates absent rows.
+    """
+    import json
+
+    from hhemt.suite import _runner as R
+
+    row = {"kind": "report", "nodeid": "tests/test_old.py::test_x", "when": "call", "outcome": "passed"}
+    (tmp_path / "chunk-00.reports.jsonl").write_text(json.dumps({**row, "duration": 4.0}) + "\n", encoding="utf-8")
+    assert R._file_durations(tmp_path) == {"tests/test_old.py": pytest.approx(4.0)}
+
+
+def test_the_three_phase_table_changes_how_many_parts_a_split_derives(tmp_path):
+    """Fixture cost in the table changes the split: three files, one test each, budget 4 s.
+
+    Input class: a table read from a three-phase ledger against the same ledger reduced to its call rows.
+    Required because the stated purpose of the sum is a split that balances fixture cost. With setup and teardown
+    counted the total is 9.5 s, so the derived part count is 3; on call rows alone it is 5.5 s and the count is 2,
+    which is the under-split the sum prevents. Killed by a table or a splitter that ignores the setup rows.
+    A second correct implementation passes: any splitter that derives the count from the table total.
+    """
+    from hhemt.suite import _runner as R
+
+    _three_phase_ledger(tmp_path)
+    full = R._file_durations(tmp_path)
+    call_only = {"tests/test_a.py": 1.5, "tests/test_b.py": 2.0, "tests/test_c.py": 2.0}
+    files = sorted(full)
+    by_file = {f: [f"{f}::test_one"] for f in files}
+    assert len(P.split_heavy_component(files, by_file, full, 4.0)) == 3
+    assert len(P.split_heavy_component(files, by_file, call_only, 4.0)) == 2

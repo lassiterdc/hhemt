@@ -55,7 +55,6 @@ from hhemt.process_simulation import (
 from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing
 from hhemt.resource_management import ResourceManager
 from hhemt.scenario import TRITONSWMM_scenario
-from hhemt.sensitivity_analysis import TRITONSWMM_sensitivity_analysis
 from hhemt.snakemake_dry_run_report import (
     generate_dry_run_report_markdown,
 )
@@ -642,6 +641,10 @@ class TRITONSWMM_analysis:
         self.nsims = len(self.df_sims)
 
         if self.cfg_analysis.toggle_sensitivity_analysis is True:
+            # Imported here, not at module level: hhemt.sensitivity_analysis imports this module, and a
+            # module-level import back made that pair a cycle that fails as a first import.
+            from hhemt.sensitivity_analysis import TRITONSWMM_sensitivity_analysis
+
             self.sensitivity = TRITONSWMM_sensitivity_analysis(
                 self, is_main_orchestrator=is_main_orchestrator, skip_log_update=skip_log_update
             )

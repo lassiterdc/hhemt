@@ -24,10 +24,26 @@ _MPL_SPECIFIC_DEFAULTS = {
 }
 
 
-@pytest.fixture
-def eda_plot_id(synthetic_sensitivity_completed_isolated):
-    """Run .eda() on the synth sensitivity master; return the rendered EDA plot-ID."""
-    analysis = synthetic_sensitivity_completed_isolated.experiment
+@pytest.fixture(scope="module")
+def eda_master_clone(synthetic_sensitivity_completed, tmp_path_factory):
+    """One clone of the completed synth sensitivity master for this module, under a `tmp_path_factory` directory.
+
+    Module-scoped because `eda_plot_id` below is: a module-scoped fixture cannot request the function-scoped
+    `synthetic_sensitivity_completed_isolated` (pytest raises ScopeMismatch), so the clone is made here through the
+    same helper that fixture uses. The tests in this module only read the plot ID `eda_plot_id` returns, so none of
+    them mutates the clone."""
+    from tests._failing_fixture_helpers import clone_analysis_to_tmp
+
+    master_clone = clone_analysis_to_tmp(
+        synthetic_sensitivity_completed.experiment, tmp_path_factory.mktemp("eda_master_clone")
+    )
+    return master_clone.sensitivity
+
+
+@pytest.fixture(scope="module")
+def eda_plot_id(eda_master_clone):
+    """Run .eda() once on the synth sensitivity master clone; return the rendered EDA plot-ID."""
+    analysis = eda_master_clone.experiment
     result = analysis.eda()
     assert result.plot_paths, "expected >=1 rendered EDA plot on the sensitivity master"
     return result.plot_paths[0].stem  # the figure stem IS the canonical ADR-2 plot-ID

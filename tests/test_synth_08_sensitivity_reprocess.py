@@ -201,6 +201,11 @@ def test_sensitivity_reprocess_consolidate_subset_member_ids(golden_member):
         assert (status_dir / f"e_consolidate_member-{sid}_complete.flag").exists()
 
 
+# This row calls reprocess for real and cannot be replaced by a dry-run plan. Under ``dry_run`` the driver claim
+# (``_acquire_reprocess_driver_claim``, src/hhemt/workflow.py line 8196: ``if dry_run:`` returns None) and the
+# liveness gate (src/hhemt/workflow.py line 7564: ``if not dry_run and claimed_driver_id is None:``) are both
+# skipped, so a dry-run plan succeeds whether or not the gate would refuse and cannot show that the gate lets this
+# call through.
 def test_sensitivity_reprocess_proceeds_with_submitted_workers_no_orchestrator(
     golden_member,
 ):
@@ -257,6 +262,10 @@ def test_sensitivity_reprocess_refuses_fast_with_live_orchestrator(
         osent.remove_orchestrator_sentinel(master_dir, "live-driver")
 
 
+# This row calls reprocess for real and cannot be replaced by a dry-run plan. The stale-lock check returns as soon as
+# ``dry_run`` is true (src/hhemt/workflow.py line 1777: ``if dry_run:``), before it reads the lock files or consults
+# ``skip_lock_check``, so a dry-run plan never reaches the prompt this row guards against and passes even when the
+# bypass is removed.
 def test_sensitivity_reprocess_never_calls_input_even_with_stale_lock(golden_member, monkeypatch):
     """(e) non-TTY no-hang: even with the non-interactive lock-clear env var
     UNSET and a stale ``.snakemake/locks/*.lock`` planted on the master dir,
@@ -556,6 +565,9 @@ def test_failed_scoped_delete_raises_instead_of_consolidating_stale(
     assert "NOT invalidated" in msg, "the message must state that the trees survived"
 
 
+# This row calls reprocess for real and cannot be replaced by a dry-run plan. The scoped-delete route is a conjunction
+# that includes ``and not dry_run`` (src/hhemt/sensitivity_analysis.py line 984), so under ``dry_run`` the delete is
+# never routed to SLURM for any ``execution_mode``, and a dry-run plan cannot show that "local" is what kept it off.
 def test_explicit_local_execution_mode_is_not_overridden_by_run_method(
     golden_member,
 ):

@@ -30,6 +30,7 @@ intended change before recapturing.
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 import sys
 from pathlib import Path
@@ -129,8 +130,14 @@ def _normalize_volatile(text: str) -> str:
     # golden stays host-portable and fails only on a second WORKTREE, which is
     # diagnosable — where the rejected alternative fails by silently deleting a token
     # nobody notices is gone.
-    _hhemt_cache = str(cache_paths.cache_root())
-    text = text.replace(_hhemt_cache, "{HHEMT_CACHE}")
+    # The cache root is masked in BOTH spellings. The generator renders some model paths relative to the RESOLVED
+    # analysis root, so on a host whose home is a symlink (every cluster home) the real path of the cache root
+    # appears, with its real prefix (`/sfs/gpfs/tardis/...`), and the unresolved spelling alone would leave that
+    # prefix in front of the token. The resolved spelling goes first because it is the longer one wherever the two
+    # differ; where the cache root is already real, the second replace finds nothing and the pair is the old one.
+    _hhemt_cache_root = cache_paths.cache_root()
+    text = text.replace(str(_hhemt_cache_root.resolve()), "{HHEMT_CACHE}")
+    text = text.replace(str(_hhemt_cache_root), "{HHEMT_CACHE}")
     text = re.sub(r"(\{HHEMT_CACHE\}/synthetic_test_runs)/[^/'\"\s]+", r"\1/{SLUG}", text)
     text = re.sub(r"(\{HHEMT_CACHE\}/synthetic_test_models)/[^/'\"\s]+", r"\1/{MODEL_KEY}", text)
     # SAME tier, RELATIVE rendering. `watershed_rel_path` and the boundary source are
@@ -180,15 +187,63 @@ def _unified_diff_excerpt(want: str, got: str, max_lines: int = 80) -> str:
     return "".join(diff[:max_lines])
 
 
-def _check(got: str, golden_name: str) -> None:
+_MODEL_PATH_RUN = re.compile(r"((?:\.\./)+)([^'\"\s`\\]*?synthetic_test_models/[^'\"\s`\\]*)")
+_RUNS_ROOT_OVERRIDE_ENV = "HHEMT_TEST_RUNS_ROOT_OVERRIDE"
+
+
+def _resolve_model_paths(text: str, analysis_dir: str) -> str:
+    """Rewrite each relative ``../``-run path into ``synthetic_test_models`` as the path it resolves to.
+
+    The run may climb to ``/`` and descend through the cache root's real path (``os.path.relpath`` between trees
+    that share only ``/``), so the text between the ``../`` run and ``synthetic_test_models`` is part of the match.
+
+    `analysis_dir` is the directory the relative path is read from. Resolving, rather than masking the ``../`` run,
+    keeps the depth in the comparison: a path one hop too shallow resolves to a different directory and so still
+    differs from the golden. Deliberately NOT a mask of the run (the comment in `_normalize_volatile` forbids it): a
+    mask keeps matching a path the generator no longer emits."""
+    return _MODEL_PATH_RUN.sub(
+        lambda m: posixpath.normpath(posixpath.join(analysis_dir, m.group(1) + m.group(2))), text
+    )
+
+
+def _mask_override_runs_root(text: str, override: str, cache: str) -> str:
+    """Spell the exported override's runs root as the slug runs root, so the slug mask then treats them alike.
+
+    An override root carries no slug segment (the builder nests ``synthetic_test_runs`` directly under it), which
+    is why the slug mask in `_normalize_volatile` cannot see it."""
+    return text.replace(f"{override.rstrip('/')}/synthetic_test_runs", f"{cache}/synthetic_test_runs/{{SLUG}}")
+
+
+def _canonical_forms(got: str, golden: str, analysis_dir: Path) -> tuple[str, str]:
+    """Return (emitted, golden) in one comparable form, whatever runs root the emitted text was produced under.
+
+    Three steps, in this order. (1) Resolve the emitted model paths against the emitted analysis directory. (2) Mask
+    the exported override's runs root as the slug runs root, then apply the usual volatile masks, which also mask the
+    cache root. (3) Resolve the golden's model paths against the canonical analysis directory
+    ``{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/{case}/{case}``, so both sides name the same directory."""
+    cache = str(cache_paths.cache_root())
+    emitted = _resolve_model_paths(got, str(analysis_dir))
+    override = os.environ.get(_RUNS_ROOT_OVERRIDE_ENV)
+    if override:
+        emitted = _mask_override_runs_root(emitted, override, cache)
+    emitted = _normalize_volatile(emitted)
+    case = analysis_dir.name
+    canonical = f"{{HHEMT_CACHE}}/synthetic_test_runs/{{SLUG}}/{case}/{case}"
+    return emitted, _resolve_model_paths(golden, canonical)
+
+
+def _check(got: str, golden_name: str, analysis_dir: Path | None = None) -> None:
     """Normalize volatile tokens, then capture-or-assert against the golden."""
     golden_path = GOLDENS_DIR / golden_name
-    normalized = _normalize_volatile(got)
     if _CAPTURE:
+        normalized = _normalize_volatile(got)
         GOLDENS_DIR.mkdir(parents=True, exist_ok=True)
         golden_path.write_text(normalized)
         pytest.skip(f"captured golden {golden_name} ({len(normalized)} bytes)")
-    want = golden_path.read_text()
+    if analysis_dir is None:
+        normalized, want = _normalize_volatile(got), golden_path.read_text()
+    else:
+        normalized, want = _canonical_forms(got, golden_path.read_text(), analysis_dir)
     assert normalized == want, _unified_diff_excerpt(want, normalized)
 
 
@@ -200,7 +255,7 @@ def test_multi_sim_snakefile_byte_identity() -> None:
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
     got = builder.generate_snakefile_content()
-    _check(got, "multi_sim.Snakefile.golden")
+    _check(got, "multi_sim.Snakefile.golden", tc.analysis.analysis_paths.analysis_dir)
 
 
 def test_master_snakefile_byte_identity() -> None:
@@ -212,7 +267,7 @@ def test_master_snakefile_byte_identity() -> None:
     sens = TRITONSWMM_sensitivity_analysis(tc.analysis)
     builder = SensitivityAnalysisWorkflowBuilder(sens)
     got = builder.generate_master_snakefile_content()
-    _check(got, "sensitivity_master.Snakefile.golden")
+    _check(got, "sensitivity_master.Snakefile.golden", tc.analysis.analysis_paths.analysis_dir)
 
 
 # --- T15(iii) fixtures. DELIBERATELY NOT EXAMPLE_HPC_CONFIG, which is threaded
@@ -551,6 +606,119 @@ def test_report_tail_partition_native_dispatch_invariant_to_locus(
         )
 
 
+_GOLDEN_CASES = [
+    ("multi_sim.Snakefile.golden", "synth_multi_sim"),
+    ("sensitivity_master.Snakefile.golden", "synth_sensitivity"),
+]
+_EMITTED_MODEL_KEY = "b495da2fed88fb9a"
+
+
+def _emitted_from_golden(golden: str, case: str, runs_dir: str) -> tuple[str, Path]:
+    """Rebuild the text the generator would emit for `case` under `runs_dir` from its golden, with its analysis dir.
+
+    `runs_dir` is the directory that holds the case directories: ``{override}/synthetic_test_runs`` under an exported
+    override, ``{cache}/synthetic_test_runs/{slug}`` otherwise. Every relative model path is re-rendered with
+    `os.path.relpath`, the way the generator renders it, so the ``../`` run has the length a real emission has."""
+    cache = str(cache_paths.cache_root())
+    analysis_dir = Path(runs_dir) / case / case
+    models = f"{cache}/synthetic_test_models/{_EMITTED_MODEL_KEY}"
+    text = golden.replace("{HHEMT_CACHE}/synthetic_test_runs/{SLUG}", runs_dir)
+    text = re.sub(
+        r"(?:\.\./)+synthetic_test_models/\{MODEL_KEY\}",
+        lambda _m: os.path.relpath(models, analysis_dir),
+        text,
+    )
+    for placeholder, value in (
+        ("{HHEMT_CACHE}", cache),
+        ("{MODEL_KEY}", _EMITTED_MODEL_KEY),
+        ("{PYTHON}", sys.executable),
+        ("{REPO_ROOT}", str(Path(__file__).resolve().parents[1])),
+    ):
+        text = text.replace(placeholder, value)
+    return text, analysis_dir
+
+
+@pytest.fixture(params=["exported", "unset"])
+def runs_dir_for_emission(request, tmp_path, monkeypatch) -> str:
+    """The directory a reconstructed emission puts its case directories in, with the override variable to match.
+
+    "exported" is a harness chunk's isolation root; "unset" is a laptop session, where a slug directory under the
+    cache root holds them."""
+    if request.param == "exported":
+        monkeypatch.setenv(_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
+        return f"{tmp_path}/synthetic_test_runs"
+    monkeypatch.delenv(_RUNS_ROOT_OVERRIDE_ENV, raising=False)
+    return f"{cache_paths.cache_root()}/synthetic_test_runs/slug-under-test"
+
+
+@pytest.mark.parametrize(("golden_name", "case"), _GOLDEN_CASES)
+def test_a_golden_compares_equal_to_its_re_emission_under_any_runs_root(golden_name, case, runs_dir_for_emission):
+    """Property: the golden, re-rendered the way the generator renders it under an exported override root or under
+    the slug root, compares equal after the canonical forms are built.
+
+    Class: NEW CAPABILITY, over both goldens. The wrong implementation compares the raw masked text, which the
+    override root breaks in two places: the runs root has no slug segment, and the relative model path climbs a
+    different number of hops. That is the red the two byte-identity tests show when the variable is exported.
+
+    Why it is required, checkable against the code: `_canonical_forms` is the only place the override root and the
+    hop count are reconciled, and the byte-identity tests reach it only when the variable is exported, which no
+    laptop run does.
+
+    What kills it: dropping the runs-root mask, or resolving the golden's path against the wrong directory.
+
+    A second correct implementation under which it passes: one that compares fully resolved absolute paths on both
+    sides instead of placeholders."""
+    golden = (GOLDENS_DIR / golden_name).read_text()
+    got, analysis_dir = _emitted_from_golden(golden, case, runs_dir_for_emission)
+    emitted, want = _canonical_forms(got, golden, analysis_dir)
+    assert emitted == want, _unified_diff_excerpt(want, emitted)
+
+
+def _drop_a_model_hop(text: str) -> str:
+    """One ``../`` fewer on the first relative model path."""
+    return _MODEL_PATH_RUN.sub(lambda m: m.group(1)[3:] + m.group(2), text, count=1)
+
+
+@pytest.mark.parametrize(
+    ("mutant", "mutate"),
+    [
+        ("extra hop on a non-model path", lambda t: t.replace("'../elevation_", "'../../elevation_", 1)),
+        ("one model path component changed", lambda t: t.replace("/boundary.geojson", "/boundary.json", 1)),
+        ("model path one hop shallower", _drop_a_model_hop),
+    ],
+)
+@pytest.mark.parametrize(("golden_name", "case"), _GOLDEN_CASES)
+def test_a_layout_regression_still_reddens_the_golden_under_an_exported_override(
+    golden_name, case, mutant, mutate, tmp_path, monkeypatch
+):
+    """Property: each layout regression changes the emitted text so that it no longer equals the golden, with the
+    override exported.
+
+    Class: NEW CAPABILITY, must-fire. Three regressions: one extra ``../`` on a non-model path, one model-path
+    component changed, and a model path one hop shallower. The last is the one a mask of the ``../`` run would
+    accept, which is why the normaliser resolves paths and does not mask them. Control: the unmutated text equals the
+    golden (the test above, and the first assertion here).
+
+    Why it is required, checkable against the code: `_normalize_volatile` forbids a depth mask in its own comment,
+    and a resolving normaliser is only as strict as the resolution; this pins that it did not become a mask.
+
+    What kills it: masking the model-path ``../`` run, or ignoring the hop count when resolving.
+
+    A second correct implementation under which it passes: one that resolves with `os.path.realpath` on a scratch
+    tree instead of string arithmetic.
+
+    Each arm also asserts that its mutation changed the text, so an arm that matches nothing cannot pass."""
+    monkeypatch.setenv(_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
+    golden = (GOLDENS_DIR / golden_name).read_text()
+    got, analysis_dir = _emitted_from_golden(golden, case, f"{tmp_path}/synthetic_test_runs")
+    emitted, want = _canonical_forms(got, golden, analysis_dir)
+    assert emitted == want, "control: the unmutated re-emission must equal the golden"
+    mutated = mutate(got)
+    assert mutated != got, f"{mutant}: the mutation changed nothing, so this arm checked nothing"
+    emitted, want = _canonical_forms(mutated, golden, analysis_dir)
+    assert emitted != want, f"{mutant}: the regression went unnoticed"
+
+
 def test_home_data_dir_mask_survives_a_symlinked_home() -> None:
     """The ``{HOME_REL}`` mask must fire whether or not ``$HOME`` is a symlink.
 
@@ -657,6 +825,43 @@ def test_synth_root_mask_collapses_cache_root_and_worktree_slug() -> None:
             f"{arm} arm: a host- or checkout-specific token leaked past the mask, so the "
             f"golden would only reproduce where it was captured. got={got!r}"
         )
+
+
+@pytest.mark.parametrize("symlinked_home", [True, False])
+def test_the_cache_root_mask_covers_the_resolved_spelling_on_a_symlinked_home(tmp_path, monkeypatch, symlinked_home):
+    """Property: a model path rendered under the RESOLVED cache root normalises to the same placeholder form as one
+    rendered under the unresolved root, with no host prefix left in front of the token.
+
+    Class: NEW CAPABILITY. On a host whose home is a symlink (`home -> real/home`), the platform cache root is
+    spelled through the link while the generator renders some paths from the resolved analysis root, so the real
+    prefix survives a mask of the unresolved spelling alone: the Rivanna diff read
+    `/sfs/gpfs/tardis{HHEMT_CACHE}/synthetic_test_models/...`. Arm `symlinked_home=False` is the control: a real cache
+    root, where the added mask must be a no-op, so both spellings are the same string and the result is the old one.
+
+    Why it is required, checkable against the code: `_normalize_volatile` masks `cache_root().resolve()` and
+    `cache_root()` in that order; only the first catches the resolved spelling, and the host this suite was written on
+    has a real home, so no other test here would see the difference.
+
+    What kills it: removing the `.resolve()` mask line (the symlinked arm then keeps `real` in the output).
+
+    A second correct implementation under which it passes: one that resolves every absolute path in the text before
+    masking."""
+    real_home = tmp_path / "real" / "home"
+    real_home.mkdir(parents=True)
+    if symlinked_home:
+        (tmp_path / "home").symlink_to(real_home)
+        home = tmp_path / "home"
+    else:
+        home = real_home
+    unresolved_root = home / ".cache" / "hhemt"
+    unresolved_root.mkdir(parents=True)
+    monkeypatch.setattr(cache_paths, "cache_root", lambda: unresolved_root)
+    resolved_root = unresolved_root.resolve()
+    assert (resolved_root != unresolved_root) is symlinked_home, "control: the layout must have the symlink asked for"
+    want = "'{HHEMT_CACHE}/synthetic_test_models/{MODEL_KEY}/boundary.geojson'"
+    for spelling in (resolved_root, unresolved_root):
+        got = _normalize_volatile(f"'{spelling}/synthetic_test_models/b495da2fed88fb9a/boundary.geojson'")
+        assert got == want, f"{spelling}: {got!r}"
 
 
 def test_no_shell_prefix_or_executable_disables_pipefail() -> None:
