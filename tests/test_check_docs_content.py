@@ -59,6 +59,9 @@ MEMO_LOG_ENV = "HHEMT_DOCS_MEMO_DERIVATION_LOG"
 _MEMO_DIR_NAME = "check_docs_content_memo"
 _MEMO_DISTRIBUTIONS = ("griffe", "griffelib", "mkdocstrings", "mkdocstrings-python")
 _MISS = object()
+#: Derivations whose stored form did not round-trip equal in THIS process, keyed ``(key, name)``. Re-raised on every
+#: later call without deriving again (see ``_memo_fetch``).
+_ROUNDTRIP_FAILURES: dict[tuple[str, str], AssertionError] = {}
 
 
 def _memo_key(root: Path, name: str) -> str:
@@ -100,8 +103,14 @@ def _memo_fetch(directory: Path, key: str, name: str, derive, shape_ok):
     """Return the stored value for ``(key, name)``, deriving and publishing it once across processes on a miss.
 
     A reader sees no entry or a whole one (a temporary file is ``os.replace``d onto the final name). A corrupt or
-    wrong-shaped entry is a miss that is re-derived and republished; it is never an error."""
+    wrong-shaped entry is a miss that is re-derived and republished; it is never an error.
+
+    A derived value whose pickle does not load back EQUAL to it is never published: the failure is recorded for
+    ``(key, name)`` in this process and re-raised on this call and on every later one without deriving again, so a
+    derivation that cannot be stored faithfully fails loudly instead of serving a different value from the memo."""
     final = directory / f"{key}.{name}.pkl"
+    if (key, name) in _ROUNDTRIP_FAILURES:
+        raise _ROUNDTRIP_FAILURES[(key, name)]
 
     def read():
         try:
@@ -122,8 +131,13 @@ def _memo_fetch(directory: Path, key: str, name: str, derive, shape_ok):
         if log:
             with open(log, "a", encoding="utf-8") as fh:
                 fh.write(f"{name}\n")
+        data = pickle.dumps(value)
+        if pickle.loads(data) != value:
+            failure = AssertionError(f"the derivation {name!r} does not pickle-round-trip equal; nothing was published")
+            _ROUNDTRIP_FAILURES[(key, name)] = failure
+            raise failure
         tmp = directory / f".{key}.{name}.{os.getpid()}.tmp"
-        tmp.write_bytes(pickle.dumps(value))
+        tmp.write_bytes(data)
         os.replace(tmp, final)
         return value
 
@@ -1040,3 +1054,25 @@ def test_the_path_sense_master_ban_reaches_fenced_content_and_spares_the_role_se
     ):
         codes = {c for c, _p, _l, _e in cdc._gate_findings(Path("<synthetic>"), keep + "\n")}
         assert "banned-path-sense-master" not in codes, f"the ban fired on role sense: {keep!r}"
+
+
+def test_the_stored_value_of_each_real_derivation_round_trips_equal():
+    """Each real derivation's value is of the shape the memo accepts, is non-empty, and pickles back equal.
+
+    Input class: the live ``rendered_docstrings`` and ``published_source_lines`` results, read through the live
+    wrappers (the memo's own pass-through). ORDER-DEPENDENT cost: in file order this arm derives nothing the
+    module's earlier live tests have not already derived (its call time is below 0.005 s), but run alone, for
+    example with ``-k`` on this test, it pays both real derivations (about 90 s measured with the conda ``hhemt``
+    interpreter), so ``-k`` on this test alone is not cheap. Required because the return types were read as
+    annotations and never run; a value that does not pickle, or comes back unequal, would make the memo error or
+    serve a different value. Where the equality is checked: ``_memo_fetch`` compares
+    ``pickle.loads(pickle.dumps(value)) == value`` before it publishes and raises
+    on a difference, so a derivation that cannot be stored faithfully fails HERE (or in the first live test that
+    needs it). The shape and non-empty assertions below are the only place a freshly derived value is checked: the
+    memo applies ``shape_ok`` to a stored entry on read, never to a value it has just derived. Killed by a
+    derivation returning a non-pickleable or non-equal-after-round-trip object, or an empty one.
+    """
+    rendered = cdc.rendered_docstrings(cdc.SRC_ROOT, cdc.API_PAGE)
+    spans = cdc.published_source_lines(cdc.SRC_ROOT, cdc.API_PAGE)
+    assert _rendered_shape_ok(rendered) and _spans_shape_ok(spans)
+    assert rendered and spans, "an empty derivation proves nothing"

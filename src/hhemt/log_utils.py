@@ -21,7 +21,9 @@ def log_workflow_context(logger: logging.Logger):
     logs a simple message instead to avoid cluttering logs with "N/A" values.
 
     This logs (when in SLURM):
-    - Master SLURM job ID (for correlating with workflow_batch_*.out logs)
+    - Master SLURM job ID (``SLURM_ARRAY_JOB_ID`` for correlating with
+      workflow_batch_*.out logs; ``N/A (not an array job)`` outside an array job)
+    - SLURM job name (``SLURM_JOB_NAME``, else ``N/A``)
     - Child SLURM job ID (for correlating with .snakemake/slurm_logs/)
     - Node name (which HPC node executed this)
     - Partition (which SLURM partition)
@@ -52,15 +54,17 @@ def log_workflow_context(logger: logging.Logger):
     logger.info("=" * 60)
 
     # Master workflow info (for linking to workflow_batch_*.out)
-    # In array jobs, SLURM_ARRAY_JOB_ID is the master
-    # In batch_job mode, each job is independent (no master)
-    master_job_id = os.environ.get("SLURM_ARRAY_JOB_ID", "N/A")
-    if master_job_id == "N/A":
-        # Not an array job - check if we're in a nested SLURM context
-        # (master workflow also runs in SLURM with batch_job mode)
-        master_job_id = os.environ.get("SLURM_JOB_ACCOUNT", "N/A")
-
+    # In array jobs, SLURM_ARRAY_JOB_ID is the master. Outside an array job there
+    # is no master job id to report, so the line says so rather than printing an
+    # unrelated value (the SLURM account was printed here before).
+    master_job_id = os.environ.get("SLURM_ARRAY_JOB_ID") or "N/A (not an array job)"
     logger.info(f"Master SLURM job ID: {master_job_id}")
+
+    # Job name: the Snakemake SLURM executor names batch_job jobs with the
+    # invocation's run uuid; in other run methods it is whatever the allocation
+    # was named. The label states only what the value is.
+    job_name = os.environ.get("SLURM_JOB_NAME") or "N/A"
+    logger.info(f"SLURM job name: {job_name}")
 
     # Child job info (current SLURM job running this script)
     child_job_id = os.environ.get("SLURM_JOB_ID", "local")

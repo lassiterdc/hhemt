@@ -36,10 +36,12 @@ touches the network, or needs git.
 from __future__ import annotations
 
 import hashlib
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_layout_version.py"
@@ -394,3 +396,231 @@ def test_check_b_range_reads_the_graded_commit_not_a_dirty_worktree(tmp_path: Pa
         "the exemption did not re-fire on a graded blob that does not match its signature: " + out2.stdout + out2.stderr
     )
     assert "src/foo.py" in out2.stderr
+
+
+# =============================================================================================
+# Chunk 1c.1 (decision D-C1): `check-a` grades a MERGE against the HIGHEST `LAYOUT_VERSION` over
+# ALL of its parents. Reviewer arms for run `hhemt_11-05_0913_hhemt-bundle-and-publish-residuals`,
+# work package 1c.
+#
+# The coder's nine arms in `tests/test_check_layout_version.py` position the highest parent on the
+# SECOND parent of a two-parent merge (and on the second MERGE_HEAD line of a pending octopus).
+# The arms below position it where those arms do not: on the FIRST parent, on the LAST or a MIDDLE
+# parent of a three-parent merge at BOTH venues, and they grade the `+1`-past-the-maximum rule's
+# module and fixture triple at the range venue, where the coder has no arm. Each arm builds real
+# git history under `tmp_path`: a `--no-commit` merge STATE for the pending-change venue
+# (`check-a HEAD`, the MERGE_HEAD arm) and a real merge COMMIT for the range venue
+# (`check-a --range HEAD~1`).
+# =============================================================================================
+
+_MP_BASE_VERSION = 26
+_MP_CONSTANTS = Path("src/hhemt/version_migration/constants.py")
+_MP_VERSIONS = Path("src/hhemt/version_migration/versions")
+_MP_FIXTURES = Path("tests/fixtures/legacy_layouts")
+
+
+def _mp_git(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _mp_set_version(repo: Path, version: int) -> None:
+    (repo / _MP_CONSTANTS).write_text(f"LAYOUT_VERSION: int = {version}\n")
+
+
+def _mp_bump(repo: Path, version: int) -> None:
+    """One valid bump: the constant, its migration module, and both fixture directories."""
+    _mp_set_version(repo, version)
+    (repo / _MP_VERSIONS).mkdir(parents=True, exist_ok=True)
+    (repo / _MP_VERSIONS / f"V{version:04d}__m.py").write_text('"""m"""\n')
+    for n in (version - 1, version):
+        d = repo / _MP_FIXTURES / f"v{n}"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / ".keep").touch()
+
+
+def _mp_make_branches(repo: Path, branches: dict[str, int]) -> None:
+    """`main` at v26, then one branch per entry forking from it and bumping one version at a time
+    (each bump carrying its module and fixtures) up to its target; a branch targeting v26 gets one
+    marker commit so it still has a commit of its own."""
+    (repo / _MP_CONSTANTS).parent.mkdir(parents=True)
+    _mp_set_version(repo, _MP_BASE_VERSION)
+    (repo / MANIFEST_NAME).write_text(
+        "layout_relevant:\n  paths:\n    - src/foo.py\n  globs: []\nnon_breaking_allowlist: []\n"
+    )
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    _mp_git(repo, "add", ".")
+    _mp_git(repo, "commit", "-qm", "base")
+    for name, target in branches.items():
+        _mp_git(repo, "checkout", "-q", "-b", name, "main")
+        if target == _MP_BASE_VERSION:
+            (repo / f"{name}.txt").write_text(f"{name}\n")
+        for v in range(_MP_BASE_VERSION + 1, target + 1):
+            _mp_bump(repo, v)
+        _mp_git(repo, "add", "-A")
+        _mp_git(repo, "commit", "-qm", f"{name} at {target}")
+
+
+def _mp_start_merge(repo: Path, into: str, others: list[str]) -> None:
+    """Check out `into` and start merging `others` into it WITHOUT committing. Two parents merge
+    for real; more than two use `-s ours` (an octopus of branches that all touch the constant is
+    otherwise refused), which leaves the worktree as `into` had it."""
+    _mp_git(repo, "checkout", "-q", into)
+    if len(others) == 1:
+        _mp_git(repo, "merge", "-q", "--no-commit", "--no-ff", others[0])
+    else:
+        _mp_git(repo, "merge", "-q", "--no-commit", "-s", "ours", *others)
+
+
+def _mp_grade(repo: Path, venue: str, n_others: int) -> subprocess.CompletedProcess:
+    """Run check-a at `venue` over the merge that `_mp_start_merge` started (and the caller has
+    finished editing). `pending` grades the merge IN PROGRESS; `range` commits it first."""
+    if venue == "pending":
+        merge_head = _mp_git(repo, "rev-parse", "--git-path", "MERGE_HEAD").stdout.strip()
+        lines = (repo / merge_head).read_text().split()
+        assert len(lines) == n_others, "the pending arm needs the merge still IN PROGRESS with every parent listed"
+        return _run(repo, "check-a", "HEAD")
+    _mp_git(repo, "add", "-A", "--", ".", ":!scripts")
+    _mp_git(repo, "commit", "-qm", "merge")
+    parents = _mp_git(repo, "rev-list", "--parents", "-n", "1", "HEAD").stdout.split()[1:]
+    assert len(parents) == n_others + 1, "the range arm needs HEAD to be a merge commit with every parent"
+    return _run(repo, "check-a", "--range", "HEAD~1")
+
+
+@pytest.mark.parametrize("venue", ["pending", "range"])
+@pytest.mark.parametrize(
+    "branches, result",
+    [
+        pytest.param({"ours": 28, "behind": 26}, 28, id="highest-is-the-first-parent"),
+        pytest.param({"ours": 26, "mid": 27, "top": 29}, 29, id="highest-is-the-last-of-three"),
+        pytest.param({"ours": 26, "top": 29, "mid": 27}, 29, id="highest-is-the-second-of-three"),
+    ],
+)
+def test_check_a_merge_is_graded_against_the_highest_parent_wherever_it_sits(
+    tmp_path: Path, venue: str, branches: dict[str, int], result: int
+) -> None:
+    """Property: a merge whose result keeps the highest parent's `LAYOUT_VERSION` passes.
+
+    Class (i): every merge, at either venue, whatever its parent count and WHICH parent carries
+    the highest version, whose result equals that highest version. The coder's arms put the
+    highest on the second parent of a two-parent merge; this one also puts it on the FIRST parent
+    (merging an older branch into a newer one, the ordinary `git merge release/old` into develop)
+    and on a later parent of a three-parent merge, which is where a base read from "the other
+    parent" or "the first extra parent" alone goes wrong.
+
+    Why it is required (iii): D-C1 takes the base as the maximum over ALL parents, so the verdict
+    cannot depend on parent position. A base taken from any single parent reports `jumped` on
+    one of these inputs and passes the others, and the failure is a blocked, correct merge.
+
+    Mutation that reds it (iv): replacing the maximum in `check_a` with the version at
+    `merge_parents[0]` alone (ignoring the first parent) reds the first-parent case; taking
+    only `merge_parents[:1]` or only `merge_parents[-1:]` reds the later-parent cases.
+
+    A second correct implementation, differing in what is asserted on: computing the base as
+    `max(_layout_version_at(p) for p in <git rev-list --parents -n 1 of the graded commit>)` at
+    both venues, with no `MERGE_HEAD` file read. It reaches the same verdict on every input here.
+    """
+    repo = tmp_path
+    _mp_make_branches(repo, branches)
+    others = [b for b in branches if b != "ours"]
+    _mp_start_merge(repo, "ours", others)
+    _mp_set_version(repo, result)
+    out = _mp_grade(repo, venue, len(others))
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert f"LAYOUT_VERSION unchanged ({result}); pass" in out.stdout
+
+
+@pytest.mark.parametrize("venue", ["pending", "range"])
+@pytest.mark.parametrize(
+    "defect, rc, stream, needles",
+    [
+        pytest.param("none", 0, "stdout", ["V0029 migration + fixtures present"], id="complete-passes"),
+        pytest.param("no_module", 1, "stderr", ["V0029", "migration module"], id="missing-module"),
+        pytest.param("no_from_fixture", 1, "stderr", ["FROM side", "v28"], id="missing-from-fixture-of-the-maximum"),
+        pytest.param("no_to_fixture", 1, "stderr", ["TO side", "v29"], id="missing-to-fixture"),
+    ],
+)
+def test_check_a_merge_bumping_past_the_highest_parent_is_graded_for_module_and_fixtures(
+    tmp_path: Path, venue: str, defect: str, rc: int, stream: str, needles: list[str]
+) -> None:
+    """Property: a merge result one past the HIGHEST parent is graded for its module and both
+    fixtures, keyed on that highest version, at both venues.
+
+    Class (i): every defect of the (module, FROM fixture, TO fixture) triple of a `+1` bump over
+    the maximum, at both venues. The coder has a pending-venue arm for the module and none for
+    the range venue, where the triple is read from the COMMITTED tree and the FROM fixture is
+    named after the base. The FROM arm is the discriminating one: with parents at v26 (the branch
+    merged into) and v28, the FROM fixture is `v28`, not `v26`, and deleting only `v28` while
+    `v26` stays must be refused.
+
+    Why it is required (iii): D-C1 says the existing rule applies unchanged against the maximum,
+    and that rule demands `V{head}` plus `v{base}` and `v{head}`. A FROM probe left on the first
+    parent's version asks for `v26`, which exists, and passes a merge whose FROM side is missing.
+
+    Mutation that reds it (iv): in `check_a`, probe `v{base_v - 2}` (the first parent's version)
+    instead of `v{base_v}` in the FROM fixture check, at either venue; reds `missing-from-fixture`.
+    Leaving the base unmerged reds every case here, as `jumped from 26 to 29`.
+
+    A second correct implementation, differing in what is asserted on: raising the module and
+    fixture probes into one helper taking `(base, head)` and printing its own wording. The
+    needles are the versions and the side names the existing messages already carry, not the
+    surrounding sentence.
+    """
+    repo = tmp_path
+    _mp_make_branches(repo, {"ours": 26, "dev": 28})
+    _mp_start_merge(repo, "ours", ["dev"])
+    _mp_bump(repo, 29)
+    if defect == "no_module":
+        (repo / _MP_VERSIONS / "V0029__m.py").unlink()
+    elif defect == "no_from_fixture":
+        shutil.rmtree(repo / _MP_FIXTURES / "v28")
+    elif defect == "no_to_fixture":
+        shutil.rmtree(repo / _MP_FIXTURES / "v29")
+    out = _mp_grade(repo, venue, 1)
+    assert out.returncode == rc, out.stdout + out.stderr
+    text = out.stdout if stream == "stdout" else out.stderr
+    for needle in needles:
+        assert needle in text, f"{needle!r} not in {stream}: {out.stdout + out.stderr}"
+    assert "jumped" not in out.stdout + out.stderr
+
+
+@pytest.mark.parametrize("venue", ["pending", "range"])
+def test_check_a_three_parent_merge_below_the_highest_parent_is_refused_for_that_reason(
+    tmp_path: Path, venue: str
+) -> None:
+    """Property: a merge result below the highest of THREE parents is refused because it is below
+    that parent, at both venues.
+
+    Class (i): every merge with more than two parents whose result lies strictly between the
+    first two parents' maximum and the highest parent. Parents are v26 (merged into), v27 and v29;
+    the result is v28. The coder's below-parent arms are two-parent merges only.
+
+    Why it is required (iii): the refusal is defined against the maximum over ALL parents
+    (D-C1). A grade that sees only two parents computes a base of 27, reads v28 as a legitimate
+    `+1`, and refuses for a different reason (a missing module), while the first-parent-only grade
+    reads `jumped from 26 to 28`. Same exit status in all three; only the reason separates them,
+    so the assertion is on the reason: the highest version is named and neither the jump nor the
+    missing-module wording appears.
+
+    Mutation that reds it (iv): limiting `_merge_parent_shas` to its first two entries (a
+    `[:2]` slice of the range arm's parents, a `[:1]` slice of the MERGE_HEAD lines) reds both
+    venues with `no migration module`; reverting to first-parent grading reds both with `jumped`.
+
+    A second correct implementation, differing in what is asserted on: any wording of the
+    refusal that names the highest parent's version, such as "lower than the highest parent
+    (29)". The needle is the number, which any correct message must carry to be actionable.
+    """
+    repo = tmp_path
+    _mp_make_branches(repo, {"ours": 26, "mid": 27, "top": 29})
+    _mp_start_merge(repo, "ours", ["mid", "top"])
+    _mp_set_version(repo, 28)
+    out = _mp_grade(repo, venue, 2)
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "29" in out.stderr, out.stdout + out.stderr
+    assert "jumped" not in out.stderr, out.stderr
+    assert "migration module" not in out.stderr, out.stderr

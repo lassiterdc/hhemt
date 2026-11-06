@@ -1609,3 +1609,191 @@ def test_check_b_range_still_reports_the_slug_arm(tmp_path: Path) -> None:
     assert out.returncode == 1, out.stdout + out.stderr
     assert "compute_event_id_slug" in out.stderr
     assert "drift" in out.stderr
+
+
+# ---------------------------------------------------------------------------------------------
+# A MERGE is graded against the HIGHEST LAYOUT_VERSION over its parents, not the first parent's.
+#
+# Before: `check_a` read one base. A back-merge of a develop two or more bumps ahead carries
+# those bumps from the OTHER parent, so first-parent-only grading read them as one illegal jump
+# (`jumped from 26 to 28`) and blocked a merge that contains no un-migrated bump.
+#
+# WHICH VENUE REACHES WHICH ARM (measured on git 2.43.0): a clean merge fires `pre-merge-commit`
+# and not `pre-commit`, and this repository registers check-layout-version-a at `pre-commit`
+# only, so the MERGE_HEAD arm is reached by a conflicted or `--no-commit` merge, while a clean
+# back-merge is graded at the pre-push range venue (`check-a --range HEAD~1`), where HEAD has two
+# parents. Each arm therefore has its own tests: a real `--no-commit` merge STATE for the
+# MERGE_HEAD arm and a real merge COMMIT for the range arm. Every arm asserts message wording,
+# not exit status alone, because a refusal for the wrong reason has the same exit status.
+# ---------------------------------------------------------------------------------------------
+
+_FEATURE_BASE_VERSION = 26
+
+
+def _make_back_merge_repo(tmp_path: Path, develop_versions: dict[str, int]) -> Path:
+    """`main` at v26 (one commit), a `feature` branch one commit past it that keeps v26, and one
+    branch per entry of `develop_versions` that bumps to its target one version at a time with a
+    migration module and both fixture directories per bump (so each bump is itself valid).
+
+    Leaves `feature` checked out, so `git merge <branch>` is a back-merge into the feature.
+    Branch order in the dict is creation order; every branch forks from the same base commit.
+    """
+    versions_dir = tmp_path / "src" / "hhemt" / "version_migration" / "versions"
+    versions_dir.mkdir(parents=True)
+    (tmp_path / "tests" / "fixtures" / "legacy_layouts").mkdir(parents=True)
+    (tmp_path / "_layout_relevant_files.yaml").write_text(
+        "layout_relevant:\n  paths:\n    - src/foo.py\n  globs: []\nnon_breaking_allowlist: []\n"
+    )
+    constants = tmp_path / "src" / "hhemt" / "version_migration" / "constants.py"
+    constants.write_text(f"LAYOUT_VERSION: int = {_FEATURE_BASE_VERSION}\n")
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    _git_t(tmp_path, "add", ".")
+    _git_t(tmp_path, "commit", "-qm", "base")
+    for branch, target in develop_versions.items():
+        _git_t(tmp_path, "checkout", "-q", "-b", branch, "main")
+        # Switching back to `main` removes the directories only a develop branch tracked.
+        versions_dir.mkdir(parents=True, exist_ok=True)
+        for v in range(_FEATURE_BASE_VERSION + 1, target + 1):
+            constants.write_text(f"LAYOUT_VERSION: int = {v}\n")
+            (versions_dir / f"V{v:04d}__m.py").write_text('"""m"""\n')
+            for n in (v - 1, v):
+                d = tmp_path / "tests" / "fixtures" / "legacy_layouts" / f"v{n}"
+                d.mkdir(parents=True, exist_ok=True)
+                (d / ".keep").touch()
+            _git_t(tmp_path, "add", ".")
+            _git_t(tmp_path, "commit", "-qm", f"{branch} bump to {v}")
+    _git_t(tmp_path, "checkout", "-q", "-b", "feature", "main")
+    (tmp_path / "feature.txt").write_text("feature work\n")
+    _git_t(tmp_path, "add", "feature.txt")
+    _git_t(tmp_path, "commit", "-qm", "feature work")
+    return tmp_path
+
+
+def _constants_text(repo: Path) -> str:
+    return (repo / "src" / "hhemt" / "version_migration" / "constants.py").read_text()
+
+
+def test_check_a_pending_merge_two_bumps_ahead_passes_against_the_higher_parent(tmp_path: Path) -> None:
+    """The reported defect, MERGE_HEAD arm: a back-merge of a develop at v28 into a feature at
+    v26 leaves the worktree at 28. First-parent-only grading read 26 -> 28 as `jumped`."""
+    repo = _make_back_merge_repo(tmp_path, {"dev": 28})
+    _git_t(repo, "merge", "-q", "--no-commit", "--no-ff", "dev")
+    assert (repo / ".git" / "MERGE_HEAD").is_file(), "the arm needs a merge IN PROGRESS or it tests nothing"
+    assert "= 28" in _constants_text(repo)
+    out = _run(repo, "check-a", "HEAD")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "LAYOUT_VERSION unchanged (28); pass" in out.stdout
+
+
+def test_check_a_range_merge_commit_two_bumps_ahead_passes_against_the_higher_parent(tmp_path: Path) -> None:
+    """The reported defect, range arm: the same back-merge as a real merge COMMIT, graded at the
+    pre-push venue (`check-a --range HEAD~1`), where HEAD~1 is the first parent."""
+    repo = _make_back_merge_repo(tmp_path, {"dev": 28})
+    _git_t(repo, "merge", "-q", "--no-ff", "-m", "back-merge", "dev")
+    parents = subprocess.run(
+        ["git", "rev-list", "--parents", "-n", "1", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.split()
+    assert len(parents) == 3, "HEAD must be a merge commit (sha + two parents)"
+    out = _run(repo, "check-a", "--range", "HEAD~1")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "LAYOUT_VERSION unchanged (28); pass" in out.stdout
+
+
+def test_check_a_pending_merge_one_bump_ahead_still_passes(tmp_path: Path) -> None:
+    """Control, kept green: a develop exactly one bump ahead passed before and must still."""
+    repo = _make_back_merge_repo(tmp_path, {"dev": 27})
+    _git_t(repo, "merge", "-q", "--no-commit", "--no-ff", "dev")
+    out = _run(repo, "check-a", "HEAD")
+    # Wording is not pinned: the same merge passed before this change as `PASS - V0027 ...` and
+    # passes after it as `unchanged (27); pass`. The control is that it still does not fail.
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "FAIL" not in out.stderr
+
+
+def test_check_a_non_merge_commit_jumping_two_bumps_still_fails(tmp_path: Path) -> None:
+    """Control, kept green: the max-over-parents rule widens only a MERGE's base. A plain commit
+    that takes 26 to 28 in one step is still `jumped`."""
+    repo = _make_repo(tmp_path, layout_version_at_head=28, layout_version_at_main=26)
+    out = _run(repo, "check-a", "main")
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "jumped from 26 to 28" in out.stderr
+
+
+def test_check_a_pending_merge_result_below_the_higher_parent_is_refused(tmp_path: Path) -> None:
+    """The NEW refusal (green-to-red): resolving the merge to the FEATURE's v26 while the other
+    parent shipped v28 undoes two shipped bumps. Before: base was the first parent's 26, so
+    26 == 26 passed silently."""
+    repo = _make_back_merge_repo(tmp_path, {"dev": 28})
+    _git_t(repo, "merge", "-q", "--no-commit", "--no-ff", "-s", "ours", "dev")
+    assert (repo / ".git" / "MERGE_HEAD").is_file()
+    assert "= 26" in _constants_text(repo)
+    out = _run(repo, "check-a", "HEAD")
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "below its higher parent's 28" in out.stderr
+    assert "LAYOUT_VERSION 26" in out.stderr
+
+
+def test_check_a_range_merge_result_below_the_higher_parent_is_refused(tmp_path: Path) -> None:
+    """The same refusal at the range venue, on a real merge commit made with `-s ours`."""
+    repo = _make_back_merge_repo(tmp_path, {"dev": 28})
+    _git_t(repo, "merge", "-q", "--no-ff", "-s", "ours", "-m", "bad back-merge", "dev")
+    assert "= 26" in _constants_text(repo)
+    out = _run(repo, "check-a", "--range", "HEAD~1")
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "below its higher parent's 28" in out.stderr
+
+
+def test_check_a_pending_merge_bumping_past_the_higher_parent_needs_its_module(tmp_path: Path) -> None:
+    """The graded base is the MAX, and the existing rule applies unchanged against it: a merge
+    result at 29 over a higher parent at 28 is `+1` and so needs V0029 plus the v28 and v29
+    fixtures. Without them the failure names the missing module, not a jump."""
+    repo = _make_back_merge_repo(tmp_path, {"dev": 28})
+    _git_t(repo, "merge", "-q", "--no-commit", "--no-ff", "dev")
+    (repo / "src" / "hhemt" / "version_migration" / "constants.py").write_text("LAYOUT_VERSION: int = 29\n")
+    out = _run(repo, "check-a", "HEAD")
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "no migration module" in out.stderr
+    assert "jumped" not in out.stderr
+    versions_dir = repo / "src" / "hhemt" / "version_migration" / "versions"
+    (versions_dir / "V0029__m.py").write_text('"""m"""\n')
+    for n in (28, 29):
+        d = repo / "tests" / "fixtures" / "legacy_layouts" / f"v{n}"
+        d.mkdir(exist_ok=True)
+        (d / ".keep").touch()
+    ok = _run(repo, "check-a", "HEAD")
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    assert "V0029 migration + fixtures present" in ok.stdout
+
+
+def test_check_a_pending_octopus_merge_reads_every_merge_head_line(tmp_path: Path) -> None:
+    """S5: MERGE_HEAD lists one parent per line. Two develops, `dev_a` at 27 and `dev_b` at 29,
+    merged together, so MERGE_HEAD has TWO lines and the HIGHEST version sits on the SECOND.
+    The worktree is set to 29 (the merge result keeps the highest). Reading only the first
+    MERGE_HEAD line (as `git rev-parse -q --verify MERGE_HEAD` does) grades against 27 and reports
+    `jumped from 27 to 29`."""
+    repo = _make_back_merge_repo(tmp_path, {"dev_a": 27, "dev_b": 29})
+    _git_t(repo, "merge", "-q", "--no-commit", "-s", "ours", "dev_a", "dev_b")
+    merge_head_lines = (repo / ".git" / "MERGE_HEAD").read_text().split()
+    assert len(merge_head_lines) == 2, "the arm needs an octopus merge in progress"
+    (repo / "src" / "hhemt" / "version_migration" / "constants.py").write_text("LAYOUT_VERSION: int = 29\n")
+    out = _run(repo, "check-a", "HEAD")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "LAYOUT_VERSION unchanged (29); pass" in out.stdout
+
+
+def test_check_a_pending_merge_in_a_linked_worktree_finds_merge_head(tmp_path: Path) -> None:
+    """In a linked worktree `.git` is a FILE, so `.git/MERGE_HEAD` is no path; the checker must
+    resolve it with `git rev-parse --git-path`. Same back-merge as the first test, run inside a
+    worktree added from the feature branch."""
+    repo = _make_back_merge_repo(tmp_path / "main_clone", {"dev": 28})
+    linked = tmp_path / "linked"
+    _git_t(repo, "worktree", "add", "-q", "-b", "feature_wt", str(linked), "feature")
+    assert (linked / ".git").is_file(), "the arm needs a linked worktree, whose .git is a file"
+    _git_t(linked, "merge", "-q", "--no-commit", "--no-ff", "dev")
+    merge_head = subprocess.run(
+        ["git", "rev-parse", "--git-path", "MERGE_HEAD"], cwd=linked, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert (linked / merge_head).is_file() or Path(merge_head).is_file()
+    out = _run(linked, "check-a", "HEAD")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "LAYOUT_VERSION unchanged (28); pass" in out.stdout

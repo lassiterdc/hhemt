@@ -1432,12 +1432,19 @@ def test_float32_eps_is_the_coarsest_floor_over_the_admitted_float_dtype_set() -
     claim that makes it correct — *"float32 eps is the coarsest over today's admitted set"* —
     quantifies over a class, so it is pinned here rather than asserted in a comment.
 
-    MEASURED 2026-10-04 over ``src/``: ``float16`` has ZERO occurrences and the only float
-    dtypes named anywhere in the package are ``float32`` (66 occurrences) and ``float64``
+    MEASURED 2026-10-04 over ``src/``: ``float16`` had ZERO occurrences as a dtype IN USE and the only float
+    dtypes named anywhere in the package were ``float32`` (66 occurrences) and ``float64``
     (80). ``float16`` is the one standard float dtype COARSER than ``float32``
     (eps 9.77e-04 vs 1.19e-07), so its absence is what makes the constant the ceiling. This
     test fails the moment a coarser float dtype enters the package, which is the moment the
     published floor starts UNDERSTATING what the verdict can see.
+
+    ONE named exemption, added with ``hhemt.bundle._reprex_gate``: the registry name ``"float16"`` as a member of
+    its ``ZARR_SKIPPED_DATA_TYPES`` table, which lists zarr data-type names so the bundle's privacy check can
+    tell an array that holds no text from one that does (a type with no row is refused loudly). Nothing there
+    builds, casts or compares a float16 value. The exemption is a single line, exactly ``"float16",`` on its own
+    line, in that one file, and it must match exactly one line: any other float16 token in that file or in any
+    other file still fires, and an exemption that matches nothing (the table dropped the name) fails as stale.
     """
     import pathlib
 
@@ -1450,11 +1457,23 @@ def test_float32_eps_is_the_coarsest_floor_over_the_admitted_float_dtype_set() -
 
     src = pathlib.Path(__file__).resolve().parents[1] / "src" / "hhemt"
     assert src.is_dir(), src
-    coarser = sorted(
-        str(p.relative_to(src))
-        for p in src.rglob("*.py")
-        if any(tok in p.read_text() for tok in ("float16", "np.half", "'<f2'", '"<f2"'))
-    )
+    registry_file = "bundle/_reprex_gate.py"
+    exempted = 0
+    coarser = []
+    for p in sorted(src.rglob("*.py")):
+        rel = str(p.relative_to(src))
+        text = p.read_text()
+        if rel == registry_file:
+            kept = []
+            for line in text.splitlines():
+                if line.strip() == '"float16",':
+                    exempted += 1
+                else:
+                    kept.append(line)
+            text = "\n".join(kept)
+        if any(tok in text for tok in ("float16", "np.half", "'<f2'", '"<f2"')):
+            coarser.append(rel)
+    assert exempted == 1, f"the named registry-name exemption must match exactly one line; matched {exempted}"
     assert coarser == [], (
         f"a float dtype coarser than float32 entered the package ({coarser}); the hardcoded "
         f"detection_floor in check_cross_sim_identity now UNDERSTATES the verdict's "

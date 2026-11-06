@@ -538,36 +538,50 @@ def test_a_clean_emit_records_the_layers_and_every_member_is_opened_once(tmp_pat
     assert scanner.hits == []
 
 
-def test_binary_members_and_zarr_chunks_are_not_scanned_and_a_text_member_is(tmp_path, monkeypatch):
-    """Property: with a scanner, a planted path inside a NUL-prefixed member or a zarr chunk (binary by name) is
-        carried unscanned, and the same bytes in a text member refuse the archive.
+def test_a_binary_member_and_a_text_member_refuse_and_a_zarr_chunk_alone_does_not(tmp_path, monkeypatch):
+    """Property: with a scanner, the same planted bytes (1) in a zarr chunk alone are carried unscanned, (2) after
+        a NUL in a binary member alone refuse the archive naming that member, and (3) in a text member alone
+        refuse the archive naming that member.
 
-    Class: REGRESSION for the text arm; the binary arms pin the named residual so a later change to it is a
-        decision and not an accident.
+    Class: REGRESSION for the text arm; the binary arm is the D1 decision of the bundle-and-publish residuals
+        run (a private value found in a binary member refuses the emit); the chunk arm pins the by-name rule.
     Reachability: zarr stores hold hundreds of thousands of chunk files that are never opened for a sniff.
-    Both-states anchor: one text and one binary member hold identical planted bytes after the NUL.
-    Invocation isolated: ``_emit_bundle_zip`` reads only its arguments.
-    What kills it: sniffing chunks (cost), or scanning binary members (false refusals on compressed data).
-    Second correct implementation: classifying by suffix, which the sniff exists to replace.
+    Both-states anchor: three emits over identical planted bytes, each staging ONE carrier, so no refusal can
+        hide another arm's outcome (the chunk emit would otherwise be pre-empted by the binary member's refusal).
+    Invocation isolated: ``_emit_bundle_zip`` reads only its arguments; each emit has its own staging directory.
+    What kills it: sniffing chunks (cost); not scanning binary members (the arm-2 emit would pass); scanning by
+        suffix (the text arm would depend on the extension).
+    Second correct implementation: classifying a member by a suffix allowlist, which the sniff exists to replace.
     """
     planted = f"cd {PLANTED_HOME}/x".encode()
-    staging = tmp_path / "staging"
-    _put(staging / "binary.bin", b"\x00" + planted)
     streamed = {"store.zarr/c/0": _put(tmp_path / "src" / "store.zarr" / "c" / "0", planted)}
     _no_carrier(monkeypatch)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        scanner = G.ZeroUserInfoScanner.for_emit(SimpleNamespace())
-    _emit_bundle_zip(staging, tmp_path / "ok.zip", streamed=streamed, scanner=scanner)
+
+    def fresh_scanner():
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return G.ZeroUserInfoScanner.for_emit(SimpleNamespace())
+
+    # Emit 1: the zarr chunk alone passes.
+    chunk_only = tmp_path / "chunk_only"
+    chunk_only.mkdir()
+    scanner = fresh_scanner()
+    _emit_bundle_zip(chunk_only, tmp_path / "chunk.zip", streamed=streamed, scanner=scanner)
     assert scanner.hits == []
 
-    _put(staging / "notes.txt", planted)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        scanner = G.ZeroUserInfoScanner.for_emit(SimpleNamespace())
+    # Emit 2: the NUL-prefixed binary member alone refuses, naming it and not the value.
+    binary_only = tmp_path / "binary_only"
+    _put(binary_only / "binary.bin", b"\x00" + planted)
     with pytest.raises(ProcessingError) as info:
-        _emit_bundle_zip(staging, tmp_path / "bad.zip", streamed=streamed, scanner=scanner)
-    assert "notes.txt" in str(info.value) and "binary.bin" not in str(info.value)
+        _emit_bundle_zip(binary_only, tmp_path / "binary.zip", scanner=fresh_scanner())
+    assert "binary.bin" in str(info.value) and PLANTED_HOME not in str(info.value)
+
+    # Emit 3: the text member alone refuses, naming it.
+    text_only = tmp_path / "text_only"
+    _put(text_only / "notes.txt", planted)
+    with pytest.raises(ProcessingError) as info:
+        _emit_bundle_zip(text_only, tmp_path / "text.zip", scanner=fresh_scanner())
+    assert "notes.txt" in str(info.value)
 
 
 def test_the_consume_side_gate_runs_the_pattern_layer_with_no_carrier(tmp_path, monkeypatch):

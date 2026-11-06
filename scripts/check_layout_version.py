@@ -654,11 +654,48 @@ def _scan_changed_files(
     return relevant
 
 
+def _merge_parent_shas(range_mode: bool) -> list[str]:
+    """Every parent of the merge being graded, or `[]` when no merge is being graded.
+
+    A MERGE is graded against the HIGHEST `LAYOUT_VERSION` among its parents, not the first
+    parent's: a back-merge of a develop two or more bumps ahead carries those bumps from the
+    OTHER parent, and the first-parent-only comparison reads them as one illegal jump.
+
+    Two venues, two sources, because they hold different state:
+
+    * pending-change venue (pre-commit): the merge is IN PROGRESS, so `HEAD` is still the first
+      parent and the others are listed in `MERGE_HEAD`, one sha per line (an octopus merge
+      lists several). `git rev-parse -q --verify MERGE_HEAD` would return the FIRST line only,
+      so the file is read. `--git-path` resolves it in a linked worktree, where `.git` is a
+      file and `.git/MERGE_HEAD` is no path at all. A clean merge fires `pre-merge-commit`, not
+      `pre-commit`, so this arm is reached by a conflicted or `--no-commit` merge.
+    * range venue (pre-push): the merge is a COMMIT, so its parents are `HEAD`'s.
+    """
+    if range_mode:
+        try:
+            fields = _git("rev-list", "--parents", "-n", "1", "HEAD", suppress_stderr=True).split()
+        except subprocess.CalledProcessError:
+            return []
+        parents = fields[1:]
+        return parents if len(parents) >= 2 else []
+    try:
+        raw = _git("rev-parse", "--git-path", "MERGE_HEAD", suppress_stderr=True).strip()
+    except subprocess.CalledProcessError:
+        return []
+    merge_head = Path(raw) if Path(raw).is_absolute() else REPO_ROOT / raw
+    if not merge_head.is_file():
+        return []
+    return merge_head.read_text().split()
+
+
 def check_a(base_ref: str, *, range_mode: bool = False) -> int:
     resolved_base, verdict = _base_ref_or_verdict(base_ref, "check-a")
     if verdict is not None:
         return verdict
     base_v = _layout_version_at(resolved_base)
+    merge_parents = _merge_parent_shas(range_mode)
+    if merge_parents:
+        base_v = max([base_v, *(_layout_version_at(sha) for sha in merge_parents)])
     # SAME VENUE SPLIT AS check_b, and it is not optional here either. Every read below is a
     # WORKING-TREE read at default settings: the version, the migration-module glob, and the
     # two fixture-directory probes. At a range venue that is wrong in both directions.
@@ -671,6 +708,14 @@ def check_a(base_ref: str, *, range_mode: bool = False) -> int:
     if head_v == base_v:
         print(f"check-a: LAYOUT_VERSION unchanged ({head_v}); pass")
         return 0
+    if merge_parents and head_v < base_v:
+        print(
+            f"check-a: FAIL - the merge result's LAYOUT_VERSION {head_v} is below its higher "
+            f"parent's {base_v}; a merge must not undo a shipped bump (resolve it to keep "
+            f"{base_v} or higher)",
+            file=sys.stderr,
+        )
+        return 1
     if head_v != base_v + 1:
         print(
             f"check-a: FAIL - LAYOUT_VERSION jumped from {base_v} to {head_v}; "

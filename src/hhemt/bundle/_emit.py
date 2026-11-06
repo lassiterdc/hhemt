@@ -50,7 +50,15 @@ from hhemt.bundle._placeholders import (
     prefix_is_text,
     rewrite_producer_paths,
 )
-from hhemt.bundle._reprex_gate import ZeroUserInfoScanner
+from hhemt.bundle._reprex_gate import (
+    ZARR_ARRAY_METADATA_NAMES,
+    ZARR_DECODE,
+    ZeroUserInfoScanner,
+    classify_zarr_array,
+    decode_zarr_array_text,
+    has_byte_order_mark,
+    scan_binary_member,
+)
 from hhemt.report_renderers._figure_emission import (
     harvest_metadata_only_sources,
     harvest_source_paths,
@@ -2415,9 +2423,13 @@ def _emit_bundle_zip(
     #
     # With a `scanner` every text member is also checked, AFTER the rewrite, from the same bytes
     # that are written (declared inputs included: they are not rewritten, so a producer value in one
-    # is exactly what the check exists to find). A zarr chunk, classed binary by name, and a
-    # NUL-prefixed member are not scanned. Hits accumulate across the whole archive and the
-    # refusal is raised once, after the zip is closed, so the message names every offending member.
+    # is exactly what the check exists to find). The members that are NOT text are checked too, and
+    # by what they hold rather than by their bytes: a zarr array of text values is decoded
+    # (`_decode_and_scan_zarr_arrays`), and any other NUL-prefixed member is read through its
+    # decompressor when the standard library has one and in overlapping blocks otherwise
+    # (`scan_binary_member`). The chunk files of a zarr array are never raw-scanned. Hits accumulate
+    # across the whole archive and the refusal is raised once, after the zip is closed, so the
+    # message names every offending member.
     entries: dict[str, Path] = {
         entry.relative_to(staging).as_posix(): entry for entry in sorted(staging.rglob("*")) if not entry.is_dir()
     }
@@ -2429,6 +2441,11 @@ def _emit_bundle_zip(
         # Looked up only when a member can be inspected: it imports zarr, which an emit with no table
         # and no scanner (`_combine`) never needed.
         metadata_names = _zarr_metadata_filenames()
+        # With a scanner, the values the bytes of a zarr array only encode are DECODED and scanned here,
+        # and the array's chunk files are then left out of the binary-member scan below.
+        array_dirs = (
+            _decode_and_scan_zarr_arrays(entries, scanner, metadata_names) if scanner is not None else frozenset()
+        )
 
         def rewrite_and_scan(arcname: str, handle) -> bytes | None:
             """The text rewrite and scan of one member: the bytes to archive, or None to archive the file as is."""
@@ -2437,7 +2454,20 @@ def _emit_bundle_zip(
             ):
                 return None
             prefix = handle.read(SNIFF_BYTES)
+            if has_byte_order_mark(prefix):
+                # A member that begins with a UTF-16 or UTF-32 byte-order mark is tested BEFORE the NUL sniff:
+                # a UTF-16 file of non-Latin text can hold no NUL byte in its first block and would be read
+                # as UTF-8 text. A marked member is never rewritten; the shared binary path decodes it
+                # strictly, or raw-scans it as an opaque binary when its body does not decode.
+                if scanner is not None and not _is_under_any(arcname, array_dirs):
+                    scan_binary_member(scanner, arcname, handle)
+                return None
             if not prefix_is_text(prefix):
+                if scanner is not None and not _is_under_any(arcname, array_dirs):
+                    # A binary member that is not a zarr chunk: read through its decompressor when the
+                    # standard library has one, in overlapping blocks otherwise. The handle is rewound
+                    # by the scan and again by `write_zip` when this answers None.
+                    scan_binary_member(scanner, arcname, handle)
                 return None
             data = prefix + handle.read()
             if rewrite and arcname not in declared_arcnames:
@@ -2453,6 +2483,54 @@ def _emit_bundle_zip(
     write_zip(entries.items(), output_path, policy=MODERATE, transform=transform)
     if scanner is not None:
         scanner.raise_if_hits(None, "bundle emit zero-user-info check")
+
+
+def _is_under_any(arcname: str, directories: frozenset[str]) -> bool:
+    """True when some ancestor directory of ``arcname`` is in ``directories``."""
+    parent = arcname.rpartition("/")[0]
+    while parent:
+        if parent in directories:
+            return True
+        parent = parent.rpartition("/")[0]
+    return False
+
+
+def _decode_and_scan_zarr_arrays(
+    entries: dict[str, Path], scanner: ZeroUserInfoScanner, metadata_names: frozenset[str]
+) -> frozenset[str]:
+    """Decode every carried zarr array of text values and record its values with ``scanner``.
+
+    Returns the archive directories of ALL the zarr arrays among ``entries`` (text-typed or not), so the
+    caller leaves their chunk files out of the binary-member scan: the values of a text array are read
+    here, and a numeric chunk's compressed bytes would only produce false positives. An array is read
+    only when at least one of its chunk files is among ``entries``; a store carried SHALLOWLY (metadata
+    documents only) has no values in the bundle to check, and reading the source store would scan values
+    that are not shipped. Each hit is recorded under ``{array directory} (decoded values)``.
+    """
+    array_dirs: dict[str, Path] = {}
+    for arcname, src in entries.items():
+        if arcname.rsplit("/", 1)[-1] in ZARR_ARRAY_METADATA_NAMES:
+            directory = Path(src).parent
+            if classify_zarr_array(directory) is not None:
+                array_dirs[arcname.rpartition("/")[0]] = directory
+    if not array_dirs:
+        return frozenset()
+    carried: set[str] = set()
+    known = frozenset(array_dirs)
+    for arcname in entries:
+        if arcname.rsplit("/", 1)[-1] in metadata_names:
+            continue
+        parent = arcname.rpartition("/")[0]
+        while parent:
+            if parent in known:
+                carried.add(parent)
+                break
+            parent = parent.rpartition("/")[0]
+    for arcname_dir in sorted(carried):
+        directory = array_dirs[arcname_dir]
+        if classify_zarr_array(directory) == ZARR_DECODE:
+            scanner.record(f"{arcname_dir} (decoded values)", decode_zarr_array_text(directory))
+    return known
 
 
 def _toolkit_source_dir() -> Path:

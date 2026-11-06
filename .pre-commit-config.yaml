@@ -215,9 +215,9 @@ repos:
   # (kept in a private location outside this repository; this repository carries no copy). With neither configured
   # the guard runs the pattern classes alone and prints one notice.
   #
-  # The pre-commit FRAMEWORK is installed (environment.yaml:106) — what is not yet run in
-  # this clone is `pre-commit install`, so `.git/hooks/` is empty and no hook here fires.
-  # That is a per-clone activation step, not a missing dependency.
+  # The pre-commit FRAMEWORK ships with the conda environment. Hooks
+  # fire only in a clone where `pre-commit install` has been run (docs/contributing.md,
+  # step 5); worktrees of that clone share its hooks. Activation is a per-clone step.
   #
   # Registered at BOTH pre-commit and pre-push. Pre-push is the load-bearing venue: CI runs
   # this guard on `push` to main/develop, i.e. AFTER the objects are already on GitHub, so

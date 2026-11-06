@@ -4,11 +4,13 @@
 directory shared by its xdist workers (``_memo_fetch``), keyed by ``_memo_key``. These tests pin what the key covers
 (a byte changed in the gate script, a docs page, ``mkdocs.yml`` or a source file each changes it), that an unchanged
 tree hits, that bytecode caches do not move it, that a truncated or wrong-shaped entry is a miss and never an error,
-that the publication is an atomic replace, that two processes started together derive once, that the stored value of
-each real derivation round-trips equal, and that the module carries no ``xdist_group``.
+that the publication is an atomic replace, that two processes started together derive once, that a derivation
+whose stored form does not round-trip equal is never published and fails on every call, and that the module carries
+no ``xdist_group``.
 
 The probes run on a COPY of the repository subset the key reads, with a cheap stand-in derivation that counts its
-calls; the real derivations (35 to 43 s each) are exercised once, by the round-trip arm.
+calls. The real derivations (35 to 43 s each) are not run here: the round-trip arm that does lives in
+``tests/test_check_docs_content.py``, behind the live wrappers.
 """
 
 from __future__ import annotations
@@ -251,17 +253,39 @@ def test_the_module_carries_no_xdist_group():
     assert re.search(r"xdist_group", code) is None
 
 
-def test_the_stored_value_of_each_real_derivation_round_trips_equal():
-    """Each real derivation's value pickles and unpickles to an equal value of the shape the memo accepts.
+class _NeverEqual:
+    """A picklable value that is not equal to its own unpickled copy (nor to anything)."""
 
-    Input class: the live ``rendered_docstrings`` and ``published_source_lines`` results (35 to 43 s each; this is the
-    only test here that runs them). Required because the return types were read as annotations and never run; a value
-    that does not pickle, or comes back unequal, would make the memo error or serve a different value. Killed by a
-    derivation returning a non-pickleable or non-equal-after-round-trip object.
+    def __eq__(self, other):
+        return False
+
+    __hash__ = None
+
+
+def test_a_derivation_that_does_not_round_trip_equal_publishes_nothing_and_fails_every_call(tmp_path):
+    """An unequal round trip raises on every call, derives once and leaves no entry; an equal one serves all.
+
+    Input class: a stand-in derivation returning a value unequal to its unpickled copy, then an ordinary one, called
+    three times each against one memo. Required because the memo must not serve a different value than the one
+    derived. Killed by a ``_memo_fetch`` that publishes without comparing (the entry exists and later calls return a
+    value), one that raises only on the first call (the second call re-derives or returns), or one that re-derives on
+    each call (the count exceeds one). Control: the equal derivation returns on all three calls with one derivation.
     """
-    rendered = T._REAL_RENDERED()
-    spans = T._REAL_SPANS()
-    assert T._rendered_shape_ok(rendered) and T._spans_shape_ok(spans)
-    assert rendered and spans, "an empty derivation proves nothing"
-    assert pickle.loads(pickle.dumps(rendered)) == rendered
-    assert pickle.loads(pickle.dumps(spans)) == spans
+    memo = tmp_path / "memo"
+    memo.mkdir()
+    bad_calls = []
+
+    def bad():
+        bad_calls.append(1)
+        return _NeverEqual()
+
+    for _ in range(3):
+        with pytest.raises(AssertionError, match="round-trip"):
+            T._memo_fetch(memo, "k-bad", "rendered_docstrings", bad, lambda v: True)
+    assert len(bad_calls) == 1, "unit: derivations of the unequal value"
+    assert not list(memo.glob("*.pkl")), "unit: entries published for the unequal value"
+
+    good = _Counted()
+    for _ in range(3):
+        assert T._memo_fetch(memo, "k-good", "rendered_docstrings", good, T._rendered_shape_ok)
+    assert good.calls == 1
