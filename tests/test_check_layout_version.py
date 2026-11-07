@@ -1797,3 +1797,245 @@ def test_check_a_pending_merge_in_a_linked_worktree_finds_merge_head(tmp_path: P
     out = _run(linked, "check-a", "HEAD")
     assert out.returncode == 0, out.stdout + out.stderr
     assert "LAYOUT_VERSION unchanged (28); pass" in out.stdout
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# `--stamp --at REV`: the stamp covers the blob a pushed commit carries, and the range venue's text says how.
+# ---------------------------------------------------------------------------------------------------------------
+
+_AT_GOVERNED_ALLOWLIST = "layout_relevant:\n  paths:\n    - src/foo.py\n  globs: []\nnon_breaking_allowlist:\n"
+_AT_WHY = "NON-BREAKING. Comment-only edit; no on-disk change."
+
+
+def _at_history(tmp_path: Path) -> tuple[Path, list[str]]:
+    """Three commits on one branch: a base, an un-bumped change to the governed file, and a bumped change to it.
+
+    The working tree ends at the third commit, so the file there is NOT the file the second commit carries.
+    That gap is what a working-tree stamp cannot cross and a blob stamp can.
+    """
+    return _make_history_repo(
+        tmp_path,
+        [
+            {"version": 4, "files": {"src/foo.py": "# v0\n"}},
+            {"version": 4, "files": {"src/foo.py": "# v1\n"}},
+            {"version": 5, "files": {"src/foo.py": "# v2\n"}},
+        ],
+        sentinel_yaml=_AT_GOVERNED_ALLOWLIST,
+    )
+
+
+def _commit_manifest(repo: Path) -> None:
+    """Commit the stamped manifest alone: `_run` leaves an untracked copy of the checker in the fixture."""
+    git = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run([*git, "add", "_layout_relevant_files.yaml"], cwd=repo, check=True)
+    subprocess.run([*git, "commit", "-qm", "row"], cwd=repo, check=True)
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _last_row(repo: Path) -> dict:
+    return yaml.safe_load(_stamp_manifest_text(repo))["non_breaking_allowlist"][-1]
+
+
+def test_stamp_at_covers_the_commit_the_range_venue_names_and_a_working_tree_stamp_does_not(tmp_path: Path) -> None:
+    """Property: a row stamped with `--at {commit}` makes `check-b --range` pass for an un-bumped change in that
+    commit when a later commit has changed the file again; the same history stamped from the working tree fails.
+
+    Class: a history whose graded commit carries a file that the working tree no longer holds.
+    Why required: the range venue compares the row's signature with each graded commit's own blob, so a signature
+    of the tip content matches no commit that was later overwritten and the push is refused.
+    Kills it: a stamp that ignores `--at` and hashes the working tree; a stamp that hashes the blob at HEAD.
+    Passes under: a stamp that resolves REV through any other git plumbing and hashes the same blob.
+    """
+    repo, shas = _at_history(tmp_path / "at")
+    out = _run(repo, "--stamp", "src/foo.py", "--at", shas[1], "--why", _AT_WHY)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert _last_row(repo)["layout_signature"] == _sha("# v1\n")
+    assert _last_row(repo)["layout_signature"] != _sha("# v2\n")
+    _commit_manifest(repo)
+    graded = _run(repo, "check-b", shas[0], "--range", "--to", "HEAD")
+    assert graded.returncode == 0, graded.stdout + graded.stderr
+
+    control, control_shas = _at_history(tmp_path / "control")
+    out = _run(control, "--stamp", "src/foo.py", "--why", _AT_WHY)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert _last_row(control)["layout_signature"] == _sha("# v2\n")
+    _commit_manifest(control)
+    graded = _run(control, "check-b", control_shas[0], "--range", "--to", "HEAD")
+    assert graded.returncode == 1, graded.stdout + graded.stderr
+    assert control_shas[1][:9] in graded.stderr, graded.stderr
+
+
+def test_stamp_at_refuses_a_revision_that_names_no_commit_and_writes_nothing(tmp_path: Path) -> None:
+    """Property: an `--at` value that does not peel to a commit is refused with a non-zero exit and the manifest is
+    byte-identical afterwards.
+
+    Class: a missing ref, a tree, a blob spelling, a value that begins with a dash, and a negated or ranged spelling
+    that git prints as something other than one object name.
+    Why required: hashing against an unresolved revision would either crash after the write began or record a row
+    for content nobody committed.
+    Kills it: a stamp that passes the value to git unchecked and appends on a failure; one that accepts a tree.
+    Passes under: any implementation that validates the revision before it opens the manifest for writing.
+    """
+    repo, _ = _at_history(tmp_path)
+    before = _stamp_manifest_text(repo)
+    for rev in ("no-such-ref", "HEAD^{tree}", "HEAD:src/foo.py", "-x", "^HEAD", "HEAD~1..HEAD"):
+        out = _run(repo, "--stamp", "src/foo.py", f"--at={rev}", "--why", _AT_WHY)
+        assert out.returncode != 0, f"{rev!r} must be refused: {out.stdout + out.stderr}"
+        assert "does not name a commit" in out.stderr, f"{rev!r}: {out.stderr}"
+        assert _stamp_manifest_text(repo) == before, f"{rev!r}: a refused stamp must write nothing"
+
+
+def test_stamp_at_refuses_a_path_that_is_not_a_file_at_the_commit_and_writes_nothing(tmp_path: Path) -> None:
+    """Property: with `--at`, a path that is absent at the commit and a path that names a directory there are both
+    refused with nothing written, while a path that is a file there stamps.
+
+    Class: a file added after the named commit, a directory that exists at the named commit, and the file at a
+    commit that has it (the must-pass control, which varies the property rather than the token).
+    Why required: a directory hashes to a digest rather than to nothing, so only a type probe tells it from a file,
+    and an absent path would otherwise record a row that carries no usable signature.
+    Kills it: a stamp that treats any non-error hash as success; one that checks the working tree for existence.
+    Passes under: any type probe that separates a blob from a tree and from absence.
+    """
+    repo, shas = _make_history_repo(
+        tmp_path,
+        [
+            {"version": 4, "files": {"src/foo.py": "# v0\n"}},
+            {"version": 4, "files": {"src/foo.py": "# v0\n", "src/late.py": "# late\n"}},
+        ],
+        sentinel_yaml=_AT_GOVERNED_ALLOWLIST,
+    )
+    before = _stamp_manifest_text(repo)
+    for target, rev in (("src/late.py", shas[0]), ("src", shas[1]), ("src/missing.py", shas[1])):
+        out = _run(repo, "--stamp", target, "--at", rev, "--why", _AT_WHY)
+        assert out.returncode != 0, f"{target} at {rev[:9]} must be refused: {out.stdout + out.stderr}"
+        assert "not a file" in out.stderr, out.stderr
+        assert _stamp_manifest_text(repo) == before, f"{target}: a refused stamp must write nothing"
+
+    out = _run(repo, "--stamp", "src/late.py", "--at", shas[1], "--why", _AT_WHY)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert _last_row(repo)["layout_signature"] == _sha("# late\n")
+
+
+def test_at_without_stamp_is_a_parser_error(tmp_path: Path) -> None:
+    """Property: `--at` given to any invocation that is not `--stamp` exits 2 and says so.
+
+    Class: `--at` beside a check subcommand.
+    Why required: the option only changes what `--stamp` hashes; accepted silently beside a check it would look
+    like it had narrowed the check.
+    Kills it: an `--at` that is parsed and ignored outside `--stamp`.
+    Passes under: any rejection that exits 2 before a check runs.
+    """
+    repo = _make_stamp_repo(tmp_path)
+    out = _run(repo, "--at", "HEAD", "check-a", "main")
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "--at is only meaningful with --stamp" in out.stderr, out.stderr
+
+
+def test_stamp_success_line_names_the_content_it_hashed(tmp_path: Path) -> None:
+    """Property: the success line says `from the working tree` without `--at`, and names the revision and the
+    commit's short sha with it.
+
+    Class: one stamp of each form.
+    Why required: a stamper cannot otherwise tell which of two different contents the printed digest covers.
+    Kills it: a success line that is the same for both forms.
+    Passes under: any wording that carries those three facts.
+    """
+    repo, shas = _at_history(tmp_path / "a")
+    out = _run(repo, "--stamp", "src/foo.py", "--why", _AT_WHY)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "from the working tree" in out.stdout, out.stdout
+
+    repo, shas = _at_history(tmp_path / "b")
+    out = _run(repo, "--stamp", "src/foo.py", "--at", "HEAD~1", "--why", _AT_WHY)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "HEAD~1" in out.stdout and shas[1][:9] in out.stdout, out.stdout
+    assert "from the working tree" not in out.stdout, out.stdout
+
+
+_WORKTREE_RESOLUTION_TEXT = (
+    "\nResolution paths:\n"
+    "  1. If breaking: bump LAYOUT_VERSION to 5, write versions/V0005__*.py, add fixtures v4/ and v5/.\n"
+    "  2. If non-breaking: add or update the file's non_breaking_allowlist entry in "
+    "_layout_relevant_files.yaml. The row must leave the path RESOLVING to a layout_signature -- "
+    "set it to the file's current sha256. Omitting the field on an appended row INHERITS the "
+    "path's previous signature, which no longer matches the content you just changed, so this "
+    "check keeps failing; a bare-string row clears the signature and the loader refuses at load.\n"
+)
+
+
+def test_the_range_venue_text_names_at_and_the_worktree_venue_text_is_unchanged(tmp_path: Path) -> None:
+    """Property: the range venue's failure text tells the stamper to use `--at` with the commit named above and does
+    not tell them to use the current sha256; the worktree venue's text is the same bytes it always was.
+
+    Class: one failing check-b at each venue over a fixture whose governed file changed without a bump.
+    Why required: the range venue grades each commit's own blob, so advice to hash the working tree produces a row
+    that matches no graded commit; the worktree venue grades the working tree, where that advice is right.
+    Kills it: one text printed at both venues; a range text that still says current sha256.
+    Passes under: any range wording that names `--at` and the commit.
+    """
+    repo, shas = _make_history_repo(
+        tmp_path / "range",
+        [
+            {"version": 4, "files": {"src/foo.py": "# v0\n"}},
+            {"version": 4, "files": {"src/foo.py": "# v1\n"}},
+        ],
+        sentinel_yaml=_AT_GOVERNED_ALLOWLIST,
+    )
+    ranged = _run(repo, "check-b", shas[0], "--range", "--to", "HEAD")
+    assert ranged.returncode == 1, ranged.stdout + ranged.stderr
+    assert "--at" in ranged.stderr, ranged.stderr
+    assert shas[1][:9] in ranged.stderr, ranged.stderr
+    assert "current sha256" not in ranged.stderr, ranged.stderr
+
+    worktree_repo = _make_repo(
+        tmp_path / "worktree",
+        layout_version_at_head=4,
+        layout_version_at_main=4,
+        extra_files_at_main={"src/foo.py": "# initial\n"},
+        extra_files_at_head={"src/foo.py": _STAMP_CHANGED_CONTENT},
+        sentinel_yaml=_AT_GOVERNED_ALLOWLIST,
+    )
+    pending = _run(worktree_repo, "check-b", "main")
+    assert pending.returncode == 1, pending.stdout + pending.stderr
+    assert _WORKTREE_RESOLUTION_TEXT in pending.stderr, pending.stderr
+    assert "--at" not in pending.stderr, pending.stderr
+
+
+def test_the_range_venue_text_says_how_to_split_a_push_that_carries_two_unbumped_changes(tmp_path: Path) -> None:
+    """Property: the range venue's failure text carries the separate-push instruction (rewrite history so each
+    covered commit is followed by its own row commit, push through the first, then the rest); the worktree venue's
+    text does not.
+
+    Class: one failing check-b at each venue.
+    Why required: one row holds one signature per path, so two un-bumped commits in one push cannot both be covered
+    and the stamper needs to be told the route that does pass.
+    Kills it: a range text without the instruction; the instruction leaking into the worktree venue's text.
+    Passes under: any wording that names the interleaved row commit and the push order.
+    """
+    repo, shas = _make_history_repo(
+        tmp_path / "range",
+        [
+            {"version": 4, "files": {"src/foo.py": "# v0\n"}},
+            {"version": 4, "files": {"src/foo.py": "# v1\n"}},
+        ],
+        sentinel_yaml=_AT_GOVERNED_ALLOWLIST,
+    )
+    ranged = _run(repo, "check-b", shas[0], "--range", "--to", "HEAD")
+    assert ranged.returncode == 1, ranged.stdout + ranged.stderr
+    assert "followed directly by its own row commit" in ranged.stderr, ranged.stderr
+    assert "push through the first row commit" in ranged.stderr, ranged.stderr
+
+    worktree_repo = _make_repo(
+        tmp_path / "worktree",
+        layout_version_at_head=4,
+        layout_version_at_main=4,
+        extra_files_at_main={"src/foo.py": "# initial\n"},
+        extra_files_at_head={"src/foo.py": _STAMP_CHANGED_CONTENT},
+        sentinel_yaml=_AT_GOVERNED_ALLOWLIST,
+    )
+    pending = _run(worktree_repo, "check-b", "main")
+    assert pending.returncode == 1, pending.stdout + pending.stderr
+    assert "row commit" not in pending.stderr, pending.stderr

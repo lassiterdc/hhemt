@@ -6,14 +6,17 @@ Usage:
     python scripts/check_layout_version.py check-b [base_ref=main]
     python scripts/check_layout_version.py check-c [base_ref=main]
     python scripts/check_layout_version.py --stamp {path} --why {text}
+    python scripts/check_layout_version.py --stamp {path} --at {rev} --why {text}
 
 Exit 0 = pass; exit 1 = enforcement failure with structured message.
 Check C is warning-only and always exits 0.
 
 `--stamp` is the remedy GATE rather than a check: it APPENDS one
-`non_breaking_allowlist` row carrying the changed file's current sha256 and the
+`non_breaking_allowlist` row carrying the changed file's sha256 and the
 `--why` text as its justification, so the non-breaking re-declaration Check B asks
-for is one command instead of a hand-copied 64-character digest. It takes no
+for is one command instead of a hand-copied 64-character digest. By default the file
+is hashed as it stands in the working tree; `--at {rev}` hashes it as COMMITTED at
+`rev`, which is the content the range venue grades for that commit. It takes no
 subcommand and writes nothing unless every readiness predicate below holds.
 """
 
@@ -865,7 +868,7 @@ def check_b(base_ref: str, *, range_mode: bool = False, to_ref: str = "HEAD") ->
         )
         for p in layout_relevant_changed:
             print(f"  - {p.relative_to(REPO_ROOT)}", file=sys.stderr)
-        _print_resolution_paths(head_v)
+        _print_resolution_paths(head_v, range_mode=False)
         failed = True
 
     if SLUG_FUNC_SENTINEL not in allow:
@@ -888,18 +891,49 @@ def check_b(base_ref: str, *, range_mode: bool = False, to_ref: str = "HEAD") ->
     return 0
 
 
-def _print_resolution_paths(head_v: int) -> None:
+def _print_resolution_paths(head_v: int, *, range_mode: bool) -> None:
     """Check B's two resolution paths, printed on failure at BOTH venues so the advice
-    cannot drift between them."""
-    print(
+    cannot drift between them.
+
+    The two venues grade different content, so option 2 differs in exactly one place. The
+    worktree venue grades the file as it stands in the working tree, so the working-tree
+    sha256 is the right signature. The range venue grades the file as committed in EACH
+    pushed commit, so a working-tree sha256 matches only when the file has not changed since
+    the commit named in the failure; the advice there is `--stamp ... --at {commit}`, which
+    hashes that commit's blob. A row holds one signature per path, so the range text also
+    says what an operator does when two pushed commits change the file without a bump.
+    """
+    breaking = (
         "\nResolution paths:\n"
         f"  1. If breaking: bump LAYOUT_VERSION to {head_v + 1}, write "
         f"versions/V{head_v + 1:04d}__*.py, add fixtures v{head_v}/ and v{head_v + 1}/.\n"
-        "  2. If non-breaking: add or update the file's non_breaking_allowlist entry in "
-        "_layout_relevant_files.yaml. The row must leave the path RESOLVING to a layout_signature -- "
-        "set it to the file's current sha256. Omitting the field on an appended row INHERITS the "
+    )
+    inherit = (
+        "Omitting the field on an appended row INHERITS the "
         "path's previous signature, which no longer matches the content you just changed, so this "
-        "check keeps failing; a bare-string row clears the signature and the loader refuses at load.",
+        "check keeps failing; a bare-string row clears the signature and the loader refuses at load."
+    )
+    if not range_mode:
+        print(
+            breaking + "  2. If non-breaking: add or update the file's non_breaking_allowlist entry in "
+            "_layout_relevant_files.yaml. The row must leave the path RESOLVING to a layout_signature -- "
+            "set it to the file's current sha256. " + inherit,
+            file=sys.stderr,
+        )
+        return
+    print(
+        breaking + "  2. If non-breaking: add or update the file's non_breaking_allowlist entry in "
+        "_layout_relevant_files.yaml. This check grades each pushed commit against the file AS "
+        "COMMITTED in that commit, so the row's layout_signature must be the sha256 of the file in "
+        "each commit named above: write it with "
+        "`python scripts/check_layout_version.py --stamp PATH --at COMMIT --why TEXT`, where COMMIT is "
+        "the commit named above. A hash of the working tree matches only when the file has not "
+        "changed since that commit. " + inherit + "\n"
+        "  One row per path covers one content, so two commits in one push that each change this "
+        "file without a bump cannot both be covered. To split the push, rewrite local history so "
+        "each covered commit is followed directly by its own row commit (stamped with --at that "
+        "commit), push through the first row commit, then push the rest (commits the remote already "
+        "has are not graded again).",
         file=sys.stderr,
     )
 
@@ -999,7 +1033,7 @@ def _check_b_range(from_ref: str, to_ref: str, sentinel: dict) -> int:
             print(f"  in commit {_short(commit)} ({from_ref}..{to_ref}):", file=sys.stderr)
             for p in hits:
                 print(f"  - {p.relative_to(REPO_ROOT)}", file=sys.stderr)
-        _print_resolution_paths(to_v)
+        _print_resolution_paths(to_v, range_mode=True)
         failed = True
 
     if SLUG_FUNC_SENTINEL not in allow:
@@ -1143,8 +1177,8 @@ def _stamp_text(text: str, path: str, signature: str, why: str) -> str:
     return out
 
 
-def stamp_allowlist_row(path_arg: str, why: str | None) -> int:
-    """`--stamp {path} --why {text}`: append one non-breaking row for `path`.
+def stamp_allowlist_row(path_arg: str, why: str | None, at: str | None = None) -> int:
+    """`--stamp {path} [--at {rev}] --why {text}`: append one non-breaking row for `path`.
 
     Exits non-zero and writes NOTHING unless every readiness predicate holds. The order
     of the predicates is the order in which a violation would be MOST expensive to
@@ -1159,7 +1193,11 @@ def stamp_allowlist_row(path_arg: str, why: str | None) -> int:
        below for why this one is a refusal rather than a post-write re-hash.
     3. `path` EXISTS. `_file_content_hash` returns None for an absent file, and a row whose
        `layout_signature` is null on a path with no earlier row resolves to None -- which is
-       the same install-wide load refusal as (1), reached by a different road.
+       the same install-wide load refusal as (1), reached by a different road. With `--at`,
+       existence is judged at the named commit and takes two refusals of its own: `rev` must
+       name a commit, and `path` must be a FILE there. The second covers an absent path and a
+       directory alike, because `_file_content_hash_at` returns a digest for a directory
+       rather than None, so only a type probe tells the two apart. Both refuse before any write.
     4. `non_breaking_allowlist` is the LAST top-level key in the file, or is absent. The
        row is appended at END OF FILE, so a manifest whose allowlist is followed by another
        top-level key would have the row land under THAT key -- a silent semantic
@@ -1170,6 +1208,10 @@ def stamp_allowlist_row(path_arg: str, why: str | None) -> int:
 
     `why` is `None` rather than a defaulted empty string so that `--why ""` and an
     absent `--why` are the same refusal, for the same measured reason.
+
+    `at` is `None` for the working-tree signature. The range venue grades each pushed commit's
+    OWN blob, so a stamp taken from the working tree covers the commit the failure names only
+    while the file has not changed since; `at` hashes the blob at that commit instead.
     """
     if why is None or not why.strip():
         print(
@@ -1220,15 +1262,44 @@ def stamp_allowlist_row(path_arg: str, why: str | None) -> int:
             file=sys.stderr,
         )
         return 1
-    signature = _file_content_hash(REPO_ROOT / rel)
-    if signature is None:
-        print(
-            f"check_layout_version: --stamp target {path_arg!r} does not exist under "
-            f"{REPO_ROOT}. A row for an absent path carries no signature, which resolves to "
-            f"None and is refused by _load_allowlist at load. Nothing was written.",
-            file=sys.stderr,
-        )
-        return 1
+    if at is None:
+        signature = _file_content_hash(REPO_ROOT / rel)
+        source = "the working tree"
+        if signature is None:
+            print(
+                f"check_layout_version: --stamp target {path_arg!r} does not exist under "
+                f"{REPO_ROOT}. A row for an absent path carries no signature, which resolves to "
+                f"None and is refused by _load_allowlist at load. Nothing was written.",
+                file=sys.stderr,
+            )
+            return 1
+    else:
+        try:
+            commit = _git("rev-parse", "--verify", "--quiet", f"{at}^{{commit}}", suppress_stderr=True).strip()
+            # A negated revision such as `^HEAD` exits 0 and prints `^{sha}`, which is not an object
+            # name; accepting it would blame the PATH for a revision that was never resolved.
+            if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit):
+                raise subprocess.CalledProcessError(1, "git rev-parse")
+        except subprocess.CalledProcessError:
+            print(
+                f"check_layout_version: --at {at!r} does not name a commit in {REPO_ROOT}. Nothing was written.",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            kind = _git("cat-file", "-t", f"{commit}:{rel.as_posix()}", suppress_stderr=True).strip()
+        except subprocess.CalledProcessError:
+            kind = ""
+        if kind != "blob":
+            print(
+                f"check_layout_version: --stamp target {path_arg!r} is not a file at {at!r} "
+                f"({_short(commit)}): it is absent there or names a directory. A row for it would "
+                f"carry no usable signature. Nothing was written.",
+                file=sys.stderr,
+            )
+            return 1
+        signature = _file_content_hash_at(commit, rel.as_posix())
+        source = f"the blob at {at} ({_short(commit)})"
 
     if not SENTINEL_PATH.exists():
         print(
@@ -1263,15 +1334,15 @@ def stamp_allowlist_row(path_arg: str, why: str | None) -> int:
     if not isinstance(last, dict) or last.get("path") != rel.as_posix() or last.get("layout_signature") != signature:
         print(
             f"check_layout_version: refusing to write -- the appended row did not resolve as "
-            f"the last {_ALLOWLIST_KEY} entry with path {rel.as_posix()!r} and the current "
-            f"sha256. This means the manifest's allowlist is not a plain block sequence "
+            f"the last {_ALLOWLIST_KEY} entry with path {rel.as_posix()!r} and the signature "
+            f"computed above. This means the manifest's allowlist is not a plain block sequence "
             f"(a `[]` flow value is the common cause). Nothing was written.",
             file=sys.stderr,
         )
         return 1
 
     SENTINEL_PATH.write_bytes(new_text.encode("utf-8"))
-    print(f"check-layout-version: stamped {rel.as_posix()} at {signature}")
+    print(f"check-layout-version: stamped {rel.as_posix()} at {signature} from {source}")
     return 0
 
 
@@ -1316,8 +1387,17 @@ def main() -> int:
         metavar="PATH",
         default=None,
         help="Append a non_breaking_allowlist row for the repo-relative PATH, carrying the "
-        "file's current sha256 as layout_signature and --why as the justification. Takes no "
-        "subcommand. Appends at END OF FILE and never mutates a pre-existing row.",
+        "file's sha256 as layout_signature (the working tree's, or the blob at --at) and --why as "
+        "the justification. Takes no subcommand. Appends at END OF FILE and never mutates a "
+        "pre-existing row.",
+    )
+    parser.add_argument(
+        "--at",
+        metavar="REV",
+        default=None,
+        help="With --stamp: any commit-ish REV; hash the file as COMMITTED at REV instead of the "
+        "working tree. Use the commit the range venue's failure names, since that venue grades "
+        "each pushed commit's own blob. Without --at the working tree is hashed.",
     )
     parser.add_argument(
         "--why",
@@ -1365,9 +1445,11 @@ def main() -> int:
     c.add_argument("base_ref", nargs="?", default="main")
     args = parser.parse_args()
     if args.stamp is not None:
-        return stamp_allowlist_row(args.stamp, args.why)
+        return stamp_allowlist_row(args.stamp, args.why, at=args.at)
     if args.why is not None:
         parser.error("--why is only meaningful with --stamp")
+    if args.at is not None:
+        parser.error("--at is only meaningful with --stamp")
     if args.cmd is None:
         parser.error("a subcommand is required unless --stamp is given")
     if args.cmd == "check-a":

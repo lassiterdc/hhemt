@@ -265,11 +265,11 @@ def test_the_root_comes_from_the_override_then_the_xdg_cache_then_the_home_cache
     tree = _make_toy(tmp_path / "toy_tree")
     xdg, home = tmp_path / "xdg", tmp_path / "home"
     home.mkdir()
-    cache = {"UV_CACHE_DIR": os.environ.get("UV_CACHE_DIR", str(Path.home() / ".cache" / "uv"))}
-    first = _run(tree, "python", "-c", "pass", XDG_CACHE_HOME=str(xdg), HOME=str(home), **cache)
+    uv_cache = os.environ.get("UV_CACHE_DIR", str(Path.home() / ".cache" / "uv"))
+    first = _run(tree, "python", "-c", "pass", XDG_CACHE_HOME=str(xdg), HOME=str(home), UV_CACHE_DIR=uv_cache)
     assert first.returncode == 0, first.stderr
     assert len(_dirs(xdg / "hhemt" / "hook_envs")) == 1
-    second = _run(tree, "python", "-c", "pass", drop=("XDG_CACHE_HOME",), HOME=str(home), **cache)
+    second = _run(tree, "python", "-c", "pass", drop=("XDG_CACHE_HOME",), HOME=str(home), UV_CACHE_DIR=uv_cache)
     assert second.returncode == 0, second.stderr
     assert len(_dirs(home / ".cache" / "hhemt" / "hook_envs")) == 1
 
@@ -324,8 +324,9 @@ def test_removal_never_reaches_through_a_symlink_or_a_plain_file_named_like_a_ke
     link.symlink_to(outside, target_is_directory=True)
     plain = root / "fedcba9876543210"
     plain.write_text("x", encoding="utf-8")
+    backdated = time.time() - 30 * _DAY
     for p in (link, plain):
-        os.utime(p, (time.time() - 30 * _DAY,) * 2, follow_symlinks=False)
+        os.utime(p, (backdated, backdated), follow_symlinks=False)
     _backdate(outside, 30)
     assert _run(tree, "python", "-c", "pass", root=root).returncode == 0
     assert (outside / "keep.txt").read_text(encoding="utf-8") == "keep"
