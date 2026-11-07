@@ -1,5 +1,5 @@
-"""Every justfile recipe that runs pytest through `uv run` installs the `docs` extra, and the `--active` ones drop
-`VIRTUAL_ENV` (work package 5a, chunk 5a.4).
+"""Every justfile recipe that runs pytest through `uv run` or the hook wrapper installs the `docs` extra, and the
+`--active` ones drop `VIRTUAL_ENV` (work package 5a, chunk 5a.4).
 
 `tests/test_check_docs_content.py` imports `mkdocstrings_handlers`, which only the `docs` extra provides; CI installs
 `.[test,docs]` but no recipe did, so a laptop run on an interpreter without the handler failed four tests. The shell
@@ -16,12 +16,27 @@ from pathlib import Path
 _JUSTFILE = Path(__file__).resolve().parents[1] / "justfile"
 
 
+_WRAPPER = "scripts/hook_env.sh"
+
+
 def _is_pytest_line(line: str) -> bool:
-    """A non-comment line that runs pytest through `uv run` (its command is `pytest` or `-m pytest`)."""
+    """A non-comment line that runs pytest through `uv run` or through the `scripts/hook_env.sh` wrapper (its command
+    is `pytest` or `-m pytest`)."""
     stripped = line.strip()
-    if not stripped or stripped.startswith("#") or "uv run" not in stripped:
+    if not stripped or stripped.startswith("#"):
         return False
-    return bool(re.search(r"(?:\bpytest\b|-m pytest\b)", stripped.split("uv run", 1)[1]))
+    runner = "uv run" if "uv run" in stripped else _WRAPPER if _WRAPPER in stripped else None
+    if runner is None:
+        return False
+    return bool(re.search(r"(?:\bpytest\b|-m pytest\b)", stripped.split(runner, 1)[1]))
+
+
+def _lacks_docs_extra(line: str) -> bool:
+    """A `uv run` line needs `--extra docs`; a wrapper line has it by default and only violates when it passes an
+    `--extra` list that omits `docs`."""
+    if _WRAPPER in line and "uv run" not in line:
+        return "--extra" in line and "--extra docs" not in line
+    return "--extra docs" not in line
 
 
 def _violations(text: str) -> list[str]:
@@ -31,7 +46,7 @@ def _violations(text: str) -> list[str]:
     for line in text.splitlines():
         if line.strip().startswith("#"):
             continue
-        if _is_pytest_line(line) and "--extra docs" not in line:
+        if _is_pytest_line(line) and _lacks_docs_extra(line):
             found.append(f"no --extra docs: {line.strip()[:70]}")
         if "uv run --active" in line and "env -u VIRTUAL_ENV conda run" not in line:
             found.append(f"VIRTUAL_ENV kept: {line.strip()[:70]}")
@@ -113,3 +128,21 @@ def test_the_laptop_recipe_excludes_the_snakemake_subprocess_tests_and_their_own
     own = _marker_expression(text, "test-snakemake-subprocess")
     assert _selects(own, {"requires_snakemake_subprocess"})
     assert not _selects(own, {"requires_snakemake_subprocess", "compile_tier"}) and not _selects(own, set())
+
+
+def test_the_predicate_accepts_wrapper_lines_by_default_and_reports_one_that_drops_docs():
+    """Property: a wrapper pytest line with no `--extra` (default `test docs`) or with `--extra docs` passes, and one
+    that passes only `--extra test` is reported.
+
+    Class: NEW CAPABILITY, the widened predicate. What kills it: a predicate that still recognises only `uv run`
+    lines (the six wrapper pytest lines would drop out of the count and the control above would red), or one that
+    reports every wrapper line lacking a literal `--extra docs`. Second correct implementation: parsing the wrapper's
+    arguments instead of searching the line text."""
+    sample = (
+        "    scripts/hook_env.sh --python 3.12 pytest\n"
+        "    scripts/hook_env.sh --python 3.11 --extra docs pytest -x\n"
+        "    scripts/hook_env.sh --python 3.12 --extra test pytest\n"
+        '    RUN="scripts/hook_env.sh --python 3.12" bash scripts/docs_gates.sh\n'
+    )
+    assert sum(_is_pytest_line(x) for x in sample.splitlines()) == 3
+    assert _violations(sample) == ["no --extra docs: scripts/hook_env.sh --python 3.12 --extra test pytest"]

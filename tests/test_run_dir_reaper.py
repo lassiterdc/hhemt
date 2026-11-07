@@ -1,8 +1,11 @@
 """Phase 4 — liveness-gated run-directory reaper tests."""
 
+import hashlib
+import subprocess
+
 import pytest
 
-from tests.fixtures._run_dir_reaper import LiveSignals, is_reapable, sweep
+from tests.fixtures._run_dir_reaper import LiveSignals, collect_live_signals, is_reapable, sweep
 from tests.fixtures._triton_source_cache import canonical_root, synthetic_runs_root
 
 _NO_SIGNALS = LiveSignals(
@@ -162,3 +165,60 @@ def test_backstop_wrapper_first_run_gates_apply_on_acknowledgment(tmp_path, monk
     assert report.applied is True
     assert report.reaped == ["reaper_test_dead_slug"]
     assert not dead.exists(), "acknowledged backstop did not reclaim the stale dir"
+
+
+def test_the_path_arm_keeps_the_digest_tier_of_a_live_long_named_worktree(tmp_path):
+    """Property: a worktree whose folder name exceeds the digest length is addressed by a digest,
+    and the reaper keeps that tier through its path arm, via the tier's `.origin` breadcrumb.
+
+    Class: NEW CAPABILITY -- a 30-character worktree name, which `tier_address` now maps to a
+    `path-` digest address that no git worktree folder name and no branch name equals, so the
+    worktree arm and the branch arm cannot protect it.
+    Why required: moving long-named worktrees onto the digest address is safe only if the
+    reaper still keeps their live tier; a path arm that failed to re-derive the address would
+    leave a live tier reapable once its 7-day bound passes.
+    What kills it: an address rule that mints for the worktree an address the reaper's
+    `tier_address_for(origin)` does not re-derive (against the code before this change the
+    digest tier is not the address the worktree mints, so the first assertion reds); and a path
+    arm that keeps every tier whose breadcrumb names the worktree, which the second tier at an
+    address the worktree does not mint (`path-` plus sixteen zeros) detects.
+    Second correct implementation: a path arm that compares a re-derived address to the tier
+    name by a normalised form rather than by string equality; it keeps the same tiers.
+    The `_triton_source_cache.py` stub carries `def checkout_slug(` because without it
+    `_checkout_mints_digest_address` returns False and the path arm keeps every tier whose
+    breadcrumb names the worktree, so the keep verdict would not depend on the address.
+    """
+    if ".claude" in tmp_path.resolve().parts:
+        pytest.skip("the temporary directory sits under a `.claude` component; the arms cannot be separated")
+    repo = (tmp_path / "repo").resolve()
+    repo.mkdir()
+    git = ["git", "-c", "user.name=t", "-c", "user.email=reaper-test", "-C", str(repo)]
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "seed"], check=True)
+    name = "w" * 30
+    worktree = repo / ".claude" / "worktrees" / name
+    subprocess.run([*git, "worktree", "add", "-q", "-b", "wt-branch", str(worktree)], check=True)
+    stub = worktree / "tests" / "fixtures" / "_triton_source_cache.py"
+    stub.parent.mkdir(parents=True)
+    stub.write_text("def checkout_slug(cwd):\n    return ''\n", encoding="utf-8")
+
+    digest_slug = "path-" + hashlib.sha256(str(worktree).encode("utf-8", "surrogateescape")).hexdigest()[:16]
+    foreign_slug = "path-" + "0" * 16
+    runs_root = tmp_path / "runs"
+    for slug in (digest_slug, foreign_slug):
+        (runs_root / slug).mkdir(parents=True)
+        (runs_root / slug / ".origin").write_text(f"{worktree}\n", encoding="utf-8")
+
+    signals = collect_live_signals(repo, runs_root=runs_root, candidate_slugs=frozenset({digest_slug, foreign_slug}))
+    assert digest_slug in signals.live_path_slugs
+    assert foreign_slug not in signals.live_path_slugs
+
+    report = sweep(runs_root, signals=signals, ttl_days=0, dry_run=True)
+    assert report.kept[digest_slug] == "live-path"
+    assert foreign_slug in report.reaped
+
+    # The unreadable-breadcrumb fail-safe: the digest tier with its `.origin` removed is
+    # still kept, because every digest address starts with `path`.
+    (runs_root / digest_slug / ".origin").unlink()
+    signals = collect_live_signals(repo, runs_root=runs_root, candidate_slugs=frozenset({digest_slug}))
+    assert digest_slug in signals.live_path_slugs

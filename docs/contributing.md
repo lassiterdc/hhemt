@@ -36,15 +36,22 @@ open an issue to discuss before submitting.
    Run it from the checkout you mean to document: an editable install names ONE
    `src`, so running it from a worktree re-points the shared conda environment's
    `import hhemt` at that worktree until the next install. If you keep several
-   checkouts, `uv run --locked --extra docs mkdocs serve` needs no install step and
+   checkouts, `scripts/hook_env.sh --python 3.12 mkdocs serve` needs no install step and
    binds to the checkout it runs in.
 4. Install `uv` (https://docs.astral.sh/uv/). It is a hard prerequisite, not a
-   convenience: every pre-commit hook in this repo runs through `uv run --locked`,
-   so `git commit` fails without it. `uv` builds and manages its own project
-   environment in `.venv/`, separate from the conda environment step 2 creates —
-   both will exist on your machine, and the hooks always use `.venv/`. If you work
-   inside an activated virtualenv (this does not apply to conda), `uv` prints a
-   `VIRTUAL_ENV ... will be ignored` warning on each hook run; that is expected.
+   convenience: every pre-commit hook and every uv-hosted `just` recipe in this repo
+   runs through `scripts/hook_env.sh` (the four conda-hosted recipes and `build` do
+   not), so `git commit` fails without it. The wrapper keeps
+   its dependencies in shared environments under `~/.cache/hhemt/hook_envs/` (or under
+   `$XDG_CACHE_HOME/hhemt/hook_envs/`, or `$HHEMT_HOOK_ENV_ROOT` when that is set), keyed by
+   the lock file, the Python version and the extras, and binds each run to the checkout
+   it runs in. No `.venv/` is created in a tree, and environments unused for 14 days
+   are removed automatically. They are separate from the conda environment step 2
+   creates; both will exist on your machine. To point an editor at the shared
+   environment, set its interpreter to the `bin/python` of the path that
+   `scripts/hook_env.sh --print-env --python 3.12` prints. If you work
+   inside an activated virtualenv, the wrapper unsets `VIRTUAL_ENV` before it calls
+   `uv`, so the hooks print no `VIRTUAL_ENV` warning and use the shared environment.
 5. Install pre-commit hooks: `pre-commit install`. The `pre-commit` package ships
    only with the conda environment (`environment.yaml`); it is declared in no
    `pyproject.toml` extra, so if you installed via Option B of
@@ -75,8 +82,8 @@ open an issue to discuss before submitting.
       check before a release PR. `just qa` does NOT invoke this recipe either — it
       inlines its own `pytest` carrying the same `-m` expression, so the two apply the
       same marker FILTERING. That does not make the collected populations equal: the
-      two resolve different dependency sets — `qa` runs `uv run --python=3.12 --extra
-      test`, while `test-fast` uses the conda `hhemt` environment, which
+      two resolve different dependency sets — `qa` runs `scripts/hook_env.sh --python
+      3.12`, while `test-fast` uses the conda `hhemt` environment, which
       `environment.yaml` pins to Python 3.11 — and a module-level import present in one
       resolution and absent from the other changes what is collected before any marker
       is evaluated.
@@ -122,7 +129,7 @@ mkdocs serve
 
 The install line re-points the shared conda environment's editable install at the
 checkout you run it from (see step 3 of the development setup). From a second
-checkout, `uv run --locked --extra docs mkdocs serve` builds the same site with no
+checkout, `scripts/hook_env.sh --python 3.12 mkdocs serve` builds the same site with no
 install step.
 
 ## Documentation gates
@@ -134,11 +141,11 @@ hygiene, and published-surface fidelity. Run the same list locally before openin
 pull request:
 
 ```bash
-RUN="uv run --locked --extra docs" bash scripts/docs_gates.sh
+RUN="scripts/hook_env.sh --python 3.12" bash scripts/docs_gates.sh
 ```
 
-With `just` installed, `just docs-check` runs exactly that line. `uv run --locked
---extra docs` binds `import hhemt` to the checkout you run it in, so the autodoc
+With `just` installed, `just docs-check` runs exactly that line. `scripts/hook_env.sh`
+binds `import hhemt` to the checkout you run it in, so the autodoc
 gate grades this checkout and its `population root:` line names the tree it
 enumerated. Never `uv run --active` here: under a foreign `VIRTUAL_ENV` it
 re-points another checkout's editable install.

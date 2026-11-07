@@ -26,7 +26,7 @@ jobs:
       # public-API autodoc coverage, docs content hygiene, published-surface
       # fidelity) live ONCE, in scripts/docs_gates.sh, each beside the rationale
       # for it. `just docs-check` runs the same script locally through
-      # `uv run --locked --extra docs`; here RUN is empty, so every gate runs on
+      # `scripts/hook_env.sh --python 3.12`; here RUN is empty, so every gate runs on
       # the interpreter the install step above populated. The script announces
       # each gate on stdout, which is where the per-step attribution now lives.
       - name: Run the documentation gates

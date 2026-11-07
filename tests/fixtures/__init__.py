@@ -15,8 +15,9 @@ def worktree_slug() -> str:
 
     Derived from ``Path.cwd().resolve()`` by
     ``tests.fixtures._triton_source_cache.checkout_slug``, whose docstring states both
-    arms: the worktree name under ``.claude/worktrees/{name}/``, otherwise a
-    fixed-length ``path-`` digest of the checkout path. Canonical shared utility
+    arms: the worktree name under ``.claude/worktrees/{name}/`` when it is no longer than
+    a digest address (21 characters), otherwise a fixed-length ``path-`` digest of the
+    checkout path. Canonical shared utility
     consumed by ``test_case_builder.py`` and ``test_case_catalog.py`` to root
     per-checkout test artifacts under a contention-free path, so concurrent pytest
     runs in sibling checkouts do not fight over a single shared

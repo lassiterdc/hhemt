@@ -177,7 +177,7 @@ Working from a repo checkout, the fuller checker additionally verifies that the 
 present:
 
 ```bash
-uv run --locked python scripts/check_experiment_structure.py experiments/my_experiment
+scripts/hook_env.sh python scripts/check_experiment_structure.py experiments/my_experiment
 ```
 
 Exit 0 = conformant. Note that `scripts/` is not distributed in the wheel, so this second form

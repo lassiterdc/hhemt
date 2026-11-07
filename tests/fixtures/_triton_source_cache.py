@@ -195,11 +195,15 @@ def checkout_slug(cwd: Path) -> str:
     and the status verb then reports a machine that looks cold while its trees sit on disk.
 
     TWO ARMS.
-      * Under `.claude/worktrees/{name}/` the address is `{name}`, so the reaper's
-        worktree arm, which matches a tier name against a git worktree basename,
-        keeps working.
-      * Anywhere else the address is `path-` followed by the first 16 hex digits of
-        the SHA-256 of `str(cwd)`: 21 characters for every checkout.
+      * Under `.claude/worktrees/{name}/` the address is `{name}` when the name is no
+        longer than a digest address (21 characters). Such a name stays readable and the
+        reaper's worktree arm, which matches a tier name against a git worktree
+        basename, protects its tier. A longer name takes the digest arm below, and the
+        reaper's path arm protects that tier through its `.origin` breadcrumb, exactly as
+        it protects a non-worktree checkout's.
+      * Anywhere else, and for a worktree name over that threshold, the address is
+        `path-` followed by the first 16 hex digits of the SHA-256 of `str(cwd)`: 21
+        characters for every checkout.
 
     WHY A FIXED-LENGTH DIGEST. The address is one segment of every synthetic
     simulation's run path, and SWMM keeps a file name only up to MAXFNAME (259)

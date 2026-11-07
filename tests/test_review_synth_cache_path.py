@@ -9,6 +9,7 @@ hold the identity properties, over the input classes the function's own docstrin
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from pathlib import Path
@@ -27,12 +28,15 @@ _DIGEST_ADDRESS = re.compile(r"^path-[0-9a-f]{16}$")
         ("/home/u/dev/hhemt/.claude/worktrees/build-foo", "build-foo"),
         ("/home/u/dev/hhemt/.claude/worktrees/build-foo/tests/fixtures", "build-foo"),
         ("/home/u/dev/hhemt/.claude/worktrees/w", "w"),
+        ("/home/u/dev/hhemt/.claude/worktrees/" + "n" * 21, "n" * 21),
     ],
 )
 def test_a_cwd_inside_a_worktree_is_addressed_by_the_worktree_name(cwd, expected):
-    """Property: under `.claude/worktrees/{name}/`, at any depth, the address is `{name}`.
+    """Property: under `.claude/worktrees/{name}/`, at any depth, the address is `{name}` for
+    a name of at most 21 characters (the length of a digest address).
 
-    Class: every cwd whose first `.claude` component is followed by `worktrees` and a name.
+    Class: every cwd whose first `.claude` component is followed by `worktrees` and a name of
+    21 characters or fewer, including the 21-character boundary itself.
     Why required: the reaper's worktree arm matches a tier directory name against the basename
     of a registered git worktree, so a worktree checkout addressed by anything but its name
     loses that protection and its live tier becomes reapable once the TTL passes.
@@ -42,6 +46,37 @@ def test_a_cwd_inside_a_worktree_is_addressed_by_the_worktree_name(cwd, expected
     path string instead of walking `Path.parts`; it returns the same names and still passes.
     """
     assert checkout_slug(Path(cwd)) == expected
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "n" * 22,
+        "11-06_1523_synthetic-cache-address-for-long-named-run-worktrees",
+    ],
+)
+def test_a_worktree_name_over_the_digest_length_gets_the_digest_of_the_worktree_root(name):
+    """Property: a worktree folder name longer than 21 characters is addressed by the 21-character
+    digest address of the worktree root, not by the name.
+
+    Class: worktree names of 22 characters (one past the boundary) and 63 characters (the length
+    of the folder name of the worktree this change was built in, which made the path-budget test
+    red under the default cache root).
+    Why required: the address is one segment of every synthetic run path and SWMM keeps a file
+    name only up to 259 characters; a name used verbatim at 45 characters or more pushes the
+    longest synthetic path over the limit. The digest address is protected from the reaper by its
+    path arm through `.origin`, so the move costs a live tier no protection.
+    What kills it: leaving the worktree arm unbounded, or setting the threshold to a figure other
+    than the digest length (a threshold of 44 passes the 63-character case and fails the
+    22-character case).
+    Second correct implementation: one that slices the combined string, `("path-" + digest)[:21]`,
+    rather than the digest, `"path-" + digest[:16]`; the two produce the same 21 characters and
+    both still pass.
+    """
+    root = Path("/home/u/dev/hhemt/.claude/worktrees") / name
+    expected = "path-" + hashlib.sha256(str(root).encode("utf-8", "surrogateescape")).hexdigest()[:16]
+    assert checkout_slug(root) == expected
+    assert len(checkout_slug(root)) == 21 and _DIGEST_ADDRESS.match(checkout_slug(root))
 
 
 @pytest.mark.parametrize(
