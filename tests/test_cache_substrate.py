@@ -112,15 +112,18 @@ def test_two_checkouts_get_different_addresses(tmp_path):
 
 
 def test_worktree_address_is_the_worktree_name_and_the_fixture_facade_agrees(tmp_path):
-    """Property: under `.claude/worktrees/{name}/` the address is `{name}`, and the fixture
-    facade (`checkout_slug`) returns exactly what the substrate mints.
+    """Property: under `.claude/worktrees/{name}/` the address is `{name}` for a name of at
+    most 21 characters, and the fixture facade (`checkout_slug`) returns exactly what the
+    substrate mints.
 
     Class: REGRESSION -- the worktree arm is pre-existing behaviour that the relocation must
     preserve; the equivalence half reds if the facade and the substrate drift apart.
 
     Why it is required: the run-dir reaper's worktree arm matches a tier name against a git
-    worktree basename, so an address that stops being the worktree name silently removes a
-    live tier's protection.
+    worktree basename, so a short name's address that stops being the worktree name silently
+    removes a live tier's protection. A name over 21 characters takes the digest address and
+    is protected by the reaper's path arm instead, so this protection argument does not cover
+    it.
 
     What kills it: routing one of the two entry points around the substrate.
 
@@ -236,7 +239,8 @@ def test_cache_status_reports_the_same_tier_from_a_subdirectory(tmp_path, monkey
 
 def test_checkout_root_resolves_a_linked_worktree_whose_dot_git_is_a_file(tmp_path):
     """Property: a checkout whose `.git` is a FILE -- a linked git worktree -- resolves to its
-    OWN root, so its tier address is the worktree name.
+    OWN root, so its tier address is the worktree name when that name is 21 characters or
+    fewer.
 
     Class: NEW CAPABILITY -- the plausible wrong implementation tests `.git` for
     `is_dir()` rather than `exists()`, which is what an author reaching for "is this a
@@ -246,7 +250,8 @@ def test_checkout_root_resolves_a_linked_worktree_whose_dot_git_is_a_file(tmp_pa
     Why it is required: git records a linked worktree with a `.git` FILE holding a
     `gitdir:` pointer, and every `.claude/worktrees/{name}` tree in this repository --
     including the one this suite runs in -- is one. Under the `is_dir()` form a worktree
-    resolves to no root, so its tier stops being named after its worktree and
+    resolves to no root, so its tier stops being named after its worktree (a short name's
+    tier is named after its worktree; a longer name's tier takes the digest address) and
     `_run_dir_reaper`'s live-worktree protection silently stops matching it, leaving a
     live tier reapable once its TTL passes.
 

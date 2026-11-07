@@ -106,6 +106,12 @@ def checkout_root(start: Path | None = None) -> Path | None:
     return None
 
 
+# The length of a digest address, ``path-`` plus 16 hex digits. One fact, used twice: it
+# builds the digest arm of ``tier_address`` and it is the longest worktree folder name that arm
+# lets through verbatim, so the threshold cannot drift from the digest's own length.
+_DIGEST_ADDRESS_LENGTH = len("path-") + 16
+
+
 def tier_address(cwd: Path) -> str:
     """The cache-tier address of the checkout at ``cwd``. SINGLE SOURCE.
 
@@ -113,11 +119,24 @@ def tier_address(cwd: Path) -> str:
     resolve it. Callers holding an arbitrary path want :func:`tier_address_for`.
 
     TWO ARMS.
-      * Under ``.claude/worktrees/{name}/`` the address is ``{name}``, so the reaper's
-        worktree arm, which matches a tier name against a git worktree basename, keeps
-        working.
-      * Anywhere else the address is ``path-`` followed by the first 16 hex digits of the
-        SHA-256 of the root's string form: 21 characters for every checkout.
+      * Under ``.claude/worktrees/{name}/`` the address is ``{name}`` when the name is no
+        longer than a digest address (``_DIGEST_ADDRESS_LENGTH``, 21 characters). Such a name
+        stays readable and the reaper's worktree arm, which matches a tier name against a git
+        worktree basename, protects its tier. A longer name takes the digest arm below, and
+        the reaper's path arm protects that tier through its ``.origin`` breadcrumb, exactly as
+        it protects a non-worktree checkout's.
+      * Anywhere else, and for a worktree name over the threshold, the address is ``path-``
+        followed by the first 16 hex digits of the SHA-256 of the root's string form: 21
+        characters for every checkout.
+
+    WHY THE THRESHOLD IS THE DIGEST LENGTH. Under the default cache root every address of 44
+    characters or fewer fits the longest synthetic path and every address of 45 or more does
+    not, so a worktree folder name of 45 or more used verbatim made the path-budget test red.
+    Setting the threshold to the digest arm's own length bounds the address at 21 characters
+    for every checkout, so the budget depends on the cache root and the case names alone.
+    Deliberately NOT a threshold of 44: that figure is today's cache root and today's longest
+    case name, and the next longer ``analysis_name=`` literal or cache root would make names
+    just under it red again with no edit here.
 
     WHY A FIXED-LENGTH DIGEST. The address is one segment of every synthetic run path, and
     SWMM keeps a file name only up to MAXFNAME (259) characters. The previous address
@@ -139,9 +158,11 @@ def tier_address(cwd: Path) -> str:
     if ".claude" in parts:
         i = parts.index(".claude")
         if i + 1 < len(parts) and parts[i + 1] == "worktrees" and i + 2 < len(parts):
-            return parts[i + 2]
+            name = parts[i + 2]
+            if len(name) <= _DIGEST_ADDRESS_LENGTH:
+                return name
     digest = hashlib.sha256(str(cwd).encode("utf-8", "surrogateescape")).hexdigest()
-    return "path-" + digest[:16]
+    return ("path-" + digest)[:_DIGEST_ADDRESS_LENGTH]
 
 
 def tier_address_for(path: Path) -> str:
