@@ -3,8 +3,9 @@
 #
 # `.github/workflows/docs-build.yml` runs this script bare: one checkout, one
 # editable install, so plain `python` is the tree under test and RUN is empty.
-# `just docs-check` runs it with RUN="uv run --locked --extra docs": the per-tree
-# uv .venv, whose editable .pth names THIS checkout. A second copy of this list in
+# `just docs-check` runs it with RUN="scripts/hook_env.sh --python 3.12": the shared
+# environment that wrapper keeps outside every tree, with THIS checkout's `src` first on
+# the import path. A second copy of this list in
 # either caller is the drift class scripts/check_autodoc_coverage.py records at its
 # head (two hand-maintained lists that silently diverged), so neither caller
 # carries one. Never `uv run --active`: under a foreign VIRTUAL_ENV it re-points

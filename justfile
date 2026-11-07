@@ -6,12 +6,12 @@ list:
 
 # Run all the formatting, linting, and testing commands
 qa:
-    uv run --python=3.12 --extra test ruff format .
-    uv run --python=3.12 --extra test ruff check . --fix
-    uv run --python=3.12 --extra test ruff check --select I --fix .
-    uv run --python=3.12 --extra test ty check .
-    uv run --python=3.12 --extra test python scripts/check_du_sentinel_sites.py
-    uv run --python=3.12 --extra test python scripts/check_vocabulary_freeze.py
+    scripts/hook_env.sh --python 3.12 ruff format .
+    scripts/hook_env.sh --python 3.12 ruff check . --fix
+    scripts/hook_env.sh --python 3.12 ruff check --select I --fix .
+    scripts/hook_env.sh --python 3.12 ty check .
+    scripts/hook_env.sh --python 3.12 python scripts/check_du_sentinel_sites.py
+    scripts/hook_env.sh --python 3.12 python scripts/check_vocabulary_freeze.py
     # Gate A's population, hosted on the low-barrier uv path so a contributor needs no
     # conda env. The marker is stamped at COLLECTION by tests/conftest.py from each
     # test's fixture closure, and the compile gate's skip fires later at fixture SETUP,
@@ -19,23 +19,23 @@ qa:
     # here and checked by nothing -- do not record a count in this comment; the last one
     # (2996/3195) was stale within weeks. `just test-fast` is the conda-hosted
     # sibling that additionally PROVES the marker did the deselecting rather than PATH.
-    uv run --python=3.12 --extra test --extra docs pytest -m "not slow and not compile_tier and not requires_snakemake_subprocess"
+    scripts/hook_env.sh --python 3.12 pytest -m "not slow and not compile_tier and not requires_snakemake_subprocess"
 
 # Run all the tests for all the supported Python versions
 testall:
-    uv run --python=3.11 --extra test --extra docs pytest
-    uv run --python=3.12 --extra test --extra docs pytest
+    scripts/hook_env.sh --python 3.11 pytest
+    scripts/hook_env.sh --python 3.12 pytest
 
 # Run all the tests, but allow for arguments to be passed.
 # NOTE: the compile-dependent tests (test_synth_04/05, test_workflow_rerun_triggers_empirical)
 # build TRITON-SWMM CPU, which needs cmake + mpic++ + mpi.h from the `hhemt` conda env.
-# Under this uv `.venv` command they SKIP cleanly (tests/utils_for_testing.py::
+# Under this shared-environment command they SKIP cleanly (tests/utils_for_testing.py::
 # compile_toolchain_unavailable). To actually run them green, invoke under the conda env
 # (drop the 3.12 pin; the hhemt env is python 3.11 and uv --active uses it):
 #   conda run -n hhemt uv run --active --extra test pytest {{ARGS}}
 test *ARGS:
     @echo "Running with arg: {{ARGS}}"
-    uv run --python=3.12 --extra test --extra docs pytest {{ARGS}}
+    scripts/hook_env.sh --python 3.12 pytest {{ARGS}}
 
 # Authoritative gating run: the conda env supplies cmake+mpic++ AND
 # HHEMT_REQUIRE_COMPILE_TIER=1 turns any compile-tier skip into a HARD FAILURE,
@@ -88,19 +88,20 @@ test-snakemake-subprocess *ARGS:
 # Run all the tests, but on failure, drop into the debugger
 pdb *ARGS:
     @echo "Running with arg: {{ARGS}}"
-    uv run --python=3.12  --extra test --extra docs pytest --pdb --maxfail=10 --pdbcls=IPython.terminal.debugger:TerminalPdb {{ARGS}}
+    scripts/hook_env.sh --python 3.12 pytest --pdb --maxfail=10 --pdbcls=IPython.terminal.debugger:TerminalPdb {{ARGS}}
 
 # Run coverage, and build to HTML
 coverage:
-    uv run --python=3.12 --extra test --extra docs coverage run -m pytest .
-    uv run --python=3.12 --extra test coverage report -m
-    uv run --python=3.12 --extra test coverage html
+    scripts/hook_env.sh --python 3.12 coverage run -m pytest .
+    scripts/hook_env.sh --python 3.12 coverage report -m
+    scripts/hook_env.sh --python 3.12 coverage html
 
-# The documentation gates: the SAME script CI runs, on the per-tree uv .venv, whose
-# editable .pth names THIS checkout. Never `uv run --active` here: under a foreign
-# VIRTUAL_ENV it re-points another tree's editable install at this one (measured).
+# The documentation gates: the SAME script CI runs, in the shared environment that
+# scripts/hook_env.sh keeps outside every tree, with this checkout's `src` first on the
+# import path. Never `uv run --active` here: under a foreign VIRTUAL_ENV it re-points
+# another tree's editable install at this one (measured).
 docs-check:
-    RUN="uv run --locked --extra docs" bash scripts/docs_gates.sh
+    RUN="scripts/hook_env.sh --python 3.12" bash scripts/docs_gates.sh
 
 # Build the project, useful for checking that packaging is correct
 build:
