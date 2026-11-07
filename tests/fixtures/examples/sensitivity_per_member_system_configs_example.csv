@@ -1,4 +1,4 @@
-member_id,run_mode,n_omp_threads,system_config_yaml
+member_id,analysis.run_mode,analysis.n_omp_threads,system_config_yaml
 0,mpi,1,/path/to/system_dem_10m.yaml
 1,mpi,1,/path/to/system_dem_20m.yaml
 2,openmp,4,/path/to/system_dem_10m.yaml

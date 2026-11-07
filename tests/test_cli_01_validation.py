@@ -51,31 +51,20 @@ def test_from_scratch_and_resume_mutually_exclusive(tmp_path):
 # R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
 # no completed-tree fixture applies. Evidence:
 #     analysis_config.write_text("version: 1\n")
-def test_event_ilocs_and_range_mutually_exclusive(tmp_path):
-    """Test --event-ilocs and --event-range are mutually exclusive."""
+def test_removed_event_selection_options_are_refused_as_unknown(tmp_path):
+    """`--event-ilocs` and `--event-range` no longer exist: Typer refuses each as an unknown option."""
     system_config = tmp_path / "system.yaml"
     analysis_config = tmp_path / "analysis.yaml"
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(
-        app,
-        [
-            "run",
-            "--system-config",
-            str(system_config),
-            "--analysis-config",
-            str(analysis_config),
-            "--event-ilocs",
-            "0,1,2",
-            "--event-range",
-            "0:10",
-        ],
-    )
-
-    assert result.exit_code == 2
-    assert "cannot use both" in result.output.lower()
-    assert "--event-ilocs/--event-range" in result.output
+    for option, value in (("--event-ilocs", "0"), ("--event-range", "0:10")):
+        result = runner.invoke(
+            app,
+            ["run", "--system-config", str(system_config), "--analysis-config", str(analysis_config), option, value],
+        )
+        assert result.exit_code == 2
+        assert option in result.output
 
 
 # R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and

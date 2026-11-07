@@ -7,14 +7,7 @@ figure_defaults:
 
 system_map:
   figsize_inches: [8.0, 6.0]
-  watershed_color: red
-  dem_extent_color: blue
-  bc_marker: o
   bc_color: orange
-  swmm_node_color: black
-  swmm_node_size: 6.0
-  swmm_link_color: gray
-  swmm_link_width: 0.5
 
 per_sim:
   peak_flood_depth:

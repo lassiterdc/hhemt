@@ -1,115 +1,72 @@
 # H&H Ensemble Modeling Toolkit
 
-Running one coupled flood simulation is a solved problem. Running four hundred of
-them, across a sweep of events and compute configurations, and getting back a single
-analysis-ready dataset you can defend in a paper, is not.
-
-The H&H Ensemble Modeling Toolkit (hhemt) orchestrates coupled TRITON-SWMM flood
-simulations as embarrassingly-parallel ensembles across local workstations and HPC
-clusters, using configurable CPU or GPU resources per simulation on both NVIDIA and
-AMD hardware. It manages the full lifecycle, from preprocessing and compilation
-through execution and post-processing, and produces consolidated datasets and an
-interactive report.
+The H&H Ensemble Modeling Toolkit, hhemt, orchestrates coupled TRITON-SWMM flood
+simulations as ensembles across workstations and HPC clusters. The toolkit manages the
+full lifecycle from preprocessing through post-processing and produces consolidated
+datasets and an interactive report.
 
 <!-- hhemt:maturity-disclosure -->
-> **On this release.** hhemt is released in the mechanical sense. It is tagged,
-> packaged, archived with a DOI, and documented. I do not yet consider it ready for
-> general outside use. Version 0.1.0 exists to build and prove the machinery a real
-> release requires, which is the packaging, the archiving, the documentation and the
-> continuous integration, rather than to invite adoption.
->
-> Today the toolkit is for three readers. The first wants to run the shipped Norfolk
-> case study end to end, which the tutorial does on one machine, with no HPC and no
-> account. The second is evaluating whether this approach fits their own problem. The
-> third wants a reproducible, citable pipeline for their own work. If you are one of
-> those three, what is here works and is documented.
->
-> The release intended for general use is planned alongside the paper introducing the
-> software. What changes then is that the work this toolkit was built to produce will
-> be published, so a reader will have something to reproduce rather than only
-> something to run.
+> **On this release.** General outside use is out of scope in this version.
 <!-- /hhemt:maturity-disclosure -->
 
 --8<-- "platform-support.md"
 
-## What a run looks like
+## Highlights
 
-Two YAML configs describe the study, and the toolkit does the rest:
+- **Open science.** [Bundles and publishing](how-to/publishing.md) package results with their metadata for deposit in Zenodo or HydroShare.
+- **Selective re-runs.** The Snakemake workflow manager [re-runs only the simulations whose inputs changed](how-to/forcing-reruns.md).
+- **Limited peak disk use.** The toolkit processes outputs as simulations finish, and the [`clear_raw` option](reference/config-schema.md) deletes the raw outputs afterward.
+- **Interactive reports.** The toolkit renders [a self-contained report](reference/example-report.md) for each completed analysis.
+- **Exploratory analysis.** The `hhemt eda` command [writes a Jupyter notebook](tutorials/exploratory-analysis.md) for continued work on a result.
+- **Metadata tracking.** Consolidated outputs record the toolkit version, the provenance, and the CF-1.13 metadata listed in the [output data model](reference/output-data-model.md).
+- **Containers.** [Container mode](how-to/building-container-images.md) packages the solver in an Apptainer image and executes each simulation in that image.
+- **Parallel simulation.** Simulations run on CPU or on NVIDIA and AMD GPUs across workstations and [SLURM clusters](explanation/capabilities.md#hardware-portability).
 
-```python
-from hhemt.experiments import NorfolkIreneExperiment
+## License
 
-# hhemt_sha is the 40-hex commit you are running; `git rev-parse HEAD` prints it.
-norfolk = NorfolkIreneExperiment.load(hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT")
-norfolk.system.compile_TRITON_SWMM()             # once per machine: builds the solver
-result = norfolk.analysis.run(from_scratch=False, execution_mode="auto")
-norfolk.analysis.render_report()                 # self-contained interactive report
-```
+The source is available on [GitHub](https://github.com/lassiterdc/hhemt) and on PyPI through `pip install hhemt`.
+The license is the [GNU Affero General Public License v3.0 or later](https://www.gnu.org/licenses/agpl-3.0.html).
+The first release was published under the PolyForm Noncommercial License 1.0.0.
 
-The load fetches the case-study data once. That is the whole worked path for the
-shipped example on a laptop, and the same calls run a four-hundred-member ensemble
-on a cluster; what changes is the configuration.
-One thing more changes on a GPU partition: you build the solver with the
-command-line form on [Compile the solver](how-to/compiling-the-solver.md).
+<a id="how-to-cite"></a>
 
-**[Start with the Quickstart](tutorials/quickstart.md)**, which takes a fresh clone
-to a finished report.
+## Citation
 
-## What it is for
-
-Every analysis is one of two kinds, set by one switch in its configuration:
-
-- **Event ensembles.** Many weather events in parallel, consolidated into
-  hierarchical zarr stores with CF-1.13 metadata, ready for analysis across the
-  whole population.
-- **Sensitivity analyses.** A parameter table turns each row into a
-  [member](reference/glossary.md#member), a separate analysis, so
-  you can vary the hydraulic model, roughness, grid resolution, or the compute
-  configuration itself. Benchmarking is the sensitivity analysis whose axis is the
-  compute configuration.
-
-Either kind can run the same event through TRITON, SWMM, and the coupled
-TRITON-SWMM, so you can measure what the two-way coupling changes.
-
-[Capabilities](explanation/capabilities.md) covers each in depth, and
-[Limitations](explanation/limitations.md) is candid about where the toolkit stops.
-
-## How to cite
-
-If you use hhemt in published work, cite it:
+If you use hhemt in published work, cite the software.
 
 ``` { .text .copy }
-Lassiter, D. (2026). H&H Ensemble Modeling Toolkit (hhemt) (Version 0.1.0)
-[Computer software]. https://doi.org/10.5281/zenodo.21359152
+Lassiter, D. (2026). H&H Ensemble Modeling Toolkit (hhemt) (Version 0.2.0)
+[Computer software]. https://doi.org/10.5281/zenodo.21359151
 ```
 
 <!-- hhemt:doi-kind-convention
-     This table prints the VERSION DOI while CITATION.cff carries the CONCEPT
-     DOI. That difference is deliberate rather than a drift to be reconciled.
-     A surface carries the most precise identifier that (i) exists when the
-     surface is written and (ii) stays true of its referent while the surface
-     is readable. CITATION.cff fails (i): Zenodo mints the version DOI in
-     response to the published release, so it does not exist at tag time.
-     This page is rebuilt after each release and can carry the precise one.
-     Reasoning and worked cases: "DOI kind convention" in architecture.md. -->
+     A page built from a release tag names only identifiers that exist at that tag.
+     Zenodo mints the version DOI after the release is published, so the block above
+     carries the CONCEPT DOI. The version DOI of the release is added to the `latest`
+     build of this page after the tag, in a docs-only change. CITATION.cff carries the
+     CONCEPT DOI for the same reason. Reasoning and worked cases are in
+     architecture.md. -->
 
-Two DOIs exist, and which one you want depends on what you are claiming:
+Zenodo issues a *concept* DOI and a *version* DOI. The concept DOI resolves to the
+newest release. A version DOI resolves to a single release permanently. Zenodo creates the
+version DOI after a release is published, so the citation above carries the concept DOI. To
+pin the exact version of a result, take the version DOI from the Zenodo record that the
+concept DOI resolves to. The DOI badge on the repository page and the "Cite this
+repository" button hand out the concept DOI. A consolidated output records the toolkit
+version that produced the output.
 
-| DOI | Resolves to | Use it when |
+| DOI | Resolves to | Use case |
 |---|---|---|
-| `10.5281/zenodo.21359152` | version 0.1.0, permanently | **Citing in a paper.** It pins the exact version your results came from. |
-| `10.5281/zenodo.21359151` | always the latest version | Pointing a reader at the software in general, rather than at the version you ran. |
+| `10.5281/zenodo.21359151` | always the latest version | Pointing a reader at the software in general. |
 
 `CITATION.cff` in the repository root carries the same metadata in a
-machine-readable form, and GitHub renders it as a "Cite this repository" button.
+machine-readable form, and GitHub renders the file as a "Cite this repository" button.
 
-## Where to go next
+## Next steps
 
-- **[Installation](how-to/installation.md)**: environment setup, and the pip-only
-  alternative.
-- **[Tutorials](tutorials/index.md)**: learning-oriented walkthroughs. Start with
-  the [Quickstart](tutorials/quickstart.md) if you are new.
-- **[How-To Guides](how-to/index.md)**: task-oriented recipes for a specific job,
-  from configuring a run to publishing a dataset.
-- **[Reference](reference/index.md)**: the API surface, the config schema, and what
-  the toolkit produces.
+- The [Quickstart](quickstart.md) starts from a fresh clone and ends with a running simulation.
+- [Installation](how-to/installation.md) covers the environment setup and the pip-only alternative.
+- [Tutorials](tutorials/index.md) walk through complete case studies.
+- [How-To Guides](how-to/index.md) cover single tasks, from configuring an analysis to publishing a dataset.
+- [Reference](reference/index.md) lists the API, the configuration schema, and the outputs.
+- [Limitations](explanation/limitations.md) covers the solver, environment, scale, and reproducibility constraints.

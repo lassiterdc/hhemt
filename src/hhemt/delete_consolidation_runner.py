@@ -39,6 +39,7 @@ _ANALYSIS_LEVEL_ARTIFACTS = [
     "system_datatree.zarr",
     "analysis_report.html",
     "analysis_report.zip",
+    "analysis_report.format",
     "plots",
     "report",
     "scenario_status.csv",

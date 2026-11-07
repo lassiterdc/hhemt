@@ -85,9 +85,9 @@ def test_default_output_path_is_cwd_relative_not_analysis_dir(eda_plot_id, monke
 
 
 def test_register_in_reporting_set_records_intent():
-    rec = register_eda_plot_in_reporting_set("config_diff_maps", "default")
+    rec = register_eda_plot_in_reporting_set("config_diff_maps", "compute_sensitivity")
     assert rec.plot_id == "config_diff_maps"
-    assert rec.set_name == "default"
+    assert rec.set_name == "compute_sensitivity"
     assert "deferred" in rec.routing  # D-1 option (c): routing deferred to eda-skill
 
 

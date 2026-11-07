@@ -45,6 +45,7 @@ from matplotlib.colors import Normalize
 from plotly.subplots import make_subplots
 
 from hhemt import units, utils
+from hhemt.config.viz_vocabulary import PanelScalePolicy, VminVmaxStrategy
 from hhemt.figure_panels import (
     WATERSHED_LEGEND_GROUP,
     WATERSHED_LEGEND_LABEL,
@@ -55,7 +56,7 @@ from hhemt.report_renderers._map_bounds import (
     compute_padded_square_bounds,
 )
 from hhemt.report_renderers._model_arms import groups_for
-from hhemt.report_renderers.system_overview import _resolve_inp_sources
+from hhemt.report_renderers.system_overview import _draw_static_subplot_label, _resolve_inp_sources
 
 
 def _build_discrete_depth_colorscale(
@@ -104,15 +105,34 @@ if TYPE_CHECKING:
 def _shared_depth_max(analysis, target_crs, map_cfg=None, model_types=None):
     """Return the global vmax for the peak-flood-depth colorbar across every
     event_iloc, so the depth colorbar has the same range on every per-event
-    figure and one color means one depth throughout the report. Only the upper
-    bound is computed here; callers take the lower bound from
-    `PerSimMapConfig.depth_vmin`, below which cells render in the under-color.
-    Returns None if no event exposes a usable summary (caller falls back to
-    per-event range).
+    figure and one color means one depth throughout the report. Returns None if
+    no event exposes a usable summary (caller falls back to per-event range).
+    The lower end comes from `_shared_depth_range`.
     """
+    return _shared_depth_range(analysis, target_crs, map_cfg=map_cfg, model_types=model_types)[1]
+
+
+def _shared_depth_range(analysis, target_crs, map_cfg=None, model_types=None, upper_quantile=None):
+    """Return `(lower, upper)` for the peak-flood-depth colorbar across every event_iloc.
+
+    `upper` is the global vmax (the quantile `PerSimMapConfig.depth_clip_quantile_upper`
+    of the wetted depths when set, else the maximum). `lower` is the quantile
+    `PerSimMapConfig.depth_clip_quantile_lower` of the wetted depths when that setting is
+    a number, else None; callers raise `depth_vmin` to it and never lower it.
+    `upper_quantile`, when given, replaces `depth_clip_quantile_upper` as the quantile of
+    the wetted depths across all events that sets `upper` (the static-figure
+    `vmax_quantile` under `panel_scale_policy="shared"`).
+    Each element is None if no event exposes a usable summary (caller falls back to
+    the per-event range).
+    """
+    _lo_q = map_cfg.depth_clip_quantile_lower if map_cfg is not None else None
+    _hi_q = upper_quantile
+    if _hi_q is None:
+        _hi_q = map_cfg.depth_clip_quantile_upper if map_cfg is not None else None
+    _collect = _lo_q is not None or _hi_q is not None
     enabled = analysis._get_enabled_model_types()
     if "tritonswmm" not in enabled and "triton" not in enabled:
-        return None
+        return None, None
     watershed_shp = analysis._system.cfg_system.watershed_gis_polygon
     watershed_gdf = gpd.read_file(watershed_shp)
     g_max = float("-inf")
@@ -120,14 +140,14 @@ def _shared_depth_max(analysis, target_crs, map_cfg=None, model_types=None):
     try:
         tree = analysis.process.open_datatree()
     except (ValueError, FileNotFoundError):
-        return None
+        return None, None
     # Cross-ARM union (not just cross-event). Every applicable model arm is drawn
     # on one scrolling page, so a range computed from a single model's group would
     # be BORROWED by the other arm's figure -- a scale that looks authoritative and
     # is not. The range is therefore accumulated over every (group, event) pair.
     groups = [g for g in groups_for("peak_flood_depth", model_types or enabled) if g in tree.groups]
     if not groups:
-        return None
+        return None, None
     _ds_by_group = {g: tree[g].to_dataset() for g in groups}
     _pairs = [(_g, _e) for _g in groups for _e in analysis.df_sims.index]
     for _group, _ev in _pairs:
@@ -144,7 +164,7 @@ def _shared_depth_max(analysis, target_crs, map_cfg=None, model_types=None):
             else:
                 m = utils.create_mask_from_shapefile(da_ev, watershed_shp)
             d_ev = da_ev.where(m & (da_ev > 0))
-            if map_cfg is not None and map_cfg.depth_clip_quantile_upper is not None:
+            if _collect:
                 vals = d_ev.values
                 if hasattr(vals, "compute"):
                     vals = vals.compute()
@@ -160,14 +180,82 @@ def _shared_depth_max(analysis, target_crs, map_cfg=None, model_types=None):
                     g_max = max(g_max, v_max)
         except KeyError:
             continue
-    if map_cfg is not None and map_cfg.depth_clip_quantile_upper is not None:
+    g_lo = None
+    if _collect:
         if not all_wet_values:
-            return None
+            return None, None
         combined = np.concatenate(all_wet_values)
-        g_max = float(np.nanquantile(combined, map_cfg.depth_clip_quantile_upper))
+        g_max = float(np.nanquantile(combined, _hi_q)) if _hi_q is not None else float(np.nanmax(combined))
+        if _lo_q is not None:
+            g_lo = float(np.nanquantile(combined, _lo_q))
     if not np.isfinite(g_max) or g_max <= 0.01:
+        return None, None
+    return g_lo, g_max
+
+
+def _uses_shared_depth_scale(static_cfg) -> bool:
+    """Return whether the depth and water-surface-elevation colour bars take the range shared by every event.
+
+    `StaticPlotBaseConfig.panel_scale_policy` `shared` (the default) and a render with no
+    `static_cfg` share both ranges; `independent` gives each figure its own range on both bars.
+    """
+    return static_cfg is None or static_cfg.panel_scale_policy != PanelScalePolicy.independent
+
+
+def _static_quantile_vmax(static_cfg, da_masked):
+    """Return the `vmax_quantile` of the wetted depths when `vmin_vmax_strategy` is `quantile`, else None.
+
+    Reads `StaticPlotBaseConfig.vmin_vmax_strategy` and `vmax_quantile`; the default
+    strategy `absolute` (and a missing `vmax_quantile`) returns None so the caller keeps
+    today's range. The quantile is taken over this figure's wetted (finite, positive)
+    cells and returned only when it exceeds 0.
+    """
+    if static_cfg is None or static_cfg.vmin_vmax_strategy != VminVmaxStrategy.quantile:
         return None
-    return g_max
+    if static_cfg.vmax_quantile is None:
+        return None
+    vals = da_masked.values
+    if hasattr(vals, "compute"):
+        vals = vals.compute()
+    wet = vals[np.isfinite(vals) & (vals > 0)]
+    if wet.size == 0:
+        return None
+    q = float(np.nanquantile(wet, static_cfg.vmax_quantile))
+    return q if np.isfinite(q) and q > 0 else None
+
+
+def _static_quantile_depth_vmax(analysis, target_crs, map_cfg, static_cfg, da_masked):
+    """Return the upper depth bound that `vmin_vmax_strategy="quantile"` sets, or None.
+
+    None when the strategy is `absolute` or `vmax_quantile` is unset. Under
+    `panel_scale_policy="shared"` the quantile is taken over the wetted depths of
+    every event (the cross-event scan `_shared_depth_range` runs); under `independent`,
+    or when that scan finds no usable summary, over this figure's wetted cells.
+    """
+    if _static_quantile_vmax(static_cfg, da_masked) is None:
+        return None
+    if _uses_shared_depth_scale(static_cfg):
+        _lo, hi = _shared_depth_range(analysis, target_crs, map_cfg=map_cfg, upper_quantile=static_cfg.vmax_quantile)
+        if hi is not None:
+            return float(hi)
+    return _static_quantile_vmax(static_cfg, da_masked)
+
+
+def _apply_depth_clip_quantile_lower(analysis, target_crs, map_cfg, depth_vmin, depth_vmax):
+    """Return `depth_vmin` raised to the lower-quantile depth, never lowered.
+
+    `PerSimMapConfig.depth_clip_quantile_lower` None returns `depth_vmin` without
+    reading any data. A quantile at or above `depth_vmax` would empty the colour bar,
+    so it leaves `depth_vmin` unchanged as well.
+    """
+    if map_cfg is None or map_cfg.depth_clip_quantile_lower is None:
+        return depth_vmin
+    lower, _upper = _shared_depth_range(analysis, target_crs, map_cfg=map_cfg)
+    if lower is None or not np.isfinite(lower):
+        return depth_vmin
+    if lower <= depth_vmin or lower >= depth_vmax:
+        return depth_vmin
+    return float(lower)
 
 
 def _wall_threshold_m(sys_cfg, elevation_panel):
@@ -528,6 +616,7 @@ def render(
     )
     gs_hydro_inner = gs_hydro_outer[0, 0].subgridspec(2, 1, height_ratios=[1, 1])
     ax_depth = fig.add_subplot(gs_depth[0, 0])
+    _draw_static_subplot_label(ax_depth, static_cfg)
     cax_depth = fig.add_subplot(gs_depth_cbar[0, 1])
     ax_wse = fig.add_subplot(gs_wse[0, 0], sharex=ax_depth, sharey=ax_depth)
     cax_wse = fig.add_subplot(gs_wse_cbar[0, 1])
@@ -557,8 +646,17 @@ def render(
         depth_vmin = map_cfg.depth_vmin
     if static_cfg is not None and static_cfg.vmax is not None:
         depth_vmax = float(static_cfg.vmax)
+    elif (
+        _quantile_vmax := _static_quantile_depth_vmax(analysis, target_crs, map_cfg, static_cfg, da_masked)
+    ) is not None:
+        depth_vmax = _quantile_vmax
     else:
-        shared_max = _shared_depth_max(analysis, target_crs, map_cfg=map_cfg)
+        # `panel_scale_policy="independent"` drops the cross-event shared range, so this
+        # figure's colour bar spans its own depths; the default `shared` keeps the range
+        # shared by every event's figure.
+        shared_max = (
+            _shared_depth_max(analysis, target_crs, map_cfg=map_cfg) if _uses_shared_depth_scale(static_cfg) else None
+        )
         if shared_max is not None:
             depth_vmax = float(shared_max)
         else:
@@ -569,6 +667,7 @@ def render(
             depth_vmax = (
                 d_max_local if (np.isfinite(d_max_local) and d_max_local > depth_vmin) else map_cfg.depth_vmax_fallback
             )
+        depth_vmin = _apply_depth_clip_quantile_lower(analysis, target_crs, map_cfg, depth_vmin, depth_vmax)
     # colormap + out-of-range colors: dual-source (report uses map_cfg; publication
     # uses the PeakFloodDepthStaticConfig depth_* fields + optional over/bad).
     _depth_cmap_name = static_cfg.depth_cmap if static_cfg is not None else map_cfg.depth_cmap
@@ -676,7 +775,11 @@ def render(
     # by eye. Falls back to this event's own range only when the cross-event scan
     # returns no range: no event, this one included, has a usable summary, or the
     # quantile range is degenerate.
-    shared = _shared_wse_range(analysis, target_crs, dem_da, map_cfg=map_cfg)
+    shared = (
+        _shared_wse_range(analysis, target_crs, dem_da, map_cfg=map_cfg)
+        if _uses_shared_depth_scale(static_cfg)
+        else None
+    )
     if shared is not None:
         wse_min, wse_max = shared
     else:
@@ -976,6 +1079,7 @@ def _build_peak_flood_depth_figure(
         depth_vmax = (
             d_max_local if (np.isfinite(d_max_local) and d_max_local > depth_vmin) else map_cfg.depth_vmax_fallback
         )
+    depth_vmin = _apply_depth_clip_quantile_lower(analysis, target_crs, map_cfg, depth_vmin, depth_vmax)
     shared_wse = _shared_wse_range(analysis, target_crs, dem_da, map_cfg=map_cfg)
     if shared_wse is not None:
         wse_min, wse_max = shared_wse

@@ -6,7 +6,7 @@ reader of the docs site, and a row left behind after a verb is removed sends rea
 command that does not exist. This test reads both lists and requires them to be the same set.
 
 What counts as the page's verb list: the first backticked word of each row in every table whose
-header is `| Command | What it does |` and that sits directly under a `## ` section. Tables under
+header is `| Command | Purpose |` and that sits directly under a `## ` section. Tables under
 a `### ` subsection describe a command group's own subcommands (for example `hhemt test
 toolkit`'s `plan` and `chunk`) and are not top-level verbs; the exit-code table has a different
 header and is not a verb list either.
@@ -21,7 +21,7 @@ import typer
 from hhemt.cli import app
 
 _CLI_PAGE = Path(__file__).resolve().parent.parent / "docs" / "reference" / "cli.md"
-_VERB_TABLE_HEADER = "| Command | What it does |"
+_VERB_TABLE_HEADER = "| Command | Purpose |"
 
 
 def _documented_verbs(text: str) -> set[str]:
@@ -80,14 +80,14 @@ def test_the_table_reader_finds_rows_and_skips_subsection_and_exit_code_tables()
         [
             "## Running",
             "",
-            "| Command | What it does |",
+            "| Command | Purpose |",
             "|---|---|",
             "| `run` | Runs. |",
             "| `delete` | Deletes. |",
             "",
             "### `hhemt test toolkit`",
             "",
-            "| Command | What it does |",
+            "| Command | Purpose |",
             "|---|---|",
             "| `plan --toolkit {path}` | Plans. |",
             "",

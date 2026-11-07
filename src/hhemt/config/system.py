@@ -34,10 +34,9 @@ class CRSConfig(cfgBaseModel):
     vertical_epsg: int = Field(
         5703,
         description=(
-            "EPSG code for the vertical CRS / datum of DEM elevations. "
-            "Defaults to 5703 (NAVD88 height, m). Drives elevation/WSE/"
-            "depth colorbar labels in renderers and CF-1.13 "
-            "vertical_datum stamping on consolidated outputs."
+            "EPSG code for the vertical CRS or datum of DEM elevations. Defaults to 5703, NAVD88 height in "
+            "m. Drives elevation, WSE, and depth colorbar labels in renderers and CF-1.13 vertical_datum "
+            "stamping on consolidated outputs."
         ),
     )
 
@@ -102,32 +101,32 @@ class system_config(cfgBaseModel):
     )
     SWMM_hydraulics: Path = Field(
         ...,
-        description="Hydraulics-only SWMM model (.inp) template with fillable fields based on input weather data. An "
-        "event-specific scenario of this model will be input to TRITON-SWMM.",
+        description="Hydraulics-only SWMM model template, a .inp file, with fillable fields based on input "
+        "weather data. An event-specific scenario of the model will be input to TRITON-SWMM.",
     )
     SWMM_hydrology: Path | None = Field(
         None,
-        description="Hydrology-only SWMM model (.inp) template with fillable fields based on input weather data. This "
-        "will be "
-        "run prior to TRITON-SWMM to generate runoff time series in grid cells that overlap with subcatchment "
-        "outlet nodes.",
+        description="Hydrology-only SWMM model template, a .inp file, with fillable fields based on input "
+        "weather data. The model will be run prior to TRITON-SWMM to generate runoff time "
+        "series in grid cells that overlap with subcatchment outlet nodes.",
         json_schema_extra=field_meta(required_when=[when("toggle_use_swmm_for_hydrology", True)]),
     )
     SWMM_full: Path | None = Field(
         None,
-        description="Full SWMM model (.inp) template with fillable fields based on input weather data. Scenarios based "
-        "on this "
-        "can be run in addition to TRITON-SWMM to compare SWMM hydraulics results.",
+        description="Full SWMM model template, a .inp file, with fillable fields based on input weather "
+        "data. Scenarios based on the template can be run in addition to TRITON-SWMM to "
+        "compare SWMM hydraulics results.",
         json_schema_extra=field_meta(required_when=[when("toggle_swmm_model", True)]),
     )
     swmm_coupling_mode: Literal["all_junctions", "list", "legacy"] = Field(
         "all_junctions",
         description=(
-            "Which SWMM nodes the coupled TRITON-SWMM model may exchange water at. The toolkit "
-            "always gives TRITON an explicit list it writes for each scenario; this setting "
-            "chooses the candidates that list is selected from. The default, all_junctions, "
-            "couples every junction that has a [COORDINATES] row; legacy keeps the earlier "
-            "selection from FLOW [INFLOWS] lines."
+            "The SWMM nodes where the coupled TRITON-SWMM model may exchange water. The toolkit always "
+            "gives TRITON an explicit list that the toolkit writes for each scenario, and this setting "
+            "chooses the candidates that the list is selected from. The default, all_junctions, couples "
+            "every junction that has a [COORDINATES] row. The list choice takes the nodes named in "
+            "swmm_coupling_nodes_file. The third choice selects every node that carries a FLOW [INFLOWS] "
+            "line."
         ),
         json_schema_extra=field_meta(
             applies_when=[when("toggle_tritonswmm_model", True)],
@@ -136,10 +135,11 @@ class system_config(cfgBaseModel):
                     "The default. Every [JUNCTIONS] node of SWMM_hydraulics that has a [COORDINATES] row."
                 ),
                 "list": (
-                    "The nodes named in swmm_coupling_nodes_file; each must be a junction with a [COORDINATES] row."
+                    "The nodes named in swmm_coupling_nodes_file. Each node must be a junction with a "
+                    "[COORDINATES] row."
                 ),
                 "legacy": (
-                    "An explicit opt-in: every node of SWMM_hydraulics that carries an "
+                    "An explicit opt-in that selects every node of SWMM_hydraulics that carries an "
                     "[INFLOWS] line with constituent FLOW, read by SWMM's own rule."
                 ),
             },
@@ -148,9 +148,9 @@ class system_config(cfgBaseModel):
     swmm_coupling_nodes_file: Path | None = Field(
         None,
         description=(
-            "A one-column file of coupling-node names, read when swmm_coupling_mode is "
-            "'list': one name per line, surrounding whitespace stripped, blank lines and "
-            "lines starting ';' skipped, no header."
+            "A one-column file of coupling-node names, read when swmm_coupling_mode is 'list'. The file "
+            "holds one name per line, with surrounding whitespace stripped, blank lines skipped, lines "
+            "starting with `;` skipped, and no header."
         ),
         json_schema_extra=field_meta(
             applies_when=[when("swmm_coupling_mode", "list")],
@@ -165,7 +165,7 @@ class system_config(cfgBaseModel):
     SWMM_software_directory: Path | None = Field(
         None,
         json_schema_extra={"toolkit_owned_output": True, "toolkit_clones_into": True},
-        description="Folder containing the SWMM model software (created by the clone/build gate at run/setup).",
+        description="Folder containing the SWMM model software, created by the clone/build gate at run/setup.",
     )
     # Optional[Path] (not required) ONLY so a portability-scrubbed render bundle's
     # cfg_system.yaml (which nulls this per bundle/_path_policy.py IS_NONE_ACCEPTABLE)
@@ -175,10 +175,10 @@ class system_config(cfgBaseModel):
     TRITONSWMM_software_directory: Path | None = Field(
         None,
         json_schema_extra={"toolkit_owned_output": True, "toolkit_clones_into": True},
-        description="Folder containing the TRITONSWMM model software (created by the clone/build gate at run/setup). "
-        "May be "
-        "null in a reconstituted reprex bundle's synthesized system_config.yaml -- the round-trip re-derives it "
-        "from the by-reference software.",
+        description="Folder containing the TRITONSWMM model software, created by the clone/build gate at "
+        "run/setup. May be null in the synthesized system_config.yaml of a reconstituted "
+        "reprex bundle, because the round-trip re-derives the value from the by-reference "
+        "software.",
     )
     TRITONSWMM_git_URL: str = Field(
         ...,
@@ -187,14 +187,13 @@ class system_config(cfgBaseModel):
     TRITONSWMM_branch_key: str | None = Field(
         None,
         description=(
-            "Git ref the TRITONSWMM clone is pinned to. In native mode this may be a "
-            "branch, a tag, or a commit sha; in container mode it MUST be a full commit "
-            "sha, because a container skips the compile and there is no clone to resolve "
-            "a branch name against. The pin is re-checked on every run, and a run is "
-            "refused when an existing clone sits at a different commit. That check is "
-            "the only protection against stale numerics: an existing clone is never "
-            "re-checked-out and its cached build is never invalidated. Leave "
-            "unset to build whatever the clone's default branch resolves to."
+            "Git ref the TRITONSWMM clone is pinned to. In native mode the value may be a branch, a tag, "
+            "or a commit sha. In container mode the value MUST be a full commit sha, because a container "
+            "skips the compile and no clone exists to resolve a branch name against. The pin is re-checked "
+            "on every run, and a run is refused when an existing clone sits at a different commit. The "
+            "check is the only protection against stale numerics, because an existing clone is never "
+            "re-checked-out and the cached build of the clone is never invalidated. Leave unset to build "
+            "whatever the default branch of the clone resolves to."
         ),
     )
     SWMM_git_URL: str = Field(
@@ -224,11 +223,6 @@ class system_config(cfgBaseModel):
         description="Path to the template TRITON-SWMM cfg file that defines the variables and inputs per simulation.",
     )
     # ATTRIBUTES
-    landuse_description_colname: str | None = Field(
-        None,
-        description="column name in the landuse_lookup_file corresponding to landuse description.",
-        json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
-    )
     landuse_lookup_class_id_colname: str | None = Field(
         None,
         description="column name in the landuse_lookup_file corresponding to landuse classification.",
@@ -239,10 +233,6 @@ class system_config(cfgBaseModel):
         description="column name in the landuse_lookup_file corresponding to manning's coefficient.",
         json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
     )
-    landuse_plot_color_colname: str | None = Field(
-        None,
-        description="column name in the landuse_lookup_file corresponding to target plot colors by landuse.",
-    )
     subcatchment_raingage_mapping_gage_id_colname: str | None = Field(
         None,
         description="Column name in subcatchment_raingage_mapping_gage corresponding to the rain gage ids.",
@@ -251,18 +241,21 @@ class system_config(cfgBaseModel):
     # CONSTANTS
     dem_outside_watershed_height: float | None = Field(
         None,
-        description="Elevation burned into the DEM outside the watershed boundary. Report figures never test cells "
-        "against it directly. Cells at or above the smaller of this and dem_building_height (or the one that is "
-        "set), less wall_threshold_buffer_m, are painted as walls, so a value below the raster's real terrain paints "
-        "terrain as wall and reports no error. Leave unset when the DEM carries no such sentinel.",
+        description="Elevation burned into the DEM outside the watershed boundary. Report figures never "
+        "test cells against the threshold directly. Cells at or above the smaller of this "
+        "value and dem_building_height, less wall_threshold_buffer_m, are painted as walls. "
+        "When dem_building_height is unset, this value acts alone. A value below the real "
+        "terrain of the raster paints terrain as wall and reports no error. Leave unset when "
+        "the DEM carries no such sentinel.",
     )
     dem_building_height: float | None = Field(
         None,
-        description="Elevation burned into DEM cells overlapping buildings. Report figures drop cells whose value "
-        "equals this number from the DEM colorbar range, and paint cells at or above the smaller of this and "
-        "dem_outside_watershed_height (or the one that is set), less wall_threshold_buffer_m, as walls. A value that "
-        "does not match the raster leaves rooftops in the colorbar and reports no error. Leave unset when the DEM "
-        "carries no such sentinel.",
+        description="Elevation burned into DEM cells overlapping buildings. Report figures drop cells "
+        "whose value equals this number from the DEM colorbar range, and paint cells at or "
+        "above the smaller of this value and dem_outside_watershed_height, less "
+        "wall_threshold_buffer_m, as walls. When dem_outside_watershed_height is unset, this "
+        "value acts alone. A value that mismatches the raster leaves rooftops in the colorbar "
+        "and reports no error. Leave unset when the DEM carries no such sentinel.",
     )
     # TOGGLES
     toggle_use_swmm_for_hydrology: bool = Field(
@@ -276,25 +269,22 @@ class system_config(cfgBaseModel):
     toggle_triton_model: bool = Field(
         ...,
         description=(
-            "Determines whether or not a TRITON-only model is enabled. The build is "
-            "not performed here: in native mode the setup rule asserts that an enabled "
-            "model already has a successful build."
+            "Determines whether a TRITON-only model is enabled. The build is not performed here. In native "
+            "mode the setup rule asserts that an enabled model already has a successful build."
         ),
     )
     toggle_tritonswmm_model: bool = Field(
         ...,
         description=(
-            "Determines whether or not a TRITON-SWMM coupled model is enabled. The "
-            "build is not performed here: in native mode the setup rule asserts that an "
-            "enabled model already has a successful build."
+            "Determines whether a TRITON-SWMM coupled model is enabled. The build is not performed here. "
+            "In native mode the setup rule asserts that an enabled model already has a successful build."
         ),
     )
     toggle_swmm_model: bool = Field(
         ...,
         description=(
-            "Determines whether or not a standalone SWMM model is enabled. The build is "
-            "not performed here: in native mode the setup rule asserts that an enabled "
-            "model already has a successful build."
+            "Determines whether a standalone SWMM model is enabled. The build is not performed here. In "
+            "native mode the setup rule asserts that an enabled model already has a successful build."
         ),
     )
     # PARAMETERS
@@ -311,15 +301,15 @@ class system_config(cfgBaseModel):
     processed_xllcorner: float | None = Field(
         None,
         description=(
-            "Optional lower-left x-coordinate to anchor processed DEM/Manning outputs "
-            "(in DEM CRS units). When set, processed rasters are aligned to this origin."
+            "Optional lower-left x-coordinate to anchor processed DEM/Manning outputs, in DEM CRS units. "
+            "When set, processed rasters are aligned to this origin."
         ),
     )
     processed_yllcorner: float | None = Field(
         None,
         description=(
-            "Optional lower-left y-coordinate to anchor processed DEM/Manning outputs "
-            "(in DEM CRS units). When set, processed rasters are aligned to this origin."
+            "Optional lower-left y-coordinate to anchor processed DEM/Manning outputs, in DEM CRS units. "
+            "When set, processed rasters are aligned to this origin."
         ),
     )
     ncols: int | None = Field(
@@ -333,9 +323,8 @@ class system_config(cfgBaseModel):
     crs: CRSConfig = Field(
         ...,
         description=(
-            "Composite horizontal + vertical CRS for the modeled system. "
-            "horizontal_epsg is required; vertical_epsg defaults to 5703 "
-            "(NAVD88 m). See CRSConfig for full semantics."
+            "Composite horizontal + vertical CRS for the modeled system. horizontal_epsg is required, and "
+            "vertical_epsg defaults to 5703, NAVD88 m. See CRSConfig for full semantics."
         ),
     )
 

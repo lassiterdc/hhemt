@@ -245,7 +245,7 @@ def test_an_interrupt_during_the_write_removes_the_temporary_and_leaves_the_old_
 
 
 _NEW_BYTES = (
-    b"member_id,run_mode,n_mpi_procs,n_omp_threads,n_gpus,n_nodes\n"
+    b"member_id,analysis.run_mode,analysis.n_mpi_procs,analysis.n_omp_threads,analysis.n_gpus,analysis.n_nodes\n"
     b"0,mpi,2,1,0,1\n1,openmp,1,2,0,1\n2,hybrid,2,2,0,1\n3,serial,1,1,0,1\n"
 )
 
@@ -346,7 +346,9 @@ def test_a_second_call_with_different_bytes_writes_and_replaces(tmp_path):
     rename = next(e for e in facts["events"] if e[0] == "rename")
     assert rename[2].endswith("atomic_probe.csv") and Path(rename[1]).name.startswith(".")
     assert facts["inode_same"] is False
-    assert facts["bytes"].splitlines()[0] == "member_id,run_mode,n_mpi_procs,n_omp_threads,n_gpus,n_nodes,extra"
+    assert facts["bytes"].splitlines()[0] == (
+        "member_id,analysis.run_mode,analysis.n_mpi_procs,analysis.n_omp_threads,analysis.n_gpus,analysis.n_nodes,extra"
+    )
 
 
 def test_the_bytes_written_are_exactly_the_in_memory_bytes_and_the_parameters_match(csv_path, monkeypatch):

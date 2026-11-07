@@ -42,24 +42,37 @@ def render_eda_plots(
     eda_cfg: eda_config,
     only_kinds: set[str] | None = None,
     must_emit: set[str] | None = None,
+    cfg_system=None,
 ) -> list[Path]:
     """Render the plots in ``eda_cfg.enabled_plots`` to ``{root}/plots/eda/``.
 
-    ``only_kinds`` is an OPTIONAL narrowing filter (the eda() facade passes the
-    produced-kinds set). It MUST NOT be relied on for absence-safety:
-    Bundle.eda(plots_only=True) passes ``only_kinds=None`` (render-all), so the
-    absence gate below is CALLEE-side and both callers inherit it. Returns the
-    list of emitted HTML paths. Unknown renderer-kind keys raise ValueError
-    (fail-fast). ``root`` is the analysis_dir on the Analysis side and
-    bundle.root on the Bundle side.
+    ``only_kinds`` is an OPTIONAL narrowing filter that the ``eda()`` facade fills with the
+    produced-kinds set. Absence-safety MUST NOT rely on the filter, because
+    ``Bundle.eda(plots_only=True)`` passes ``only_kinds=None`` for render-all, so the
+    absence gate below is CALLEE-side and both callers inherit the gate. Returns the
+    list of emitted HTML paths. Every key of ``eda_cfg.enabled_plots`` is checked
+    against the renderer registry BEFORE the ``only_kinds`` filter and before any
+    figure renders, so a key that names no renderer, including a figure type the render refuses,
+    raises ValueError whichever types the caller narrowed to. The filter
+    MUST NOT run first, because a refused stem is never in the produced-kinds set, so a
+    filter-first order drops the stem with no error and no warning. ``root`` is the
+    analysis_dir on the Analysis side and bundle.root on the Bundle side.
+
+    ``cfg_system`` is the system configuration object, when the caller has the object. The
+    DEM-resolution figures take ``crs.horizontal_epsg`` from the object, and the report rule's
+    adapter is a caller whose analysis directory carries no system configuration file. A caller
+    that passes none relies on ``{root}/cfg_system.yaml``, as
+    ``_dem_resolution_plots._horizontal_epsg`` shows. Every renderer accepts the keyword so the
+    dispatch stays uniform, and the renderers that read no system configuration ignore the keyword.
     """
+    for kind in eda_cfg.enabled_plots:
+        if kind not in _EDA_RENDERERS:
+            raise ValueError(f"unknown EDA plot kind {kind!r}; known: {sorted(_EDA_RENDERERS)}")
     out: list[Path] = []
     for kind in eda_cfg.enabled_plots:
         if only_kinds is not None and kind not in only_kinds:
             continue
-        renderer = _EDA_RENDERERS.get(kind)
-        if renderer is None:
-            raise ValueError(f"unknown EDA plot kind {kind!r}; known: {sorted(_EDA_RENDERERS)}")
+        renderer = _EDA_RENDERERS[kind]
         # Absence gate (bundle-safe, CALLEE-side). A calc member that skipped wrote no
         # backing zarr, so skip rather than open a non-existent store -- Bundle.eda(
         # plots_only=True) passes only_kinds=None (render-all) and would otherwise crash
@@ -86,7 +99,14 @@ def render_eda_plots(
         # Render-all callers that carry no enumeration (Bundle.eda(plots_only=True),
         # eda/_notebook.py) pass must_emit=None and KEEP the skip-with-warning, so the warning
         # that surfaces genuine kind/stem drift is preserved exactly where it is still meaningful.
-        if not artifact.exists() and kind in (must_emit or ()) and kind not in _ALWAYS_EMIT_KINDS:
+        # A kind with no eda/ backing artifact at all (the DEM-resolution figures read the
+        # experiment datatree at the root and no calc member writes an eda/ store for them) has
+        # nothing for this gate to test: the absent store is the NORMAL state, not drift. Without
+        # this branch the gate warned a false "degradation panel is rendered" under must_emit and,
+        # on every render-all route (Bundle.eda, the notebook cell), skipped the figure outright.
+        if kind in _NO_EDA_BACKING_KINDS:
+            pass
+        elif not artifact.exists() and kind in (must_emit or ()) and kind not in _ALWAYS_EMIT_KINDS:
             warnings.warn(
                 f"EDA plot kind {kind!r} is a report target but its backing "
                 f"artifact {artifact} is absent, so the degradation panel is rendered rather "
@@ -102,7 +122,7 @@ def render_eda_plots(
                 stacklevel=2,
             )
             continue
-        out.append(renderer(root, cfg_analysis=cfg_analysis, eda_cfg=eda_cfg))
+        out.append(renderer(root, cfg_analysis=cfg_analysis, eda_cfg=eda_cfg, cfg_system=cfg_system))
     return out
 
 
@@ -111,6 +131,7 @@ def _render_config_diff_maps(
     *,
     cfg_analysis: analysis_config,
     eda_cfg: eda_config,
+    cfg_system=None,
 ) -> Path:
     """Config-diff-maps EDA plot (redesign, /design-figure iteration 1).
 
@@ -122,21 +143,21 @@ def _render_config_diff_maps(
     serial reference maps. Compute-config labels are derived from config attrs (never
     the member_id name). Emits under PRIMARY-ROOTED plots/eda/ as config_diff_maps.html.
 
-    plot_id `config_diff_maps` (== on-disk stem, ADR-2). Existing bundles carrying the
-    legacy `eda_cross_sim_identity` enabled_plots key are normalized to this kind by
-    config/eda.py::_rewrite_legacy_eda_plot_kind (Bundle.eda() back-compat).
+    plot_id `config_diff_maps` (== on-disk stem). The `eda_cross_sim_identity`
+    key is a kind the render refuses, as it refuses any unknown kind; a cfg_analysis.yaml that lists it is
+    edited to list `config_diff_maps`.
     """
     from hhemt.eda._config_diff import build_config_diff_figure, config_diff_source_paths
 
     plot_id = canonical_plot_id("config_diff_maps")
-    fig = build_config_diff_figure(root)
+    fig = build_config_diff_figure(root, cfg_system=cfg_system)
 
     output_path = root / "plots" / "eda" / f"{plot_id}.html"
     html_text = _fig_to_html(fig, plotly_js_mode=eda_cfg.plotly_js_mode)
     return emit_plot_with_sources(
         html_text,
         output_path,
-        source_paths=config_diff_source_paths(root),  # consolidated tree + one hydraulics.inp
+        source_paths=config_diff_source_paths(root, cfg_system=cfg_system),  # consolidated tree + one hydraulics.inp
         analysis_dir=root,
         output_format="html",
     )
@@ -147,6 +168,7 @@ def _render_rank_sensitivity(
     *,
     cfg_analysis: analysis_config,
     eda_cfg: eda_config,
+    cfg_system=None,
 ) -> Path:
     """Rank-sensitivity EDA plot (within-family rank-N vs rank-1). Figure body is a
     /eda-spinup seam; emits primary-rooted plots/eda/eda_rank_sensitivity.html and declares
@@ -174,6 +196,7 @@ def _render_resume_sensitivity(
     *,
     cfg_analysis: analysis_config,
     eda_cfg: eda_config,
+    cfg_system=None,
 ) -> Path:
     """Resume-sensitivity EDA plot (clean-vs-resume). Figure body is a /eda-spinup seam;
     emits primary-rooted plots/eda/eda_resume_sensitivity.html and declares BOTH
@@ -201,6 +224,7 @@ def _render_cross_hardware_magnitude(
     *,
     cfg_analysis: analysis_config,
     eda_cfg: eda_config,
+    cfg_system=None,
 ) -> Path:
     """Cross-hardware-magnitude EDA plot (ADR-4 1-GPU vs 1-rank serial-CPU). Figure body
     is a /eda-spinup seam; emits primary-rooted plots/eda/eda_cross_hardware_magnitude.html
@@ -626,7 +650,9 @@ def _render_b4b(
     )
 
 
-def _render_raw_byte_identity(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
+def _render_raw_byte_identity(
+    root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config, cfg_system=None
+) -> Path:
     """Cross-hardware results comparison (b4b), reused per-family over each primary's
     own subs (serves both the clean and resume primaries). Reads eda/raw_byte_identity.zarr;
     R10 honest-degradation panel when raw outputs were cleared."""
@@ -681,6 +707,20 @@ def _fig_to_html(fig: go.Figure, *, plotly_js_mode: str) -> str:
 #: renderer emits an honest-degradation panel on absent/degraded backing data. render_eda_plots
 #: MUST NOT absence-skip these, or an enumerated report() target goes unproduced (WorkflowError).
 _ALWAYS_EMIT_KINDS = frozenset({"raw_byte_identity"})
+
+#: EDA kinds whose renderer reads the experiment datatree at the root and has NO eda/{stem}.zarr
+#: backing artifact (the four DEM-resolution figures). render_eda_plots tests membership BEFORE
+#: the absence gate and skips the gate for these. Distinct from _ALWAYS_EMIT_KINDS, which also
+#: promises an honest-degradation panel on absent data: these renderers promise no such panel,
+#: they have no backing artifact whose absence could be tested.
+_NO_EDA_BACKING_KINDS = frozenset(
+    {
+        "dem_resolution_cost_error",
+        "dem_resolution_coupling_table",
+        "dem_resolution_diff_maps",
+        "dem_resolution_error_ecdf",
+    }
+)
 
 _EDA_RENDERERS = {
     "config_diff_maps": _render_config_diff_maps,

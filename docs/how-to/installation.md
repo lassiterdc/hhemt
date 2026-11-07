@@ -1,70 +1,49 @@
 # Installation
 
-## Before you start
+## Goal
+
+Install hhemt with the pinned dependencies into a conda environment on a workstation or a cluster.
+
+## Prerequisites
 
 --8<-- "platform-support.md"
 
-You also need `conda` (Miniforge or Miniconda).
+Install `conda` from Miniforge or Miniconda first.
+
+## Key references
+
+- [Environment constraints](../explanation/limitations.md#environment-constraints) gives the reasoning for the recommended route.
+- [Compile the solver](compiling-the-solver.md) follows the install.
 
 ## Install
 
-### Option A (recommended): full conda env from yaml
+### Option A, the recommended full conda environment
 
-The repo ships an `environment.yaml` that pins every runtime dependency including the Snakemake SLURM executor plugins required for HPC `batch_job` orchestration. Use this for production HPC installs.
+The repository ships an `environment.yaml` that pins every runtime dependency, including the Snakemake SLURM executor plugins that HPC `batch_job` orchestration requires. Use Option A for production HPC installs.
 
 --8<-- "install-commands.md"
 
-Both `--no-deps` flags are required, not optional.
+Both `--no-deps` flags are required.
 
-??? note "When `PYTHONNOUSERSITE=1` is needed, and why it is not above"
-    `environment.yaml` documents two ways to build the environment. The commands
-    above are its *direct-create* route, which does not set `PYTHONNOUSERSITE`. Its
-    other route builds a bare environment first
-    (`conda create --no-default-packages`) and updates into it, and that one does set
-    `export PYTHONNOUSERSITE=1` before the update.
+??? note "Set PYTHONNOUSERSITE=1 in the environment build"
+    `environment.yaml` documents the routes that build the environment. The commands above are the direct-create route, and that route sets no `PYTHONNOUSERSITE`. The bare-environment route builds a bare environment first with `conda create --no-default-packages`, updates into that environment, and sets `export PYTHONNOUSERSITE=1` before the update.
 
-    The variable stops Python from adding your `~/.local` packages to `sys.path`. Set
-    it if you keep packages there and want to be certain the environment you just
-    built is the one being used. It is also load-bearing at run time on a cluster,
-    where a stray `~/.local` package can otherwise shadow the environment inside a
-    batch job.
+    The variable stops Python from adding your `~/.local` packages to `sys.path`. Set the variable when you keep packages there and want certainty that the environment you built is the environment in use. The variable also matters on a cluster at run time, where a stray `~/.local` package can shadow the environment inside a batch job.
 
-??? note "Why `--no-deps` is required"
-    `--no-deps` prevents `pip install -U` from touching the conda graph at all. It
-    now guards only against PyPI wheels displacing conda's `numpy`/`pandas`:
-    swmmio's real runtime dependencies are declared in `environment.yaml`'s conda
-    section, and `pyproject.toml` does pin `pyswmm` and `swmm-toolkit`, but pinning
-    them says nothing about whether pip may replace conda's `numpy`/`pandas`.
-
-    The original hazard was narrower and no longer applies at the pinned version.
-    `swmmio 0.8.5` declared `pyswmm<2.0` and `numpy<2.0`, so a dependency-resolving
-    install downgraded the conda-installed `pyswmm 2.0.1` to `1.5.1` and broke
-    `prepare_scenario`'s SWMM-runoff step upstream of every render. At the pinned
-    `0.8.2` that risk is gone: it declares no `pyswmm` requirement at all, and its
-    numpy/pandas entries are floors rather than caps.
+??? note "Reason for the --no-deps requirement"
+    `--no-deps` stops `pip install -U` from touching the conda dependency graph. The flag guards against PyPI wheels displacing the conda `numpy` and `pandas`. The conda section of `environment.yaml` declares the real runtime dependencies of swmmio, and `pyproject.toml` pins `pyswmm` and `swmm-toolkit`, but a pin leaves open whether pip may replace the conda `numpy` and `pandas`.
 
     `scripts/check_env_lock_consistency.py` enforces this invariant in CI.
 
-??? note "What `environment-lock.yaml` is, and why it is not a lockfile"
-    `environment-lock.yaml` is a `conda env export` snapshot, useful for
-    *inspecting* the exact versions of a known-good env. It is **not** a portable
-    lockfile: it is single-platform, and recreating an env from it still runs its
-    `pip:` block. If you use it, apply the same two `--no-deps` post-create steps
-    above. For genuine bit-level cross-machine reproducibility, generate a
-    multi-platform `conda-lock.yml` instead.
+??? note "environment-lock.yaml is a snapshot and no lockfile"
+    `environment-lock.yaml` is a `conda env export` snapshot, useful for inspecting the exact versions of a known-good environment. The file is a single-platform snapshot and no portable lockfile, and recreating an environment from the file still runs the `pip:` block of the file. When you use the file, apply the same `--no-deps` post-create steps as above. Generate a multi-platform `conda-lock.yml` for bit-level reproducibility across machines.
 
-### Option B (lightweight): pip extras only
+### Option B, the lightweight pip extras
 
-> **Option B is a reduced-support path, and SWMM is not the reason.** `pyproject.toml`
-> pins `swmm-toolkit` and `pyswmm` directly, so a pip-only environment resolves a
-> stack that passes `prepare_scenario`'s runtime validation guard. What Option B
-> does not give you is the rest of what `environment.yaml` pins: the HPC stack and
-> the exact conda-resolved graph Option A reproduces. If the guard does refuse a
-> stack you assembled yourself, it names the offending versions; the override is
-> `HHEMT_ALLOW_UNVALIDATED_SWMM_STACK=1`, at your own risk. Use Option A for
-> production HPC runs.
+!!! warning "Option B is a reduced-support path"
+    `pyproject.toml` pins `swmm-toolkit` and `pyswmm` directly, so a pip-only environment passes the SWMM guard. [Environment constraints](../explanation/limitations.md#environment-constraints) lists the missing support of Option B and the use of the guard override. Use Option A for production HPC installs.
 
-When you control the conda env separately (e.g., shared HPC env, CI), install the toolkit via pip extras matched to your usage:
+A conda environment that you control separately, such as a shared HPC environment or a CI job, takes the toolkit through pip extras that match the usage.
 
 ```bash
 conda create -n hhemt python=3.11
@@ -72,21 +51,14 @@ conda activate hhemt
 pip install -e '.[hpc]'
 ```
 
-The `[hpc]` extra pulls `snakemake-executor-plugin-slurm` and
-`snakemake-executor-plugin-slurm-jobstep`, required for sensitivity `batch_job`
-analyses.
+The `[hpc]` extra pulls `snakemake-executor-plugin-slurm` and `snakemake-executor-plugin-slurm-jobstep` for sensitivity `batch_job` analyses.
 
-??? note "Where the SLURM plugins are used, and what happened to `viz-export`"
-    The extra is declared in `pyproject.toml`. The call sites are
-    `SnakemakeWorkflowBuilder._run_snakemake_slurm_detached` and
-    `._validate_batch_job_dry_run` in `src/hhemt/workflow.py`, both of which pass
-    `--executor slurm`.
+??? note "SLURM plugin call sites and the kaleido dependency"
+    `pyproject.toml` declares the extra. The call sites are `SnakemakeWorkflowBuilder._run_snakemake_slurm_detached` and `._validate_batch_job_dry_run` in `src/hhemt/workflow.py`, and both pass `--executor slurm`.
 
-    `kaleido`, required for Plotly to SVG figure export, is now a **core**
-    dependency with no extra needed. The empty `viz-export` extra is retained as a
-    no-op alias for one deprecation cycle.
+    `kaleido`, required for Plotly to SVG figure export, is a **core** dependency and needs no extra.
 
-For purely local non-HPC use (laptop development with `multi_sim_run_method: serial`), neither extra is required:
+Purely local use without HPC, such as local development with `multi_sim_run_method: serial`, needs neither extra.
 
 ```bash
 pip install -e .

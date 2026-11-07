@@ -18,7 +18,7 @@ config["n_sims"] = 4
 config["is_sensitivity"] = True
 config["n_members"] = 4
 config["independent_vars"] = ['n_devices']
-config["group_by_var"] = 'run_mode'
+config["group_by_var"] = 'analysis.run_mode'
 config["report"] = {"generated_at": _dt.now().isoformat(timespec="seconds")}
 
 # Paired (member_id, event_id) lists for per-member per-event plot rules.
@@ -48,7 +48,7 @@ onerror:
 
 rule all:
     input:
-        "_status/a_setup_target_0_complete.flag", "_status/e_consolidate_member-0_complete.flag", "_status/e_consolidate_member-1_complete.flag", "_status/e_consolidate_member-2_complete.flag", "_status/e_consolidate_member-3_complete.flag", "_status/f_consolidate_experiment_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "plots/workflow_performance.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/per_sim/member-{member_id}/{event_id}/peak_flood_depth__member.{member_id}__evt.{event_id}.html", zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT), expand("plots/sensitivity/per_sim/member-{member_id}/{event_id}/conduit_flow__member.{member_id}__evt.{event_id}.html", zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT), expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.zip"
+        "_status/a_setup_target_0_complete.flag", "_status/e_consolidate_member-0_complete.flag", "_status/e_consolidate_member-1_complete.flag", "_status/e_consolidate_member-2_complete.flag", "_status/e_consolidate_member-3_complete.flag", "_status/f_consolidate_experiment_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "plots/workflow_performance.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/per_sim/member-{member_id}/{event_id}/peak_flood_depth__member.{member_id}__evt.{event_id}.html", zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT), expand("plots/sensitivity/per_sim/member-{member_id}/{event_id}/conduit_flow__member.{member_id}__evt.{event_id}.html", zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT), expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.format"
 
 rule setup_target_0:
     output: "_status/a_setup_target_0_complete.flag"
@@ -966,10 +966,8 @@ rule render_report:
         expand("plots/sensitivity/per_sim/member-{member_id}/{event_id}/conduit_flow__member.{member_id}__evt.{event_id}.html", zip=True, member_id=MEMBER_EVENT_PAIRS_MEMBER, event_id=MEMBER_EVENT_PAIRS_EVT),
         expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices'])
     output:
-        "analysis_report.{format}"
-    wildcard_constraints:
-        format="zip|html"
-    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/render_report_{format}.log"
+        "analysis_report.format"
+    log: "{HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/synth_sensitivity/logs/render_report.log"
     resources:
         slurm_partition="None",
         runtime=30,
@@ -983,6 +981,5 @@ rule render_report:
             --system-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/system_config.yaml \
             --analysis-config {HHEMT_CACHE}/synthetic_test_runs/{SLUG}/synth_sensitivity/analysis_config.yaml \
             --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
-            --format {wildcards.format} \
             2>&1 | tee {log}
         """

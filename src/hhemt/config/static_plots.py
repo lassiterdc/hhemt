@@ -113,7 +113,10 @@ class StaticPlotBaseConfig(cfgBaseModel):
 
     # --- caption / panel labeling (publication) ---
     caption: str | None = Field(None, description="Figure caption text.")
-    subplot_label: str | None = Field(None, description="(a)/(b)/1/2 publication panel label.")
+    subplot_label: str | None = Field(
+        None,
+        description="Text drawn at the upper left of the figure's first panel, such as (a) or 1. None draws no label.",
+    )
 
     # --- exact figure geometry (publication: exact dimensions, no reflow) ---
     figure_width_inches: float = Field(7.0, gt=0.0)
@@ -168,7 +171,8 @@ class StaticPlotBaseConfig(cfgBaseModel):
     panel_scale_policy: PanelScalePolicy = Field(
         PanelScalePolicy.shared,
         description=(
-            "Shared vs independent colorbar scale ACROSS multi-panel figures. "
+            "Colorbar ranges of the peak-flood-depth figure (depth and water surface elevation) across events. "
+            "shared: each range spans all events. independent: each range spans that event's figure only. "
             "Owns the cross-panel axis exclusively (D2)."
         ),
     )
@@ -177,9 +181,11 @@ class StaticPlotBaseConfig(cfgBaseModel):
     vmin_vmax_strategy: VminVmaxStrategy = Field(
         VminVmaxStrategy.absolute,
         description=(
-            "How a single colorbar's [vmin, vmax] is derived: 'absolute' uses the "
-            "vmin/vmax fields (or data min/max when None); 'quantile' uses "
-            "vmax_quantile. RESTRICTED to {absolute, quantile} at the base (D2): "
+            "Derivation of a single colorbar's [vmin, vmax]. absolute: the "
+            "vmin/vmax fields (or data min/max when None). quantile: the vmax_quantile of the values "
+            "sets the upper bound of the peak-flood-depth map (across all events under panel_scale_policy "
+            "shared, within the figure under independent) and of the peak-flow colorbar (within the figure). "
+            "RESTRICTED to {absolute, quantile}: "
             "per_panel_max / shared_across_panels are cross-PANEL concerns owned "
             "by panel_scale_policy."
         ),
@@ -228,7 +234,9 @@ class StaticPlotBaseConfig(cfgBaseModel):
     value_encoding_policy: ValueEncodingPolicy = Field(
         ValueEncodingPolicy.colorscale,
         description=(
-            "colorscale | one_to_one_dict | value_to_shape — how a data variable maps to a visual encoding (user O-e)."
+            "Encoding of each group value in the sensitivity benchmarking figure. colorscale: the series "
+            "palette color of the group. one_to_one_dict: every distinct group value takes its own palette "
+            "color by sorted position. value_to_shape: every distinct group value takes its own marker shape."
         ),
     )
 
@@ -388,7 +396,6 @@ class SensitivityBenchmarkingStaticConfig(StaticPlotBaseConfig):
         description="Categorical per-run_mode palette (default Okabe-Ito, CVD-safe).",
     )
     cpu_marker: MplMarker = Field("o", description="Marker for CPU run-mode series.")
-    gpu_marker: MplMarker = Field("s", description="Marker for GPU run-mode series.")
     log_y: bool = Field(False, description="Log-scale the y-axis (wall-clock / compute-cost panels).")
 
 

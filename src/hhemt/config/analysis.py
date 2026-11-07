@@ -122,21 +122,19 @@ class ForceRerunSpec(cfgBaseModel):
     stage: Literal["simulate", "process", "consolidate", "render"] = Field(
         "simulate",
         description=(
-            "Earliest stage to force; that stage and everything downstream re-run. "
-            "'simulate' (default) preserves the historical force_rerun meaning. "
-            "'render' -- the plot + export + render rule family that produces "
-            "analysis_report.html. Bundling is NOT on this axis: it emits no Snakemake "
-            "rule and is always explicit and user-invoked."
+            "Earliest stage to force. The stage and everything downstream re-run. 'simulate', the default, "
+            "preserves the historical force_rerun meaning. 'render' covers the plot, export, and render "
+            "rule family that produces analysis_report.html. Bundling is NOT on this axis, because "
+            "bundling emits no Snakemake rule and is always explicit and invoked by the caller."
         ),
     )
     models: list[Literal["triton", "tritonswmm", "swmm"]] | None = Field(
         None,
         description=(
-            "WHICH model arms to force. None (default) means every model type enabled for "
-            "this analysis, which is the historical behaviour. Naming a subset leaves the "
-            "unnamed arms' completion state entirely untouched -- their flags, their "
-            "per-model processing-log records and their chapter sets are not cleared -- so "
-            "a correct, complete arm is not invalidated by a force aimed at a damaged one."
+            "Model arms to force. None, the default, means every model type enabled for this analysis, as "
+            "in the historical behaviour. Naming a subset leaves the unnamed arms' completion state "
+            "untouched, including their flags, their per-model processing-log records, and their chapter "
+            "sets, so a correct, complete arm is not invalidated by a force aimed at a damaged arm."
         ),
     )
 
@@ -292,17 +290,16 @@ class analysis_config(cfgBaseModel):
         str,
         Field(
             ...,
-            description="analysis identifier. Used for creating analysis folder if one with the same name does not "
-            "exist.",
+            description="Analysis identifier. Used for creating the analysis folder when no folder with "
+            "the same name exists.",
             pattern=r"^[A-Za-z][A-Za-z0-9_.]*$",
         ),
     ]
     weather_event_indices: list = Field(
         ...,
-        description="List of one or more strings corresponding to fields used for indexing "
-        "unique weather events. These "
-        "must "
-        "match what is in weather_timeseries and weather_event_summary_csv.",
+        description="List of one or more strings corresponding to fields used for indexing unique weather "
+        "events. The strings must match the fields in weather_timeseries and "
+        "weather_event_summary_csv.",
     )
     weather_timeseries: Path = Field(
         ...,
@@ -316,19 +313,18 @@ class analysis_config(cfgBaseModel):
     weather_time_series_spatial_mean_rainfall_datavar: str = Field(
         ...,
         description=(
-            "Data variable in weather_timeseries corresponding to the "
-            "spatially-averaged rainfall time series the report renderers "
-            "(per_sim_peak_flood_depth / per_sim_conduit_flow event-hydrology "
-            "panels) read for the rainfall sub-panel. Required."
+            "Data variable in weather_timeseries corresponding to the spatially-averaged rainfall time "
+            "series that the report renderers read for the rainfall sub-panel, namely the event-hydrology "
+            "panels of per_sim_peak_flood_depth and per_sim_conduit_flow. Required."
         ),
     )
     rainfall_units: Literal["mm", "mm/hr"] = Field(
         ...,
-        description="Rainfall units in weather_timeseries mm or mm/hr.",
+        description="Rainfall units in weather_timeseries. The value is mm or mm/hr.",
         json_schema_extra=field_meta(
             options={
-                "mm": "Depth accumulated over each timestep (an incremental depth).",
-                "mm/hr": "Instantaneous intensity at each timestep (a rate).",
+                "mm": "Depth accumulated over each timestep, an incremental depth.",
+                "mm/hr": "Instantaneous intensity at each timestep, a rate.",
             }
         ),
     )
@@ -347,52 +343,50 @@ class analysis_config(cfgBaseModel):
     ) = Field(
         default=None,
         description=(
-            "SPDX identifier of the license for the dataset this analysis PUBLISHES (its "
-            "consolidated outputs). There is no default and nothing but publishing needs it: "
-            "a config without it loads, runs, consolidates and bundles normally, and "
-            "publish() refuses to deposit until one is chosen. The value is written into the "
-            "RO-Crate root Dataset.license when the outputs are consolidated and read back at "
-            "publish time, so choosing it after consolidating means re-running "
-            "reprocess(start_with='consolidate', regenerate_existing=True) before publishing. "
-            "Mutually exclusive with dataset_license_file, which supplies a license that is not "
-            "one of the seven ids here: set at most one of the two. "
-            "'NonCommercial' is broader than 'education only' and does not turn on who the user is."
+            "SPDX identifier of the license for the dataset this analysis PUBLISHES, meaning the "
+            "consolidated outputs. No default exists, and only publishing needs a license. A config "
+            "without a license loads, runs, consolidates, and bundles normally, and `publish()` refuses to "
+            "deposit until a license is chosen. The value is written into the RO-Crate root "
+            "Dataset.license when the outputs are consolidated and read back at publish time, so choosing "
+            "a license after consolidating means re-running `reprocess(start_with='consolidate', "
+            "regenerate_existing=True)` before publishing. Mutually exclusive with dataset_license_file, "
+            "the field for a license outside the listed ids. Set either field and never both. "
+            "'NonCommercial' is broader than 'education only' and applies to every reuser."
         ),
         json_schema_extra=field_meta(
             options={
                 "CC0-1.0": (
-                    "Public-domain dedication: no conditions at all; commercial use and derivatives allowed, "
-                    "no attribution required."
+                    "Public-domain dedication with no conditions at all. Commercial use and derivatives are "
+                    "allowed, and no attribution is required."
                 ),
-                "CC-BY-4.0": "Attribution required; commercial use and derivatives allowed.",
+                "CC-BY-4.0": "Attribution required. Commercial use and derivatives allowed.",
                 "CC-BY-SA-4.0": (
-                    "Attribution required; commercial use and derivatives allowed, and derivatives must be "
+                    "Attribution required. Commercial use and derivatives allowed, and derivatives must be "
                     "shared under this same license."
                 ),
-                "CC-BY-NC-4.0": "Attribution required; derivatives allowed; commercial use prohibited.",
+                "CC-BY-NC-4.0": "Attribution required. Derivatives allowed. Commercial use prohibited.",
                 "CC-BY-NC-SA-4.0": (
-                    "Attribution required; commercial use prohibited; derivatives allowed and must be shared "
+                    "Attribution required. Commercial use prohibited. Derivatives allowed and must be shared "
                     "under this same license."
                 ),
-                "CC-BY-ND-4.0": "Attribution required; commercial use allowed; no derivatives may be shared.",
-                "CC-BY-NC-ND-4.0": ("Attribution required; commercial use prohibited; no derivatives may be shared."),
+                "CC-BY-ND-4.0": "Attribution required. Commercial use allowed. No derivatives may be shared.",
+                "CC-BY-NC-ND-4.0": ("Attribution required. Commercial use prohibited. No derivatives may be shared."),
             }
         ),
     )
     dataset_license_file: Path | None = Field(
         default=None,
         description=(
-            "Path to a YAML license-details file, for a dataset license that is NOT one of the "
-            "seven SPDX ids dataset_license accepts. The file is one YAML mapping carrying a "
-            "required 'name' (the license's human title) and an optional 'link' (the address "
-            "its owner publishes it at); no other key is read. Mutually exclusive with "
-            "dataset_license: set at most one of the two, and neither is required at load "
-            "because only publishing needs a license. Like dataset_license, the value is "
-            "written into the RO-Crate root Dataset.license when the outputs are consolidated, "
-            "so choosing it after consolidating means re-running "
-            "reprocess(start_with='consolidate', regenerate_existing=True) before publishing. "
-            "Because the terms live in the file rather than in this config, a deposit's license "
-            "is reproducible only if the file is carried alongside it -- the bundle does carry it."
+            "Path to a YAML license-details file, for a dataset license outside the SPDX ids that "
+            "dataset_license accepts. The file is a YAML mapping carrying a required 'name', the human "
+            "title of the license, and an optional 'link', the address where the owner publishes the "
+            "license. No other key is read. Mutually exclusive with dataset_license. Set either field and "
+            "never both, and neither is required at load because only publishing needs a license. Like "
+            "dataset_license, the value is written into the RO-Crate root Dataset.license when the outputs "
+            "are consolidated, so choosing the file after consolidating means re-running "
+            "`reprocess(start_with='consolidate', regenerate_existing=True)` before publishing. The terms "
+            "live in the file and not in this config, so the license of a deposit is reproducible only if "
+            "the file is carried alongside the deposit. The bundle carries the file."
         ),
         json_schema_extra=field_meta(),
     )
@@ -420,18 +414,17 @@ class analysis_config(cfgBaseModel):
     run_mode: Literal["serial", "openmp", "mpi", "hybrid", "gpu"] = Field(
         ...,
         description=(
-            "Per-simulation compute configuration. Selects which parallelism the "
-            "solver uses, and therefore which of n_mpi_procs / n_omp_threads / "
-            "n_gpus must be set."
+            "Per-simulation compute configuration. Selects the parallelism the solver uses, and therefore "
+            "the fields among n_mpi_procs, n_omp_threads, and n_gpus that must be set."
         ),
         json_schema_extra=field_meta(
             options={
                 "serial": "One process, one thread, no GPU. n_mpi_procs and n_omp_threads must be 1 or unset.",
-                "openmp": "Shared-memory threading on one node. n_omp_threads must be > 1; no MPI, no GPU.",
-                "mpi": "Distributed MPI ranks, one thread each. n_mpi_procs must be > 1 and >= n_nodes; no GPU.",
+                "openmp": "Shared-memory threading on one node. n_omp_threads must be > 1. MPI and GPU stay off.",
+                "mpi": "Distributed MPI ranks, one thread each. n_mpi_procs must be > 1 and >= n_nodes. GPU stays off.",
                 "hybrid": "MPI ranks each running OpenMP threads. Both n_mpi_procs and "
-                "n_omp_threads must be > 1; no GPU.",
-                "gpu": "GPU-accelerated solve. n_gpus must be >= 1; MPI and OpenMP are optional alongside it.",
+                "n_omp_threads must be > 1. GPU stays off.",
+                "gpu": "GPU-accelerated solve. n_gpus must be >= 1. MPI and OpenMP are optional alongside the GPU.",
             }
         ),
     )
@@ -477,10 +470,9 @@ class analysis_config(cfgBaseModel):
         # requiredness are now DECLARED below and enforced from that declaration,
         # so the two cannot diverge again.
         description=(
-            "Total wall-clock duration, in minutes, requested for the SLURM job "
-            "that runs the simulation ensemble. Also used as the sim job's "
-            "plausible-lifetime bound by the wait-on-sentinel poll cap and the "
-            "stale-token fail-safe; when unset those fall back to "
+            "Total wall-clock duration, in minutes, requested for the SLURM job that runs the simulation "
+            "ensemble. Also the plausible-lifetime bound of the sim job for the wait-on-sentinel poll cap "
+            "and the stale-token fail-safe. When unset, both the poll cap and the fail-safe fall back to "
             "hpc_max_wait_for_inflight_min."
         ),
         json_schema_extra=field_meta(
@@ -507,22 +499,21 @@ class analysis_config(cfgBaseModel):
         default=12000,
         gt=0,
         description=(
-            "Memory allocation (in MB) for the setup_target SLURM rule that runs "
-            "system-input processing (DEM coarsening, Manning's raster) and, in native mode, "
-            "asserts that every enabled model already has a successful build. Default 12 GB "
-            "covers 0.35 m DEM processing (empirical peak ~5.15 GB parent-process RSS) with "
-            "2.3x headroom; the rule performs no compile, so it needs no compile-side headroom. "
-            "Increase for higher-resolution DEMs or larger watersheds."
+            "Memory allocation, in MB, for the setup_target SLURM rule. The rule runs system-input "
+            "processing for DEM coarsening and the Manning's raster and, in native mode, asserts that "
+            "every enabled model already has a successful build. The default of 12 GB covers 0.35 m DEM "
+            "processing with 2.3x headroom over the empirical peak of about 5.15 GB parent-process RSS. "
+            "The rule performs no compile and needs no compile-side headroom. Increase for "
+            "higher-resolution DEMs or larger watersheds."
         ),
     )
     hpc_runtime_min_for_setup: int = Field(
         default=60,
         gt=0,
         description=(
-            "Time allocation (in minutes) for the setup_target SLURM rule. Default 60 "
-            "covers 0.35 m DEM processing (empirical wall time ~2:24) with headroom; the "
-            "rule performs no compile. Increase for higher-resolution DEMs or slower "
-            "nodes."
+            "Time allocation, in minutes, for the setup_target SLURM rule. The default 60 covers 0.35 m "
+            "DEM processing with headroom over the empirical wall time of about 2:24. The rule performs no "
+            "compile. Increase for higher-resolution DEMs or slower nodes."
         ),
     )
 
@@ -530,19 +521,15 @@ class analysis_config(cfgBaseModel):
         default=240,
         gt=0,
         description=(
-            "Time allocation (in minutes) for the per-scenario output-processing SLURM "
-            "rule — the one whose MEMORY is set by "
-            "hpc_mem_allocation_for_sim_output_processing_mb. Default 240 is the value "
-            "the sensitivity paths already used; the multisim path previously hardcoded "
-            "120 and this field retires that 2x self-disagreement. Raise it for "
-            "fine-grid or long simulations: processing time scales with output VOLUME "
-            "(timesteps x grid cells x model count), which is why this is a plain "
-            "number rather than a value derived from the memory allocation — no "
-            "physical relation ties walltime to job RAM, and inventing one would state "
-            "an assumption as a computed value. NOT hpc_runtime_min_for_setup (a "
-            "DIFFERENT rule: DEM processing and the build assertion) and NOT any "
-            "process_* "
-            "knob (those are in-runner byte/count budgets, not SLURM allocations)."
+            "Time allocation, in minutes, for the per-scenario output-processing SLURM rule whose MEMORY "
+            "is set by hpc_mem_allocation_for_sim_output_processing_mb. The default 240 is the value every "
+            "workflow path reads from this field. Raise the value for fine-grid or long simulations, "
+            "because processing time scales with output VOLUME, the product of timesteps, grid cells, and "
+            "model count. The field is a plain number and no value derived from the memory allocation, "
+            "because no physical relation ties walltime to job RAM and inventing one would state an "
+            "assumption as a computed value. The field is distinct from hpc_runtime_min_for_setup, a "
+            "different rule for DEM processing and the build assertion, and from every process_* knob. The "
+            "process_* knobs are in-runner byte and count budgets and no SLURM allocations."
         ),
     )
 
@@ -550,18 +537,15 @@ class analysis_config(cfgBaseModel):
         default=30,
         gt=0,
         description=(
-            "Time allocation (in minutes) for the analysis-level `consolidate` SLURM "
-            "rule — the one whose MEMORY is set by "
-            "hpc_mem_allocation_for_analysis_output_consolidation_mb. Default 30 "
-            "reproduces the value that rule carried as a hardcoded literal, so an "
-            "analysis config that omits this field is unchanged. Raise it when the "
-            "consolidation fan-in is large: the rule's cost is dominated by "
-            "whole-population walks whose length scales with the number of "
-            "scenarios, not by the size of any one of them, which is why this is a "
-            "plain number rather than a value derived from the memory allocation. "
-            "NOT hpc_runtime_min_for_setup (a DIFFERENT rule — DEM processing and "
-            "compilation) and NOT hpc_runtime_min_for_sim_output_processing (the "
-            "per-scenario processing rule)."
+            "Time allocation, in minutes, for the analysis-level `consolidate` SLURM rule whose MEMORY is "
+            "set by hpc_mem_allocation_for_analysis_output_consolidation_mb. The default 30 reproduces the "
+            "value that the rule carried as a hardcoded literal, so an analysis config that omits this "
+            "field is unchanged. Raise the value when the consolidation fan-in is large, because the cost "
+            "of the rule is dominated by whole-population walks whose length scales with the number of "
+            "scenarios and not with the size of any single scenario. The field is a plain number and no "
+            "value derived from the memory allocation. The field is distinct from "
+            "hpc_runtime_min_for_setup, a different rule for DEM processing and compilation, and from "
+            "hpc_runtime_min_for_sim_output_processing, the per-scenario processing rule."
         ),
     )
     hpc_max_wait_for_inflight_min: int = Field(
@@ -569,15 +553,14 @@ class analysis_config(cfgBaseModel):
         ge=60,
         le=10080,
         description=(
-            "Backstop cap (minutes) on the v2 wait-on-sentinel rule's poll loop. "
-            "As of the wait-rule in-loop-liveness change, the wait-rule detects "
-            "job death in-loop (per-job squeue/sacct probe every ~5 min) and "
-            "writes a _failed marker on confirmed death, so this cap is now a "
-            "pure safety backstop (NOT walltime-derived) — it fires only if a "
-            "job is stuck-but-alive past the cap. Default 10080 (1 week, the "
-            "field max) makes waits effectively indefinite, safe because in-loop "
-            "detection — not the timer — terminates a dead-job wait. Bounds: 60 "
-            "(1h) to 10080 (1 week). Lower it only to force an earlier give-up."
+            "Backstop cap, in minutes, on the poll loop of the v2 wait-on-sentinel rule. After the "
+            "wait-rule in-loop-liveness change, the wait-rule detects job death in-loop with a per-job "
+            "squeue/sacct probe about every 5 min and writes a _failed marker on confirmed death, so the "
+            "cap is a pure safety backstop and no walltime-derived limit. The cap fires only if a job is "
+            "stuck-but-alive past the cap. The default 10080 min is 1 week and the field maximum, so waits "
+            "are effectively indefinite. The indefinite wait is safe because in-loop detection and not the "
+            "timer terminates a dead-job wait. The valid range is 60 min, equal to 1 hour, to 10080 min, "
+            "equal to 1 week. Lower the cap only to force an earlier give-up."
         ),
     )
     hpc_no_progress_timeout_min: int | None = Field(
@@ -585,16 +568,14 @@ class analysis_config(cfgBaseModel):
         ge=10,
         le=10080,
         description=(
-            "Backstop cap (minutes) on the tmux orchestrator's no-progress stall "
-            "watchdog (_wait_for_tmux_session_completion). As of the watchdog "
-            "liveness-gate change, the stall timer is SUSPENDED while SLURM "
-            "reports at least one live job for the run, so this cap is a pure "
-            "safety backstop (NOT a queue-wait tolerance) - it fires only when "
-            "Snakemake is alive AND SLURM has no live work AND _status/ has not "
-            "advanced. None (default) keeps the legacy walltime-derived fallback "
-            "max(30, 6 * hpc_time_min_per_sim), which is NOT queue-aware on its "
-            "own and is retained only so existing configs are unchanged. Bounds: "
-            "10 (10 min) to 10080 (1 week). Mirrors hpc_max_wait_for_inflight_min."
+            "Backstop cap, in minutes, on the no-progress stall watchdog of the tmux orchestrator, "
+            "_wait_for_tmux_session_completion. After the watchdog liveness-gate change, the stall timer "
+            "is SUSPENDED while SLURM reports at least one live job for the run, so the cap is a pure "
+            "safety backstop and no queue-wait tolerance. The cap fires only when Snakemake is alive AND "
+            "SLURM has no live work AND _status/ has not advanced. None, the default, keeps the "
+            "walltime-derived fallback `max(30, 6 * hpc_time_min_per_sim)`. The fallback is NOT "
+            "queue-aware by itself and is retained only so existing configs are unchanged. The valid range "
+            "is 10 min to 10080 min, equal to 1 week. Mirrors hpc_max_wait_for_inflight_min."
         ),
     )
     hpc_max_queue_wait_min: int | None = Field(
@@ -602,214 +583,188 @@ class analysis_config(cfgBaseModel):
         ge=30,
         le=10080,
         description=(
-            "Cap (minutes) on how long the tmux orchestrator tolerates a live SLURM "
-            "job set that is continuously ALL-PENDING (never RUNNING). Distinct from "
-            "hpc_no_progress_timeout_min by construction: that one bounds the "
-            "SLURM-SILENT state (a hang), this one bounds the QUEUE-STARVED state "
-            "(partition contention). Reusing one number for both would recreate the "
-            "walltime-coupling defect the liveness gate exists to remove. Any RUNNING "
-            "observation resets the tracker. On expiry the session is killed - which "
-            "cancels the queued jobs, since the SLURM executor runs scancel on "
-            "interrupt - and a distinct queue-starved verdict is returned. None "
-            "(default) means 720 (12 h). Bounds: 30 (30 min) to 10080 (1 week)."
+            "Cap, in minutes, on how long the tmux orchestrator tolerates a live SLURM job set that is "
+            "continuously ALL-PENDING and never RUNNING. The cap is distinct from "
+            "hpc_no_progress_timeout_min by construction. hpc_no_progress_timeout_min bounds the "
+            "SLURM-SILENT state, a hang, and this cap bounds the QUEUE-STARVED state, partition "
+            "contention. Reusing a single number for both would recreate the walltime-coupling defect that "
+            "the liveness gate exists to remove. Any RUNNING observation resets the tracker. On expiry the "
+            "session is killed, cancelling the queued jobs because the SLURM executor runs scancel on "
+            "interrupt, and a distinct queue-starved verdict is returned. None, the default, means 720 "
+            "min, equal to 12 h. The valid range is 30 min to 10080 min, equal to 1 week."
         ),
     )
     resume_interruption_schedule: tuple[int, ...] | None = Field(
         default=None,
         description=(
-            "Resume-test harness ONLY. A STRICTLY INCREASING tuple of ABSOLUTE "
-            "hotstart-checkpoint indices at which a fresh TRITON/TRITON-SWMM sim is "
-            "interrupted, producing len(schedule) hotstart resumes. The unit is the "
-            "one the watcher already counts (config_NNNN.cfg files) and the one "
-            "return_the_reporting_step_from_a_cfg returns, so no conversion exists "
-            "anywhere in the mechanism and interval alignment is vacuous. An entry "
-            "beyond the sim's checkpoint count degrades gracefully (no kill fires). "
-            "Empty tuples, duplicates, non-positive entries and non-increasing "
-            "sequences are rejected. The runner arms each kill "
-            "from the PERSISTED n_resumes counter relative to the attempt's own "
-            "baseline, never from an absolute count over the cfg directory (that "
-            "directory accumulates across attempts, so an absolute predicate is "
-            "already true on attempt 2 before any forward progress). Default None "
-            "DISABLES the harness — production and clean-arm runs leave it unset and "
-            "the runner path is byte-identical to a plain proc.wait(). Incompatible "
-            "with multi_sim_run_method='1_job_many_srun_tasks' (rejected at "
-            "preflight): that mode does not get the job-end cgroup reap that makes "
-            "repeated per-attempt step teardown structurally safe under batch_job."
+            "Resume-test harness ONLY. A STRICTLY INCREASING tuple of ABSOLUTE hotstart-checkpoint "
+            "indices. A fresh TRITON/TRITON-SWMM sim is interrupted at each index, producing "
+            "`len(schedule)` hotstart resumes. The unit is the unit that the watcher already counts as "
+            "config_NNNN.cfg files, and return_the_reporting_step_from_a_cfg returns the same unit, so no "
+            "conversion exists anywhere in the mechanism and interval alignment is vacuous. An entry "
+            "beyond the checkpoint count of the sim degrades gracefully, and no kill fires. Empty tuples, "
+            "duplicates, non-positive entries, and non-increasing sequences are rejected. The runner arms "
+            "each kill from the PERSISTED n_resumes counter relative to the baseline of the attempt and "
+            "never from an absolute count over the cfg directory, because that directory accumulates "
+            "across attempts and an absolute predicate is already true on attempt 2 before any forward "
+            "progress. Default None DISABLES the harness. Production and clean-arm runs leave the field "
+            "unset, and the runner path is byte-identical to a plain `proc.wait()`. Incompatible with "
+            "multi_sim_run_method='1_job_many_srun_tasks', rejected at preflight, because that mode lacks "
+            "the job-end cgroup reap that makes repeated per-attempt step teardown structurally safe under "
+            "batch_job."
         ),
     )
     swmm_snapshot_disable: bool | None = Field(
         default=None,
         description=(
-            "Resume arm selector for the COUPLED model only. Left unset (None, the default) the "
-            "toolkit decides from the model: when the coupled hydraulics model declares at least "
-            "one pollutant and its [OPTIONS] IGNORE_QUALITY is not YES, the toolkit behaves as "
-            "if this were True, because a snapshot resume at an older TRITON build does not carry "
-            "SWMM's node and link water-quality state and exact replay does; when the coupled "
-            "build is a TRITON commit listed in `SWMM_QUALITY_SNAPSHOT_SHAS` (`hhemt.scenario`), "
-            "whose snapshot does carry that state, it behaves as if this were False and the "
-            "quality-routed run resumes from its snapshot. The coupled build is the sha the "
-            "system log records (the compiled coupled target's sha natively, the image label in "
-            "a container); an unlisted, abbreviated or unrecorded sha counts as not listed. For "
-            "every other model it behaves as if "
-            "this were False and writes the cfg byte for byte as it did before this field "
-            "became optional. An explicit True or False overrides that decision. An explicit "
-            "False keeps the snapshot route for a quality-routed model, and at a build NOT "
-            "listed in that set the processed water-quality statistics of an event that "
-            "resumed that way are withheld. "
-            "When True the "
-            "toolkit appends the line `swmm_snapshot_disable=1` to each coupled "
-            "scenario's TRITON cfg, which makes the solver leave snapshot_path_stem "
-            "EMPTY and so forces a coupled hotstart resume onto the OLD exchange-replay "
-            "fallback instead of the full-precision state snapshot. It exists to make "
-            "the replay path measurable at a pin that also carries the snapshot path, "
-            "which is what lets a replay arm and a snapshot arm be compared without a "
-            "solver-version confound. An explicit False appends NOTHING, and a run whose "
-            "model is not quality-routed and which leaves this unset emits a cfg "
-            "BYTE-IDENTICAL to one emitted before this field existed. The TRITON-only cfg never carries the key: the "
-            "key gates the SWMM coupling surface, so it is meaningless there. "
-            "THE SPELLING IS LOAD-BEARING IN TWO OTHER REPOSITORIES. The solver reads "
-            'this key through `argsd("swmm_snapshot_disable", argmap, "0")`, and arm '
-            "membership for the bit-for-bit re-run is established iff a member's own "
-            "`config_{k}.cfg` carries the literal `swmm_snapshot_disable=1` — carried "
-            "there by the solver's unknown-key cfg passthrough. Renaming the emitted key "
-            "without renaming both of those in the same change silently unassigns every "
-            "member from its arm with no error anywhere. "
-            "THE PIN IS PART OF THE CONTRACT AND NOTHING HERE CAN CHECK IT. A solver that "
-            "predates the key does not read it, and no TRITON cfg parse rejects an "
-            "unknown key, so setting this against such a solver emits the line, runs the "
-            "SNAPSHOT path, and leaves the armed-looking cfg behind as evidence. Verify "
-            "the key is present in the solver's argsd table at the pin you are running."
+            "Resume arm selector for the COUPLED model only. When left unset with the default None, the "
+            "toolkit decides from the model. If the coupled hydraulics model declares at least one "
+            "pollutant and the IGNORE_QUALITY option in [OPTIONS] is not YES, the toolkit behaves as if "
+            "the value were True, because a snapshot resume at an older TRITON build lacks the SWMM node "
+            "and link water-quality state and exact replay carries the state. If the coupled build is a "
+            "TRITON commit listed in `SWMM_QUALITY_SNAPSHOT_SHAS` in `hhemt.scenario`, whose snapshot "
+            "carries that state, the toolkit behaves as if the value were False and the quality-routed run "
+            "resumes from the snapshot. The coupled build is the sha that the system log records, namely "
+            "the sha of the compiled coupled target natively or the image label in a container. An "
+            "unlisted, abbreviated, or unrecorded sha counts as not listed. For every other model the "
+            "toolkit behaves as if the value were False and writes the cfg byte for byte as before this "
+            "field became optional. An explicit True or False overrides the decision. An explicit False "
+            "keeps the snapshot route for a quality-routed model, and at a build NOT listed in that set "
+            "the processed water-quality statistics of an event that resumed that way are withheld. When "
+            "True, the toolkit appends the line `swmm_snapshot_disable=1` to the TRITON cfg of each "
+            "coupled scenario, making the solver leave snapshot_path_stem EMPTY and forcing a coupled "
+            "hotstart resume onto the OLD exchange-replay fallback in place of the full-precision state "
+            "snapshot. The field makes the replay path measurable at a pin that also carries the snapshot "
+            "path, so a replay arm and a snapshot arm can be compared without a solver-version confound. "
+            "An explicit False appends no line, and a run whose model is not quality-routed and that "
+            "leaves the field unset emits a cfg BYTE-IDENTICAL to a cfg emitted before this field existed. "
+            "The TRITON-only cfg never carries the key, because the key gates the SWMM coupling surface "
+            "and is meaningless there. THE SPELLING IS LOAD-BEARING IN OTHER REPOSITORIES. The solver "
+            'reads the key through `argsd("swmm_snapshot_disable", argmap, "0")`, and arm membership '
+            "for the bit-for-bit re-run is established iff the `config_{k}.cfg` of a member carries the "
+            "literal `swmm_snapshot_disable=1`, carried there by the unknown-key cfg passthrough of the "
+            "solver. Renaming the emitted key without renaming all of the reads in the same change "
+            "silently unassigns every member from the arm with no error anywhere. THE PIN IS PART OF THE "
+            "CONTRACT AND NO CHECK COVERS THE PIN. A solver that predates the key ignores the key, and no "
+            "TRITON cfg parse rejects an unknown key, so setting the field against such a solver emits the "
+            "line, runs the SNAPSHOT path, and leaves the armed-looking cfg behind as evidence. Verify "
+            "that the key is present in the argsd table of the solver at the pin you run."
         ),
     )
     swmm_snapshot_keep_all: bool = Field(
         default=False,
         description=(
-            "Resume-EXPERIMENT arm selector for the COUPLED model only. When True the "
-            "toolkit appends the line `swmm_snapshot_keep_all=1` to each coupled "
-            "scenario's TRITON cfg, which disarms the solver's snapshot PRUNE gate so "
-            "every checkpoint index retains a restorable SWMM state snapshot instead of "
-            "only the two most recent. "
-            "WHAT IT BUYS, which is not 'more snapshots'. Under the keep-2 default a "
-            "member interrupted at a checkpoint older than the two most recent finds NO "
-            "snapshot and silently falls back to the exchange-replay path, so ONE "
-            "experiment mixes TWO resume mechanisms across its members and the "
-            "cross-experiment comparison carries an undeclared confound. Setting this "
-            "makes the resume mechanism UNIFORM across every member of an arm, which is "
-            "what lets a run against one solver pin be compared to a run against another "
-            "with the resume path held fixed. "
-            "IT IS INDEPENDENT OF swmm_snapshot_disable, NOT ITS INVERSE. That field "
-            "empties snapshot_path_stem and removes the snapshot path entirely; this one "
-            "changes the RETENTION DEPTH of a snapshot path that exists. Both False is "
-            "the shipped default; both True is expressible and is resolved BY THE SOLVER "
-            "(disable wins — there is no stem to retain into), never by this toolkit, "
-            "which emits what the configuration asked for and arbitrates nothing. "
-            "The default False appends NOTHING, so every cfg emitted for a run that "
-            "leaves this unset is BYTE-IDENTICAL to one emitted before this field "
-            "existed. The TRITON-only cfg never carries the key: the key gates the SWMM "
-            "coupling surface, so it is meaningless there. "
-            "THE SPELLING IS LOAD-BEARING IN ANOTHER REPOSITORY. The solver reads this "
-            'key through `argsd("swmm_snapshot_keep_all", argmap, "0")`, and arm '
-            "membership is established iff a member's own `config_{k}.cfg` carries the "
-            "literal `swmm_snapshot_keep_all=1` — carried there by the solver's "
-            "unknown-key cfg passthrough. Renaming the emitted key without renaming that "
-            "argsd read in the same change silently unassigns every member from its arm "
-            "with no error anywhere. "
-            "THE PIN IS PART OF THE CONTRACT AND NOTHING HERE CAN CHECK IT. A solver that "
-            "predates the key does not read it, and no TRITON cfg parse rejects an "
-            "unknown key, so setting this against such a solver emits the line, prunes to "
-            "keep-2 anyway, and leaves the armed-looking cfg behind as evidence. Verify "
-            "the key is present in the solver's argsd table at the pin you are running."
+            "Resume-EXPERIMENT arm selector for the COUPLED model only. When True, the toolkit appends the "
+            "line `swmm_snapshot_keep_all=1` to the TRITON cfg of each coupled scenario, disarming the "
+            "snapshot PRUNE gate of the solver so every checkpoint index retains a restorable SWMM state "
+            "snapshot in place of only the most recent snapshots. The field buys uniformity and no extra "
+            "snapshots for their own sake. Under the keep-2 default, a member interrupted at a checkpoint "
+            "older than the most recent retained snapshots finds NO snapshot and silently falls back to "
+            "the exchange-replay path, so a single experiment mixes different resume mechanisms across the "
+            "members and the cross-experiment comparison carries an undeclared confound. Setting this "
+            "field makes the resume mechanism UNIFORM across every member of an arm, so a run against a "
+            "solver pin can be compared to a run against another pin with the resume path held fixed. The "
+            "field is INDEPENDENT of swmm_snapshot_disable and is not the inverse of swmm_snapshot_disable. "
+            "swmm_snapshot_disable empties snapshot_path_stem and removes the snapshot path entirely, and "
+            "this field changes the RETENTION DEPTH of a snapshot path that exists. Both False is the "
+            "shipped default. Both True is expressible and is resolved BY THE SOLVER, where disable wins "
+            "because no stem exists to retain into, and never by the toolkit. The toolkit emits the "
+            "requested configuration and arbitrates no conflict. The default False appends no line, so "
+            "every cfg emitted for a run that leaves the field unset is BYTE-IDENTICAL to a cfg emitted "
+            "before the field existed. The TRITON-only cfg never carries the key, because the key gates "
+            "the SWMM coupling surface and is meaningless there. THE SPELLING IS LOAD-BEARING IN ANOTHER "
+            'REPOSITORY. The solver reads the key through `argsd("swmm_snapshot_keep_all", argmap, '
+            '"0")`, and arm membership is established iff the `config_{k}.cfg` of a member carries the '
+            "literal `swmm_snapshot_keep_all=1`, carried there by the unknown-key cfg passthrough of the "
+            "solver. Renaming the emitted key without renaming the argsd read in the same change silently "
+            "unassigns every member from the arm with no error anywhere. THE PIN IS PART OF THE CONTRACT "
+            "AND NO CHECK COVERS THE PIN. A solver that predates the key ignores the key, and no TRITON "
+            "cfg parse rejects an unknown key, so setting the field against such a solver emits the line, "
+            "prunes to keep-2 anyway, and leaves the armed-looking cfg behind as evidence. Verify that the "
+            "key is present in the argsd table of the solver at the pin you run."
         ),
     )
     swmm_snapshot_failed_replay: bool = Field(
         default=False,
         description=(
-            "COUPLED model only. When True, the toolkit writes the line "
-            "`swmm_snapshot_failed_replay=1` into the TRITON cfg that each coupled launch passes to "
-            "the solver, including a resume; when False it removes that line. It takes effect at "
-            "the NEXT launch, so it can be set after a run has stopped at a failed snapshot write: "
-            "re-run with pickup_where_leftoff and the resume replays the SWMM exchange history at "
-            "that checkpoint and continues, with correct results, instead of stopping with the "
-            "solver's write-failed error. The failure is still recorded, as a replay resume with "
-            "reason write-failed, and raised as a write-failed alarm in the resume-event report. "
-            "The default False writes nothing into a cfg that does not already carry the key. The "
-            "TRITON-only cfg never carries it. A solver that predates the key ignores it and stops "
-            "at the failed write, as it does without the key."
+            "COUPLED model only. When True, the toolkit writes the line `swmm_snapshot_failed_replay=1` "
+            "into the TRITON cfg that each coupled launch passes to the solver, including a resume, and "
+            "when False the toolkit removes the line. The change takes effect at the NEXT launch, so the "
+            "field can be set after a run has stopped at a failed snapshot write. Re-run with "
+            "pickup_where_leftoff and the resume replays the SWMM exchange history at that checkpoint and "
+            "continues, with correct results, in place of stopping with the write-failed error of the "
+            "solver. The failure is still recorded, as a replay resume with reason write-failed, and "
+            "raised as a write-failed alarm in the resume-event report. The default False writes no line "
+            "into a cfg lacking the key. The TRITON-only cfg never carries the key. A solver that predates "
+            "the key ignores the key and stops at the failed write, as the solver does without the key."
         ),
     )
     # local run constraints
     local_cpu_cores_for_workflow: int | None = Field(
         None,
-        description="This is passed to Snakemake to let it know how many CPU cores its allowed to use on your computer",
+        description="This is passed to Snakemake to set how many CPU cores Snakemake may use on your computer",
     )
     local_gpus_for_workflow: int | None = Field(
         None,
-        description="This is passed to Snakemake to let it know how many GPUS its allowed to use on your computer",
+        description="This is passed to Snakemake to set how many GPUs Snakemake may use on your computer",
     )
     # HPC RESOURCES, RETRIES AND PARTITION SELECTORS
     mem_gb_per_cpu: int = Field(2, description="Memory per CPU in GB. Defaults to 2GB.")
     hpc_time_min_per_sim: int | None = Field(
         60,
-        description="Walltime in minutes requested for each simulation. A simulation rule's Snakemake "
-        "`runtime` is this value, plus hpc_runtime_min_for_sim_output_processing when process_in_sim_rule "
-        "runs output processing inside the simulation rule. "
-        "Must be >= 1 under multi_sim_run_method='batch_job'; when an hpc_system_config is supplied, "
-        "preflight checks it against the ensemble partition's max_runtime.",
+        description="Walltime in minutes requested for each simulation. The Snakemake `runtime` of a "
+        "simulation rule is this value, plus hpc_runtime_min_for_sim_output_processing when "
+        "process_in_sim_rule runs output processing inside the simulation rule. Must be >= 1 "
+        "under multi_sim_run_method='batch_job'. When an hpc_system_config is supplied, "
+        "preflight checks the value against the max_runtime of the ensemble partition.",
         json_schema_extra=field_meta(required_when=[when("multi_sim_run_method", "batch_job")]),
     )
     hpc_restart_times_simulate: int = Field(
         2,
         ge=0,
         description=(
-            "Per-rule Snakemake `retries:` for the simulation rules "
-            "(run_triton/run_tritonswmm/run_swmm/simulation_member_*). A walltime "
-            "kill is a SLURM TIMEOUT (retriable); raise this high (e.g. 20) for a "
-            "hotstart-resume sweep so a killed sim re-dispatches from its latest "
-            "config_NNNN.cfg checkpoint within ONE analysis.run(). Default 2. "
-            "THIS NUMBER IS PER SNAKEMAKE PROCESS AND IS NOT THE NUMBER OF TIMES THE "
-            "SOLVER CAN RUN. Snakemake compares the budget against `job.attempt`, which "
-            "lives on an in-memory job object initialised to 1 when that process builds "
-            "its DAG and is persisted nowhere. Under `--executor slurm` at least two such "
-            "processes exist per rule execution -- the driver that submits the SLURM job, "
-            "and the Snakemake instance running inside the allocation -- so the budget "
-            "restarts at each nesting level and the REALISED ceiling is the PRODUCT across "
-            "them, not this value. Measured on member 39 of the a6000 benchmarking arm: a "
-            "declared 3 produced TEN solver launches across four SLURM jobs. "
-            "The realised TOTAL is bounded instead by "
-            "`hpc_consecutive_failure_budget_simulate`, a durable per-(member, event, "
-            "model_type) cap the runner enforces before each launch; that knob is what "
-            "makes a ceiling additive, and this one governs only how many restarts a "
-            "SINGLE process will attempt."
+            "Per-rule Snakemake `retries:` for the simulation rules run_triton, run_tritonswmm, run_swmm, "
+            "and simulation_member_*. A walltime kill is a SLURM TIMEOUT and is retriable. Raise this "
+            "value high, such as 20, for a hotstart-resume sweep so a killed sim re-dispatches from the "
+            "latest config_NNNN.cfg checkpoint within a single `analysis.run()`. Default 2. THIS NUMBER IS "
+            "PER SNAKEMAKE PROCESS AND IS NO LIMIT ON THE NUMBER OF TIMES THE SOLVER CAN RUN. Snakemake "
+            "compares the budget against `job.attempt`, an attribute of an in-memory job object "
+            "initialised to 1 when the process builds the DAG and persisted nowhere. Under `--executor "
+            "slurm` more than one such process exists per rule execution, namely the driver that submits "
+            "the SLURM job and the Snakemake instance running inside the allocation, so the budget "
+            "restarts at each nesting level and the REALISED ceiling is the PRODUCT across the levels and "
+            "no single value. Measured on member 39 of the a6000 benchmarking arm, a declared 3 produced "
+            "10 solver launches across 4 SLURM jobs. The realised TOTAL is bounded instead by "
+            "`hpc_consecutive_failure_budget_simulate`, a durable cap per member, event, and model_type "
+            "that the runner enforces before each launch. The knob makes a ceiling additive, and the "
+            "retries field governs only how many restarts a SINGLE process will attempt."
         ),
     )
     hpc_restart_times_other: int = Field(
         2,
         ge=0,
         description=(
-            "Per-rule Snakemake `retries:` baseline for the non-simulation rules "
-            "(prepare/process/consolidate/plot/render), emitted as the GLOBAL "
-            "restart-times so directive-less rules inherit it. Idempotent "
-            "re-derivations, so a low count suffices. Default 2."
+            "Per-rule Snakemake `retries:` baseline for the non-simulation rules prepare, process, "
+            "consolidate, plot, and render, emitted as the GLOBAL restart-times so directive-less rules "
+            "inherit the baseline. The rules are idempotent re-derivations, so a low count suffices. "
+            "Default 2."
         ),
     )
     hpc_consecutive_failure_budget_simulate: int = Field(
         3,
         ge=0,
         description=(
-            "DURABLE cap on CONSECUTIVE TERMINAL simulation failures per "
-            "(member, event, model_type), enforced in the simulation runner BEFORE the "
-            "solver is launched. This is the knob that makes a retry ceiling REAL: "
-            "`hpc_restart_times_simulate` bounds restarts within ONE Snakemake process "
-            "and does not persist across processes, so under `--executor slurm` the "
-            "realised ceiling MULTIPLIES across nesting levels. This budget persists in "
-            "the per-model log and so bounds the TOTAL. "
-            "A TERMINAL failure is one the runner itself concluded (it wrote "
-            "`_status/_failed/{rule_token}.json`); a WALLTIME KILL is NOT terminal and "
-            "does NOT count, so a hotstart-resume sweep is unaffected however many times "
-            "it resumes. The count resets on a completing attempt and on a forced re-run "
-            "(it is era-relative). Reaching the budget writes the failed marker and exits "
-            "non-zero WITHOUT launching, which is a terminal state an operator then "
-            "clears. Set 0 to DISABLE the gate entirely. Default 3."
+            "DURABLE cap on CONSECUTIVE TERMINAL simulation failures per member, event, and model_type, "
+            "enforced in the simulation runner BEFORE the solver is launched. The cap makes a retry "
+            "ceiling REAL. `hpc_restart_times_simulate` bounds restarts within a single Snakemake process "
+            "and persists across no process, so under `--executor slurm` the realised ceiling MULTIPLIES "
+            "across nesting levels. The budget persists in the per-model log and so bounds the TOTAL. A "
+            "TERMINAL failure is a failure that the runner itself concluded, with the runner writing "
+            "`_status/_failed/{rule_token}.json`. A WALLTIME KILL is NOT terminal and is not counted, so a "
+            "hotstart-resume sweep is unaffected however many times the sweep resumes. The count resets on "
+            "a completing attempt and on a forced re-run, because the count is era-relative. Reaching the "
+            "budget writes the failed marker and exits non-zero WITHOUT launching, a terminal state that "
+            "an operator then clears. Set 0 to DISABLE the gate entirely. Default 3."
         ),
     )
     # hpc_max_simultaneous_sims is RETIRED from analysis_config: it MOVED to
@@ -823,23 +778,25 @@ class analysis_config(cfgBaseModel):
     # as the per-CSV-row overlay column. They are NOT retired despite the hpc_* prefix.
     hpc_ensemble_partition: str | None = Field(
         None,
-        description="SLURM partition name (e.g., 'standard', 'gpu', 'high-memory') for "
-        "running simulations: the partition of the simulation rules (a CPU-only simulation rule resolves "
-        "hpc_cpu_sim_partition first), the default slurm_partition of "
-        "the generated Snakemake executor profile, and the #SBATCH --partition of the single allocation "
-        "under multi_sim_run_method='1_job_many_srun_tasks'. Also the key into "
-        "hpc_system_config.partitions that resolves a simulation's GPU hardware; a sensitivity sweep may "
-        "vary it per row through the hpc.partition column.",
+        description="SLURM partition name, such as 'standard', 'gpu', or 'high-memory', for running "
+        "simulations. The name sets the partition of the simulation rules, where a CPU-only "
+        "simulation rule resolves hpc_cpu_sim_partition first, the default slurm_partition of "
+        "the generated Snakemake executor profile, and the #SBATCH --partition of the single "
+        "allocation under multi_sim_run_method='1_job_many_srun_tasks'. The name is also the "
+        "key into hpc_system_config.partitions that resolves the GPU hardware of a simulation, "
+        "and a sensitivity sweep may vary the partition per row through the hpc.partition "
+        "column.",
         json_schema_extra=field_meta(
             required_when=[when("multi_sim_run_method", "batch_job", "1_job_many_srun_tasks")],
         ),
     )
     hpc_setup_and_analysis_processing_partition: str | None = Field(
         None,
-        description="SLURM partition name for the single-node, single-core rules: system setup and "
-        "compilation, scenario preparation, output processing, consolidation, report rendering and its "
-        "plots, and deletion. Also the first choice for the batch_job orchestration job (falling back to "
-        "hpc_ensemble_partition) and a fallback for CPU-only simulation rules (see hpc_cpu_sim_partition).",
+        description="SLURM partition name for the single-node, single-core rules. The rules cover system "
+        "setup and compilation, scenario preparation, output processing, consolidation, report "
+        "rendering, the plots of the report, and deletion. Also the first choice for the "
+        "batch_job orchestration job, with hpc_ensemble_partition as the fallback. Also a "
+        "fallback for CPU-only simulation rules, per hpc_cpu_sim_partition.",
         json_schema_extra=field_meta(
             required_when=[when("multi_sim_run_method", "batch_job", "1_job_many_srun_tasks")],
         ),
@@ -847,12 +804,12 @@ class analysis_config(cfgBaseModel):
     hpc_cpu_sim_partition: str | None = Field(
         None,
         description=(
-            "SLURM partition for CPU-ONLY simulation rules (currently run_swmm). When None "
-            "this resolves to hpc_setup_and_analysis_processing_partition, then to "
-            "hpc_ensemble_partition. Exists because a CPU-only sim carries no --gres, so a "
-            "GPU partition whose QOS enforces a GRES minimum rejects it at submit "
-            "(UVA Rivanna -p gpu -> `sbatch: error: QOSMinGRES`). Set this only when the "
-            "CPU sim rung needs a different partition from the setup/processing rungs."
+            "SLURM partition for CPU-ONLY simulation rules, currently run_swmm. When None, the partition "
+            "resolves to hpc_setup_and_analysis_processing_partition and then to hpc_ensemble_partition. "
+            "The field exists because a CPU-only sim carries no --gres, so a GPU partition whose QOS "
+            "enforces a GRES minimum rejects the sim at submit, and `sbatch -p` naming that partition "
+            "prints `sbatch: error: QOSMinGRES`. Set the field only when the CPU sim rung needs a "
+            "different partition from the setup and processing rungs."
         ),
     )
     # hpc_account, hpc_login_node and python_path are RETIRED from analysis_config.
@@ -862,9 +819,8 @@ class analysis_config(cfgBaseModel):
     # Popped by the check_consistency shim.
     additional_SBATCH_params: list[str] | None = Field(
         None,
-        description="Optional list of SBATCH arguments (omit #SBATCH). Really only relevant for when "
-        "multi_sim_run_method = "
-        "1_job_many_srun_tasks.",
+        description="Optional list of SBATCH arguments, written without the #SBATCH prefix. Relevant only "
+        "when multi_sim_run_method = 1_job_many_srun_tasks.",
     )
     # TOGGLES
     toggle_sensitivity_analysis: bool = Field(
@@ -915,34 +871,32 @@ class analysis_config(cfgBaseModel):
     weather_event_windows_csv: Path | None = Field(
         None,
         description=(
-            "CSV declaring the simulation window for each weather event. Its index columns "
-            "must be exactly weather_event_indices, plus a start and an end column whose "
-            "names are given by weather_event_start_column / weather_event_end_column. The "
-            "toolkit CLIPS each event to the declared window and never inspects the weather "
-            "data to decide one. WHEN ABSENT, each event's window is the full extent of its "
-            "time coordinate -- the file as given. The toolkit still refuses to run an event "
-            "whose forcing is incomplete over that extent; supplying this CSV is how you "
-            "declare a shorter window that IS complete."
+            "CSV declaring the simulation window for each weather event. The index columns must be "
+            "weather_event_indices, plus a start column and an end column whose names are given by "
+            "weather_event_start_column and weather_event_end_column. The toolkit CLIPS each event to the "
+            "declared window and never inspects the weather data to decide a window. WHEN ABSENT, the "
+            "window of each event is the full extent of the time coordinate of the event, the file as "
+            "given. The toolkit still refuses to run an event whose forcing is incomplete over that "
+            "extent. Supplying this CSV is how you declare a shorter window that IS complete."
         ),
     )
     weather_event_start_column: str = Field(
         WEATHER_EVENT_WINDOW_COLUMN_UNSPECIFIED,
         description=(
-            "Column in weather_event_windows_csv carrying each event's window START, parsed "
-            "with pandas.to_datetime. The NAME is a config input so the toolkit binds no "
-            "column name of its own: the default is the SENTINEL 'unspecified', which names "
-            "no real column and is rejected before any column is read. Only relevant when "
-            "weather_event_windows_csv is supplied -- without that file there is no CSV to "
-            "name a column in, and the sentinel simply goes unread. When the file IS "
-            "supplied, both column names must be stated and both must exist in it."
+            "Column in weather_event_windows_csv carrying the window START of each event, parsed with "
+            "pandas.to_datetime. The NAME is a config input so the toolkit binds no column name. The "
+            "default is the SENTINEL 'unspecified', a value that names no real column and is rejected "
+            "before any column is read. Only relevant when weather_event_windows_csv is supplied, because "
+            "without that file no CSV exists to name a column in and the sentinel simply goes unread. When "
+            "the file IS supplied, both column names must be stated and both must exist in the file."
         ),
     )
     weather_event_end_column: str = Field(
         WEATHER_EVENT_WINDOW_COLUMN_UNSPECIFIED,
         description=(
-            "Column in weather_event_windows_csv carrying each event's window END, parsed "
-            "with pandas.to_datetime. Inclusive: the clipped slice contains the end stamp. "
-            "Sentinel-defaulted and validated exactly as weather_event_start_column."
+            "Column in weather_event_windows_csv carrying the window END of each event, parsed with "
+            "pandas.to_datetime. Inclusive, so the clipped slice contains the end stamp. "
+            "Sentinel-defaulted and validated as weather_event_start_column is."
         ),
     )
 
@@ -968,12 +922,11 @@ class analysis_config(cfgBaseModel):
     weather_event_label_column: str | None = Field(
         None,
         description=(
-            "Optional column name in weather_events_to_simulate carrying a human-readable "
-            "display name for each event (e.g. '2003-09-17 05:44 - Hurricane Isabel'). "
-            "Presentation only: the value NEVER enters weather_event_indices, the event_id "
-            "slug, a figure stem, or any path segment. The column is renamed to the toolkit "
-            "canonical name at projection, so downstream consumers never see this value. "
-            "None disables labelling and every report surface falls back to its current text."
+            "Optional column name in weather_events_to_simulate carrying a human-readable display name for "
+            "each event, such as '2003-09-17 05:44 - Hurricane Isabel'. Presentation only. The value NEVER "
+            "enters weather_event_indices, the event_id slug, a figure stem, or any path segment. The "
+            "column becomes the toolkit canonical name at projection, so downstream consumers never see "
+            "the value. None disables labelling, and every report surface falls back to the current text."
         ),
     )
     analysis_description: str | None = Field(
@@ -985,12 +938,13 @@ class analysis_config(cfgBaseModel):
         Field(
             ...,
             pattern=r"^[0-9a-f]{40}$",
-            description="The hhemt commit this experiment runs: the FULL 40-hex lowercase sha, nothing "
-            "else (no tag, no branch, no short sha). REQUIRED, no default ([Q331]): every process that "
-            "constructs an analysis — the driver, the simulation runner, the in-image processing runner, "
-            "the consolidator — compares it to the running toolkit's own identity (validation."
-            "running_identity) before writing anything into the analysis tree, and refuses on a mismatch "
-            "(exit 2), so a refused construction leaves no directory behind.",
+            description="The hhemt commit this experiment runs, as the FULL 40-hex lowercase sha only, "
+            "with no tag, no branch, and no short sha. REQUIRED, with no default. Every "
+            "process that constructs an analysis, namely the driver, the simulation runner, "
+            "the in-image processing runner, and the consolidator, compares the sha to the "
+            "identity of the running toolkit, `validation.running_identity`, before writing "
+            "anything into the analysis tree, and refuses on a mismatch with exit 2, so a "
+            "refused construction leaves no directory behind.",
             json_schema_extra=field_meta(),
         ),
     ]
@@ -998,156 +952,149 @@ class analysis_config(cfgBaseModel):
     # TRITON-SWMM PARAMETERS
     target_processed_output_type: Literal["zarr", "nc"] = Field(
         "zarr",
-        description="TRITON processed output type, zarr or nc.",
+        description="TRITON processed output type. The value is zarr or nc.",
         json_schema_extra=field_meta(
             options={
                 "zarr": "Chunked Zarr store. Default and preferred -- supports lazy and partial reads.",
-                "nc": "One NetCDF file per scenario for each artifact the output type governs -- the "
-                "gridded TRITON, SWMM node/link and performance timeseries and their summaries. "
-                "The hydrology capture summaries (hydrology_inflow_summary, hydrology_rpt_summary) "
-                "stay Zarr. Use when a downstream consumer requires NetCDF.",
+                "nc": "One NetCDF file per scenario for each artifact the output type governs. The artifacts "
+                "are the gridded TRITON output, the SWMM node timeseries, the SWMM link timeseries, the "
+                "performance timeseries, and their summaries. The hydrology capture summaries stay Zarr. "
+                "They are hydrology_inflow_summary and hydrology_rpt_summary. "
+                "Use when a downstream consumer requires NetCDF.",
             }
         ),
     )
     toggle_consolidate_timeseries: bool = Field(
         default=False,
         description=(
-            "When True, the per-scenario SWMM node (wlevel(t)) and SWMM link (flow(t)) "
-            "TIMESERIES are consolidated into the analysis/sensitivity DataTree under "
-            "tritonswmm/swmm_node_timeseries and tritonswmm/swmm_link_timeseries "
-            "(concatenated along event_iloc). Default False (summaries only) — enable to "
-            "unblock over-time clean-vs-resume difference figures. The TRITON gridded "
-            "timeseries is NOT consolidated: it is ~83x larger per scenario by payload "
-            "(6.6 MB vs 0.08 MB measured), would inflate a 28-scenario primary tree 7.9x, "
-            "and is GB-scale per scenario on a production fine grid. It is excluded on "
-            "COST, not for lack of a consumer — the clean-vs-resume over-time figure does "
-            "read flood_depth from the per-scenario gridded store, via a documented "
-            "deployment-config reproduction script. What that figure consumes is a "
-            "per-timestep max-over-(y,x) reduction (144 values/scenario), not the field; "
-            "consolidating the reduction is the cheap, grid-independent extension. "
-            "Additive, config-schema-only change: no LAYOUT_VERSION bump (config/analysis.py is "
-            "allowlisted; the tree-node add is "
-            "additive-read-compatible)."
+            "When True, the per-scenario SWMM node and SWMM link TIMESERIES are consolidated into the "
+            "analysis/sensitivity DataTree under tritonswmm/swmm_node_timeseries and "
+            "tritonswmm/swmm_link_timeseries, concatenated along event_iloc. The node series holds "
+            "`wlevel(t)` and the link series holds `flow(t)`. Default False, summaries only. Enable to "
+            "unblock over-time clean-vs-resume difference figures. The TRITON gridded timeseries is NOT "
+            "consolidated. The timeseries is about 83x larger per scenario by payload, 6.6 MB against 0.08 "
+            "MB measured, would inflate a 28-scenario primary tree 7.9x, and is GB-scale per scenario on a "
+            "production fine grid. The timeseries is excluded on COST and not for lack of a consumer. The "
+            "clean-vs-resume over-time figure does read flood_depth from the per-scenario gridded store, "
+            "via a documented deployment-config reproduction script. The figure consumes a per-timestep "
+            "max over y and x, 144 values per scenario, and no field. Consolidating the reduction is the "
+            "cheap, grid-independent extension. Additive, config-schema-only change with no LAYOUT_VERSION "
+            "bump, because config/analysis.py is allowlisted and the tree-node add is "
+            "additive-read-compatible."
         ),
     )
     process_output_target_chunksize_mb: int = Field(
         200,
-        description="Target memory budget (MiB) PER LOAD CHUNK for streaming-chunked operations on per-scenario "
-        "timeseries "
-        "output. This is the in-memory RSS guard ONLY; it does NOT govern how many timesteps go into one "
-        "output chapter (see process_append_batch_timesteps). Consumed by both the chunked raw-to-zarr LOAD "
-        "inside write_timeseries_outputs AND summarize_triton_simulation_results' "
-        "_streaming_argmax_with_companions helper (per-cell argmax+companion reduction). On fine grids a single "
-        "float64 timestep can meet/exceed this budget, flooring the load chunk to 1 timestep — that is a correct "
-        "memory guard, NOT a performance bug, because write granularity is decoupled via "
-        "process_append_batch_timesteps.",
+        description="Target memory budget, in MiB, PER LOAD CHUNK for streaming-chunked operations on "
+        "per-scenario timeseries output. The field is the in-memory RSS guard ONLY. The number "
+        "of timesteps in one output chapter is set by process_append_batch_timesteps. Consumed "
+        "by the chunked raw-to-zarr LOAD inside write_timeseries_outputs AND by the "
+        "_streaming_argmax_with_companions helper of summarize_triton_simulation_results, the "
+        "per-cell argmax-with-companions reduction. On fine grids a single float64 timestep "
+        "can meet or exceed the budget, flooring the load chunk to 1 timestep. The floor is a "
+        "correct memory guard and no performance bug, because write granularity is decoupled "
+        "via process_append_batch_timesteps.",
     )
     process_append_batch_timesteps: int = Field(
         128,
         description="Number of LOADED timesteps to accumulate before emitting ONE output chapter in "
-        "write_timeseries_outputs. "
-        "Decouples write granularity from the in-memory load-chunk size "
-        "(process_output_target_chunksize_mb), "
-        "so fine grids that floor the load chunk to 1 timestep still emit only ceil(N_timesteps / this) chapters "
-        "instead of O(N_timesteps) tiny ones. Independent of the streaming-summary reduction (which writes no "
-        "chapter). Buffer RSS is bounded by process_append_batch_memory_budget_mb: the buffer is flushed once it "
-        "reaches that budget, so it holds less than that budget plus one load chunk before each flush.",
+        "write_timeseries_outputs. The field decouples write granularity from the in-memory "
+        "load-chunk size, process_output_target_chunksize_mb, so fine grids that floor the "
+        "load chunk to 1 timestep still emit only `ceil(N_timesteps / this)` chapters in place "
+        "of `O(N_timesteps)` tiny chapters. Independent of the streaming-summary reduction, "
+        "and that reduction writes no chapter. Buffer RSS is bounded by "
+        "process_append_batch_memory_budget_mb, because the buffer is flushed once the buffer "
+        "reaches that budget, so the buffer holds less than that budget plus a single load "
+        "chunk before each flush.",
     )
     process_append_batch_memory_budget_mb: int | None = Field(
         None,
         description=(
-            "Memory budget (MiB) governing BOTH the output-chapter batch byte cap in "
+            "Memory budget, in MiB, governing BOTH the output-chapter batch byte cap in "
             "write_timeseries_outputs AND the streaming-argmax summary reduction in "
-            "summarize_triton_simulation_results. Distinct from "
-            "process_output_target_chunksize_mb (the small per-LOAD-chunk RSS guard, "
-            "~200 MiB): this larger budget lets fine grids accumulate a bigger pending "
-            "batch / argmax chunk inside the process job's real RAM allocation. When None "
-            "(default), resolved at config-load to a fraction (0.35) of "
-            "hpc_mem_allocation_for_sim_output_processing_mb (the field that sets the "
-            "process rule's SLURM mem_mb), clamped to the actual cgroup limit when "
-            "readable — see the _resolve_process_batch_budget validator. A concrete int "
-            "overrides the fraction but is still ceiling-checked at <= 0.5*job_RAM. The "
-            "0.35 fraction reserves headroom for the peak-RSS inequality 2*B + per_ts "
-            "<= job_RAM (the flush transiently holds the pending batch B, its xr.concat "
-            "copy ~B, and one live load chunk per_ts), accounting for the post-append "
-            "trigger overshoot. Consumed at process_simulation.py write-flush cap and "
-            "argmax budget."
+            "summarize_triton_simulation_results. The budget is distinct from "
+            "process_output_target_chunksize_mb, the small per-LOAD-chunk RSS guard of about 200 MiB. The "
+            "larger budget lets fine grids accumulate a bigger pending batch or argmax chunk inside the "
+            "real RAM allocation of the process job. When None, the default, the budget resolves at "
+            "config-load to the fraction 0.35 of hpc_mem_allocation_for_sim_output_processing_mb, the "
+            "field that sets the process-rule mem_mb in SLURM, clamped to the actual cgroup limit when "
+            "readable. See the _resolve_process_batch_budget validator. A concrete int overrides the "
+            "fraction and is still ceiling-checked at <= 0.5*job_RAM. The 0.35 fraction reserves headroom "
+            "for the peak-RSS inequality `2*B + per_ts <= job_RAM`, because the flush transiently holds "
+            "the pending batch B, the xr.concat copy of about B, and a live load chunk per_ts, with "
+            "allowance for the post-append trigger overshoot. Consumed at the process_simulation.py "
+            "write-flush cap and argmax budget."
         ),
     )
     flood_velocity_min_depth_m: float = Field(
         DEFAULT_FLOOD_VELOCITY_MIN_DEPTH_M,
         gt=0,
         description=(
-            "Wet-depth threshold (m) for the TRITON flood velocity. The summary stores the maximum "
-            "over output prints of |q| / h, where q is the solver's unit discharge (QX, QY) and h is "
-            "the depth of the SAME print; at a print where h is at or below this value (or NaN) the "
-            "flood velocity is NaN, because the solver zeroes q below its own hextra and q / h is "
-            "then 0 / 0. The default 0.001 m equals the solver's hextra in every measured run; the "
-            "toolkit does not read hextra from the cfg, so raise this value yourself if a case study "
-            "sets a larger hextra. Read at summary time and stamped into each flood-velocity "
-            "variable's `comment` attribute."
+            "Wet-depth threshold, in m, for the TRITON flood velocity. The summary stores the maximum, "
+            "over output prints, of the ratio `|q| / h`. Here q is the solver unit discharge from the QX "
+            "and QY outputs and h is the depth of the SAME print. At a print where h is at or below the "
+            "threshold, or NaN, the flood velocity is NaN, because the solver zeroes q below the hextra of "
+            "the solver and `q / h` is then `0 / 0`. The default 0.001 m equals the hextra of the solver "
+            "in every measured run. The toolkit takes no hextra value from the cfg, so raise this value "
+            "yourself if a case study sets a larger hextra. Read at summary time and stamped into the "
+            "`comment` attribute of each flood-velocity variable."
         ),
     )
     process_store_float32: bool = Field(
         True,
         description=(
-            "Store per-scenario spatial timeseries (H/QX/QY/MH -> flood depth/unit discharge) as "
-            "float32 in the processed zarr instead of float64, ~halving on-disk size and "
-            "I/O. Default True. Set False for precision-sensitive analyses (e.g. tight "
-            "mass-balance). Does NOT alter CF attributes — dtype lives in the zarr encoding "
-            "dict, orthogonal to cf_conventions.py. Consumed by utils.return_dic_zarr_encodings."
+            "Store per-scenario spatial timeseries as float32 in the processed zarr in place of float64, "
+            "roughly halving on-disk size and I/O. The affected quantities are H/QX/QY/MH and the derived "
+            "flood depth/unit discharge. Default True. Set False for precision-sensitive analyses, such as "
+            "tight mass-balance. The setting leaves CF attributes unchanged, because the dtype lives in "
+            "the zarr encoding dict, orthogonal to cf_conventions.py. Consumed by "
+            "utils.return_dic_zarr_encodings."
         ),
     )
     process_timestep_chunk: int | None = Field(
         None,
         description=(
-            "Explicit on-disk `timestep` zarr chunk size for the per-scenario "
-            "spatial timeseries. A READ-LOCALITY OVERRIDE AND NOTHING MORE: it replaces "
-            "the TIME component of the grid utils.resolve_chunk_grid derives, leaving the "
-            "spatial components derived, so no value here can re-introduce an "
-            "extent-dependent grid. When None (default) the derived time component is "
-            "used. This field is NOT what makes the chunk grid safe -- that is the "
-            "writer's once-per-scenario call to resolve_chunk_grid. The previous wording "
-            "said None 'preserves the current first-write-extent chunking behavior', "
-            "which was false and is recorded here because the claim travelled: with no "
-            "grid declared at all, zarr sized each store from its FULL shape, making a "
-            "chapter's spatial grid a function of its time extent. Consumed by "
-            "utils.return_dic_zarr_encodings and utils.resolve_chunk_grid."
+            "Explicit on-disk `timestep` zarr chunk size for the per-scenario spatial timeseries. A "
+            "READ-LOCALITY OVERRIDE ONLY. The field replaces the TIME component of the grid that "
+            "utils.resolve_chunk_grid derives and leaves the spatial components derived, so no value here "
+            "can re-introduce an extent-dependent grid. When None, the default, the derived time component "
+            "is used. The chunk grid is made safe by the once-per-scenario call of the writer to "
+            "resolve_chunk_grid, and the field plays no part in that safety. With no grid declared at all, "
+            "zarr sizes each store from the FULL shape, making the spatial grid of a chapter a function of "
+            "the time extent of the chapter. Consumed by utils.return_dic_zarr_encodings and "
+            "utils.resolve_chunk_grid."
         ),
     )
     allow_mixed_version_chapters: bool = Field(
         False,
         description=(
-            "Bypass the chapter-set build guard. Default False: when a resume would extend "
-            "a per-scenario chapter set that a DIFFERENT hhemt build wrote, processing "
-            "refuses loudly rather than publishing one unified store built by two "
-            "processing builds. Set True only when you know nothing material changed "
-            "between the builds; the run then proceeds, prints the mismatch to standard "
-            "output (kept in the processing step's log when the workflow runs it), and, once "
-            "it flags a chapter, adds its build to provenance_history.json in the chapter "
-            "set's directory beside the earlier build(s). The guard identifies a build by "
-            "processing_build_key: the running toolkit's identity (inside a container image, "
-            "the image's staged HHEMT_SHA), or, when that cannot be confirmed -- for example "
-            "a checkout mounted over the image's source -- the image's own "
-            "org.hhemt.hhemt_sha label, read from /.singularity.d/labels.json. The label "
-            "names the image, not a checkout mounted over it, so changes to a checkout "
-            "mounted over one image are not detected. The history "
-            "records that same identity, so a label-identified run is compared on the next "
-            "resume. A build neither resolves is recorded as 'unknown' and is not compared. "
-            "The detector is therefore live under execution_environment='container' as well "
-            "as natively. The guard is what prevents a chapter set written "
-            "with one declared chunk grid from being extended by a build that declares "
-            "another, so leaving this False is load-bearing. Consumed by "
+            "Bypass the chapter-set build guard. When False, the default, and a resume would extend a "
+            "per-scenario chapter set that a DIFFERENT hhemt build wrote, processing refuses loudly in "
+            "place of publishing a unified store built by different processing builds. Set True only if no "
+            "material change exists between the builds. The run then proceeds, prints the mismatch to "
+            "standard output, kept in the processing step log when the workflow runs the step, and, once "
+            "the guard flags a chapter, adds the build to provenance_history.json in the directory of the "
+            "chapter set beside the earlier builds. The guard identifies a build by processing_build_key. "
+            "The key is the identity of the running toolkit. Inside a container image the identity is the "
+            "staged HHEMT_SHA of the image. When the identity is unconfirmed, as with a checkout mounted "
+            "over the source of the image, the key is the org.hhemt.hhemt_sha label of the image, read "
+            "from /.singularity.d/labels.json. The label names the image and not a checkout mounted over "
+            "the image, so changes to such a checkout are undetected. The history records the same "
+            "identity, so a label-identified run is compared on the next resume. A build that neither "
+            "source resolves is recorded as 'unknown' and is not compared. The detector is therefore live "
+            "under execution_environment='container' as well as natively. The guard prevents a chapter set "
+            "written with a declared chunk grid from being extended by a build that declares another grid, "
+            "so leaving the field False is load-bearing. Consumed by "
             "provenance.assert_chapters_match_running_build."
         ),
     )
     TRITON_raw_output_type: Literal["bin", "asc"] = Field(
         "bin",
-        description="TRITON raw output type, asc or bin.",
+        description="TRITON raw output type. The value is asc or bin.",
         json_schema_extra=field_meta(
             options={
                 "bin": "Raw binary rasters. Default -- smaller and faster to write and parse.",
-                "asc": "ASCII grid rasters. Human-readable, substantially larger and slower.",
+                "asc": "ASCII grid rasters that are human-readable but far larger and slower.",
             }
         ),
     )
@@ -1162,37 +1109,35 @@ class analysis_config(cfgBaseModel):
     swmm_node_rim_from_dem: bool = Field(
         default=False,
         description=(
-            "When True, the toolkit writes the line `swmm_node_rim_from_dem=1` into each "
-            "coupled scenario's TRITON cfg, and TRITON then takes a coupled node's rim (the "
-            "height of its surface connection) as the DEM cell's elevation minus the node's "
-            "invert, instead of the depth SWMM itself uses for the node. When False (the "
-            "default) the line is not written and the rim is SWMM's own depth. Only TRITON builds "
-            "that read the key honour it, so preparation refuses a True value unless the build "
-            "the run uses is known to read it: in native mode the TRITON clone's "
-            "src/config_utils.h must carry the key's read, or the clone must descend from the "
-            "commit that added the key; in container mode the image's recorded TRITON "
-            "commit must equal TRITONSWMM_branch_key and be one of the commits known to read it. "
-            "It changes hydraulic results when True."
+            "When True, the toolkit writes the line `swmm_node_rim_from_dem=1` into the TRITON cfg of each "
+            "coupled scenario, and TRITON then takes the rim of a coupled node, the height of the surface "
+            "connection of the node, as the DEM cell elevation minus the invert of the node, in place of "
+            "the depth that SWMM itself uses for the node. When False, the default, the line is not "
+            "written and the rim is the SWMM depth. Only TRITON builds that read the key honour the "
+            "setting, so preparation refuses a True value unless the build the run uses is known to read "
+            "the key. In native mode the TRITON clone src/config_utils.h must carry the read of the key, "
+            "or the clone must descend from the commit that added the key. In container mode the recorded "
+            "TRITON commit of the image must equal TRITONSWMM_branch_key and be one of the commits known "
+            "to read the key. The setting changes hydraulic results when True."
         ),
     )
     one_coupled_inflow_node_per_dem_cell: bool = Field(
         default=False,
         description=(
-            "Applies only to a coupled system (toggle_tritonswmm_model) whose "
-            "system_config.swmm_coupling_mode is legacy: a coupled system under any other mode "
-            "with it on is refused at run entry, and a system whose coupled model is off writes "
-            "no coupling-node list, so the option has no effect there. When True, scenario "
-            "preparation writes at "
-            "most ONE candidate junction per DEM cell to the coupling-node list, the limit "
-            "TRITON-SWMM required before it coupled any number of nodes per cell. The kept "
-            "junction is the one whose own outgoing link has the largest flow area; on a tie, the "
-            "cell's junction whose outgoing link leaves the cell, then the lowest invert. A "
-            "junction with no outgoing pipe is ranked by its largest incoming pipe. No [INFLOWS] "
-            "line is removed; each prepared scenario records the cells it reduced in "
-            "_status/inflow_node_selection.json, which the report's inflow-node reduction check "
-            "lists. When False (the default) every legacy candidate junction is written, so the "
-            "number of surface exchange points does not depend on the DEM resolution. In both "
-            "cases outfalls, storage nodes and dividers are not coupled."
+            "Applies only to a coupled system with toggle_tritonswmm_model on and "
+            "system_config.swmm_coupling_mode set to the third choice. A coupled system under any other "
+            "mode with the option on is refused at run entry, and a system whose coupled model is off "
+            "writes no coupling-node list, so the option is inert there. When True, scenario preparation "
+            "writes at most ONE candidate junction per DEM cell to the coupling-node list, the limit that "
+            "TRITON-SWMM required before TRITON-SWMM coupled any number of nodes per cell. The kept "
+            "junction is the junction whose own outgoing link has the largest flow area. On a tie, the "
+            "kept junction is the junction of the cell whose outgoing link leaves the cell, then the "
+            "junction with the lowest invert. A junction with no outgoing pipe is ranked by the largest "
+            "incoming pipe. No [INFLOWS] line is removed. Each prepared scenario records the cells that "
+            "the scenario reduced in _status/inflow_node_selection.json, and the inflow-node reduction "
+            "check of the report lists that file. When False, the default, every candidate junction is "
+            "written, so the number of surface exchange points is independent of the DEM resolution. In "
+            "both cases outfalls, storage nodes, and dividers are not coupled."
         ),
     )
     hydraulic_timestep_s: float = Field(
@@ -1205,10 +1150,8 @@ class analysis_config(cfgBaseModel):
     )
     open_boundaries: int = Field(
         ...,
-        description="0 for closed, 1 for open. This is affects all boundaries wherever "
-        "external boundary conditions are "
-        "not "
-        "otherwise defined.",
+        description="0 for closed and 1 for open. The value applies to all boundaries wherever external "
+        "boundary conditions are otherwise undefined.",
     )
 
     # OPTIONAL PATHS, EXPERIMENT MEMBERSHIP, REPORTING AND EXECUTION SETTINGS
@@ -1228,80 +1171,70 @@ class analysis_config(cfgBaseModel):
     )
     experiment_cfg_yaml: Path | None = Field(
         None,
-        description="Path to the configuration file of the parent experiment this analysis is a member of. "
-        "Required when is_experiment_member is true.",
+        description="Path to the configuration file of the parent experiment that contains this analysis "
+        "as a member. Required when is_experiment_member is true.",
     )
     report: _report_config_model = Field(
         ...,
         description=(
-            "Required inline report-rendering config (formerly a separate "
-            "report_config.yaml referenced by absolute path in Snakefile shell "
-            "lines, since eliminated). The canonical source of truth for "
-            "renderer parameters including `interactive.static_backend`. A "
-            "cfg_analysis.yaml file without a `report:` block raises pydantic "
-            "ValidationError at load time. Callers may still pass an explicit "
-            "`report_config=` argument to `analysis.run()` to override. "
-            "Precedence: an explicit `report_config=` Path passed to run() wins "
-            "over this inline block. The field is deliberately inline rather "
-            "than a path to a separate file, so a cfg_analysis.yaml carries its "
-            "own report configuration with nothing to repoint."
+            "Required inline report-rendering config. The config replaces a separate report_config.yaml "
+            "that Snakefile shell lines referenced by absolute path. The canonical source of truth for "
+            "renderer parameters, including `interactive.static_backend`. A cfg_analysis.yaml file without "
+            "a `report:` block raises pydantic ValidationError at load time. Callers may still pass an "
+            "explicit `report_config=` argument to `analysis.run()` to override. The precedence rule is "
+            "that an explicit `report_config=` path passed to `analysis.run()` wins over this inline "
+            "block. The field is deliberately inline and is no path to a separate file, so a "
+            "cfg_analysis.yaml carries the report configuration with no repointing."
         ),
     )
 
     brand_theme: Path | None = Field(
         None,
         description=(
-            "Optional path to a brand-theme YAML (institutional "
-            "identity: report.css :root palette + HTML-table primary/accent + "
-            "navbar upper-left text). When None (default), the code-frozen "
-            "DEFAULT_BRAND_THEME (config/brand_theme.py) applies. Mirrors the "
-            "sensitivity_analysis / storm_tide_boundary_line_gis path-field "
-            "precedent. Callers may pass an explicit `override_brand_theme=` Path "
-            "to `analysis.run()` to override for one invocation, mirroring the "
-            "`report_config=` runtime-override precedent. Automatically "
-            "per-member overlayable via an `analysis.brand_theme` "
-            "sensitivity column."
+            "Optional path to a brand-theme YAML for institutional identity, The theme covers the "
+            "report.css :root palette, the HTML-table primary color, the HTML-table accent color, and the "
+            "navbar upper-left text. When None, the default, the code-frozen DEFAULT_BRAND_THEME in "
+            "config/brand_theme.py applies. Mirrors the sensitivity_analysis and "
+            "storm_tide_boundary_line_gis path-field precedent. Callers may pass an explicit "
+            "`override_brand_theme=` Path to `analysis.run()` to override for a single invocation, "
+            "mirroring the `report_config=` runtime-override precedent. Automatically per-member "
+            "overlayable via an `analysis.brand_theme` sensitivity column."
         ),
     )
 
     static_plot_configs: list[Path] = Field(
         default_factory=list,
         description=(
-            "Per-plot static-config YAML paths. "
-            "Each path is a standalone publication-static plot spec. Default [] "
-            "(no static plots) — strict-safe; old yamls load cleanly. Each element "
-            "is existence-validated at config-load via a dedicated "
-            "@field_validator('static_plot_configs') (the base * validator "
-            "cfgBaseModel._check_paths_exist only existence-checks SCALAR Path fields "
-            "and passes list[Path] through, so a list-aware validator is required). "
-            "Consumed by analysis.static_plots(), which renders one figure per config "
-            "via a dedicated Snakemake workflow; a single config may also be selected "
-            "by ID at call time. Leaving this list empty is an error unless a config "
-            "is supplied at call time."
+            "Per-plot static-config YAML paths. Each path is a standalone publication-static plot spec. "
+            "Default [], meaning no static plots. The field is strict-safe, and old yamls load cleanly. "
+            "Each element is existence-validated at config-load via a dedicated "
+            "`@field_validator('static_plot_configs')`, because the base * validator "
+            "`cfgBaseModel._check_paths_exist` only existence-checks SCALAR Path fields and passes "
+            "list[Path] through, so a list-aware validator is required. Consumed by "
+            "`analysis.static_plots()`, the method that renders one figure per config via a dedicated "
+            "Snakemake workflow. A single config may also be selected by ID at call time. Leaving this "
+            "list empty is an error unless a config is supplied at call time."
         ),
     )
 
     eda: eda_config = Field(
         default_factory=eda_config,
         description=(
-            "Optional inline EDA-loop config: selects which EDA plots "
-            "appear in the standalone eda_report.html. Default member set (the "
-            "cross-sim byte-identity plot) applies when absent. Deliberately INLINE "
-            "(not a path field) so it travels in cfg_analysis.yaml and Bundle.eda() "
-            "reads it with zero extra carry/repoint wiring — the same rationale as "
-            "the `report` field above. Runtime override via eda(override_eda_config=<Path>)."
+            "Optional inline EDA-loop config that selects the EDA plots in the standalone eda_report.html. "
+            "The default member set, the cross-sim byte-identity plot, applies when absent. The config is "
+            "deliberately INLINE and no path field, so the config travels in cfg_analysis.yaml and "
+            "`Bundle.eda()` reads the config with zero extra carry/repoint wiring, for the same reason as "
+            "the `report` field above. Runtime override via `eda(override_eda_config=<Path>)`."
         ),
     )
 
     execution_environment: Literal["native", "container"] = Field(
         "native",
         description=(
-            "'native' runs sim+processing on the host (the default); "
-            "'container' wraps the innermost sim {exe} and "
-            "the process_{model} runners in `apptainer exec {sif}`, where the cluster "
-            "SIF is described by hpc_system_config.container (ContainerSpec). Additive "
-            "default-valued field so pre-container configs load as native. The "
-            "native|container SELECTOR is experiment-scoped; "
+            "'native' runs sim+processing on the host, the default. 'container' wraps the innermost sim "
+            "{exe} and the process_{model} runners in `apptainer exec {sif}`, with the cluster SIF "
+            "described by hpc_system_config.container, a ContainerSpec. Additive default-valued field so "
+            "pre-container configs load as native. The native|container SELECTOR is experiment-scoped, and "
             "the cluster-coupled 'how to exec' lives on ContainerSpec."
         ),
         json_schema_extra=field_meta(
@@ -1317,21 +1250,19 @@ class analysis_config(cfgBaseModel):
     process_in_sim_rule: bool = Field(
         False,
         description=(
-            "Run each simulation's per-scenario output processing INSIDE the simulation "
-            "rule (one Snakemake rule, one SLURM job: the sim runner, then the process "
-            "runner, in one shell) instead of as the separate `process_{model}` rule. "
-            "Default False reproduces today's Snakefile byte-for-byte. True removes the "
-            "processing job from the SLURM queue entirely, so reclaim of raw output can "
-            "never wait behind a backlog of older simulation jobs (the 2026-09-12 "
-            "stochastic-ensemble stall). The combined rule declares BOTH the c_run and "
-            "d_process flags as outputs, requests mem_mb = max(sim, processing) and "
-            "runtime = sim + processing, and is safe under retries because the sim runner "
-            "short-circuits an already-completed simulation (run_simulation."
-            "prepare_simulation_command returns None on model_run_completed), so a "
-            "processing failure re-runs only the processing pass. Applies to "
-            "multi_sim_run_method='batch_job' and '1_job_many_srun_tasks'; REFUSED on a "
-            "sensitivity analysis (the sensitivity-primary generator raises "
-            "ConfigurationError) until its member rules carry the same branch."
+            "Run the per-scenario output processing of each simulation INSIDE the simulation rule, as one "
+            "Snakemake rule and one SLURM job with the sim runner and then the process runner in one "
+            "shell, in place of a separate `process_{model}` rule. Default False reproduces today's "
+            "Snakefile byte-for-byte. True removes the processing job from the SLURM queue entirely, so "
+            "reclaim of raw output can never wait behind a backlog of older simulation jobs, as in the "
+            "2026-09-12 stochastic-ensemble stall. The combined rule declares BOTH the c_run and d_process "
+            "flags as outputs and requests `mem_mb = max(sim, processing)` with `runtime = sim + "
+            "processing`. The rule is safe under retries because the sim runner short-circuits an "
+            "already-completed simulation, since run_simulation.prepare_simulation_command returns None on "
+            "model_run_completed, so a processing failure re-runs only the processing pass. Applies to "
+            "multi_sim_run_method='batch_job' and '1_job_many_srun_tasks'. REFUSED on a sensitivity "
+            "analysis, where the sensitivity-primary generator raises ConfigurationError, until the member "
+            "rules carry the same branch."
         ),
         json_schema_extra=field_meta(
             applies_when=[when("multi_sim_run_method", "batch_job", "1_job_many_srun_tasks")],
@@ -1352,50 +1283,42 @@ class analysis_config(cfgBaseModel):
     remove_after_processing: RemoveValue = Field(
         "none",
         description=(
-            "Post-processing reclaim policy. Fires ONLY after the per-model summary "
-            'outputs are verified present AND openable on disk. "none" reclaims '
-            'nothing. "all" reclaims every artifact class. A list selects classes: '
-            '"timeseries" drops the per-scenario *_tseries zarr/nc set (the paired '
-            "complement of summary_paths._SUMMARY_STEMS_BY_MODEL -- no renderer and no "
-            'default consolidation path reads them); "raw_swmm_binaries" drops '
-            "out_tritonswmm/swmm/*.out (hydraulics.out plus the per-node *.out set), and "
-            "NEVER *.rpt, which is a live completion predicate via "
-            'run_simulation._coupled_swmm_report_finalized. "coupled_rpt" '
-            "TRUNCATES out_tritonswmm/swmm/hydraulics.rpt in place to its header, "
-            "continuity and summary tables plus its trailer -- truncation, NEVER deletion, "
-            "because that file is a live completion predicate via "
-            'run_simulation._coupled_swmm_report_finalized. "hydro_out" drops the SWMM '
-            "hydrology output swmm/hydro.out, which write_hydrograph_files reads; that is "
-            "safe only because write_hydrograph_files carries an already-written gate. "
-            '"prep_inputs" drops the weather .dat directory, the external-boundary '
-            "timeseries directory and the weather timeseries file, all regenerable by "
-            're-running scenario preparation with no solver. "hydrographs" drops the '
-            "hydrograph timeseries and locations files ONLY once "
-            "processed/hydrology_inflow_summary.zarr is present and openable, and otherwise "
-            'declines. "standalone_rpt" TRUNCATES the standalone full.rpt in place (never '
-            "deletes it) and deletes the hydrology .rpt only once a "
-            "processed/hydrology_rpt_summary.zarr capture carrying every subcatchment the "
-            "hydrology model declares has been written. "
-            '"raw_swmm_binaries" '
-            'no-ops (with a logged reason) when clear_raw == "none", because its only '
-            "consumer, eda.raw_byte_identity.compare_swmm_raw, also needs the raw "
-            "H/QX/QY/MH set that clear_raw governs. Every reclaim is recorded per "
-            "scenario in the per-model log and surfaced by "
-            'analysis_validation.check_data_availability. Defaults to "none" -- '
-            "existing yamls load cleanly with the strict-safe (reclaim-nothing) default. "
-            "Reclaiming makes REPROCESSING those scenarios impossible without re-running "
-            "the simulations."
+            "Post-processing reclaim policy. Fires ONLY after the per-model summary outputs are verified "
+            'present AND openable on disk. "none" reclaims no artifact. "all" reclaims every artifact '
+            'class. A list selects classes. "timeseries" drops the per-scenario *_tseries zarr/nc set, '
+            "the paired complement of summary_paths._SUMMARY_STEMS_BY_MODEL, and neither a renderer nor a "
+            'default consolidation path reads the set. "raw_swmm_binaries" drops '
+            "out_tritonswmm/swmm/*.out, covering hydraulics.out plus the per-node *.out set, and NEVER "
+            "*.rpt, a live completion predicate via run_simulation._coupled_swmm_report_finalized. "
+            '"coupled_rpt" TRUNCATES out_tritonswmm/swmm/hydraulics.rpt in place to the header, the '
+            "continuity table, the summary table, and the trailer. The class truncates and NEVER deletes, "
+            "because the file is a live completion predicate via "
+            'run_simulation._coupled_swmm_report_finalized. "hydro_out" drops the SWMM hydrology output '
+            "swmm/hydro.out, the file that write_hydrograph_files reads, and is safe only because "
+            'write_hydrograph_files carries an already-written gate. "prep_inputs" drops the weather '
+            ".dat directory, the external-boundary timeseries directory, and the weather timeseries file, "
+            'all regenerable by re-running scenario preparation with no solver. "hydrographs" drops the '
+            "hydrograph timeseries and locations files ONLY once processed/hydrology_inflow_summary.zarr "
+            'is present and openable, and otherwise declines. "standalone_rpt" TRUNCATES the standalone '
+            "full.rpt in place and never deletes the file, and deletes the hydrology .rpt only once a "
+            "processed/hydrology_rpt_summary.zarr capture carrying every subcatchment that the hydrology "
+            'model declares has been written. "raw_swmm_binaries" no-ops with a logged reason when '
+            'clear_raw == "none", because the only consumer of the class, '
+            "eda.raw_byte_identity.compare_swmm_raw, also needs the raw H/QX/QY/MH set that clear_raw "
+            "governs. Every reclaim is recorded per scenario in the per-model log and surfaced by "
+            'analysis_validation.check_data_availability. Defaults to "none", so existing yamls load '
+            "cleanly with the strict-safe default of no reclaim. Reclaiming makes REPROCESSING the "
+            "affected scenarios impossible without re-running the simulations."
         ),
     )
     clear_raw: ClearRawValue = Field(
         "none",
         description=(
-            'Post-processing cleanup policy. "all" deletes all raw outputs '
-            'for every enabled model type. "none" deletes nothing. A list '
-            'of model type strings (subset of "tritonswmm", "triton", "swmm") '
-            "deletes raw outputs only for the listed model types. Defaults "
-            'to "none" — yamls written before this field was introduced '
-            "load cleanly with the strict-safe (delete-nothing) default."
+            'Post-processing cleanup policy. "all" deletes all raw outputs for every enabled model type. '
+            '"none" deletes no output. A list of model type strings, a subset of "tritonswmm", '
+            '"triton", and "swmm", deletes raw outputs only for the listed model types. Defaults to '
+            '"none", so yamls written before this field was introduced load cleanly with the strict-safe '
+            "default of no deletion."
         ),
     )
     # `validate_default=True`, because pydantic does not validate a default and this field's
@@ -1407,13 +1330,11 @@ class analysis_config(cfgBaseModel):
         "none",
         validate_default=True,
         description=(
-            'Force-rerun policy. "all" re-runs everything. "none" runs no '
-            'forced re-runs. A dict with exactly one key — "sa_id" (sensitivity '
-            'only) or "event_iloc" (non-sensitivity only) — and a list of int '
-            "or string identifiers re-runs only the named members or "
-            'events. Defaults to "none" — yamls written before this field '
-            "was introduced load cleanly with the strict-safe (re-run-nothing) "
-            "default."
+            'Force-rerun policy. "all" re-runs everything. "none" runs no forced re-runs. A dict with '
+            'a single key, "sa_id" for a sensitivity analysis or "event_iloc" otherwise, and a list of '
+            'int or string identifiers re-runs only the named members or events. Defaults to "none", so '
+            "yamls written before this field was introduced load cleanly with the strict-safe default of "
+            "no re-runs."
         ),
     )
 

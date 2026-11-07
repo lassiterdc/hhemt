@@ -1,0 +1,5 @@
+# Allowlist of the single-source docs test (tests/docs/test_docs_single_source.py).
+# One entry per pair of paragraphs on different pages that share a run of words. An entry matches every identical pair of its two pages.
+# status: baseline = present when the test was added; permitted = a reviewer concurred (a summary sentence of README.md or docs/index.md that links to the page that owns the item, or a pair that the census and the review class as not a duplicate of an item).
+# The reason of a baseline entry names the census row (single-source-census.md in the run directory) that the pair belongs to.
+entries: []

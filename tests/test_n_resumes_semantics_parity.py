@@ -77,6 +77,7 @@ _TABLE: dict[str, tuple[str, str | None]] = {
     "tests/test_consecutive_failure_budget_gate.py": ("incidental mention", None),
     "tests/test_coupled_resume_validity.py": ("reads-as-attempts", None),
     "tests/test_debug_flag_keep_previous_snapshots.py": ("reads-as-attempts", None),
+    "tests/test_eda_mixed_grid_and_dem_gate.py": ("reads-as-attempts", None),
     "tests/test_event_labeling.py": ("incidental mention", None),
     "tests/test_experiment_tree_summary.py": ("reads-as-attempts", "536e2aa64bd60d2fc648338b6c6f02305f102594"),
     "tests/test_known_solver_defects.py": ("reads-as-attempts", None),

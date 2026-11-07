@@ -41,7 +41,7 @@ class RunResult:
 
 
 def status(target_dir: Path) -> RunResult:
-    """Report current vs LAYOUT_VERSION; do not mutate."""
+    """Report current versus LAYOUT_VERSION without mutating anything."""
     current = _resolve_current(target_dir)
     plan_modules = registry.plan(current, LAYOUT_VERSION) if current >= 0 else []
     return RunResult(
@@ -111,16 +111,16 @@ def run_migration(
     apply: bool = False,
     cfg_paths: dict[str, Path] | None = None,
 ) -> RunResult:
-    """Plan and (optionally) apply the migration sequence to ``target_dir``.
+    """Plan the migration sequence for ``target_dir`` and apply the sequence when ``apply`` is true.
 
     Renamed from ``migrate`` to disambiguate from the package name and CLI
     verb.
 
-    ``cfg_paths`` (optional) maps {"system": Path, "analysis": Path} and is
+    The optional ``cfg_paths`` maps ``{"system": Path, "analysis": Path}`` and is
     threaded into every MigrationContext via ``_construct_context``.
-    Required by migrations whose ``upgrade()`` calls
-    ``ctx.build_expected_slugs_for_current_version()`` (currently V0001).
-    Ignored by migrations that do not.
+    Migrations whose ``upgrade()`` calls
+    ``ctx.build_expected_slugs_for_current_version()`` require ``cfg_paths``. V0001 is the current case.
+    Other migrations ignore ``cfg_paths``.
     """
     target = LAYOUT_VERSION if target is None else target
     current = _resolve_current(target_dir)
@@ -226,8 +226,8 @@ def _resolve_current(target_dir: Path) -> int:
 def verify(target_dir: Path) -> bool:
     """Compare target_dir to schema/layout_schema_v{LAYOUT_VERSION}.json.
 
-    Phase 1 returns True if _version.json shows current LAYOUT_VERSION,
-    False otherwise. Phase 5 expands this to full schema-walk comparison.
+    Returns True if _version.json shows the current LAYOUT_VERSION,
+    False otherwise. No schema-walk comparison is made.
     """
     st = state.read_version_file(target_dir)
     if st is None:

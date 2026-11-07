@@ -464,22 +464,40 @@ class Local_TestCases:
         )
 
     @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_bare_name_column(
+        start_from_scratch: bool = False,
+    ):
+        """A sensitivity table that holds the bare analysis_config field name `mem_gb_per_cpu`.
+
+        The construction raises a ConfigurationError that names `analysis.mem_gb_per_cpu`."""
+        _require_cpu_cores_for_sensitivity()
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_bare_name_column",
+            model_subset="all",
+            extra_columns={
+                "mem_gb_per_cpu": [2, 2, 2, 2],
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_bare_name_column",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            start_from_scratch=start_from_scratch,
+        )
+
+    @staticmethod
     def retrieve_synth_cpu_config_sensitivity_case_all_analysis_prefixed(
         start_from_scratch: bool = False,
     ):
-        """Phase 2 R2 — all analysis-config columns use the canonical `analysis.` prefix."""
+        """Phase 2 R2 — all analysis-config columns use the canonical `analysis.` prefix.
+
+        The default sensitivity table is prefixed throughout, so this case adds no columns."""
         _require_cpu_cores_for_sensitivity()
         csv_path = Local_TestCases._write_synth_sensitivity_csv(
             analysis_name="synth_sensitivity_all_analysis_prefixed",
             model_subset="all",
-            drop_columns=["run_mode", "n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes"],
-            extra_columns={
-                "analysis.run_mode": ["mpi", "openmp", "hybrid", "serial"],
-                "analysis.n_mpi_procs": [2, 1, 2, 1],
-                "analysis.n_omp_threads": [1, 2, 2, 1],
-                "analysis.n_gpus": [0, 0, 0, 0],
-                "analysis.n_nodes": [1, 1, 1, 1],
-            },
         )
         return retrieve_synth_TRITON_SWMM_test_case(
             analysis_name="synth_sensitivity_all_analysis_prefixed",
@@ -494,16 +512,12 @@ class Local_TestCases:
     def retrieve_synth_cpu_config_sensitivity_case_mixed_prefixed_columns(
         start_from_scratch: bool = False,
     ):
-        """Phase 2 R10 — mixed bare + `analysis.` + `system.` columns."""
+        """Phase 2 R10 — `analysis.` and `system.` columns together."""
         _require_cpu_cores_for_sensitivity()
         csv_path = Local_TestCases._write_synth_sensitivity_csv(
             analysis_name="synth_sensitivity_mixed_prefixed_columns",
             model_subset="all",
-            drop_columns=["n_mpi_procs"],
             extra_columns={
-                # `n_omp_threads` retained as bare (deprecated path); `analysis.n_mpi_procs`
-                # introduced as canonical prefixed replacement.
-                "analysis.n_mpi_procs": [2, 1, 2, 1],
                 "system.target_dem_resolution": [1.0, 1.0, 2.0, 2.0],
             },
         )
@@ -540,27 +554,27 @@ class Local_TestCases:
             df = pd.DataFrame(
                 {
                     "member_id": [0, 1, 2, 3],
-                    "run_mode": ["mpi", "openmp", "hybrid", "serial"],
-                    "n_mpi_procs": [2, 1, 2, 1],
-                    "n_omp_threads": [1, 2, 2, 1],
-                    "n_gpus": [0, 0, 0, 0],
-                    "n_nodes": [1, 1, 1, 1],
+                    "analysis.run_mode": ["mpi", "openmp", "hybrid", "serial"],
+                    "analysis.n_mpi_procs": [2, 1, 2, 1],
+                    "analysis.n_omp_threads": [1, 2, 2, 1],
+                    "analysis.n_gpus": [0, 0, 0, 0],
+                    "analysis.n_nodes": [1, 1, 1, 1],
                 }
             )
         elif model_subset == "swmm":
             df = pd.DataFrame(
                 {
                     "member_id": [0, 1, 2],
-                    "run_mode": ["openmp", "openmp", "serial"],
-                    "n_mpi_procs": [1, 1, 1],
+                    "analysis.run_mode": ["openmp", "openmp", "serial"],
+                    "analysis.n_mpi_procs": [1, 1, 1],
                     # SWMM 5.2 clamps NumThreads=1 when Nobjects[LINK] < 4*NumThreads
                     # (project.c:269). The synth full SWMM model has 12 conduits, so it
                     # honors at most 3 threads (12 >= 4*3); 4 would silently clamp to 1
                     # and fail the resource-match check. member_0=3 gives a genuinely
                     # multithreaded run whose actual matches expected.
-                    "n_omp_threads": [3, 2, 1],
-                    "n_gpus": [0, 0, 0],
-                    "n_nodes": [1, 1, 1],
+                    "analysis.n_omp_threads": [3, 2, 1],
+                    "analysis.n_gpus": [0, 0, 0],
+                    "analysis.n_nodes": [1, 1, 1],
                 }
             )
         else:

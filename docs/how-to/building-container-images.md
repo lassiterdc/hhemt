@@ -1,68 +1,54 @@
 # Building container images
 
-Container mode runs each simulation inside an Apptainer image. `hhemt build-sifs`
-creates every image an experiment needs, addressed by identity rather than by
-filename, so you never name an image file in a config.
+## Goal
 
-For the fields of the build config itself, see
-[Configuration schema](../reference/config-schema.md). This page is the workflow.
+Build the Apptainer images that container mode needs for an experiment.
 
-## Before you start: declare the build host
+## Prerequisites
 
-A build host is a machine where `apptainer build --fakeroot` works. Declare it on
-that cluster's HPC-system config:
+- A build host, meaning a machine where `apptainer build --fakeroot` works, declared on the HPC system config of that cluster.
+- An experiment definition, plus the HPC system config for the cluster that the images target.
+
+## Key references
+
+- [Configuration schema](../reference/config-schema.md) lists the fields of the build config.
+- [Running an experiment definition](running-an-experiment-definition.md) describes the experiment definition.
+
+## Declare the build host
+
+Set `builds_containers` on the HPC system config of the build cluster.
 
 ```yaml
 container:
   builds_containers: true
 ```
 
-`hhemt build-sifs` refuses to run on a config that does not declare it, naming the
-key in the refusal. A target-only cluster leaves it `false`, which is the default:
-Frontier login nodes grant no fakeroot, so images for that cluster are built
-elsewhere and placed under its `sif_root`.
+`hhemt build-sifs` refuses to run on a config without the declaration and names the key in the refusal. A target-only cluster leaves the key at the default `false`. Some clusters grant no fakeroot on the login nodes. Build the images for such a cluster elsewhere and place them under the cluster's `sif_root`.
 
 ## See what would be built
 
-`build-sifs` needs to know which experiment's images to plan, so name an experiment definition with
-`--experiment`. Run the plan first; it writes nothing:
+`build-sifs` plans the images of one experiment. Name an experiment definition with `--experiment` and plan first. A dry run writes no file.
 
 ```bash
 hhemt build-sifs --build-hpc-config hpc/uva.yaml --sif-build-config sif_build.yaml \
   --experiment experiments/my_experiment --dry-run
 ```
 
-`--experiment` is repeatable, and the experiment definition's system and analysis configs plus its
-HPC map are what derive the targets. With no experiment definition, name the three configs directly
-instead, with `--system-config`, `--analysis-config` and `--target-hpc-config` as a
-positional triplet. Naming neither is refused.
+`--experiment` is repeatable. The system config, the analysis config, and the HPC map of the experiment definition determine the targets. Without an experiment definition, name the system config, the analysis config, and the target HPC config as a positional triplet with `--system-config`, `--analysis-config`, and `--target-hpc-config`. The command refuses to run with neither form.
 
-The output is the identity table: one row per image the experiment's matrix
-requires, keyed by the identity the toolkit recomputes from your configs. Each row
-names a family and a hardware target. Read it before building, because it tells you
-how many images the run needs and which of them already exist.
+The output is the identity table, with a row for each image that the experiment matrix requires. The toolkit recomputes the identity from your configs. Each row names a family and a hardware target. The table shows the images the experiment needs and the images that exist already, so read the table before building.
 
 ## Build
 
-Drop `--dry-run` to build. Two options shape what happens:
+Drop `--dry-run` to build. The options below shape the build.
 
-- `--only KEY` builds a subset. Take the KEY, or a `FAMILY:HW` pair, from the
-  dry-run table.
-- `--force` rebuilds identities whose images already exist. Images are replaced
-  only on success, so a failed rebuild leaves the working image in place.
+- `--only KEY` builds a subset. Take the KEY or a `FAMILY:HW` pair from the dry-run table.
+- `--force` rebuilds identities with an existing image. A rebuild replaces an image only on success, so a failed rebuild leaves the working image in place.
 
-By default the build runs as a detached driver and returns. Pass `--foreground` to
-run it in the current shell instead, which is what you want when you are watching a
-first build or capturing its output.
+By default the build starts as a detached driver and returns. Pass `--foreground` to build in the current shell. Use that form for a first build or to capture the output.
 
-## Where the images go
+## Image location
 
-Each image is written under the `sif_root` your build config names, at a path
-derived from its identity, beside a `.manifest.json` recording the digest. Nothing
-reads an image by filename. A run recomputes the identity from its own configs and
-resolves the same path, which is why an image built for one commit is not found
-after the toolkit moves on.
+Each image is written under the `sif_root` of your build config, at a path derived from the identity of the image, beside a `.manifest.json` that records the digest. Every reader resolves an image by identity. An analysis recomputes the identity from the configs of the analysis and resolves the same path, so after the toolkit moves on, the analysis finds no image built for an earlier commit.
 
-To place an image on a cluster that cannot build, copy both the `.sif` and its
-`.manifest.json` to the same relative path under that cluster's `sif_root`.
-Preflight verifies the labels and the digest, not the filename.
+A cluster without a build host receives an image by a copy of the `.sif` and the `.manifest.json` to the same relative path under the `sif_root` of that cluster. Preflight verifies the labels and the digest of the image and ignores the filename.

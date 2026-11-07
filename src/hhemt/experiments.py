@@ -1,59 +1,66 @@
 """
 Turn a case study or a published bundle into a runnable TRITON-SWMM experiment.
 
-The problem: a user should not have to assemble system and analysis configs by hand to
-run a known example or to reproduce someone else's published run. This module builds a
-ready ``TRITON_SWMM_experiment`` (system + analysis) two ways. ``from_case_study`` fills
-an in-repo case study's config templates (for example Norfolk coastal flooding) and
-fetches its data from the case's host (HydroShare or Zenodo). ``from_doi`` fetches a
-published reprex bundle by DOI or PID, reconstitutes its configs, and places or rebuilds
-the container images it needs.
+System and analysis configs should not have to be assembled by hand to
+run a known example or to reproduce someone else's published run. The module builds a
+ready ``TRITON_SWMM_experiment`` with system and analysis by either route below. ``from_case_study`` fills
+the config templates of an in-repo case study, such as Norfolk coastal flooding, and
+fetches the data from the HydroShare or Zenodo host of the case. ``from_doi`` fetches a
+published reprex bundle by DOI or PID, reconstitutes the configs of the bundle, and secures
+the container images that the experiment needs by placing or rebuilding the images.
 
-Generic API (for any case study):
-    from hhemt.experiments import TRITON_SWMM_experiment
-    from hhemt.constants import *
+Generic API for any case study:
 
-    # Load any case study
-    example = TRITON_SWMM_experiment.from_case_study(
-        case_name="norfolk_coastal_flooding",
-        system_config_template="template_system_config.yaml",
-        analysis_config_template="template_analysis_config.yaml",
-        case_config_filename="case.yaml",
-        weather_events_to_simulate="hurricane_irene_event_index.csv",
-        analysis_description="Single Simulation of Hurricane Irene 8-27-2011",
-        # hhemt_sha is the commit you run: `git rev-parse HEAD`
-        hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT",
-    )
-    system = example.system
+```python
+from hhemt.experiments import TRITON_SWMM_experiment
+from hhemt.constants import *
 
-Case-Specific API (convenience wrappers):
-    from hhemt.experiments import NorfolkIreneExperiment
-
-    # Load Norfolk example (convenience wrapper)
+# Load any case study
+example = TRITON_SWMM_experiment.from_case_study(
+    case_name="norfolk_coastal_flooding",
+    system_config_template="template_system_config.yaml",
+    analysis_config_template="template_analysis_config.yaml",
+    case_config_filename="case.yaml",
+    weather_events_to_simulate="hurricane_irene_event_index.csv",
+    analysis_description="Single Simulation of Hurricane Irene 8-27-2011",
     # hhemt_sha is the commit you run: `git rev-parse HEAD`
-    norfolk = NorfolkIreneExperiment.load(hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT")
-    system = norfolk.system
+    hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT",
+)
+system = example.system
+```
 
-Adding New Case Studies:
-    To add a new case study, create a thin wrapper class:
+Case-specific API through convenience wrappers:
 
-    class MiamiExample:
-        @classmethod
-        def load(cls, download_if_exists=False, example_data_dir=None, *, hhemt_sha):
-            return TRITON_SWMM_experiment.from_case_study(
-                case_name="miami_flooding",
-                system_config_template="template_system_config.yaml",
-                analysis_config_template="template_analysis_config.yaml",
-                case_config_filename="case.yaml",
-                weather_events_to_simulate="miami_event_index.csv",
-                analysis_description="Miami flooding example",
-                download_if_exists=download_if_exists,
-                example_data_dir=example_data_dir,
-                hhemt_sha=hhemt_sha,
-            )
+```python
+from hhemt.experiments import NorfolkIreneExperiment
 
-For test infrastructure (synthetic weather, isolated test directories),
-see tests/fixtures/ instead.
+# Load the Norfolk example
+# hhemt_sha is the commit you run: `git rev-parse HEAD`
+norfolk = NorfolkIreneExperiment.load(hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT")
+system = norfolk.system
+```
+
+Adding a new case study takes a thin wrapper class:
+
+```python
+class MiamiExample:
+    @classmethod
+    def load(cls, download_if_exists=False, example_data_dir=None, *, hhemt_sha):
+        return TRITON_SWMM_experiment.from_case_study(
+            case_name="miami_flooding",
+            system_config_template="template_system_config.yaml",
+            analysis_config_template="template_analysis_config.yaml",
+            case_config_filename="case.yaml",
+            weather_events_to_simulate="miami_event_index.csv",
+            analysis_description="Miami flooding example",
+            download_if_exists=download_if_exists,
+            example_data_dir=example_data_dir,
+            hhemt_sha=hhemt_sha,
+        )
+```
+
+Test infrastructure, such as synthetic weather and isolated test directories, lives in
+tests/fixtures/.
 """
 
 import sys
@@ -188,11 +195,11 @@ class TRITON_SWMM_experiment:
         Returns
         -------
         Path
-            The ``test_data/{case_name}/`` directory two levels above the ``hhemt``
-            package directory: the repository root in a src-layout checkout.
-            ``test_data/`` is not package data, so from an installed wheel the path does
-            not exist. The path is returned whether or not it exists; nothing here
-            creates or downloads it.
+            The ``test_data/{case_name}/`` directory under the repository root of a
+            src-layout checkout, namely the parent of the ``src`` directory that holds the ``hhemt`` package.
+            ``test_data/`` is not package data, so from an installed wheel the path is absent.
+            The path is returned whether or not the path exists. The function
+            creates or downloads no file.
         """
         test_data_dir = files(cnst.APP_NAME).parents[1].joinpath(f"test_data/{case_name}/")  # type: ignore
         return test_data_dir
@@ -214,9 +221,9 @@ class TRITON_SWMM_experiment:
         """
         Load a case study example from configuration templates.
 
-        This is the high-level API for loading any case study. It handles:
+        The method is the high-level API for loading any case study and handles:
         - Template filling with data directory paths
-        - Data download from the case's host (HydroShare or Zenodo, per its case manifest)
+        - Data download from the HydroShare or Zenodo host named in the case manifest
         - System and analysis configuration generation
 
         Parameters
@@ -235,14 +242,15 @@ class TRITON_SWMM_experiment:
         analysis_description : str
             Free-text description written verbatim into the generated analysis config.
         download_if_exists : bool, default False
-            Re-download the case study's data from its host even when it is already present.
+            Re-download the case study's data from the host of the case even when the data is already present.
         example_data_dir : Path or None
             Override for the data storage location, when one is given.
         hhemt_sha : str
-            REQUIRED, keyword-only: the FULL 40-hex hhemt commit this experiment runs,
-            written into the generated analysis config's ``hhemt_sha`` field over the template's
-            non-40-hex placeholder (Norfolk's reads ``REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT``)
-            — nothing defaults it, because the analysis refuses to construct when the running
+            REQUIRED and keyword-only. The FULL 40-hex hhemt commit this experiment runs,
+            written into the ``hhemt_sha`` field of the generated analysis config over the
+            non-40-hex placeholder of the template. The Norfolk placeholder reads
+            ``REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT``.
+            No default exists, because the analysis refuses to construct when the running
             toolkit is at a different commit.
 
         Returns
@@ -252,26 +260,28 @@ class TRITON_SWMM_experiment:
 
         Examples
         --------
-        The first six parameters are required. On first use the call fetches the
-        case study's data from its host into the example data directory; a later call
+        The example passes the required parameters. On first use the call fetches the
+        case study's data from the host of the case into the example data directory. A later call
         finds the data present and skips the fetch unless ``download_if_exists=True``.
 
-        >>> from hhemt.constants import (
-        ...     NORFOLK_ANALYSIS_CONFIG,
-        ...     NORFOLK_CASE_CONFIG,
-        ...     NORFOLK_EX,
-        ...     NORFOLK_SYSTEM_CONFIG,
-        ... )
-        >>> example = TRITON_SWMM_experiment.from_case_study(
-        ...     case_name=NORFOLK_EX,
-        ...     system_config_template=NORFOLK_SYSTEM_CONFIG,
-        ...     analysis_config_template=NORFOLK_ANALYSIS_CONFIG,
-        ...     case_config_filename=NORFOLK_CASE_CONFIG,
-        ...     weather_events_to_simulate="hurricane_irene_event_index.csv",
-        ...     analysis_description="Single Simulation of Hurricane Irene 8-27-2011",
-        ...     # hhemt_sha is the commit you run: `git rev-parse HEAD`
-        ...     hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT",
-        ... )
+        ```python
+        from hhemt.constants import (
+            NORFOLK_ANALYSIS_CONFIG,
+            NORFOLK_CASE_CONFIG,
+            NORFOLK_EX,
+            NORFOLK_SYSTEM_CONFIG,
+        )
+        example = TRITON_SWMM_experiment.from_case_study(
+            case_name=NORFOLK_EX,
+            system_config_template=NORFOLK_SYSTEM_CONFIG,
+            analysis_config_template=NORFOLK_ANALYSIS_CONFIG,
+            case_config_filename=NORFOLK_CASE_CONFIG,
+            weather_events_to_simulate="hurricane_irene_event_index.csv",
+            analysis_description="Single Simulation of Hurricane Irene 8-27-2011",
+            # hhemt_sha is the commit you run: `git rev-parse HEAD`
+            hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT",
+        )
+        ```
 
         For the shipped Norfolk case, ``NorfolkIreneExperiment.load()`` wraps this call.
         """
@@ -308,25 +318,25 @@ class TRITON_SWMM_experiment:
         validate: bool = True,
         sif_build_config_yaml: Path | None = None,
     ) -> "TRITON_SWMM_experiment":
-        """Fetch a published reprex bundle by DOI or PID, reconstitute it, and return
+        """Fetch a published reprex bundle by DOI or PID, reconstitute the bundle, and return
         a runnable experiment.
 
         Under the self-contained-by-default contract the emitted bundle carries every
-        config-declared simulation input at its bundle-relative location, so a
-        self-contained bundle reconstitutes to inputs that all exist on disk. That is
+        config-declared simulation input at the bundle-relative location of the input, so a
+        self-contained bundle reconstitutes to inputs that all exist on disk. The result is
         a from-scratch runnable experiment, dependent externally only on the
-        reproducer's user-specific and HPC-specific configs and, for a container-mode
-        bundle, on the container images: the bundle carries each image's producer
-        manifest (not a ``.def`` recipe and not the image), and ingest keeps an image
-        already present under the reproducer's ``container.sif_root`` or rebuilds it on
+        reproducer's account-specific and HPC-specific configs and, for a container-mode
+        bundle, on the container images. The bundle carries the producer
+        manifest of each image but no ``.def`` recipe and no image. Ingest keeps an image
+        already present under the reproducer's ``container.sif_root`` or rebuilds the image on
         this checkout. A bundle emitted with a ``bundle_exclude_config`` opt-out
         carries the excluded inputs by reference, via an ``input_deposit`` block per
         input. On ingest an input whose block carries a ``contentUrl`` is fetched and
-        sha256-verified; one whose block has no ``contentUrl`` (licensed or restricted
-        data) is not fetched, and the ingest stops with a ``ProcessingError`` that names
-        its citation and the path to place it at.
+        sha256-verified. An input whose block has no ``contentUrl`` holds licensed or restricted
+        data and is not fetched, and the ingest stops with a ``ProcessingError`` that names
+        the citation of the input and the path to place the input at.
 
-        Trust boundary: ingesting a DOI and running it executes shell derived from the
+        A trust boundary applies. Ingesting a DOI and running the experiment executes shell derived from the
         fetched config, so ingest only deposits you trust. ``expected_sha256`` pins the
         integrity of the fetched bundle zip.
 
@@ -336,10 +346,10 @@ class TRITON_SWMM_experiment:
             The bundle's DOI, for example ``'10.5281/zenodo.123456'``. Give either
             ``doi`` or ``pid``.
         pid : str or None
-            The host-native id: a Zenodo record id or a HydroShare resource id.
+            The host-native id, either a Zenodo record id or a HydroShare resource id.
         host : {'zenodo', 'hydroshare'}
             Required, with no default. The sibling case-study fetch defaults to
-            hydroshare, and two DOI entry points with opposite host defaults would be
+            hydroshare, and DOI entry points with opposite host defaults would be
             a trap.
         expected_sha256 : str or None
             Sha256 pin on the fetched bundle zip.
@@ -347,23 +357,23 @@ class TRITON_SWMM_experiment:
             Directory to fetch into. Defaults to a fresh temporary directory.
         software_dir : Path or None
             Target-side directory for the toolkit-owned SWMM and TRITON build
-            directories. Defaults to ``{bundle_root}/software``. These are build
-            outputs the toolkit creates at setup rather than bundled inputs, and they
+            directories. Defaults to ``{bundle_root}/software``. The directories are build
+            outputs the toolkit creates at setup and no bundled inputs, and they
             must be non-null for ``TRITONSWMM_system`` to construct.
         hpc_system_config_yaml : Path or None
-            Path to your cluster's ``hpc_system_config.yaml``. It is read only from
-            this argument; no environment variable is consulted, and None means no HPC
-            config (the native path). The bundle never carries it, because it describes
-            the reproducer's own cluster: its partitions, account and container-image
-            directory. It is required for a container-mode bundle, because the
-            ContainerSpec that renders ``apptainer exec {sif}`` lives on it.
+            Path to your cluster's ``hpc_system_config.yaml``. The file is read only from
+            this argument. No environment variable is consulted, and None means no HPC
+            config, the native path. The bundle never carries the file, because the file describes
+            the cluster of the reproducer, including the partitions, the account, and the container-image
+            directory. The config is required for a container-mode bundle, because the
+            ContainerSpec that renders ``apptainer exec {sif}`` lives on the config.
             Start from the shape sketched in the bundle's ``hpc_system_config.template.yaml``.
 
             On the container path ``from_doi`` writes a derived copy at
             ``{software_dir}/hpc_system_config.resolved.yaml`` whose
-            ``container.sif_root`` names the directory this run resolves its images
-            under, and hands the analysis that path. A derived file rather than an
-            in-memory edit is required: every downstream consumer re-loads the YAML
+            ``container.sif_root`` names the directory this run resolves the images
+            under, and hands the analysis that path. A derived file is required, and an
+            in-memory edit fails, because every downstream consumer re-loads the YAML
             from the path, including ``run_simulation_runner.main``, so an in-memory
             repoint would never reach the ``apptainer exec`` invocation in
             ``run_simulation.prepare_simulation_command``. Your original config is
@@ -371,20 +381,20 @@ class TRITON_SWMM_experiment:
             ``sif_build_config_yaml`` entry below.
         validate : bool, default True
             Run preflight validation on the reconstituted experiment before returning,
-            mirroring ``Toolkit.from_configs``. This is what makes a container-mode
-            bundle fail closed rather than silently degrade to a native run:
-            ``preflight_validate`` calls ``_validate_container_config``, which errors
+            mirroring ``Toolkit.from_configs``. Validation makes a container-mode
+            bundle fail closed, with no silent degradation to a native run, because
+            ``preflight_validate`` calls ``_validate_container_config``. The function errors
             when ``execution_environment == "container"`` and no ContainerSpec
-            resolves. Without it the workflow builder sets an empty container prefix
-            (``SnakemakeWorkflowBuilder.__init__``) and the experiment runs natively
+            resolves. Without the config the workflow builder sets an empty container prefix
+            in ``SnakemakeWorkflowBuilder.__init__`` and the experiment runs natively
             while reporting success. Pass False only to inspect a bundle you do not
             intend to run.
         sif_build_config_yaml : Path or None, default None
-            The reproducer's ``sif_build_config`` (build venue + resources). REQUIRED when the
+            The reproducer's ``sif_build_config``, covering the build venue and resources. REQUIRED when the
             bundle's carried images are not already present under the reproducer's
             ``container.sif_root``: each missing image is REBUILT through the same transaction
-            the producer used, on THIS checkout — which must be at the carried ``hhemt_sha``
-            (a different commit, or a wheel install, is refused with ``ConfigurationError``).
+            the producer used, on THIS checkout. The checkout must be at the carried ``hhemt_sha``,
+            and ``ConfigurationError`` refuses a different commit or a wheel install.
         """
         from hhemt.bundle import Bundle
         from hhemt.bundle._emit import (
@@ -1474,16 +1484,18 @@ class NorfolkIreneExperiment:
     """
     Convenience wrapper for Norfolk coastal flooding case study.
 
-    This is a thin wrapper around TRITON_SWMM_experiment that provides
-    Norfolk-specific defaults. Makes it easy to load the Norfolk example
+    The class is a thin wrapper around TRITON_SWMM_experiment that provides
+    Norfolk-specific defaults. The class makes loading the Norfolk example easy
     without remembering all the constant names.
 
     Examples
     --------
-    >>> from hhemt.experiments import NorfolkIreneExperiment
-    >>> # hhemt_sha is the commit you run: `git rev-parse HEAD`
-    >>> norfolk = NorfolkIreneExperiment.load(hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT")
-    >>> system = norfolk.system
+    ```python
+    from hhemt.experiments import NorfolkIreneExperiment
+    # hhemt_sha is the commit you run: `git rev-parse HEAD`
+    norfolk = NorfolkIreneExperiment.load(hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT")
+    system = norfolk.system
+    ```
     """
 
     @classmethod
@@ -1500,11 +1512,11 @@ class NorfolkIreneExperiment:
         Parameters
         ----------
         download_if_exists : bool, default False
-            Re-download the HydroShare data even when it is already present.
+            Re-download the HydroShare data even when the data is already present.
         example_data_dir : Path or None
             Override for the data directory, when one is given.
         hhemt_sha : str
-            REQUIRED, keyword-only: the FULL 40-hex hhemt commit this experiment runs.
+            REQUIRED and keyword-only. The FULL 40-hex hhemt commit this experiment runs.
 
         Returns
         -------
@@ -1532,16 +1544,18 @@ class NorfolkObservedExperiment:
     """
     Convenience wrapper for observed event ensemble simulation.
 
-    This is a thin wrapper around TRITON_SWMM_experiment that provides
-    Norfolk-specific defaults. Makes it easy to load the Norfolk example
+    The class is a thin wrapper around TRITON_SWMM_experiment that provides
+    Norfolk-specific defaults. The class makes loading the Norfolk example easy
     without remembering all the constant names.
 
     Examples
     --------
-    >>> from hhemt.experiments import NorfolkObservedExperiment
-    >>> # hhemt_sha is the commit you run: `git rev-parse HEAD`
-    >>> norfolk = NorfolkObservedExperiment.load(hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT")
-    >>> system = norfolk.system
+    ```python
+    from hhemt.experiments import NorfolkObservedExperiment
+    # hhemt_sha is the commit you run: `git rev-parse HEAD`
+    norfolk = NorfolkObservedExperiment.load(hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT")
+    system = norfolk.system
+    ```
     """
 
     @classmethod
@@ -1553,16 +1567,16 @@ class NorfolkObservedExperiment:
         hhemt_sha: str,
     ) -> TRITON_SWMM_experiment:
         """
-        Load the Norfolk observed-event ensemble (observed events from years with complete coverage).
+        Load the Norfolk observed-event ensemble of observed events from years with complete coverage.
 
         Parameters
         ----------
         download_if_exists : bool, default False
-            Re-download the HydroShare data even when it is already present.
+            Re-download the HydroShare data even when the data is already present.
         example_data_dir : Path or None
             Override for the data directory, when one is given.
         hhemt_sha : str
-            REQUIRED, keyword-only: the FULL 40-hex hhemt commit this experiment runs.
+            REQUIRED and keyword-only. The FULL 40-hex hhemt commit this experiment runs.
 
         Returns
         -------

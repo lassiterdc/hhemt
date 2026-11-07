@@ -1671,8 +1671,7 @@ class TRITONSWMM_sim_post_processing:
                 "analysis is mid-multi-allocation (multi_allocation_in_progress=True). "
                 "This is forbidden because removing pre-resume performance{N}.txt "
                 "checkpoints would corrupt the V0008 per-checkpoint wallclock "
-                "aggregation. See library/docs/stipulations/hhemt/clear raw triton "
-                "outputs deferred until last allocation.md. Clearing is only safe "
+                "aggregation. Clearing is only safe "
                 "after the final-allocation consolidation succeeds and clears the flag."
             )
 

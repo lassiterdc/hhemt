@@ -536,15 +536,23 @@ def _file_content_hash_at(ref: str, rel: str) -> str | None:
     return hashlib.sha256(data).hexdigest()
 
 
-def _commits_in_range(from_ref: str, to_ref: str) -> list[str]:
+def _commits_in_range(from_ref: str, to_ref: str, *, exclude_remote: str = "") -> list[str]:
     """Full shas of the commits in `from_ref..to_ref`, OLDEST FIRST.
 
     `--reverse` is load-bearing rather than cosmetic: the walk reports failures in the order
     a reviewer reading the push will meet them, and a reversal bug would make a multi-commit
     diagnosis read backwards. `from_ref` itself is EXCLUDED, which is `git rev-list`'s
     range semantics and is what makes `from..to` name the pushed commits.
+
+    `exclude_remote`, when non-empty, additionally drops every commit reachable from
+    `refs/remotes/{exclude_remote}/*` (`--not --remotes={exclude_remote}`). It is the NAMED form
+    only: the bare `--remotes` would also drop commits reachable from some OTHER remote, and
+    with no name at all it would drop the one commit a manual run grades.
     """
-    out = _git("rev-list", "--reverse", f"{from_ref}..{to_ref}")
+    args = ["rev-list", "--reverse", f"{from_ref}..{to_ref}"]
+    if exclude_remote:
+        args += ["--not", f"--remotes={exclude_remote}"]
+    out = _git(*args)
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
@@ -914,6 +922,10 @@ def _check_b_range(from_ref: str, to_ref: str, sentinel: dict) -> int:
     in commit 2 cannot disarm the scan of commit 3, because commit 3 is evaluated from its own
     parent.
 
+    THE REMOTE EXCLUSION. When `PRE_COMMIT_REMOTE_NAME` is set and non-empty, commits reachable
+    from `refs/remotes/{name}/*` are not graded (a correct merge of `develop` would otherwise
+    fail on the imported commits). Unset or empty grades the whole range.
+
     WHY NOT A WIDER BASE. Grading `merge-base(main, HEAD)..HEAD` is W-B2 and is REFUTED:
     measured at this repository's state (`main` at LAYOUT_VERSION 16 against HEAD 26) it
     returns PASS before its scan while `check-a --range main` blocks every push. The
@@ -932,8 +944,24 @@ def _check_b_range(from_ref: str, to_ref: str, sentinel: dict) -> int:
     allow = _load_allowlist(sentinel)
     to_v = _layout_version_at(to_ref)
 
+    # THE REMOTE EXCLUSION. A commit already reachable from the named remote's tracking refs was
+    # graded by the push that put it there, so re-grading it here against the allowlist loaded at
+    # `to_ref` is what fails a correct merge of `develop`: the imported commit's blob was signed by
+    # a row that a later row has since replaced under the loader's last-wins rule. The exclusion
+    # applies ONLY when pre-commit names the remote (`PRE_COMMIT_REMOTE_NAME`, exported on every
+    # real pre-push run). Unset or empty means a manual run, and then nothing is excluded: the
+    # bare `--remotes` form would drop the single commit the default one-commit population grades.
+    remote = os.environ.get(PRE_PUSH_REMOTE_ENV, "").strip()
+    commits = _commits_in_range(from_ref, to_ref, exclude_remote=remote)
+    if remote:
+        skipped = len(_commits_in_range(from_ref, to_ref)) - len(commits)
+        print(
+            f"check-b: {from_ref}..{to_ref}: skipped {skipped} commit(s) already reachable from "
+            f"refs/remotes/{remote}/*; grading {len(commits)}"
+        )
+
     failures: list[tuple[str, list[Path]]] = []
-    for commit in _commits_in_range(from_ref, to_ref):
+    for commit in commits:
         parent = _commit_parent(commit)
         if parent is None:
             print(f"check-b: {_short(commit)}: no in-repo predecessor (root commit); skipped")
@@ -1250,6 +1278,7 @@ def stamp_allowlist_row(path_arg: str, why: str | None) -> int:
 CHECK_B_DEFAULT_BASE = "main"
 PRE_PUSH_FROM_ENV = "PRE_COMMIT_FROM_REF"
 PRE_PUSH_TO_ENV = "PRE_COMMIT_TO_REF"
+PRE_PUSH_REMOTE_ENV = "PRE_COMMIT_REMOTE_NAME"
 PRE_PUSH_DEFAULT_FROM = "HEAD~1"
 PRE_PUSH_DEFAULT_TO = "HEAD"
 

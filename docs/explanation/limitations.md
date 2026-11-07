@@ -1,127 +1,85 @@
 # Limitations and constraints
 
-What hhemt does not do, and what it constrains about how you work. Read this
-alongside [Capabilities](capabilities.md). That page is what the toolkit is for,
-this one is where it stops.
+## The solvers contain the science
 
-This page covers **architectural and environmental** limits, which are properties
-of the toolkit and are stated here because a reader can act on them. It is
-deliberately not a validation envelope for the underlying solvers; see
-[Scientific validity](#scientific-validity) below for why that distinction
-matters and where to look instead.
+The toolkit is an **orchestration framework**. TRITON supplies the 2D hydrodynamics and
+SWMM supplies the stormwater network. hhemt compiles the solvers, prepares their
+inputs, runs them at scale, and consolidates their outputs.
 
-## hhemt does not contain the science
-
-The toolkit is an **orchestration framework**. The physics is TRITON's (2D
-hydrodynamics) and SWMM's (stormwater network); hhemt compiles them, feeds them,
-runs them at scale, and consolidates what they emit.
-
-Three consequences follow, and they are the ones most likely to matter:
-
-- **A solver's limitations are hhemt's limitations.** Anything TRITON cannot
-  represent, an hhemt ensemble cannot represent either.
-- **Solver version is part of your result.** The toolkit clones and builds
-  TRITON at a pinned commit; two analyses built from different pins are not
-  necessarily comparable. The pin is recorded in your consolidated output's
-  provenance, and a set pin is verified fail-loud at setup rather than silently
-  reused from a stale clone.
-- **Coupled and standalone SWMM are not the same build.** The coupled model uses
-  a SWMM vendored inside TRITON, which travels with the TRITON pin. The
-  standalone model is built from its own tag. They can differ.
+- **A solver's limitations are hhemt's limitations.** Any physics that TRITON omits is
+  absent from every hhemt ensemble.
+- **Solver version is part of your result.** The toolkit clones and builds TRITON at a
+  pinned commit, and analyses built from different pins can differ. The provenance of
+  your consolidated output records the pin. Setup verifies a set pin and stops on a
+  mismatch.
+- **Coupled and standalone SWMM are different builds.** The coupled model uses a SWMM
+  vendored inside TRITON that travels with the TRITON pin. The standalone model is built
+  from a separate tag.
 
 ## Environment constraints
 
-**Python 3.11–3.12 only** (`requires-python = ">= 3.11, < 3.13"`). The upper
-bound is not a policy choice: it is forced by a transitive dependency that pins
-an older pydantic with no wheel for 3.13. It lifts when that dependency relaxes.
+**Python 3.11 to 3.12 only.** The `requires-python` bound is `>= 3.11, < 3.13`. A
+transitive dependency forces the upper bound by pinning an older pydantic with no wheel
+for 3.13. The bound lifts when that dependency relaxes.
 
 **The SWMM engine is version-gated at runtime.** Before executing SWMM the toolkit
-checks the installed `pyswmm` and `swmm-toolkit` against the pairing it certifies,
-and refuses rather than run against an engine build it cannot vouch for. Silent
-execution against an uncertified engine is the outcome that guard exists to
-prevent. `pyproject.toml` pins that pairing directly, so a pip install resolves a
-stack the guard accepts. There is an override, and using it means accepting a
-result from an unchecked engine. Conda remains the recommended path for a
-different reason: `environment.yaml` pins the whole HPC stack, including the
+checks the installed `pyswmm` and `swmm-toolkit` against the certified pairing
+and refuses to run against any other engine build. `pyproject.toml` pins that pairing directly, so a pip install resolves a
+stack the guard accepts. A refusal names the offending versions, and setting
+`HHEMT_ALLOW_UNVALIDATED_SWMM_STACK=1` overrides the guard. Using the override means
+accepting a result from an unchecked engine. A pip-only environment also lacks the
+exact conda-resolved graph that `environment.yaml` reproduces. Conda remains the
+recommended path because `environment.yaml` pins the whole HPC stack, including the
 Snakemake SLURM executor plugins. See [Installation](../how-to/installation.md).
 
 ## Scale and hardware
 
-**More GPUs is not always faster.** Domain decomposition adds communication, and
-below some domain size that cost dominates the compute it saves. Benchmark your
-own domain rather than assuming the largest allocation you can obtain is the
-fastest; the sensitivity and benchmarking machinery exists precisely so this is
-measurable rather than guessed.
+**Per-row partition variation requires `batch_job` dispatch.** A SLURM allocation
+covers one partition, so a sensitivity analysis that varies hardware across rows needs
+`batch_job` dispatch. Preflight rejects a single-allocation dispatch method in that case
+before any simulation starts.
 
-**Per-row partition variation requires `batch_job` dispatch.** One SLURM
-allocation cannot span partitions, so a sensitivity sweep that varies hardware
-across rows cannot use a single-allocation dispatch method. Preflight rejects
-the combination rather than failing mid-run.
+**Only junctions are eligible for coupling.** Outfalls, storage nodes, and dividers are
+not coupled. [Coupled inflow nodes](../reference/coupled-inflow-nodes.md) describes the candidate
+modes and the optional limit of one junction per DEM cell. The limit applies only to the
+mode that selects nodes from `[INFLOWS]` lines.
 
-**Only coupling-candidate junctions exchange water with the surface.** `swmm_coupling_mode` chooses the candidates; outfalls, and in this build storage nodes and dividers, are not coupled, and an optional limit (legacy only) keeps one junction per DEM cell; see [Coupled inflow nodes](coupled-inflow-nodes.md).
-
-**Coupled water quality is limited.** In a coupled analysis no subcatchment washoff reaches the
-network, so only the sources the hydraulics model declares (dry-weather and external inflow
-concentrations, RDII, initial concentrations) produce pollutant mass. Pollutant mass that leaves
-for the 2D surface is counted in `Quality Routing Continuity` External Outflow and is not
-transported. A resume from a checkpoint snapshot written by a TRITON build before `bd18215` does
-not carry SWMM's node and link water-quality state, so at such a build a quality-routed coupled run
-resumes by exact replay unless `swmm_snapshot_disable` is set to `false`; for an event that did
-resume from such a snapshot, the water-quality statistics are withheld (NaN, with
-`pollutant_stats_status` giving the reason) while the concentration time series are kept. This
-follows from the snapshot inventory of those builds, which excludes the node and link quality
-fields. At a build listed in `SWMM_QUALITY_SNAPSHOT_SHAS` (`bd18215` and `bb13ea28`; a later TRITON pin that
-carries the fix is added there by hand), the snapshot carries that state, so a quality-routed run
-resumes from its snapshot and its statistics are kept, with `pollutant_stats_status` recording the
-route. A build not in that set, an abbreviated sha, or no recorded build keeps the exact replay and
-the withholding. A snapshot written by a TRITON build before `bd18215` is refused when a later build
-resumes it; relaunch with `swmm_snapshot_disable: true` for the exact replay, or start clean.
-Processing reads the build recorded in the system directory's log, so recompiling that directory at
-another TRITON commit before a run is processed attributes the run to the new build. See the
+**Coupled water quality is limited.** In a coupled analysis no subcatchment washoff
+reaches the network, so only the sources the hydraulics model declares produce pollutant
+mass. The sources are dry-weather and external inflow concentrations, RDII, and
+initial concentrations. Pollutant mass that leaves for the 2D surface is counted in
+`Quality Routing Continuity` External Outflow and is not transported. See the
 [output data model](../reference/output-data-model.md).
 
-**SWMM file paths are limited to 259 characters.** SWMM keeps an input, report or binary-output
-file name only up to 259 characters. From TRITON `bb13ea28` a coupled run whose SWMM input,
-report or binary-output path is longer stops at startup with an error naming the path and its
-length, and the flooding-debug report is written only when its path is at most 259 characters.
-Keep the analysis directory shallow enough that a simulation's `swmm/hydraulics.inp` and
-`out_tritonswmm/swmm/hydraulics.rpt` stay within the limit. A standalone SWMM model is not
-covered by that refusal: SWMM itself shortens a longer name without an error.
+**SWMM file paths are limited to 259 characters.** SWMM keeps an input, report, or
+binary-output file name only up to 259 characters. A coupled simulation whose SWMM input,
+report, or binary-output path is longer stops at startup with an error naming the path
+and the path length. The flooding-debug report is written only when the path is at
+most 259 characters. Keep the analysis directory shallow enough that a simulation's
+`swmm/hydraulics.inp` and `out_tritonswmm/swmm/hydraulics.rpt` stay within the limit.
+Standalone SWMM models are outside that refusal. SWMM itself shortens a longer name
+without an error.
 
-**Walltime is a real boundary.** A simulation killed at walltime resumes from its
-most recent checkpoint, but resumption is a property of the solver's checkpoint
-cadence, not something the toolkit can add. Size allocations with that in mind.
+**Walltime bounds a simulation.** A simulation killed at walltime resumes from the most
+recent checkpoint. The solver's checkpoint cadence sets the resumption point, and the
+toolkit has no control over that cadence. Size allocations accordingly.
 
 ## Reproducibility boundaries
 
-**Bit-identical results are not guaranteed across hardware.** The toolkit's own
-consistency checking treats within-hardware-family reproducibility and
-cross-hardware comparison as different questions, and reports them separately,
-because a GPU result and a serial-CPU result of the same scenario are expected to
-differ at some magnitude. Cross-hardware agreement is a characterized divergence,
-not an assertion of equality.
+**GPU and CPU results differ slightly.** The consistency checking of the toolkit reports
+within-hardware-family reproducibility and cross-hardware comparison separately. A GPU
+result and a serial-CPU result of the same simulation are expected to differ by a small
+amount. A serial result and a decomposed result on CPUs, with MPI, OpenMP, or both, are also
+expected to differ slightly, because floating-point addition is not associative. The checking
+reports the GPU and CPU difference as a characterized divergence.
 
-**A render bundle's schema version must match.** A bundle emitted by a different
-toolkit version is refused rather than read on a best-effort basis. Re-emit it
-from source instead.
-
-## Scientific validity
-
-**This page does not tell you whether hhemt's results are valid for your study.**
-That question is about the coupled model's behaviour against observations in a
-domain like yours, and it is answered by validation work and its publications,
-not by the orchestration layer's documentation.
-
-If you are deciding whether to base published work on this toolkit, the citation surface in the
-[README](https://github.com/lassiterdc/hhemt#readme) and the
-[FAIR scope table](../reference/fair-scope-table.md) are the right starting
-points, and the underlying solvers' own literature is the authority on their
-physics.
+**A render bundle's schema version must match.** A bundle emitted by a different toolkit
+version is refused. Re-emit the bundle from source.
 
 ## See also
 
-- [Capabilities](capabilities.md): what the toolkit is for.
-- [When and why re-runs happen](rerun-faq.md): why a run you expected to be a
-  no-op re-executed.
-- [Installation](../how-to/installation.md): the environment contract and its
+- [Capabilities](capabilities.md) covers the supported experiments and hardware.
+- [Rerun triggers](../reference/rerun-triggers.md) lists the triggers behind a full
+  re-execution.
+- [Installation](../how-to/installation.md) states the environment contract and the
   failure modes.

@@ -1,4 +1,11 @@
-"""Phase 1: the DEM-resolution matrix builder + the R14 coupling-node pre-check."""
+"""The DEM-resolution matrix builder, the coupling-node precheck and their wiring into the experiment matrix.
+
+VENUE: HPC-free and solver-free, so the laptop runs this file. No test here reaches a compile or a
+solver run, directly or through a fixture: the only fixture is ``tmp_path``, and the code under test
+is configuration validation, row enumeration and a geometric precheck over the synthetic-model
+placement helpers. The file name starts with ``test_synth_``, and
+``pytest tests/test_synth_dem_resolution_matrix.py -m compile_tier --collect-only -q`` selects no test.
+"""
 
 from __future__ import annotations
 
@@ -8,10 +15,15 @@ from pathlib import Path
 import pytest
 
 from hhemt.config.synthetic_experiment import synthetic_experiment_config
-from hhemt.exceptions import ProcessingError
+from hhemt.exceptions import ConfigurationError, ProcessingError
 from hhemt.synthetic_experiment import (
+    _CLEAN_WALLTIME_MIN,
+    _configs,
+    _rows,
     assert_coupling_nodes_distinct,
+    build_experiment_matrix,
     dem_resolution_matrix_rows,
+    experiment_matrix_rows,
 )
 
 
@@ -86,7 +98,10 @@ def test_rows_carry_the_resolution_and_a_fixed_compute_config(tmp_path):
     assert len(rows) == 3 * 2
     assert {r["system.target_dem_resolution"] for r in rows} == {3.5, 7.0, 14.0}
     # The control: ONE compute config across the whole sweep.
-    assert {(r["run_mode"], r["n_mpi_procs"], r["n_omp_threads"], r["n_gpus"]) for r in rows} == {("serial", 1, 1, 0)}
+    assert {
+        (r["analysis.run_mode"], r["analysis.n_mpi_procs"], r["analysis.n_omp_threads"], r["analysis.n_gpus"])
+        for r in rows
+    } == {("serial", 1, 1, 0)}
     assert len({r["member_id"] for r in rows}) == len(rows)
     assert all(r["member_id"].startswith("dem_") for r in rows)
 
@@ -121,3 +136,108 @@ def test_coupling_precheck_raises_on_a_colliding_rung(tmp_path):
     )
     with pytest.raises(ProcessingError, match="share DEM cell"):
         assert_coupling_nodes_distinct(cfg)
+
+
+#: The member ids of the ladder (3.5, 7.0, 14.0) at two replicates, written out so the test
+#: does not derive its expectation from the formatting code it checks.
+_LADDER_MEMBER_IDS = {
+    "dem_3p5_r1",
+    "dem_3p5_r2",
+    "dem_7p0_r1",
+    "dem_7p0_r2",
+    "dem_14p0_r1",
+    "dem_14p0_r2",
+}
+
+
+def test_matrix_of_a_ladder_config_is_one_row_per_rung_and_replicate(tmp_path):
+    """`build_experiment_matrix` emits the DEM-resolution rows when a ladder is set.
+
+    Class: REGRESSION. Red on the pre-change tree, where `experiment_matrix_rows` ignores the
+    ladder and the matrix holds compute-configuration rows with member ids such as `serial_6_r1`.
+    Plausible wrong implementation: appending the DEM rows to the compute-configuration rows;
+    red because the member-id set then holds the compute rows as well. Satisfying inputs in
+    different positions: a ladder config (DEM rows) and an empty-ladder config (compute rows)
+    in one test body, each building its own matrix.
+    """
+    hpc = _write_hpc_yaml(tmp_path / "hpc.yaml")
+    ladder_df = build_experiment_matrix(_cfg(hpc, (3.5, 7.0, 14.0)))
+    assert set(ladder_df["member_id"]) == _LADDER_MEMBER_IDS
+    assert len(ladder_df) == len(_LADDER_MEMBER_IDS)
+    for _, row in ladder_df.iterrows():
+        rung = float(row["member_id"].split("_")[1].replace("p", "."))
+        assert row["system.target_dem_resolution"] == rung
+    assert {int(v) for v in ladder_df["analysis.hpc_time_min_per_sim"]} == {_CLEAN_WALLTIME_MIN}
+
+    compute_df = build_experiment_matrix(_cfg(hpc, ()))
+    assert not any(m.startswith("dem_") for m in compute_df["member_id"])
+    assert compute_df["system.target_dem_resolution"].isna().all()
+
+
+def test_the_config_cap_validator_and_the_emitted_matrix_read_one_enumeration(tmp_path):
+    """The cap validator iterates `experiment_matrix_rows`, so a ladder config validates the DEM rows.
+
+    Class: NEW CAPABILITY. Plausible wrong implementation: `build_experiment_matrix` switching to
+    the DEM rows while `experiment_matrix_rows` keeps the compute rows; red because the ladder
+    config then still validates the GPU rows against an hpc file that declares no GPU partition.
+    Both-states property: against a file that declares only `standard`, the ladder config
+    constructs and the empty-ladder config raises, because the compute rows target the GPU
+    partitions. Second correct implementation: the ladder branch in `build_experiment_matrix`
+    reading `experiment_matrix_rows(cfg)` passes the same assertions.
+    """
+    standard_only = tmp_path / "hpc_standard.yaml"
+    standard_only.write_text(
+        textwrap.dedent(
+            """\
+            hpc_name: test_standard_only
+            partitions:
+              standard:
+                max_runtime: 4320
+                cpus_per_node: 40
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    def build(ladder):
+        return synthetic_experiment_config(
+            hpc_system_config_yaml=standard_only,
+            ensemble_partition="standard",
+            setup_partition="standard",
+            dem_resolution_ladder=ladder,
+        )
+
+    cfg = build((3.5, 7.0, 14.0))
+    assert experiment_matrix_rows(cfg) == dem_resolution_matrix_rows(cfg, walltime_min=_CLEAN_WALLTIME_MIN)
+    assert [r["member_id"] for r in experiment_matrix_rows(cfg)] == list(build_experiment_matrix(cfg)["member_id"])
+    with pytest.raises(ConfigurationError, match="undeclared partition"):
+        build(())
+
+
+def test_an_empty_ladder_matrix_is_the_compute_configuration_enumeration(tmp_path):
+    """Without a ladder the matrix is the compute-configuration enumeration, row for row.
+
+    Class: PRESERVATION, green on the chunk base and on the changed tree by design. Plausible wrong
+    implementation: routing the empty ladder through the DEM branch; red because the rows then carry
+    `dem_` member ids.
+    """
+    cfg = _cfg(_write_hpc_yaml(tmp_path / "hpc.yaml"), ())
+    expected = _rows(_configs(tuple(cfg.rank_sweep)), walltime_min=_CLEAN_WALLTIME_MIN)
+    assert experiment_matrix_rows(cfg) == expected
+
+
+def test_matrix_of_a_colliding_ladder_raises_from_build_experiment_matrix(tmp_path):
+    """A ladder with a rung that merges in-line coupling nodes raises from `build_experiment_matrix`.
+
+    Class: NEW CAPABILITY. Plausible wrong implementation: the precheck wired into a path the
+    matrix builder does not reach; red because `build_experiment_matrix` then returns a frame.
+    The 32x32 grid and `rank_sweep=(2,)` are the colliding-rung inputs of the precheck arm above;
+    the satisfying input in a different position is the default grid with the safe ladder, which
+    builds. Second correct implementation: calling the precheck from `experiment_matrix_rows`
+    instead passes, because the assertion reads the raised error and not the call site.
+    """
+    hpc = _write_hpc_yaml(tmp_path / "hpc.yaml")
+    colliding = _cfg(hpc, (3.5, 7.0, 14.0), n_cols=32, n_rows=32, rank_sweep=(2,))
+    with pytest.raises(ProcessingError, match="share DEM cell"):
+        build_experiment_matrix(colliding)
+    assert len(build_experiment_matrix(_cfg(hpc, (3.5, 7.0, 14.0)))) == len(_LADDER_MEMBER_IDS)

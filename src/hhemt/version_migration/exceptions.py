@@ -31,8 +31,8 @@ class LayoutVersionError(MigrationError):
 
 
 class BaselineRequiredError(MigrationError):
-    """Raised when the detection ladder cannot infer a layout version and
-    the user must explicitly baseline."""
+    """Raised when the detection ladder is unable to infer a layout version and
+    the caller must explicitly baseline."""
 
     def __init__(self, target_dir: Path) -> None:
         self.target_dir = target_dir
@@ -44,7 +44,7 @@ class BaselineRequiredError(MigrationError):
 
 
 class MigrationConflictError(MigrationError):
-    """Raised mid-apply when a primitive cannot complete.
+    """Raised mid-apply when a primitive is unable to complete.
 
     Covers filesystem conflicts, permission errors, and other runtime
     failures surfaced by a primitive.

@@ -82,6 +82,20 @@ def _stub_index_dem(bin_dir: Path, raw_out_type: str = "bin") -> xr.DataArray:
     )
 
 
+def _b4b_grid_shape(bin_dir: Path, raw_out_type: str) -> tuple[int, int] | None:
+    """The ``(y, x)`` grid shape a member's raw rasters declare in their header, or None.
+
+    None when the directory holds no raster to read (``_stub_index_dem`` raises
+    ``FileNotFoundError``); such a member has no grid to disagree with and is left to
+    ``compare_triton_raw_timeseries``, which returns ``{}`` for it exactly as before.
+    """
+    try:
+        shape = _stub_index_dem(bin_dir, raw_out_type).shape
+    except FileNotFoundError:
+        return None
+    return int(shape[0]), int(shape[1])
+
+
 def compare_triton_raw_timeseries(
     base_bin: Path,
     test_bin: Path,
@@ -772,14 +786,14 @@ def _collapse_replicates(per_config: dict, meta: dict) -> tuple[dict, dict, dict
 def check_raw_byte_identity(primary, *, cfg_analysis, eda_cfg):
     """WITHIN-PRIMARY raw per-timestep byte-for-byte producer for the compute_config_byte_identity ReportingSet.
 
-    Reads ONLY the passed primary's own subs' raw outputs (single-arm; primary R12(b)).
-    Writes eda/raw_byte_identity.zarr ALWAYS (a real per-family cross-config grid
-    or a degraded marker) so the single report() target renders. The comparison is
-    PER-FAMILY over the primary's OWN subs (each config vs its within-family
-    minimum-device reference), so the ONE figure is applicable + non-degraded on BOTH the
-    clean and the resume primary. The former within-primary b4b_clean_vs_resume figure is
-    removed (F8); the clean-vs-resume comparison lives on the combine surface
-    (cross_experiment_intercomparison). Returns one EdaResult carrying the per-family verdict.
+    Reads ONLY the raw outputs of the subs of the passed primary, in a single arm.
+    Writes ``eda/raw_byte_identity.zarr`` ALWAYS, holding a real per-family cross-config grid
+    or a degraded marker, so that the single ``report()`` target renders. The comparison is
+    PER-FAMILY over the primary's OWN subs. Each config compares against the minimum-device
+    reference of the family of the config, so the ONE figure is applicable and non-degraded on BOTH the
+    clean and the resume primary. The within-primary ``b4b_clean_vs_resume`` figure is
+    removed. The clean-vs-resume comparison lives on the combine surface,
+    ``cross_experiment_intercomparison``. Returns a single EdaResult carrying the per-family verdict.
     """
     import dataclasses as _dc
     import json as _json
@@ -828,6 +842,8 @@ def check_raw_byte_identity(primary, *, cfg_analysis, eda_cfg):
     meta: dict[str, dict] = {}
     contrib: list = []
     reference_config_by_family: dict[str, str] = {}
+    # family -> the distinct (y, x) grid shapes its members declare, kept only when more than one.
+    mixed_grid_families: dict[str, list[tuple[int, int]]] = {}
 
     def _meta_for(s, family: str, is_ref: bool) -> dict:
         a = _b4b_config_attrs(s[1])
@@ -844,6 +860,18 @@ def check_raw_byte_identity(primary, *, cfg_analysis, eda_cfg):
         }
 
     for family, members in sorted(families.items()):
+        # Byte identity is defined WITHIN one grid: compare_triton_raw_timeseries decodes both
+        # members' rasters with ONE index stub sized from the reference's header, so a member on
+        # another grid cannot be decoded (xarray CoordinateValidationError, measured on the
+        # DEM-resolution ladder). A family that holds more than one grid shape is therefore not
+        # compared at all and the figure degrades honestly. A per-grid comparison is NOT done
+        # here: _collapse_replicates folds rows by config_label, which carries no grid, so a
+        # per-grid comparison would fold different grids into one row and claim an identity no
+        # one measured.
+        _grids = sorted({g for g in (_b4b_grid_shape(m[3], raw_out_type) for m in members) if g is not None})
+        if len(_grids) > 1:
+            mixed_grid_families[family] = _grids
+            continue
         ref = min(members, key=_b4b_ref_key)
         ref_meta = _meta_for(ref, family, True)
         reference_config_by_family[family] = ref_meta["config_label"]
@@ -867,9 +895,18 @@ def check_raw_byte_identity(primary, *, cfg_analysis, eda_cfg):
     # reference in its own right) and BEFORE _b4b_dataset, so the compute_config DIM is
     # the config label rather than the member_id.
     per_config, meta, n_replicates = _collapse_replicates(per_config, meta)
-    degraded = not per_config
+    degraded = bool(mixed_grid_families) or not per_config
     degraded_reason = ""
-    if degraded:
+    if mixed_grid_families:
+        _described = "; ".join(
+            f"{fam} family: {len(grids)} grids ({', '.join(f'{ny} x {nx} cells' for ny, nx in grids)})"
+            for fam, grids in sorted(mixed_grid_families.items())
+        )
+        degraded_reason = (
+            "byte identity is defined within one grid, and this sweep's members run on different grids "
+            f"[{_described}]; a mixed-resolution sweep is compared by the dem_resolution reporting set"
+        )
+    elif degraded:
         degraded_reason = (
             "no member with present raw outputs in this sweep (raw cleared or absent); "
             "raw outputs must be preserved for this figure (clear_raw disabled)"

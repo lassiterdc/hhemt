@@ -54,11 +54,11 @@ def synth_member_two_row(tmp_path, monkeypatch):
     pd.DataFrame(
         {
             "member_id": ["0", "1"],
-            "run_mode": ["openmp", "openmp"],
-            "n_mpi_procs": [1, 1],
-            "n_omp_threads": [2, 4],
-            "n_gpus": [0, 0],
-            "n_nodes": [1, 1],
+            "analysis.run_mode": ["openmp", "openmp"],
+            "analysis.n_mpi_procs": [1, 1],
+            "analysis.n_omp_threads": [2, 4],
+            "analysis.n_gpus": [0, 0],
+            "analysis.n_nodes": [1, 1],
         }
     ).to_csv(csv_path, index=False)
     case = retrieve_synth_TRITON_SWMM_test_case(
@@ -168,7 +168,7 @@ _STATUS_REPORT_JOBS = frozenset(
         "plot_scenario_status_appendix",
         "plot_system_overview",
         "plot_workflow_performance",
-        "render_report[format=zip]",
+        "render_report",
     }
     | {
         f"plot_per_sim_per_member_{kind}[member_id={m},event_id=event_index.0]"
@@ -199,7 +199,7 @@ def _chain_of_member(member_id: int) -> frozenset[str]:
 def test_one_row_edit_triggers_only_that_chain(golden_extractor):
     """Editing one row's value schedules only that member_id's chain (a dry-run plan over the sensitivity golden).
 
-    The untouched golden plans only its report-stage jobs. Editing member 1's ``n_omp_threads`` in the CSV
+    The untouched golden plans only its report-stage jobs. Editing member 1's ``analysis.n_omp_threads`` in the CSV
     changes member 1's input fingerprint, which is an input of that member's rules, so the plan adds member 1's
     prepare, simulation, process and consolidation jobs and the experiment consolidation, and no job of
     members 0, 2 or 3."""
@@ -209,7 +209,7 @@ def test_one_row_edit_triggers_only_that_chain(golden_extractor):
 
     csv_path = _golden_member_csv(root)
     df = pd.read_csv(csv_path)
-    df.loc[df["member_id"].astype(str) == "1", "n_omp_threads"] = 8
+    df.loc[df["member_id"].astype(str) == "1", "analysis.n_omp_threads"] = 8
     df.to_csv(csv_path, index=False)
 
     edited = planned_jobs(root)

@@ -176,7 +176,7 @@ def format_node_inflow_summary(lst_section_lines, lst_col_headers) -> pd.DataFra
     drops that token, which leaves one column holding two units. Here each row's last value goes to
     ``flow_balance_error`` (percent) where no ``ltr`` followed it and to ``flow_balance_error_volume`` (litres)
     where one did, the other being NaN on that row."""
-    df = format_rpt_section_into_dataframe(lst_section_lines, lst_col_headers)
+    df = format_rpt_section_into_dataframe(lst_section_lines, lst_col_headers, section_name="Node Inflow Summary")
     has_ltr = [
         line.split()[-1] == "ltr" for line in lst_section_lines if [t for t in line.split(" ") if t and t != "ltr\n"]
     ]
@@ -329,7 +329,9 @@ def return_swmm_outputs(
         lst_node_fld_summary = dict_section_lines.get("Node Flooding Summary", [])
         lst_node_flow_summary = dict_section_lines.get("Node Inflow Summary", [])
         lst_link_flow_summary = dict_section_lines.get("Link Flow Summary", [])
-    df_node_flood_summary = format_rpt_section_into_dataframe(lst_node_fld_summary, lst_col_headers_node_flood_summary)
+    df_node_flood_summary = format_rpt_section_into_dataframe(
+        lst_node_fld_summary, lst_col_headers_node_flood_summary, section_name="Node Flooding Summary"
+    )
     if use_rpt_for_tseries:
         with open(swmm_timeseries_result_file, encoding="latin-1") as _rpt:
             _ponded_field = node_flooding_ponded_field(_rpt)
@@ -337,7 +339,9 @@ def return_swmm_outputs(
         _ponded_field = node_flooding_ponded_field(rpt_lines) if rpt_lines is not None else None
     _apply_ponded_depth_rule(df_node_flood_summary, _ponded_field, swmm_timeseries_result_file.with_suffix(".rpt").name)
     df_node_flow_summary = format_node_inflow_summary(lst_node_flow_summary, lst_col_headers_node_flow_summary)
-    df_link_flow_summary = format_rpt_section_into_dataframe(lst_link_flow_summary, lst_col_headers_link_flow_summary)
+    df_link_flow_summary = format_rpt_section_into_dataframe(
+        lst_link_flow_summary, lst_col_headers_link_flow_summary, section_name="Link Flow Summary"
+    )
     # combine event summary dataframes into an xarray dataset
     df_node_flood_summary.set_index("node_id", inplace=True)
     df_node_flow_summary.set_index("node_id", inplace=True)
@@ -1269,7 +1273,9 @@ def parse_hydrology_rpt_summary(f_rpt: Path, f_inp: Path | None = None):
         rpt_lines = fh.readlines()
     dict_system_results = return_swmm_system_outputs(rpt_lines)
     lst_rows = return_lines_for_section_of_rpt("Subcatchment Runoff Summary", lines=rpt_lines)
-    df = format_rpt_section_into_dataframe(lst_rows, list(LST_COL_HEADERS_SUBCATCH_RUNOFF_SUMMARY))
+    df = format_rpt_section_into_dataframe(
+        lst_rows, list(LST_COL_HEADERS_SUBCATCH_RUNOFF_SUMMARY), section_name="Subcatchment Runoff Summary"
+    )
     if not df.empty:
         df = df.set_index("subcatchment_id")
     ds = df.to_xarray()
@@ -1388,10 +1394,10 @@ def return_lines_for_section_of_rpt(section_header, f_rpt=None, lines=None):
 
 
 @profile
-def format_rpt_section_into_dataframe(lst_section_lines, lst_col_headers):
+def format_rpt_section_into_dataframe(lst_section_lines, lst_col_headers, section_name=None):
     if len(lst_section_lines) == 0:
         return pd.DataFrame(columns=lst_col_headers)
-    dict_line_contents_aslist = return_data_from_rpt(lst_section_lines)
+    dict_line_contents_aslist = return_data_from_rpt(lst_section_lines, section_name=section_name)
     records = []
     col_count = len(lst_col_headers)
     for _, lst_substrings_with_content in dict_line_contents_aslist.items():
@@ -1687,7 +1693,9 @@ def create_tseries_ds(dict_lst_time_series, lst_col_headers, idx_colname):
     # dict_lst_time_series, lst_col_headers, idx_colname = dict_lst_node_time_series, lst_col_headers, "node_id"
     lst_dfs = []
     for key, lst_section_lines in dict_lst_time_series.items():
-        df_tseries = format_rpt_section_into_dataframe(lst_section_lines, lst_col_headers)
+        df_tseries = format_rpt_section_into_dataframe(
+            lst_section_lines, lst_col_headers, section_name=f"time series of {key}"
+        )
         if df_tseries.empty:
             continue
         df_tseries[idx_colname] = key
@@ -1749,7 +1757,7 @@ def convert_swmm_tdeltas_to_minutes(s_tdelta):
 
 
 @profile
-def return_data_from_rpt(lst_section_lines):
+def return_data_from_rpt(lst_section_lines, section_name=None):
     lst_substrings_to_ignore = ["ltr\n"]
     # initialize vars
     dict_line_contents_aslist = {}
@@ -1851,7 +1859,8 @@ def return_data_from_rpt(lst_section_lines):
             else:
                 print("####################################################################")
                 print(
-                    "WARNING: There is an issue with swmm outputs read from an rpt file that I have not yet encountered"
+                    f"WARNING: the parser cannot interpret rows of the SWMM report section "
+                    f"{section_name if section_name is not None else '(unnamed)'!r}"
                 )
                 print("Here is an example of a normal row:")
                 print(normal_row)

@@ -20,11 +20,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jinja2
 import plotly.graph_objects as go
 import plotly.io as pio
+
+if TYPE_CHECKING:
+    from hhemt.config.eda import eda_config
 
 
 # FigureSpec + _figure_divs: the data-visualization-specialist FQ1 VMS (the
@@ -129,9 +132,9 @@ def render_scrollable_report(
 def config_diff_maps_figure_from_root(root: Path) -> go.Figure:
     """Re-build the config-diff-maps figure from the carried sensitivity_datatree.zarr.
 
-    The scrollable doc is RE-RENDERED from the consolidated tree (NOT assembled from
-    the saved standalone plots/eda/*.html fragments, which are full_html=True documents
-    that cannot be concatenated). Delegates to the same builder the per-figure renderer
+    The scrollable doc is RE-RENDERED from the consolidated tree and NOT assembled from
+    the saved standalone plots/eda/*.html fragments, because the fragments are full_html=True documents
+    and full HTML documents do not concatenate. Delegates to the same builder the per-figure renderer
     uses so the doc figure matches the standalone artifact.
     """
     from hhemt.eda._config_diff import build_config_diff_figure
@@ -140,9 +143,9 @@ def config_diff_maps_figure_from_root(root: Path) -> go.Figure:
 
 
 def dem_resolution_cost_error_figure_from_root(root: Path) -> go.Figure:
-    """Re-build DEM figure 1 (cost vs error) from the carried sensitivity_datatree.zarr.
+    """Re-build DEM figure 1, cost versus error, from the carried sensitivity_datatree.zarr.
 
-    Same contract as config_diff_maps_figure_from_root: delegates to the builder
+    Same contract as config_diff_maps_figure_from_root. The function delegates to the builder
     the standalone renderer uses, so the notebook figure matches the artifact.
     """
     from hhemt.eda._dem_resolution_plots import build_dem_resolution_cost_error_figure
@@ -150,27 +153,28 @@ def dem_resolution_cost_error_figure_from_root(root: Path) -> go.Figure:
     return build_dem_resolution_cost_error_figure(root)
 
 
-def dem_resolution_error_ecdf_figure_from_root(root: Path) -> go.Figure:
-    """Re-build DEM figure 2 (depth-error ECDF) from the carried sensitivity_datatree.zarr.
+def dem_resolution_error_ecdf_figure_from_root(root: Path, *, eda_cfg: eda_config | None = None) -> go.Figure:
+    """Re-build DEM figure 2, the depth-error ECDF, from the carried sensitivity_datatree.zarr.
 
-    Passes no eda_cfg, so the tolerance line renders as the DRAFT placeholder.
-    That matches the standalone artifact today because `dem_resolution_tolerance_m`
-    is not yet a field on eda_config; if it is added, thread it through here too.
+    ``eda_cfg`` carries ``dem_resolution_tolerance_m``, the tolerance the figure draws as
+    a vertical line. Pass the same config the standalone renderer receives, or the
+    notebook figure and the standalone artifact disagree about the line. ``None`` draws
+    no line.
     """
     from hhemt.eda._dem_resolution_plots import build_dem_resolution_error_ecdf_figure
 
-    return build_dem_resolution_error_ecdf_figure(root)
+    return build_dem_resolution_error_ecdf_figure(root, eda_cfg=eda_cfg)
 
 
 def dem_resolution_diff_maps_figure_from_root(root: Path) -> go.Figure:
-    """Re-build DEM figure 3 (signed diff maps) from the carried sensitivity_datatree.zarr."""
+    """Re-build DEM figure 3, the signed diff maps, from the carried sensitivity_datatree.zarr."""
     from hhemt.eda._dem_resolution_plots import build_dem_resolution_diff_maps_figure
 
     return build_dem_resolution_diff_maps_figure(root)
 
 
 def dem_resolution_coupling_table_figure_from_root(root: Path) -> go.Figure:
-    """Re-build DEM artifact 4 (the coupling table) from the carried sensitivity_datatree.zarr."""
+    """Re-build DEM artifact 4, the coupling table, from the carried sensitivity_datatree.zarr."""
     from hhemt.eda._dem_resolution_plots import build_dem_resolution_coupling_table_figure
 
     return build_dem_resolution_coupling_table_figure(root)

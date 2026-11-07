@@ -47,7 +47,7 @@ rule all:
         "plots/disk_utilization.html",
         "plots/metadata.html",
         "plots/workflow_performance.html",
-        "analysis_report.zip",
+        "analysis_report.format",
 
 # onsuccess: removed — `rule export_scenario_status` (added below) now produces
 # scenario_status.csv and workflow_summary.md on the success path via the
@@ -711,10 +711,8 @@ rule render_report:
         "plots/workflow_performance.html",
         "scenario_status.csv",
     output:
-        "analysis_report.{format}"
-    wildcard_constraints:
-        format="zip|html"
-    log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/render_report_{format}.log"
+        "analysis_report.format"
+    log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/render_report.log"
     resources:
         slurm_partition="None",
         runtime=30,
@@ -727,6 +725,5 @@ rule render_report:
         {PYTHON} -m hhemt.render_report_runner \
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
-            --format {wildcards.format} \
             2>&1 | tee {log}
         """

@@ -532,42 +532,42 @@ def emit_bundle(
     """Emit a portable render bundle from a completed HPC analysis.
 
     The bundle file set is the union of source paths each renderer declared
-    during the most recent render (the ``source_paths`` it passed to
-    ``emit_plot_with_sources``, plus any ``prov.artist().add_channel(...)``
-    refs), harvested from *.manifest.json sidecars under
+    during the most recent render, namely the ``source_paths`` the renderer passed to
+    ``emit_plot_with_sources`` plus any ``prov.artist().add_channel(...)``
+    refs, harvested from *.manifest.json sidecars under
     {analysis_dir}/plots/ and {analysis_dir}/eda/, together with every
     cfg-declared input not excluded. Configs are rewritten to relative paths.
-    The HPC-baseline analysis_report.html is preserved under bundle_baseline/; the
+    The HPC-baseline analysis_report.html is preserved under bundle_baseline/. The
     baseline zip is not carried.
 
-    Every text member of the archive (generated and harvested alike) has the
-    producer's directories, interpreter, login name and SLURM account replaced by
-    the closed ``{hhemt_*}`` tokens of ``_placeholders`` as it is written into the
-    zip. Declared inputs (the files ``_copy_declared_inputs`` carries) and binary
+    Every generated and every harvested text member of the archive has the
+    producer's directories, interpreter, login name, and SLURM account replaced by
+    the closed ``{hhemt_*}`` tokens of ``_placeholders`` as the member is written into the
+    zip. Declared inputs, meaning the files ``_copy_declared_inputs`` carries, and binary
     members are copied through byte for byte.
 
     Parameters
     ----------
     exclude_config : Path or BundleExcludeConfig, or None
         Path to an operator-authored exclude-config YAML, or an already-validated
-        ``BundleExcludeConfig``. When given, the named inputs are not carried; each
+        ``BundleExcludeConfig``. When given, the named inputs are not carried. Each
         emits an ``input_deposit`` by-reference block into ``bundle_manifest.json`` and
-        a URL-bearing ``File`` part into the crate instead. Omit it, the default, and
-        the bundle is self-contained: every config-declared input is carried.
+        a URL-bearing ``File`` part into the crate instead. Omit the argument, the default, and
+        the bundle is self-contained, and every config-declared input is carried.
     omit_output_zarrs : bool
-        When True, every harvested ``.zarr`` store is carried SHALLOWLY (zarr metadata
-        documents only, no chunk files) and named in BOTH ``metadata_only_stores`` and
+        When True, every harvested ``.zarr`` store is carried SHALLOWLY, with zarr metadata
+        documents only and no chunk files, and named in BOTH ``metadata_only_stores`` and
         ``omitted_output_zarrs`` in ``bundle_manifest.json``. ``combine`` refuses such a
-        bundle (it refuses every ``metadata_only_stores`` entry), and the bundle's
+        bundle, because ``combine`` refuses every ``metadata_only_stores`` entry, and the bundle's
         regeneration Snakefile refuses a plot rule that declared an omitted store in full.
-        Default False: the emit is unchanged.
+        The default is False, and the emit is unchanged.
     allow_stale_figures : bool
-        A sensitivity analysis holding figures of members no longer in its setup table is
-        REFUSED by default (``ConfigurationError``, field ``bundle_stale_figures``), before
-        anything is deleted or staged. When True the emit proceeds, carries those figures as
-        they are, issues one warning naming their count, and records their analysis-relative
-        paths under ``stale_figures_included`` in ``bundle_manifest.json``. Nothing is ever
-        deleted from the analysis tree on account of a stale figure.
+        A sensitivity analysis holding figures of members absent from the setup table is
+        REFUSED by default, with ``ConfigurationError`` on field ``bundle_stale_figures``, before
+        anything is deleted or staged. When True the emit proceeds, carries the stale figures as
+        they are, issues a warning naming their count, and records their analysis-relative
+        paths under ``stale_figures_included`` in ``bundle_manifest.json``. The emit deletes
+        no file from the analysis tree on account of a stale figure.
     """
     # ARGUMENT validation, so it precedes every read of the tree: a caller passing a retired
     # parameter is told before a single stat.
@@ -1134,6 +1134,19 @@ def emit_relative_config_pair(
     for cfg_attr, filename in _CONFIG_PAIR:
         cfg = analysis._system.cfg_system if cfg_attr == "cfg_system" else analysis.cfg_analysis
         cfg_dict = cfg.model_dump(mode="json")
+        source_note = None
+        if cfg_attr == "cfg_analysis":
+            # The report section is the settings the report was rendered with, read from the
+            # render's record in report_manifest.json; with no record the section stays the analysis
+            # config's section and the comment line at the head of the file says so.
+            from hhemt.provenance import read_report_settings_record
+
+            record = read_report_settings_record(analysis_dir)
+            if record is not None:
+                cfg_dict["report"] = record["report_settings"]
+                source_note = f"report settings: render record, source {record['report_settings_source']}"
+            else:
+                source_note = "report settings: analysis config, no render record"
         result = _rewrite_paths_to_relative(
             cfg_dict,
             cfg_model=type(cfg),
@@ -1146,7 +1159,9 @@ def emit_relative_config_pair(
         for out, preimage in _config_string_preimages(cfg_dict, result.cfg_dict, type(cfg), analysis_dir):
             outputs.setdefault(out, set()).add(preimage)
         scrubbed = _scrub_user_bucket_fields(result.cfg_dict, cfg_model=type(cfg))
-        (staging / filename).write_text(yaml.safe_dump(scrubbed, sort_keys=False))
+        dumped = yaml.safe_dump(scrubbed, sort_keys=False)
+        # yaml.safe_dump emits no comment, so the source line is prefixed to the dumped text.
+        (staging / filename).write_text(f"# {source_note}\n{dumped}" if source_note else dumped)
     return aggregated, outputs
 
 
@@ -1347,9 +1362,13 @@ def _emit_resolved_brand_theme(analysis: TRITONSWMM_analysis, staging: Path) -> 
     # Repoint the already-written bundled cfg_analysis.yaml at the sidecar so the
     # consume-side load_brand_theme(cfg_analysis.brand_theme) resolves locally.
     cfg_path = staging / "cfg_analysis.yaml"
-    cfg_dict = yaml.safe_load(cfg_path.read_text())
+    cfg_text = cfg_path.read_text()
+    cfg_dict = yaml.safe_load(cfg_text)
     cfg_dict["brand_theme"] = "brand_theme.resolved.yaml"
-    cfg_path.write_text(yaml.safe_dump(cfg_dict, sort_keys=False))
+    # yaml.safe_dump drops comments; keep the source line emit_relative_config_pair wrote at the head.
+    first_line = cfg_text.split("\n", 1)[0]
+    source_line = f"{first_line}\n" if first_line.startswith("# report settings:") else ""
+    cfg_path.write_text(source_line + yaml.safe_dump(cfg_dict, sort_keys=False))
 
 
 def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None:

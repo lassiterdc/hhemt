@@ -125,8 +125,8 @@ def test_each_manifest_dict_holds_the_same_values_under_unit_free_keys_with_a_un
 @needs_before
 def test_the_boundaries_still_come_from_the_configuration_field_and_the_field_is_untouched():
     """Property: both peak-flood-depth dicts take `depth_boundaries` from the map configuration's field of that
-    name with a unit suffix, and the configuration module that defines that field is byte-identical to the earlier
-    commit.
+    name with a unit suffix, and the configuration module that defines that field is byte-identical between the
+    earlier commit and the later one of the series.
 
     Class: the two dict literals and `src/hhemt/config/report.py`.
     Why required: the configuration models forbid unknown keys, so a field that changed its name would reject every
@@ -137,7 +137,7 @@ def test_the_boundaries_still_come_from_the_configuration_field_and_the_field_is
     for d in _manifest_dicts((REPO / DEPTH_RENDERER).read_text()):
         value = _entries(d)["depth_boundaries"]
         assert FIELD in value and "map_cfg" in value, value
-    assert _git("diff", "--stat", BEFORE, "--", "src/hhemt/config/report.py") == ""
+    assert _git("diff", "--stat", BEFORE, AFTER, "--", "src/hhemt/config/report.py") == ""
     assert FIELD in (REPO / "src/hhemt/config/report.py").read_text()
 
 
@@ -369,6 +369,14 @@ _EXCLUDED = (
 )
 
 
+#: A notebook member that carries an embedded image: the key `image/png` or `image/jpeg` and a value that is a
+#: single run of at least two hundred base64 characters (with the optional trailing line break the notebook format
+#: writes), and nothing else on the line. A person cannot read such a value, and a short run of its characters can
+#: match any word pattern by chance, so the line is not text a reader meets. A line that holds anything besides the
+#: member, and a member whose value is short or holds a character outside the base64 alphabet, is read as before.
+_EMBEDDED_IMAGE = re.compile(r'^\s*"image/(?:png|jpeg)":\s*"[A-Za-z0-9+/=]{200,}(?:\\n)?",?\s*$')
+
+
 def _citations(diff_text: str) -> list[tuple[str, str]]:
     """(path, text) of each added line that cites a decision, a design section or a check item."""
     path = ""
@@ -378,7 +386,7 @@ def _citations(diff_text: str) -> list[tuple[str, str]]:
             path = line[6:] if line.startswith("+++ b/") else ""
         elif line.startswith("+") and not line.startswith("+++"):
             text = line[1:]
-            if _CITATION.search(text) and not any(s in text for s in _STABLE):
+            if _CITATION.search(text) and not _EMBEDDED_IMAGE.match(text) and not any(s in text for s in _STABLE):
                 out.append((path, text.strip()))
     return out
 
@@ -428,3 +436,37 @@ def test_no_added_line_cites_a_decision_a_design_section_or_a_check_item_except_
     ).stdout
     found = _citations(real)
     assert found == [], "\n".join(f"{p}: {t[:110]}" for p, t in found)
+
+
+def test_an_embedded_image_member_is_not_read_and_every_other_notebook_line_still_is():
+    """Property: the citation scan skips a diff line that holds only an embedded base64 image member and reads every
+    other added line of a notebook, markdown cells and code cells included.
+
+    Class: added lines of a notebook diff. A line is skipped only when it is a member keyed ``image/png`` or
+    ``image/jpeg`` whose whole value is a run of at least two hundred base64 characters.
+    Why required: a long base64 value holds, by chance, substrings that look like a citation; no person reads it.
+    Kills it: a skip keyed on the notebook path (the cells would go unread); a skip keyed on the key alone.
+    Passes under: any predicate that skips the same lines and no others.
+    Must-fire control: (a) a base64 image member holding a citation-shaped run is not reported; (b) the same diff
+    with a real citation added in a markdown-cell line is reported; (c) a short ``image/png`` value, a value outside
+    the base64 alphabet and a line that adds text after the member are reported.
+    """
+
+    def diff(*added: str) -> str:
+        return "+++ b/docs/tutorials/example.ipynb\n" + "".join(f"+{line}\n" for line in added)
+
+    citation_shaped = "A" * 120 + "+D" + "14+" + "A" * 120
+    member = f'      "image/png": "{citation_shaped}",'
+    assert _CITATION.search(member), "the planted member must be one the pattern would report without the skip"
+    assert _citations(diff(member)) == []
+    assert _citations(diff(member.replace("image/png", "image/jpeg"), member.replace('",', '\\n",'))) == []
+    real = '    "See ' + "D" + "14 and " + "sec" + 'tion 3.4 for the choice.\\n",'
+    assert [t for _, t in _citations(diff(member, real))] == [real.strip()]
+    short_citation = '      "image/png": "D' + '14",'
+    non_base64 = f'      "image/png": "{citation_shaped[:100]} {citation_shaped[100:]}",'
+    trailing = member + " D" + "14 trailing text"
+    assert [t for _, t in _citations(diff(short_citation, non_base64, trailing))] == [
+        short_citation.strip(),
+        non_base64.strip(),
+        trailing.strip(),
+    ]

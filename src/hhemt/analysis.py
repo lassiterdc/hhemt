@@ -1,15 +1,15 @@
 # %%
-"""The analysis orchestrator: one ensemble of coupled TRITON-SWMM simulations, end to end.
+"""The analysis orchestrator for one ensemble of coupled TRITON-SWMM simulations, end to end.
 
-An *analysis* is a set of weather events simulated against one modelled system. This module
-owns everything between the user's config files and a rendered report for that set: scenario
-construction, execution-strategy selection, Snakemake workflow submission, output processing
-and consolidation, the report render, and the operations that act on a finished or partly
-finished analysis (reprocess, delete, cancel, the ``_test/`` smoke run, the
-exploratory-analysis loop, bundling and publishing).
+An *analysis* is a set of weather events simulated against one modelled system. The module
+owns everything between the config files and a rendered report for that set. The scope covers scenario
+construction, execution-strategy selection, Snakemake workflow submission, output processing,
+consolidation, the report render, and the operations that act on a finished or partly
+finished analysis. The operations are reprocess, delete, cancel, the ``_test/`` smoke run, the
+exploratory-analysis loop, bundling, and publishing.
 
 The public surface is :class:`TRITONSWMM_analysis`. The module-level helpers and the
-``Test*`` dataclasses exist to support it. System-level inputs and compiled solvers belong to
+``Test*`` dataclasses exist to support that class. System-level inputs and compiled solvers belong to
 :mod:`hhemt.system`, and the members of a sensitivity sweep to
 :mod:`hhemt.sensitivity_analysis`.
 """
@@ -37,6 +37,7 @@ from hhemt import orchestrator_sentinels as _osent
 from hhemt.config.analysis import ClearRawValue, ForceRerunValue, analysis_config
 from hhemt.config.hpc_system import resolve_gpu_target
 from hhemt.config.loaders import load_analysis_config, load_hpc_system_config
+from hhemt.config.report import REPORT_FORMAT_MARKER
 from hhemt.exceptions import ConfigurationError
 from hhemt.execution import (
     LocalConcurrentExecutor,
@@ -212,12 +213,12 @@ __all__ = ["TRITONSWMM_analysis"]
 @dataclass
 class TestRepresentative:
     """One minimum-device representative of a unique
-    (model-toggles x compilation-backend x partition x compute-config) group,
-    selected by ``TRITONSWMM_analysis._select_test_representatives``
-    (compute-config is a group KEY, so every unique config is represented;
-    device count only breaks ties). ``source_analysis`` is the
+    group of model-toggles x compilation-backend x partition x compute-config,
+    selected by ``TRITONSWMM_analysis._select_test_representatives``.
+    Compute-config is a group KEY, so every unique config is represented,
+    and device count only breaks ties. ``source_analysis`` is the
     already-built, already-validated candidate analysis the representative was
-    chosen from (the primary itself, or one ``self.sensitivity.members``)."""
+    chosen from, either the primary itself or a member in ``self.sensitivity.members``."""
 
     key: tuple
     source_analysis: "TRITONSWMM_analysis"
@@ -226,10 +227,10 @@ class TestRepresentative:
     @property
     def axes(self) -> dict:
         """Name the declared axes this representative is SELECTED to exercise,
-        unpacked from ``key`` = (model_toggles, backend, partition,
-        compute_config). ``compilation_backend`` is "CUDA"/"HIP"/None; a None
+        unpacked from ``key``, a tuple of model_toggles, backend, partition, and
+        compute_config. ``compilation_backend`` is "CUDA", "HIP", or None. A None
         backend on an ``n_gpus>=1`` rep is the diagnostic that the GPU-compile
-        axis will not resolve (``hpc_system_config`` not threaded)."""
+        axis will not resolve, with ``hpc_system_config`` not threaded."""
         model_toggles, backend, partition, compute_config = self.key
         run_mode, n_mpi_procs, n_omp_threads, n_gpus, n_nodes = compute_config
         return {
@@ -246,14 +247,15 @@ class TestRepresentative:
 
 @dataclass
 class TestSubResult:
-    """One representative's REALIZED ``_test`` run: declared axes (via
-    ``representative.axes``) plus the RESOLVED execution the old
+    """One representative's REALIZED ``_test`` run, with declared axes via
+    ``representative.axes`` plus the RESOLVED execution that the old
     ``(analysis_id, sub)`` tuple discarded, plus informational binary
-    provenance. ``workflow_result.mode`` is "slurm" (real allocation) vs
-    "local" (login-node ThreadPool, NO allocation); ``.job_id`` the real SLURM
-    job id; ``.success`` the per-rep pass/fail. ``binary_provenance`` is
-    captured-not-asserted (ldd/readelf text of the compiled triton.exe; None
-    when absent) — NEVER parsed/gated in the engine (empirical judgment only)."""
+    provenance. ``workflow_result.mode`` is "slurm" for a real allocation and
+    "local" for a login-node ThreadPool with NO allocation. ``.job_id`` is the real SLURM
+    job id, and ``.success`` is the per-rep pass/fail. ``binary_provenance`` is
+    captured-not-asserted, holding ldd/readelf text of the compiled triton.exe, and None
+    when absent. The engine NEVER parses or gates on ``binary_provenance``, so the field serves
+    empirical judgment only."""
 
     representative: "TestRepresentative"
     analysis_id: str
@@ -265,9 +267,9 @@ class TestSubResult:
 @dataclass
 class TestResult:
     """Result of ``TRITONSWMM_analysis.test()`` -- the selected representatives,
-    the materialized ``_test/`` members as ``TestSubResult`` records (each
-    carrying the representative's declared ``axes``, the resolved
-    ``workflow_result``, and informational ``binary_provenance``), and the
+    the materialized ``_test/`` members as ``TestSubResult`` records, each
+    carrying the declared ``axes`` of the representative, the resolved
+    ``workflow_result``, and informational ``binary_provenance``, and the
     ``{analysis_dir}/_test`` root directory."""
 
     representatives: list
@@ -330,33 +332,33 @@ def _coupled_system_configs(analysis) -> list:
 class TRITONSWMM_analysis:
     """Orchestrates one ensemble of coupled TRITON-SWMM simulations.
 
-    This is the central object of the toolkit. It owns the lifecycle of an
-    *analysis* — a set of weather events simulated against one modelled system
-    — from scenario construction through execution, post-processing,
+    The class is the central object of the toolkit and owns the lifecycle of an
+    *analysis*, a set of weather events simulated against one modelled system,
+    from scenario construction through execution, post-processing,
     consolidation, and reporting.
 
-    An analysis belongs to a :class:`~hhemt.system.TRITONSWMM_system`, which
-    owns the system-level inputs (DEM, Manning's raster, compiled solver
-    binaries) that every analysis under it shares. One system may have many
-    analyses; each gets its own directory under the system directory.
+    An analysis belongs to a :class:`~hhemt.system.TRITONSWMM_system`. The system
+    owns the system-level inputs, namely the DEM, Manning's raster, and compiled solver
+    binaries, that every analysis under the system shares. One system may have many
+    analyses, and each gets a separate directory under the system directory.
 
     Construction
     ------------
     Prefer :meth:`hhemt.toolkit.Toolkit.from_configs`, or load a packaged case
-    study via :mod:`hhemt.experiments`, rather than constructing this directly.
+    study via :mod:`hhemt.experiments`, and avoid constructing the class directly.
 
     The main entry points
     ---------------------
     ``run()``
-        Execute the whole workflow — setup, scenario preparation, simulation,
+        Execute the whole workflow of setup, scenario preparation, simulation,
         processing, consolidation, and report render.
     ``test()``
         Run a strict, least-demanding subset of *this* analysis under
         ``{analysis_dir}/_test/``, exercising the real
         run-process-consolidate-report path for one minimum-device
         representative per unique compute configuration. In native mode the
-        solver must already be built: the run checks for the build and never
-        performs it. This is the smoke test to run before committing an
+        solver must already be built, because the run checks for the build and never
+        performs the build. Run the smoke test before committing an
         allocation to a full run.
     ``validate()``
         Preflight the configuration without executing anything.
@@ -371,25 +373,27 @@ class TRITONSWMM_analysis:
     Sensitivity analyses
     --------------------
     When ``toggle_sensitivity_analysis`` is set, this object coordinates a set
-    of members — each itself a full ``TRITONSWMM_analysis`` — defined by
+    of members, each itself a full ``TRITONSWMM_analysis``, defined by
     the rows of a sensitivity spreadsheet. The ``sensitivity`` attribute
-    EXISTS ONLY in that case; guard on the toggle, or use
-    ``getattr(analysis, "sensitivity", None)``, rather than assuming it.
+    EXISTS ONLY in that case. Guard on the toggle, or use
+    ``getattr(analysis, "sensitivity", None)``, and avoid assuming the attribute.
 
     Notes
     -----
-    Besides the entry points above, the non-underscore methods are the
-    lower-level submission and maintenance methods (``submit_workflow``,
-    ``delete``, ``cancel``, ``static_plots``), the output methods
-    (``bundle_report_data``, ``reprex_bundle``, ``publish``,
-    ``publish_reprex_bundle``, ``eda``, ``promote_eda_plot``), the Globus
-    transfer methods (``globus_to_local``, ``globus_to_hpc``,
-    ``transfer_results``), the in-process execution helpers (the
-    ``retrieve_*_launchers`` and ``run_*`` methods, ``process_sim_timeseries``,
-    ``print_cfg``, ``print_logfile_for_scenario``), and the informational
-    accessors (``log``, ``df_status``, ``n_sims``, ``n_scenarios``,
-    ``disk_utilization_bytes``). Anything underscore-prefixed is backend
-    machinery and is not part of the supported API.
+    Besides the entry points above, the non-underscore methods fall into the groups below.
+
+    - ``submit_workflow``, ``delete``, ``cancel``, and ``static_plots`` are the lower-level
+      submission and maintenance methods.
+    - ``bundle_report_data``, ``reprex_bundle``, ``publish``, ``publish_reprex_bundle``,
+      ``eda``, and ``promote_eda_plot`` are the output methods.
+    - ``globus_to_local``, ``globus_to_hpc``, and ``transfer_results`` are the Globus
+      transfer methods.
+    - The ``retrieve_*_launchers`` and ``run_*`` methods, ``process_sim_timeseries``,
+      ``print_cfg``, and ``print_logfile_for_scenario`` are the in-process execution helpers.
+    - ``log``, ``df_status``, ``n_sims``, ``n_scenarios``, and ``disk_utilization_bytes``
+      are the informational accessors.
+
+    Anything underscore-prefixed is backend machinery and is not part of the supported API.
     """
 
     @staticmethod
@@ -998,36 +1002,38 @@ class TRITONSWMM_analysis:
     def validate(self, *, build_sifs: bool = False) -> ValidationResult:
         """Run preflight validation on system and analysis configurations.
 
-        This method performs comprehensive validation of both system and analysis
-        configurations before launching expensive simulation work. It checks:
+        The method performs comprehensive validation of both system and analysis
+        configurations before launching expensive simulation work. The method checks:
 
-        - System config: paths, toggle dependencies, model selection
-        - Analysis config: weather data, run-mode consistency, HPC settings
-        - Data consistency: event alignment, storm tide data, units
+        - System config covers paths, toggle dependencies, and model selection
+        - Analysis config covers weather data, run-mode consistency, and HPC settings
+        - Data consistency covers event alignment, storm tide data, and units
 
         Returns
         -------
         ValidationResult
-            Validation result with any errors and warnings. Use result.is_valid
-            to check if validation passed, or result.raise_if_invalid() to raise
+            Validation result with any errors and warnings. Use ``result.is_valid``
+            to check if validation passed, or ``result.raise_if_invalid()`` to raise
             ConfigurationError if any errors exist.
 
         Examples
         --------
-        >>> analysis = system.analysis
-        >>> result = analysis.validate()
-        >>> if not result.is_valid:
-        >>>     print(result)  # Show all errors and warnings
-        >>>     result.raise_if_invalid()  # Raise ConfigurationError
+        ```python
+        analysis = system.analysis
+        result = analysis.validate()
+        if not result.is_valid:
+            print(result)  # Show all errors and warnings
+            result.raise_if_invalid()  # Raise ConfigurationError
 
-        >>> # Or validate and raise in one step:
-        >>> analysis.validate().raise_if_invalid()
+        # Or validate and raise in one step:
+        analysis.validate().raise_if_invalid()
+        ```
 
         Notes
         -----
         Validation is NOT automatically called in __init__ to avoid breaking
-        existing workflows. Users should explicitly call validate() before
-        launching simulations, or CLI/API entry points can call it automatically.
+        existing workflows. Callers should explicitly call ``validate()`` before
+        launching simulations, or CLI/API entry points can call ``validate()`` automatically.
         """
         return preflight_validate(
             cfg_system=self._system.cfg_system,
@@ -1038,9 +1044,9 @@ class TRITONSWMM_analysis:
 
     @property
     def log(self):
-        """The analysis log, loaded from disk on FIRST ACCESS rather than at
+        """The analysis log, loaded from disk on FIRST ACCESS and not at
         construction. The setter is kept so `_refresh_log`'s `self.log = ...`
-        assignments and any external assignment behave exactly as before."""
+        assignments and any external assignment behave as before."""
         if self._log is None:
             self._refresh_log()
         return self._log
@@ -1081,7 +1087,7 @@ class TRITONSWMM_analysis:
         Parameters
         ----------
         which : Literal["system", "analysis", "both"], optional
-            Which configuration to print (default: "both")
+            The configuration to print. The default is "both".
         """
         if which in ["system", "both"]:
             print("=== System Configuration ===", flush=True)
@@ -1104,16 +1110,16 @@ class TRITONSWMM_analysis:
         Returns
         -------
         str
-            Globus task ID. Pass it to ``GlobusTransferManager().wait(task_id)`` to
-            block until the transfer completes, or monitor it at app.globus.org.
+            Globus task ID. Pass the ID to ``GlobusTransferManager().wait(task_id)`` to
+            block until the transfer completes, or monitor the transfer at app.globus.org.
 
         Examples
         --------
-        .. code-block:: python
-
-            task_id = analysis.globus_to_local(
-                Path("configs/transfers/my_frontier_run.yaml")
-            )
+        ```python
+        task_id = analysis.globus_to_local(
+            Path("configs/transfers/my_run.yaml")
+        )
+        ```
         """
         from pathlib import Path as _Path
 
@@ -1152,14 +1158,14 @@ class TRITONSWMM_analysis:
     ) -> str:
         """Transfer analysis results to local machine via Globus.
 
-        This is a standalone method. It does not require ``run()`` to have been called
-        first. Use it for the "submit on HPC, poll squeue, transfer when done"
+        The method is standalone and requires no prior ``run()`` call.
+        Use the method for the "submit on HPC, poll squeue, transfer when done"
         workflow.
 
         Parameters
         ----------
         config : PostRunTransferConfig
-            User-facing transfer configuration. See
+            Post-run transfer configuration. See
             :class:`~hhemt.config.globus.PostRunTransferConfig`.
 
         Returns
@@ -1175,15 +1181,15 @@ class TRITONSWMM_analysis:
 
         Examples
         --------
-        .. code-block:: python
+        ```python
+        from hhemt.config.globus import PostRunTransferConfig
 
-            from hhemt.config.globus import PostRunTransferConfig
-
-            config = PostRunTransferConfig(
-                destination_root=r"D:\\Dropbox\\_GradSchool\\repos\\hhemt\\frontier",
-                system="frontier",
-            )
-            task_id = analysis.transfer_results(config)
+        config = PostRunTransferConfig(
+            destination_root=r"D:\\results\\run_01",
+            system="frontier",
+        )
+        task_id = analysis.transfer_results(config)
+        ```
         """
         from hhemt.config.globus import (
             _get_endpoint_uuids,
@@ -1227,15 +1233,15 @@ class TRITONSWMM_analysis:
     ) -> "Path":
         """Emit a portable render bundle for local renderer iteration.
 
-        Opt-in only — NEVER invoked from analysis.run() or
-        submit_workflow(). The bundle is a self-contained zip including
+        Opt-in only and NEVER invoked from ``analysis.run()`` or
+        ``submit_workflow()``. The bundle is a self-contained zip including
         every source path the report's figures declared, harvested from the
         ``source_paths_relative`` field of each ``*.manifest.json`` sidecar under
-        ``plots/`` (with any ``add_channel`` source refs as a secondary channel).
-        The sidecars are written when the plot rules render the figures, not by
-        ``render_report()``. The zip also carries the configs with relative paths,
-        the Snakefile, and the HPC-baseline analysis_report.html (the HTML report
-        only, no zip) under bundle_baseline/.
+        ``plots/``, with any ``add_channel`` source refs as a secondary channel.
+        The plot rules write the sidecars when they render the figures, and ``render_report()`` writes none.
+        The zip also carries the configs with relative paths,
+        the Snakefile, and the HPC-baseline analysis_report.html, the HTML report
+        only with no zip, under bundle_baseline/.
 
         Parameters
         ----------
@@ -1244,9 +1250,9 @@ class TRITONSWMM_analysis:
             ``{analysis_dir}/render_bundle/{analysis_id}_{git_sha}_{render_sha}_v{schema}.zip``,
             where ``render_sha`` hashes the rendered figures.
         container_defs : list of Path, or None
-            One Apptainer ``.def`` per distinct architecture to carry. Required, and
-            repeatable, for a container-mode analysis: the config names ONE recipe per
-            container reference and cannot express a multi-architecture SET. Ignored
+            One Apptainer ``.def`` per distinct architecture to carry. Required
+            and repeatable for a container-mode analysis. The config names ONE recipe per
+            container reference and is unable to express a multi-architecture SET. Ignored
             for a native analysis.
 
         Returns
@@ -1269,28 +1275,28 @@ class TRITONSWMM_analysis:
         output_path: "Path | None" = None,
         container_defs: "list[Path] | None" = None,
     ) -> "Path":
-        """Emit a reprex-ready Workflow-Run-Crate bundle and return its extracted
+        """Emit a reprex-ready Workflow-Run-Crate bundle and return the extracted
         directory root.
 
-        Peer of ``bundle_report_data()``; opt-in only (never invoked from
-        ``run()``/``submit_workflow()``). ``emit_bundle`` already carries the reprex
-        runnable-template set and upgrades the crate to a Workflow-Run Crate, so this
+        Peer to ``bundle_report_data()`` and opt-in only, never invoked from
+        ``run()`` or ``submit_workflow()``. ``emit_bundle`` already carries the reprex
+        runnable-template set and upgrades the crate to a Workflow-Run Crate, so the
         facade emits the bundle and extracts the zip to a sibling directory so the
-        round-trip consumes a directory root directly
-        (``Bundle.from_directory(...).reprex(...)``). Nothing at emit time refuses a
-        bundle that carries user-specific information; ``Bundle.reprex()`` scans for it
-        on the consume side and reports what it finds without failing.
+        round-trip consumes a directory root directly, as in
+        ``Bundle.from_directory(...).reprex(...)``. No check at emit time refuses a
+        bundle that carries producer-specific information. ``Bundle.reprex()`` scans for that information
+        on the consume side and reports the findings without failing.
 
         Parameters
         ----------
         output_path : Path or None
-            Target path for the bundle zip, as in ``bundle_report_data()``; the
+            Target path for the bundle zip, as in ``bundle_report_data()``. The
             default is under ``{analysis_dir}/render_bundle/``. The zip is extracted
             to a sibling directory with the same stem.
         container_defs : list of Path, or None
-            One Apptainer ``.def`` per distinct architecture to carry. Required, and
-            repeatable, for a container-mode analysis: the config names ONE recipe per
-            container reference and cannot express a multi-architecture SET. Ignored
+            One Apptainer ``.def`` per distinct architecture to carry. Required
+            and repeatable for a container-mode analysis. The config names ONE recipe per
+            container reference and is unable to express a multi-architecture SET. Ignored
             for a native analysis.
 
         Returns
@@ -1315,19 +1321,19 @@ class TRITONSWMM_analysis:
     ) -> dict:
         """Deposit this analysis to a DOI-minting repository.
 
-        Opt-in only — NEVER invoked from analysis.run() or submit_workflow(), mirroring
-        bundle_report_data()/transfer_results(). Requires the analysis to have consolidated
-        (ro-crate-metadata.json + analysis_datatree.zarr present); the license is read from
+        Opt-in only and NEVER invoked from ``analysis.run()`` or ``submit_workflow()``, mirroring
+        ``bundle_report_data()`` and ``transfer_results()``. Requires the analysis to have consolidated.
+        Both ro-crate-metadata.json and analysis_datatree.zarr must be present. The license is read from
         the emitted crate sidecar. Publishing never re-stamps that archived license. Before
-        anything is deposited, publish compares the license the config declares — from
-        dataset_license, or from the details file dataset_license_file names — against the
-        crate license, by record, and raises PublishError when they differ; that check runs
-        before any override is read. Re-emit the crate with
-        reprocess(start_with='consolidate', regenerate_existing=True), then publish again.
+        anything is deposited, publish compares the config license against the crate license, by record,
+        and raises PublishError when they differ. The check runs
+        before any override is read. The config license comes from dataset_license or from the details
+        file that dataset_license_file names. Re-emit the crate with
+        ``reprocess(start_with='consolidate', regenerate_existing=True)``, then publish again.
         override_dataset_license, when given, is a second assertion of the SPDX license you
-        expect, compared against the crate only after the config check has passed; a
-        mismatch raises PublishError. Returns {"target","data_doi","software_doi","record_url"};
-        for target='hydroshare' data_doi is None and the dict also carries "manual_step".
+        expect, compared against the crate only after the config check has passed. A
+        mismatch raises PublishError. Returns ``{"target","data_doi","software_doi","record_url"}``.
+        For target='hydroshare' data_doi is None and the dict also carries "manual_step".
         """
         from hhemt.publishing import publish_analysis
 
@@ -1352,33 +1358,33 @@ class TRITONSWMM_analysis:
     ) -> dict:
         """Deposit the runnable reprex bundle to a DOI-minting repository.
 
-        This is the emit half of the DOI round-trip whose consume half is
+        The method is the emit half of the DOI round-trip whose consume half is
         ``TRITON_SWMM_experiment.from_doi``. Where ``publish()`` deposits the
-        ``analysis_dir`` data set, a citation and reuse DOI with no reconstitution path,
-        this deposits the reprex bundle, which is the only artifact whose crate carries a
-        ``mainEntity`` ComputationalWorkflow and for which ``reconstitute_runnable_config``
-        exists.
+        ``analysis_dir`` data set under a citation-and-reuse DOI that offers no reconstitution path,
+        the method deposits the reprex bundle. Only that bundle's crate carries a
+        ``mainEntity`` ComputationalWorkflow, and only that bundle has a
+        ``reconstitute_runnable_config`` path.
 
-        Opt-in only. It is never invoked from ``run()`` or ``submit_workflow()``.
+        Opt-in only. The method is never invoked from ``run()`` or ``submit_workflow()``.
 
-        The bundle is deposited as the zip ``emit_bundle`` wrote, not via
-        ``reprex_bundle()``, which returns the extracted directory. Re-zipping that would
+        The bundle is deposited as the zip ``emit_bundle`` wrote and never via
+        ``reprex_bundle()``. The method returns the extracted directory. Re-zipping the directory would
         produce a nested root that the ingest side's ``Bundle.from_directory`` rejects.
 
         Parameters
         ----------
         exclude_config : Path or None
-            Path to an operator-authored exclude-config YAML. Omit it and the deposited
-            bundle is self-contained: every config-declared input is carried, so a
-            consumer can run it from scratch. Supply it and the named inputs are carried
+            Path to an operator-authored exclude-config YAML. Omit the file and the deposited
+            bundle is self-contained, so every config-declared input is carried and a
+            consumer can run the bundle from scratch. Supply the file and the named inputs are carried
             by reference instead, as an ``input_deposit`` block plus a URL-bearing crate
-            ``File`` part. See ``hhemt bundle --list-excludable`` for the menu, and note
-            the ordering constraint: the excluded input must already have a durable
+            ``File`` part. See ``hhemt bundle --list-excludable`` for the menu. Note
+            the ordering constraint. The excluded input must already have a durable
             record.
         container_defs : list of Path, or None
             One Apptainer ``.def`` per distinct architecture in the experiment matrix,
             threaded to ``emit_bundle`` so a container-mode analysis can be deposited.
-            Its container branch fails closed without them. Omit for a native-mode
+            The container branch fails closed without them. Omit for a native-mode
             bundle.
         """
         from hhemt.bundle import emit_bundle
@@ -1399,16 +1405,16 @@ class TRITONSWMM_analysis:
         override_eda_config: "Path | None" = None,
         notebook_filename: "str | None" = None,
     ) -> "EdaReportResult":
-        """Run the in-process EDA loop: calc -> plots -> doc.
+        """Run the in-process EDA loop of calc -> plots -> doc.
 
-        A LIGHTER non-Snakemake facade. Resolves the EDA config
-        (``override_eda_config`` when given, else ``cfg_analysis.eda``), runs the
+        A LIGHTER non-Snakemake facade. Resolves the EDA config from
+        ``override_eda_config`` when given, else ``cfg_analysis.eda``, runs the
         calc members, renders the EDA
         plots under plots/eda/, and assembles eda_report/eda_report.html. Returns
-        an EdaReportResult. Bundle carriage: run this BEFORE bundle_report_data()
+        an EdaReportResult. Run ``eda()`` BEFORE ``bundle_report_data()`` for bundle carriage,
         so the EDA plots' declared eda/<plot_id>.zarr sources are harvested into
-        the bundle (the plots emit under plots/eda/ and declare the zarr as a
-        source); bundling before eda() silently omits EDA content.
+        the bundle, because the plots emit under plots/eda/ and declare the zarr as a
+        source. Bundling before ``eda()`` silently omits EDA content.
         """
         from hhemt.config.eda import eda_config
         from hhemt.config.loaders import yaml_to_model
@@ -1565,17 +1571,17 @@ class TRITONSWMM_analysis:
         dry_run: bool = False,
     ) -> dict:
         """Generate publication static figures, one Snakemake rule per static-plot ID,
-        distributed via the existing executor. Adjacent to run()/reprocess()/
-        bundle_report_data()/eda().
+        distributed via the existing executor. Adjacent to ``run()``, ``reprocess()``,
+        ``bundle_report_data()``, and ``eda()``.
 
-        ``override_static_plot_configs`` (override-prefixed; default None reads
-        ``cfg_analysis.static_plot_configs``) is the resolved config list, threaded
-        DOWN to the workflow builder so a passed override is honored (anti facade-
-        drift). ``static_config_ids`` optionally restricts the render to the named
+        ``override_static_plot_configs`` is override-prefixed, and the default None reads
+        ``cfg_analysis.static_plot_configs``. The parameter is the resolved config list, threaded
+        DOWN to the workflow builder so a passed override is honored and no facade
+        drift arises. ``static_config_ids`` optionally restricts the render to the named
         subset. ``stamp_new_target`` first stamps the analysis directory at the
-        current ``LAYOUT_VERSION`` when it carries no layout record, and refuses a
-        record stating a different version (the ``static_plots/`` output dir itself
-        is created lazily on first render).
+        current ``LAYOUT_VERSION`` when the directory carries no layout record, and refuses a
+        record stating a different version. The ``static_plots/`` output dir itself
+        is created lazily on first render.
         """
         from hhemt.version_migration import LAYOUT_VERSION
         from hhemt.version_migration.state import stamp_new_target
@@ -1609,10 +1615,10 @@ class TRITONSWMM_analysis:
         """Promote an EDA plot into a standard static-plot config OR a named reporting set.
 
         Thin facade over eda/_promote.py. ``target="static_plot"`` emits a
-        ``StaticPlotBaseConfig`` YAML keyed on the plot-ID (kwargs: ``output_path``,
-        ``caption``); ``target="reporting_set"`` records the plot-ID's promotion intent
-        against a named ``ReportingSet`` (kwargs: ``set_name``). Promotion is a deliberate
-        per-plot user action -- it is NOT folded into eda() and is NOT exposed on Bundle.
+        ``StaticPlotBaseConfig`` YAML keyed on the plot-ID, with the kwargs ``output_path`` and
+        ``caption``. ``target="reporting_set"`` records the plot-ID's promotion intent
+        against a named ``ReportingSet``, with the kwarg ``set_name``. Promotion is an intentional
+        per-plot caller action -- promotion is NOT folded into ``eda()`` and is NOT exposed on Bundle.
         """
         from hhemt.eda._promote import (
             promote_eda_plot_to_static_config,
@@ -2009,14 +2015,14 @@ class TRITONSWMM_analysis:
         Parameters
         ----------
         which : Literal["TRITON", "SWMM", "both"]
-            Which outputs to process: TRITON, SWMM, or both
+            The outputs to process, one of TRITON, SWMM, or both
         override_clear_raw : ClearRawValue | None
-            Runtime override for ``cfg_analysis.clear_raw``. ``None`` (the default)
-            reads from the YAML config; a concrete value overrides for this run.
+            Overrides ``cfg_analysis.clear_raw`` at runtime. The default ``None``
+            reads from the YAML config, and a concrete value overrides for this run.
         verbose : bool
             If True, print progress messages
         compression_level : int
-            Compression level for output files (0-9)
+            Compression level from 0 to 9 for output files
 
         Returns
         -------
@@ -2086,9 +2092,9 @@ class TRITONSWMM_analysis:
         function_launchers : List[Callable[[], None]]
             Functions to execute concurrently.
         max_parallel : int | None
-            Upper bound on parallelism (defaults to CPU count).
+            Upper bound on parallelism, defaulting to CPU count.
         min_memory_per_function_MiB : int | None
-            Minimum memory required per function (MiB).
+            Minimum memory required per function, in MiB.
             If provided, concurrency is reduced to avoid oversubscription.
         verbose : bool
             Print progress messages.
@@ -2162,17 +2168,17 @@ class TRITONSWMM_analysis:
         Parameters
         ----------
         overwrite_scenario_if_already_set_up : bool, optional
-            If True, overwrite existing scenarios (default: False)
+            If True, overwrite existing scenarios. The default is False.
         rerun_swmm_hydro_if_outputs_exist : bool, optional
-            If True, rerun SWMM hydrology model even if outputs exist (default: False)
+            If True, rerun SWMM hydrology model even if outputs exist. The default is False.
         verbose : bool, optional
-            If True, print progress messages (default: False)
+            If True, print progress messages. The default is False.
 
         Raises
         ------
         RuntimeError
             If any scenario's ``scenario_creation_complete`` is not True after all
-            launchers ran (the prepare subprocess failed); the message names each
+            launchers ran because the prepare subprocess failed. The message names each
             such scenario directory and the collected subprocess return codes.
         """
         prepare_scenario_launchers = self.retrieve_prepare_scenario_launchers(
@@ -2199,16 +2205,16 @@ class TRITONSWMM_analysis:
         Parameters
         ----------
         event_iloc : int
-            Positional index of the event in ``df_sims`` — not an ``event_id``.
+            Positional index of the event in ``df_sims``, and never an ``event_id``.
 
         Notes
         -----
-        This prints the scenario-level log, which tracks scenario PREPARATION
-        only (`.inp` creation, TRITON config copy, boundary conditions).
+        The method prints the scenario-level log. The log tracks scenario PREPARATION
+        only, covering `.inp` creation, TRITON config copy, and boundary conditions.
         Per-model-type simulation and processing state lives in a separate
-        model log; reach it with ``scenario.get_log(model_type)`` instead.
+        model log. Reach that state with ``scenario.get_log(model_type)`` instead.
         Looking here for ``simulation_completed`` or a processing field will
-        not find it.
+        not find the field.
         """
         scen = TRITONSWMM_scenario(event_iloc, self)
         scen.log.print()
@@ -2306,7 +2312,7 @@ class TRITONSWMM_analysis:
         process_outputs_after_sim_completion : bool
             If True, process timeseries outputs after simulation completes
         which : Literal["TRITON", "SWMM", "both"]
-            Which outputs to process (only used if process_outputs_after_sim_completion=True)
+            The outputs to process (only used if process_outputs_after_sim_completion=True)
         compression_level : int
             Compression level for output files, 0-9
         override_clear_raw : ClearRawValue | None
@@ -2417,14 +2423,14 @@ class TRITONSWMM_analysis:
         event_iloc : int
             Integer index of the scenario in df_sims
         which : Literal["TRITON", "SWMM", "both"], optional
-            Which outputs to process (default: "both")
+            The outputs to process. The default is "both".
         override_clear_raw : ClearRawValue | None, optional
-            Runtime override for ``cfg_analysis.clear_raw``. ``None`` (default)
-            reads the YAML; a concrete value overrides for this invocation.
+            Overrides ``cfg_analysis.clear_raw`` at runtime. The default ``None``
+            reads the YAML, and a concrete value overrides for this invocation.
         verbose : bool, optional
-            If True, print progress messages (default: False)
+            If True, print progress messages. The default is False.
         compression_level : int, optional
-            Compression level for output files, 0-9 (default: 5)
+            Compression level from 0 to 9 for output files. The default is 5.
         """
         proc = self._retrieve_sim_run_processing_object(event_iloc=event_iloc)
         proc.write_timeseries_outputs(
@@ -2570,14 +2576,14 @@ class TRITONSWMM_analysis:
         Run simulations concurrently using the configured execution strategy.
 
         Automatically selects the appropriate executor based on cfg_analysis.multi_sim_run_method:
-        - "1_job_many_srun_tasks": Uses SlurmExecutor for HPC execution
-        - "local": Uses LocalConcurrentExecutor for parallel local execution
-        - Other: Uses SerialExecutor for sequential execution
+        - "1_job_many_srun_tasks" uses SlurmExecutor for HPC execution
+        - "local" uses LocalConcurrentExecutor for parallel local execution
+        - Other values use SerialExecutor for sequential execution
 
         Parameters
         ----------
         launch_functions : list[tuple]
-            List of tuples (launcher, finalize_sim) from _create_subprocess_sim_run_launcher()
+            List of tuples of launcher and finalize_sim from ``_create_subprocess_sim_run_launcher()``
         max_concurrent : Optional[int]
             Maximum number of concurrent simulations
         verbose : bool
@@ -2606,18 +2612,18 @@ class TRITONSWMM_analysis:
         Parameters
         ----------
         pickup_where_leftoff : bool
-            If True, resume each simulation from its last checkpoint.
+            If True, resume each simulation from the latest checkpoint.
         process_outputs_after_sim_completion : bool, optional
             If True, process each completed simulation's outputs with
-            ``process_sim_timeseries`` (default: False).
+            ``process_sim_timeseries``. The default is False.
         which : Literal["TRITON", "SWMM", "both"], optional
-            Which outputs to process; used only when processing (default: "both").
+            The outputs to process, used only when processing. The default is "both".
         compression_level : int, optional
-            Compression level for processed output files, 0-9 (default: 5).
+            Compression level from 0 to 9 for processed output files. The default is 5.
         override_clear_raw : ClearRawValue | None, optional
-            Runtime override for ``cfg_analysis.clear_raw``; ``None`` reads the config.
+            Overrides ``cfg_analysis.clear_raw`` at runtime. ``None`` reads the config.
         verbose : bool, optional
-            If True, print progress messages (default: False).
+            If True, print progress messages. The default is False.
         """
         if verbose:
             print("Running all sims in series...", flush=True)
@@ -2938,7 +2944,6 @@ class TRITONSWMM_analysis:
         self,
         from_scratch: bool = False,
         dry_run: bool = False,
-        events: list[int] | None = None,
         execution_mode: Literal["auto", "local", "slurm"] = "auto",
         verbose: bool = True,
         wait_for_job_completion: bool | None = None,
@@ -2955,7 +2960,7 @@ class TRITONSWMM_analysis:
         transfer_config: "PostRunTransferConfig | None" = None,
         report_config: "Path | None" = None,
         override_brand_theme: "Path | None" = None,
-        report_formats: list[Literal["html", "zip"]] | None = None,
+        override_report_formats: list[Literal["html", "zip"]] | None = None,
         cleanup_orphans: bool = False,
         cleanup_stale_metadata: bool = True,
         prune_settled_markers: bool = True,
@@ -2973,133 +2978,132 @@ class TRITONSWMM_analysis:
         ----------
         from_scratch : bool
             If True, delete all analysis artifacts and start fresh.
-            If False (default), resume from last completed checkpoint.
+            If False, the default, resume from last completed checkpoint.
         dry_run : bool
-            If True, validate workflow but don't execute.
-        events : list[int] | None
-            Subset of event_ilocs to process. If None, processes all events.
+            If True, only validate the workflow.
         execution_mode : Literal["auto", "local", "slurm"]
-            Where to execute. ``"auto"`` (default) resolves the locus from
-            ``multi_sim_run_method`` -- local for a ``local`` config, SLURM for
-            ``batch_job`` / ``1_job_many_srun_tasks`` -- and never from SLURM environment
-            variables; ``"local"`` / ``"slurm"`` override it.
+            Where to execute. The default ``"auto"`` resolves the locus from
+            ``multi_sim_run_method`` -- local for a ``local`` config and SLURM for
+            ``batch_job`` or ``1_job_many_srun_tasks`` -- and never from SLURM environment
+            variables. ``"local"`` and ``"slurm"`` override the resolution.
         verbose : bool
             If True, print progress messages.
         override_clear_raw : ClearRawValue | None
-            Runtime override for ``cfg_analysis.clear_raw``. ``None`` (default)
-            reads the YAML; pass ``"none"`` / ``"all"`` / a list of model types
-            (e.g. ``["tritonswmm", "swmm"]``) to override for this invocation.
-            Every ``override_``-prefixed parameter here follows that rule: ``None``
-            reads the config, a concrete value overrides it for this call.
+            Overrides ``cfg_analysis.clear_raw`` at runtime. The default ``None``
+            reads the YAML. Pass ``"none"``, ``"all"``, or a list of model types,
+            such as ``["tritonswmm", "swmm"]``, to override for this invocation.
+            Every ``override_``-prefixed parameter here follows that rule. ``None``
+            reads the config, and a concrete value overrides the config for this call.
         wait_for_job_completion : bool | None
             If True, block until the SLURM job finishes. Mainly for tests.
         override_hpc_total_nodes : int | None
             Overrides `hpc_total_nodes` in the SBATCH script without mutating
-            the config. Only valid for `multi_sim_run_method="1_job_many_srun_tasks"`.
+            the config. Valid only with `multi_sim_run_method="1_job_many_srun_tasks"`.
         debug : bool
-            Run in debug mode. Today it does exactly one thing: when a coupled simulation
-            starts from the beginning (a clean start, rather than a resume from a checkpoint),
-            the toolkit writes ``swmm_snapshot_keep_previous=1`` into its base cfg, asking the
-            solver to keep the previous run's snapshot files rather than remove them. Without
-            it the line is removed. A solver build that does not read the key ignores it.
-            Named ``debug`` rather than ``override_debug`` because it bridges no config field.
+            Run in debug mode. Today the flag has one effect. When a coupled simulation
+            starts from the beginning, as a clean start and no resume from a checkpoint,
+            the toolkit writes ``swmm_snapshot_keep_previous=1`` into the base cfg, asking the
+            solver to keep the snapshot files of the previous run and skip their removal. Without
+            the flag the line is removed. A solver build without support for the key ignores the line.
+            Named ``debug`` and not ``override_debug`` because the parameter bridges no config field.
         transfer_config : PostRunTransferConfig | None
             If provided, automatically transfer results to the local machine
-            after successful completion (requires ``wait_for_job_completion=True``).
+            after successful completion. Requires ``wait_for_job_completion=True``.
         cleanup_orphans : bool, default False
-            When True, deletes orphan member artifacts (member dirs,
-            status flags, sensitivity_datatree.zarr groups) detected when an
+            When True, deletes orphan member artifacts, namely member dirs,
+            status flags, and sensitivity_datatree.zarr groups, detected when a
             ``member_id`` is removed from the sensitivity CSV/XLSX. Opt-in because
-            the blast radius is irrecoverable (member data deleted).
+            the blast radius is irrecoverable, with member data deleted.
         cleanup_stale_metadata : bool, default True
-            When True (default), subprocess-invokes ``snakemake --cleanup-metadata``
+            When True, the default, subprocess-invokes ``snakemake --cleanup-metadata``
             against orphaned ``.snakemake/metadata/`` records left by past
-            rule-output renames (e.g., the report figures' ``.png``/``.svg`` →
-            ``.html`` flip). When False, skips the cleanup; the first invocation
-            after a rename may then rebuild every plot once. Asymmetric with
-            ``cleanup_orphans`` default (False)
-            because metadata-cleanup blast radius is bounded to records, not
-            data; safe to auto-apply.
-            Under ``dry_run`` the cleanup is not invoked: the candidate paths are
-            reported and nothing is deleted.
+            rule-output renames, such as the report figures' ``.png``/``.svg`` →
+            ``.html`` flip. When False, skips the cleanup. The first invocation
+            after a rename may then rebuild every plot once. Asymmetric with the
+            ``cleanup_orphans`` default of False
+            because the blast radius of metadata-cleanup is bounded to records and never reaches
+            data, so auto-applying is safe.
+            Under ``dry_run`` the cleanup is not invoked. The candidate paths are
+            reported and no file is deleted.
         prune_settled_markers : bool, default True
-            When True (default), prunes settled ``_status/_completed`` and
-            ``_status/_failed`` markers (a marker is settled when its sibling
-            ``_status/_submitted/{token}.json`` is absent — pure accumulation the
-            reconcile will never re-read). Opt-out, mirroring
-            ``cleanup_stale_metadata``: the blast radius is bounded to inert
+            When True, the default, the method prunes the settled ``_status/_completed`` markers and the
+            ``_status/_failed`` markers. A marker is settled when the sibling
+            ``_status/_submitted/{token}.json`` is absent, and the marker is pure accumulation the
+            reconcile will never re-read. Opt-out, mirroring
+            ``cleanup_stale_metadata``. The blast radius is bounded to inert
             settled markers, so auto-applying is safe and bounds unbounded marker
             growth over long resumable campaigns.
         extra_sbatch_args : list[str] | None
-            Optional list of additional SBATCH directive strings (e.g.,
-            ``["--qos=debug"]`` to route the job to Frontier's debug queue) to
+            Optional list of additional SBATCH directive strings, such as
+            ``["--qos=debug"]`` to route the job to the debug queue, to
             append to the generated ``run_workflow_1job.sh`` script. Each list
             element is emitted as one ``#SBATCH <element>`` line, after every
-            other source of ``#SBATCH`` directives in the script — both the
-            always-emitted directives derived from config fields
-            (``--job-name``, ``--partition`` from
+            other source of ``#SBATCH`` directives in the script. The sources are the
+            always-emitted directives derived from config fields AND the directives in the
+            ``cfg_analysis.additional_SBATCH_params`` config list. The derived directives are
+            ``--job-name``, ``--partition`` from
             ``cfg_analysis.hpc_ensemble_partition``, ``--account`` from
             ``hpc_system_config.default_account``, ``--nodes`` from
-            ``cfg_analysis.hpc_total_nodes`` (or the
-            ``override_hpc_total_nodes`` runtime kwarg), ``--exclusive``,
+            ``cfg_analysis.hpc_total_nodes`` with the
+            ``override_hpc_total_nodes`` runtime kwarg taking precedence, ``--exclusive``,
             ``--gres`` from the ensemble partition's ``gpus_per_node`` and
             ``gpu_hardware`` in ``hpc_system_config``, ``--time`` from
             ``cfg_analysis.hpc_total_job_duration_min``, ``--output``,
-            ``--error``) AND the directives in the
-            ``cfg_analysis.additional_SBATCH_params`` config list.
+            and ``--error``.
 
-            **Override behavior**: any flag in ``extra_sbatch_args`` that
-            matches a flag emitted earlier in the script — whether that earlier
-            directive came from a config field (``hpc_ensemble_partition``,
-            ``hpc_total_nodes``, ``hpc_total_job_duration_min``, the
-            ``hpc_system_config`` account or partition GPU fields, etc.) or
-            from the ``cfg_analysis.additional_SBATCH_params`` list — WILL
+            **Override behavior.** Any flag in ``extra_sbatch_args`` that
+            matches a flag emitted earlier in the script, whether that earlier
+            directive came from a config field such as ``hpc_ensemble_partition``,
+            ``hpc_total_nodes``, or ``hpc_total_job_duration_min``, from the account fields or the
+            partition GPU fields of ``hpc_system_config``, or
+            from the ``cfg_analysis.additional_SBATCH_params`` list, WILL
             OVERRIDE the config-derived value via SLURM's last-directive-wins
             parser semantics. When such an override is detected, an
             informational ``[extra_sbatch_args] OVERRIDE: ...`` message is
-            printed naming the flag, the origin of the original value
-            (e.g. ``cfg_analysis.hpc_ensemble_partition``), and the new
-            runtime value, so the user can confirm the override took effect
+            printed naming the flag, the origin of the original value,
+            such as ``cfg_analysis.hpc_ensemble_partition``, and the new
+            runtime value, so a reader can confirm the override took effect
             as intended.
 
-            Only valid for ``multi_sim_run_method="1_job_many_srun_tasks"``;
-            raises ``ConfigurationError`` otherwise (a fail-fast guard
-            preventing the user from believing they are controlling the
-            experiment when the kwarg would silently no-op in another mode).
+            Valid only with ``multi_sim_run_method="1_job_many_srun_tasks"``.
+            Raises ``ConfigurationError`` otherwise, as a fail-fast guard
+            preventing the caller from believing the kwarg controls the
+            experiment when the kwarg would silently no-op in another mode.
         override_force_rerun, override_hpc_restart_times_simulate, override_hpc_restart_times_other
             Follow the override rule above for ``force_rerun``,
             ``hpc_restart_times_simulate`` and ``hpc_restart_times_other``. A force
-            is resolved and its flags and log records are deleted on the login
+            is resolved and the flags and log records of the force are deleted on the login
             node before Snakemake plans the DAG.
         override_pickup_where_leftoff : bool | None
-            ``None`` takes resume-on-retry from the mode (off when
-            ``from_scratch``). True keeps within-run hotstart resume on a fresh
-            wipe, which a resume experiment needs.
+            ``None`` takes resume-on-retry from the mode, off when
+            ``from_scratch``. True keeps within-run hotstart resume on a fresh
+            wipe, and a resume experiment needs the resume.
         override_clean_restart_member_ids : list[str] | None
-            Members to wipe before the run (their runtime children and primary
-            completion flags), so only they restart from step 0. Not applied on a
+            Members to wipe before the run. The wipe covers the runtime children and primary
+            completion flags of each member, so only the members restart from step 0. Not applied on a
             dry run.
         override_wipe_nonempty : bool, default False
             With ``from_scratch``, permit wiping an analysis directory that holds
-            work; without it such a wipe is refused.
+            work. Without the flag such a wipe is refused.
         override_live_driver : str | None
             The ``driver_id`` of an orchestrator sentinel the operator has
-            determined is dead; that one sentinel is reclaimed and any other live
+            determined is dead. Only that sentinel is reclaimed and any other live
             driver still refuses.
         report_config : Path | None
-            A report config YAML used instead of ``cfg_analysis.report`` for this
+            A report config YAML that replaces ``cfg_analysis.report`` for this
             run.
         override_brand_theme : Path | None
-            A brand-theme YAML used instead of ``cfg_analysis.brand_theme``.
-        report_formats : list of "html" / "zip", or None
-            Report formats the workflow renders; passed to ``submit_workflow``.
+            A brand-theme YAML that replaces ``cfg_analysis.brand_theme``.
+        override_report_formats : list of "html" / "zip", or None
+            Report formats the workflow renders, passed to ``submit_workflow``. The default ``None``
+            reads ``report.interactive.report_html_mode``, and a list overrides the setting.
         snakemake_diagnostics : SnakemakeDiagnostics | None
             Extra Snakemake diagnostic flags for the submission.
         build_sifs, build_sifs_no_wait, force_sif_rebuild, override_sif_build_config
             ``build_sifs`` first builds the container images in this mode's
-            detached driver (not on a dry run) and requires
+            detached driver, except on a dry run, and requires
             ``override_sif_build_config``. ``build_sifs_no_wait`` stops the chain
-            after the build instead of re-invoking ``hhemt run``;
+            after the build and skips re-invoking ``hhemt run``.
             ``force_sif_rebuild`` rebuilds images that already exist.
 
         Returns
@@ -3109,32 +3113,41 @@ class TRITONSWMM_analysis:
 
         Examples
         --------
-        Resume (default):
+        Resume, the default:
 
-        >>> result = analysis.run()
+        ```python
+        result = analysis.run()
+        ```
 
         Fresh start:
 
-        >>> result = analysis.run(from_scratch=True)
+        ```python
+        result = analysis.run(from_scratch=True)
+        ```
 
         Dry-run validation:
 
-        >>> result = analysis.run(dry_run=True, verbose=True)
+        ```python
+        result = analysis.run(dry_run=True, verbose=True)
+        ```
 
         Auto-transfer after completion:
 
-        >>> from hhemt.config.globus import PostRunTransferConfig
-        >>> result = analysis.run(
-        ...     wait_for_job_completion=True,
-        ...     transfer_config=PostRunTransferConfig(
-        ...         destination_root=r"D:\\Dropbox\\results",
-        ...         system="frontier",
-        ...     ),
-        ... )
+        ```python
+        from hhemt.config.globus import PostRunTransferConfig
+
+        result = analysis.run(
+            wait_for_job_completion=True,
+            transfer_config=PostRunTransferConfig(
+                destination_root=r"D:\\Dropbox\\results",
+                system="frontier",
+            ),
+        )
+        ```
 
         See Also
         --------
-        submit_workflow : Lower-level workflow submission (15+ parameters)
+        submit_workflow : Lower-level workflow submission
         transfer_results : Standalone transfer method
         """
         import time
@@ -3211,6 +3224,10 @@ class TRITONSWMM_analysis:
                 ) from e
         else:
             cfg_report = self.cfg_analysis.report
+        # The workflow generator writes this config beside the Snakefile and passes that file to
+        # the render and plot rules; each builds its own analysis from cfg_analysis.yaml. None
+        # when no report_config was given: the Snakefile then carries no --report-config flag.
+        self._run_entry_report_cfg = cfg_report if report_config is not None else None
 
         member_csv = self.cfg_analysis.sensitivity_analysis if self.cfg_analysis.toggle_sensitivity_analysis else None
         # The sweep's varied-axis set, from the two single-source properties that
@@ -3360,13 +3377,6 @@ class TRITONSWMM_analysis:
                 return _receipt
 
         start_time = time.time()
-
-        # Event filtering not yet implemented - validate parameter
-        if events is not None:
-            raise NotImplementedError(
-                "Event filtering via events parameter not yet implemented. "
-                "For now, all events in analysis will be processed."
-            )
 
         if from_scratch and not dry_run:
             # Refuse a fresh start that would destroy existing work. This site is the
@@ -3536,7 +3546,7 @@ class TRITONSWMM_analysis:
             "override_hpc_total_nodes": override_hpc_total_nodes,
             "override_hpc_restart_times_simulate": override_hpc_restart_times_simulate,
             "override_hpc_restart_times_other": override_hpc_restart_times_other,
-            "report_formats": report_formats,
+            "override_report_formats": override_report_formats,
             "extra_sbatch_args": extra_sbatch_args,
             "snakemake_diagnostics": snakemake_diagnostics,
             "override_live_driver": override_live_driver,
@@ -3612,22 +3622,22 @@ class TRITONSWMM_analysis:
         """Run a strict, least-demanding subset of THIS analysis end-to-end.
 
         Builds one minimum-device representative per unique
-        (enabled-model-toggles x compilation-backend x partition x compute-config)
-        group present in the analysis, materializes each under
-        ``{analysis_dir}/_test/``, truncates its inputs to ~``n_reporting_timesteps``
+        group of enabled-model-toggles x compilation-backend x partition x compute-config
+        present in the analysis, materializes each under
+        ``{analysis_dir}/_test/``, truncates the inputs to ~``n_reporting_timesteps``
         reporting frames, and runs the full run->process->consolidate->report
-        path. In native mode the solver must already be built: the emitted setup rule
-        asserts that every enabled model has a successful build and never performs one.
-        A strict subset of the user's defined analysis -- no sweeps,
+        path. In native mode the solver must already be built, because the emitted setup rule
+        asserts that every enabled model has a successful build and never performs a build.
+        A strict subset of the analysis the configs define -- no sweeps,
         no synthetic substitution.
 
         Notes
         -----
-        This is a user-facing smoke-test entry point rather than a pytest-collected
-        test function. pytest's default collection (``python_functions = test*``)
+        The method is a public smoke-test entry point and no pytest-collected
+        test function. The default collection of pytest, ``python_functions = test*``,
         collects only module-level functions and ``Test``-prefixed class methods, so
         this instance method on ``TRITONSWMM_analysis`` is never collected as a test.
-        Invoke it directly, as ``analysis.test()``, or through the synthetic smoke in
+        Invoke the method directly, as ``analysis.test()``, or through the synthetic smoke in
         ``test_synth_analysis_test_end_to_end.py``.
         """
         reps = self._select_test_representatives()
@@ -3869,39 +3879,43 @@ class TRITONSWMM_analysis:
 
     def render_report(
         self,
-        format: "Literal['html','zip']" = "zip",
+        format: "Literal['html','zip'] | None" = None,
         *,
         reprocess: bool = False,
         declare_stale_plots: bool = False,
     ) -> "Path":
         """Render the report from already-completed workflow outputs.
 
-        Idempotent: invokes ``snakemake --report`` against the existing Snakefile
-        without re-executing any rules. Requires the workflow to have completed
-        (so the report() outputs exist) and the Snakefile to be on disk.
+        Idempotent. Invokes ``snakemake --report`` against the existing Snakefile
+        without re-executing any rules. Requires the workflow to have completed,
+        so the ``report()`` outputs exist, and the Snakefile to be on disk.
 
         Parameters
         ----------
-        format : Literal["html", "zip"], default "zip"
-            Output format. ``"html"`` produces a single self-contained
+        format : Literal["html", "zip"] or None, default None
+            Output format. ``None`` reads ``report.interactive.report_html_mode``:
+            ``"html"`` and ``"zip"`` select the format named, and ``"auto"`` adds up the bytes
+            of the figure files under ``plots/`` and renders ``"html"`` below 15 MB, the
+            ``config.report.AUTO_HTML_MAX_BYTES`` threshold, and ``"zip"`` otherwise. An explicit value
+            overrides the setting. ``"html"`` produces a single self-contained
             ``analysis_report.html`` with all figures inlined as base64.
             ``"zip"`` produces ``analysis_report.zip`` containing the
             unbundled report tree. Both receive the same React-bundle
-            post-process surgery; the zip's is applied to the report page
+            post-process surgery. The surgery of the zip is applied to the report page
             inside the archive.
         reprocess : bool, default False
-            When ``True``, render against ``Snakefile.reprocess`` (the filtered
-            reprocess DAG) instead of the production ``Snakefile``, so the
+            When ``True``, render against ``Snakefile.reprocess``, the filtered
+            reprocess DAG, in place of the production ``Snakefile``, so the
             ``snakemake --report`` step only expects the figures the reprocess
-            DAG built. Keyword-only; set by the reprocess ``render_report`` rule
+            DAG built. Keyword-only and set by the reprocess ``render_report`` rule
             shell. Default ``False`` keeps the production render path
             byte-identical.
         declare_stale_plots : bool, default False
-            The method first runs the build-match gate
-            (``provenance.assert_plots_match_running_build``), which raises
+            The method first runs the build-match gate,
+            ``provenance.assert_plots_match_running_build``. The gate raises
             ``StalePlotsError`` when the figures were rendered by a different
-            build than the one running. ``True`` prints the mismatch instead of
-            raising and renders anyway; nothing records it.
+            build than the one running. ``True`` prints the mismatch in place of
+            raising and renders anyway. No record keeps the mismatch.
 
         Returns
         -------
@@ -3932,6 +3946,14 @@ class TRITONSWMM_analysis:
         snakefile_name = "Snakefile.reprocess" if reprocess else "Snakefile"
         snakefile = self.analysis_paths.analysis_dir / snakefile_name
         _assert_snakefile_package_current(snakefile)
+        _chose_format_here = format is None
+        if format is None:
+            from .config.report import report_figure_bytes, resolve_report_format
+
+            _cfg_report = getattr(self, "_cfg_report", None) or self.cfg_analysis.report
+            format = resolve_report_format(
+                _cfg_report.interactive.report_html_mode, report_figure_bytes(self.analysis_paths.analysis_dir)
+            )
         out = self.analysis_paths.analysis_dir / f"analysis_report.{format}"
         css_path = self.analysis_paths.analysis_dir / "report" / "report.css"
         # Brand-theme resolution. The dominant render path is
@@ -4037,7 +4059,22 @@ class TRITONSWMM_analysis:
             )
         from hhemt.provenance import stamp_report_stage
 
-        stamp_report_stage(self.analysis_paths.analysis_dir, out)
+        # The record of the settings this render used: the run-entry config when the render got one
+        # (in this process, or through --report-config), else the analysis config's section.
+        # Both are the settings as given: run() overlays brand colors onto its own copy
+        # (_cfg_report), and the record keeps the unmodified config so every consumer compares
+        # like with like.
+        _given = getattr(self, "_run_entry_report_cfg", None)
+        stamp_report_stage(
+            self.analysis_paths.analysis_dir,
+            out,
+            _given if _given is not None else self.cfg_analysis.report,
+            "run_entry" if _given is not None else "analysis_config",
+        )
+        if _chose_format_here:
+            # The generated workflow's render rule declares this file as its output, and a
+            # direct call that chose the format records the choice for the same reader.
+            (out.parent / REPORT_FORMAT_MARKER).write_text(f"{format}\n")
         if format != "html":
             return out
         out_html = out
@@ -4061,11 +4098,11 @@ class TRITONSWMM_analysis:
         """Number of distinct scenarios this analysis defines.
 
         A scenario is one weather event within one member. The count is
-        the number of simulated events times the number of sensitivity rows
-        (1 when ``toggle_sensitivity_analysis`` is False).
+        the number of simulated events times the number of sensitivity rows,
+        with 1 row when ``toggle_sensitivity_analysis`` is False.
 
-        This counts scenarios, NOT simulations: one scenario produces one
-        simulation per enabled model type. Use :attr:`n_sims` for the number of
+        The property counts scenarios and NOT simulations. One scenario produces one
+        simulation per enabled model type. Use ``n_sims`` for the number of
         model runs the workflow will actually dispatch.
         """
         sensitivity_scenario = 1
@@ -4080,12 +4117,12 @@ class TRITONSWMM_analysis:
     def n_sims(self):
         """Number of individual model runs this analysis will dispatch.
 
-        :attr:`n_scenarios` multiplied by the number of enabled model types
-        (``toggle_tritonswmm_model`` / ``toggle_triton_model`` /
-        ``toggle_swmm_model``), so enabling a second model doubles this without
+        ``n_scenarios`` multiplied by the number of enabled model types,
+        ``toggle_tritonswmm_model``, ``toggle_triton_model``, and
+        ``toggle_swmm_model``, so enabling a second model doubles this without
         changing the scenario count.
 
-        This is the figure to reason about when sizing an allocation.
+        Use this figure when sizing an allocation.
         """
         sensitivity_scenario = 1
         if self.cfg_analysis.toggle_sensitivity_analysis:
@@ -4156,7 +4193,7 @@ class TRITONSWMM_analysis:
         """Generate workflow status report.
 
         Inspects logs and outputs to determine completion state of each phase,
-        providing actionable recommendations for which execution mode to use.
+        providing actionable recommendations for the execution mode to use.
 
         Returns
         -------
@@ -4167,22 +4204,26 @@ class TRITONSWMM_analysis:
         --------
         Check status before running:
 
-        >>> status = analysis.get_workflow_status()
-        >>> print(status)
-        >>> if not status.simulation.complete:
-        ...     print(f"{len(status.simulation.failed_items)} scenarios not yet fully run")
+        ```python
+        status = analysis.get_workflow_status()
+        print(status)
+        if not status.simulation.complete:
+            print(f"{len(status.simulation.failed_items)} scenarios incomplete")
+        ```
 
         Use recommended mode:
 
-        >>> status = analysis.get_workflow_status()
-        >>> result = analysis.run(from_scratch=status.recommended_mode == "fresh")
+        ```python
+        status = analysis.get_workflow_status()
+        result = analysis.run(from_scratch=status.recommended_mode == "fresh")
+        ```
 
         Notes
         -----
-        This method changes no workflow state: it writes no log, flag or output.
-        It does create missing per-scenario directories, because each
-        ``TRITONSWMM_scenario`` it constructs creates them. It provides
-        transparency into workflow progress to help users make informed
+        The method changes no workflow state and writes no log, flag, or output.
+        The method does create missing per-scenario directories, because each
+        ``TRITONSWMM_scenario`` that the method constructs creates them. The method provides
+        transparency into workflow progress to help callers make informed
         decisions about execution modes.
 
         See Also
@@ -4373,7 +4414,7 @@ class TRITONSWMM_analysis:
         override_hpc_total_nodes: int | None = None,
         override_hpc_restart_times_simulate: int | None = None,
         override_hpc_restart_times_other: int | None = None,
-        report_formats: list[str] | None = None,
+        override_report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
         override_live_driver: str | None = None,
@@ -4381,11 +4422,11 @@ class TRITONSWMM_analysis:
         """
         Submit workflow using Snakemake.
 
-        The config's ``multi_sim_run_method`` chooses the execution path:
+        The config's ``multi_sim_run_method`` chooses the execution path.
         ``1_job_many_srun_tasks`` submits a single SLURM job with multiple srun tasks
         inside, ``batch_job`` runs Snakemake in a tmux session that submits one SLURM job
         per rule, and ``local`` runs Snakemake locally or, with an explicit
-        ``mode="slurm"``, through the SLURM executor (see ``mode``).
+        ``mode="slurm"``, through the SLURM executor. See ``mode``.
 
         Delegates to the sensitivity analysis's ``submit_workflow`` when
         ``toggle_sensitivity_analysis`` is True, and to ``SnakemakeWorkflowBuilder``
@@ -4396,35 +4437,34 @@ class TRITONSWMM_analysis:
         mode : Literal["local", "slurm", "auto"]
             Execution mode, read only for a ``multi_sim_run_method="local"`` config.
             ``"auto"`` resolves from the config, never from SLURM environment
-            variables; an explicit ``"local"`` / ``"slurm"`` passes through.
+            variables. An explicit ``"local"`` or ``"slurm"`` passes through.
         process_system_level_inputs : bool
-            If True, process system-level inputs (DEM, Mannings) in the setup phase
+            If True, process system-level inputs for the DEM and Mannings in the setup phase
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
-            Does NOT compile: no emitted setup rule carries a ``--compile-*`` flag, so
-            the rule asserts the solver tier rather than building it. In container
-            mode it performs no such check, because the SIF carries the binary.
-            What it does do
-            depends on which path this facade dispatches to, and on one of them it does
-            nothing at all: on a non-sensitivity analysis this and
+            Compiles no solver, because no emitted setup rule carries a ``--compile-*`` flag, so
+            the rule asserts the solver tier and avoids building the solver. In container
+            mode the rule performs no such check, because the SIF carries the binary.
+            The effect of the parameter
+            depends on the path this facade dispatches to. On a non-sensitivity analysis the parameter and
             ``process_system_level_inputs`` together decide whether the setup rule
-            invokes ``python -m hhemt.setup_workflow`` or only touches its completion
-            flag; with ``toggle_sensitivity_analysis`` True it is inert on the generated
-            workflow, whose setup rule is emitted per target regardless. On both paths
-            ``run()`` lists ``"setup"`` in its ``phases_completed`` roll-up when this or
+            invokes ``python -m hhemt.setup_workflow`` or only touches the completion
+            flag. With ``toggle_sensitivity_analysis`` True the parameter is inert on the generated
+            workflow, and the setup rule of the workflow is emitted per target regardless. On both paths
+            ``run()`` lists ``"setup"`` in the ``phases_completed`` roll-up when this or
             ``process_system_level_inputs`` is True.
         recompile_if_already_done_successfully : bool
             Forwarded to the generated setup rule's ``hhemt.setup_workflow``
-            invocation as ``--recompile-if-already-done``, where it has no reachable
-            consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
+            invocation as ``--recompile-if-already-done``, where the flag has no reachable
+            consumer. Each pass-down of that module to ``TRITONSWMM_system``
             sits behind an ``args.compile_*`` gate that no emitted rule sets. The
-            parameter itself is NOT dead —
+            parameter itself is NOT dead.
             ``TRITONSWMM_system.compile_TRITON_SWMM`` / ``compile_TRITON_only`` /
-            ``compile_SWMM`` each read it — but only when called directly, never
+            ``compile_SWMM`` each read the parameter, but only when called directly, never
             through this workflow.
         prepare_scenarios : bool
-            If True, each simulation will prepare its scenario before running
+            If True, each simulation prepares the scenario before running
         overwrite_scenario_if_already_set_up : bool
             If True, overwrite existing scenarios
         rerun_swmm_hydro_if_outputs_exist : bool
@@ -4432,42 +4472,42 @@ class TRITONSWMM_analysis:
         process_timeseries : bool
             If True, process timeseries outputs after each simulation
         which : Literal["TRITON", "SWMM", "both"]
-            Which outputs to process (only used if process_timeseries=True)
+            The outputs to process, used only if process_timeseries=True
         override_clear_raw : ClearRawValue | None
-            Runtime override for ``cfg_analysis.clear_raw``. ``None`` (default)
-            reads from YAML; concrete values follow the override-prefix convention.
+            Overrides ``cfg_analysis.clear_raw`` at runtime. The default ``None``
+            reads from YAML. Concrete values follow the override-prefix convention.
         compression_level : int
-            Compression level for output files (0-9)
+            Compression level from 0 to 9 for output files
         pickup_where_leftoff : bool
             If True, resume simulations from last checkpoint
         debug : bool
-            The run's ``--debug`` flag, threaded to the workflow builder, which emits
-            ``--debug`` on every run-simulation rule shell. Today it does one thing: a coupled
-            clean start keeps the previous run's snapshot files instead of removing them.
+            The run's ``--debug`` flag, threaded to the workflow builder. The builder emits
+            ``--debug`` on every run-simulation rule shell. Today the flag has one effect. A coupled
+            clean start keeps the snapshot files of the previous run and skips their removal.
         wait_for_completion : bool
-            If True, wait for workflow completion (relevant for slurm jobs only)
+            If True, wait for workflow completion, relevant for slurm jobs only
         dry_run : bool
             If True, only perform a dry run and return that result
         verbose : bool
             If True, print progress messages
         override_hpc_total_nodes : int | None
             If set, overrides `hpc_total_nodes` in the generated SBATCH script without
-            mutating the config. Only valid for `multi_sim_run_method="1_job_many_srun_tasks"`.
+            mutating the config. Valid only with `multi_sim_run_method="1_job_many_srun_tasks"`.
         override_force_rerun, override_hpc_restart_times_simulate, override_hpc_restart_times_other
-            As documented on ``run()``, which passes them through.
-        report_formats, extra_sbatch_args, snakemake_diagnostics, override_live_driver
-            As documented on ``run()``, which passes them through.
+            As documented on ``run()``. The method passes them through.
+        override_report_formats, extra_sbatch_args, snakemake_diagnostics, override_live_driver
+            As documented on ``run()``. The method passes them through.
 
         Returns
         -------
         dict
             Status dictionary with keys:
-            - success: bool - Whether workflow succeeded
-            - mode: str - as the builder that ran returns it, e.g. "local",
-              "slurm", "batch_job", "single_job" or "tmux"
-            - snakefile_path: Path - Path to generated Snakefile
-            - job_id: str | None - Job ID (only for slurm mode)
-            - message: str - Status message
+            - ``success`` as bool, set when the workflow succeeded
+            - ``mode`` as str, the mode that the builder that ran returns, such as "local",
+              "slurm", "batch_job", "single_job", or "tmux"
+            - ``snakefile_path`` as Path, the path to the generated Snakefile
+            - ``job_id`` as str or None, the job ID for slurm mode only
+            - ``message`` as str, the status message
         """
         self._refuse_undefined_inflow_nodes()
         self._refuse_invalid_coupling_declaration()
@@ -4549,6 +4589,11 @@ class TRITONSWMM_analysis:
             override_force_rerun = self._reconcile_build_stamp_force(
                 override_force_rerun, dry_run=dry_run, override_clear_raw=override_clear_raw, for_reprocess=False
             )
+            override_force_rerun = self._reconcile_report_settings_force(
+                override_force_rerun,
+                settings_cfg=getattr(self, "_run_entry_report_cfg", None) or self.cfg_analysis.report,
+                dry_run=dry_run,
+            )
             if not self.cfg_analysis.toggle_sensitivity_analysis:
                 self._apply_force_rerun(
                     override_force_rerun,
@@ -4589,7 +4634,7 @@ class TRITONSWMM_analysis:
                     dry_run=dry_run,
                     verbose=verbose,
                     overrides=overrides,
-                    report_formats=report_formats,
+                    override_report_formats=override_report_formats,
                     extra_sbatch_args=extra_sbatch_args,
                     snakemake_diagnostics=snakemake_diagnostics,
                 )
@@ -4629,7 +4674,7 @@ class TRITONSWMM_analysis:
                     dry_run=dry_run,
                     verbose=verbose,
                     overrides=overrides,
-                    report_formats=report_formats,
+                    override_report_formats=override_report_formats,
                     extra_sbatch_args=extra_sbatch_args,
                     snakemake_diagnostics=snakemake_diagnostics,
                 )
@@ -4678,62 +4723,62 @@ class TRITONSWMM_analysis:
         verbose: bool = True,
         dry_run: bool = False,
         prune_settled_markers: bool = True,
-        report_formats: list[Literal["html", "zip"]] | None = None,
+        override_report_formats: list[Literal["html", "zip"]] | None = None,
     ) -> dict:
         """Re-run downstream stages against existing sim outputs.
 
         Re-runs processing / consolidation / plotting / report rendering
         without re-running the simulation rules. Runs the submission
         reconciliation guard against ``_status/_submitted/`` before
-        submitting, so a parallel live sim driver cannot be double-submitted.
+        submitting, so a parallel live sim driver is never double-submitted.
         Emits a scope-limited Snakefile at
-        ``{analysis_dir}/Snakefile.reprocess`` and runs it against the shared
-        ``.snakemake/`` with ``--nolock``; the ``_status/_orchestrator/``
-        liveness gate (not the Snakemake lock) prevents collision with a live
+        ``{analysis_dir}/Snakefile.reprocess`` and runs that Snakefile against the shared
+        ``.snakemake/`` with ``--nolock``. The ``_status/_orchestrator/``
+        liveness gate, and not the Snakemake lock, prevents collision with a live
         orchestration driver.
 
         Parameters
         ----------
         start_with
             Stage to re-fire from. ``"consolidate"`` is the common case. With
-            ``regenerate_existing=False`` (the default) the consolidated zarr
-            is left in place and consolidation stays inert; the report is
+            ``regenerate_existing=False``, the default, the consolidated zarr
+            is left in place and consolidation stays inert. The report is
             re-rendered against the existing zarr. Pass
             ``regenerate_existing=True`` to delete the consolidate flag and
-            the zarr and rebuild them; that rebuild is also what re-emits
+            the zarr and rebuild them. The rebuild also re-emits
             ``ro-crate-metadata.json``. A sensitivity-toggled analysis
             dispatches to ``TRITONSWMM_sensitivity_analysis.reprocess``,
-            whose ``start_with`` entry describes its own flag handling.
+            whose ``start_with`` entry describes the flag handling of that class.
         execution_mode
-            ``"auto"`` (default) resolves the locus from ``multi_sim_run_method``, never
-            from SLURM environment variables; ``"local"`` / ``"slurm"`` force the mode.
+            The default ``"auto"`` resolves the locus from ``multi_sim_run_method``, never
+            from SLURM environment variables. ``"local"`` and ``"slurm"`` force the mode.
         which
-            ``"both"`` (default) / ``"TRITON"`` / ``"SWMM"`` — passes through
+            One of ``"both"``, ``"TRITON"``, or ``"SWMM"``, with ``"both"`` as the default. The value passes through
             to ``rule consolidate``'s ``--which`` flag.
         regenerate_existing
             **Default False.** When False, reprocess regenerates ONLY report +
-            plot artifacts against the EXISTING consolidated zarr — no zarr
-            deletion, no DU restamp walk. When True, the legacy destructive
-            delete-and-rebuild runs. A plain reprocess-only toggle (NOT
-            ``override_``-prefixed: bridges no config field; meaningless on
-            ``run()``). Matches the ``prune_settled_markers`` plain-bool
+            plot artifacts against the EXISTING consolidated zarr, with no zarr
+            deletion and no DU restamp walk. When True, the destructive
+            delete-and-rebuild runs. A plain reprocess-only toggle that is NOT
+            ``override_``-prefixed, because the toggle bridges no config field and is meaningless on
+            ``run()``. Matches the ``prune_settled_markers`` plain-bool
             precedent.
         delete_via_slurm
-            **None (default) auto-resolves**: route the opt-in deletion through
+            **The default None auto-resolves.** The opt-in deletion routes through
             the SLURM ``analysis.delete()`` architecture iff
-            ``multi_sim_run_method`` is an HPC mode (``batch_job`` /
-            ``1_job_many_srun_tasks``); ``local`` → in-process ``fast_rmtree``.
-            Pass ``True`` / ``False`` to force. (CLI exposes
-            ``--delete-via-slurm/--no-delete-via-slurm``.)
+            ``multi_sim_run_method`` is an HPC mode, ``batch_job`` or
+            ``1_job_many_srun_tasks``. ``local`` routes to the in-process ``fast_rmtree``.
+            Pass ``True`` or ``False`` to force. The CLI exposes
+            ``--delete-via-slurm/--no-delete-via-slurm``.
         override_clear_raw
-            **Hard-default "none"** to preserve historic ``reprocess`` semantics
-            (reprocess never auto-clears unless the caller explicitly opts in).
-            Pass ``None`` to read ``cfg_analysis.clear_raw``; pass ``"all"`` /
-            ``"none"`` / a list of model types to override. When the resolved
-            value is anything other than ``"none"``, two guards must both pass:
-            (a) every enabled sim's ``c_run_*`` flag must exist (no
-            never-started sims); (b) no ``_status/_submitted/`` sentinel
-            may be present (no in-flight / just-died sims). Both exist because
+            **Hard-default "none"** to preserve historic ``reprocess`` semantics,
+            so reprocess never auto-clears unless the caller explicitly opts in.
+            Pass ``None`` to read ``cfg_analysis.clear_raw``. Pass ``"all"``,
+            ``"none"``, or a list of model types to override. When the resolved
+            value is anything other than ``"none"``, both guards must pass.
+            The first guard requires the ``c_run_*`` flag of every enabled sim to exist,
+            so no never-started sim passes. The second guard requires that no ``_status/_submitted/`` sentinel
+            be present, so neither an in-flight sim nor a just-died sim passes. Both exist because
             clearing raw outputs deletes the checkpoint and per-checkpoint
             performance files a sim that may still resume needs.
         verbose
@@ -4741,11 +4786,11 @@ class TRITONSWMM_analysis:
         dry_run
             If True, runs ``snakemake --dry-run`` only.
         prune_settled_markers
-            When True (default), prunes settled ``_status/_completed`` /
-            ``_status/_failed`` markers (those whose ``_submitted/`` sibling is
-            gone) at the primary ``_status/`` level before submitting. Opt-out;
-            mirrors ``run()``. Inert hygiene — does not affect reconcile
-            correctness.
+            When True, the default, the method prunes the settled ``_status/_completed`` markers and the
+            ``_status/_failed`` markers whose ``_submitted/`` sibling is
+            gone, at the primary ``_status/`` level before submitting. Opt-out.
+            Mirrors ``run()``. Inert hygiene, and the step leaves reconcile
+            correctness unchanged.
 
         Returns
         -------
@@ -4792,6 +4837,10 @@ class TRITONSWMM_analysis:
         from hhemt.version_migration.state import stamp_new_target
 
         from .exceptions import ConfigurationError
+
+        # A re-process renders with the analysis config's report settings, so forget any
+        # an earlier run() in this process left on the object, before anything reads them.
+        self._reset_run_report_settings()
 
         stamp_new_target(self.analysis_paths.analysis_dir, LAYOUT_VERSION)
 
@@ -4853,7 +4902,7 @@ class TRITONSWMM_analysis:
                 override_force_rerun=override_force_rerun,
                 verbose=verbose,
                 dry_run=dry_run,
-                report_formats=report_formats,
+                override_report_formats=override_report_formats,
             )
 
         if would_clear:
@@ -4864,7 +4913,7 @@ class TRITONSWMM_analysis:
                     message=(
                         "reprocess refuses raw-output clearing while c_run_* flags are absent "
                         f"(resolved clear_raw={resolved_clear_raw!r}; some sims have not completed). "
-                        "See stipulation `clear raw triton outputs deferred until last allocation`."
+                        "Raw outputs are cleared only after every simulation has completed."
                     ),
                     config_path=str(self.analysis_config_yaml),
                 )
@@ -5025,6 +5074,7 @@ class TRITONSWMM_analysis:
             override_force_rerun = self._reconcile_build_stamp_force(
                 override_force_rerun, dry_run=False, override_clear_raw=None, for_reprocess=True
             )
+            override_force_rerun = self._reconcile_report_settings_force(override_force_rerun, dry_run=False)
             self._apply_force_rerun(override_force_rerun, override_clear_raw=None, for_reprocess=True)
 
         # Processed-output deletion. The per-model PROCESSING-LOG
@@ -5061,6 +5111,7 @@ class TRITONSWMM_analysis:
             claimed_driver_id=_reprocess_claim,
             dry_run=dry_run,
             verbose=verbose,
+            override_report_formats=override_report_formats,
         )
         return result
 
@@ -5076,14 +5127,14 @@ class TRITONSWMM_analysis:
         indicate live SLURM jobs. Pass ``override_in_flight=True`` to bypass
         the guard.
 
-        Mirrors the dispatch pattern of :meth:`reprocess` — sensitivity-toggled
+        Mirrors the dispatch pattern that ``reprocess`` uses. Sensitivity-toggled
         analyses dispatch to
-        :meth:`TRITONSWMM_sensitivity_analysis.delete`.
+        ``TRITONSWMM_sensitivity_analysis.delete``.
 
         ``override_multi_sim_run_method``, when given, replaces the configured
         ``multi_sim_run_method`` for this delete's submission only. If any expected
         per-rule completion sentinel is missing after the workflow, the directory is
-        preserved for debugging rather than removed.
+        preserved for debugging and never removed.
         """
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.delete(
@@ -5232,6 +5283,7 @@ class TRITONSWMM_analysis:
             """
             report_html = analysis_dir / "analysis_report.html"
             report_zip = analysis_dir / "analysis_report.zip"
+            report_marker = analysis_dir / REPORT_FORMAT_MARKER
             plots_dir = analysis_dir / "plots"
             # ONE accounting call for the report shell + every ELIGIBLE plot
             # artifact. The tool measures what it deletes and adjusts this scope's sentinel
@@ -5245,7 +5297,7 @@ class TRITONSWMM_analysis:
             # figures no active report rule writes, which nothing rebuilds; the
             # report_rule_stems passed below keep deleting the plots/eda/ figures a report
             # rule does rebuild. An unfiltered rglob over plots/ is the defect, not a shortcut.
-            _targets = [report_html, report_zip]
+            _targets = [report_html, report_zip, report_marker]
             if not dry_run:
                 # On a dry run, plots survive. ALL figures stay inside this guard, not only
                 # the unregenerable subtrees: re-rendering them is expensive (a measured
@@ -5293,8 +5345,9 @@ class TRITONSWMM_analysis:
             # "report shell only" path).
             report_html = analysis_dir / "analysis_report.html"
             report_zip = analysis_dir / "analysis_report.zip"
+            report_marker = analysis_dir / REPORT_FORMAT_MARKER
             du_sentinels.delete_and_account_unless_dry_run(
-                [report_html, report_zip], scope_dir=analysis_dir, scope="analysis", dry_run=dry_run
+                [report_html, report_zip, report_marker], scope_dir=analysis_dir, scope="analysis", dry_run=dry_run
             )
         else:
             raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
@@ -5533,6 +5586,72 @@ class TRITONSWMM_analysis:
                 models=tuple(self._get_enabled_model_types()),
             )
         )
+
+    #: The attributes ``run()`` sets from its report arguments. A re-process renders with the
+    #: analysis config's report settings, so each is set back to None before any
+    #: Snakefile is generated; every reader falls back to ``cfg_analysis.report`` on None.
+    _RUN_REPORT_ATTRIBUTES = ("_run_entry_report_cfg", "_active_reporting_set", "_cfg_report", "_brand_theme")
+
+    def _reset_run_report_settings(self) -> None:
+        """Forget the report settings an earlier ``run()`` in this process left on the object.
+
+        Resets the four attributes on this analysis and, for a sweep, on its wrapper
+        (``self.sensitivity``; the wrapper's ``experiment`` is this analysis).
+        """
+        holders = [self]
+        wrapper = getattr(self, "sensitivity", None)
+        if wrapper is not None:
+            holders.append(wrapper)
+            experiment = getattr(wrapper, "experiment", None)
+            if experiment is not None and experiment is not self:
+                holders.append(experiment)
+        for holder in holders:
+            for name in self._RUN_REPORT_ATTRIBUTES:
+                setattr(holder, name, None)
+
+    def _reconcile_report_settings_force(self, override_force_rerun, *, settings_cfg=None, dry_run: bool = False):
+        """Escalate the force-rerun STAGE to 'render' when this invocation's report settings
+        differ from the settings the existing report was rendered with.
+
+        The record is ``report_settings_sha256`` in ``report_manifest.json``, written by the
+        render. ``settings_cfg`` is the report config this invocation renders with (the
+        run-entry config for a run that was given one, else the analysis config's section);
+        a re-process passes the analysis config's. With no record, or on a dry run, nothing
+        changes. Callers MUST use the return value.
+        """
+        import logging
+
+        from hhemt.config.analysis import ForceRerunSpec
+        from hhemt.provenance import read_report_settings_record, report_settings_sha256
+
+        if dry_run:
+            return override_force_rerun
+        record = read_report_settings_record(self.analysis_paths.analysis_dir)
+        if record is None:
+            return override_force_rerun
+        mine = report_settings_sha256(settings_cfg if settings_cfg is not None else self.cfg_analysis.report)
+        if record["report_settings_sha256"] == mine:
+            return override_force_rerun
+        _resolved = override_force_rerun if override_force_rerun is not None else self.cfg_analysis.force_rerun
+        if not isinstance(_resolved, ForceRerunSpec):
+            _resolved = ForceRerunSpec.model_validate(_resolved)
+        _escalating = _resolved.stage == "render" or _resolved.subject == "none"
+        _disposition = (
+            "escalating force_rerun to (subject=all, stage=render) so the figures and the report are re-rendered"
+            if _escalating
+            else f"NOT escalating -- the caller already forced stage={_resolved.stage!r}, a stronger floor"
+        )
+        logging.getLogger(__name__).warning(
+            "report settings mismatch: the existing report was rendered with settings %s (source %s) and this "
+            "invocation renders with %s -- %s.",
+            str(record["report_settings_sha256"])[:12],
+            record["report_settings_source"],
+            mine[:12],
+            _disposition,
+        )
+        if _escalating:
+            return ForceRerunSpec(subject="all", stage="render")
+        return override_force_rerun
 
     def _reconcile_build_stamp_force(
         self,
@@ -6510,12 +6629,12 @@ class TRITONSWMM_analysis:
         Returns
         -------
         pd.DataFrame
-            Long-format status table with one row per (event_iloc, model_type),
-            or per (member, event_iloc, model_type) on a sensitivity primary,
+            Long-format status table with one row per ``(event_iloc, model_type)`` pair,
+            or per ``(member, event_iloc, model_type)`` triple on a sensitivity primary,
             including scenario setup status, model run completion status,
             parsed Snakemake allocated resources, and actual runtime details
-            (where available from model logs / reports). A member analysis
-            returns its rows without the Snakemake allocation columns.
+            where available from model logs and reports. A member analysis
+            returns the rows without the Snakemake allocation columns.
         """
         if self.cfg_analysis.toggle_sensitivity_analysis:
             df_status = self.sensitivity.df_status
@@ -6978,24 +7097,25 @@ class TRITONSWMM_analysis:
         """
         Cancel ongoing tmux workflow for this analysis.
 
-        Two branches. By default (``rule_classes=None``) it sends SIGINT to the Snakemake
-        process running in the tmux session, which triggers Snakemake's built-in
-        cancel_jobs() to cancel ALL worker jobs. With ``rule_classes`` set it sends NO
-        SIGINT: it scancels only the jobs whose rule token starts with one of those
-        prefixes -- running AND pending -- then kills the tmux session, deliberately
-        leaving other jobs (e.g. post-sim processing) running (see ``_selective_cancel``).
+        The method has a default branch and a selective branch. By default,
+        with ``rule_classes=None``, the method sends SIGINT to the Snakemake
+        process running in the tmux session. The SIGINT triggers the built-in
+        ``cancel_jobs()`` of Snakemake to cancel ALL worker jobs. With ``rule_classes`` set the method sends NO
+        SIGINT. The method scancels only the running AND pending jobs whose rule token starts with one of the
+        prefixes, then kills the tmux session, deliberately
+        leaving other jobs, such as post-sim processing, running. See ``_selective_cancel``.
 
-        The method uses persistent log data to identify the session, so it works across
-        terminal sessions (close terminal, reopen, reinitialize analysis, call cancel).
+        The method uses persistent log data to identify the session, so the method works across
+        terminal sessions, as in closing the terminal, reopening, reinitializing the analysis, and calling cancel.
 
         **Key features:**
         - Checks if session is actually running before attempting cancellation, and
-          distinguishes a gone session (the selective arm still cancels its sims) from a
-          probe that could not answer (reported as unknown, never as completion)
-        - Default branch: sends SIGINT to the Snakemake process for clean cancellation
+          distinguishes a gone session, where the selective arm still cancels the sims, from a
+          probe that could not answer. The method reports the probe as unknown and never as completion
+        - Default branch sends SIGINT to the Snakemake process for clean cancellation
         - Waits for Snakemake to finish canceling worker jobs
         - Asks SLURM whether any worker job recorded under the driver's run uuids is
-          still live, and reports the workers unverified when it cannot ask
+          still live, and reports the workers unverified when the check is unable to run
         - Gracefully handles a session that no longer exists
 
         Parameters
@@ -7007,50 +7127,57 @@ class TRITONSWMM_analysis:
         debug : bool, default=False
             Print detailed per-iteration diagnostics during the wait loop
         rule_classes : tuple of str, or None
-            Rule-token prefixes (e.g. ``("run_", "simulation_member_")``). When
-            given, the selective arm runs instead: no SIGINT is sent; the jobs of
-            those rule classes, pending and running, are scancelled, the driver's
-            tmux session is killed, and processing jobs are left running.
+            Rule-token prefixes, such as ``("run_", "simulation_member_")``. When
+            given, the selective arm runs instead. No SIGINT is sent. The pending jobs and the
+            running jobs of the rule classes are scancelled. The tmux session of the driver
+            is killed, and processing jobs are left running.
 
         Returns
         -------
         dict
             Cancellation status with keys:
-            - success: bool. True when no session is recorded or the recorded session no
+            - ``success`` as bool. True when no session is recorded or the recorded session no
               longer exists. On the full cancel, True only when no step recorded an error
-              and no worker job was found still live; when no Snakemake PID can be found
-              the session is killed and success is True, with the missing PID recorded in
-              ``errors``. The selective path returns False in three cases, not two: on the
-              UNKNOWN arm below, whenever one of its own external calls raised, and when its
+              and no worker job was found still live. When no Snakemake PID can be found,
+              the method kills the session and reports success True, with the missing PID recorded in
+              ``errors``. The selective path returns False when the
+              UNKNOWN arm below applies, whenever an external call of the path raised, and when the
               liveness query could not answer and the observed-sim widening was abstained
-              from -- all three are non-answers rather than a completed cancel.
-            - session_canceled: bool. On the selective path, False in two cases: the
-              driver's session was already gone, because this call killed nothing; and the
-              kill itself raised, because then it killed nothing either.
-            - workers_canceled: bool. On the full cancel, True only when the worker check
-              ran and found no live worker job; False when the check could not run. On
+              from. Each case is a non-answer and not a completed cancel.
+            - ``session_canceled`` as bool. On the selective path, False when the
+              driver's session was already gone and the call killed no process, and when the
+              kill itself raised and the call killed no process either.
+            - ``workers_canceled`` as bool. On the full cancel, True only when the worker check
+              ran and found no live worker job, and False when the check could not run. On
               the selective path, True when at least one job was scancelled.
-            - jobs_were_running: bool | None (False when no session is recorded or it no
-              longer exists; on the selective path, True when at least one job was
-              scancelled; None when EITHER the session probe or the scancel could not
+            - ``jobs_were_running`` as bool or None. False when no session is recorded. None on the
+              full cancel when the recorded session no longer exists, because only the driver's
+              session was checked and the workers that the driver submitted were not. On the selective path,
+              True when at least one job was scancelled. None when EITHER the session probe or the scancel could not
               answer, because False there would assert a determined absence that neither
-              probe nor scancel established)
-            - message: str
-            - session_name: str | None
-            - analysis_id: str (not on the selective path)
-            - errors: list[str] (any errors encountered)
-            - cancelled: list of (token, jobid) (selective path only)
+              probe nor scancel established.
+            - ``message`` as str
+            - ``session_name`` as str or None
+            - ``analysis_id`` as str, absent on the selective path
+            - ``errors`` as list[str] of any errors encountered
+            - ``cancelled`` as a list of token and jobid pairs, present on the selective path only
 
         Examples
         --------
-        Cancel from same session:
-        >>> result = analysis.submit_workflow(wait_for_completion=False)
-        >>> # ... later decide to cancel ...
-        >>> cancel_result = analysis.cancel()
+        Cancel from the same session:
 
-        Cancel from new terminal session:
-        >>> analysis = TRITONSWMM_analysis("config.yaml", system)
-        >>> cancel_result = analysis.cancel()  # Loads session name from log
+        ```python
+        result = analysis.submit_workflow(wait_for_completion=False)
+        # ... later decide to cancel ...
+        cancel_result = analysis.cancel()
+        ```
+
+        Cancel from a new terminal session:
+
+        ```python
+        analysis = TRITONSWMM_analysis("config.yaml", system)
+        cancel_result = analysis.cancel()  # Loads session name from log
+        ```
         """
         import datetime
         import subprocess
@@ -7122,8 +7249,11 @@ class TRITONSWMM_analysis:
         if _session_state == _PROBE_GONE:
             if verbose:
                 if rule_classes is None:
+                    # Same statement as the returned mapping's message: the session is gone,
+                    # nothing was cancelled, and the workers it submitted were not checked.
                     print(
-                        f"[Cancel] Tmux session '{session_name}' no longer exists (workflow already completed)",
+                        f"[Cancel] Tmux session '{session_name}' no longer exists; nothing was cancelled, "
+                        f"and whether the jobs it submitted are still running was not checked",
                         flush=True,
                     )
                 else:
@@ -7141,14 +7271,23 @@ class TRITONSWMM_analysis:
                 # The FULL cancel has nothing left to signal, so a gone session is its
                 # documented no-op arm. The SELECTIVE arm does not stop here -- it reaches
                 # the sim class below, which is why this return is conditional.
+                #
+                # `jobs_were_running` is None, not False: this arm checked the DRIVER's
+                # session and never asked the scheduler about the workers that session
+                # submitted, which outlive it (see the comment above), so False would assert
+                # an absence that no probe established. The message makes the same statement
+                # in words, because the CLI prints this mapping to the reader as it stands.
                 return {
                     "success": True,
                     "session_canceled": False,
                     "workers_canceled": False,
-                    "jobs_were_running": False,
+                    "jobs_were_running": None,
                     "session_name": session_name,
                     "analysis_id": analysis_id,
-                    "message": f"Tmux session '{session_name}' already completed",
+                    "message": (
+                        f"Tmux session '{session_name}' no longer exists. Nothing was cancelled, "
+                        f"and whether any job it submitted is still queued or running was not checked."
+                    ),
                     "errors": [],
                 }
 

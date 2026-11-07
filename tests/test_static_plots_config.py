@@ -189,7 +189,6 @@ def test_sensitivity_benchmarking_inherits_and_extends():
     assert cfg.series_palette[0] == "#000000"  # Okabe-Ito default (CVD-safe)
     assert len(cfg.series_palette) == 8
     assert cfg.cpu_marker == "o"  # added content knob
-    assert cfg.gpu_marker == "s"  # added content knob
     assert cfg.log_y is False  # added content knob
 
 

@@ -4,7 +4,9 @@ The set of ``{hhemt_*}`` tokens is closed and lives in one tuple, but three hand
 describe it: the ``rehydrate_placeholders`` docstring (rendered in the API reference), the module
 docstring of ``hhemt.bundle._placeholders``, and the sentence of the reprex how-to that lists the tokens.
 A token added to the tuple without touching those statements leaves them stating a count or a list
-that is no longer true. These tests read the three statements and compare each with the tuple.
+that is no longer true. These tests read the three statements and compare each with the tuple. The
+``rehydrate_placeholders`` docstring states no count (published text names a set and leaves its size to
+the tuple), so its test holds that absence; a count stated anywhere else is compared with the tuple.
 
 SOLVER-FREE: text only. No fixture here compiles or runs a solver, and nothing is written outside
 ``tmp_path``.
@@ -38,6 +40,8 @@ _NUMBER_WORDS = {
 # Every anchor separates its words with ``\s+`` so that rewrapping a docstring or the page cannot turn a
 # correct statement red. The count is captured as one word-or-numeral token.
 _REHYDRATE_COUNT = re.compile(r"matches\s+only\s+the\s+(?P<count>\w+)\s+closed\s+token\s+names")
+# The sentence of the docstring that names the set, with or without a word in the count position.
+_REHYDRATE_PHRASE = re.compile(r"matches\s+only\s+the\s+(?:\w+\s+)?closed\s+token\s+names")
 _MODULE_COUNT = re.compile(r"these\s+(?P<count>\w+)\s+exact\s+names")
 _HOW_TO_SENTENCE = re.compile(r"closed\s+set\s+of\s+tokens:(?P<body>.*?)\.(?:\s|$)", re.DOTALL)
 _TOKEN = re.compile(r"\{hhemt_[a-z_]+\}")
@@ -75,18 +79,72 @@ def stated_tokens(text: str) -> set[str]:
     return set(_TOKEN.findall(found.group("body")))
 
 
-def test_the_rehydrate_docstring_states_the_size_of_the_closed_set():
-    """Property: the count in the ``rehydrate_placeholders`` docstring equals ``len(PLACEHOLDER_TOKENS)``.
+def states_a_count(text: str, anchor: re.Pattern[str]) -> bool:
+    """Return whether the statement places a word in the count position of the anchor.
+
+    Any word there counts, a number word, a numeral or a quantifier, because the property is that the
+    statement gives the reader no count to go stale. An absent phrase fails the calling test; it never skips.
+    """
+    found = _REHYDRATE_PHRASE.search(text)
+    assert found is not None, "the sentence that names what the function matches is not in the text"
+    return anchor.search(text) is not None
+
+
+def test_the_rehydrate_docstring_states_no_count_of_the_closed_set():
+    """Property: the ``rehydrate_placeholders`` docstring states the closed set without giving its size, and the
+    sentence that names the set is still present.
 
     Class: published-text drift. The docstring is on the published surface and is rendered in the API
-    reference, so a stale count is read by users.
-    Why required: the set grows by adding one row to the tuple, and nothing else forces this sentence to follow.
-    What kills it: a token added to the tuple (or removed) with the sentence left unchanged.
-    A second correct implementation: the sentence written with a numeral, or wrapped across two lines.
+    reference. A count there is a second record of ``len(PLACEHOLDER_TOKENS)`` that goes stale when a row is
+    added, so the docstring names the set and the tuple owns the size.
+    Why required: the count was removed from the docstring on purpose, as a rule against written counts of a
+    set; without this test a later pass restores one and nothing records that the removal was deliberate.
+    What kills it: a count restored before ``closed token names`` (a correct one, which the next added token
+    makes wrong, or a wrong one), or the sentence deleted so that the absence of a count is vacuous.
+    A second correct implementation: the sentence reworded or rewrapped, with the set named by the tuple's role.
+    A count stated anywhere else still has to equal the tuple; the module docstring's test keeps that.
     """
     doc = experiment_definition.rehydrate_placeholders.__doc__
     assert doc is not None
-    assert stated_count(doc, _REHYDRATE_COUNT) == len(_placeholders.PLACEHOLDER_TOKENS)
+    assert not states_a_count(doc, _REHYDRATE_COUNT), "the docstring states a count; name the closed set instead"
+
+
+@pytest.mark.parametrize(
+    ("statement", "states"),
+    [
+        pytest.param("it matches only the closed token names, in one pass", False, id="no-count"),
+        pytest.param("it matches only the\n    closed  token\nnames, in one pass", False, id="no-count-rewrapped"),
+        pytest.param("it matches only the ten closed token names, in one pass", True, id="correct-count-word"),
+        pytest.param("it matches only the eleven closed token names, in one pass", True, id="wrong-count-word"),
+        pytest.param("it matches only the 11 closed token names, in one pass", True, id="wrong-count-numeral"),
+        pytest.param("it matches only the several closed token names, in one pass", True, id="quantifier"),
+    ],
+)
+def test_the_no_count_check_fires_on_a_stated_count_and_not_on_the_set_named(statement, states):
+    """Property: the reader behind the no-count test returns True for a statement that gives a count (correct,
+    wrong, numeral or quantifier) and False for the same statement without one, rewrapped or not.
+
+    Class: instrument check, so the no-count test above is judged by a reader that fires.
+    Why required: a reader that never matched would pass the docstring forever, and a zero from it would not
+    distinguish a docstring with no count from a broken matcher.
+    What kills it: an anchor on one spelling of the count, or a reader that returns False for a wrong count.
+    A second correct implementation: any reader with the same True and False verdicts on these statements.
+    """
+    assert states_a_count(statement, _REHYDRATE_COUNT) is states
+
+
+def test_the_no_count_check_refuses_a_text_without_the_sentence():
+    """Property: a text that lacks the sentence naming what the function matches fails the check instead of
+    reading as a text with no count.
+
+    Class: the zero is not vacuous; deleting the sentence cannot turn the no-count test green.
+    Why required: a docstring with the sentence removed has no count, and a check that passed it would accept
+    the removal.
+    What kills it: a reader that returns False on an absent phrase.
+    A second correct implementation: any reader that raises on the absent phrase.
+    """
+    with pytest.raises(AssertionError):
+        states_a_count("this text names nothing", _REHYDRATE_COUNT)
 
 
 def test_the_placeholder_module_docstring_states_the_size_of_the_closed_set():
@@ -118,25 +176,33 @@ def test_the_how_to_lists_exactly_the_closed_set():
 
 
 @pytest.mark.parametrize(
-    "check",
+    ("statement", "anchor"),
     [
+        # The rehydrate docstring states no count, so this statement is the docstring as it would read if a pass
+        # wrote the present size back: a correct count today, built from the tuple before the set grows.
         pytest.param(
-            lambda: stated_count(experiment_definition.rehydrate_placeholders.__doc__ or "", _REHYDRATE_COUNT),
+            lambda: f"it matches only the {len(_placeholders.PLACEHOLDER_TOKENS)} closed token names, in one pass",
+            _REHYDRATE_COUNT,
             id="rehydrate-docstring",
         ),
-        pytest.param(lambda: stated_count(_placeholders.__doc__ or "", _MODULE_COUNT), id="module-docstring"),
+        pytest.param(lambda: _placeholders.__doc__ or "", _MODULE_COUNT, id="module-docstring"),
     ],
 )
-def test_a_larger_closed_set_turns_each_count_statement_red(check, monkeypatch):
-    """Property: with one more token in the tuple, each count statement disagrees with ``len(PLACEHOLDER_TOKENS)``.
+def test_a_larger_closed_set_turns_each_count_statement_red(statement, anchor, monkeypatch):
+    """Property: with one more token in the tuple, a count statement written before the growth disagrees with
+    ``len(PLACEHOLDER_TOKENS)``.
 
-    Class: the comparison is not vacuous; it reads the tuple at call time.
+    Class: the comparison is not vacuous; it reads the tuple at call time. The ``rehydrate-docstring`` leg
+    is the control for the no-count test: a docstring that restored a correct count would go stale the moment a
+    token is added, and this leg shows that staleness is visible to the reader the suite uses.
     Why required: a test that compared two constants of its own would stay green when the set grew.
     What kills it: reading the expected size from a value fixed at import, or from the text under test.
     A second correct implementation: any way of growing the tuple by one entry.
     """
+    stated = stated_count(statement(), anchor)
+    assert stated == len(_placeholders.PLACEHOLDER_TOKENS), "the statement must agree before the set grows"
     monkeypatch.setattr(_placeholders, "PLACEHOLDER_TOKENS", (*_placeholders.PLACEHOLDER_TOKENS, "{hhemt_extra}"))
-    assert check() != len(_placeholders.PLACEHOLDER_TOKENS)
+    assert stated != len(_placeholders.PLACEHOLDER_TOKENS)
 
 
 def test_the_statement_parsers_accept_rewrapping_and_numerals_and_refuse_absence():

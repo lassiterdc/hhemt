@@ -14,9 +14,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from hhemt.cache.paths import synthetic_runs_root
 from tests.fixtures import test_case_builder as tcb
 
 NAME = "reuse_layout_case"
+#: The runs-root directory name, read from its single product definition so this file holds no literal of it.
+RUNS_DIR = synthetic_runs_root().name
 
 
 class _Reached(Exception):
@@ -47,7 +50,7 @@ def _construct(tmp_path: Path, monkeypatch, *, start_from_scratch: bool) -> Path
         tcb.retrieve_synth_TRITON_SWMM_test_case(
             NAME, start_from_scratch=start_from_scratch, runs_root_override=runs_root
         )
-    return runs_root / "synthetic_test_runs" / NAME
+    return runs_root / RUNS_DIR / NAME
 
 
 def test_the_constructor_removes_a_reused_tree_stamped_at_another_layout(tmp_path, monkeypatch):
@@ -58,7 +61,7 @@ def test_the_constructor_removes_a_reused_tree_stamped_at_another_layout(tmp_pat
     Kills it: a helper that is defined and never called; a call placed after the directory is recreated; a call in a
     branch the reuse path does not take.
     """
-    tree = tmp_path / "root" / "synthetic_test_runs" / NAME
+    tree = tmp_path / "root" / RUNS_DIR / NAME
     _plant(tree, tcb._version_constants.LAYOUT_VERSION - 1)
     _construct(tmp_path, monkeypatch, start_from_scratch=False)
     assert tree.is_dir() and list(tree.iterdir()) == []
@@ -66,7 +69,7 @@ def test_the_constructor_removes_a_reused_tree_stamped_at_another_layout(tmp_pat
 
 def test_the_constructor_keeps_a_reused_tree_stamped_at_the_current_layout(tmp_path, monkeypatch):
     """Control: the same construction over a tree at the current layout keeps the stamp and the inner payload."""
-    tree = tmp_path / "root" / "synthetic_test_runs" / NAME
+    tree = tmp_path / "root" / RUNS_DIR / NAME
     _plant(tree, tcb._version_constants.LAYOUT_VERSION)
     _construct(tmp_path, monkeypatch, start_from_scratch=False)
     assert (tree / "inner" / "payload.txt").read_text() == "x"

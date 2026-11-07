@@ -912,7 +912,7 @@ def test_df_setup_with_system_overlays_carries_prefixed_system_columns(
     overlay_frame = sens.df_setup_with_system_overlays
     assert "system.target_dem_resolution" in overlay_frame.columns
     # ... and the analysis-config columns are preserved too.
-    assert "n_mpi_procs" in overlay_frame.columns
+    assert "analysis.n_mpi_procs" in overlay_frame.columns
     # Index parity with df_setup (same member_ids, same order).
     assert list(overlay_frame.index) == list(sens.df_setup.index)
 
@@ -924,19 +924,15 @@ def test_df_setup_with_system_overlays_carries_prefixed_system_columns(
 # ============================================================================
 
 
-def test_bare_name_analysis_config_column_emits_deprecation_warning(monkeypatch, tmp_path):
-    """Bare-name analysis-config columns emit DeprecationWarning at construction."""
-    # The default synth sensitivity CSV uses bare names (run_mode, n_mpi_procs, etc.),
-    # so a fresh load must surface a DeprecationWarning naming a bare analysis-config column.
-    # Isolation: this is a start_from_scratch=True retrieve on the SHARED
-    # synth_sensitivity slug cache. Without the runs_root override it fast_rmtree-wipes the
-    # shared cache to a configured-only (empty sims/) state (no run) — which then breaks the
-    # downstream *_cached consumers (e.g. test_synth_07's failing_synth_sensitivity_analysis
-    # -> _first_scenario_in_member StopIteration). Redirect the analysis tree to tmp_path so the
-    # construction (which is all this test exercises) cannot touch the shared cache.
+def test_bare_name_analysis_config_column_is_refused_naming_the_prefixed_form(monkeypatch, tmp_path):
+    """A bare-name analysis-config column raises ConfigurationError naming `analysis.{name}`."""
+    # This is a start_from_scratch=True retrieve on a slug of its own; the runs_root
+    # override redirects the analysis tree to tmp_path so the construction (which is all
+    # this test exercises) cannot touch the shared synth_sensitivity cache.
     monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
-    with pytest.warns(DeprecationWarning, match=r"Bare-name analysis-config column"):
-        _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(start_from_scratch=True)
+    with pytest.raises(ConfigurationError, match="bare analysis_config field names") as excinfo:
+        _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_bare_name_column(start_from_scratch=True)
+    assert "analysis.mem_gb_per_cpu" in str(excinfo.value)
 
 
 def test_analysis_dot_prefix_column_accepted_silently(synth_sensitivity_all_analysis_prefixed):
@@ -1021,7 +1017,7 @@ def test_reprocess_render_report_over_partial_completion(golden_planned):
     # Arrange: a golden carries no plots or report (tests/goldens/SPEC.md section 9), so a consolidate-stage reprocess
     # of the complete golden materializes the per-sim figures and the master report for every sub.
     arrange = analysis.reprocess(
-        start_with="consolidate", execution_mode="local", report_formats=["zip"], verbose=False
+        start_with="consolidate", execution_mode="local", override_report_formats=["zip"], verbose=False
     )
     assert arrange["success"], f"arranging the report failed: {arrange.get('message')!r}"
 
@@ -1069,7 +1065,7 @@ def test_reprocess_render_report_over_partial_completion(golden_planned):
     reprocess_result = analysis.reprocess(
         start_with="render",
         execution_mode="local",
-        report_formats=["zip"],
+        override_report_formats=["zip"],
         verbose=True,
     )
 

@@ -243,34 +243,6 @@ def test_the_listing_agrees_with_the_snapshot_source_for_every_registered_sha():
 
 
 # --------------------------------------------------------------------------- (c) the documentation
-def test_the_docs_state_the_set_that_the_code_lists():
-    """The limitations page names exactly the builds in `SWMM_QUALITY_SNAPSHOT_SHAS`.
-
-    Property: the backticked shas in the parenthesis after "listed in `SWMM_QUALITY_SNAPSHOT_SHAS`" are, each as a
-    prefix of one member, exactly the set's members and nothing else.
-    Class: the members of the set against the page's listing, in both directions. The page abbreviates (seven
-    and eight characters), so the comparison is by prefix.
-    Reachability: the set and the page are edited by hand in one change; artifact: P8 of the approved
-    shape, which edits the listing in the same change as the set.
-    Both-states anchor: the assertion compares the documented tokens with the set's members, whatever prose
-    surrounds the listing.
-    Why required: a page that omits a listed pin tells a user their build forces replay when it does not,
-    and one that lists an unlisted pin promises statistics the code withholds. What kills it: dropping
-    `bb13ea28` from the page or adding a sha the set lacks. Second correct implementation: generating the
-    listing from the set while documenting; the assertion reads the rendered text only.
-    """
-    text = " ".join(_docs_text().split())
-    m = re.search(r"listed in `SWMM_QUALITY_SNAPSHOT_SHAS` \(([^)]*)\)", text)
-    assert m, "the page no longer carries the listing sentence"
-    documented = set(re.findall(r"`([0-9a-f]{7,40})`", m.group(1)))
-    members = scenario.SWMM_QUALITY_SNAPSHOT_SHAS
-    stray = sorted(t for t in documented if not any(m.startswith(t) for m in members))
-    unlisted = sorted(m[:8] for m in members if not any(m.startswith(t) for t in documented))
-    assert (stray, unlisted) == ([], []), (
-        f"documented but not in the set: {stray}; in the set but not documented: {unlisted}"
-    )
-
-
 def test_the_docs_path_limit_is_the_solvers_maxfname_in_every_sentence():
     """Every number the path-limit paragraph states is SWMM's `MAXFNAME`, including the flooding-debug sentence.
 

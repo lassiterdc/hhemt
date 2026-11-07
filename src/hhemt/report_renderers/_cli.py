@@ -35,6 +35,13 @@ def main() -> None:
         "TRITONSWMM_analysis so the renderer builds the analysis consistently with the "
         "sibling runners (setup_workflow/prepare_scenario_runner/export_scenario_status).",
     )
+    parser.add_argument(
+        "--report-config",
+        type=Path,
+        default=None,
+        help="Report config YAML given at run entry. Replaces the analysis config's report: block "
+        "for this render. Emitted by the workflow generator only when the run was given a report config.",
+    )
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--event-iloc", type=int, default=None, help="for renderers that draw one event")
     parser.add_argument("--independent-var", type=str, default=None, help="for sensitivity renderers")
@@ -76,6 +83,13 @@ def main() -> None:
     )
     # Post-F2: report cfg lives inline on cfg_analysis (R1, load-time-required).
     report_cfg = analysis.cfg_analysis.report
+    if args.report_config is not None:
+        from hhemt.config.loaders import yaml_to_model
+        from hhemt.config.report import report_config as ReportConfigModel
+
+        # The report config given at run entry governs the plots and the rule selection alike.
+        report_cfg = yaml_to_model(args.report_config, ReportConfigModel)
+        analysis._cfg_report = report_cfg
 
     # Member routing: when --member-id is present, resolve the member from
     # the master and pass it as the `analysis` argument to the renderer. Per-sim

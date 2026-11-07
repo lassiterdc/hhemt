@@ -90,5 +90,5 @@ def test_the_tutorial_bullet_states_what_the_page_does() -> None:
     text = " ".join(TUTORIAL.read_text().split())
 
     assert "rendered inside a workflow run leaves that workflow run out" in text
-    assert "the page names the workflow run it left out" in text
+    assert "the page names the omitted workflow run" in text
     assert "rendered later, from the analysis directory, counts every job" in text

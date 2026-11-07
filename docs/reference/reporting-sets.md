@@ -1,60 +1,32 @@
 # Reporting sets
 
-A **reporting set** is a named *bundle* of report renderers, plus a sidebar
-category order. One set produces one report containing every renderer in the
-bundle. Choosing a set decides which figures and tables a rendered report
-contains, and in what order its sidebar lists them. You select a set with a
-single config field, without editing code.
+A **reporting set** is a named bundle of report renderers plus a sidebar category order. One set produces one report with every renderer in the bundle. The choice of set fixes the figures and tables of a report and the sidebar order. A single config field selects a set without code edits.
 
-!!! tip "Most reports come from one set, and one set is usually enough"
-    A report showing benchmarking results alongside compute-configuration
-    comparisons has usually selected one set that bundles both kinds of
-    renderer, rather than naming two. `compute_config_byte_identity` is the clearest case: it carries
-    ten renderers, including `sensitivity_benchmarking` and
-    `eda_compute_sensitivity` together, so its report shows both. Reach for a
-    list only when no single set carries everything you want. If you are
-    trying to work out what produced a report you are looking at, read the
-    bundle contents below rather than reasoning from the figures present.
+!!! tip "One set usually suffices"
+    A report with benchmarking results next to compute-configuration comparisons usually selects one set that bundles both renderers. `compute_config_byte_identity` is the clearest case. The set carries `sensitivity_benchmarking` and `eda_compute_sensitivity` together, so the report shows both. A list is necessary only when no single set carries every renderer you want. To identify the set behind a report, read the bundle contents below and skip any reasoning from the figures present.
 
 ## Selecting one or more
 
-The field is `reporting_set`, on the `report` block of the analysis config. It
-takes either one set name or a list of them. One name is the common case:
+The field is `reporting_set` on the `report` block of the analysis config. The field takes a set name or a list of names. A single name is the common case.
 
 ```yaml
 report:
   reporting_set: benchmarking
 ```
 
-Its default value is the one-element list `["default"]`, whose single member is
-a sentinel rather than an ordinary set name. At `analysis.run()` entry that
-sentinel resolves to `sensitivity` when `toggle_sensitivity_analysis` is true,
-and to the standard `default` set otherwise. Setting any other registered name
-selects that set directly.
+The default value is the one-element list `["default"]`. The single member is a sentinel and no ordinary set name. At `analysis.run()` entry the sentinel resolves to `sensitivity` when `toggle_sensitivity_analysis` is true and to the standard `default` set otherwise. Any other registered name selects that set directly.
 
-Writing the field but leaving it empty means the same as omitting it. A bare
-`reporting_set:` with nothing after it, its explicit form `null`, an empty
-string, and an empty list are all read as absent values rather than as requests
-for a report with no figures, so each of them falls back to the sentinel above.
+An empty value means the same as an omitted field. A bare `reporting_set:` with no value, the explicit form `null`, an empty string, and an empty list all read as absent values and fall back to the sentinel. A request for a report with no figures is impossible.
 
-The sentinel then resolves from the analysis rather than from the blank. On a
-sensitivity analysis an empty field therefore produces the `sensitivity`
-report, carrying per-member results without the run-time, compute-cost and scaling figures.
+The sentinel resolves from the analysis and not from the blank. On a sensitivity analysis an empty field therefore produces the `sensitivity` report. The report carries per-member results and omits the run-time, compute-cost, and scaling figures.
 
-The value must be a name or a list of names. An unordered container such as a
-YAML set (`!!set`) is refused rather than quietly accepted, because the order
-you write the names in decides the order their renderers merge, and an
-unordered container carries no order to read.
+The value must be a name or a list of names. An unordered container such as a YAML set with `!!set` is refused. The order of the names decides the merge order of the renderers, and an unordered container has no order to read.
 
-The name is validated at `analysis.run()` entry against the registry. An
-unregistered name raises `ConfigurationError` naming both what you asked for and
-the registered names, so a typo fails before any compute is committed.
+`analysis.run()` validates every name against the registry at entry. An unregistered name raises `ConfigurationError` that names the requested value and the registered names. A typo fails before any compute is committed.
 
 ## Composing several sets
 
-Naming more than one set composes them into a single report. A renderer carried
-by more than one of them appears once, carrying the figures each contributes,
-and the renderers merge in the order you list the sets:
+A list of several names composes the sets into one report. A renderer in more than one set appears once with the figures from each, and the renderers merge in the order of the list.
 
 ```yaml
 report:
@@ -63,119 +35,69 @@ report:
     - benchmarking
 ```
 
-??? note "Which compositions add figures, and the one pair to run as two sweeps"
-    That list composes to the same bundle as `benchmarking` alone. All but one of
-    the pairs the rules below admit behave the same way. In each of them one set
-    already carries everything the other does, so naming the larger set is enough.
-    The one pair that adds figures is `compute_sensitivity` with `dem_resolution`,
-    and it passes every rule below and still cannot render the figures it adds:
-    `config_diff_maps` subtracts members cell-wise and refuses members on different
-    grids, while the `dem_resolution` figures need a ladder of grids, so no single
-    sweep serves both. Run them as two sweeps, as
-    [Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md)
-    does.
+??? note "Compositions that add figures, and the pair for separate sweeps"
+    The list above composes to the same bundle as `benchmarking` alone. Every pair that the rules below admit behaves that way with one exception. In each of the other pairs a single set carries everything that the other set carries, so naming the larger set is enough. The exception is `compute_sensitivity` with `dem_resolution`. The pair passes every rule below and still fails to render the added figures. `config_diff_maps` subtracts members cell by cell and refuses members on different grids with a `ProcessingError`. The `dem_resolution` figures need a ladder of grids. No single sweep serves both, and separate sweeps solve the conflict, as [Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md) shows.
 
-Four rules apply, and all four are checked at `analysis.run()` entry, before any
-compute is committed:
+`analysis.run()` checks each rule below at entry, before any compute is committed.
 
-- **Every named set must describe the same kind of analysis.** You cannot mix an
-  event-ensemble set with a sensitivity set, and `combined` is never selectable
-  on an analysis at all.
-- **Your sweep must vary an axis for each named set that requires one.** The
-  requirements add up rather than replacing one another, so a list of
-  `compute_sensitivity` and `dem_resolution` needs a sweep that varies both a
-  compute-configuration field and `target_dem_resolution`.
-- **`default` cannot be listed alongside another set.** It is a sentinel that
-  resolves to whichever set suits the analysis, so it has no meaning as one
-  member of a composition. Name the set you want instead.
-- **Two sets that gate the same renderer on different conditions cannot be
-  combined.** A composed report emits each renderer once, under one condition,
-  so two sets that disagree about that condition have no single answer. `compute_config_byte_identity`
-  gates `eda_compute_sensitivity` on preserved raw outputs, while
-  `compute_sensitivity` and `dem_resolution` gate it on an EDA artifact, so
-  `compute_config_byte_identity` composes with `benchmarking` and `sensitivity` but not with those two.
+- **Every named set must describe the same type of analysis.** An event-ensemble set and a sensitivity set never mix, and `combined` is never selectable on an analysis.
+- **The sweep must vary an axis for each named set that requires an axis.** The requirements add up. A list of `compute_sensitivity` and `dem_resolution` needs a sweep that varies a compute-configuration field and `target_dem_resolution`.
+- **`default` is unavailable in a list.** The name `default` is a sentinel that resolves to the set that suits the analysis, so the name has no meaning as one member of a composition. Name the set you want.
+- **Sets that gate the same renderer on different conditions are unavailable together.** A composed report emits each renderer once under one condition, and sets that disagree about the condition have no single answer. `compute_config_byte_identity` gates `eda_compute_sensitivity` on preserved raw outputs. `compute_sensitivity` and `dem_resolution` gate the renderer on an EDA artifact. Therefore `compute_config_byte_identity` composes with `benchmarking` and `sensitivity` and refuses `compute_sensitivity` and `dem_resolution`.
 
-All four rules fail with a message naming both the set and the reason, so a
-combination that cannot work is refused on the login node rather than after the
-compute is spent.
+Each rule fails with a message that names the set and the reason. A combination that fails is refused on the login node and wastes no compute.
 
 ## The registered sets
 
-Seven sets ship, in three kinds. The kind tells you whether a set is even
-selectable for the analysis you are running.
-
-`src/hhemt/report_renderers/_reporting_sets.py::REPORTING_SETS` is the single
-source of truth for what each set contains. This page describes what each is
-**for**.
+`src/hhemt/report_renderers/_reporting_sets.py::REPORTING_SETS` is the single source of truth for the contents of each set. The tables give the purpose of each set.
 
 ### Event-ensemble sets
 
-For an analysis whose members are weather events rather than compute
-configurations.
-
-| Set | Use it for |
+| Set | Use |
 |---|---|
-| `default` | An ordinary analysis. The general-purpose report: workflow status, system inputs, per-simulation results, validation findings, provenance. It is the only set carrying `per_sim`, the per-event figure pair. |
+| `default` | An ordinary analysis. The general-purpose report shows workflow status, system inputs, per-simulation results, validation findings, and provenance. The set is the only one carrying `per_sim`, the per-event figure pair. |
 
 ### Sensitivity-analysis sets
 
-For a sweep, where members vary along a declared axis. All five replace
-`per_sim` with `per_sim_per_member`; all but `sensitivity` also add
-`sensitivity_benchmarking`.
+Every set here replaces `per_sim` with `per_sim_per_member`. Every set except `sensitivity` also adds `sensitivity_benchmarking`.
 
-| Set | Use it for |
+| Set | Use |
 |---|---|
-| `benchmarking` | A sweep whose axis is compute configuration. Adds run-time, compute-cost and scaling figures. |
-| `sensitivity` | A sweep that wants per-member results without any specialized figure family: no run-time and scaling figures, no EDA comparison. It is the sweep-shaped bundle minus `sensitivity_benchmarking`, so it imposes no axis requirement and suits a sweep varying any axis. This is what `default` resolves to on a sensitivity analysis. |
-| `compute_sensitivity` | A compute-configuration sweep where the question is whether results are invariant to the compute config, rather than only how fast each one runs. Expects the compute-sensitivity EDA artifacts. |
-| `dem_resolution` | A sweep whose axis is DEM cell size. Its figures compare peak flood depth across resolution rungs, so it expects a varying grid and rejects a mixed-resolution experiment. |
-| `compute_config_byte_identity` | A raw-output byte-for-byte identity study across compute configurations. The benchmarking bundle plus a per-timestep check on whether the raw TRITON rasters are bit-identical across compute configs within one device class (CPU or GPU). It is not a resume study: the clean-versus-resume comparison lives on the combined report. Requires preserved raw outputs. |
+| `benchmarking` | A [benchmarking](glossary.md#benchmarking) sweep. The set adds run-time, compute-cost, and scaling figures. |
+| `sensitivity` | A sweep that needs per-member results and no specialized figure family. The set omits the run-time and scaling figures and the EDA comparison. The set is the sweep-shaped bundle minus `sensitivity_benchmarking`, so the set imposes no axis requirement and suits a sweep over any axis. The name `default` resolves to the set on a sensitivity analysis. |
+| `compute_sensitivity` | A compute-configuration sweep that tests whether results are invariant to the compute config and goes beyond the speed of each configuration. The set expects the compute-sensitivity EDA artifacts. |
+| `dem_resolution` | A sweep over the DEM cell size. The figures compare peak flood depth across resolution rungs, so the set expects a varying grid and rejects a mixed-resolution experiment. |
+| `compute_config_byte_identity` | A byte-for-byte identity check of raw outputs across compute configurations. The set bundles the benchmarking renderers plus a per-timestep check of whether the raw TRITON rasters are bit-identical across compute configs within the CPU device class or within the GPU device class. The combined report holds the clean-versus-resume comparison, and [Combining experiments](../how-to/combining-experiments.md) describes the comparison. The set requires preserved raw outputs. |
 
-`compute_sensitivity`, `dem_resolution` and `compute_config_byte_identity` expect artifacts an ordinary
-sweep does not produce. Each assumes the analysis was shaped for its question,
-and selecting one on an analysis that was not shaped that way produces a report
-with missing figures rather than a useful one. The exploratory analysis step
-produces those artifacts; see
-[Run the exploratory analysis](../how-to/running-eda.md) for how to run it.
+`compute_sensitivity`, `dem_resolution`, and `compute_config_byte_identity` expect artifacts that an ordinary sweep leaves out. Each set assumes that the analysis was shaped for the question of the set. A set selected on an unsuited analysis produces a report with missing figures. The exploratory analysis step produces the artifacts, and [Running the exploratory analysis](../how-to/running-eda.md) gives the procedure.
 
 ### Cross-experiment sets
 
-| Set | Use it for |
+| Set | Use |
 |---|---|
-| `combined` | The cross-experiment report emitted by `hhemt combine`. You do not select this one on an analysis. `combine` uses it to build one report over several finished experiments. |
+| `combined` | The cross-experiment report that `hhemt combine` emits. An analysis never selects `combined`. The `combine` command uses the set to build one report over several finished experiments. |
 
-`combined` is also the only set with its own sidebar order. Every other set uses
-the standard order. `combined` carries fixed cross-experiment categories, and
-`hhemt combine` appends one category per input experiment at combine time, so
-its final sidebar is known only once the inputs are known.
+`combined` is the only set with a nonstandard sidebar order. Every other set uses the standard order. `combined` carries fixed cross-experiment categories. `hhemt combine` appends a category per input experiment at combine time. The final sidebar is known once the inputs are known.
 
-## What each set bundles
+## Set bundles
 
-Every name below is droppable via `disabled_renderers`. These are the complete
-bundles, not examples.
+`disabled_renderers` can drop any name below.
 
-| Set | Renderers | Count |
-|---|---|---|
-| `default` | `disk_utilization`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim`, `scenario_status_appendix`, `system_overview`, `workflow_performance` | 8 |
-| `benchmarking` | `disk_utilization`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` | 9 |
-| `sensitivity` | `disk_utilization`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `system_overview`, `workflow_performance` | 8 |
-| `compute_sensitivity` | `disk_utilization`, `eda_compute_sensitivity`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` | 10 |
-| `dem_resolution` | `disk_utilization`, `eda_compute_sensitivity`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` | 10 |
-| `compute_config_byte_identity` | `disk_utilization`, `eda_compute_sensitivity`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` | 10 |
-| `combined` | `cross_experiment_compatibility`, `cross_experiment_disk_utilization`, `cross_experiment_errors_and_warnings`, `cross_experiment_intercomparison`, `cross_experiment_intercomparison_maps` | 5 |
+| Set | Renderers |
+|---|---|
+| `default` | `disk_utilization`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim`, `scenario_status_appendix`, `system_overview`, `workflow_performance` |
+| `benchmarking` | `disk_utilization`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` |
+| `sensitivity` | `disk_utilization`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `system_overview`, `workflow_performance` |
+| `compute_sensitivity` | `disk_utilization`, `eda_compute_sensitivity`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` |
+| `dem_resolution` | `disk_utilization`, `eda_compute_sensitivity`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` |
+| `compute_config_byte_identity` | `disk_utilization`, `eda_compute_sensitivity`, `errors_and_warnings`, `metadata`, `per_analysis_summary`, `per_sim_per_member`, `scenario_status_appendix`, `sensitivity_benchmarking`, `system_overview`, `workflow_performance` |
+| `combined` | `cross_experiment_compatibility`, `cross_experiment_disk_utilization`, `cross_experiment_errors_and_warnings`, `cross_experiment_intercomparison`, `cross_experiment_intercomparison_maps`, `cross_solver_comparison` |
 
-The three sensitivity EDA sets bundle the same ten renderers. They differ in the
-figures `eda_compute_sensitivity` emits, which follow from the analysis each set
-expects.
+`compute_sensitivity`, `dem_resolution`, and `compute_config_byte_identity` bundle the same renderers. The figures that `eda_compute_sensitivity` emits differ, and the figures follow from the analysis that each set expects.
 
 ## Dropping a renderer from a set
 
-`disabled_renderers` subtracts named renderers from the active set's bundle,
-without switching sets. The report contains every renderer in that bundle
-unless you drop it here, and any name from that set's bundle above is a valid
-entry. The usual reason is a large event ensemble, where the per-event figures
-(`per_sim`, or `per_sim_per_member` on a sweep) add a page for every event, so
-a run of hundreds of events produces hundreds of pages:
+`disabled_renderers` subtracts named renderers from the bundle of the active set and keeps the set. The report contains every renderer of the bundle except the dropped ones, and any name from the bundle above is a valid entry. A large event ensemble is the usual reason. The per-event figures, `per_sim` or `per_sim_per_member` on a sweep, add a page for every event.
 
 ```yaml
 report:
@@ -184,21 +106,14 @@ report:
     - per_sim_per_member
 ```
 
-An unknown name here raises `ConfigurationError` at run entry rather than
-silently doing nothing, and the same filter applies both where figures are
-emitted and where they are enumerated, so the two can never disagree.
+An unknown name raises `ConfigurationError` at run entry and never passes silently. The same filter applies where figures are emitted and where figures are enumerated. Emission and enumeration always agree.
 
-??? note "Why four sets carry an extra validation step"
-    `benchmarking`, `compute_sensitivity`, `dem_resolution` and `compute_config_byte_identity` all
-    carry figures that plot against a sweep axis, so each additionally
-    validates that the sensitivity configuration declares the independent
-    variables its figures plot against. That check runs at `analysis.run()`
-    entry alongside the set-name check, which is why a mis-specified sweep
-    fails on the login node rather than after the compute is spent.
+??? note "Extra validation step on some sets"
+    `benchmarking`, `compute_sensitivity`, `dem_resolution`, and `compute_config_byte_identity` carry figures that plot against a sweep axis. Each set therefore validates that the sensitivity configuration declares the independent variables of the figures. The check runs at `analysis.run()` entry beside the set-name check, so a mis-specified sweep fails on the login node and wastes no compute.
 
 ## See also
 
-- [The interactive analysis report](example-report.md): what a rendered report contains and how to open one.
-- [Configuration schema](config-schema.md): the rest of the `report` block.
-- [Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md): two worked sweeps, one selecting `compute_sensitivity` and one selecting `dem_resolution`.
-- [Exploratory analysis](../explanation/exploratory-analysis.md): what the exploratory figures are, and why the step that produces them sits outside the workflow graph.
+- [The interactive analysis report](example-report.md) covers report production and the finished examples.
+- [Configuration schema](config-schema.md) lists the rest of the `report` block.
+- [Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md) shows a worked sweep with `compute_sensitivity` and a worked sweep with `dem_resolution`.
+- [Exploratory analysis](../tutorials/exploratory-analysis.md) covers the exploratory figures and the placement of the step outside the workflow graph.

@@ -563,8 +563,9 @@ def test_every_recipe_line_keeps_its_python_version_and_command_and_gains_no_ext
 
 def test_the_docs_check_recipe_routes_through_run_with_the_wrapper_and_the_conda_recipes_and_build_are_unchanged():
     """Property: `docs-check` is exactly `RUN="scripts/hook_env.sh --python 3.12" bash scripts/docs_gates.sh`, and
-    every body line of `test-gated`, `test-fast`, `test-laptop`, `test-snakemake-subprocess`, `build` and `list`
-    equals the base commit's.
+    every body line of `test-gated`, `test-fast`, `test-snakemake-subprocess`, `build` and `list` equals the base
+    commit's, and the body of `test-no-compile-no-subprocess` (the base commit's `test-laptop`, renamed by the
+    public-release commit 1fd842c4) equals the base body after the two renamed tokens are substituted.
 
     Class: REGRESSION -- the recipes the shape says this chunk leaves alone, and the one it routes through `RUN=`.
     The plausible wrong implementation rewrites a conda-hosted line to the wrapper (which drops its conda
@@ -578,11 +579,15 @@ def test_the_docs_check_recipe_routes_through_run_with_the_wrapper_and_the_conda
     base = _recipes(_base_justfile())
     now = _recipes(_JUSTFILE.read_text(encoding="utf-8"))
     assert now["docs-check"] == ['RUN="scripts/hook_env.sh --python 3.12" bash scripts/docs_gates.sh']
-    drift = [
-        r
-        for r in ("test-gated", "test-fast", "test-laptop", "test-snakemake-subprocess", "build", "list")
-        if base[r] != now[r]
+    drift = [r for r in ("test-gated", "test-fast", "test-snakemake-subprocess", "build", "list") if base[r] != now[r]]
+    renamed_base = [
+        line.replace("Laptop tier", "No-compile, no-subprocess tier").replace(
+            "suite_ledger_laptop.jsonl", "suite_ledger_no_compile_no_subprocess.jsonl"
+        )
+        for line in base["test-laptop"]
     ]
+    if renamed_base != now["test-no-compile-no-subprocess"]:
+        drift.append("test-no-compile-no-subprocess")
     assert drift == [], drift
 
 

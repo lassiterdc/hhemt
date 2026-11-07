@@ -51,6 +51,8 @@ OVERRIDE_ISOLATED_NODE_IDS: tuple[str, ...] = (
     "tests/test_node_local_config_guard.py::test_sensitivity_submit_workflow_refuses_node_local_configs",
     "tests/test_node_local_config_guard.py::test_slurm_submit_allows_shared_filesystem_configs",
     "tests/test_node_local_config_guard.py::test_slurm_submit_refuses_node_local_configs",
+    "tests/test_report_config_run_entry.py::test_control_run_without_report_config_records_none",
+    "tests/test_report_config_run_entry.py::test_run_records_the_run_entry_config",
     "tests/test_reprocess_delete_r8.py::test_nonsensitivity_explicit_local_execution_mode_is_not_overridden",
     "tests/test_reprocess_delete_r8.py::test_nonsensitivity_failed_scoped_delete_raises_instead_of_consolidating_stale",
     "tests/test_reprocess_rebuild_invalidation.py::test_reprocess_consolidate_inprocess_preserves_processed",
@@ -103,6 +105,14 @@ OVERRIDE_ISOLATED_NODE_IDS: tuple[str, ...] = (
     "tests/test_synth_static_plots.py::test_static_plots_generates_publication_figure",
     "tests/test_synth_static_plots.py::test_static_plots_generates_sensitivity_benchmarking_figure",
     "tests/test_synth_static_plots.py::test_static_plots_generates_system_overview_figure",
+    "tests/test_unread_settings_rulings.py::test_benchmarking_plotly_render_reads_the_aggregation_at_the_scaling_series",
+    "tests/test_unread_settings_rulings.py::test_benchmarking_static_render_reaches_the_label_and_both_encoding_reads",
+    "tests/test_unread_settings_rulings.py::test_conduit_render_reaches_its_label_and_quantile_reads",
+    "tests/test_unread_settings_rulings.py::test_depth_plotly_render_reaches_the_lower_clip",
+    "tests/test_unread_settings_rulings.py::test_depth_render_independent_policy_drops_both_cross_event_ranges",
+    "tests/test_unread_settings_rulings.py::test_depth_render_quantile_strategy_takes_the_quantile_across_events_when_shared",
+    "tests/test_unread_settings_rulings.py::test_depth_render_reaches_its_clip_label_and_shared_range_reads",
+    "tests/test_unread_settings_rulings.py::test_system_overview_render_reaches_its_label",
     "tests/test_workflow_rerun_triggers_empirical.py::test_rerun_triggers_multi_sim_add_remove",
 )
 

@@ -1,57 +1,32 @@
 # Running a synthetic compute-sensitivity experiment
 
-A **synthetic compute-sensitivity experiment** sweeps a small, fully-generated
-synthetic TRITON-SWMM model across compute configurations (MPI-rank counts, run
-modes, GPU vs CPU partitions) and produces a report whose figures compare the
-results across those configurations, verifying that the physics is invariant to
-the compute configuration and quantifying where it is not.
+## Goal
 
-Use this when you want a standardized experiment you can set up without HPC, to
-characterize how a cluster's compute choices affect (or do not affect) the model
-outputs.
+Sweep a small, generated synthetic TRITON-SWMM model across compute configurations, meaning MPI-rank counts, run modes, and the choice of GPU or CPU partition, and produce a report whose figures compare the results across the configurations. The sweep verifies that the physics is invariant to the compute configuration and quantifies where the invariance fails. The experiment needs no HPC to set up and characterizes how the compute choices of a cluster affect the model outputs.
 
 ## Prerequisites
 
---8<-- "prerequisites-base.md"
-- **An `hpc_system_config` for your cluster.** The experiment resolves each
-  matrix row's GPU hardware/backend from the chosen partition's `PartitionSpec`,
-  so the cluster profile must describe your partitions. Anonymized examples ship
-  in-repo (`test_data/norfolk_coastal_flooding/hpc_system_config_{uva,frontier}.yaml`).
-  See [Set up an HPC system profile](hpc-profile-setup.md).
-- **A `synthetic_experiment_config` YAML.** It parameterizes the synthetic model
-  (grid dims/resolution, conduit + subcatchment counts, event forcing), the
-  experiment matrix (compute configs, the MPI-rank sweep axis `rank_sweep`
-  defaulting to `{2,4,8}`, clean-vs-resume), and a reference to the
-  `hpc_system_config` + partition selectors. The cross-hardware axis is expressed
-  as the **partition** (an a6000 row + an a100 row), not a `gpu_hardware` column.
+- A working [installation](installation.md).
+- An `hpc_system_config` for your cluster. The experiment resolves the GPU hardware and backend of each matrix row from the `PartitionSpec` of the chosen partition, so the cluster profile must describe your partitions. Anonymized examples are in [`test_data/norfolk_coastal_flooding/`](https://github.com/lassiterdc/hhemt/tree/main/test_data/norfolk_coastal_flooding) on the repository, and [Set up an HPC system profile](hpc-profile-setup.md) describes the file.
+- A `synthetic_experiment_config` YAML. The file parameterizes the synthetic model with the grid dimensions, the grid resolution, the conduit counts, the subcatchment counts, and the event forcing. The file also parameterizes the experiment matrix with the compute configs and the clean-versus-resume choice. The MPI-rank sweep axis `rank_sweep` defaults to `{2,4,8}`. The file references the `hpc_system_config` and the partition selectors. The partition expresses the cross-hardware axis with an a6000 row and an a100 row. Each row takes the GPU model from the partition, and [Choose a partition](hpc-profile-setup.md#choose-a-partition) covers the choice.
 
-## Declaring the model arms (and an optional resume schedule)
+## Key references
 
-A compute-sensitivity experiment runs as **one sensitivity primary per model arm**.
-Declare the arms in the experiment config's matrix block:
-`model_arms: [tritonswmm, triton]`. Each arm runs the identical compute-config
-matrix and differs only in its system model toggles. The two primaries are joined for
-reporting by `hhemt combine`; the cross-arm figures live on the combined report, not
-on either primary's own report.
+- The [CLI reference](../reference/cli.md#development) documents `hhemt synth-experiment`.
+- [Reporting sets](../reference/reporting-sets.md) describes the reporting sets that this page selects.
+- [Run the exploratory analysis](running-eda.md) covers the exploratory figures.
+- [Combining experiments](combining-experiments.md) covers the clean-versus-resume comparison.
 
-??? note "Why one primary per arm rather than one primary with both"
-    The sensitivity Snakefile generator accepts exactly one enabled model type per
-    primary, so a two-arm experiment is two primaries by construction rather than by
-    preference.
+## Declaring the model arms and an optional resume schedule
 
-To interrupt the sims for a resume study, set `resume_interruption_schedule` on the
-analysis config to a strictly increasing tuple of hotstart-checkpoint indices, not
-percentages, not seconds. One checkpoint is written per reporting interval, so on
-the 3.5 m / 24 h synthetic grid (10-minute reporting = 144 checkpoints) the
-25% / 50% / 75% markers are `[36, 72, 108]`, which produces three resumes at the
-same three points in every compute config. That identity across configs is what
-makes cross-config resume comparisons meaningful. Convert the fractions to indices
-once, in the committed experiment config; the runner performs no conversion. Leave
-it unset for a clean sweep. The retired `deterministic_kill_after_n_checkpoints`
-field is no longer accepted.
+A compute-sensitivity experiment executes as **one sensitivity primary per model arm**. Declare the arms in the matrix block of the experiment config as `model_arms: [tritonswmm, triton]`. Each arm executes the identical compute-config matrix and differs only in the system model toggles. `hhemt combine` joins the primaries for reporting, and the cross-arm figures live on the combined report and never on the report of either primary.
 
-On the 3.5 m / 24 h grid the three-resume schedule above is written in the analysis
-config as:
+??? note "One primary per arm"
+    The sensitivity Snakefile generator accepts one enabled model type per primary, so an experiment with several arms is several primaries by construction and never by preference.
+
+To interrupt the simulations for a resume comparison, set `resume_interruption_schedule` on the analysis config to a strictly increasing tuple of hotstart-checkpoint indices. The values are neither percentages nor seconds. The simulation writes one checkpoint per reporting interval, so the 3.5 m / 24 h synthetic grid with a 10-minute reporting interval holds 144 checkpoints, and the 25% / 50% / 75% markers are `[36, 72, 108]`. The indices produce resumes at the same points in every compute config. The identity across configs makes cross-config resume comparisons meaningful. Convert the fractions to indices once, in the committed experiment config, because the driver performs no conversion. Leave the field unset for a clean sweep. The driver accepts no `deterministic_kill_after_n_checkpoints` field.
+
+On the 3.5 m / 24 h grid, the analysis config holds the schedule as follows.
 
 ```yaml
 resume_interruption_schedule: [36, 72, 108]
@@ -59,8 +34,7 @@ resume_interruption_schedule: [36, 72, 108]
 
 ## Set up the experiment
 
-Validate the config and build the partition-as-axis matrix (and, without
-`--dry-run`, write the matrix CSV and generate the synthetic model):
+Run `hhemt synth-experiment`, as the [CLI reference](../reference/cli.md#development) describes.
 
 ```bash
 # Load-smoke: validate config + build matrix in memory, write nothing.
@@ -72,85 +46,47 @@ hhemt synth-experiment --config synth_experiment.yaml \
     --dest-dir runs/synth_cc/
 ```
 
-The config's cross-field validators reject any requested
-`(n_mpi_procs, n_gpus, n_nodes, partition)` tuple that exceeds the resolved
-`PartitionSpec` caps before submission.
+The cross-field validators of the config reject any requested `(n_mpi_procs, n_gpus, n_nodes, partition)` tuple that exceeds the resolved `PartitionSpec` caps before submission.
 
 !!! note "Running the full ensemble"
-    `hhemt synth-experiment` currently prepares the experiment **inputs**
-    (validated config + matrix CSV + generated model). Composing and running the
-    full clean+resume ensemble from the framework is a tracked follow-up; today
-    the ensemble is driven by the companion driver
-    (`scripts/experiments/synth_compute_config.py`), which runs the matrix and
-    consolidates the outputs into a sensitivity primary.
+    `hhemt synth-experiment` prepares the experiment **inputs**, meaning the validated config, the matrix CSV, and the generated model. The companion driver `scripts/experiments/synth_compute_config.py` in a repository checkout runs the full clean and resume ensemble. The driver runs the matrix and consolidates the outputs into a sensitivity primary.
 
 ## Read the report
 
-After the ensemble has run and consolidated, produce the exploratory figures and
-select the compute-sensitivity reporting set so they render alongside the
-benchmarking figures in `analysis_report.html`:
+After the ensemble has run and consolidated, produce the exploratory figures and select the compute-sensitivity reporting set, so that the figures render alongside the benchmarking figures in `analysis_report.html`.
 
-```python
-from hhemt import Toolkit
-
-tk = Toolkit.from_configs("system.yaml", "analysis.yaml")   # the sensitivity primary
-tk.analysis.eda()                                           # emit plots/eda/ figures
-tk.analysis.render_report()                                 # renders the active reporting set
+```bash
+hhemt eda --system-config system.yaml --analysis-config analysis.yaml    # emit plots/eda/ figures
+hhemt reprocess --system-config system.yaml --analysis-config analysis.yaml --start-with render
 ```
 
-Select the `compute_sensitivity` reporting set by setting
-`report.reporting_set: compute_sensitivity` on the analysis config (see
-[Reporting sets](../reference/reporting-sets.md)). The rendered report then
-carries the compute-config EDA figures under **Key Results**, alongside the
-benchmarking figures.
+Both commands take the configs of the sensitivity primary. The second command renders the active reporting set against the existing plots.
 
-Which exploratory figures exist, which of them render, what each one writes, and
-how to read a verdict file are covered once in
-[Run the exploratory analysis](running-eda.md). Two things are specific to this
-experiment. Its default figure selection is `config_diff_maps`, the config-diff
-comparison across compute configurations. And because it runs as two separate
-single-arm primaries, a clean sweep and a resume sweep, the clean-versus-resume
-comparison is produced at combine level by `hhemt combine` rather than inside
-either primary.
+Select the `compute_sensitivity` reporting set with `report.reporting_set: compute_sensitivity` on the analysis config, as [Reporting sets](../reference/reporting-sets.md) describes. The rendered report then carries the compute-config EDA figures under **Key Results**.
+
+[Run the exploratory analysis](running-eda.md) covers the figures that exist, the figures that render, the files that each figure writes, and the reading of a verdict file. The experiment adds a default figure selection of `config_diff_maps`, the config-diff comparison across compute configurations. The clean sweep and the resume sweep execute as separate single-arm primaries, so [Combining experiments](combining-experiments.md) covers the clean-versus-resume comparison.
 
 ## Running a DEM-resolution sweep instead
 
-The same synthetic machinery produces a **DEM-resolution sweep**: the same model
-run across DEM cell sizes instead of across compute configs, whose figures
-compare peak flood depth from a finer versus a coarser grid.
+The same synthetic machinery produces a **DEM-resolution sweep**, the same model across DEM cell sizes in place of compute configs. The figures compare peak flood depth from a finer grid against a coarser grid.
 
-Set it up through the **sensitivity-CSV overlay**, not through
-`hhemt synth-experiment`: that CLI always builds the compute-config matrix and
-does **not** dispatch on a resolution axis. A DEM-resolution sweep is instead
-expressed by giving the sensitivity CSV a `system.target_dem_resolution` overlay
-column, one row per resolution rung:
+Set `dem_resolution_ladder` in the `synthetic_experiment_config` YAML, with the finest cell size first. The `dem` subcommand of `scripts/experiments/synth_compute_config.py` writes the matrix, selects the `dem_resolution` reporting set and the DEM-resolution figure types, and builds the analysis. `hhemt synth-experiment` builds the same matrix, with a row for each rung and replicate and a `system.target_dem_resolution` overlay column.
 
 | `member_id` | ... | `system.target_dem_resolution` |
 |---------|-----|--------------------------------|
-| `res_3p5` | ... | 3.5 |
-| `res_7p0` | ... | 7.0 |
-| `res_14p0` | ... | 14.0 |
+| `dem_3p5_r1` | ... | 3.5 |
+| `dem_3p5_r2` | ... | 3.5 |
+| `dem_7p0_r1` | ... | 7.0 |
+| `dem_7p0_r2` | ... | 7.0 |
+| `dem_14p0_r1` | ... | 14.0 |
+| `dem_14p0_r2` | ... | 14.0 |
 
-Each row overlays `target_dem_resolution` onto the base system config
-(`system_config.model_validate({**base, **overlay})`), so the members share
-everything but the DEM cell size. Choose a **constant-ratio** ladder, each coarser
-rung an integer multiple of the finest (e.g. 3.5 / 7.0 / 14.0 m, successive
-doubling), so each coarse grid is a clean aggregation of the finest, which is the
-**reference** (never "truth": its own error is unquantified). Then select the
-DEM-resolution reporting set:
+Each row overlays `target_dem_resolution` onto the base system config through `system_config.model_validate({**base, **overlay})`, so the members share everything except the DEM cell size. Choose a **constant-ratio** ladder with each coarser rung an integer multiple of the finest, such as 3.5, 7.0, and 14.0 m with successive doubling, so that each coarse grid is a clean aggregation of the finest. The finest grid is the **reference** and never the truth, because the error of the finest grid is unquantified. Then select the DEM-resolution reporting set and the figures.
 
-- `report.reporting_set: dem_resolution` on the analysis config (see
-  [Reporting sets](../reference/reporting-sets.md)), and
-- `eda_config.enabled_plots: [dem_resolution_cost_error, dem_resolution_diff_maps, dem_resolution_error_ecdf, dem_resolution_coupling_table]`.
+- `report.reporting_set: dem_resolution` on the analysis config, as [Reporting sets](../reference/reporting-sets.md) describes.
+- `eda.enabled_plots: [dem_resolution_cost_error, dem_resolution_diff_maps, dem_resolution_error_ecdf, dem_resolution_coupling_table]` on the analysis config.
 
-!!! warning "The two EDA families are mutually exclusive per experiment"
-    The `compute_sensitivity` family's `config_diff_maps` requires a **uniform**
-    grid across members and raises a named `ProcessingError` on a
-    mixed-resolution primary; the `dem_resolution` family requires the varying grid.
-    Pick one reporting set per experiment: do not mix `config_diff_maps` with the
-    `dem_resolution_*` renderers.
+!!! warning "One EDA family per experiment"
+    The `compute_sensitivity` and `dem_resolution` families need different grids, so no single sweep serves both, as [Composing several sets](../reference/reporting-sets.md#composing-several-sets) describes.
 
-To compare two experiments (e.g. clean vs resume, or two clusters) in one
-report, emit a bundle from each and combine them. See
-[Combining experiments](combining-experiments.md); `combine` accepts
-sensitivity-primary bundles.
+To compare experiments, such as clean versus resume or different clusters, in one report, emit a bundle from each and combine the bundles, as [Combining experiments](combining-experiments.md) describes. `combine` accepts sensitivity-primary bundles.

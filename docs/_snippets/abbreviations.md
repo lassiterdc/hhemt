@@ -16,10 +16,10 @@
 *[OLCF]: Oak Ridge Leadership Computing Facility
 *[OpenMP]: A standard for shared-memory threading within one node
 *[PID]: Persistent identifier
-*[PROV]: W3C provenance ontology (PROV-O)
-*[QOS]: Quality of service, the SLURM setting that attaches priority and limits to a job
+*[PROV]: W3C provenance ontology PROV-O
+*[QOS]: Quality of service
 *[ROCm]: AMD's GPU software platform
-*[SIF]: The image file format that Apptainer runs
-*[SLURM]: The job scheduler on the clusters hhemt targets
+*[SIF]: Singularity Image Format
+*[SLURM]: Simple Linux Utility for Resource Management
 *[SWMM]: EPA Storm Water Management Model
 *[WSL]: Windows Subsystem for Linux

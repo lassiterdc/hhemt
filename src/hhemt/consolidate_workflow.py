@@ -101,14 +101,20 @@ def validate_resource_usage(analysis, logger=None, *, df_status=None):
         scenario_dir = row["scenario_directory"]
         issues = []
 
-        # Get expected values from row if available (sensitivity analysis),
-        # otherwise from analysis config (regular analysis)
-        if "run_mode" in df_status.columns:
-            # Sensitivity analysis: each row has its own config
-            run_mode = row["run_mode"]
-            expected_nTasks = row.get("n_mpi_procs", 1) or 1
-            expected_omp_threads = row.get("n_omp_threads", 1) or 1
-            expected_gpus = row.get("n_gpus", 0) or 0
+        # Get expected values from the row when it carries them, otherwise from the analysis
+        # config. A row built by `df_status` carries bare `run_mode`, `n_mpi_procs`,
+        # `n_omp_threads` and `n_gpus` columns holding the model-specific expectation (a SWMM
+        # row says serial or openmp, never the table's MPI width), so those win. A frame that
+        # carries only the sensitivity table's `analysis.`-prefixed columns, the one spelling
+        # `_retrieve_df_setup` accepts, takes each row's expectation from them.
+        _prefix = (
+            "analysis." if "run_mode" not in df_status.columns and "analysis.run_mode" in df_status.columns else ""
+        )
+        if "run_mode" in df_status.columns or _prefix:
+            run_mode = row[f"{_prefix}run_mode"]
+            expected_nTasks = row.get(f"{_prefix}n_mpi_procs", 1) or 1
+            expected_omp_threads = row.get(f"{_prefix}n_omp_threads", 1) or 1
+            expected_gpus = row.get(f"{_prefix}n_gpus", 0) or 0
         else:
             # Regular analysis: use analysis config
             cfg = analysis.cfg_analysis

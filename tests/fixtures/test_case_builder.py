@@ -681,7 +681,6 @@ class retrieve_synth_TRITON_SWMM_test_case:
                 {
                     "landuse_lookup_file": str(self.artifacts.landuse_lookup),
                     "landuse_raster": str(self.artifacts.landuse),
-                    "landuse_description_colname": "landuse_description",
                     "landuse_lookup_class_id_colname": "landuse_class_id",
                     "landuse_lookup_mannings_colname": "mannings",
                 }

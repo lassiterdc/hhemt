@@ -9,7 +9,7 @@ speedup | Strong-scaling efficiency. TWO x-axis groups, not one shared axis: the
 is keyed on ``independent_var`` (typical: ``n_devices``) and the bottom pair on
 ``n_devices`` always, each labelled from its own group so a label cannot describe a
 column its panel did not plot (see ``resolve_axis_groups``). One line+marker series per
-``group_by_var`` value (typical: ``run_mode``).
+``group_by_var`` value (typical: ``analysis.run_mode``).
 
 Special line-drawing rules per the user-locked Phase 6 iter-2 spec:
 
@@ -52,6 +52,7 @@ import plotly.io as pio
 import xarray as xr
 from plotly.subplots import make_subplots
 
+from hhemt.config.viz_vocabulary import ValueEncodingPolicy
 from hhemt.exceptions import ProcessingError
 from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
@@ -470,9 +471,8 @@ def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labe
 # `sens_cfg.point_size`, `sens_cfg.line_style`, `sens_cfg.line_width`,
 # `sens_cfg.palette`, `sens_cfg.independent_var_labels`.
 #
-# `sens_cfg.gpu_marker` is NOT in that list any more. Hardware is carried by the column
-# facet, not by the marker symbol, so no site in this module selects a marker on
-# `is_gpu_group`. The plotly branch keys symbol on decomposition
+# No GPU marker setting exists. The column facet carries hardware, so no site in this
+# module selects a marker on `is_gpu_group`. The plotly branch keys symbol on decomposition
 # (`_DECOMPOSITION_SYMBOLS`); the matplotlib branch has no per-decomposition marker
 # vocabulary and uses `cpu_marker` for every series.
 
@@ -821,7 +821,9 @@ def render(
     # is never promoted to publication (KEEP-no-hybrid invariant).
     use_plotly = False if static_cfg is not None else (static_backend == "plotly")
     if use_plotly:
-        speedup_pg, strong_eff_pg, speedup_all, efficiency_all = _compute_scaling_series(df)
+        speedup_pg, strong_eff_pg, speedup_all, efficiency_all = _compute_scaling_series(
+            df, aggregation=sens_cfg.aggregation
+        )
         if analysis.cfg_analysis.sensitivity_analysis is not None:
             source_paths.append(Path(analysis.cfg_analysis.sensitivity_analysis))
         # F1: GPU hardware suffix (e.g., "gpu (a6000)"). Phase-4 (4c, D3): gpu_hardware
@@ -900,6 +902,9 @@ def render(
     # post-construction by _apply_matplotlib_axis_groups below, from the SAME two
     # AxisGroup objects that supply the labels.
     fig, (ax_wall, ax_cost, ax_speedup, ax_eff) = plt.subplots(4, 1, figsize=_figsize, sharex=False)
+    from hhemt.report_renderers.system_overview import _draw_static_subplot_label
+
+    _draw_static_subplot_label(ax_wall, static_cfg)
     _draw_panel(
         ax_wall,
         df,
@@ -1436,8 +1441,13 @@ def _compute_metric_all_rows_per_group(
 
 def _compute_scaling_series(
     df: pd.DataFrame,
+    aggregation: str = "mean",
 ) -> tuple[dict, dict, dict | None, dict | None]:
     """Compute the four scaling-panel series from the raw per-run frame.
+
+    ``aggregation`` is the statistic (`SensitivityReportConfig.aggregation`: ``mean``,
+    ``median``, ``min`` or ``max``) that collapses the replicates of one configuration
+    before the per-N min is taken; ``mean`` is the original behaviour.
 
     Returns ``(speedup_pg, strong_eff_pg, speedup_all, efficiency_all)``: the
     per-group speedup and strong-efficiency LINE series, then the all-rows
@@ -1491,7 +1501,7 @@ def _compute_scaling_series(
         # COLUMN is sa_id, the VARIABLE is member_id). The `**{...}` form binds the
         # emitted name AND the source column to one constant; a plain keyword would
         # bind neither, because a kwarg NAME cannot be a variable in this syntax.
-        wallclock_s=("wallclock_s", "mean"),
+        wallclock_s=("wallclock_s", aggregation),
         **{_MEMBER_KEY: (_MEMBER_KEY, "first")},
     )
     family_baselines = _resolve_family_baselines(
@@ -1599,6 +1609,29 @@ def _compute_scaling_series(
     return speedup_pg, strong_eff_pg, speedup_all, efficiency_all
 
 
+#: Marker shapes cycled by `value_encoding_policy="value_to_shape"`, one per distinct group value.
+_SHAPE_CYCLE = ("o", "s", "^", "v", "D", "P", "X", "*")
+
+
+def _apply_value_encoding(static_cfg, index: int, color, marker, palette):
+    """Return `(color, marker)` for the series at sorted position `index` under `value_encoding_policy`.
+
+    `colorscale` (the default, and any call without `static_cfg`) returns the inputs
+    unchanged. `one_to_one_dict` gives every distinct group value its own palette colour
+    by sorted position, a dictionary from value to colour that does not depend on which
+    values a panel happens to hold. `value_to_shape` keeps the colour and sets the marker
+    from `_SHAPE_CYCLE` by sorted position.
+    """
+    if static_cfg is None:
+        return color, marker
+    policy = static_cfg.value_encoding_policy
+    if policy == ValueEncodingPolicy.one_to_one_dict:
+        return palette[index % len(palette)], marker
+    if policy == ValueEncodingPolicy.value_to_shape:
+        return color, _SHAPE_CYCLE[index % len(_SHAPE_CYCLE)]
+    return color, marker
+
+
 def _draw_metric_panel(
     ax,
     metric_per_group: dict[str, list[tuple[float, float]]],
@@ -1663,6 +1696,7 @@ def _draw_metric_panel(
             is_gpu_group=str(gv).lower().startswith("gpu"),
             is_hybrid_group=str(gv).lower() == "hybrid",
         )
+        color, group_marker = _apply_value_encoding(static_cfg, _i, color, cpu_marker, palette)
         with prov.artist(
             axes_id="ax_metric",
             kind="line",
@@ -1681,7 +1715,7 @@ def _draw_metric_panel(
                 ys,
                 facecolor=_HOLLOW_FILL_MPL,
                 edgecolor=color,
-                marker=cpu_marker,
+                marker=group_marker,
                 s=sens_cfg.point_size,
                 linewidth=1.0,
                 zorder=3,
@@ -1765,24 +1799,22 @@ def _draw_panel(
     groups = sorted(df["group_value"].dropna().unique(), key=str)
     # Dual-source publication style: static_cfg overrides palette + cpu/gpu markers.
     palette = static_cfg.series_palette if static_cfg is not None else sens_cfg.palette
-    # `gpu_marker` is deliberately NOT read here any more: hardware is out of the symbol
-    # channel, and its only consumer was the branch below. The config field survives for
-    # other consumers; leaving the binding would be an unused local (ruff F841).
+    # Hardware is out of the symbol channel, so a single `cpu_marker` binding serves every series.
     cpu_marker = static_cfg.cpu_marker if static_cfg is not None else sens_cfg.cpu_marker
     for _i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
         is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
         color = _decomposition_color(gv, palette, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
-        # Hardware is OUT of the symbol channel: it is carried by the column facet in the
-        # plotly branch and named in the legend text here, so `gpu_marker` no longer
-        # selects. This branch has no per-decomposition marker vocabulary to replace it
-        # with -- `sens_cfg` offers exactly two markers -- so every series takes
-        # `cpu_marker`, which is already what `_draw_metric_panel` does for ALL groups
-        # including GPU. The two matplotlib sites now agree. Giving this branch the
+        # Hardware is OUT of the symbol channel: the column facet carries it in the
+        # plotly branch and the legend text names it here. This branch has no
+        # per-decomposition marker vocabulary and `sens_cfg` offers one marker, so every
+        # series takes `cpu_marker`, as `_draw_metric_panel` does for ALL groups
+        # including GPU. The two matplotlib sites agree. Giving this branch the
         # four-symbol strategy map the plotly branch carries needs a config field
-        # (`decomposition_markers`), which is a schema change, not a figure iteration.
+        # (`decomposition_markers`), a schema change and not a figure iteration.
         marker = cpu_marker
+        color, marker = _apply_value_encoding(static_cfg, _i, color, marker, palette)
         is_single_point_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
         if is_single_point_group or len(sub) == 1:
             with prov.artist(
@@ -2525,7 +2557,7 @@ def _plotly_metric_panel(
             # level" rule). Without the first step the min is a min over RUNS, which on
             # the staged master discards a 159.3 s vs 275.9 s replicate spread silently.
             _by_cfg = (
-                sub.groupby(["indep_value", "config_id"], as_index=False)[y_col].mean()
+                sub.groupby(["indep_value", "config_id"], as_index=False)[y_col].agg(sens_cfg.aggregation)
                 if "config_id" in sub.columns
                 else sub
             )

@@ -1,59 +1,48 @@
 # Publish a dataset and fetch inputs by DOI/PID
 
-This guide covers the two ends of the reproducibility loop: **publishing** a consolidated
-analysis to a DOI-minting repository (Zenodo or HydroShare), and **fetching** a case
-study's heavy inputs back by DOI/PID. Both are opt-in: publishing is never triggered by
-`analysis.run()` or `submit_workflow()`.
+## Goal
 
-## Which deposit unit? data-DOI vs runnable-DOI
+Publish a consolidated analysis to Zenodo or HydroShare and fetch the heavy inputs of a case study back by DOI or PID. Both directions are opt-in. `analysis.run()` and `submit_workflow()` never trigger publishing.
 
-The toolkit can publish two different units, minting two different kinds of DOI. Pick by what
-you want the DOI to *do*:
+## Prerequisites
 
-| Deposit unit | Command | The DOI mints a… | Use when |
+- A [consolidated analysis](#before-you-publish).
+- [Host credentials in environment variables](#provide-credentials-as-environment-variables).
+
+## Key references
+
+- The [FAIR scope table](../reference/fair-scope-table.md) lists the license identifiers.
+- [DOI round-trip for operators](doi-roundtrip-e2e.md) walks through the runnable-DOI round-trip.
+- [Config filling](config-filling.md#4-point-the-analysis-config-at-your-events) describes `hhemt_sha`.
+- The [configuration schema](../reference/config-schema.md) describes `dataset_license`.
+
+## Choose a deposit unit: data-DOI or runnable-DOI
+
+| Deposit unit | Command | DOI type | Use case |
 |---|---|---|---|
-| **analysis-directory set** (consolidated zarr + `ro-crate-metadata.json` + the two configs) | `analysis.publish(target=…)` | **data-DOI**: the archived, citable analysis outputs + provenance (reproducible from the configs and crate) | you're archiving results for citation / a data-availability statement |
-| **reprex bundle** (the round-trippable bundle that runs an experiment from scratch) | `analysis.publish_reprex_bundle(target=…)` | **runnable-DOI**: `hhemt ingest --doi {DOI} --hpc-system-config {your-cluster-hpc-system-config.yaml}` fetches and reconstitutes it, then prints the `hhemt run` command that runs it | you want a reproducible experiment that anyone can fetch by DOI (see [the DOI round-trip runbook](doi-roundtrip-e2e.md)) |
+| **Analysis-directory set**, the consolidated zarr with `ro-crate-metadata.json` and the system and analysis configs | `hhemt publish --target {zenodo or hydroshare}` | **Data-DOI** for the archived, citable analysis outputs with provenance, reproducible from the configs and the crate | Archiving results for citation or a data-availability statement |
+| **Reprex bundle**, the round-trippable bundle that runs an experiment from scratch | `hhemt publish --target {zenodo or hydroshare} --reprex-bundle` | **Runnable-DOI**. `hhemt ingest --doi {DOI} --hpc-system-config {your-cluster-hpc-system-config.yaml}` fetches and reconstitutes the bundle, then prints the `hhemt run` command that runs the bundle | A reproducible experiment that anyone can fetch by DOI, as [the DOI round-trip](doi-roundtrip-e2e.md) shows |
 
-Both go through the same `target` seam and the same credentials below; they differ only in
-what bytes are deposited. The rest of this guide uses `analysis.publish()` (the data-DOI); the
-runnable-DOI path is identical with `publish_reprex_bundle()` in place of `publish()`.
+Both deposits use the same `target` seam and the same credentials below, and differ only in the deposited bytes. The rest of this guide describes the data-DOI deposit, and the runnable-DOI path is identical with `--reprex-bundle` added.
 
-From the command line, both deposits are made from an experiment definition, with the
-config-driven form:
+Both deposits are made from an experiment definition with the config-driven form.
 
 ```bash
 hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --target zenodo
 hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --target zenodo --reprex-bundle
 ```
 
-!!! example "Verified against a live deposit (Zenodo sandbox)"
-    The command forms on this page were run against a Zenodo **sandbox** deposit of a
-    15-configuration CPU sensitivity analysis: one data deposit and one runnable
-    reprex-bundle deposit. The reprex-bundle deposit is far larger because it carries the
-    declared inputs. The `10.5072` DOI prefix marks the sandbox: a sandbox record is
-    discardable and is not a citable DOI, and production Zenodo mints `10.5281`.
-    `HHEMT_ZENODO_BASE_URL=https://sandbox.zenodo.org` together with a sandbox token
-    selects the sandbox. Not verified: the 15-member sweep was not re-run from the
-    deposit; only `hhemt run --dry-run` on the reconstituted configs was.
+To try a deposit without minting a citable DOI, use the Zenodo sandbox. `HHEMT_ZENODO_BASE_URL=https://sandbox.zenodo.org` together with a sandbox token selects the sandbox. The `10.5072` DOI prefix marks a discardable record, and production Zenodo mints `10.5281`. `hhemt ingest` resolves the Zenodo host from the same variable, so a sandbox DOI resolves against the sandbox and never against production. [The DOI round-trip](doi-roundtrip-e2e.md) names the deposit that verified the command forms and the parts left unverified.
 
 ## Before you publish
 
-`analysis.publish()` deposits the *analysis-directory set*: the consolidated
-`analysis_datatree.zarr`, the co-located `ro-crate-metadata.json` provenance sidecar, and
-the two configs (`cfg_analysis.yaml` + `cfg_system.yaml`), whose paths are relative to the deposit folder. So the analysis must already be
-**consolidated** (run through `reprocess(start_with="consolidate")` or a full `run()`), or
-publish has nothing to deposit and no crate to read the license from.
+`hhemt publish` deposits the *analysis-directory set*, meaning the consolidated `analysis_datatree.zarr`, the co-located `ro-crate-metadata.json` provenance sidecar, `cfg_analysis.yaml`, and `cfg_system.yaml`, with paths relative to the deposit folder. The analysis must therefore be **consolidated**. Run `hhemt reprocess --start-with consolidate` or a full `hhemt run` first. Otherwise publish has no output to deposit and no crate to read the license from.
 
-The dataset license is read back from the crate sidecar: it is baked in at consolidation
-from `analysis_config.dataset_license`, which has no default. Set it before consolidating;
-an analysis consolidated without one is refused at publish, with the steps that fix it.
-Publishing does **not** re-stamp the archived license.
+Publishing reads the dataset license back from the crate sidecar. Set `analysis_config.dataset_license` before consolidating, because consolidation bakes the license into the crate. Publishing keeps the archived license that consolidation stamped.
 
-## Provide credentials (environment variables)
+## Provide credentials as environment variables
 
-Live deposits require host credentials, supplied via environment variables so they never
-land in a config file:
+Live deposits require host credentials, supplied through environment variables so that the credentials never land in a config file. A missing or misnamed variable fails with a `PublishError` that names the variable.
 
 ```bash
 # Zenodo (or the sandbox: set HHEMT_ZENODO_BASE_URL=https://sandbox.zenodo.org)
@@ -66,83 +55,43 @@ export HHEMT_HYDROSHARE_PASSWORD=<your-hydroshare-password>
 
 ## Publish to Zenodo
 
-Zenodo mints the DOI on publish:
+??? note "Toolkit steps behind `publish(target='zenodo')`"
+    The call creates a draft, embeds the record metadata, uploads the deposit, publishes, and reads the minted DataCite-registered DOI back from the published record. The toolkit reserves no DOI up front, so the identifier exists only after the deposit is published.
 
-??? note "What the toolkit does behind `publish(target='zenodo')`"
-    It creates a draft, embeds the record metadata, uploads the deposit, publishes,
-    and reads the minted, DataCite-registered DOI back from the published record.
-    No DOI is reserved up front, so the identifier does not exist until the deposit
-    is published.
-
-```python
-result = analysis.publish(
-    target="zenodo",
-    software_doi="10.5281/zenodo.SOFTWARE",   # optional: links data -> software (IsCompiledBy)
-)
-print(result["data_doi"], result["record_url"])
-# {"target": "zenodo", "data_doi": ..., "software_doi": ..., "record_url": ...}
+```bash
+hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --target zenodo \
+    --software-doi 10.5281/zenodo.SOFTWARE    # optional: links data -> software (IsCompiledBy)
 ```
 
-`software_doi` is optional; when given, the deposit records a DataCite `IsCompiledBy`
-`relatedIdentifier` (data → the software that produced it). When that software DOI is itself
-a Zenodo record, `publish` also tries to backfill the reciprocal edge onto the software
-record; a backfill failure is never raised, because the data record is already published.
+`hhemt publish` prints the deposit record with `data_doi` as the minted DOI and `record_url` as the address of the record.
 
-Publishing does not re-stamp the archived license, so `publish` refuses to deposit a crate
-whose license disagrees with your config. This check runs before any override is read: if
-`analysis_config.dataset_license` differs from the license in `ro-crate-metadata.json`,
-`publish` raises `PublishError` and tells you to re-emit the crate. Re-emitting requires
-`regenerate_existing=True`. A plain `reprocess(start_with="consolidate")` leaves an intact
-consolidated zarr in place and never rewrites the crate. Set `dataset_license` in the analysis
-config file and rebuild the analysis from that file (a value set on the in-memory config never
-reaches the consolidation subprocess), then:
+`--software-doi` is optional. When given, the deposit records a DataCite `IsCompiledBy` `relatedIdentifier` from the data to the software that produced the data. When the software DOI is a Zenodo record, `publish` also tries to backfill the reciprocal edge onto the software record, and a backfill failure never raises, because the data record is already published.
 
-```python
-analysis.reprocess(start_with="consolidate", regenerate_existing=True)
-analysis.publish(target="zenodo")
-```
+Publishing leaves the archived license as stamped, so `publish` refuses to deposit a crate whose license disagrees with your config. The check runs before any override is read. When `analysis_config.dataset_license` differs from the license in `ro-crate-metadata.json`, `publish` raises `PublishError`. The error tells you to re-emit the crate. Re-emitting requires `--regenerate-existing`, and a plain `hhemt reprocess --start-with consolidate` leaves an intact consolidated zarr in place and never rewrites the crate. Set `dataset_license` in the analysis config file, run the consolidation again from that file, and then deposit.
 
-To additionally assert the license you expect at publish time, pass
-`override_dataset_license`. It is compared against the crate only after the config check has
-passed, and a disagreement raises `PublishError` rather than publishing a mismatched license:
-
-```python
-analysis.publish(target="zenodo", override_dataset_license="CC-BY-NC-4.0")
+```bash
+hhemt reprocess --system-config my_system.yaml --analysis-config my_analysis.yaml \
+    --start-with consolidate --regenerate-existing
+hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --target zenodo
 ```
 
 ## Publish to HydroShare
 
-HydroShare is a two-step flow, because hsclient (v1.1.6) has no programmatic DOI mint. `publish()`
-creates the resource, uploads the deposit set, sets it public, then **stops and returns a
-manual instruction**:
+HydroShare needs a manual step, because hsclient has no programmatic DOI mint. `hhemt publish` creates the resource, uploads the deposit set, sets the resource public, and then **stops and prints a manual instruction**.
 
-```python
-result = analysis.publish(target="hydroshare")
-print(result["manual_step"])   # open result["record_url"] and use 'Publish' in the web UI
+```bash
+hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --target hydroshare
 ```
 
-Open `result["record_url"]` and click **Publish** in the HydroShare web UI to mint the DOI. If
-you want the data-to-software relation recorded on the resource, pass `software_doi` on that
-first `publish(target="hydroshare")` call, as in the Zenodo example above: the toolkit writes
-it into the resource's relations before the resource goes public. Do not re-run `publish` to
-add it afterwards. Every HydroShare `publish` call creates a new resource, so a second call
-deposits a second copy and leaves the first untouched. For HydroShare deposits, the toolkit
-writes no reciprocal edge (software to data, which needs the minted DOI) on the software
-record.
+Open the `record_url` that the command prints and click **Publish** in the HydroShare web UI to mint the DOI. To record the data-to-software relation on the resource, pass `--software-doi` on that first `hhemt publish --target hydroshare` call, as the Zenodo example above shows. The toolkit writes the software DOI into the relations of the resource before the resource goes public. Do not re-run `publish` to add the DOI afterwards. Every HydroShare `publish` call creates a new resource, so a second call deposits a second copy and leaves the first untouched. For HydroShare deposits, the toolkit writes no reciprocal edge on the software record, from software to data, because that edge needs the minted DOI.
 
 ## Publish a sensitivity analysis
 
-A sensitivity analysis deposits its **primary** tree the same way:
-
-```python
-# The analysis-directory set, with experiment_datatree.zarr as the consolidated zarr
-sensitivity.publish(target="zenodo")
-```
+The deposit of a sensitivity analysis uses the same command and covers the **primary** tree, so the consolidated zarr of the analysis-directory set is `experiment_datatree.zarr`.
 
 ## Fetch a case study's inputs by DOI/PID
 
-A case study's `case.yaml` is a provenance descriptor of *remote* heavy inputs. Point it at
-a durable deposit with `host` + `doi` (or `pid`):
+The `case.yaml` of a case study is a provenance descriptor of *remote* heavy inputs. Point the descriptor at a durable deposit with `host` and `doi`, or `pid`.
 
 ```yaml
 # test_data/<case_name>/case.yaml
@@ -152,8 +101,7 @@ host: zenodo                       # or: hydroshare
 doi: '10.5281/zenodo.1234567'      # host='zenodo' requires a doi OR pid
 ```
 
-Then load the case study. The toolkit dispatches on `host`, fetches over anonymous-first
-HTTPS, and verifies every file against the `manifest` sha256 map:
+Load the case study from Python, because the case-study fetch has no command-line form. The toolkit dispatches on `host`, fetches over anonymous-first HTTPS, and verifies every file against the `manifest` sha256 map.
 
 ```python
 from hhemt.experiments import TRITON_SWMM_experiment
@@ -171,11 +119,6 @@ experiment = TRITON_SWMM_experiment.from_case_study(
 )
 ```
 
-Seven arguments are required: the first six, and the keyword-only `hhemt_sha`. `download_if_exists`
-is optional. `hhemt_sha` is the full 40-hex commit of hhemt that you run. Nothing defaults it,
-because the analysis refuses to construct when the running toolkit is at a different commit. The
-two template names and `case.yaml` live under `test_data/{case_name}/`. For the shipped Norfolk
-case, `NorfolkIreneExperiment.load(hhemt_sha=...)` wraps this call.
+The call requires every argument shown except `download_if_exists`. `hhemt_sha` is keyword-only and holds the commit of hhemt that you run, as [Config filling](config-filling.md#4-point-the-analysis-config-at-your-events) describes. The template names and `case.yaml` live under `test_data/{case_name}/`. For the shipped Norfolk case, `NorfolkIreneExperiment.load(hhemt_sha=...)` wraps this call.
 
-The fetch is host-agnostic on verification: the streaming 1 MiB-chunk sha256 check is
-byte-identical regardless of `host`, and Globus (when used) stays transport-only.
+Verification is host-agnostic. The streaming 1 MiB-chunk sha256 check is byte-identical regardless of `host`, and Globus, when used, stays transport-only.

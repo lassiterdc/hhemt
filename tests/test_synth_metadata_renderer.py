@@ -470,12 +470,20 @@ def test_reprex_guide_renders_placeholders_not_values(tmp_path):
     html, _, _ = _render(tmp_path, doc=_full_crate())
     assert "{amend for your target system}" in html
     assert "{your-default_account}" in html
-    # The EXPERIMENT placeholder is plain text. The empty-cell dash still rides in the
-    # fragment's options JSON, and `json.dumps` defaults to ensure_ascii=True, so it is emitted
-    # as the escape `\u2014` -- which renders as a dash in the browser but is NOT the literal
-    # character in the file. The escape is asserted explicitly.
+    # The EXPERIMENT placeholder is plain text.
     assert "{inherited from the bundle}" in html
-    assert "\\u2014" in html, "the empty-cell dash should be JSON-escaped, not dropped"
+    # The JSON escape of a dash is pinned on the fragment builder directly. `json.dumps` defaults to
+    # ensure_ascii=True, so a dash cell is emitted as the escape `\u2014`, which renders as a dash in the
+    # browser but is NOT the literal character in the file. The rendered guide holds no empty-cell dash
+    # and its field descriptions carry no dash, so a page-level assertion would test description wording
+    # and prove nothing about escaping.
+    from hhemt.report_renderers._tabulator_defaults import build_table_fragment
+
+    fragment = build_table_fragment(
+        container_id="dash_probe",
+        options={"data": [{"Field": "\u2014"}], "columns": [{"title": "Field", "field": "Field"}]},
+    )
+    assert "\\u2014" in fragment.script, "a dash cell should be JSON-escaped, not dropped"
 
 
 def test_reprex_guide_rows_default_to_required_first_then_alphabetical(tmp_path, monkeypatch):

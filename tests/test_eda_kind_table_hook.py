@@ -48,10 +48,6 @@ def _kind_of(row: str) -> str:
     return row.split("|")[1].strip().strip("`")
 
 
-def _mark_of(row: str) -> str:
-    return row.split("|")[3].strip()
-
-
 # --- the substitution behaviour -------------------------------------------------
 
 
@@ -59,7 +55,7 @@ def test_marker_is_substituted_on_the_target_page():
     page_md = f"# Run the exploratory analysis\n\nbefore\n\n{hook.MARKER}\n\nafter\n"
     out = hook.on_page_markdown(page_md, _page(hook.TARGET_URI), None, None)
     assert hook.MARKER not in out
-    assert "| Renderer kind | Backing artifact | Figure |" in out
+    assert "| Plot | Backing artifact |" in out
     # The surrounding prose is untouched: the hook substitutes, it does not rewrite.
     assert "before" in out and "after" in out
 
@@ -94,12 +90,29 @@ def test_rows_are_exactly_the_registered_kinds_in_sorted_order():
     assert [_kind_of(r) for r in rows] == sorted(_EDA_RENDERERS)
 
 
-def test_the_mark_tracks_the_pending_set():
-    from hhemt.eda._sensitivity_figures import _PENDING_EDA_FIGURE_STEMS
+def test_the_table_carries_exactly_the_kind_and_backing_columns_and_no_status_marker():
+    """No row states a figure's design status; each row is the two derived identifiers.
 
-    for row in _rendered_rows(hook.render_table()):
-        expected = "Not yet designed" if _kind_of(row) in _PENDING_EDA_FIGURE_STEMS else "Designed"
-        assert _mark_of(row) == expected, _kind_of(row)
+    Property: the header names two columns, every data row holds exactly two cells, and no
+    cell contains a status word (`Designed`, `Not yet designed`).
+
+    Class: any registry content; the cells are derived from the registries only.
+
+    What kills it: restoring a third column that derives a status from a set of kinds, or a
+    fixed status word in any row.
+
+    A second correct implementation under which it still passes: a different column order or
+    header wording, provided there are two columns and no status word.
+    """
+    table = hook.render_table()
+    header = [ln for ln in table.splitlines() if ln.startswith("|")][0]
+    assert header.count("|") == 3
+    rows = _rendered_rows(table)
+    assert rows
+    for row in rows:
+        assert row.count("|") == 3, row
+    lowered = table.lower()
+    assert "designed" not in lowered and "not yet" not in lowered
 
 
 def test_the_backing_column_honours_the_override_map():
@@ -122,7 +135,7 @@ def test_no_rendered_cell_can_trip_the_docs_content_gate():
     """The generated table bypasses `check_docs_content.py`, which reads what is on
     disk and therefore sees the marker rather than the table. This pins the property
     that made a build-time lint pass unnecessary: every emitted cell is an identifier
-    or one of two fixed words."""
+    read out of the code."""
     table = hook.render_table()
     assert "—" not in table
     for banned in ("scaffold", "estate"):

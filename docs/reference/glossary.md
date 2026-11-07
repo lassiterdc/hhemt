@@ -1,70 +1,48 @@
 # Glossary
 
-The terms the rest of these pages use without stopping to explain. The acronyms
-here also show their expansion as a tooltip when you hover over them on any page.
-Where a term names a configuration field or a class, the entry says which, so you
-can find the field in the [configuration schema](config-schema.md) or the class in
-the [API reference](api.md).
+Acronyms here show their expansion as a tooltip on any page. The [configuration schema](config-schema.md) lists configuration fields, and the [API reference](api.md) lists classes.
 
-## The objects a study is made of
+## Nomenclature
 
-### system
+A matrix is a set of experiments. An experiment is one or more analyses. An analysis is one or more simulations. Every page uses the terms with the meanings in the entries.
 
-The modelled place and the solver build. It holds the inputs that
-every analysis over that place shares, which are the DEM, the Manning's roughness
-inputs, the choice of which models to run, and the compiled solver binaries. It
-is described by the system config (`system_config`) and is not the computer you
-run on; that is the [HPC system config](#hpc-system-config). One system can have
-many analyses.
+### matrix
 
-### analysis
-
-A set of weather events simulated against one system, together
-with everything produced from them: the simulations, the processed outputs, the
-consolidated datasets and the report. It is described by the analysis config
-(`analysis_config`). Every analysis is either an [event ensemble](#event-ensemble)
-or a [sensitivity analysis](#sensitivity-analysis). By default each analysis lives in its own
-directory, named by its `analysis_id`, under its system's directory; the analysis
-config's `analysis_dir` places it elsewhere.
+A set of [experiments](#experiment). The experiments of a matrix differ in the compute configuration, the DEM resolution, the models, or another parameter. The `synth-experiment` command builds the matrix of a synthetic experiment.
 
 ### experiment
 
-This word has three senses, and the page you are reading tells
-you which.
+One or more [analyses](#analysis). The name covers the objects below.
 
-- An **experiment definition** is a directory holding an `experiment.yaml`
-  descriptor that points to a system config and an analysis config, and records
-  the input datasets, the toolkit version it is pinned to and whether it runs in
-  a container. Its schema is `ExperimentConfig`. See
-  [Running an experiment definition](../how-to/running-an-experiment-definition.md).
-- A **case-study experiment** is the object that `NorfolkIreneExperiment.load`
-  and `TRITON_SWMM_experiment.from_case_study` return. It holds a system as
-  `.system` and an analysis as `.analysis`, built from a [case study](#case-study).
-- A **sensitivity analysis's experiment root** is the level above its members:
-  the place where `experiment_datatree.zarr` is written, with one node per
-  completed [member](#member).
+- An **experiment definition** is a directory holding an `experiment.yaml` descriptor. The descriptor points to the system config and the analysis config of the experiment. The descriptor records the input datasets, the toolkit version of the pin, and whether the experiment runs in a container. The schema is `ExperimentConfig`. See [Running an experiment definition](../how-to/running-an-experiment-definition.md).
+- A **case-study experiment** is the object that `NorfolkIreneExperiment.load` and `TRITON_SWMM_experiment.from_case_study` return. The object holds a system as `.system` and an analysis as `.analysis`, built from a [case study](#case-study).
+- The **experiment root** of a sensitivity analysis is the level above the [members](#member). [The per-experiment tier](output-data-model.md#the-per-experiment-tier) lists the contents of the root.
+
+### analysis
+
+One or more [simulations](#simulation) of weather events against one [system](#system), together with everything produced from them. The products are the processed outputs, the consolidated datasets, and the report. The analysis config, `analysis_config`, describes an analysis. Every analysis is an [event ensemble](#event-ensemble) or a [sensitivity analysis](#sensitivity-analysis). Each analysis has a directory under the directory of the system, named by `analysis_id`. The `analysis_dir` field of the analysis config places the directory elsewhere.
+
+### simulation
+
+One execution of the solver for one [scenario](#scenario) under one [compute configuration](#compute-configuration). A simulation writes raw outputs. Processing turns the raw outputs into the processed outputs of the analysis.
+
+## Objects of an analysis
+
+### system
+
+The modelled place and the solver build. A system holds the inputs that every analysis over that place shares. The inputs are the DEM, the Manning's roughness inputs, the choice of models, and the compiled solver binaries. The system config, `system_config`, describes a system. A system is not the computer that executes the simulations, and the [HPC system config](#hpc-system-config) describes that computer. One system can have many analyses.
 
 ### experiment definition
 
-The directory with an `experiment.yaml` descriptor that makes a study runnable by
-someone else. It is the first sense of [experiment](#experiment). It names the
-configs and inputs a run needs and holds none of the run's outputs, so it is not a
-[bundle](#bundle).
+The directory with an `experiment.yaml` descriptor that makes an experiment executable by anyone. The directory names the configs and inputs that the [experiment](#experiment) needs. A [bundle](#bundle) holds the outputs.
 
 ### event ensemble
 
-An analysis whose runs are weather events. Each event is
-simulated against the same system, and the results are consolidated for analysis
-across the whole population of events. It is the kind of analysis you get when
-`toggle_sensitivity_analysis` is `false`.
+An analysis whose simulations are weather events. Each event is simulated against the same system, and the consolidation combines the results across the whole population of events. An analysis is an event ensemble when `toggle_sensitivity_analysis` is `false`.
 
 ### sensitivity analysis
 
-An analysis whose runs are the rows of a parameter table
-that you supply. Each row varies something about the model or the compute
-configuration, and each is run as a [member](#member). It is the kind of analysis
-you get when `toggle_sensitivity_analysis` is `true`. A **sweep** is the same
-thing under another name; the pages use both words interchangeably.
+An analysis whose simulations follow the rows of a parameter table that you supply. Each row varies the model or the compute configuration and forms a [member](#member). An analysis is a sensitivity analysis when `toggle_sensitivity_analysis` is `true`. A **sweep** is a sensitivity analysis under another name, and the pages use both words.
 
 ### sweep
 
@@ -72,251 +50,167 @@ A synonym for [sensitivity analysis](#sensitivity-analysis).
 
 ### member
 
-One row of a sensitivity analysis's parameter table. A member is run
-as an analysis of its own, in its own directory (`members/member_{member_id}/`),
-and carries its own scenarios and consolidated output.
+One row of the parameter table of a sensitivity analysis. A member is an analysis with a directory `members/member_{member_id}/`, scenarios, and consolidated output.
 
 ### scenario
 
-One weather event simulated within an analysis. Its files live under
-`sims/{event_id}/`. An event ensemble has one scenario per event, and each member
-of a sensitivity analysis has its own.
+One weather event within an analysis. The files are under `sims/{event_id}/`. An event ensemble has one scenario per event. Each member of a sensitivity analysis has scenarios.
 
 ### benchmarking
 
-A sensitivity analysis whose axis is the compute configuration.
-It also names the [reporting set](#reporting-set) that selects the figures such a
-study needs, which are run time, compute cost and speedup.
+A sensitivity analysis whose axis is the compute configuration. The term also names the [reporting set](#reporting-set) that selects the figures for such an analysis. The figures show wall-clock time, compute cost, and speedup.
 
 ### case study
 
-A worked example that ships with the repository under
-`test_data/{case_name}/`, described by a `case.yaml` manifest (`CaseManifest`)
-that names where its large input data are hosted. The Norfolk coastal flooding
-case is the one the tutorial runs.
+A worked example under `test_data/{case_name}/` in the repository. The `case.yaml` manifest describes the example and names the host of the large input data. The manifest schema is `CaseManifest`. The Norfolk coastal flooding case is the case study of the tutorials.
 
 ## Compute and execution
 
 ### compute configuration
 
-How one simulation uses the machine. It is set by
-`run_mode` together with `n_mpi_procs`, `n_omp_threads`, `n_gpus` and `n_nodes`.
+The machine resources of one simulation. `run_mode` sets the configuration together with `n_mpi_procs`, `n_omp_threads`, `n_gpus` and `n_nodes`.
 
 ### `run_mode`
 
-The analysis config field that selects the parallelism one
-simulation uses. The options are `serial`, `openmp`, `mpi`, `hybrid` (MPI ranks that
-each run OpenMP threads) and `gpu`.
+The analysis config field that selects the parallelism of one simulation. The options are `serial`, `openmp`, `mpi`, `hybrid` and `gpu`. The `hybrid` option combines MPI ranks that each use OpenMP threads.
 
 ### `multi_sim_run_method`
 
-The analysis config field that selects how the many
-simulations of an analysis are dispatched. `local` runs them in a thread pool on
-the machine you are on, with no SLURM. `batch_job` runs Snakemake in a tmux session
-on the login node and submits one SLURM job per scenario. `1_job_many_srun_tasks`
-runs all of them as concurrent `srun` tasks inside one SLURM allocation.
+The analysis config field that selects the dispatch of the simulations of an analysis. The option `local` uses a thread pool on the current machine without SLURM. The option `batch_job` starts Snakemake in a tmux session on the login node and submits one SLURM job per scenario. The option `1_job_many_srun_tasks` executes all simulations as concurrent `srun` tasks inside one SLURM allocation.
 
 ### native mode
 
-The default value of `execution_environment`. Simulation and
-processing run directly on the host, using a solver you have compiled yourself.
+`execution_environment` has the default value native. Simulation and processing execute on the host with a solver that you compiled.
 
 ### container mode
 
-The value `container` of `execution_environment`. The
-simulation executable and the processing runners are wrapped in
-`apptainer exec` on a [SIF](#sif) image, which hhemt resolves for you.
+`execution_environment` has the value `container` in container mode. The simulation executable and the processing runners start inside `apptainer exec` on a [SIF](#sif) image, and hhemt resolves the image.
 
 ### HPC system config
 
-The third configuration file, which describes a cluster
-rather than a study (`hpc_system_config`). It carries the partitions and their
-limits, the account to charge and the container settings. Local runs do not need
-one.
+The configuration file that describes a cluster and no experiment, `hpc_system_config`. Only cluster-bound work needs the file. [HPC-profile setup](../how-to/hpc-profile-setup.md) describes the authoring.
 
 ### partition
 
-A SLURM queue with its own limits. In the HPC system config each
-partition is a `PartitionSpec` that records caps such as the longest run time and the
-most memory a single job may request, and hhemt rejects a request that exceeds
-them before submitting.
+A SLURM queue with limits. Each partition in the HPC system config is a `PartitionSpec` with caps such as the longest wall time and the most memory for a single job. hhemt rejects a request above a cap before submitting.
 
 ### allocation
 
-In SLURM, the resources granted to a job. The word is also used for
-the account a job is charged to; the HPC system config's `default_account` field
-describes itself that way.
+In SLURM, the resources granted to a job. The word also names the account that a job is charged to, and the `default_account` field of the HPC system config uses that sense.
 
 ### driver
 
-The process that orchestrates a run. It starts the workflow, submits
-the jobs and writes a liveness record under `_status/_orchestrator/`. A blocking
-local driver ends when the call returns. A detached driver, such as the tmux session
-of `batch_job` or a single batch job, outlives it.
+The process that orchestrates an experiment. The driver starts the workflow, submits the jobs, and writes a liveness record under `_status/_orchestrator/`. A blocking local driver ends when the call returns. A detached driver outlives the call. The tmux session of `batch_job` and a single batch job are detached drivers.
 
 ### sentinel
 
-A small JSON file under an analysis's `_status/` directory that marks
-work as in flight. `_status/_submitted/{rule_token}.json` records a submitted job,
-and `_status/_orchestrator/{driver_id}.json` records a live [driver](#driver). hhemt
-checks them so that it does not submit the same work twice and so that deleting or
-reprocessing refuses to run over live work. In DEM preparation the word has another
-meaning: a sentinel elevation is a placeholder value burned into a DEM, for example
-for buildings or for cells outside the watershed.
+A small JSON file under the `_status/` directory of an analysis that marks work in flight. `_status/_submitted/{rule_token}.json` records a submitted job. `_status/_orchestrator/{driver_id}.json` records a live [driver](#driver). hhemt checks the files so that each piece of work is submitted once and so that deleting or reprocessing refuses to start over live work. In DEM preparation the word has another meaning. A sentinel elevation is a placeholder value burned into a DEM for buildings or for cells outside the watershed.
 
 ### hotstart
 
-Restarting a TRITON simulation from a checkpoint it wrote earlier,
-instead of from time zero. A simulation that a wall-time limit killed can be
-dispatched again and continue from its latest checkpoint.
+A restart of a TRITON simulation from an earlier checkpoint. [Scale and hardware](../explanation/limitations.md#scale-and-hardware) covers a simulation that a wall-time limit stops.
 
 ### Snakemake
 
-The open-source workflow manager hhemt uses to run the steps of an
-analysis. It skips steps that have already completed.
+The open-source workflow manager that hhemt uses to execute the steps of an analysis. Snakemake skips completed steps.
 
 ### Apptainer
 
-The container runtime used on HPC systems. It runs
-[SIF](#sif) images.
+The container runtime on HPC systems. Apptainer starts [SIF](#sif) images.
 
 ## Models and inputs
 
 ### TRITON
 
-The two-dimensional hydrodynamic flood model that hhemt compiles and
-runs. It is an external solver, not part of hhemt.
+The 2D hydrodynamic flood model that hhemt compiles and executes. TRITON is an external solver and no part of hhemt.
 
 ### SWMM
 
-The EPA Storm Water Management Model, the stormwater network model that
-hhemt compiles and runs. It is an external solver.
+The EPA Storm Water Management Model for stormwater networks. hhemt compiles and executes SWMM, an external solver.
 
-### coupled (TRITON-SWMM)
+### coupled TRITON-SWMM
 
-The solver build in which TRITON and SWMM exchange data
-during the run. It is enabled by `toggle_tritonswmm_model`, independently of the
-TRITON-only and SWMM-only models.
+The solver build where TRITON and SWMM exchange data during the simulation. `toggle_tritonswmm_model` enables the coupled build independently of the TRITON-only and SWMM-only models.
 
 ### DEM
 
-Digital elevation model, the raster of ground elevation that TRITON runs
-on. The system config points to it as `DEM_fullres`, and it can be coarsened to the
-target resolution.
+Digital elevation model, the raster of ground elevation that TRITON uses. The system config points to the DEM as `DEM_fullres`. hhemt coarsens the DEM to the target resolution.
 
 ### CRS
 
-Coordinate reference system, which fixes how a raster's coordinates map to
-places on the ground. The system config takes the horizontal CRS of the DEM as an
-EPSG code.
+Coordinate reference system, the definition that maps raster coordinates to places on the ground. The system config takes the horizontal CRS of the DEM as an EPSG code.
 
 ### Manning's roughness
 
-The coefficient for how much the ground slows flowing
-water. It is either one constant value or a lookup from a land-use raster through a
-table, as selected by `toggle_use_constant_mannings`.
+The coefficient for the friction of the ground on flowing water. The coefficient is a constant value or a lookup from a land-use raster through a table. `toggle_use_constant_mannings` selects the option.
 
 ### NetCDF
 
-A self-describing file format for gridded data. It is the alternative to
-Zarr for per-scenario outputs, selected with `target_processed_output_type: nc`.
-The weather input is also a NetCDF file.
+A self-describing file format for gridded data. The weather input is a NetCDF file. The [Output data model](output-data-model.md) names the per-scenario output option.
 
 ## Outputs and data formats
 
 ### consolidation
 
-Combining the processed outputs of every scenario, and of every
-member for a sensitivity analysis, into one hierarchical dataset per analysis. The
-result is called the **consolidated** dataset or tree.
+The combination of the processed outputs of every scenario into one hierarchical dataset per analysis. For a sensitivity analysis the combination also covers every member. The result is the **consolidated** dataset or tree.
 
 ### zarr
 
-A chunked array storage format that holds a dataset as a directory of
-files. hhemt writes its processed and consolidated outputs as Zarr stores.
+A chunked array storage format that holds a dataset as a directory of files. hhemt writes the processed and consolidated outputs as Zarr stores.
 
 ### DataTree
 
-The `xarray.DataTree` structure, which holds a hierarchy of datasets
-in one object. The consolidated outputs are DataTrees saved as Zarr.
+The `xarray.DataTree` structure for a hierarchy of datasets in one object. The consolidated outputs are DataTrees saved as Zarr.
 
 ### CF-1.13
 
-Version 1.13 of the Climate and Forecast conventions, a standard for
-naming and describing variables (`standard_name`, `long_name`, `units`,
-`cell_methods`). The consolidated outputs carry these attributes.
+Version 1.13 of the Climate and Forecast conventions, a standard for naming and describing variables with `standard_name`, `long_name`, `units` and `cell_methods`. The consolidated outputs carry the attributes.
 
 ### `system_datatree.zarr`
 
-The per-system tier of the output data model. It is written only when you call
-`system.process.consolidate_system_datatree()` yourself; no run writes it for you.
-It holds one group for each analysis that was bound to the system when a call ran,
-and each call appends.
-See [Output data model](output-data-model.md).
+The per-system tier of the output data model. [The per-system tier](output-data-model.md#the-per-system-tier) gives the write timing and the contents of the store.
 
 ### `experiment_datatree.zarr` and `analysis_datatree.zarr`
 
-The consolidated
-trees of a sensitivity analysis's experiment root and of a single analysis. The
-[output data model](output-data-model.md) lists every tier.
+The consolidated trees of the experiment root of a sensitivity analysis and of a single analysis. The [output data model](output-data-model.md) lists every tier.
 
 ### reporting set
 
-A named selection of report renderers, together with the order
-of the report's sidebar categories. Choosing one decides which figures and tables a
-report contains. See [Reporting sets](reporting-sets.md).
+A named selection of report renderers with an order for the sidebar categories of the report. The choice of a set decides the figures and tables of a report. See [Reporting sets](reporting-sets.md).
 
 ### render bundle
 
-A portable zip that `bundle_report_data()` writes, holding the
-data behind a report's figures, the configs and the Snakefile, so that you can
-re-render the report on another machine. It is not an experiment definition.
+A portable zip that `bundle_report_data()` writes. The zip holds the data behind the figures of a report, the configs, and the Snakefile, so that the report can be re-rendered on another machine. A render bundle is no experiment definition.
 
 ### EDA
 
-Exploratory data analysis. In hhemt it is the step that runs after an
-analysis has consolidated and compares the analysis against itself, to tell whether
-a result belongs to the model or to how it was computed. See
-[Exploratory analysis](../explanation/exploratory-analysis.md).
+Exploratory data analysis. In hhemt, EDA is the step after consolidation that compares an analysis against itself. The comparison shows whether a result belongs to the model or to the compute configuration. See [Exploratory analysis](../tutorials/exploratory-analysis.md).
 
 ## Publishing and reproducing
 
 ### bundle
 
-A reproducible and shareable directory for an experiment or an analysis, holding its
-inputs, its outputs and its metadata, that can be published to an open data-sharing
-repository such as Zenodo or HydroShare. The [render bundle](#render-bundle) and the
-reprex bundle (see [reprex](#reprex)) are bundles. The directory holding an
-`experiment.yaml` is not: it is an [experiment definition](#experiment-definition).
+A reproducible and shareable directory for an experiment or an analysis. The directory holds inputs, outputs, and metadata, and can be published to an open data-sharing repository such as Zenodo or HydroShare. The [render bundle](#render-bundle) and the reprex bundle, described under [reprex](#reprex), are bundles. The directory with an `experiment.yaml` is an [experiment definition](#experiment-definition) and no bundle.
 
 ### reprex
 
-A reproducible example, here a bundle that anyone can fetch by DOI and
-run. hhemt's reprex check confirms that a bundle can be run on a target cluster
-profile and suggests the amendments it needs. See
-[Publishing and fetching](../how-to/publishing.md).
+A reproducible example. A reprex is a bundle that anyone can fetch by DOI and execute. See [Publishing and fetching](../how-to/publishing.md).
 
 ### RO-Crate
 
-Research Object Crate, a packaging convention that describes a set
-of files and how they relate in a `ro-crate-metadata.json` file. hhemt writes one
-in each analysis directory, beside its consolidated tree, and at a sensitivity analysis's
-experiment root; the per-system tree has none.
+Research Object Crate, a packaging convention that describes a set of files and their relations in a `ro-crate-metadata.json` file. hhemt writes a crate in each analysis directory beside the consolidated tree and at the experiment root of a sensitivity analysis. The per-system tree has no crate.
 
-### PROV (PROV-O)
+### PROV-O
 
-The W3C ontology for recording where data came from and how it
-was produced. The provenance recorded in the RO-Crate uses it.
+The W3C ontology for recording where data came from and how the data was produced. The provenance in the RO-Crate uses the ontology.
 
 ### JSON-LD
 
-JSON for Linking Data, the serialization of the `ro-crate-metadata.json`
-file.
+JSON for Linking Data, the serialization of the `ro-crate-metadata.json` file.
 
 ### CodeMeta
 
-A metadata vocabulary for describing software, used in the RO-Crate's
-description of the software.
+A metadata vocabulary for describing software. The RO-Crate uses the vocabulary for the description of the software.
 
 ### DOI
 
@@ -324,20 +218,15 @@ Digital object identifier, a permanent link to a published item.
 
 ### PID
 
-Persistent identifier, the general term for a DOI or any similar permanent
-identifier. A case study's `case.yaml` accepts a `doi` or, where there is none, the
-host's own record `pid`.
+Persistent identifier, the general term for a DOI or any similar permanent identifier. The `case.yaml` of a case study accepts a `doi` or, without one, the `pid` record of the host.
 
 ### DataCite
 
-The metadata schema that DOIs for datasets are registered with. A
-deposit must supply its mandatory fields, which are the identifier, creators,
-title, publisher, publication year and resource type.
+The metadata schema for the registration of dataset DOIs. A deposit supplies the identifier, the creators, the title, the publisher, the publication year, and the resource type.
 
 ### FAIR
 
-Findable, accessible, interoperable, reusable, the four properties the
-[FAIR scope table](fair-scope-table.md) grades each published artifact on.
+Findable, accessible, interoperable, and reusable. The [FAIR scope table](fair-scope-table.md) grades each published artifact on the properties.
 
 ### OCI
 
@@ -345,54 +234,42 @@ Open Container Initiative, the standard for container image formats.
 
 ### SIF
 
-The image file format that Apptainer runs. hhemt addresses an image by its
-identity, so you never name an image file in a config.
+The image file format that Apptainer starts. [Building container images](../how-to/building-container-images.md) covers image addressing.
 
 ## Computing and platform terms
 
 ### HPC
 
-High-performance computing, meaning a shared cluster of many nodes run by a
-scheduler.
+High-performance computing on a shared cluster of many nodes under a scheduler.
 
 ### SLURM
 
-The job scheduler on the clusters hhemt targets.
+The job scheduler on the clusters that hhemt targets.
 
 ### MPI
 
-Message Passing Interface, the standard that lets the processes of one
-simulation communicate across nodes.
+Message Passing Interface, the standard for communication between the processes of one simulation across nodes.
 
 ### OpenMP
 
-A standard for running threads that share memory within one node.
+A standard for threads that share memory within one node.
 
-### CUDA, HIP and ROCm
+### CUDA, HIP, and ROCm
 
-GPU programming platforms. CUDA is NVIDIA's. HIP and
-ROCm are AMD's. GPU code compiles against one of them, chosen in configuration.
+GPU programming platforms. CUDA belongs to NVIDIA. HIP and ROCm belong to AMD. GPU code compiles against one platform, and the configuration chooses the platform.
 
 ### QOS
 
-Quality of service, the SLURM setting that attaches priority and limits to
-a job.
+Quality of service, the SLURM setting that attaches priority and limits to a job.
 
 ### GPFS
 
-The IBM parallel file system that some clusters use for shared storage.
+The IBM parallel file system for the shared storage of some clusters.
 
 ### OLCF
 
-The Oak Ridge Leadership Computing Facility, which runs the Frontier
-system.
-
-### WSL
-
-Windows Subsystem for Linux, the Linux environment inside Windows, on which
-hhemt can run.
+The Oak Ridge Leadership Computing Facility, a high-performance computing facility at Oak Ridge National Laboratory.
 
 ### CI
 
-Continuous integration, the automated builds and tests that run on every
-change to the repository.
+Continuous integration. The repository runs automated builds and tests on every change.

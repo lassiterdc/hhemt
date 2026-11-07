@@ -27,6 +27,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.docs
+
 _REPO = Path(__file__).resolve().parent.parent
 _TUTORIAL = _REPO / "docs" / "tutorials" / "norfolk-compute-config-sweep.md"
 _REPORT = _REPO / "docs" / "reference" / "bundles" / "norfolk-compute-config-sweep-report.html"

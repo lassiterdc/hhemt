@@ -1,3 +1,3 @@
-# API reference: The toolkit and its errors
+# API reference: Error handling
 
 ::: hhemt

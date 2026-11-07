@@ -1,22 +1,19 @@
 """Descriptor-driven experiment-definition runner.
 
 An experiment definition is a directory whose ``experiment.yaml`` names the system config,
-the analysis config, and a per-cluster ``hpc_system_config``. This module turns one
-definition into a run: load and validate the descriptor, refuse any CLI argument that would
-silently override it, build the analysis, and run it.
+the analysis config, and a per-cluster ``hpc_system_config``. The module turns a
+definition into a run by loading and validating the descriptor, refusing any CLI argument that would
+silently override the descriptor, building the analysis, and running the analysis.
 
-It follows the same split as the ``synthetic_experiment.py`` +
-``config/synthetic_experiment.py`` pair: the FRAMEWORK lives in ``src/hhemt/`` so it
-ships in the wheel and is importable without ``tests/`` or ``scripts/``; the operator's
-deployment-config repository holds experiment IDENTITY (``experiment.yaml``) and a thin
-caller.
-
-This module MUST NOT import from ``tests`` or ``scripts`` — a ``src -> tests`` or
-``src -> scripts`` import breaks ``pip install -e .``.
+The framework ships in the wheel and imports without ``tests/`` or ``scripts/``. The
+operator's deployment-config repository holds experiment identity in ``experiment.yaml``
+and a thin caller.
 """
 
 from __future__ import annotations
 
+# This module MUST NOT import from ``tests`` or ``scripts``: a ``src -> tests`` or
+# ``src -> scripts`` import breaks ``pip install -e .``.
 import hashlib
 import os
 import re
@@ -47,21 +44,21 @@ def resolve_hpc_system_config(
     definition: ExperimentConfig | None = None,
     definition_dir: str | Path | None = None,
 ) -> Path:
-    """Resolve the operator's REAL ``hpc_system_config`` path for ``cluster``.
+    """Resolve the operator's REAL path to ``hpc_system_config`` on ``cluster``.
 
-    Non-mutating: reads the deployment config, never edits a tracked file.
+    Non-mutating. Reads the deployment config and edits no tracked file.
 
-    Two sources, highest first, and nothing else:
-      1. explicit ``override`` (the ``--hpc-system-config`` CLI argument).
-      2. the experiment definition's declared ``hpc_system_config[cluster]``: absolute, or relative to the
-         definition directory itself (the folder holding ``experiment.yaml``), so the entry
-         means the file beside the descriptor wherever the experiment definition sits, and nothing above
-         it is searched. With no ``definition_dir``, a relative entry resolves against the
+    The function reads the sources below only, highest first:
+      1. explicit ``override``, the ``--hpc-system-config`` CLI argument.
+      2. the experiment definition's declared ``hpc_system_config[cluster]``. The path is absolute or relative to the
+         definition directory itself, the folder holding ``experiment.yaml``, so the entry
+         means the file beside the descriptor wherever the experiment definition sits, and no directory above
+         the definition is searched. With no ``definition_dir``, a relative entry resolves against the
          working directory.
 
-    With neither, this raises ``ConfigurationError`` naming both. Environment variables are
-    deliberately NOT consulted: an HPC config chosen by the shell rather than by the command
-    line or the experiment descriptor is not recorded anywhere the run's record can see.
+    With neither, the function raises ``ConfigurationError`` naming both. Environment variables are
+    deliberately NOT consulted, because an HPC config chosen by the shell, and not by the command
+    line or the experiment descriptor, is not recorded anywhere the run's record can see.
     """
     if override:
         path = Path(override).expanduser()
@@ -97,9 +94,9 @@ def resolve_hpc_system_config(
 
 
 def experiment_definition_id(definition_dir: str | Path) -> str:
-    """The experiment's identity is the experiment definition directory's NAME (by convention: an experiment
-    descriptor carries no id field — `ExperimentConfig` is `extra="forbid"` — and the directory
-    that holds `experiment.yaml` is what names it). Resolved first so a trailing slash or a
+    """The experiment's identity is the NAME of the experiment definition directory. By convention, an experiment
+    descriptor carries no id field, because `ExperimentConfig` is `extra="forbid"`, and the directory
+    that holds `experiment.yaml` names the experiment. The path is resolved first so a trailing slash or a
     relative `.` still yields the real directory name."""
     return Path(definition_dir).resolve().name
 
@@ -107,7 +104,7 @@ def experiment_definition_id(definition_dir: str | Path) -> str:
 def load_experiment_definition(definition_dir: str | Path) -> ExperimentConfig:
     """Load and validate `{definition_dir}/experiment.yaml`.
 
-    Raises ConfigurationError (CLI exit 2) on absence or schema violation.
+    Raises ConfigurationError on absence or schema violation, with CLI exit 2.
     """
     import yaml
 
@@ -129,25 +126,25 @@ def load_experiment_definition(definition_dir: str | Path) -> ExperimentConfig:
 
 
 def expand_config_vars(cfg_path: str | Path, *, dest_dir: str | Path | None = None) -> Path:
-    """Expand ``${VAR}`` env references in a config file, materialize a resolved copy, return its path.
+    """Expand ``${VAR}`` env references in a config file, materialize a resolved copy, and return the path of the copy.
 
-    The toolkit config loader applies ``expanduser`` but NEVER ``expandvars`` — a
-    ``${DATA_DIR}``-style placeholder reaches the config-load path-existence check
-    (``config/base.py::cfgBaseModel._check_paths_exist``, which ``Toolkit.from_configs``
-    reaches through ``load_system_config`` before any preflight runs) verbatim, and the
+    The toolkit config loader applies ``expanduser`` but NEVER ``expandvars``. A
+    ``${DATA_DIR}``-style placeholder reaches the config-load path-existence check,
+    ``config/base.py::cfgBaseModel._check_paths_exist``, verbatim. ``Toolkit.from_configs``
+    reaches that check through ``load_system_config`` before any preflight runs, and the
     load raises ``ConfigurationError`` wrapping ``ValueError(f"File does not exist: {p}")``. So expand
     the placeholders against ``os.environ`` here, before ``Toolkit.from_configs``.
 
-    Materialization: the resolved copy is written to ``$SCRATCH_DIR/resolved_configs/``
-    (a SHARED filesystem, so ``batch_job`` Snakemake rules dispatched to OTHER compute
-    nodes can read it — node-local ``/tmp`` is invisible cross-node), falling back to
-    the platform tempdir when ``$SCRATCH_DIR`` is unset (a purely-local dry-run). This
-    is an ephemeral INPUT, not an analysis OUTPUT, so it is compatible with a
-    ``dry_run`` that writes nothing to the analysis output tree.
+    The resolved copy is written to ``$SCRATCH_DIR/resolved_configs/``.
+    The directory sits on a SHARED filesystem, so ``batch_job`` Snakemake rules dispatched to OTHER compute
+    nodes can read the file, while node-local ``/tmp`` is invisible cross-node. The write falls back to
+    the platform tempdir when ``$SCRATCH_DIR`` is unset, as in a purely-local dry-run. The copy
+    is an ephemeral INPUT and no analysis OUTPUT, so the file is compatible with a
+    ``dry_run`` that writes no file to the analysis output tree.
 
-    This lives in the wheel, like ``resolve_hpc_system_config`` above, so every
-    deployment-config caller imports one copy instead of carrying its own. An unresolved
-    placeholder raises ``ConfigurationError`` (CLI exit 2) rather than ``SystemExit``,
+    The function lives in the wheel, like ``resolve_hpc_system_config`` above, so every
+    deployment-config caller imports a single copy and keeps no copy of the function. An unresolved
+    placeholder raises ``ConfigurationError``, with CLI exit 2, and never ``SystemExit``,
     because ``SystemExit`` is not an ``Exception`` and passes straight through a caller's
     ``except Exception``.
     """
@@ -229,43 +226,45 @@ def rehydrate_placeholders(
 ) -> Path:
     """Put a consumer's own values back for the ``{hhemt_*}`` tokens in a bundle member, and return a resolved copy.
 
-    An emitted bundle replaces the producer's directories, interpreter, home directory, login name and
-    SLURM account with the closed tokens of ``hhemt.bundle._placeholders.PLACEHOLDER_TOKENS``. A reader
+    An emitted bundle replaces the producer's directories, interpreter, home directory, login name, and
+    SLURM account with the closed tokens that ``hhemt.bundle._placeholders.PLACEHOLDER_TOKENS`` lists. A reader
     that parses such a member as a path calls this first and reads the returned copy. The source member is
     never modified.
 
-    ``values`` maps token (braces included, e.g. ``"{hhemt_slurm_account}"``) to the consumer's value and
+    ``values`` maps token, braces included as in ``"{hhemt_slurm_account}"``, to the consumer's value and
     wins over the default. Defaults, per token:
 
     * ``{hhemt_analysis_dir}`` and ``{hhemt_system_dir}``: the bundle root, taken as the nearest ancestor of
       ``path`` that holds ``bundle_manifest.json``. Outside any bundle there is no default.
-    * ``{hhemt_toolkit_dir}``: this install's checkout root, only when its package sits under ``src/``;
-      otherwise there is no default and the token is refused until the caller supplies a value.
-      ``{hhemt_package_dir}``: this install's ``hhemt`` package directory.
+    * ``{hhemt_toolkit_dir}``: the checkout root of this install, only when the package of the install
+      sits under ``src/``.
+      Otherwise there is no default and the token is refused until the caller supplies a value.
+      ``{hhemt_package_dir}``: the ``hhemt`` package directory of this install.
     * ``{hhemt_python}``: ``sys.executable``. ``{hhemt_home}``: ``Path.home()``.
     * ``{hhemt_conda_env}``, ``{hhemt_user}``, ``{hhemt_slurm_account}`` and ``{hhemt_producer_path}``: left as
-      the token, because the consumer has no value of the producer's kind to give.
+      the token, because the consumer has no value of the producer's type to give.
 
-    Raises ``ConfigurationError`` (CLI exit 2), before writing anything, when the member holds a token that has
+    Raises ``ConfigurationError``, with CLI exit 2, before writing any file, when the member holds a token that has
     neither a supplied value nor a default, or when ``values`` names a token outside the closed set. An unresolved
-    token is refused rather than left in place because a directory token left in a path that is then opened
+    token is refused and never left in place, because a directory token left in a path that is then opened
     produces a ``FileNotFoundError`` that names the token and not the missing value.
 
-    The copy is ``rehydrated_{name}`` (the prefix means it can never be the source, even in the source's own
-    directory) under ``dest_dir``, or under ``$SCRATCH_DIR`` (else the platform tempdir)
-    in ``rehydrated_members/{digest of the source path}/``. The digest subdirectory is there because two bundle
-    members routinely share a file name (every sensitivity ``zarr.json``), and a shared directory would let the
-    second call overwrite the first call's copy while its caller still holds the path.
+    The copy is ``rehydrated_{name}``. The prefix keeps the copy from ever being the source, even in the
+    directory of the source. The copy lives under ``dest_dir`` when given. Without ``dest_dir``, the copy
+    lives under ``$SCRATCH_DIR``, else the platform tempdir,
+    in ``rehydrated_members/{digest of the source path}/``. The digest subdirectory is there because bundle
+    members routinely share a file name, such as every sensitivity ``zarr.json``, and a shared directory would let a
+    later call overwrite the copy of an earlier call while the caller of the earlier call still holds the path.
 
-    Deliberately NOT ``expand_config_vars``: that function runs ``os.path.expandvars``, which expands every
-    ``${...}`` and would rewrite the shell references (``${CONDA_PREFIX}``) a bundled Snakefile legitimately
-    carries. This function matches only the ten closed token names, in one pass, so a substituted value is
+    Deliberately NOT ``expand_config_vars``. The latter runs ``os.path.expandvars``. The call expands every
+    ``${...}`` and rewrites the shell references, such as ``${CONDA_PREFIX}``, that a bundled Snakefile legitimately
+    carries. The function here matches only the closed token names, in one pass, so a substituted value is
     never scanned again.
 
-    Not established: the as-given and resolved spellings of a directory share one token, so a single value
-    cannot restore which spelling a given occurrence had. A
-    percent-encoded path (``%2Fscratch%2F...``) matched no placeholder row at emit time and is not touched
-    here. The member is read whole, so this is for text members.
+    Caveat. The as-given and resolved spellings of a directory share one token, so a single value
+    is unable to restore the spelling of a given occurrence. A
+    percent-encoded path, ``%2Fscratch%2F...``, matched no placeholder row at emit time and is not touched
+    here. The member is read whole, so the function suits text members.
     """
     from hhemt.bundle._placeholders import PLACEHOLDER_TOKENS
 
@@ -333,14 +332,14 @@ def rehydrate_placeholders(
 def resolve_overrides(definition: ExperimentConfig, cli_args: dict[str, object]) -> list[OverrideReport]:
     """Return every field where a CLI argument differs from the descriptor.
 
-    An empty list means the CLI adds nothing the descriptor does not already say —
-    the one-config path, no confirmation needed.
+    An empty list means the CLI adds no value beyond the descriptor.
+    The result is the one-config path, and no confirmation is needed.
 
-    Which arguments the override gate sees: the CLI verb wires only ``--hpc-system-config`` as a
-    real config override. ``dry_run``/``yes`` are controls, not overrides, so they are
+    The override gate sees only some arguments. The CLI verb wires only ``--hpc-system-config`` as a
+    real config override. ``dry_run`` and ``yes`` are controls and no overrides, so they are
     never reported here. An argument is an OVERRIDE only when the descriptor already
-    DECLARES a value for it and the CLI value DIFFERS — supplying a value the descriptor
-    omits fills a gap, it does not override.
+    DECLARES a value for the argument and the CLI value DIFFERS. Supplying a value the descriptor
+    omits fills a gap and is no override.
     """
     reports: list[OverrideReport] = []
     cluster = cli_args.get("cluster")
@@ -361,8 +360,8 @@ def resolve_overrides(definition: ExperimentConfig, cli_args: dict[str, object])
 def format_override_gate(reports: list[OverrideReport]) -> str:
     """Render the side-by-side config-vs-CLI table for the confirmation prompt.
 
-    BOTH values are printed, not just the winner — a user who cannot see what they are
-    overriding cannot consent to it.
+    The gate prints BOTH values. A person who is unable to see the value under override
+    is unable to consent to the override.
     """
     fw = max([len("field")] + [len(r.field) for r in reports])
     cw = max([len("descriptor (config)")] + [len(r.config_value) for r in reports])
@@ -427,17 +426,18 @@ def build_case_from_definition(
 ):
     """Construct the analysis for `definition` on `cluster`.
 
-    Generalizes ``container_validation.py::build_case`` with NO hardcoded cluster map:
+    Generalizes ``container_validation.py::build_case`` with NO hardcoded cluster map.
     ``definition.hpc_system_config[cluster]`` names the per-cluster ``hpc_system_config``
-    file, not a module-level dict. That resolved file is handed whole to
-    ``Toolkit.from_configs``; this function itself reads only its ``default_account``
-    and ``container`` fields, for the two guards below.
+    file and no module-level dict. The resolved file is handed whole to
+    ``Toolkit.from_configs``, and the function reads only the ``default_account``
+    and ``container`` fields of the file, for the guards below.
 
-    Carries the same two fail-fast guards as that script, raising ``ConfigurationError``
-    where the script raises ``ValueError``: a ``default_account`` that is unset or still a
-    ``{your-...}`` placeholder raises; a missing or placeholder ``container.sif_root``
-    raises when the experiment definition declares a container (the script checks it unconditionally). Config
-    resolution is NON-MUTATING — it reads the deployment config, never edits a tracked file.
+    Carries the same fail-fast guards as that script, raising ``ConfigurationError``
+    where the script raises ``ValueError``. A ``default_account`` that is unset or still a
+    ``{your-...}`` placeholder raises. A missing or placeholder ``container.sif_root``
+    raises when the experiment definition declares a container, while the script checks the field
+    unconditionally. Config
+    resolution is NON-MUTATING, because the step reads the deployment config and edits no tracked file.
     """
     from hhemt.config.loaders import load_hpc_system_config
     from hhemt.toolkit import Toolkit
@@ -484,6 +484,92 @@ def build_case_from_definition(
     )
 
 
+_PYPI_PROJECT = "hhemt"
+"""The package-index project whose source archive ``toolkit_pin.sdist_sha256`` names."""
+
+_SDIST_HASH_CHUNK_BYTES = 1024 * 1024
+"""Streaming read size, the case-manifest stipulation's 1 MiB rule: an archive is never
+loaded whole."""
+
+_PYPI_JSON_URL = "https://pypi.org/pypi/{project}/{version}/json"
+
+
+def _fetch_sdist_chunks(version: str, chunk_size: int = _SDIST_HASH_CHUNK_BYTES):
+    """Yield the bytes of ``hhemt``'s source archive for ``version`` from the package index, in chunks.
+
+    Reads the index's JSON record for the version, takes its ``sdist`` file URL and
+    streams that file in ``chunk_size`` reads. Any failure to reach the index or to find
+    an sdist raises ``OSError``, and the caller converts that, ``http.client.HTTPException`` and
+    ``ValueError`` into one refusal that names the pin. A seam: tests
+    replace this function, so the digest comparison runs with no network.
+    """
+    import json
+    import urllib.request
+
+    json_url = _PYPI_JSON_URL.format(project=_PYPI_PROJECT, version=version)
+    with urllib.request.urlopen(json_url, timeout=30) as resp:  # noqa: S310 - fixed https URL
+        record = json.load(resp)
+    files = record.get("urls", []) if isinstance(record, dict) else []
+    sdist_url = next(
+        (f["url"] for f in files if isinstance(f, dict) and f.get("packagetype") == "sdist" and "url" in f),
+        None,
+    )
+    if sdist_url is None:
+        raise OSError(f"the package index lists no source archive for {_PYPI_PROJECT} {version}")
+    with urllib.request.urlopen(sdist_url, timeout=60) as resp:  # noqa: S310 - URL from the index record
+        while True:
+            chunk = resp.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+
+
+def _verify_toolkit_pin_sdist(toolkit_pin, *, definition_dir: Path | None = None) -> None:
+    """Refuse an experiment whose ``toolkit_pin.sdist_sha256`` is not the index's digest for ``version``.
+
+    No-op when ``sdist_sha256`` is None. Otherwise fetches the source archive of
+    ``toolkit_pin.version`` from the package index, hashes it in 1 MiB chunks and
+    compares: a mismatch raises ``ConfigurationError`` naming both digests; an index
+    that cannot be reached raises ``ConfigurationError`` naming the pin, because
+    warn-and-skip would hide a misconfigured experiment (``sif/plan.py`` refuses the
+    same way). The check attests that the declared digest names the index's file for
+    ``version``. It does not compare the running toolkit with that file.
+    """
+    import hashlib
+    import http.client
+
+    declared = toolkit_pin.sdist_sha256
+    if declared is None:
+        return
+    where = f"toolkit_pin (version {toolkit_pin.version!r}, sdist_sha256 {declared!r})"
+    try:
+        digest = hashlib.sha256()
+        for chunk in _fetch_sdist_chunks(toolkit_pin.version):
+            digest.update(chunk)
+    except (OSError, http.client.HTTPException, ValueError) as exc:
+        # URLError and HTTPError are OSError; a dropped connection raises HTTPException
+        # (IncompleteRead); an index that answers with a page raises ValueError (JSONDecodeError).
+        raise ConfigurationError(
+            field="toolkit_pin.sdist_sha256",
+            message=(
+                f"{where}: the package index could not be reached or lists no source archive "
+                f"for this version ({type(exc).__name__}: {exc}). The pin declares a digest, so "
+                f"the run is refused rather than unverified."
+            ),
+            config_path=definition_dir,
+        ) from exc
+    measured = digest.hexdigest()
+    if measured.lower() != declared.strip().lower():
+        raise ConfigurationError(
+            field="toolkit_pin.sdist_sha256",
+            message=(
+                f"{where}: the declared digest {declared!r} does not match the package index's "
+                f"source archive for version {toolkit_pin.version!r}, whose sha256 is {measured!r}."
+            ),
+            config_path=definition_dir,
+        )
+
+
 def run_experiment(
     definition_dir: str | Path,
     cluster: str,
@@ -501,30 +587,34 @@ def run_experiment(
 ):
     """Load -> validate -> gate overrides -> build -> run.
 
-    mode: a ``RunMode`` member. ``resume`` (default) picks up where the last invocation left
-    off; ``fresh`` wipes the analysis_dir first. The default matches ``Toolkit.run``'s own
-    default so the two layers state one value rather than two. This is a typed pass-through:
-    the CLI refuses an unknown value at parse time and ``Toolkit.run`` refuses one at the
+    mode : a ``RunMode`` member. ``resume``, the default, picks up where the last invocation left
+    off, and ``fresh`` wipes the analysis_dir first. The default matches the default of ``Toolkit.run``,
+    so both layers state a single value. The parameter is a typed pass-through.
+    The CLI refuses an unknown value at parse time and ``Toolkit.run`` refuses an unknown value at the
     reduction site, so no third check lives here.
 
-    override_force_rerun: per-invocation override of the experiment definition's analysis config's
-    ``force_rerun`` (``"all"``, ``"none"``, or a subject dict), threaded untouched into
-    ``Toolkit.run``. None, the default, reads the config field. This is the honest route to
-    re-running completed scenarios without a wipe; it is a knob, not a mode.
+    override_force_rerun : per-invocation override of the ``force_rerun`` of the analysis config of the
+    experiment definition,
+    taking ``"all"``, ``"none"``, or a subject dict, and threaded untouched into
+    ``Toolkit.run``. None, the default, reads the config field. The flag is the honest route to
+    re-running completed scenarios without a wipe. The flag is a knob and no mode.
 
-    debug: the run's debug flag, threaded untouched into ``Toolkit.run``. Named here rather
-    than left to ``**cli_overrides`` because it is a run argument, not a config override, and
-    ``resolve_overrides`` would otherwise compare it against the experiment definition's configs. Today it does
-    one thing: a coupled clean start asks the solver to keep the previous run's snapshot files.
+    debug : the run's debug flag, threaded untouched into ``Toolkit.run``. The flag is named here
+    and left out of ``**cli_overrides``, because the flag is a run argument and no config override, so
+    ``resolve_overrides`` would compare the flag against the configs of the experiment definition. Today the
+    flag has one effect. A coupled clean start asks the solver to keep the snapshot files of the previous run.
 
-    The override gate: if `resolve_overrides` returns a non-empty
-    list, print the side-by-side table and require explicit confirmation. A non-TTY
-    invocation without `assume_yes` REFUSES rather than silently preferring either
-    source — silently preferring the CLI is how a bare `run_mode=gpu` ran a CUDA-only
+    The override gate prints the side-by-side table and requires explicit confirmation when
+    `resolve_overrides` returns a non-empty list. A non-TTY
+    invocation without `assume_yes` REFUSES and avoids silently preferring either
+    source. Silently preferring the CLI is how a bare `run_mode=gpu` ran a CUDA-only
     build in CPU mode.
     """
     definition_dir = Path(definition_dir)
     definition = load_experiment_definition(definition_dir)
+    # The pin's digest is checked before anything is built: a pin that names the wrong
+    # archive refuses the run at once rather than after a compile.
+    _verify_toolkit_pin_sdist(definition.toolkit_pin, definition_dir=definition_dir)
 
     cli_args: dict[str, object] = {
         "cluster": cluster,

@@ -152,3 +152,45 @@ def test_on_config_writes_the_generated_page_under_docs_dir(tmp_path):
     page = (tmp_path / "reference" / "config-schema.md").read_text(encoding="utf-8")
     assert page.startswith(f"<!-- {cfgref._load_lint().GENERATED_MARKER} -->")
     assert cfgref._table(cfgref._closure_models()[0]) in page
+
+
+_OLD_STYLE = "body{font-family:system-ui,sans-serif;margin:1rem 1.5rem}h1{font-size:1.4rem;margin:0 0 .4rem}"
+
+
+def _scheme_problems(page: str) -> list[str]:
+    """What a standalone configuration page lacks of following the visitor's colour scheme."""
+    import re
+
+    problems = []
+    if "prefers-color-scheme" not in page:
+        problems.append("no prefers-color-scheme rule")
+        return problems
+    base, _, light = page.partition("@media (prefers-color-scheme: light){")
+    for label, pattern in (
+        ("page text colour", r"body\{[^}]*?[^-]color:(#[0-9a-fA-F]+)"),
+        ("table background", r"body \.tabulator\{background-color:(#[0-9a-fA-F]+)"),
+    ):
+        dark = re.findall(pattern, base)
+        bright = re.findall(pattern, light)
+        if not dark or not bright:
+            problems.append(f"{label} is not set in both schemes")
+        elif dark[-1] == bright[0]:
+            problems.append(f"{label} is the same in both schemes: {dark[-1]}")
+    return problems
+
+
+def test_the_standalone_page_follows_the_visitors_colour_scheme():
+    """The standalone page has a prefers-color-scheme rule; its text and table colours differ between schemes."""
+    from hhemt.config.system import system_config
+
+    page = cfgref._standalone_table_page(system_config, "System config")
+    assert _scheme_problems(page) == []
+
+
+def test_control_a_page_with_the_old_style_fails_the_scheme_check():
+    """Must-fire control: the check reports the page built from the old style string, which has no colour rules."""
+    from hhemt.config.system import system_config
+
+    page = cfgref._standalone_table_page(system_config, "System config").replace(cfgref._STANDALONE_STYLE, _OLD_STYLE)
+    assert cfgref._STANDALONE_STYLE not in page
+    assert _scheme_problems(page), "the old style must fail the check"

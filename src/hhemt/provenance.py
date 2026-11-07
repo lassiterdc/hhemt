@@ -227,7 +227,75 @@ def producing_stamp() -> dict[str, str]:
 _HISTORY_FILENAME = "provenance_history.json"
 
 
-def stamp_report_stage(analysis_dir: Path, report_path: Path) -> None:
+#: The three keys the render writes into ``report_manifest.json`` to record the report settings
+#: used. Written together, removed together.
+REPORT_SETTINGS_KEYS = ("report_settings", "report_settings_sha256", "report_settings_source")
+
+
+def report_settings_dump(report_cfg) -> dict:
+    """The JSON-mode dump of a report config: the form the render record stores."""
+    return report_cfg.model_dump(mode="json")
+
+
+def report_settings_sha256(report_cfg) -> str:
+    """The sha256 of a report config's dump serialized with sorted keys."""
+    import hashlib
+    import json as _json
+
+    return hashlib.sha256(_json.dumps(report_settings_dump(report_cfg), sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def read_report_settings_record(analysis_dir: Path) -> dict | None:
+    """The settings keys of ``report_manifest.json``, or None when the record is absent or unreadable.
+
+    None means "no record": nothing rendered yet, a report rendered before the record existed,
+    or a record the render could not write. Consumers treat all three alike.
+    """
+    import json as _json
+
+    try:
+        data = _json.loads((Path(analysis_dir) / "report_manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not all(k in data for k in REPORT_SETTINGS_KEYS):
+        return None
+    return {k: data[k] for k in REPORT_SETTINGS_KEYS}
+
+
+def _drop_report_settings_keys(manifest: Path) -> None:
+    """Remove the three settings keys from an existing manifest, best-effort."""
+    import json as _json
+    import os
+    import uuid
+
+    try:
+        data = _json.loads(manifest.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not any(k in data for k in REPORT_SETTINGS_KEYS):
+            return
+        for k in REPORT_SETTINGS_KEYS:
+            data.pop(k, None)
+        text = _json.dumps(data, indent=2)
+        tmp = manifest.with_name(f"{manifest.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        try:
+            try:
+                tmp.write_text(text, encoding="utf-8")
+                tmp.replace(manifest)
+            finally:
+                tmp.unlink(missing_ok=True)  # EXEMPT-DU: transient-intermediate
+        except Exception:
+            # The atomic path failed (the same failure that sent us here may block `replace`):
+            # rewrite in place, since a stale record is worse than a non-atomic write.
+            manifest.write_text(text, encoding="utf-8")
+    except Exception:  # best-effort: a manifest that cannot be read holds no trusted record
+        pass
+
+
+def stamp_report_stage(
+    analysis_dir: Path,
+    report_path: Path,
+    report_cfg=None,
+    report_settings_source: str = "analysis_config",
+) -> None:
     """Capture the REPORT stage's producing stamp. Called by BOTH render_report twins.
 
     Called AFTER the render has demonstrably succeeded and BEFORE the format-gated early
@@ -240,21 +308,42 @@ def stamp_report_stage(analysis_dir: Path, report_path: Path) -> None:
     `report_path` is the FORMAT-AGNOSTIC output, never an html-only binding -- recording a
     path that does not exist for a zip is the defect one rung down from the one this fixes.
 
-    Best-effort and never raises: a provenance write must not fail a completed render.
+    `report_cfg` is the report config the render used, recorded as `report_settings`
+    with its sha256 and `report_settings_source` (`run_entry` or `analysis_config`), so every
+    consumer reads one record of the settings the report was rendered with. The manifest is
+    written through a temporary file and `replace`. When the write fails the function logs a
+    WARNING and removes the three settings keys from any existing manifest, so no consumer
+    trusts settings the report was not rendered with.
+
+    Never raises: a provenance write must not fail a completed render.
     """
     import json as _json
+    import logging
+    import os
+    import uuid
 
+    manifest = Path(analysis_dir) / "report_manifest.json"
     try:
-        (Path(analysis_dir) / "report_manifest.json").write_text(
-            _json.dumps({"report_path": str(report_path), **producing_stamp()}, indent=2),
-            encoding="utf-8",
-        )
+        payload = {"report_path": str(report_path), **producing_stamp()}
+        if report_cfg is not None:
+            payload["report_settings"] = report_settings_dump(report_cfg)
+            payload["report_settings_sha256"] = report_settings_sha256(report_cfg)
+            payload["report_settings_source"] = report_settings_source
+        tmp = manifest.with_name(f"{manifest.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(_json.dumps(payload, indent=2), encoding="utf-8")
+            tmp.replace(manifest)
+        finally:
+            tmp.unlink(missing_ok=True)  # EXEMPT-DU: transient-intermediate
         # Appends, never overwrites: the manifest above holds only the LATEST build, and
         # this is what keeps an earlier one. De-duplicated, so a re-render at an unchanged
         # build appends nothing and rewrites nothing.
         append_stage_provenance(Path(analysis_dir), "report")
     except Exception as _e:  # never fail a completed render on a provenance write
-        print(f"[render_report] report_manifest.json stamp failed (non-fatal): {_e}", flush=True)
+        logging.getLogger(__name__).warning(
+            "report_manifest.json stamp failed (non-fatal); removing any earlier report settings record: %s", _e
+        )
+        _drop_report_settings_keys(manifest)
 
 
 def _write_consolidate_manifest(analysis_dir: Path, stamp: dict) -> None:

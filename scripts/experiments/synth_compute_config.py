@@ -10,6 +10,7 @@ this scripts-side driver composes them into the UVA sensitivity cases and emits 
 from __future__ import annotations
 
 import dataclasses
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -22,6 +23,7 @@ import pandas as pd
 import rioxarray  # noqa: F401  (import-order workaround — see comment above)
 
 from hhemt.bundle._dependency import ExperimentDependency, ExperimentIdentity
+from hhemt.exceptions import ConfigurationError
 
 # The matrix enumeration lives in ``src`` and is its SINGLE SOURCE (an ``src -> scripts`` import
 # is the direction that module forbids), so composing a SUBSET matrix here means reading its
@@ -38,6 +40,7 @@ from hhemt.synthetic_experiment import (
     _SERIAL_CONFIGS,
     _configs,
     _rows,
+    build_experiment_matrix,
     model_arm_toggles,
     write_clean_matrix_csv,
     write_resume_matrix_csv,
@@ -114,6 +117,29 @@ def _params_for_resolution(cell_size_m: float) -> SyntheticModelParams:
     return dataclasses.replace(_EXPERIMENT_PARAMS, cell_size_m=cell_size_m, n_cols=n_cols, n_rows=n_rows)
 
 
+#: The setup partition and the run method that `_build_case` writes into every analysis configuration.
+_SETUP_PARTITION = "standard"
+_MULTI_SIM_RUN_METHOD = "batch_job"
+
+#: The EDA kinds of the compute-config experiment, in render order.
+_COMPUTE_CONFIG_EDA_PLOTS: tuple[str, ...] = (
+    "config_diff_maps",
+    "raw_byte_identity",
+    "b4b_clean_vs_resume",
+    "eda_rank_sensitivity",
+    "eda_cross_hardware_magnitude",
+)
+
+#: The EDA kinds of the DEM-resolution experiment, the four renderer keys of
+#: ``hhemt.eda._plotting._EDA_RENDERERS`` that read a sensitivity primary with one point per cell size.
+_DEM_RESOLUTION_EDA_PLOTS: tuple[str, ...] = (
+    "dem_resolution_cost_error",
+    "dem_resolution_diff_maps",
+    "dem_resolution_error_ecdf",
+    "dem_resolution_coupling_table",
+)
+
+
 @dataclasses.dataclass
 class _Case:
     analysis: object  # TRITONSWMM_analysis
@@ -138,6 +164,9 @@ def _build_case(
     swmm_snapshot_disable: bool | None = None,
     swmm_snapshot_keep_all: bool = False,
     hpc_consecutive_failure_budget_simulate: int | None = None,
+    eda_enabled_plots: tuple[str, ...] = _COMPUTE_CONFIG_EDA_PLOTS,
+    reporting_set: str = "compute_config_byte_identity",
+    independent_vars: tuple[str, ...] = ("n_devices",),
 ) -> _Case:
     """Materialize the synthetic UVA case and return an object exposing ``.analysis``.
 
@@ -149,6 +178,11 @@ def _build_case(
     3-entry schedule, so the finishing launch is refused with ``budget SPENT``. ``None`` writes no
     key, so every arm that does not name a value keeps the field default and its persisted config
     is byte-identical to before.
+
+    ``eda_enabled_plots``, ``reporting_set`` and ``independent_vars`` select the figure family and the
+    report of the experiment kind. The defaults are the compute-config experiment's values, so every
+    arm that names none of them persists the analysis configuration it persisted before these
+    parameters existed. ``dem_case`` names the DEM-resolution values.
 
     ``system_directory``: when given, redirect the case root there (Decision 4 — on Rivanna pass
     ``/project/{your-allocation}/...`` so outputs avoid the small-quota $HOME/.cache and the analysis tool
@@ -299,7 +333,7 @@ def _build_case(
         additional_system_configs=system_cfg,
         hpc_system_config_yaml=hpc_cfg,
         additional_analysis_configs={
-            "multi_sim_run_method": "batch_job",
+            "multi_sim_run_method": _MULTI_SIM_RUN_METHOD,
             # Opt-in per-scenario SWMM node/link timeseries consolidation. ON for this
             # experiment because the clean-vs-resume over-time MAX-ABSOLUTE-difference
             # figure reads tritonswmm/swmm_{node,link}_timeseries from the consolidated
@@ -331,7 +365,7 @@ def _build_case(
             # is a GPU partition so the master participates in the GPU-target dedup (Gotcha 54);
             # setup/prepare/process/consolidate run on standard.
             "hpc_ensemble_partition": ensemble_partition,
-            "hpc_setup_and_analysis_processing_partition": "standard",
+            "hpc_setup_and_analysis_processing_partition": _SETUP_PARTITION,
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": str(sensitivity_csv),
             # eda.enabled_plots must include the compute_config_byte_identity figures so analysis.eda() computes AND
@@ -340,26 +374,18 @@ def _build_case(
             # instead of the real raw_byte_identity grid; the render is robust to a mis-set
             # enabled_plots (the compute_config_byte_identity always-emit kinds), but only this config makes the grids
             # real.
-            "eda": {
-                "enabled_plots": [
-                    "config_diff_maps",
-                    "raw_byte_identity",
-                    "b4b_clean_vs_resume",
-                    "eda_rank_sensitivity",
-                    "eda_cross_hardware_magnitude",
-                ],
-            },
+            "eda": {"enabled_plots": list(eda_enabled_plots)},
             # sensitivity report block REQUIRED (validate_sensitivity_independent_vars).
             # reporting_set lives on report_config (top level), NOT on report.sensitivity
             # (ADR-5 ReportingSet: config/report.py::report_config.reporting_set; the
-            # sensitivity submodel forbids it as extra and strips a legacy `mode` key).
+            # sensitivity submodel forbids it as an extra key).
             "report": {
-                "reporting_set": "compute_config_byte_identity",
+                "reporting_set": reporting_set,
                 "sensitivity": {
-                    "independent_vars": ["n_devices"],
+                    "independent_vars": list(independent_vars),
                     "dependent_var": "performance.Total",
                     "aggregation": "mean",
-                    "group_by_var": "run_mode",
+                    "group_by_var": "analysis.run_mode",
                 },
             },
             **snapshot_disable_cfg,
@@ -655,6 +681,107 @@ def smoke_case(
     )
 
 
+def dem_case(
+    cfg,
+    start_from_scratch: bool = False,
+    system_directory: str | None = None,
+    tritonswmm_branch_key: str | None = None,
+    tritonswmm_git_url: str | None = None,
+    tritonswmm_software_directory: str | None = None,
+) -> _Case:
+    """DEM-resolution experiment: one fixed compute configuration run at every cell size of the ladder.
+
+    ``cfg`` is a ``synthetic_experiment_config`` with ``dem_resolution_ladder`` set. The sensitivity
+    CSV is ``build_experiment_matrix(cfg)``, so the rows run here are the rows the configuration
+    validated and the coupling-node precheck passed. The base case is built at the finest rung, and
+    each row overlays its own ``system.target_dem_resolution``. The analysis configuration selects the
+    four DEM-resolution EDA kinds and the ``dem_resolution`` reporting set, with the cell size as the
+    independent variable of the sensitivity report. The compute-config reporting set would render
+    ``config_diff_maps`` over a primary of mixed resolution, and that figure raises ``ProcessingError``
+    on a mixed grid; the ``dem_resolution`` set renders the four DEM kinds.
+
+    Each refusal names the field to change. The precheck and the matrix enumerate against the
+    grid of ``cfg``, so the case has to use that grid: the finest rung equals ``cfg.cell_size_m``, and the
+    extent of ``cfg`` equals the domain of this driver. One analysis runs one model arm, so
+    ``cfg.model_arms`` holds one entry.
+    """
+    if not cfg.dem_resolution_ladder:
+        raise ConfigurationError(
+            field="dem_resolution_ladder",
+            message="the dem case needs a configuration with dem_resolution_ladder set.",
+            config_path=None,
+        )
+    finest = cfg.dem_resolution_ladder[0]
+    if finest != cfg.cell_size_m:
+        raise ConfigurationError(
+            field="dem_resolution_ladder",
+            message=(
+                f"the finest rung {finest} m differs from cell_size_m={cfg.cell_size_m} m. The coupling "
+                f"precheck places nodes on the grid of cell_size_m, so the case would use another grid."
+            ),
+            config_path=None,
+        )
+    # Relative tolerance of floating point: 400 * 0.56 is 224.00000000000003, and a grid that differs
+    # by a whole cell differs by far more than 1e-9 of the extent.
+    if not (
+        math.isclose(cfg.n_cols * cfg.cell_size_m, _DOMAIN_WIDTH_M, rel_tol=1e-9)
+        and math.isclose(cfg.n_rows * cfg.cell_size_m, _DOMAIN_HEIGHT_M, rel_tol=1e-9)
+    ):
+        raise ConfigurationError(
+            field="n_cols",
+            message=(
+                f"the grid {cfg.n_cols} x {cfg.n_rows} at {cfg.cell_size_m} m spans a domain other than "
+                f"{_DOMAIN_WIDTH_M} x {_DOMAIN_HEIGHT_M} m, the domain this driver builds."
+            ),
+            config_path=None,
+        )
+    if cfg.setup_partition != _SETUP_PARTITION:
+        raise ConfigurationError(
+            field="setup_partition",
+            message=(
+                f"setup_partition={cfg.setup_partition!r} differs from {_SETUP_PARTITION!r}, "
+                f"the setup partition this driver writes into the analysis configuration."
+            ),
+            config_path=None,
+        )
+    if cfg.multi_sim_run_method != _MULTI_SIM_RUN_METHOD:
+        raise ConfigurationError(
+            field="multi_sim_run_method",
+            message=(
+                f"multi_sim_run_method={cfg.multi_sim_run_method!r} differs from {_MULTI_SIM_RUN_METHOD!r}, "
+                f"the run method this driver writes into the analysis configuration."
+            ),
+            config_path=None,
+        )
+    if len(cfg.model_arms) != 1:
+        raise ConfigurationError(
+            field="model_arms",
+            message=f"the dem case builds one analysis per model arm; model_arms is {list(cfg.model_arms)}.",
+            config_path=None,
+        )
+    (model_arm,) = cfg.model_arms
+    _GENERATED.mkdir(parents=True, exist_ok=True)
+    csv = _GENERATED / "dem_resolution_matrix.csv"
+    build_experiment_matrix(cfg).to_csv(csv, index=False)
+    return _build_case(
+        analysis_name=f"synth_dem_{model_arm}",
+        sensitivity_csv=csv,
+        start_from_scratch=start_from_scratch,
+        resume=False,
+        system_directory=system_directory,
+        cell_size_m=finest,
+        hpc_system_config_yaml=cfg.hpc_system_config_yaml,
+        tritonswmm_branch_key=tritonswmm_branch_key,
+        tritonswmm_git_url=tritonswmm_git_url,
+        tritonswmm_software_directory=tritonswmm_software_directory,
+        model_arm=model_arm,
+        ensemble_partition=cfg.ensemble_partition,
+        eda_enabled_plots=_DEM_RESOLUTION_EDA_PLOTS,
+        reporting_set="dem_resolution",
+        independent_vars=("system.target_dem_resolution",),
+    )
+
+
 #: Member-directory globs the stamp read walks, in order. BOTH are required and neither is
 #: redundant: live trees carry ``members/member_*`` while trees minted before the members-rename
 #: carry ``subanalyses/sa_*``, and the per-member store is the ONE stamp location uniform across
@@ -945,6 +1072,28 @@ def _cli() -> None:
         sp.add_argument("--tritonswmm-software-directory", default=None)
         sp.add_argument("--eda", action="store_true")
         sp.add_argument("--bundle", action="store_true")
+    # The DEM-resolution experiment. The experiment definition is a synthetic_experiment_config YAML
+    # with dem_resolution_ladder set, so the ladder, the grid and the partitions are one
+    # validated document. --tritonswmm-sha carries no default, for the reason it carries none on clean.
+    dp = sub.add_parser("dem")
+    dp.add_argument(
+        "--config", type=Path, required=True, help="synthetic_experiment_config YAML with dem_resolution_ladder set."
+    )
+    dp.add_argument("--system-directory", required=True)
+    dp.add_argument(
+        "--hpc-system-config",
+        type=Path,
+        default=None,
+        help="Per-cluster hpc_system_config YAML; replaces the config's hpc_system_config_yaml.",
+    )
+    dp.add_argument(
+        "--tritonswmm-sha",
+        required=True,
+        help="TRITON commit to BUILD for this case. No default: an invocation that names no version fails.",
+    )
+    dp.add_argument("--tritonswmm-git-url", default=None)
+    dp.add_argument("--tritonswmm-software-directory", default=None)
+    dp.add_argument("--eda", action="store_true")
     # CLEAN ONLY ON THIS CLI SURFACE, and the reason is no longer that the resume arm lacks the
     # parameter — `resume_case` and `build_resume_from_clean_runtimes` BOTH accept `variant` now,
     # because the ORNL-pinned solver-version control needs a resume arm whose INNER analysis name
@@ -1030,6 +1179,28 @@ def _cli() -> None:
         print(_json.dumps(verdict, indent=2, sort_keys=True))
         print(f"STAMP-CHECK {verdict['verdict']}: {verdict['reason']}")
         _sys.exit(0 if verdict["verdict"] == "PASS" else 1)
+
+    if args.cmd == "dem":
+        import yaml
+
+        from hhemt.config.synthetic_experiment import synthetic_experiment_config
+
+        cfg_dict = yaml.safe_load(args.config.read_text(encoding="utf-8")) or {}
+        if args.hpc_system_config is not None:
+            cfg_dict["hpc_system_config_yaml"] = str(args.hpc_system_config)
+        cfg = synthetic_experiment_config.model_validate(cfg_dict)
+        case = dem_case(
+            cfg,
+            system_directory=args.system_directory,
+            tritonswmm_branch_key=args.tritonswmm_sha,
+            tritonswmm_git_url=args.tritonswmm_git_url,
+            tritonswmm_software_directory=args.tritonswmm_software_directory,
+        )
+        if args.eda:
+            print("BUNDLE:", _emit_bundle(case))
+        else:
+            print("MATERIALIZED:", case.system_directory, "-> run analysis.run() then re-invoke with --eda")
+        return
 
     if args.cmd in ("clean", "resume"):
         factory = clean_case if args.cmd == "clean" else resume_case

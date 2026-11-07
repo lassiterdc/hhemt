@@ -1,28 +1,29 @@
 # Set up an HPC system profile
 
---8<-- "hpc-system-config-role.md"
+## Goal
 
-One file describes one cluster. Point a run at it with `--hpc-system-config`, or
-with `Toolkit.from_configs(..., hpc_system_config=...)`.
+Write an HPC system profile that describes one cluster, and point an analysis at the file with `--hpc-system-config` or with `Toolkit.from_configs(..., hpc_system_config=...)`.
 
-This page shows a complete working profile you can copy. For the meaning, type and
-requiredness of every individual field, see the generated
-[configuration schema](../reference/config-schema.md#hpc-system-config), which is
-derived from the models themselves and cannot fall behind them.
+## Prerequisites
+
+- A working [installation](installation.md).
+- The partition names, caps, and module names from the documentation of your cluster.
+
+## Key references
+
+- [Configuration schema](../reference/config-schema.md#hpc-system-config) gives the meaning, type, and requiredness of every field. The schema derives from the models themselves, so the schema stays current.
+- [Config filling](config-filling.md) describes the path through the system, analysis, and HPC configs.
+- [Building container images](building-container-images.md) covers the images for container mode.
+- [Compile the solver](compiling-the-solver.md) covers the build for a partition.
 
 ## Start from a working profile
 
-This is the UVA Rivanna profile, complete and ready to copy. It shows every field
-the profile accepts, the optional ones Rivanna does not use at their default values. Anonymized versions
-of this profile and its Frontier counterpart also ship in the repository under
-`test_data/norfolk_coastal_flooding/`; where the shipped UVA file and this page
-differ, this page is the current one.
+Below is an example HPC profile. The profile shows every accepted field. The optional fields that the example cluster leaves unused carry their default values. Anonymized versions of the profile and of an AMD-GPU counterpart are in [`test_data/norfolk_coastal_flooding/`](https://github.com/lassiterdc/hhemt/tree/main/test_data/norfolk_coastal_flooding) on the repository. Where a repository file and this page differ, this page is current.
 
 ```yaml
 hpc_name: uva_rivanna
 default_account: "{your-allocation}"   # CHANGE THIS: your SLURM account
 login_node: login1.hpc.virginia.edu
-default_execution_mode: batch_job      # one sbatch per simulation
 gpu_allocation_flavor: gres            # this cluster requests GPUs with --gres=gpu:N
 max_concurrent_jobs: 1000              # how many jobs to keep queued at once
 max_concurrent_cpus: null              # optional CPU budget; measure your QOS first (below)
@@ -64,7 +65,7 @@ container:                             # only read when execution_environment is
   binds: ["/scratch", "/sfs"]
   containlibs: []                      # the image carries its own MPI, so no host libraries are bound
   pre_exec_modules: []
-  cray_mpich_abi_module: false         # Cray host-MPI bind; a Frontier setting
+  cray_mpich_abi_module: false         # Cray host-MPI bind; a setting for Cray systems
   apptainerenv_ld_library_path: null   # set only together with cray_mpich_abi_module
   exe_in_sif:
     triton: "/opt/hhemt/bin/triton_only.exe"
@@ -76,138 +77,76 @@ container:                             # only read when execution_environment is
 executor_profile_extras: {}            # advanced escape hatch; leave empty
 ```
 
-### What you must change
+### Required changes
 
-Two values, both marked `CHANGE THIS` above:
+Change the values marked `CHANGE THIS` above.
 
-- **`default_account`** is your SLURM account. Every job the toolkit submits is
-  charged to it.
-- **`container.sif_root`** is the directory `hhemt build-sifs` writes into and the ONLY place the toolkit looks for an image (resolved by identity), and it matters only
-  if you set `execution_environment: container` on the analysis config. A native
-  run ignores the whole `container:` block, so you can leave it as it stands.
+- **`default_account`** is your SLURM account. The account is charged for every job that the toolkit submits.
+- **`container.sif_root`** is the directory that `hhemt build-sifs` writes into and the only place where the toolkit looks for an image, resolved by identity. The field matters only with `execution_environment: container` on the analysis config. A native analysis ignores the whole `container:` block, so you can leave the block untouched.
 
-### What you should change if your cluster differs
+### Changes for a different cluster
 
-Everything under `partitions:` describes real hardware and real scheduler caps. If
-you are writing a profile for a cluster that is not Rivanna, these are the values to
-replace with your own site's, taken from your cluster's documentation. The caps are
-what preflight validates a requested run against, so a wrong value here surfaces
-either as a rejected run that should have been allowed, or as a job the scheduler
-refuses after the toolkit accepted it.
+Everything under `partitions:` describes real hardware and real scheduler caps. A profile for another cluster takes the values of that site from the documentation of the cluster. Preflight validates a requested analysis against the caps, so a wrong value surfaces as a rejection of an analysis that the cluster would allow, or as a job that the scheduler refuses after the toolkit accepted the analysis.
 
-### What you can leave alone
+### Fields to leave alone
 
-`executor_profile_extras` stays empty unless you are passing a Snakemake SLURM
-plugin setting the toolkit does not model. Inside `container:`, everything except
-`sif_root` and `builds_containers` describes how this cluster runs the container and
-what the image provides. Most of those keys are about the cluster: how it launches a
-container and exposes its GPUs and fabric to it. `exe_in_sif` and `python_in_sif` are
-facts about the image, and both must resolve inside it rather than on the host.
-`exe_in_sif` gives the absolute in-image path of each simulation executable.
-`python_in_sif` is the interpreter command the container's processing steps run, not
-a path: the bare name `python` works because every image recipe the toolkit ships for
-`hhemt build-sifs` puts the image's own Python first on its `PATH`. Set it to an
-absolute in-image path only for an image whose `PATH` does not lead to its own Python,
-such as one built from a recipe of your own. Those values are correct for
-Rivanna as written.
+`executor_profile_extras` stays empty unless you pass a Snakemake SLURM plugin setting that is missing from the toolkit models. The keys of `container:` other than `sif_root` and `builds_containers` describe how the cluster runs the container and the contents of the image. Most keys describe the cluster, meaning how the cluster launches a container and exposes GPUs and fabric to the container. `exe_in_sif` and `python_in_sif` describe the image, and both must resolve inside the image and not on the host.
+
+`exe_in_sif` gives the absolute in-image path of each simulation executable. `python_in_sif` is the interpreter command for the processing steps of the container, and a path is not required. The bare name `python` works because every image recipe that the toolkit ships for `hhemt build-sifs` puts the image's own Python first on the `PATH`. Set the field to an absolute in-image path only for an image whose `PATH` leads to a different Python, such as an image built from a recipe of your own. The values in the example are correct for the example cluster.
 
 !!! tip "Start native, add containers later"
-    Container mode is opt-in; `hhemt build-sifs` creates every image your experiment
-    needs under `sif_root`, addressed by identity. Get a native run working first.
+    Container mode is opt-in, and [Building container images](building-container-images.md) covers the images. Get a native analysis working first.
 
-## Verify two site caps before you rely on them
+## Verify the site caps before you rely on them
 
-Two optional fields on the HPC-system config hold a cap that tracks your
-cluster's real ceiling only if your cluster meters the same thing the field
-counts. Measure both before you set either.
+The optional fields `max_concurrent_cpus` and `halt_sims_below_free_bytes` hold a cap that tracks the real ceiling of your cluster only when the cluster meters the quantity that the field counts. Measure the quantity before you set either field.
 
 ### `max_concurrent_cpus` counts CPUs
 
-It tracks a site ceiling only where that ceiling also meters `cpu`. Check what
-your QOS meters:
+The field tracks a site ceiling only where the ceiling also meters `cpu`. Check the quantities that your QOS meters.
 
 ```bash
 sacctmgr -nP show qos standard,normal format=Name,MaxTRESPU,GrpTRES,MaxTRES
 ```
 
-On Rivanna this returns `standard|cpu=1500||cpu=1500`, and no QOS on that
-cluster meters `billing`, so the CPU budget tracks the real ceiling there. Where
-a QOS meters `billing` instead, the budget still holds exactly the CPUs it
-names, but that hold will not track the cluster's own ceiling.
+On the example cluster the command returns `standard|cpu=1500||cpu=1500`, and no QOS on the cluster meters `billing`, so the CPU budget tracks the real ceiling there. Where a QOS meters `billing` instead, the budget holds the CPUs that the field names, and the hold falls short of the ceiling of the cluster.
 
 ### `halt_sims_below_free_bytes` reads `statvfs`
 
-`statvfs` reports the filesystem's free space, which equals your quota only
-where the quota is a GPFS fileset with `filesetdf` enabled. Otherwise a
-quota-exhausted run gets `EDQUOT` on write while `statvfs` still reports free
-space, and the guard never fires. Check what `statvfs` sees, substituting your
-own analysis directory:
+The free space that `statvfs` reports equals your quota only where the quota is a GPFS fileset with `filesetdf` enabled. Otherwise a quota-exhausted analysis gets `EDQUOT` on write while `statvfs` still reports free space, and the guard never fires. Check the value that `statvfs` reports, substituting your own analysis directory.
 
 ```bash
 python3 -c "import os,sys; s=os.statvfs(sys.argv[1]); print(s.f_blocks*s.f_frsize/1e12,'TB total')" /path/to/analysis_dir
 ```
 
-On Rivanna `/scratch` this reported 13.19 TB total, which is the real filesystem
-ceiling rather than a smaller soft limit, so the guard covers the binding one
-there.
+On `/scratch` of the example cluster the command reported 13.19 TB total. The value is the real filesystem ceiling and no smaller soft limit, so the guard covers the binding limit there.
 
 ## Choose a partition
 
-Pick a partition name on your **analysis** config, using
-`hpc_ensemble_partition` for the simulations and
-`hpc_setup_and_analysis_processing_partition` for setup and post-processing. The
-name must be a key under `partitions:` in this profile.
+Pick a partition name on your **analysis** config. Use `hpc_ensemble_partition` for the simulations and `hpc_setup_and_analysis_processing_partition` for setup and post-processing. The name must be a key under `partitions:` in the profile. The profile above offers `standard`, `gpu-a6000`, and `gpu-a100-80`.
 
 !!! warning "GPU hardware derives from the partition"
-    You do not set `gpu_hardware` on the analysis config. The partition you choose
-    determines both the GPU architecture the solver is compiled for and the GPU
-    backend it is built with, by reading `gpu_hardware` and
-    `gpu_compilation_backend` off that partition's entry above.
+    You set no `gpu_hardware` on the analysis config. The partition you choose determines the GPU architecture that the solver is compiled for and the GPU backend that builds the solver, because the toolkit reads `gpu_hardware` and `gpu_compilation_backend` from the entry of that partition above.
 
-    This is why the two GPU partitions in the profile differ only in a handful of
-    values: selecting `gpu-a100-80` instead of `gpu-a6000` is how you change GPU
-    hardware for a run.
+    The GPU partitions in the profile differ only in hardware values for this reason, and selecting `gpu-a100-80` in place of `gpu-a6000` changes the GPU hardware of an analysis.
 
-On the profile above that gives you `standard`, `gpu-a6000` and `gpu-a100-80`.
+Compile the solver for a partition before the first analysis on the partition. [Compile the solver](compiling-the-solver.md#on-a-cluster) gives the command-line form.
 
-The same partition entry decides what the solver is built for, and a run checks
-for that build rather than making it. Before the first run on a partition, compile
-for it with the command-line form on
-[Compile the solver](compiling-the-solver.md#on-a-cluster).
+## Differences on an AMD-GPU cluster
 
-## A second cluster, and what actually differs
+A profile for an AMD-GPU cluster uses the same schema with different values.
 
-A Frontier profile is not a different kind of file. It is the same schema with
-different values, and the differences are worth knowing because they are the ones
-that vary most between sites.
-
-??? example "How the OLCF Frontier profile differs from the UVA one above"
-    Apart from `hpc_name`, the cluster's own label, four things differ at the top level:
+??? example "AMD-GPU profile compared with the UVA profile above"
+    Apart from `hpc_name`, the top-level fields below differ.
 
     | Field | UVA Rivanna | OLCF Frontier |
     |---|---|---|
     | `gpu_allocation_flavor` | `gres`, so GPUs are requested with `--gres=gpu:N` | `gpus`, so GPUs are requested with `--gpus-per-node` |
-    | `default_execution_mode` | `batch_job`, one sbatch per simulation | `1_job_many_srun_tasks`, one allocation with a pool of steps |
     | `additional_modules` | `gcc/12.4.0` | `PrgEnv-amd` and `rocm` |
-    | `login_node` | set, because `batch_job` runs an orchestrator there | absent, because that dispatch method does not use one |
+    | `login_node` | set, because `batch_job` runs an orchestrator there | absent, because that dispatch method uses no orchestrator |
 
-    The partition set differs too: Frontier has a single `batch` partition where
-    Rivanna has three. That partition uses `gpu_compilation_backend: HIP` and
-    `gpu_hardware: mi250x`, which is the same partition-derives-hardware rule above
-    producing an AMD build instead of an NVIDIA one.
+    The AMD-GPU cluster has a single `batch` partition where the UVA profile has more. The partition uses `gpu_compilation_backend: HIP` and `gpu_hardware: mi250x`, the partition-derives-hardware rule above producing an AMD build in place of an NVIDIA build.
 
-    Its `container:` block carries substantially more, because running a container
-    against the Cray MPI and Slingshot fabric needs library paths and bind mounts
-    that a Rivanna container does not: `containlibs`, `pre_exec_modules`,
-    `cray_mpich_abi_module` and `apptainerenv_ld_library_path`, which the profile
-    above leaves at their defaults, are filled there. Copy that block as it stands
-    rather than reconstructing it.
+    The `container:` block carries more, because a container against the Cray MPI and Slingshot fabric needs library paths and bind mounts that a container on the UVA profile avoids. `containlibs`, `pre_exec_modules`, `cray_mpich_abi_module`, and `apptainerenv_ld_library_path` sit at their defaults in the profile above, and the AMD-GPU profile fills them. Take that block unchanged.
 
-    The full file is at
-    `test_data/norfolk_coastal_flooding/hpc_system_config_frontier.yaml`.
-
-## See also
-
-- [Configuration schema](../reference/config-schema.md#hpc-system-config): every field, with its type, requiredness and default.
-- [Config-filling guide](config-filling.md): the task-oriented path through all three configs.
-- [Norfolk end-to-end tutorial](../tutorials/norfolk-end-to-end.md)
+    The full file is in [`test_data/norfolk_coastal_flooding/`](https://github.com/lassiterdc/hhemt/tree/main/test_data/norfolk_coastal_flooding) on the repository.

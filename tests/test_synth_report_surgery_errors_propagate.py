@@ -79,7 +79,7 @@ def _run_analysis(monkeypatch, tmp_path, fmt):
     out.write_text("rendered")
     stand_in = SimpleNamespace(
         analysis_paths=SimpleNamespace(analysis_dir=tmp_path),
-        cfg_analysis=SimpleNamespace(brand_theme=None, analysis_id="a"),
+        cfg_analysis=SimpleNamespace(brand_theme=None, analysis_id="a", report=None),
         _brand_theme=SimpleNamespace(upper_left_text="navbar"),
         _active_reporting_set=get_reporting_set("default"),
     )
@@ -97,7 +97,7 @@ def _run_sensitivity(monkeypatch, tmp_path, fmt):
     stand_in = SimpleNamespace(
         experiment=SimpleNamespace(analysis_paths=paths),
         analysis_paths=paths,
-        cfg_analysis=SimpleNamespace(brand_theme=None, analysis_id="a"),
+        cfg_analysis=SimpleNamespace(brand_theme=None, analysis_id="a", report=None),
         _brand_theme=SimpleNamespace(upper_left_text="navbar"),
         _active_reporting_set=get_reporting_set("default"),
     )

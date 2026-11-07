@@ -1,26 +1,26 @@
-"""Bundle subsystem — render-bundle emission and the consume-side
+"""Bundle subsystem for render-bundle emission and the consume-side
 ``Bundle`` class.
 
 Public surface
 --------------
-- ``Bundle`` — the consume-side entry point for a render bundle. Used by
+- ``Bundle``: the consume-side entry point for a render bundle. Used by
   callers that already have a bundle on disk and want to regenerate the
   analysis report locally without re-running ``Analysis.run()``.
-- ``emit_bundle`` — the emit-side helper. Invoked by
+- ``emit_bundle``: the emit-side helper. Invoked by
   ``Analysis.bundle_report_data()`` and
   ``TRITONSWMM_sensitivity_analysis.bundle_report_data()`` to produce a
   portable render bundle from a completed HPC analysis.
-- ``combine_bundle`` and ``CombinedBundle`` — combine two or more completed,
+- ``combine_bundle`` and ``CombinedBundle``: combine completed,
   unpacked render bundles into one standalone cross-experiment bundle, and the
-  consume-side handle for that combined bundle (re-exported from
-  ``bundle._combine``).
-- ``BundleSchemaError`` — raised when a bundle's ``bundle_schema_version`` does
-  not match the installed toolkit's (re-exported from ``hhemt.exceptions``).
+  consume-side handle for that combined bundle, both re-exported from
+  ``bundle._combine``.
+- ``BundleSchemaError``: raised when the ``bundle_schema_version`` of a bundle differs
+  from that of the installed toolkit, re-exported from ``hhemt.exceptions``.
 
-``Bundle`` is deliberately NOT a subclass of ``TRITONSWMM_analysis``.
-Bundle outputs are pre-computed; ``Analysis.run()`` is not callable
-against a bundle, and a subclass would inherit it and every other
-simulation-side method as a call that cannot succeed on a bundle.
+``Bundle`` is deliberately NOT a ``TRITONSWMM_analysis`` subclass.
+Bundle outputs are pre-computed, so ``Analysis.run()`` is not callable
+against a bundle, and a subclass would inherit that method and every other
+simulation-side method as a call that is certain to fail on a bundle.
 """
 
 from __future__ import annotations
@@ -71,23 +71,23 @@ class Bundle:
 
     @classmethod
     def from_directory(cls, path: Path | str) -> Bundle:
-        """Construct a :class:`Bundle` from an unpacked bundle directory on disk.
+        """Construct a ``Bundle`` from an unpacked bundle directory on disk.
 
-        This is the entry point for consuming a render bundle locally — the call
-        the how-to guides instruct you to make after transferring a bundle off
-        an HPC system.
+        Use the entry point to consume a render bundle locally. The how-to
+        guides instruct you to call the entry point after transferring a bundle off an HPC
+        system.
 
         Parameters
         ----------
         path : Path or str
-            An UNPACKED bundle directory. It must contain
-            ``bundle_manifest.json``; if you have a `.zip`, extract it first.
+            An UNPACKED bundle directory. The directory must contain
+            ``bundle_manifest.json``. Extract the archive first when you have a `.zip`.
 
         Returns
         -------
         Bundle
-            A handle whose paths all resolve via :attr:`root` at call time —
-            no ``os.chdir``, no persisted absolute paths, so the directory is
+            A handle whose paths all resolve via ``root`` at call time. The handle uses
+            no ``os.chdir`` and persists no absolute paths, so the directory is
             relocatable.
 
         Raises
@@ -96,35 +96,36 @@ class Bundle:
             No ``bundle_manifest.json`` under ``path``, or no ``cfg_analysis.yaml``
             in the bundle.
         ValueError
-            The manifest has no ``bundle_schema_version`` field, or its
+            The manifest has no ``bundle_schema_version`` field, or the
             ``bundle_root_invariants`` value is not a dict.
         BundleSchemaError
-            The bundle's ``bundle_schema_version`` DIFFERS from the locally
-            installed toolkit's ``BUNDLE_SCHEMA_VERSION``, in either direction:
-            a higher version was emitted by a newer toolkit (upgrade the
-            toolkit), and a lower one by an older toolkit (re-emit the bundle
-            from its source analysis). The match is exact, so an older bundle
-            does not load.
+            The ``bundle_schema_version`` of the bundle DIFFERS from the ``BUNDLE_SCHEMA_VERSION`` of the locally
+            installed toolkit, in either direction. A newer toolkit emitted a higher version, so upgrade the
+            toolkit. An older toolkit emitted a lower version, so re-emit the bundle
+            from the source analysis. The match is exact, so an older bundle
+            fails to load.
         ConfigurationError
             The bundle's ``cfg_analysis.yaml`` fails the ``analysis_config``
-            schema; ``load_bundle_config`` wraps the pydantic validation error.
+            schema. ``load_bundle_config`` wraps the pydantic validation error.
 
         Notes
         -----
-        A missing ``bundle_root_invariants`` manifest key is read as ``{}`` (no
-        enforced invariants), and that default is DEFENSIVE: a bundle at the
+        A missing ``bundle_root_invariants`` manifest key is read as ``{}``, meaning no
+        enforced invariants, and that default is DEFENSIVE. A bundle at the
         current ``BUNDLE_SCHEMA_VERSION`` always carries the key, because
         ``emit_bundle`` always passes the invariants dict ``emit_relative_config_pair``
-        returns (the first element of its pair) to ``_write_bundle_manifest``, and the
+        returns, the first element of the pair, to ``_write_bundle_manifest``, and the
         exact version match above
         rejects bundles at any other version. Only a manifest built some other
         way reaches the default.
 
         Examples
         --------
-        >>> from hhemt.bundle import Bundle
-        >>> b = Bundle.from_directory("path/to/bundle")
-        >>> b.regenerate_report()
+        ```python
+        from hhemt.bundle import Bundle
+        b = Bundle.from_directory("path/to/bundle")
+        b.regenerate_report()
+        ```
         """
         root = Path(path).resolve()
         manifest_path = root / BUNDLE_MANIFEST_FILENAME
@@ -233,9 +234,9 @@ class Bundle:
     def root(self) -> Path:
         """Absolute path to the unpacked bundle directory.
 
-        Every bundle-relative path resolves against this at call time, which is
-        what makes a bundle relocatable — move the directory and `root` moves
-        with it. Use :meth:`absolute` to resolve a relative path against it.
+        Every bundle-relative path resolves against the root at call time, so a
+        bundle is relocatable. Move the directory and ``root`` moves
+        with the directory. Use ``absolute`` to resolve a relative path against the root.
         """
         return self._root
 
@@ -244,10 +245,10 @@ class Bundle:
         """The parsed ``bundle_manifest.json``.
 
         Carries, among other keys, the bundle's ``bundle_schema_version``, the
-        harvested file set, the root invariants and the producing
-        ``toolkit_git_sha``. The dict is returned BY REFERENCE: mutating it changes
-        this ``Bundle``'s in-memory copy, which later reads of this property see,
-        and never writes back to disk.
+        harvested file set, the root invariants, and the producing
+        ``toolkit_git_sha``. The dict is returned BY REFERENCE. Mutating the dict changes
+        this ``Bundle``'s in-memory copy, so later reads of this property see
+        the change, and the change never writes back to disk.
         """
         return self._manifest
 
@@ -259,11 +260,11 @@ class Bundle:
     def eda(self, *, plots_only: bool = True, notebook_filename: str | None = None) -> EdaReportResult:
         """Regenerate the EDA report locally from the bundled data.
 
-        Delegates to the SAME eda/ free functions analysis.eda() uses, passing
+        Delegates to the SAME eda/ free functions ``analysis.eda()`` uses, passing
         bundle.root as root and the bundled cfg. plots_only=True is the only
-        supported mode — a Bundle has no source datatree, so calc cannot run;
-        the EDA datasets (eda/<plot_id>.zarr) and rendered plots were carried into
-        the bundle by the harvest chain when analysis.eda() ran pre-bundle.
+        supported mode, because a Bundle has no source datatree and calc is unable to run.
+        The EDA datasets, ``eda/<plot_id>.zarr``, and rendered plots were carried into
+        the bundle by the harvest chain when ``analysis.eda()`` ran pre-bundle.
         """
         from hhemt.eda import (
             EdaReportResult,
@@ -299,21 +300,21 @@ class Bundle:
     def reprex(self, reprex_config, target_hpc_profile):
         """Validate round-trip runnability against a target HPC profile.
 
-        Verifies the SIF (mandatory sha256 digest match when the crate references
-        one, fail-closed; the toolkit does not PGP-sign SIFs and runs no signature
-        check), re-aims ``validation.py`` preflight at ``target_hpc_profile``, and
+        Verifies the SIF with a mandatory sha256 digest match when the crate references
+        a SIF, failing closed. The toolkit signs no SIF with PGP and runs no signature
+        check. The method re-aims ``validation.py`` preflight at ``target_hpc_profile`` and
         emits per-``(member_id, column)`` problem pairs plus per-field graduated
-        experiment amendments for closest-possible cross-system reproduction. Mirrors ``Bundle.eda()`` —
+        experiment amendments for closest-possible cross-system reproduction. Mirrors ``Bundle.eda()``:
         delegates to the ``bundle._reprex`` free function with ``bundle.root``.
 
         Parameters
         ----------
         reprex_config : hhemt.config.reprex_config.reprex_config
-            The target user's minimal runnable-field set (account / login node /
-            ``sif_root``, the directory their images are found under by digest /
-            scratch + target partition selectors).
+            The reproducer's minimal runnable-field set. The set covers the account, the login node,
+            ``sif_root`` as the directory that holds the images found by digest, the scratch selector,
+            and the target partition selector.
         target_hpc_profile : hhemt.config.hpc_system.hpc_system_config
-            The reproducer's own HPC profile (partition caps, container spec).
+            The reproducer's own HPC profile covering partition caps and container spec.
 
         Returns
         -------
@@ -405,12 +406,14 @@ class Bundle:
                     ),
                 )
 
-    def regenerate_report(self, *, format: Literal["html", "zip"] = "zip", declare_stale_plots: bool = False) -> Path:
+    def regenerate_report(
+        self, *, format: Literal["html", "zip"] | None = None, declare_stale_plots: bool = False
+    ) -> Path:
         """Regenerate the analysis report from bundled data.
 
-        Stages the report templates, writes a regeneration-scoped Snakefile
-        (plot, rule-all and render-report rules only; no simulation,
-        processing or consolidation rules), runs ``snakemake --touch`` and
+        Stages the report templates and writes a regeneration-scoped Snakefile
+        with plot, rule-all, and render-report rules only and no simulation,
+        processing, or consolidation rules. Runs ``snakemake --touch`` and
         then ``snakemake --report`` as subprocesses rooted at the bundle, and
         applies the post-render surgery. The static backend comes from
         ``cfg_analysis.yaml``'s ``report.interactive.static_backend`` field
@@ -418,20 +421,24 @@ class Bundle:
 
         Parameters
         ----------
-        format : {"html", "zip"}
-            Final report format; the signature default is ``"zip"``. The
-            static backend is NOT a caller-facing parameter; it is derived from
-            the bundle's cfg files via ``self._read_static_backend()``, so it is
-            set by the bundle's config rather than by an argument default here.
+        format : {"html", "zip"} or None, default None
+            Final report format. ``None`` reads ``report.interactive.report_html_mode``
+            from the bundle's ``cfg_analysis.yaml``. ``"html"`` and ``"zip"`` select the format named,
+            and ``"auto"`` adds up the bytes of the figure files under the
+            bundle's ``plots/`` and renders ``"html"`` below 15 MB, the
+            ``config.report.AUTO_HTML_MAX_BYTES`` threshold, and ``"zip"`` otherwise. The
+            static backend is NOT a caller-facing parameter. The backend is derived from
+            the bundle's cfg files via ``self._read_static_backend()``, so the bundle's config
+            sets the backend and no argument default does.
         declare_stale_plots : bool, default False
             Passed to ``assert_plots_match_running_build``. When False, a bundle
             whose figures were rendered by different code than the running
             toolkit raises ``StalePlotsError`` before any regeneration work.
-            When True the mismatch is printed to this process's stdout (prefixed
-            ``[render_report] DECLARED STALE PLOTS:``) and the regeneration
-            proceeds. Nothing else keeps it: this method discards the message
+            When True the mismatch is printed to this process's stdout, prefixed with
+            ``[render_report] DECLARED STALE PLOTS:``, and the regeneration
+            proceeds. No other record keeps the declaration. The method discards the message
             the guard returns, and the print runs outside the tee'd snakemake
-            subprocesses, so it reaches no ``_logs/`` file and no report.
+            subprocesses, so the declaration reaches no ``_logs/`` file and no report.
 
         Raises
         ------
@@ -440,26 +447,26 @@ class Bundle:
             ``declare_stale_plots`` is False.
         ProcessingError
             From ``_assert_render_inputs_present``: the bundle declares a render
-            input (``brand_theme``) that it does not carry. Also from the
-            post-render surgery (``report_renderers._react_surgery``), when the
+            input, ``brand_theme``, that the bundle fails to carry. Also from the
+            post-render surgery, ``report_renderers._react_surgery``, when the
             rendered report carries the toggle machinery but a literal the surgery
-            patches has drifted; the surgery is not wrapped here, so that error
+            patches has drifted. The surgery is not wrapped here, so that error
             ends the call after ``snakemake --report`` has already written the
             un-surgeried report.
         ConfigurationError
             The bundled ``brand_theme`` file exists but fails the ``brand_theme``
-            schema: ``load_brand_theme`` wraps the pydantic validation error.
+            schema. ``load_brand_theme`` wraps the pydantic validation error.
             ``_assert_render_inputs_present`` checks only that the file is there.
             An empty theme file raises ``ValueError`` from the same loader instead.
         RuntimeError
-            Stale Snakemake locks are present under ``.snakemake/locks``, or the
-            ``snakemake --touch`` or ``snakemake --report`` subprocess exits
+            Stale Snakemake locks are present under ``.snakemake/locks``. A
+            ``snakemake --touch`` or ``snakemake --report`` subprocess can also exit
             non-zero.
         FileNotFoundError
             ``format="html"`` and ``snakemake --report`` exited 0 without writing
-            ``analysis_report.html``: the html branch reads that file before the
-            surgery. The zip branch does not raise on a missing archive -- the zip
-            surgery returns without doing anything, and this method still returns the
+            ``analysis_report.html``. The html branch reads that file before the
+            surgery. The zip branch raises no error on a missing archive. The zip
+            surgery returns without acting, and this method still returns the
             ``analysis_report.zip`` path.
         """
         from hhemt.provenance import assert_plots_match_running_build
@@ -508,6 +515,12 @@ class Bundle:
                 f"left behind by an interrupted prior render."
             )
 
+        if format is None:
+            from hhemt.config.report import report_figure_bytes, resolve_report_format
+
+            format = resolve_report_format(
+                self._cfg_analysis.report.interactive.report_html_mode, report_figure_bytes(self._root)
+            )
         output_path = self._root / f"analysis_report.{format}"
 
         # Build snakemake invocation. cwd= is set on the subprocess, not

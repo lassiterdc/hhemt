@@ -1,0 +1,57 @@
+{
+  "shape": [
+    1,
+    537,
+    551
+  ],
+  "data_type": "float32",
+  "chunk_grid": {
+    "name": "regular",
+    "configuration": {
+      "chunk_shape": [
+        1,
+        269,
+        276
+      ]
+    }
+  },
+  "chunk_key_encoding": {
+    "name": "default",
+    "configuration": {
+      "separator": "/"
+    }
+  },
+  "fill_value": "NaN",
+  "codecs": [
+    {
+      "name": "bytes",
+      "configuration": {
+        "endian": "little"
+      }
+    },
+    {
+      "name": "zstd",
+      "configuration": {
+        "level": 0,
+        "checksum": false
+      }
+    }
+  ],
+  "attributes": {
+    "units": "m",
+    "long_name": "Maximum flood depth (solver running maximum of depth)",
+    "standard_name": "flood_water_thickness",
+    "format": "bin",
+    "cell_methods": "time: maximum",
+    "coordinates": "event_id",
+    "_FillValue": "AAAAAAAA+H8="
+  },
+  "dimension_names": [
+    "event_iloc",
+    "y",
+    "x"
+  ],
+  "zarr_format": 3,
+  "node_type": "array",
+  "storage_transformers": []
+}

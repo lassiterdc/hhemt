@@ -85,7 +85,7 @@ class CompilationError(TRITONSWMMError):
     Attributes
     ----------
     model_type : str
-        Which model failed: ``triton``, ``tritonswmm`` or ``swmm``.
+        The model that failed, one of ``triton``, ``tritonswmm``, or ``swmm``.
     backend : str
         Compilation backend, such as ``cpu``, ``gpu`` or ``openmp``.
     logfile : Path
@@ -118,7 +118,7 @@ class SimulationError(TRITONSWMMError):
     event_iloc : int
         Index of the weather event that failed.
     model_type : str
-        Which model failed: ``triton``, ``tritonswmm`` or ``swmm``.
+        The model that failed, one of ``triton``, ``tritonswmm``, or ``swmm``.
     logfile : Path or None
         Path to the simulation log file, when one was given.
     """
@@ -138,8 +138,8 @@ class SimulationError(TRITONSWMMError):
 class ProcessingError(TRITONSWMMError):
     """Output processing failure.
 
-    Raised when post-simulation processing operations fail (parsing
-    outputs, compressing files, generating summaries).
+    Raised when post-simulation processing operations fail, such as parsing
+    outputs, compressing files, or generating summaries.
 
     Attributes
     ----------
@@ -168,13 +168,13 @@ class ProcessingError(TRITONSWMMError):
 class WorkflowError(TRITONSWMMError):
     """Snakemake workflow failure.
 
-    Raised when Snakemake workflow execution fails during any phase
-    (setup, preparation, execution, processing, consolidation).
+    Raised when Snakemake workflow execution fails during any phase,
+    including setup, preparation, execution, processing, and consolidation.
 
     Attributes
     ----------
     phase : str
-        Which workflow phase failed.
+        The workflow phase that failed.
     return_code : int
         Process return code from Snakemake.
     stderr : str
@@ -201,13 +201,13 @@ class WorkflowError(TRITONSWMMError):
 class SLURMError(TRITONSWMMError):
     """SLURM job submission or execution failure.
 
-    Raised when SLURM operations fail (job submission, resource
-    allocation, job monitoring).
+    Raised when SLURM operations fail during job submission, resource
+    allocation, or job monitoring.
 
     Attributes
     ----------
     operation : str
-        Which SLURM operation failed: ``submit``, ``monitor`` or ``allocate``.
+        The SLURM operation that failed, one of ``submit``, ``monitor``, or ``allocate``.
     job_id : str or None
         SLURM job ID, when one was assigned.
     reason : str
@@ -237,11 +237,11 @@ class ResourceAllocationError(TRITONSWMMError):
     Attributes
     ----------
     resource_type : str
-        Which resource failed: ``cpu``, ``gpu`` or ``memory``.
+        The resource that failed, one of ``cpu``, ``gpu``, or ``memory``.
     requested : str
         Requested resource amount.
     available : str or None
-        Available resource amount, when it is known.
+        Available resource amount, when the amount is known.
     """
 
     def __init__(self, resource_type: str, requested: str, available: str | None = None):
@@ -257,7 +257,7 @@ class ResourceAllocationError(TRITONSWMMError):
 
 
 class CLIValidationError(TRITONSWMMError):
-    """CLI argument validation failure (exit code 2).
+    """CLI argument validation failure with exit code 2.
 
     Raised when command-line arguments fail business logic validation,
     such as mutually exclusive flags, conditional requirements, or
@@ -316,7 +316,7 @@ class GlobusTransferError(TRITONSWMMError):
 
 
 class WorkflowPlanningError(TRITONSWMMError):
-    """Workflow planning/build failure (exit code 3).
+    """Workflow planning/build failure with exit code 3.
 
     Raised when Snakemake workflow generation or DAG planning fails,
     typically due to invalid target specifications or missing dependencies.
@@ -350,6 +350,6 @@ class PublishError(TRITONSWMMError):
 # re-exported from hhemt.bundle for the existing `from hhemt.bundle import
 # BundleSchemaError` call sites.
 class BundleSchemaError(ValueError):
-    """A bundle's bundle_schema_version does not match the locally-installed
+    """A bundle's bundle_schema_version differs from the locally-installed
     toolkit's BUNDLE_SCHEMA_VERSION. Distinct from generic malformed-manifest
-    errors so callers can branch on schema-version mismatch specifically."""
+    errors so callers can branch on a schema-version mismatch."""

@@ -48,15 +48,19 @@ def _list_sentence(text: str) -> str:
     return rest if end is None else rest[: end.start()]
 
 
-def _count_before_names(text: str) -> int:
-    """Return the number stated just before ``closed token names``, whatever words precede that group."""
+def _count_before_names(text: str) -> int | None:
+    """Return the number stated just before ``closed token names``, or ``None`` when the word there is no number.
+
+    The phrase itself must be present: a text without it fails the calling test instead of reading as a text
+    with no count. A number word or a numeral before the phrase is returned as an integer; any other word
+    (``the``, ``all``, ``several``) states no number and returns ``None``.
+    """
     found = _COUNT_BEFORE_NAMES.search(text)
-    assert found is not None, "no count precedes the phrase 'closed token names' in the text"
+    assert found is not None, "the phrase 'closed token names' is not in the text"
     count = found.group("count").lower()
     if count.isdigit():
         return int(count)
-    assert count in _NUMBER_WORDS, f"{count!r} before 'closed token names' is not a number word or a numeral"
-    return _NUMBER_WORDS[count]
+    return _NUMBER_WORDS.get(count)
 
 
 def test_every_token_of_the_closed_set_is_named_in_the_sentence_that_introduces_it():
@@ -76,19 +80,22 @@ def test_every_token_of_the_closed_set_is_named_in_the_sentence_that_introduces_
     assert set(_TOKEN.findall(sentence)) <= set(_placeholders.PLACEHOLDER_TOKENS)
 
 
-def test_the_count_before_closed_token_names_in_the_rehydrate_docstring_is_the_size_of_the_set():
-    """Property: the number written before ``closed token names`` in the docstring equals ``len(PLACEHOLDER_TOKENS)``.
+def test_no_number_stands_before_closed_token_names_in_the_rehydrate_docstring():
+    """Property: no number word or numeral stands before ``closed token names`` in the docstring, and the
+    phrase is still present.
 
-    Class: published-text drift, read by the position of the count rather than by one fixed wording.
-    Why required: the docstring is rendered in the API reference, and a reader takes the count as the
-    number of tokens the function will replace.
-    What kills it: a token added to the tuple with the docstring's count left unchanged.
-    A second correct implementation: ``matches only all ten closed token names`` or ``... the 10 closed
-    token names`` in place of the present wording.
+    Class: published-text drift, read by the position of the count rather than by one fixed wording, so a count
+    restored in another wording (``all ten``, ``the 10``) is found as well as ``the ten``.
+    Why required: the docstring is rendered in the API reference, and a reader takes a count there as the
+    number of tokens the function will replace. The count was removed on purpose, as a rule against written
+    counts of a set, so the tuple owns the size and the docstring names the set.
+    What kills it: a count restored before the phrase, correct today and wrong after the next added token, or
+    wrong now; or the phrase deleted, which the reader refuses instead of reading as no count.
+    A second correct implementation: the phrase reworded or rewrapped, with any non-number word before it.
     """
     doc = experiment_definition.rehydrate_placeholders.__doc__
     assert doc is not None
-    assert _count_before_names(doc) == len(_placeholders.PLACEHOLDER_TOKENS)
+    assert _count_before_names(doc) is None, "a number stands before 'closed token names'; name the set instead"
 
 
 def test_a_larger_closed_set_leaves_the_how_to_list_short(monkeypatch):
@@ -112,14 +119,30 @@ def test_a_larger_closed_set_leaves_the_how_to_list_short(monkeypatch):
         pytest.param("it matches only all ten closed token names", 10, id="moved-phrase"),
         pytest.param("it matches only the 10 closed token names", 10, id="numeral"),
         pytest.param("it matches only the nine closed token\n    names", 9, id="rewrapped-nine"),
+        pytest.param("it matches only the closed token names", None, id="no-number"),
+        pytest.param("it matches only all closed token names", None, id="quantifier"),
     ],
 )
 def test_the_count_reader_follows_the_count_not_the_wording(statement, expected):
-    """Property: the reader returns the stated number for a moved phrase, a numeral and a rewrapped phrase.
+    """Property: the reader returns the stated number for a moved phrase, a numeral and a rewrapped phrase, and
+    ``None`` where the word before the phrase is not a number.
 
     Class: instrument check, so the two tests above are judged by a reader that is itself correct.
     Why required: a reader that only matched one wording would turn a correct statement red.
-    What kills it: an anchor on the words before the count, or a reader that skips instead of failing.
-    A second correct implementation: any reader returning the same numbers for these three statements.
+    What kills it: an anchor on the words before the count, a reader that returns ``None`` for a stated number
+    (which would let the no-number test above pass a restored count), or one that skips instead of failing.
+    A second correct implementation: any reader returning the same results for these statements.
     """
     assert _count_before_names(statement) == expected
+
+
+def test_the_count_reader_refuses_a_text_without_the_phrase():
+    """Property: a text that lacks ``closed token names`` fails the reader instead of reading as no number.
+
+    Class: the zero is not vacuous; deleting the phrase cannot turn the no-number test green.
+    Why required: a docstring with the phrase removed has no number before it.
+    What kills it: a reader that returns ``None`` on an absent phrase.
+    A second correct implementation: any reader that raises on the absent phrase.
+    """
+    with pytest.raises(AssertionError):
+        _count_before_names("this text names nothing")

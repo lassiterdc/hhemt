@@ -13,25 +13,15 @@ from hhemt.config.report import PerSimMapConfig, PerSimMapInteractiveConfig
 _RENDERER = Path(__file__).parent.parent / "src/hhemt/report_renderers/per_sim_peak_flood_depth.py"
 
 # Fields not referenced in per_sim_peak_flood_depth.py, enumerated explicitly so
-# the check stays strict. Two reasons a field appears here:
-#  (a) consumed in another renderer (per_sim_conduit_flow): utilization_cmap,
-#      peak_flow_cmap, conduit_outline_color, conduit_outline_width, conduit_value_width.
-#  (b) config-declared but NOT YET consumed anywhere in src/hhemt/ (aspirational/
-#      unimplemented interactive config): time_animation, visible_layers_default,
-#      colorbar_range_lock, depth_clip_quantile_lower (lower-clip companion, not
-#      yet wired into _shared_depth_max), map_tick_step (axis-tick spacing knob,
-#      declared but unconsumed).
+# the check stays strict. Each is consumed in another renderer (per_sim_conduit_flow):
+# utilization_cmap, peak_flow_cmap, conduit_outline_color, conduit_outline_width,
+# conduit_value_width.
 _ALLOWED_UNREFERENCED: set[str] = {
     "utilization_cmap",
     "peak_flow_cmap",
     "conduit_outline_color",
     "conduit_outline_width",
     "conduit_value_width",
-    "time_animation",
-    "visible_layers_default",
-    "colorbar_range_lock",
-    "depth_clip_quantile_lower",
-    "map_tick_step",
 }
 
 

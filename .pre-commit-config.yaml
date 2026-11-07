@@ -115,6 +115,21 @@ repos:
       # environment inheritance holds under either exec model, and a literal `$PRE_COMMIT_FROM_REF`
       # in `entry` would be correct under only one of them.
       #
+      # THE REMOTE EXCLUSION. When `PRE_COMMIT_REMOTE_NAME` is set and non-empty (pre-commit
+      # exports it on every real pre-push run), the walk grades only the commits in that range
+      # that are NOT reachable from `refs/remotes/{name}/*` (`git rev-list {from}..{to} --not
+      # --remotes={name}`) and prints how many it skipped. Without it, a correct merge of
+      # `develop` fails: each commit imported from `develop` is re-graded against the allowlist
+      # loaded at the tip, and its blob was signed by a row a later row has replaced under the
+      # loader's last-wins rule. When the variable is UNSET or EMPTY nothing is excluded and the
+      # whole range is graded, so a manual `pre-commit run --hook-stage pre-push` keeps the
+      # one-commit population described above. Two operating conditions follow, and both are
+      # accepted: (1) a commit that reached the remote WITHOUT this gate (`SKIP=`, `--no-verify`,
+      # a web merge) is never graded again, which is already true of every commit on the remote;
+      # (2) a `git fetch` that brings a colleague's unsigned layout commit into the tracking refs
+      # also makes that commit exempt when it is merged, because the exclusion keys on tracking
+      # refs and not on who ran the gate.
+      #
       # WHY NOT A WIDER BASE. Grading `merge-base(main, HEAD)..HEAD` is W-B2 and is REFUTED:
       # measured at this repository's state (`main` at LAYOUT_VERSION 16 against HEAD 26) it
       # returns PASS before its scan, while `check-a --range main` blocks every push. A wider

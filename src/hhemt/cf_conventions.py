@@ -794,7 +794,8 @@ _CF_VARIABLE_OVERRIDES_BY_MODE: dict[str, dict[str, dict[str, str | None]]] = {
 # say whether the value describes a grid cell, a node, or a conduit. One entry in the map
 # above demonstrates the gap directly: `flood_depth_last_tstep` carries `time: point`,
 # but `point` in CF means the variable RETAINS the time dimension with no method applied,
-# whereas process_simulation.py:4094 is `ds["flood_depth"].sel(timestep=tsteps.max())` --
+# whereas `summarize_triton_simulation_results` (process_simulation.py) computes
+# `ds["flood_depth"].sel(timestep=tsteps.max())` --
 # a selection, not a reduction. That is the gap this table exists to fill, and `cell_methods`
 # has no grammar that could.
 #
@@ -976,8 +977,8 @@ _QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
     "flood_depth_last_tstep": {
         "spatial_representation": "grid cell",
         "source_variables": "flood_depth",
-        # NOT a reduction: process_simulation.py:4094 is
-        # ds["flood_depth"].sel(timestep=tsteps.max()). The cell_methods string
+        # NOT a reduction: `summarize_triton_simulation_results` (process_simulation.py)
+        # computes ds["flood_depth"].sel(timestep=tsteps.max()). The cell_methods string
         # says "time: point", which describes a variable that KEEPS the
         # time dimension with no method applied -- a different thing.
         "operation": "value selected at the final reported timestep",

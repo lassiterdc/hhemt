@@ -220,6 +220,23 @@ def extract_reprex_bundle(zip_path: Path) -> Path:
     return dest
 
 
+def _redirect_analysis_dir(analysis_config_path: Path, run_outputs_dir: Path) -> None:
+    """Point the reconstituted ``analysis_config.yaml`` at ``run_outputs_dir`` for its run outputs.
+
+    ``reprex_config.scratch_dir`` is the target-local base under which a reproduction
+    writes its run outputs. The reconstituted configuration names the bundle root as
+    ``analysis_dir`` (the bundle's FORCED_DOT marker), so the run outputs land in the
+    bundle; with ``scratch_dir`` set they land in ``{scratch_dir}/{bundle directory name}``.
+    Every input path is already rebased onto the carried bundle, so only ``analysis_dir``
+    changes.
+    """
+    import yaml
+
+    cfg_dict = yaml.safe_load(Path(analysis_config_path).read_text())
+    cfg_dict["analysis_dir"] = str(run_outputs_dir)
+    Path(analysis_config_path).write_text(yaml.safe_dump(cfg_dict, sort_keys=False))
+
+
 def reprex(bundle_root: Path, reprex_cfg, target_hpc_profile) -> ReprexResult:
     """Verify + validate runnability + emit amendments for a reprex bundle."""
     from hhemt.bundle._emit import (
@@ -254,7 +271,10 @@ def reprex(bundle_root: Path, reprex_cfg, target_hpc_profile) -> ReprexResult:
     # former inline sensitivity_analysis rebase is folded into the analysis helper so
     # there is one rebase implementation.
     cfg_system = yaml_to_model(reconstitute_runnable_config(bundle_root), system_config)
-    cfg_analysis = yaml_to_model(reconstitute_runnable_analysis_config(bundle_root), analysis_config)
+    analysis_config_path = reconstitute_runnable_analysis_config(bundle_root)
+    if reprex_cfg.scratch_dir is not None:
+        _redirect_analysis_dir(analysis_config_path, Path(reprex_cfg.scratch_dir) / bundle_root.name)
+    cfg_analysis = yaml_to_model(analysis_config_path, analysis_config)
 
     # Overlay only the target partition selectors (the HPC-revisable axis); the input
     # paths are already rebased by the reconstitution helper above.
