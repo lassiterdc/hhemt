@@ -4791,3 +4791,7 @@ non_breaking_allowlist:
     layout_signature: 00e799d823432d89e122b278e1b312a122f3a217258ea41851792e51475a617f
     justification: |-
       chunk 10g.1 round 3 applied the reviewer's description-text specs; the ast dump with docstrings, description keywords and options= string values blanked is equal before and after, so no on-disk layout changes.
+  - path: src/hhemt/scenario.py
+    layout_signature: 89516d41c43c08d0800ef72fe1ee194a7c491e3aaf2d40c6f6dee724f5c863e4
+    justification: |-
+      Adds the ORNL triton-swmm commit faba223212408f04b7a3dbf6580adedf4a4e6b13 to SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS, the set require_dem_rim_capable_triton admits a container build by. The set is read only by that guard, which returns None or raises ConfigurationError and writes nothing; a larger set only turns a refusal into a pass for the added commit. No path, filename, log field, zarr group, fingerprint, Snakemake rule or figure stem changes, and _version.json is untouched.
