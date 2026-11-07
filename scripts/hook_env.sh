@@ -35,6 +35,23 @@
 # left behind, so a killed commit leaves at most a part-written shared key, repaired by the
 # next sync (step 4) or aged out (step 6).
 #
+# WHY EVERY COMMAND ALSO GETS ITS TREE'S DISTRIBUTION RECORD AND CONSOLE SCRIPT. Not installing
+# the project leaves `importlib.metadata` with no `hhemt` distribution, and one reader of it
+# RAISES: `provenance._default_code_repository` raises PackageNotFoundError by design, so
+# `consolidate` fails under a bare wrapper on a fresh clone (measured on Rivanna: 12 failed and 1
+# error through the wrapper against 47 passed under an editable install). Six other readers
+# degrade silently, one of them (`_reprex_gate`, which reads `Author-email`) changing a verdict, and
+# the `hhemt` console script is absent. A tree that happens to carry a gitignored
+# `src/hhemt.egg-info` hides all of this, which is why it appeared only on a fresh clone. Step 4b
+# therefore asks the project's own declared build backend (`setuptools.build_meta`, through its PEP
+# 517 `prepare_metadata_for_build_wheel` hook, which writes nothing into the tree) for the real
+# `.dist-info`, keeps it in an immutable content-keyed record inside the key directory, and step 7
+# puts the record BEFORE `{tree}/src` on `PYTHONPATH` so a stale `src/*.egg-info` cannot win.
+# Deliberately NOT a hand-written METADATA (a second implementation of what the backend computes,
+# missing `Author-email` and `entry_points.txt`) and NOT an install of the project into the shared
+# environment (the cross-tree re-pointing measured above). The backend reaches the environment as
+# a dependency of a core dependency; if it is ever absent the record step refuses with exit 2.
+#
 # --print-env syncs the environment and prints its absolute path without running a command,
 # which is how an editor is pointed at it (`{path}/bin/python`).
 #
@@ -129,6 +146,95 @@ if [ "$status" -ne 0 ] && [ ! -e "$env/pyvenv.cfg" ]; then
 fi
 [ "$status" -eq 0 ] || exit "$status"
 
+# Step 4b: the tree's distribution record and console scripts, built by the project's own backend.
+# Nothing is written to the tree: the backend's metadata hook writes only into its output directory.
+# Backend check: the backend must be importable in the environment's own interpreter.
+if ! "$env/bin/python" -c "import setuptools.build_meta" >/dev/null 2>&1; then
+    echo "hook_env.sh: setuptools.build_meta (the project's build backend, from [build-system]) is not importable in $env; the distribution record cannot be produced without it" >&2
+    exit 2
+fi
+
+# Record key: the record's key is a digest of pyproject.toml and of the readme and license files it names.
+meta_files=$("$env/bin/python" -c '
+import glob, sys, tomllib
+tree = sys.argv[1]
+with open(tree + "/pyproject.toml", "rb") as handle:
+    project = tomllib.load(handle).get("project", {})
+readme = project.get("readme")
+names = []
+if isinstance(readme, str):
+    names.append(readme)
+elif isinstance(readme, dict) and "file" in readme:
+    names.append(readme["file"])
+for pattern in project.get("license-files", []):
+    names.extend(sorted(glob.glob(pattern, root_dir=tree, recursive=True)))
+print("\n".join(names))
+' "$tree")
+meta_key=$({
+    cat "$tree/pyproject.toml"
+    printf '%s\n' "$meta_files" | while IFS= read -r meta_name; do
+        [ -n "$meta_name" ] && [ -f "$tree/$meta_name" ] || continue
+        printf '%s\0' "$meta_name"
+        cat "$tree/$meta_name"
+    done
+} | $hasher | cut -c1-16)
+record=$env/hhemt_meta/$meta_key
+
+has_record() {
+    for candidate in "$1"/*.dist-info/METADATA; do
+        [ -e "$candidate" ] && return 0
+    done
+    return 1
+}
+
+# Record build: build the record once per meta key, publishing it by a plain POSIX rename (no GNU-only
+# `mv` option exists on macOS). If two processes both pass the test, POSIX `mv` places the loser's
+# directory INSIDE the winner's as $record/record; the winner's record stays intact at the top and
+# the nested copy is never on PYTHONPATH or PATH.
+if ! has_record "$record"; then
+    tmp=$env/hhemt_meta/.tmp.$$
+    mkdir -p "$tmp/out" "$tmp/record/bin"
+    # The backend logs to stdout, so the name of the dist-info it returns is written to a file.
+    (cd "$tree" && "$env/bin/python" -c "import setuptools.build_meta as b, sys; open(sys.argv[2], 'w').write(b.prepare_metadata_for_build_wheel(sys.argv[1]))" "$tmp/out" "$tmp/built" >/dev/null 2>"$tmp/log") || {
+        cat "$tmp/log" >&2
+        echo "hook_env.sh: the build backend failed to produce a distribution record for $tree" >&2
+        exit 2
+    }
+    built=$(cat "$tmp/built")
+    mv "$tmp/out/$built" "$tmp/record/"
+    # One shim per console script, each importing that entry's module and calling its callable
+    # as pip's console scripts do. Deliberately NOT `python -m {package}`: two entries of one
+    # package (`toy` and `toy-admin`) would then run the same `__main__`.
+    "$env/bin/python" -c '
+import configparser, os, sys
+record, dist_info = sys.argv[1], sys.argv[2]
+parser = configparser.ConfigParser()
+parser.optionxform = str
+parser.read(os.path.join(record, dist_info, "entry_points.txt"))
+if parser.has_section("console_scripts"):
+    for name, target in parser.items("console_scripts"):
+        module, _, attribute = target.split("[")[0].strip().partition(":")
+        code = (
+            "import functools, importlib, sys; "
+            "f = functools.reduce(getattr, %r.split(\x27.\x27), importlib.import_module(%r)); "
+            "sys.argv[0] = %r; sys.exit(f())"
+        ) % (attribute.strip(), module.strip(), name)
+        path = os.path.join(record, "bin", name)
+        with open(path, "w") as handle:
+            handle.write("#!/bin/sh\nexec python -c \x27" + code.replace("\x27", "\x22") + "\x27 \x22$@\x22\n")
+        os.chmod(path, 0o755)
+' "$tmp/record" "$built"
+    [ -e "$record" ] || mv "$tmp/record" "$record"
+    rm -rf -- "$tmp"
+    if ! has_record "$record"; then
+        echo "hook_env.sh: no distribution record at $record after the build" >&2
+        exit 2
+    fi
+fi
+
+# Mark the record used.
+touch "$record/.last_used"
+
 # Step 5: mark use.
 touch "$env/.last_used"
 
@@ -154,13 +260,33 @@ for dir in "$root"/*/; do
     fi
 done
 
+# Step 6, within the current key: age out every record other than this one (and any killed
+# `.tmp.*` build) by the same three-tier rule.
+for entry in "$env/hhemt_meta"/* "$env/hhemt_meta"/.tmp.*; do
+    [ -d "$entry" ] || continue
+    [ -L "$entry" ] && continue
+    [ "${entry##*/}" = "$meta_key" ] && continue
+    if [ -e "$entry/.last_used" ]; then
+        age_path=$entry/.last_used
+    elif has_record "$entry"; then
+        age_path=$(ls -d "$entry"/*.dist-info/METADATA | head -n 1)
+    else
+        age_path=$entry
+    fi
+    if [ -n "$(find "$age_path" -prune -mtime +14)" ]; then
+        rm -rf -- "$entry"
+    fi
+done
+
 # Step 7: print the environment, or run the command bound to this tree.
 if [ "$print_env" -eq 1 ]; then
     printf '%s\n' "$env"
     exit 0
 fi
-PYTHONPATH="$tree/src${PYTHONPATH:+:$PYTHONPATH}"
+PYTHONPATH="$record:$tree/src${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONPATH
+PATH="$record/bin:$PATH"
+export PATH
 : "${HHEMT_TY_ENV:=$env}"
 export HHEMT_TY_ENV
 exec uv run --no-sync "$@"

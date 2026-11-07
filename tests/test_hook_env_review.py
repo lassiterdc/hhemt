@@ -36,12 +36,17 @@ _SCRUBBED = {"VIRTUAL_ENV", "HHEMT_TY_ENV", "PYTHONPATH", "UV_PROJECT_ENVIRONMEN
 
 
 def _make_toy(tree: Path) -> Path:
-    """A dependency-free project with empty `test` and `docs` extras, locked and git-initialised."""
+    """A setuptools project with empty `test` and `docs` extras, locked and git-initialised.
+
+    It declares the same build backend as the fixture of `tests/test_hook_env.py` and depends on setuptools, so the
+    shared environment can run the backend that step 4b of the wrapper asks for a distribution record.
+    """
     (tree / "src" / "toy").mkdir(parents=True)
     (tree / "src" / "toy" / "__init__.py").write_text("", encoding="utf-8")
     (tree / "pyproject.toml").write_text(
+        '[build-system]\nrequires = ["setuptools>=77.0.0"]\nbuild-backend = "setuptools.build_meta"\n'
         '[project]\nname = "toy"\nversion = "0.1.0"\nrequires-python = ">=3.11,<3.13"\n'
-        "dependencies = []\n[project.optional-dependencies]\ntest = []\ndocs = []\n",
+        'dependencies = ["setuptools>=77.0.0"]\n[project.optional-dependencies]\ntest = []\ndocs = []\n',
         encoding="utf-8",
     )
     subprocess.run(["uv", "lock", "--quiet"], cwd=tree, check=True)

@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -26,21 +27,41 @@ _DAY = 86400
 _HEX16 = re.compile(r"^[0-9a-f]{16}$")
 
 
-def _make_toy(tree: Path, version: str = "0.1.0") -> Path:
-    """Build a dependency-free project with empty `test` and `docs` extras, locked and git-initialised."""
-    (tree / "src" / "toy").mkdir(parents=True)
-    (tree / "src" / "toy" / "__init__.py").write_text("", encoding="utf-8")
+_TOY_HOMEPAGE = "https://example.invalid/toy"
+
+
+def _write_toy_pyproject(tree: Path, version: str, dependencies: str = '["setuptools>=77.0.0"]') -> None:
     (tree / "pyproject.toml").write_text(
+        "[build-system]\n"
+        'requires = ["setuptools>=77.0.0"]\n'
+        'build-backend = "setuptools.build_meta"\n'
         "[project]\n"
         'name = "toy"\n'
         f'version = "{version}"\n'
         'requires-python = ">=3.11,<3.13"\n'
-        "dependencies = []\n"
+        f"dependencies = {dependencies}\n"
+        "[project.urls]\n"
+        f'homepage = "{_TOY_HOMEPAGE}"\n'
+        "[project.scripts]\n"
+        'toy = "toy.cli:main"\n'
         "[project.optional-dependencies]\n"
         "test = []\n"
         "docs = []\n",
         encoding="utf-8",
     )
+
+
+def _make_toy(tree: Path, version: str = "0.1.0", dependencies: str = '["setuptools>=77.0.0"]') -> Path:
+    """Build a setuptools project with a console script, empty `test` and `docs` extras, locked and git-initialised.
+
+    The toy depends on setuptools so its shared environment can run the build backend, as `hsclient` makes
+    hhemt's environment do.
+    """
+    (tree / "src" / "toy").mkdir(parents=True)
+    (tree / "src" / "toy" / "__init__.py").write_text("", encoding="utf-8")
+    (tree / "src" / "toy" / "cli.py").write_text('def main():\n    print("toy-cli-output")\n', encoding="utf-8")
+    (tree / "src" / "toy" / "__main__.py").write_text("from toy.cli import main\n\nmain()\n", encoding="utf-8")
+    _write_toy_pyproject(tree, version, dependencies)
     subprocess.run(["uv", "lock", "--quiet"], cwd=tree, check=True)
     subprocess.run(["git", "init", "--quiet", "."], cwd=tree, check=True)
     return tree
@@ -393,3 +414,190 @@ def test_a_relative_root_is_resolved_against_the_callers_directory(tmp_path):
     assert env.is_absolute() and env.parent == (sub / "rel_root").resolve()
     assert (env / "pyvenv.cfg").is_file()
     assert not (tree / "rel_root").exists()
+
+
+_SHOW_DIST = (
+    "python",
+    "-c",
+    "import importlib.metadata as m; d = m.distribution('toy'); print(d.version); "
+    "print(d.metadata.get_all('Project-URL')); print(d._path)",
+)
+
+
+def _records(root: Path) -> list[Path]:
+    return sorted(p for p in root.glob("*/hhemt_meta/*") if p.is_dir() and not p.name.startswith("."))
+
+
+def _tree_files(tree: Path) -> list[str]:
+    return sorted(str(p.relative_to(tree)) for p in tree.rglob("*") if ".git" not in p.relative_to(tree).parts)
+
+
+def test_the_command_sees_the_trees_own_distribution_record_and_the_tree_is_untouched(tmp_path):
+    """Property: under the wrapper `importlib.metadata` resolves the toy distribution to the tree's own version
+    and homepage, from a record under the shared key directory, and the tree gains no file.
+
+    Class: NEW CAPABILITY -- the plausible wrong implementation leaves the project uninstalled and unrecorded, so
+    the distribution is absent; another wrong one runs the build in the tree and leaves `*.egg-info` or `build/`.
+    Why required: a reader that raises on an absent distribution (provenance's code-repository lookup) fails on a
+    fresh clone otherwise.
+    What kills it: dropping step 4b, or running the backend with its output directory inside the tree.
+    Second correct implementation: a record written by `pip install --no-deps --target`; the same fields resolve.
+    """
+    tree, root = _toy_and_root(tmp_path)
+    before = _tree_files(tree)
+    result = _run(tree, root, *_SHOW_DIST)
+    assert result.returncode == 0, result.stderr
+    version, urls, path = result.stdout.strip().splitlines()
+    assert version == "0.1.0"
+    assert _TOY_HOMEPAGE in urls
+    assert Path(path).resolve().is_relative_to(root.resolve())
+    assert "hhemt_meta" in Path(path).parts
+    assert _tree_files(tree) == before
+    assert not list(tree.rglob("*.egg-info")) and not (tree / "build").exists()
+
+
+def test_a_changed_pyproject_makes_a_second_record_and_identical_trees_share_one(tmp_path):
+    """Property: changing a field the record is built from (the homepage) yields a second record directory in the
+    same key and the new value; two trees with byte-identical `pyproject.toml` share one record.
+
+    Class: NEW CAPABILITY -- the plausible wrong implementation keys the record on the lock alone, so an edited
+    `pyproject.toml` keeps serving the old record, or on the tree path, so identical trees do not share.
+    Why required: the record must match the tree's own files and stay immutable.
+    What kills it: a meta key that omits `pyproject.toml`, or one that includes the tree path.
+    Second correct implementation: hashing the parsed project table instead of the raw bytes; the same changes
+    produce a new key.
+    """
+    tree, root = _toy_and_root(tmp_path, "one")
+    other = _make_toy(tmp_path / "two")
+    assert (tree / "pyproject.toml").read_bytes() == (other / "pyproject.toml").read_bytes()
+    for t in (tree, other):
+        assert _run(t, root, "python", "-c", "pass").returncode == 0
+    assert len(_records(root)) == 1
+    changed = (tree / "pyproject.toml").read_text(encoding="utf-8").replace(_TOY_HOMEPAGE, _TOY_HOMEPAGE + "/new")
+    (tree / "pyproject.toml").write_text(changed, encoding="utf-8")
+    result = _run(tree, root, *_SHOW_DIST)
+    assert result.returncode == 0, result.stderr
+    assert _TOY_HOMEPAGE + "/new" in result.stdout
+    assert len(_records(root)) == 2
+
+
+def test_a_new_version_is_what_the_command_sees(tmp_path):
+    """Property: after the version in `pyproject.toml` changes and the lock is refreshed, the command sees the new
+    version.
+
+    Class: NEW CAPABILITY. Why required: a record served from a previous version would make provenance report the
+    wrong release. What kills it: a record keyed on something the version does not change.
+    Second correct implementation: any keying that includes `pyproject.toml`'s bytes.
+    """
+    tree, root = _toy_and_root(tmp_path)
+    assert _run(tree, root, *_SHOW_DIST).stdout.splitlines()[0] == "0.1.0"
+    _write_toy_pyproject(tree, "0.2.0")
+    subprocess.run(["uv", "lock", "--quiet"], cwd=tree, check=True)
+    result = _run(tree, root, *_SHOW_DIST)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == "0.2.0"
+
+
+def test_the_record_wins_over_a_stale_egg_info_in_the_tree(tmp_path):
+    """Property: a stale `src/toy.egg-info/PKG-INFO` claiming version 9.9.9 does not win under the wrapper, and does
+    win under a bare `PYTHONPATH={tree}/src` (the control).
+
+    Class: NEW CAPABILITY -- trees that carry a gitignored `src/*.egg-info` from an old editable install.
+    Why required: such a tree otherwise masks a missing or wrong record, so laptop and fresh clone differ.
+    What kills it: putting `{tree}/src` before the record on `PYTHONPATH`.
+    Second correct implementation: deleting the stale record from the tree first would also pass, at the cost of
+    writing into the tree, which the wrapper must not do.
+    """
+    tree, root = _toy_and_root(tmp_path)
+    egg = tree / "src" / "toy.egg-info"
+    egg.mkdir()
+    (egg / "PKG-INFO").write_text("Metadata-Version: 2.1\nName: toy\nVersion: 9.9.9\n", encoding="utf-8")
+    code = "import importlib.metadata as m; print(m.version('toy'))"
+    wrapped = _run(tree, root, "python", "-c", code)
+    assert wrapped.returncode == 0, wrapped.stderr
+    assert wrapped.stdout.strip() == "0.1.0"
+    bare = subprocess.run(
+        [sys.executable, "-c", code],
+        env={**os.environ, "PYTHONPATH": str(tree / "src")},
+        capture_output=True,
+        text=True,
+    )
+    assert bare.stdout.strip() == "9.9.9", bare.stderr
+
+
+def test_the_console_script_resolves_to_a_shim_in_the_record(tmp_path):
+    """Property: `toy` is found on `PATH` under the record's `bin/` and runs the toy's command-line entry.
+
+    Class: NEW CAPABILITY -- the plausible wrong implementation records metadata but no executable, so `toy` is
+    not found, or finds another tree's install on `PATH`.
+    Why required: tests call the `hhemt` console script, which does not exist in an environment without the
+    project installed.
+    What kills it: not writing the shim, or not prepending `{record}/bin` to `PATH`.
+    Second correct implementation: a shim that imports the entry-point callable instead of using `python -m`.
+    """
+    tree, root = _toy_and_root(tmp_path)
+    result = _run(tree, root, "sh", "-c", "command -v toy; toy")
+    assert result.returncode == 0, result.stderr
+    where, output = result.stdout.strip().splitlines()
+    assert Path(where).parent.name == "bin" and "hhemt_meta" in Path(where).parts
+    assert output == "toy-cli-output"
+
+
+@pytest.mark.parametrize(("age_days", "removed"), [(15, True), (13, False)])
+@pytest.mark.parametrize("kind", ["record", "tmp"])
+def test_unused_records_and_killed_builds_inside_the_current_key_age_out(tmp_path, kind, age_days, removed):
+    """Property: inside the current key, a record other than the current one, and a `.tmp.*` entry, are removed
+    when unused for more than 14 days and kept at 13.
+
+    Class: NEW CAPABILITY. Why required: records live inside the key directory, so without this rule a long-lived
+    key would accumulate one record per `pyproject.toml` edit and keep any killed build forever.
+    What kills it: leaving step 6's record loop out, or aging by the wrong path.
+    Second correct implementation: aging every entry by its own directory mtime.
+    """
+    tree, root = _toy_and_root(tmp_path)
+    assert _run(tree, root, "python", "-c", "pass").returncode == 0
+    meta = next(root.glob("*/hhemt_meta"))
+    name = "0123456789abcdef" if kind == "record" else ".tmp.424242"
+    stale = meta / name
+    stale.mkdir()
+    marker = stale / ".last_used"
+    marker.write_text("", encoding="utf-8")
+    _backdate(marker, age_days)
+    assert _run(tree, root, "python", "-c", "pass").returncode == 0
+    assert stale.exists() is (not removed)
+
+
+def test_a_toy_without_setuptools_in_its_environment_is_refused_naming_the_backend(tmp_path):
+    """Property: when setuptools is absent from the shared environment the wrapper exits 2 and its message names
+    `setuptools.build_meta`.
+
+    Class: NEW CAPABILITY -- the transitive dependency that carries setuptools is dropped. Why required: the
+    alternative is a silent run with no record, which is the failure this step exists to remove.
+    What kills it: skipping the import check, or a message that does not name the backend.
+    Second correct implementation: a refusal that quotes the `[build-system]` table instead.
+    """
+    tree = _make_toy(tmp_path / "toy_tree", dependencies="[]")
+    result = _run(tree, tmp_path / "root", "python", "-c", "pass")
+    assert result.returncode == 2, (result.returncode, result.stderr)
+    assert "setuptools.build_meta" in result.stderr
+
+
+def test_the_wrapper_uses_no_gnu_only_mv_and_handles_an_existing_record(tmp_path):
+    """Property: the script carries no GNU-only `mv` option; an existing valid record is used and leaves exactly one
+    `.dist-info` at its top; an existing record directory holding none makes the wrapper exit 2 naming it.
+
+    Class: NEW CAPABILITY -- the wrapper is POSIX `sh` and step 2 already provides for macOS. Why required: `mv -T`
+    does not exist there, and a lost publish race must never leave the loser's copy in front of the winner's.
+    What kills it: reintroducing `mv -T`, `--no-target-directory` or `-t`, or building over an existing record.
+    Second correct implementation: publishing with `ln -s` and `mv` of a symlink; the same three outcomes hold.
+    """
+    text = WRAPPER.read_text(encoding="utf-8")
+    assert not re.search(r"\bmv\s+(-\w*[Tt]\b|--no-target-directory|--target-directory)", text)
+    tree, root = _toy_and_root(tmp_path)
+    assert _run(tree, root, "python", "-c", "pass").returncode == 0
+    (record,) = _records(root)
+    assert _run(tree, root, "python", "-c", "pass").returncode == 0
+    assert len(list(record.glob("*.dist-info"))) == 1
+    shutil.rmtree(next(record.glob("*.dist-info")))
+    broken = _run(tree, root, "python", "-c", "pass")
+    assert broken.returncode == 2 and str(record) in broken.stderr

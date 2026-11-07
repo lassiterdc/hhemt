@@ -92,7 +92,7 @@ def test_every_literal_synthetic_case_fits_under_this_sessions_tier():
     over = {name: lines for name, lines in over.items() if lines}
     assert not over, (
         f"synthetic SWMM paths under {runs_root} exceed the solver's limits; the cache root "
-        f"(XDG_CACHE_HOME or HOME) or the worktree name is too long: {over}"
+        f"(XDG_CACHE_HOME or HOME) or a case name is too long: {over}"
     )
 
 
