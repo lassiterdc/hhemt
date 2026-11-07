@@ -15,12 +15,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
 from pathlib import Path
 
 import pytest
+import yaml
 
 WRAPPER = Path(
     os.environ.get("HHEMT_REVIEW_WRAPPER") or Path(__file__).resolve().parents[1] / "scripts" / "hook_env.sh"
@@ -374,3 +376,232 @@ def test_an_inherited_virtual_env_is_not_passed_to_uv(tmp_path):
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() != str(tmp_path / "elsewhere")
     assert "VIRTUAL_ENV" not in result.stderr
+
+
+# ---- chunk 1b.2: the hook entries ------------------------------------------------------------------
+
+_REPO = Path(__file__).resolve().parents[1]
+_CONFIG = Path(os.environ.get("HHEMT_REVIEW_PRECOMMIT_CONFIG") or _REPO / ".pre-commit-config.yaml")
+_BASE = "f22181a3"
+_WRAPPER_WORD = "scripts/hook_env.sh"
+
+
+def _local_hooks(text: str) -> list[dict]:
+    return [h for r in yaml.safe_load(text)["repos"] if r.get("repo") == "local" for h in r["hooks"]]
+
+
+def _base_hooks() -> dict[str, dict]:
+    done = subprocess.run(
+        ["git", "show", f"{_BASE}:.pre-commit-config.yaml"], cwd=_REPO, capture_output=True, text=True
+    )
+    if done.returncode != 0:
+        pytest.skip(f"base commit {_BASE} is not reachable from this clone")
+    return {h["id"]: h for h in _local_hooks(done.stdout)}
+
+
+def test_no_hook_entry_passes_the_wrapper_an_option():
+    """Property: no local hook entry passes `--python`, `--extra` or `--print-env` to the wrapper, so
+    all 16 hooks resolve to the one default key and share one environment with the recipes.
+
+    Class: NEW CAPABILITY -- the three `ty` entries, which carried `--extra test` before this chunk.
+    The plausible wrong implementation keeps `--extra test` on a `ty` entry, which the wrapper reads as
+    "replace the default extras with `test` alone", so that hook gets a second environment without `docs`.
+    Why required: the shape's chunk 1b.2 item 3 says "No entry passes `--python` or `--extra`; the wrapper's
+    defaults apply, so the hooks share the recipes' environment"; a per-hook option splits the environment
+    and costs a second sync on the first commit.
+    What kills it: a `ty` entry reverted to carry `--extra test`.
+    Second correct implementation: hooks that set the same defaults through an environment variable the
+    wrapper reads; no entry then carries an option and the assertion still holds.
+    """
+    hooks = _local_hooks(_CONFIG.read_text(encoding="utf-8"))
+    assert len(hooks) == 16, len(hooks)
+    offenders = {}
+    for h in hooks:
+        words = shlex.split(h["entry"])
+        assert words[0] == _WRAPPER_WORD, (h["id"], words[:2])
+        bad = [w for w in words[1:] if w in {"--python", "--extra", "--print-env"}]
+        if bad:
+            offenders[h["id"]] = bad
+    assert offenders == {}, offenders
+
+
+def test_the_rewrite_changed_each_entry_only_by_its_prefix_and_nothing_else_about_any_hook():
+    """Property: against the base commit, every local hook has the same id, the same fields other than
+    `entry`, and an entry whose text after the old prefix equals the text after the wrapper prefix.
+
+    Class: REGRESSION -- all 16 entries, the folded multi-line `ty-check` entry among them. The plausible
+    wrong implementation loses an argument while retyping an entry (`--range`, `HEAD~1`, `--error ...`),
+    renames a script, or alters `stages`, `files` or `always_run`; red under it, pasted in the round file.
+    Why required: the shape's item 3 changes the interpreter prefix only; a changed argument changes
+    what a hook guards and no structural test over the prefix would notice.
+    What kills it: any edit to an entry's tail or to another field of a hook.
+    Second correct implementation: any tail-preserving rewrite with a different wrapper path spelling
+    would need the prefix constant changed, but every tail-preserving rewrite passes.
+    """
+    base = _base_hooks()
+    now = {h["id"]: h for h in _local_hooks(_CONFIG.read_text(encoding="utf-8"))}
+    assert set(now) == set(base), set(now) ^ set(base)
+    old_prefix = re.compile(r"^uv run --locked (?:--extra test )?")
+    diffs = {}
+    for hid, hook in now.items():
+        rest_old = old_prefix.sub("", " ".join(base[hid]["entry"].split()))
+        rest_new = " ".join(hook["entry"].split()).removeprefix(_WRAPPER_WORD + " ")
+        other_old = {k: v for k, v in base[hid].items() if k != "entry"}
+        other_new = {k: v for k, v in hook.items() if k != "entry"}
+        if rest_old != rest_new or other_old != other_new:
+            diffs[hid] = (rest_old, rest_new)
+    assert diffs == {}, diffs
+
+
+def test_the_wrapper_is_tracked_with_the_executable_mode():
+    """Property: the index records `scripts/hook_env.sh` with mode 100755, not only the working tree.
+
+    Class: NEW CAPABILITY -- the tracked mode, which is what a fresh clone receives. The plausible wrong
+    implementation commits the script with 100644 while the author's working tree keeps the bit, so every
+    hook on every other clone fails with `Permission denied`; the coder's `os.access` check reads the
+    working tree and cannot see it.
+    Why required: pre-commit runs a `language: system` entry by executing its first word.
+    What kills it: recording the file in the index without the executable bit.
+    Second correct implementation: a wrapper invoked as `sh scripts/hook_env.sh`; the entries and this
+    test would then change together.
+    """
+    done = subprocess.run(["git", "ls-files", "-s", "--", _WRAPPER_WORD], cwd=_REPO, capture_output=True, text=True)
+    assert done.stdout.startswith("100755 "), done.stdout or "not tracked"
+
+
+def test_every_script_a_hook_entry_names_exists():
+    """Property: every `scripts/...` path a local hook entry passes to `python` exists on disk.
+
+    Class: REGRESSION -- all entries that run a script, which this chunk retyped. The plausible wrong
+    implementation mistypes a script name during the rewrite; pre-commit then fails at invocation time with
+    a message that reads like an environment problem.
+    Why required: the structural tests read only the entry's prefix, so a dangling script passes them.
+    What kills it: renaming a script without its entry, or a typo in the retyped entry.
+    Second correct implementation: a scan of the raw file's `entry:` lines instead of the parsed YAML.
+    """
+    missing = []
+    for h in _local_hooks(_CONFIG.read_text(encoding="utf-8")):
+        words = shlex.split(h["entry"])
+        for i, w in enumerate(words[:-1]):
+            if w == "python" and words[i + 1].startswith("scripts/"):
+                if not (_REPO / words[i + 1]).is_file():
+                    missing.append((h["id"], words[i + 1]))
+    assert missing == [], missing
+
+
+def test_the_external_ruff_hooks_are_untouched():
+    """Property: the external ruff repository block still carries `ruff` and `ruff-format`, and no entry of
+    it names the wrapper.
+
+    Class: REGRESSION -- the two hooks that come from an external repository. The plausible wrong
+    implementation routes them through the wrapper or drops one while editing the config.
+    Why required: the shape says "The two `ruff` hooks are unchanged"; they run in pre-commit's own
+    environment cache and a wrapper prefix on them would break their `language: python` contract.
+    What kills it: deleting a ruff hook, or giving it an `entry`.
+    Second correct implementation: the ruff revision pinned at a different tag; the ids and the absence of
+    an entry are unchanged.
+    """
+    external = [r for r in yaml.safe_load(_CONFIG.read_text(encoding="utf-8"))["repos"] if r.get("repo") != "local"]
+    ids = sorted(h["id"] for r in external for h in r["hooks"])
+    assert ids == ["ruff", "ruff-format"], ids
+    assert all("entry" not in h for r in external for h in r["hooks"])
+
+
+# ---- chunk 1b.3: the justfile recipes and the documentation ------------------------------------------
+
+_JUSTFILE = Path(os.environ.get("HHEMT_REVIEW_JUSTFILE") or _REPO / "justfile")
+_OLD_LINE = re.compile(r"^uv run --python=(\S+)\s+(?:--extra \w+\s+)*(.*)$")
+_NEW_LINE = re.compile(r"^scripts/hook_env\.sh --python (\S+) (.*)$")
+
+
+def _recipes(text: str) -> dict[str, list[str]]:
+    """Recipe name to its indented non-comment body lines, stripped."""
+    out: dict[str, list[str]] = {}
+    name = None
+    for line in text.splitlines():
+        if line and not line[0].isspace() and not line.startswith("#") and ":" in line:
+            name = line.split(":", 1)[0].split()[0]
+            out[name] = []
+        elif name and line.strip() and not line.strip().startswith("#"):
+            out[name].append(line.strip())
+    return out
+
+
+def _base_justfile() -> str:
+    done = subprocess.run(["git", "show", f"{_BASE}:justfile"], cwd=_REPO, capture_output=True, text=True)
+    if done.returncode != 0:
+        pytest.skip(f"base commit {_BASE} is not reachable from this clone")
+    return done.stdout
+
+
+def test_every_recipe_line_keeps_its_python_version_and_command_and_gains_no_extra():
+    """Property: for each recipe, the wrapper lines are the base commit's `uv run --python=V --extra ...` lines
+    with the same V, the same command text, in the same order, and no wrapper line passes `--extra`.
+
+    Class: REGRESSION -- the 14 recipe lines of `qa`, `testall`, `test`, `pdb` and `coverage`. The plausible
+    wrong implementation retypes a version (`testall` runs 3.11 and then 3.12; a retyped 3.11 makes it run 3.12
+    twice and still passes a test that checks only the `scripts/hook_env.sh --python` prefix), or leaves an
+    `--extra` flag on a line, which gives that line a second environment.
+    Why required: the shape's item 7 keeps `{v}` and drops the `--extra` flags; the 3.11/3.12 pair is the point of
+    `testall`, and an `--extra` list replaces the default `test docs` set.
+    What kills it: a changed version, a changed command tail, a dropped or reordered line, or a kept `--extra`.
+    Second correct implementation: a wrapper line that spells the version `--python=3.12`; this test would need
+    its pattern widened, but any line that keeps version, command and order otherwise passes.
+    """
+    base = _recipes(_base_justfile())
+    now = _recipes(_JUSTFILE.read_text(encoding="utf-8"))
+    changed = {}
+    for recipe in ("qa", "testall", "test", "pdb", "coverage"):
+        old = [m.groups() for line in base[recipe] if (m := _OLD_LINE.match(line))]
+        new = [m.groups() for line in now[recipe] if (m := _NEW_LINE.match(line))]
+        if old != new:
+            changed[recipe] = (old, new)
+        assert not [line for line in now[recipe] if _NEW_LINE.match(line) and "--extra" in line], recipe
+    assert changed == {}, changed
+    assert sum(len(v) for v in (now[r] for r in ("qa", "testall", "test", "pdb", "coverage"))) >= 14
+
+
+def test_the_docs_check_recipe_routes_through_run_with_the_wrapper_and_the_conda_recipes_and_build_are_unchanged():
+    """Property: `docs-check` is exactly `RUN="scripts/hook_env.sh --python 3.12" bash scripts/docs_gates.sh`, and
+    every body line of `test-gated`, `test-fast`, `test-laptop`, `test-snakemake-subprocess`, `build` and `list`
+    equals the base commit's.
+
+    Class: REGRESSION -- the recipes the shape says this chunk leaves alone, and the one it routes through `RUN=`.
+    The plausible wrong implementation rewrites a conda-hosted line to the wrapper (which drops its conda
+    toolchain) or leaves `docs-check` on `uv run --locked`.
+    Why required: shape item 7 ("The conda-hosted recipes ... and `build` are unchanged") and item 7's exact
+    `docs-check` line.
+    What kills it: any edit to those recipes, or a `docs-check` line other than the shape's.
+    Second correct implementation: none for `docs-check`, whose line is fixed by the shape; the others are compared
+    byte for byte.
+    """
+    base = _recipes(_base_justfile())
+    now = _recipes(_JUSTFILE.read_text(encoding="utf-8"))
+    assert now["docs-check"] == ['RUN="scripts/hook_env.sh --python 3.12" bash scripts/docs_gates.sh']
+    drift = [
+        r
+        for r in ("test-gated", "test-fast", "test-laptop", "test-snakemake-subprocess", "build", "list")
+        if base[r] != now[r]
+    ]
+    assert drift == [], drift
+
+
+def test_the_contributing_guide_states_the_removal_age_the_script_enforces():
+    """Property: the number of days `docs/contributing.md` says unused environments are kept equals the `-mtime`
+    bound `scripts/hook_env.sh` removes by.
+
+    Class: NEW CAPABILITY -- one documented number and the script constant it restates. The plausible wrong
+    implementation changes the age in the script (or the guide) and not the other.
+    Why required: the shape's item 9 states "environments unused for 14 days are removed automatically", and a
+    contributor sizing disk use acts on that figure.
+    What kills it: editing either figure alone.
+    Second correct implementation: a script that reads the age from a named constant; the `find` argument is then
+    that constant's value and the assertion reads it from the `find` line instead.
+    """
+    script = (_REPO / "scripts" / "hook_env.sh").read_text(encoding="utf-8")
+    bound = re.search(r"-mtime \+(\d+)", script)
+    assert bound, "no -mtime bound found in the wrapper"
+    guide = " ".join((_REPO / "docs" / "contributing.md").read_text(encoding="utf-8").split())
+    stated = re.search(r"unused for (\d+) days are removed", guide)
+    assert stated, "the guide no longer states a removal age"
+    assert stated.group(1) == bound.group(1)

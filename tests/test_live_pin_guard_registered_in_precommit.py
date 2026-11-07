@@ -165,7 +165,7 @@ def test_the_registration_fires_on_every_commit_rather_than_on_a_file_filter(hoo
 
 def test_the_registered_script_exists_and_the_entry_honours_the_interpreter_contract(hooks: list[dict]) -> None:
     """Property: the script the entry names exists on disk, and the entry runs it through
-    `uv run --locked`.
+    `scripts/hook_env.sh`.
 
     Class: NEW CAPABILITY. The plausible wrong implementation is a registration naming a script
     path that was renamed or never added -- pre-commit then fails at invocation time with an
@@ -181,7 +181,8 @@ def test_the_registered_script_exists_and_the_entry_honours_the_interpreter_cont
     code.
 
     What kills it: renaming or deleting the guard script without updating the entry; replacing
-    the `uv run --locked` prefix with a bare `python` or a conda invocation.
+    the `scripts/hook_env.sh` prefix with a bare `uv run`, which recreates a per-tree `.venv`, or
+    with a bare `python` or a conda invocation.
 
     A second correct implementation under which it still passes: any entry that adds further
     `uv` flags or script arguments after the prefix -- the assertion is on the prefix and on the
@@ -199,7 +200,7 @@ def test_the_registered_script_exists_and_the_entry_honours_the_interpreter_cont
         f"{HOOK_ID}'s entry names {named[0]!r}, which does not exist on disk -- a dangling "
         "registration fails at invocation time and reads like an environment problem"
     )
-    assert entry.startswith("uv run --locked "), (
+    assert entry.startswith("scripts/hook_env.sh "), (
         f"{HOOK_ID}'s entry is {entry!r}; every local hook in this config runs through "
-        "`uv run --locked` for the reasons that file's INTERPRETER CONTRACT comment records"
+        "`scripts/hook_env.sh` for the reasons that file's INTERPRETER CONTRACT comment records"
     )
