@@ -1,28 +1,36 @@
-# Running an experiment from its definition
+# Running an experiment definition
 
-`hhemt run-experiment` runs a **self-describing experiment definition**: a directory whose
-`experiment.yaml` declares everything the run needs: the system and analysis configs, the
-input datasets, the per-cluster HPC profile, the container, and a resolvable toolkit pin. The
-descriptor is the *single config*: there are no positional config arguments to line up, and any
-CLI flag that would override a descriptor-declared value must be confirmed first.
+## Goal
+
+Run an [experiment definition](../reference/glossary.md#experiment-definition) with `hhemt run-experiment`. The `experiment.yaml` descriptor declares the system and analysis configs, the input datasets, the per-cluster HPC profile, the container, and a resolvable toolkit pin. The descriptor is the single config, so the command takes no positional config arguments, and any CLI flag that overrides a descriptor-declared value needs confirmation first.
+
+## Prerequisites
+
+- A working [installation](installation.md).
+- A [compiled solver](compiling-the-solver.md#on-a-cluster) for the target partition.
+- An experiment definition directory.
+
+## Key references
+
+- [Config filling](config-filling.md) and [HPC-profile setup](hpc-profile-setup.md) describe the system, analysis, and `hpc_system_config` contents.
+- [Forcing and suppressing re-runs](forcing-reruns.md) describes `--override-force-rerun`.
+- The [CLI reference](../reference/cli.md#exit-codes) lists the exit codes.
 
 ## The experiment definition layout
 
-A conformant definition (validated against the `ExperimentConfig` descriptor model, see
-[Verifying an experiment definition conforms](#verifying-an-experiment-definition-conforms)) is a directory containing at least:
+A conformant definition is a directory with at least the entries below. The `ExperimentConfig` descriptor model validates the directory, as [Verifying an experiment definition conforms](#verifying-an-experiment-definition-conforms) describes.
 
 ```
 experiments/my_experiment/
 ├── experiment.yaml          # the descriptor (schema: hhemt.config.experiment_definition.ExperimentConfig)
-├── README.md                # runbook (required)
+├── README.md                # instructions to reproduce the experiment (required)
 ├── rerun.sh                 # re-run driver (required)
 └── configs/
     ├── system_config_uva.yaml
     └── analysis_config_uva.yaml
 ```
 
-The descriptor carries no identity key: the experiment definition is named by its directory, and the
-analysis identity comes from the analysis config. A minimal `experiment.yaml`:
+The descriptor carries no identity key. The directory names the experiment definition, and the analysis config supplies the analysis identity. A minimal `experiment.yaml` follows.
 
 ```yaml
 description: One-line description.
@@ -35,23 +43,16 @@ inputs:
     local_path: "${HHEMT_DATA_ROOT}/weather/forcing.nc"   # ${VAR}-templated, never a literal operator path
     deposit: true                                          # these bytes are part of the publish payload
     destinations:
-      uva: /scratch/$USER/my_experiment/weather/forcing.nc # where the provisioning stages it on-cluster
+      uva: /scratch/$USER/my_experiment/weather/forcing.nc # the per-cluster path that staging tools read
 toolkit_pin:
-  version: "0.1.0"                      # PyPI version: the durable, installable identifier
+  version: "1.0.0"                      # PyPI version: the durable, installable identifier
 container:
   sha256_source: ro-crate              # the SIF digest's authoritative home is the RO-Crate
 ```
 
-See the [config-filling](config-filling.md) and [HPC-profile setup](hpc-profile-setup.md)
-guides for the system/analysis and `hpc_system_config` contents.
+The `container:` block names no recipe. A descriptor that carries the key `def_recipe` is refused by name when the descriptor loads, with a message that names `container.sif_root` as the replacement. Images are addressed by identity under `sif_root` and built by `hhemt build-sifs`. `sha256_source` stays because the RO-Crate is the authoritative home of the digest.
 
-The `container:` block names no recipe. `def_recipe` was retired, and a descriptor still
-carrying that key is refused by name when it loads, with a message naming `container.sif_root`
-as the replacement. Images are addressed by identity under `sif_root` and built by
-`hhemt build-sifs`; `sha256_source` stays, because the digest's authoritative home is still
-the RO-Crate.
-
-## Run it
+## Run the experiment
 
 ```bash
 # Plan only, building the DAG and writing nothing:
@@ -61,27 +62,20 @@ hhemt run-experiment --experiment experiments/my_experiment --cluster uva --dry-
 hhemt run-experiment --experiment experiments/my_experiment --cluster uva
 ```
 
-`--cluster` selects which `hpc_system_config[<cluster>]` and which per-cluster `destinations`
-apply. The verb loads and validates `experiment.yaml`, resolves the HPC profile, then hands the
-two configs to the toolkit.
+`--cluster` selects the `hpc_system_config[<cluster>]` entry. The verb loads and validates `experiment.yaml`, resolves the HPC profile, and hands the system and analysis configs to the toolkit.
 
-In native mode the solver must already be built for the partition the run targets; the
-verb checks for the build and never performs it. Run the `--dry-run` form first: it writes
-the resolved configs to `$SCRATCH_DIR/resolved_configs/`, and those are the two paths the
-compile command on [Compile the solver](compiling-the-solver.md#on-a-cluster) takes.
+Compile the solver for the partition that the experiment targets before the first execution. [Compile the solver](compiling-the-solver.md#on-a-cluster) covers the command and the resolved config paths that `--dry-run` writes.
 
 ## Run modes and the wipe guard
 
-`--mode` selects what happens to an analysis directory that already holds work. The default
-is `resume`: a second invocation, or a SLURM requeue, picks up where the last one left off,
-and completed simulations are never deleted under `resume`.
+`--mode` selects the treatment of an analysis directory that already holds work. The default is `resume`. A second invocation, or a SLURM requeue, picks up where the last invocation stopped, and `resume` never deletes completed simulations.
 
 | `--mode` | Behaviour |
 |----------|-----------|
-| `resume` (default) | Continue from the last checkpoint; completed simulations are kept. |
-| `fresh` | Delete the whole analysis directory first, then rebuild everything. Guarded; see below. |
+| `resume`, the default | Continue from the last checkpoint and keep completed simulations. |
+| `fresh` | Delete the whole analysis directory first and rebuild everything. The wipe guard below applies. |
 
-Any other value is refused at parse time (exit 2); `hhemt run-experiment --help` lists the two.
+The parser refuses any other value with exit 2, and `hhemt run-experiment --help` lists the accepted values.
 
 ```bash
 # Start over, deleting the analysis directory (refused if it holds completed work):
@@ -91,21 +85,11 @@ hhemt run-experiment --experiment experiments/my_experiment --cluster uva --mode
 hhemt run-experiment --experiment experiments/my_experiment --cluster uva --mode fresh --override-wipe-nonempty
 ```
 
-The wipe guard refuses `--mode fresh` (exit 2) when the analysis directory still holds
-completed simulations, consolidated output, in-flight submission sentinels, or an orchestrator
-sentinel; the refusal names what it found. Pass `--override-wipe-nonempty` to delete that work
-deliberately. This flag is not `--yes`: `--yes` accepts the descriptor-override table (see
-[The override gate](#the-override-gate)) and authorizes no deletion, and
-`--override-wipe-nonempty` authorizes the deletion and accepts no override. To remove an
-analysis instead, see the `hhemt delete` note under
-[Add scenarios or events to a running sweep](forcing-reruns.md#add-scenarios-or-events-to-a-running-sweep).
+The wipe guard refuses `--mode fresh` with exit 2 when the analysis directory still holds completed simulations marked by `_status/c_run_*.flag` files, consolidated output, in-flight submission sentinels under `_status/_submitted` or `_status/_queued`, or an orchestrator sentinel under `_status/_orchestrator`. The refusal names the finding of the guard. `hhemt run --from-scratch` applies the same guard and raises `ConfigurationError`. Pass `--override-wipe-nonempty` to delete the work on purpose.
 
-To re-run completed scenarios without deleting anything, keep `--mode resume` and pass
-`--override-force-rerun`: `all`, `none`, or a JSON subject dict such as
-`'{"event_iloc":[3,7]}'`. It overrides the analysis config's `force_rerun` field for this
-invocation only and clears the completion markers of the targeted scenarios, so Snakemake
-runs them (and everything downstream) again in place. See
-[Forcing and suppressing re-runs](forcing-reruns.md).
+`--override-wipe-nonempty` differs from `--yes`. `--yes` accepts the descriptor-override table, described under [The override gate](#the-override-gate), and authorizes no deletion. `--override-wipe-nonempty` authorizes the deletion and accepts no override. To remove an analysis, use `hhemt delete`, as [Add scenarios or events to a running sweep](forcing-reruns.md#add-scenarios-or-events-to-a-running-sweep) notes.
+
+Keep `--mode resume` and pass `--override-force-rerun` to re-run completed scenarios without deleting any file. [Forcing and suppressing re-runs](forcing-reruns.md#force-a-full-re-run-of-specific-scenarios) lists the accepted values and the stage floor.
 
 ```bash
 # Re-run every completed scenario in place, no wipe:
@@ -114,55 +98,33 @@ hhemt run-experiment --experiment experiments/my_experiment --cluster uva --over
 
 ## Waiting for completion
 
-For a SLURM-dispatched run, `--wait` / `--no-wait` control whether the verb blocks until the
-workflow finishes. With neither flag given, the verb waits when running inside an sbatch
-allocation (`$SLURM_JOB_ID` is set, so the detached orchestrator would otherwise die with the
-allocation) and returns immediately on a login node. A detached invocation exits `0` as soon
-as the workflow is submitted; the exit code reports the workflow's outcome only when the verb
-waits.
+For an experiment dispatched through SLURM, `--wait` and `--no-wait` control whether the verb blocks until the workflow finishes. With neither flag, the verb waits inside an sbatch allocation and returns immediately on a login node. Inside an allocation `$SLURM_JOB_ID` is set, and the detached orchestrator would otherwise die with the allocation. A detached invocation exits `0` as soon as the workflow is submitted. The exit code reports the outcome of the workflow only when the verb waits.
 
 ## `${VAR}` placeholders in configs
 
-The git-tracked system/analysis configs carry portable `${VAR}` placeholders (e.g.
-`${DATA_DIR}/dem.tif`, `${SCRATCH_DIR}/system`). Export the referenced variables
-(typically from your submit script) before running: an **unset** variable fails fast with
-a `ConfigurationError` naming the placeholder.
+The git-tracked system and analysis configs carry portable `${VAR}` placeholders such as `${DATA_DIR}/dem.tif` and `${SCRATCH_DIR}/system`. Export the referenced variables, typically from your submit script, before running. An **unset** variable fails fast with a `ConfigurationError` that names the placeholder.
 
-??? note "Where the expanded configs are written, and why there"
-    `run-experiment` expands the placeholders against the environment before the run,
-    materializing resolved copies to `$SCRATCH_DIR/resolved_configs/`. That location is
-    a shared filesystem, so `batch_job` rules dispatched to other compute nodes can read
-    them.
+??? note "Location of the expanded configs"
+    `run-experiment` expands the placeholders against the environment before execution and materializes resolved copies in `$SCRATCH_DIR/resolved_configs/`. The location is a shared filesystem, so `batch_job` rules dispatched to other compute nodes can read the copies.
 
 ## The override gate
 
-`experiment.yaml` is meant to be the single source of truth. If you pass a CLI flag that
-overrides a value the descriptor already declares (currently `--hpc-system-config`), the verb
-prints a side-by-side `descriptor (config)` vs `CLI override` table and requires confirmation:
+`experiment.yaml` is the single source of truth. A CLI flag that overrides a value the descriptor declares, currently `--hpc-system-config`, makes the verb print a side-by-side `descriptor (config)` and `CLI override` table and require confirmation.
 
 ```bash
 # Non-interactive contexts (a submit script) must pass --yes to accept an override:
 hhemt run-experiment --experiment experiments/my_experiment --cluster uva --yes
 ```
 
-Without `--yes`, a non-interactive invocation that would override the descriptor **refuses**
-rather than silently preferring the CLI. When the CLI adds nothing the descriptor does not
-already say, no confirmation is needed: that is the common one-config path. `--yes` accepts
-only this table. Deleting completed work with `--mode fresh` goes through a separate gate with
-its own flag; see [Run modes and the wipe guard](#run-modes-and-the-wipe-guard).
+Without `--yes`, a non-interactive invocation that would override the descriptor **refuses** and never silently prefers the CLI. When the CLI adds no value beyond the descriptor, no confirmation is needed, and the common one-config path falls under this case. `--yes` accepts only the table. Deleting completed work with `--mode fresh` goes through a separate gate with a separate flag, described under [Run modes and the wipe guard](#run-modes-and-the-wipe-guard).
 
 ## Exit codes
 
-`hhemt run-experiment` exits with the codes in the
-[CLI reference exit-code table](../reference/cli.md#exit-codes), which also lists the
-cases each code covers for this command.
+`hhemt run-experiment` exits with the codes in the [CLI reference exit-code table](../reference/cli.md#exit-codes). The page also lists the cases that each code covers for this command.
 
 ## Verifying an experiment definition conforms
 
-The descriptor model ships in the wheel, so an installed copy can validate an experiment definition
-directly. Run this with the interpreter you installed `hhemt` into: inside that
-environment, `python3` resolves to it; from outside one, no interpreter on `PATH` will
-import `hhemt` and the snippet cannot work.
+The descriptor model ships in the wheel, so an installed copy validates an experiment definition directly. Run the snippet with the interpreter that holds your `hhemt` install. Inside that environment `python3` resolves to that interpreter, and outside the environment no interpreter on `PATH` imports `hhemt`, so the snippet fails.
 
 ```bash
 python3 -c "
@@ -172,13 +134,10 @@ ExperimentConfig.model_validate(yaml.safe_load(open(sys.argv[1] + '/experiment.y
 print('OK')" experiments/my_experiment
 ```
 
-Working from a repo checkout, the fuller checker additionally verifies that the declared
-`system_config`/`analysis_config` paths exist on disk and that `README.md` + `rerun.sh` are
-present:
+From a repository checkout, the fuller checker also verifies that the declared `system_config` and `analysis_config` paths exist on disk and that `README.md` and `rerun.sh` are present.
 
 ```bash
 uv run --locked python scripts/check_experiment_structure.py experiments/my_experiment
 ```
 
-Exit 0 = conformant. Note that `scripts/` is not distributed in the wheel, so this second form
-requires a clone rather than a `pip install`.
+Exit 0 means conformant. The wheel omits the `scripts/` directory, so the second form requires a clone and no `pip install`.

@@ -63,7 +63,9 @@ def _analysis_stand_in(*, sensitivity: bool, calls: list):
 
     analysis = _AnalysisStandIn(
         _system=SimpleNamespace(cfg_system=SimpleNamespace(), system_config_yaml=None),
-        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=sensitivity, multi_sim_run_method="local"),
+        cfg_analysis=SimpleNamespace(
+            toggle_sensitivity_analysis=sensitivity, multi_sim_run_method="local", report=None
+        ),
         analysis_config_yaml=None,
         hpc_system_config_yaml=None,
         analysis_paths=SimpleNamespace(analysis_dir=Path("/nonexistent/an_x")),
@@ -81,6 +83,7 @@ def _analysis_stand_in(*, sensitivity: bool, calls: list):
             submit_workflow=_stop,
         ),
         _reconcile_build_stamp_force=lambda value, dry_run=False, **_keywords: value,
+        _reconcile_report_settings_force=lambda value, **_k: value,
         _apply_force_rerun=record,
     )
     if sensitivity:

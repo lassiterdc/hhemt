@@ -1,0 +1,7 @@
+{
+  "attributes": {
+    "provenance": "{\"event_id\": \"year.9_event_type.compound_event_id.1\", \"hhemt_producing_sha\": \"d574dcec5b91\", \"source_analysis_id\": \"norfolk_doc_observed_events\", \"variables\": {\"swmm_only/swmm_link\": [\"max_flow\"], \"triton_only/triton\": [\"max_flood_depth\"], \"tritonswmm/swmm_link\": [\"max_flow\"], \"tritonswmm/triton\": [\"max_flood_depth\"]}}"
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

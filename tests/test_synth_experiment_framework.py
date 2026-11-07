@@ -177,8 +177,8 @@ def test_rank_sweep_generates_mpi_rows(tmp_path):
     """The mpi rows are generated from rank_sweep at baseline enumerate indices."""
     cfg = _cfg(_write_hpc_yaml(tmp_path / "hpc.yaml"))
     df = build_experiment_matrix(cfg)
-    mpi = df[df.run_mode == "mpi"]
-    assert sorted(mpi.n_mpi_procs.tolist()) == [2, 2, 4, 4, 8, 8]
+    mpi = df[df["analysis.run_mode"] == "mpi"]
+    assert sorted(mpi["analysis.n_mpi_procs"].tolist()) == [2, 2, 4, 4, 8, 8]
     # baseline global-enumerate indices 9/10/11 (mpi spliced between openmp and hybrid)
     assert set(mpi.member_id) == {"mpi_9_r1", "mpi_9_r2", "mpi_10_r1", "mpi_10_r2", "mpi_11_r1", "mpi_11_r2"}
 
@@ -223,5 +223,5 @@ def test_resume_matrix_uses_generous_walltime(tmp_path):
     csv = tmp_path / "resume_matrix.csv"
     write_resume_matrix_csv(csv)
     df = pd.read_csv(csv)
-    assert (df["hpc_time_min_per_sim"] == _CLEAN_WALLTIME_MIN).all()
+    assert (df["analysis.hpc_time_min_per_sim"] == _CLEAN_WALLTIME_MIN).all()
     assert len(df) == 30  # 15 configs x 2 replicates (rank_sweep=(2,4,8))

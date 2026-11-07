@@ -132,29 +132,32 @@ def test_the_caption_bolds_no_page_element_and_states_what_the_code_makes_true()
 
 def test_the_caption_leaves_out_what_the_page_does_not_show_or_the_code_does_not_do() -> None:
     """NEW CAPABILITY. Cut sentences stay cut: the SWMM-only parser, the stipulation and
-    module names, a data claim about one arm, the pointer to the combined report, and the
-    aggregation mode. The last is cut because `report.sensitivity.aggregation` is read
-    nowhere in the package, so the sentence naming it was false.
+    module names, a data claim about one arm, and the pointer to the combined report. The
+    aggregation mode was cut while `report.sensitivity.aggregation` was read nowhere in the
+    package; the renderer reads it now (the control below), so the caption names it again.
 
     Must-fire: the same matcher finds each phrase in the previous caption text.
     """
-    previous = (
-        "swmm_full_rpt_file stipulation restart-safe the uncoupled arm is faster paired small-multiple aggregation mode"
-    )
-    phrases = ["swmm_full_rpt_file", "stipulation", "restart-safe", "uncoupled arm", "small-multiple", "aggregation"]
+    previous = "swmm_full_rpt_file stipulation restart-safe the uncoupled arm is faster paired small-multiple"
+    phrases = ["swmm_full_rpt_file", "stipulation", "restart-safe", "uncoupled arm", "small-multiple"]
 
     assert [p for p in phrases if p in _CAPTION] == []
     assert [p for p in phrases if p in previous] == phrases
 
 
-def test_report_sensitivity_aggregation_is_still_unread_by_the_renderer() -> None:
-    """CONTROL for the cut above: the config field exists but `sensitivity_benchmarking.py`
-    does not read it. When a change starts reading it, this fails and the caption may name it
-    again."""
+def test_report_sensitivity_aggregation_is_read_by_the_renderer_and_named_by_the_caption() -> None:
+    """The config field is read by `sensitivity_benchmarking.py`, so the caption names it.
+
+    Both reads sit on the plotly path (`render` under `if use_plotly:` and `_plotly_metric_panel`), so
+    the caption scopes the statement to the plotly backend. Must-fire: the read matcher is the one the
+    previous control used to prove the field unread.
+    """
     source = Path(sb.__file__).read_text(encoding="utf-8")
 
     assert "aggregation" in SensitivityReportConfig.model_fields
-    assert not re.search(r"sens_cfg\.aggregation|\.sensitivity\.aggregation", source)
+    assert re.search(r"sens_cfg\.aggregation|\.sensitivity\.aggregation", source)
+    assert "aggregation" in _CAPTION
+    assert "plotly" in _CAPTION
 
 
 _RETIRED_TERM_WORDS = re.compile(

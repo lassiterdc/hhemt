@@ -35,6 +35,7 @@ from hhemt.config.hpc_system import (
     resolve_gpus_per_node,
     system_directory_bind,
 )
+from hhemt.config.report import REPORT_FORMAT_MARKER
 from hhemt.constants import consolidate_experiment_flag, model_type_from_flag_name
 from hhemt.exceptions import ConfigurationError, WorkflowError, WorkflowPlanningError
 from hhemt.orchestration import resolve_execution_locus
@@ -94,6 +95,21 @@ _DU_POLL_INTERVAL_S = 60
 _NON_INTERACTIVE_LOCK_CLEAR_ENV = "HHEMT_TEST_NON_INTERACTIVE_LOCK_CLEAR"
 
 logger = logging.getLogger(__name__)
+
+# The report config given at run entry, written beside the generated Snakefile.
+RUN_ENTRY_REPORT_CONFIG_FILE = "report_config_run_entry.yaml"
+
+
+def _shape_report_cfg(analysis):
+    """The report config that fixes the shape of a generated Snakefile.
+
+    The run-entry snapshot (``_cfg_report``, set by ``analysis.run()`` from its
+    ``report_config`` argument or from ``cfg_analysis.report``) comes first, as in rule
+    selection; ``cfg_analysis.report`` serves the generate-without-run() paths. The plot output
+    extension, the render targets and the sensitivity plot wildcards read this config, so one
+    report config governs a run from rule selection to the last plot.
+    """
+    return getattr(analysis, "_cfg_report", None) or analysis.cfg_analysis.report
 
 
 @dataclass(frozen=True)
@@ -550,6 +566,58 @@ rule render_report:
             2>&1 | tee {{log}}
         """
 '''
+
+
+@dataclass(frozen=True)
+class _RenderTargetPlan:
+    """How a generated Snakefile names the report it renders.
+
+    ``formats`` holds the explicit formats when the caller passed
+    ``override_report_formats`` or the ``report_html_mode`` setting is ``html`` or ``zip``;
+    each format is its own ``analysis_report.{format}`` target. ``formats`` is ``None`` for
+    ``report_html_mode="auto"`` with no override: the workflow then declares the single
+    format-neutral file ``REPORT_FORMAT_MARKER`` as the render rule's output and the
+    ``rule all`` target, because the figure sizes that pick the format do not exist until
+    the render rule runs. ``render_report`` writes the chosen format into that file.
+    """
+
+    formats: tuple[str, ...] | None
+
+    @property
+    def rule_all_targets(self) -> tuple[str, ...]:
+        """The quoted ``rule all`` entries for the report."""
+        if self.formats is None:
+            return (f'"{REPORT_FORMAT_MARKER}"',)
+        return tuple(f'"analysis_report.{fmt}"' for fmt in self.formats)
+
+    def rule_head(self, log_dir: str) -> str:
+        """The ``output:`` through ``log:`` lines of ``rule render_report``."""
+        if self.formats is None:
+            return f'''    output:
+        "{REPORT_FORMAT_MARKER}"
+    log: "{log_dir}/render_report.log"'''
+        return f'''    output:
+        "analysis_report.{{format}}"
+    wildcard_constraints:
+        format="zip|html"
+    log: "{log_dir}/render_report_{{format}}.log"'''
+
+    @property
+    def format_shell_line(self) -> str:
+        """The ``--format`` line of the render rule's shell command, empty for the neutral target."""
+        return "" if self.formats is None else "            --format {wildcards.format} \\\n"
+
+
+def _render_target_plan(
+    override_report_formats: "list[str] | None",
+    report_html_mode: str,
+) -> _RenderTargetPlan:
+    """The render targets for an explicit override, else for the ``report_html_mode`` setting."""
+    if override_report_formats is not None:
+        return _RenderTargetPlan(tuple(override_report_formats))
+    if report_html_mode == "auto":
+        return _RenderTargetPlan(None)
+    return _RenderTargetPlan((report_html_mode,))
 
 
 def _emit_rule_all(
@@ -2480,6 +2548,48 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         except Exception as _exc:  # never block a submit on a metadata read
             print(f"[Workflow] executor plugin versions unavailable: {_exc}", flush=True)
 
+    def _report_config_args(self) -> str:
+        """The ``--report-config`` flag for a rule that renders the report or a plot, or ``""``.
+
+        ``analysis.run(report_config=...)`` chooses the rules to emit from that config, but the
+        render and plot rules each build an analysis from ``cfg_analysis.yaml`` in their own
+        process. When the analysis holds a run-entry config, this writes the config as the YAML
+        that ``yaml_to_model`` reads back, beside the Snakefile, and returns the flag that points
+        the rule at that file. The file is named by its content
+        (``report_config_run_entry.{12 hex digits of its sha256}.yaml``) and written only when
+        that name does not exist, so a run with a different config writes a different file and a
+        workflow in flight keeps reading its own. Nothing deletes one: a file is read only through
+        the flag of a Snakefile that names that file.
+
+        Returns ``""`` with no run-entry config, so a run without ``report_config=`` emits the
+        same Snakefile as before and writes no file. A re-process renders with the analysis
+        config's settings: both re-process entries reset the attribute this reads to None.
+        """
+        cfg = getattr(self.analysis, "_run_entry_report_cfg", None)
+        if cfg is None:
+            return ""
+        import hashlib
+        import os
+        import uuid
+
+        text = yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=False)
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+        base = Path(RUN_ENTRY_REPORT_CONFIG_FILE)
+        path = self.analysis_paths.analysis_dir / f"{base.stem}.{digest}{base.suffix}"
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+            try:
+                tmp.write_text(text)
+                if path.exists():
+                    # Another writer put the same content here first: skip the move.
+                    tmp.unlink(missing_ok=True)  # EXEMPT-DU: transient-intermediate
+                else:
+                    tmp.replace(path)
+            finally:
+                tmp.unlink(missing_ok=True)  # EXEMPT-DU: transient-intermediate
+        return f" \\\n            --report-config {path}"
+
     def _get_config_args(
         self,
         analysis_config_yaml: Path | None = None,
@@ -2961,7 +3071,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # cfg_analysis.report is required by analysis_config
         # Pydantic schema; sourcing static_backend inline removes the need
         # for the legacy peer-file path resolution.
-        return self.cfg_analysis.report.interactive.static_backend
+        return _shape_report_cfg(self.analysis).interactive.static_backend
 
     def _resolve_account(self) -> str | None:
         """SLURM account default-resource.
@@ -3093,7 +3203,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             python_executable=self.python_executable,
             log_dir_rel=log_dir_rel,
             conda_env_path=str(self._get_conda_env_path()),
-            config_args_str=self._get_config_args(),
+            config_args_str=self._get_config_args() + self._report_config_args(),
             is_sensitivity=bool(getattr(self.cfg_analysis, "toggle_sensitivity_analysis", False)),
             static_backend=static_backend,
             report_tail_slurm_partition=_report_tail_partition,
@@ -3514,7 +3624,7 @@ rule consolidate_scenario:
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
         debug: bool = False,
-        report_formats: list[str] | None = None,
+        override_report_formats: list[str] | None = None,
         alive_by_token: dict[str, str] | None = None,
     ) -> str:
         """
@@ -3543,7 +3653,7 @@ rule consolidate_scenario:
             such check, because the SIF carries the binary.
         recompile_if_already_done_successfully : bool
             Forwarded to the generated setup rule's ``hhemt.setup_workflow``
-            invocation as ``--recompile-if-already-done``, where it has no reachable
+            invocation as ``--recompile-if-already-done``, where the flag has no reachable
             consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
             sits behind an ``args.compile_*`` gate that no emitted rule sets.
             The parameter itself is NOT dead —
@@ -3739,8 +3849,10 @@ rule consolidate_scenario:
             event_id="{event_id}",
         ).replace("__OUTPUT_EXT__", _ext["per_sim_event_page"])
 
-        _formats = report_formats if report_formats is not None else ["zip"]
-        render_targets_in_rule_all = "".join(f',\n        "analysis_report.{fmt}"' for fmt in _formats)
+        _render_plan = _render_target_plan(
+            override_report_formats, _shape_report_cfg(self.analysis).interactive.report_html_mode
+        )
+        render_targets_in_rule_all = "".join(f",\n        {target}" for target in _render_plan.rule_all_targets)
         # Per-plot disable. The multisim rule all + render_report inputs are
         # literal lists (not renderer_selection loops), so build the active plot-input
         # items here — in the standard set's renderer order, filtered by
@@ -4121,11 +4233,7 @@ rule run_{model_type}:
 rule render_report:
     input:
         {_render_report_input_block},
-    output:
-        "analysis_report.{{format}}"
-    wildcard_constraints:
-        format="zip|html"
-    log: "{log_dir_str}/render_report_{{format}}.log"
+{_render_plan.rule_head(log_dir_str)}
     resources:
 {
             self._build_resource_block(
@@ -4140,9 +4248,8 @@ rule render_report:
     shell:
         """
         {self.python_executable} -m hhemt.render_report_runner \\
-            {config_args} \\
-            --format {{wildcards.format}} \\
-            2>&1 | tee {{log}}
+            {config_args}{self._report_config_args()} \\
+{_render_plan.format_shell_line}            2>&1 | tee {{log}}
         """
 '''
         return snakefile_content
@@ -4469,6 +4576,12 @@ rule export_scenario_status:
                     "keep-going": True,
                 }
             )
+            # `local_gpus_for_workflow` is the GPU count Snakemake may schedule on this
+            # machine: a global `gpu` resource limit, the resource a GPU rule's `gpu=`
+            # declares. None emits no key, so the profile is byte-identical to a run
+            # that never set it.
+            if self.cfg_analysis.local_gpus_for_workflow is not None:
+                config["resources"] = [f"gpu={self.cfg_analysis.local_gpus_for_workflow}"]
         elif mode == "single_job":
             # Single-job mode: cores and GPU resources set dynamically via CLI in SBATCH script
             # Don't set cores or resources here - will be passed via CLI args in SBATCH script
@@ -4564,7 +4677,60 @@ rule export_scenario_status:
                 }
             )
 
+        self._merge_executor_profile_extras(config)
         return config
+
+    def _merge_executor_profile_extras(self, config: dict) -> None:
+        """Merge ``hpc_system_config.executor_profile_extras`` into the generated profile dict.
+
+        The extras are plugin-level settings the toolkit does not model, merged after
+        the toolkit's own keys. ``hpc_system_config`` already refuses a
+        ``set-resources`` / ``default-resources`` entry that names a toolkit-emitted
+        resource at load time. A key the toolkit also emits is merged where merging
+        has one meaning (two lists concatenate, extras last; two mappings update,
+        extras last) and refused otherwise, because a second value for a key the
+        toolkit models would silently replace the toolkit's. An empty mapping, or no
+        ``hpc_system_config``, leaves ``config`` unchanged, so today's profile is
+        written byte for byte.
+        """
+        extras = self.cfg_hpc_system.executor_profile_extras if self.cfg_hpc_system is not None else None
+        if not extras:
+            return
+        for key, value in extras.items():
+            if key not in config:
+                config[key] = value
+            elif isinstance(config[key], list) and isinstance(value, list):
+                # Snakemake keeps the LAST of two entries that name one resource, so an extras
+                # entry that repeats a resource name the toolkit already emits would silently
+                # replace the toolkit's value (the in-flight CPU cap, the account, the local GPU
+                # limit). Refuse, naming the resource and the two sources.
+                own = {str(e).split("=", 1)[0].strip(): str(e) for e in config[key]}
+                for extra_entry in value:
+                    name = str(extra_entry).split("=", 1)[0].strip()
+                    if name in own:
+                        raise ConfigurationError(
+                            field=f"executor_profile_extras.{key}",
+                            message=(
+                                f"Resource '{name}' is set twice in the profile key '{key}': by the toolkit "
+                                f"('{own[name]}') and by executor_profile_extras ('{extra_entry}'). "
+                                f"Snakemake keeps the last entry, so the extras entry would replace the "
+                                f"toolkit's value. Remove '{name}' from executor_profile_extras."
+                            ),
+                            config_path=None,
+                        )
+                config[key] = [*config[key], *value]
+            elif isinstance(config[key], dict) and isinstance(value, dict):
+                config[key] = {**config[key], **value}
+            else:
+                raise ConfigurationError(
+                    field=f"executor_profile_extras.{key}",
+                    message=(
+                        f"'{key}' is a Snakemake profile key the toolkit emits itself, and "
+                        f"executor_profile_extras cannot replace it. Remove it from "
+                        f"executor_profile_extras."
+                    ),
+                    config_path=None,
+                )
 
     def write_snakemake_config(self, config: dict, mode: Literal["local", "slurm", "single_job"]) -> Path:
         """
@@ -6969,7 +7135,7 @@ exit $snakemake_status
         dry_run: bool = False,
         verbose: bool = True,
         overrides: "RunOverrides | None" = None,
-        report_formats: list[str] | None = None,
+        override_report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
     ) -> dict:
@@ -7004,7 +7170,7 @@ exit $snakemake_status
             such check, because the SIF carries the binary.
         recompile_if_already_done_successfully : bool
             Forwarded to the generated setup rule's ``hhemt.setup_workflow``
-            invocation as ``--recompile-if-already-done``, where it has no reachable
+            invocation as ``--recompile-if-already-done``, where the flag has no reachable
             consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
             sits behind an ``args.compile_*`` gate that no emitted rule sets.
             The parameter itself is NOT dead —
@@ -7122,7 +7288,7 @@ exit $snakemake_status
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
                 debug=debug,
-                report_formats=report_formats,
+                override_report_formats=override_report_formats,
                 alive_by_token=alive_by_token,
             )
 
@@ -7207,7 +7373,7 @@ exit $snakemake_status
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
                 debug=debug,
-                report_formats=report_formats,
+                override_report_formats=override_report_formats,
                 alive_by_token=alive_by_token,
             )
 
@@ -7289,7 +7455,7 @@ exit $snakemake_status
             compression_level=compression_level,
             pickup_where_leftoff=pickup_where_leftoff,
             debug=debug,
-            report_formats=report_formats,
+            override_report_formats=override_report_formats,
             alive_by_token=alive_by_token,
         )
 
@@ -7351,6 +7517,7 @@ exit $snakemake_status
         claimed_driver_id: str | None = None,
         dry_run: bool = False,
         verbose: bool = True,
+        override_report_formats: list[str] | None = None,
     ) -> dict:
         """Submit a reprocess-scoped workflow against existing sim outputs.
 
@@ -7382,6 +7549,9 @@ exit $snakemake_status
             If True, runs ``snakemake --dry-run`` only and returns.
         verbose
             If True, print progress messages.
+        override_report_formats
+            Report formats the reprocess Snakefile renders. ``None`` (default) reads
+            ``report.interactive.report_html_mode``; a list overrides it.
 
         Returns
         -------
@@ -7410,7 +7580,9 @@ exit $snakemake_status
             )
 
         # Write the reprocess-scoped Snakefile.
-        snakefile_path = write_reprocess_snakefile(self, start_with=start_with)
+        snakefile_path = write_reprocess_snakefile(
+            self, start_with=start_with, override_report_formats=override_report_formats
+        )
         if verbose:
             print(
                 f"[Snakemake] Reprocess Snakefile generated: {snakefile_path}",
@@ -7670,7 +7842,7 @@ exit $snakemake_status
         snakefile_path = write_static_snakefile(
             self.analysis,
             static_plot_configs=resolved_static_plot_configs,
-            config_args_str=self._get_config_args(),
+            config_args_str=self._get_config_args() + self._report_config_args(),
             static_backend=self._get_report_cfg_static_backend(),
             static_config_ids=static_config_ids,
         )
@@ -9337,7 +9509,7 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         override_clear_raw: ClearRawValue | None = None,
         pickup_where_leftoff: bool = True,
         debug: bool = False,
-        report_formats: list[str] | None = None,
+        override_report_formats: list[str] | None = None,
         alive_by_token: dict[str, str] | None = None,
         alive_token_to_dir: dict[str, str] | None = None,
     ) -> str:
@@ -9365,7 +9537,7 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
             If True, overwrite existing system input files
         recompile_if_already_done_successfully : bool
             Forwarded to the generated setup rule's ``hhemt.setup_workflow``
-            invocation as ``--recompile-if-already-done``, where it has no reachable
+            invocation as ``--recompile-if-already-done``, where the flag has no reachable
             consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
             sits behind an ``args.compile_*`` gate that no emitted rule sets.
             The parameter itself is NOT dead —
@@ -9419,7 +9591,7 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         # The report cfg is inline on cfg_analysis; source the
         # sensitivity benchmarking independent_vars directly from there so
         # the master Snakefile can wildcard the plot rule per independent_var.
-        _report_cfg = self.experiment.cfg_analysis.report
+        _report_cfg = _shape_report_cfg(self.experiment)
         _independent_vars: list[str] = (
             list(_report_cfg.sensitivity.independent_vars) if _report_cfg.sensitivity is not None else []
         )
@@ -9490,7 +9662,9 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         # `output: analysis_report.{fmt}` and that output added to `rule all`
         # inputs, Snakemake's DAG planner always considers it: skipped when the
         # report is newer than its plot inputs, fired when stale or missing.
-        _formats = report_formats if report_formats is not None else ["zip"]
+        _render_plan = _render_target_plan(
+            override_report_formats, _shape_report_cfg(self.experiment).interactive.report_html_mode
+        )
 
         # Start building the Snakefile
         snakefile_content = f'''# Auto-generated flattened master Snakefile for sensitivity analysis
@@ -9682,8 +9856,7 @@ onerror:
         # Auto-render: every requested format is a top-level target. Snakemake's
         # DAG planning then always considers each report output and skips iff
         # the output is current relative to its plot inputs.
-        for _fmt in _formats:
-            rule_all_inputs.append(f'"analysis_report.{_fmt}"')
+        rule_all_inputs.extend(_render_plan.rule_all_targets)
 
         snakefile_content += f"""rule all:
     input:
@@ -10076,11 +10249,7 @@ onerror:
 rule render_report:
     input:
         {render_inputs_str}
-    output:
-        "analysis_report.{{format}}"
-    wildcard_constraints:
-        format="zip|html"
-    log: "{log_dir_str}/render_report_{{format}}.log"
+{_render_plan.rule_head(log_dir_str)}
     resources:
 {
             self._base_builder._build_resource_block(
@@ -10095,9 +10264,8 @@ rule render_report:
     shell:
         """
         {self.python_executable} -m hhemt.render_report_runner \\
-            {master_config_args} \\
-            --format {{wildcards.format}} \\
-            2>&1 | tee {{log}}
+            {master_config_args}{self._base_builder._report_config_args()} \\
+{_render_plan.format_shell_line}            2>&1 | tee {{log}}
         """
 '''
 
@@ -10107,7 +10275,7 @@ rule render_report:
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         compression_level: int = 5,
-        report_formats: list[str] | None = None,
+        override_report_formats: list[str] | None = None,
         start_with: Literal["process", "consolidate", "render"] = "consolidate",
     ) -> str:
         """Generate a reprocess-scoped master Snakefile for the sensitivity master.
@@ -10161,8 +10329,9 @@ rule render_report:
             consolidate rule shells' ``--which`` flag.
         compression_level
             Compression level (0-9) for the consolidate rule shells.
-        report_formats
-            List of report formats to render; defaults to ``["zip"]``.
+        override_report_formats
+            List of report formats to render. ``None`` (default) reads
+            ``report.interactive.report_html_mode``; a list overrides it.
         start_with
             Stage to re-fire from. ``"process"`` enables conditional per-member
             per-event process_timeseries emission (only emit for
@@ -10184,7 +10353,7 @@ rule render_report:
 
         # Sensitivity benchmarking + per-sim plotting context (sourced same as
         # the full master generator so render targets match).
-        _report_cfg = self.experiment.cfg_analysis.report
+        _report_cfg = _shape_report_cfg(self.experiment)
         _independent_vars: list[str] = (
             list(_report_cfg.sensitivity.independent_vars) if _report_cfg.sensitivity is not None else []
         )
@@ -10269,7 +10438,9 @@ rule render_report:
             include_sub=_sub_included_for_reprocess,
         )
 
-        _formats = report_formats if report_formats is not None else ["zip"]
+        _render_plan = _render_target_plan(
+            override_report_formats, _shape_report_cfg(self.experiment).interactive.report_html_mode
+        )
 
         # Snakefile preamble — config dict + onstart/onerror hooks identical to
         # the production master generator so the rendered report's metadata
@@ -10432,8 +10603,7 @@ onerror:
             for _eda_tmpl in _eda_templates:
                 rule_all_inputs.append(f'"{_eda_tmpl.output_path_template.replace("__OUTPUT_EXT__", _e_eda)}"')
         render_rule_input_items = [item for item in rule_all_inputs if not item.startswith('"_status/')]
-        for _fmt in _formats:
-            rule_all_inputs.append(f'"analysis_report.{_fmt}"')
+        rule_all_inputs.extend(_render_plan.rule_all_targets)
 
         snakefile_content += f"""rule all:
     input:
@@ -10709,11 +10879,7 @@ onerror:
 rule render_report:
     input:
         {render_inputs_str}
-    output:
-        "analysis_report.{{format}}"
-    wildcard_constraints:
-        format="zip|html"
-    log: "{log_dir_str}/render_report_{{format}}.log"
+{_render_plan.rule_head(log_dir_str)}
     resources:
 {
             self._base_builder._build_resource_block(
@@ -10728,9 +10894,8 @@ rule render_report:
     shell:
         """
         {self.python_executable} -m hhemt.render_report_runner \\
-            {master_config_args} \\
-            --format {{wildcards.format}} \\
-            --reprocess \\
+            {master_config_args}{self._base_builder._report_config_args()} \\
+{_render_plan.format_shell_line}            --reprocess \\
             2>&1 | tee {{log}}
         """
 '''
@@ -11052,7 +11217,7 @@ ILOC_BY_EVENT_ID_BY_MEMBER = {iloc_by_event_id_by_member!r}
         dry_run: bool = False,
         verbose: bool = True,
         overrides: "RunOverrides | None" = None,
-        report_formats: list[str] | None = None,
+        override_report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
     ) -> dict:
@@ -11077,16 +11242,16 @@ ILOC_BY_EVENT_ID_BY_MEMBER = {iloc_by_event_id_by_member!r}
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
             Accepted for signature parity and inert on the generated workflow: the
-            master Snakefile generator carries no read of it, so it changes no emitted
-            rule. It does not compile, because no emitted setup rule carries a
+            master Snakefile generator carries no read of the parameter, so the parameter changes no emitted
+            rule. The parameter compiles nothing, because no emitted setup rule carries a
             ``--compile-*`` flag and the rule asserts the solver tier rather than
-            building it. In container mode it performs no such check, because the
+            building the solver. In container mode the rule performs no such check, because the
             SIF carries the binary. Its one surviving effect is the ``phases_completed`` roll-up
             reported by ``TRITONSWMM_analysis.run()``, which lists ``"setup"`` when this
             or ``process_system_level_inputs`` is True.
         recompile_if_already_done_successfully : bool
             Forwarded to the generated setup rule's ``hhemt.setup_workflow``
-            invocation as ``--recompile-if-already-done``, where it has no reachable
+            invocation as ``--recompile-if-already-done``, where the flag has no reachable
             consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
             sits behind an ``args.compile_*`` gate that no emitted rule sets.
             The parameter itself is NOT dead —
@@ -11210,7 +11375,7 @@ ILOC_BY_EVENT_ID_BY_MEMBER = {iloc_by_event_id_by_member!r}
                 override_clear_raw=override_clear_raw,
                 pickup_where_leftoff=pickup_where_leftoff,
                 debug=debug,
-                report_formats=report_formats,
+                override_report_formats=override_report_formats,
                 alive_by_token=alive_by_token,
                 alive_token_to_dir=alive_token_to_dir,
             )
@@ -11287,7 +11452,7 @@ ILOC_BY_EVENT_ID_BY_MEMBER = {iloc_by_event_id_by_member!r}
                 override_clear_raw=override_clear_raw,
                 pickup_where_leftoff=pickup_where_leftoff,
                 debug=debug,
-                report_formats=report_formats,
+                override_report_formats=override_report_formats,
                 alive_by_token=alive_by_token,
                 alive_token_to_dir=alive_token_to_dir,
             )
@@ -11379,7 +11544,7 @@ ILOC_BY_EVENT_ID_BY_MEMBER = {iloc_by_event_id_by_member!r}
             override_clear_raw=override_clear_raw,
             pickup_where_leftoff=pickup_where_leftoff,
             debug=debug,
-            report_formats=report_formats,
+            override_report_formats=override_report_formats,
             alive_by_token=alive_by_token,
             alive_token_to_dir=alive_token_to_dir,
         )
@@ -11467,7 +11632,7 @@ ILOC_BY_EVENT_ID_BY_MEMBER = {iloc_by_event_id_by_member!r}
         claimed_driver_id: str | None = None,
         dry_run: bool = False,
         verbose: bool = True,
-        report_formats: list[str] | None = None,
+        override_report_formats: list[str] | None = None,
     ) -> dict:
         """Submit a reprocess-scoped master Snakefile for the sensitivity master.
 
@@ -11512,8 +11677,9 @@ ILOC_BY_EVENT_ID_BY_MEMBER = {iloc_by_event_id_by_member!r}
             If True, runs ``snakemake --dry-run`` only.
         verbose
             If True, print progress messages.
-        report_formats
-            Optional list of report formats to render; defaults to ``["zip"]``.
+        override_report_formats
+            Optional list of report formats to render. ``None`` (default) reads
+            ``report.interactive.report_html_mode``; a list overrides it.
 
         Returns
         -------
@@ -11538,7 +11704,7 @@ ILOC_BY_EVENT_ID_BY_MEMBER = {iloc_by_event_id_by_member!r}
         snakefile_content = self.generate_reprocess_master_snakefile_content(
             which=which,
             compression_level=compression_level,
-            report_formats=report_formats,
+            override_report_formats=override_report_formats,
             start_with=start_with,
         )
         analysis_dir = self.experiment.analysis_paths.analysis_dir

@@ -588,7 +588,7 @@ def _load_conduit_geometry(root: Path) -> dict[str, tuple[tuple[float, float], t
     return geom
 
 
-def _watershed_polygon(root: Path):
+def _watershed_polygon(root: Path, cfg_system=None):
     """The watershed polygon, or None. It is the drainage area north of the sea wall — used
     both as the display/colorbar mask and as a boundary overlay labeled 'watershed extent
     (bbox)' — the label names the supplied geometry, which may be a bounding box.
@@ -596,29 +596,53 @@ def _watershed_polygon(root: Path):
     Resolves in BOTH render roots. ``external/watershed.geojson`` is a bundle-EMIT artifact:
     ``bundle/_path_policy`` rewrites ``cfg_system.watershed_gis_polygon`` to
     ``external/{filename}`` at emit time. A LIVE analysis dir has no ``external/`` at all and
-    holds the absolute path in ``cfg_system.yaml``."""
-    wpath = root / "external" / "watershed.geojson"
-    if not wpath.exists():
-        # LIVE-ANALYSIS root. Without this fallback the mask silently degrades to None in
-        # every analysis.eda() render: depth_vmax reverts to the unmasked coastal storm-tide
-        # maximum and no boundary ring is drawn, while the 'watershed' swatch still claims
-        # one. Bundle roots hit the branch above first, so bundle renders are unchanged.
-        wpath = _cfg_system_watershed_path(root)
-    if wpath is None or not wpath.exists():
+    holds the absolute path in ``cfg_system.yaml``.
+
+    ``cfg_system`` is the system configuration object when the caller holds one: the DEM
+    figures pass it, because the analysis directory of a real run carries no
+    ``cfg_system.yaml`` and the file lookup below would return None, drawing the figure
+    unmasked with no error. A caller that passes none keeps the file lookup unchanged."""
+    wpath = _watershed_polygon_file(root, cfg_system)
+    if wpath is None:
         return None
     import geopandas as gpd
 
     return gpd.read_file(wpath).geometry.union_all()
 
 
-def _cfg_system_watershed_path(root: Path) -> Path | None:
+def _watershed_polygon_file(root: Path, cfg_system=None) -> Path | None:
+    """The existing polygon file ``_watershed_polygon`` reads, or None.
+
+    One resolver for the read and for every source declaration, so a declaration cannot name a
+    different file than the build opens (the renderer-IO audit compares the two).
+    ``root/external/watershed.geojson`` wins when present (a bundle root). Otherwise the path
+    comes from the system object or ``{root}/cfg_system.yaml`` -- the LIVE-ANALYSIS fallback;
+    without it the mask silently degrades to None in every analysis.eda() render.
+    """
+    wpath = root / "external" / "watershed.geojson"
+    if not wpath.exists():
+        wpath = _cfg_system_watershed_path(root, cfg_system)
+    if wpath is None or not wpath.exists():
+        return None
+    return wpath
+
+
+def _cfg_system_watershed_path(root: Path, cfg_system=None) -> Path | None:
     """``watershed_gis_polygon`` from ``root/cfg_system.yaml``, resolved against ``root``.
 
     Present in BOTH render contexts: ``analysis.eda()`` writes cfg_system.yaml to the live
     root before ``render_eda_plots(root, ...)``, and the bundle staging dir carries it via
     ``emit_relative_config_pair``. Returns None (never raises) when the file, the
     key, or the YAML parse is unavailable — an absent polygon is a legitimate excludable-input
-    state that the caller renders as "no watershed"."""
+    state that the caller renders as "no watershed".
+
+    A ``cfg_system`` object, when given, is read in place of the file."""
+    if cfg_system is not None:
+        val = getattr(cfg_system, "watershed_gis_polygon", None)
+        if not val:
+            return None
+        p = Path(str(val))
+        return p if p.is_absolute() else (root / p)
     cfg = root / "cfg_system.yaml"
     if not cfg.exists():
         return None
@@ -845,8 +869,13 @@ def _config_diff_absent_panel(*, headline: str, observed: str, remedy: str) -> g
     return fig
 
 
-def build_config_diff_figure(root: Path) -> go.Figure:
+def build_config_diff_figure(root: Path, *, cfg_system=None) -> go.Figure:
     """Assemble the config-diff-maps figure from the bundle/analysis root.
+
+    ``cfg_system`` is the system configuration object when the caller holds one; it supplies the
+    watershed polygon path in place of ``{root}/cfg_system.yaml`` (see ``_watershed_polygon``).
+    The same object must reach ``config_diff_source_paths`` so the declared sources name the
+    polygon this build reads.
 
     Layout (iter-2): 2 columns — DEM rasters | SWMM conduits. Row 1 = summary table.
     Panel A (row 2) = serial-CPU reference (absolute depth + flow, report palettes).
@@ -1160,7 +1189,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     # Watershed (north of the sea wall): mask displayed flood depth + depth colorbar range
     # to the drainage area (excludes the coastal storm-tide extreme), and overlay its
     # boundary on every map labeled 'watershed extent (bbox)'.
-    wpoly = _watershed_polygon(root)
+    wpoly = _watershed_polygon(root, cfg_system)
     wmask = _watershed_mask(wpoly, xd, yd)
 
     # ---- Cross-ARM fungibility (iter-2 report QA): FIXED shared bands for the diverging DIFF
@@ -1644,7 +1673,7 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     return fig
 
 
-def config_diff_source_paths(root: Path) -> list[Path]:
+def config_diff_source_paths(root: Path, *, cfg_system=None) -> list[Path]:
     """Declared source_paths for the harvest chain: the consolidated tree (diff maps) +
     the flat-summary-derived identity artifact (the identity column) + one inp.
 
@@ -1662,7 +1691,7 @@ def config_diff_source_paths(root: Path) -> list[Path]:
         # declaration to get it into the bundle. Declaring it here makes the harvest file set
         # self-sufficient. Harvest skips-with-warning on a declared-but-absent source, so an
         # excluded polygon stays safe.
-        *([_wp] if (_wp := _cfg_system_watershed_path(root)) is not None and _wp.exists() else []),
+        *([_wp] if (_wp := _watershed_polygon_file(root, cfg_system)) is not None else []),
     ]
     inps = sorted(root.glob("members/*/sims/*/swmm/hydraulics.inp"))
     if inps:

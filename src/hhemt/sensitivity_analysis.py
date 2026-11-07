@@ -1,14 +1,14 @@
 # %%
-"""Sensitivity-analysis orchestration: one experiment, many members.
+"""Sensitivity-analysis orchestration for one experiment with many members.
 
-A sensitivity experiment varies configuration across the rows of a table (CSV or
-Excel), and each row has to run as its own full analysis while still being
-compiled, scheduled, consolidated and reported as one experiment. This module is
+A sensitivity experiment varies configuration across the rows of a CSV or Excel table.
+Each row has to run as a full analysis of the row while still being
+compiled, scheduled, consolidated, and reported as a single experiment. The module is
 that layer. ``TRITONSWMM_sensitivity_analysis`` reads the table, builds one member
 analysis per row, groups the members into compile targets -- one per distinct build,
-shared by every member that needs it -- so each distinct build is done once, and
-drives the member-wide submit, reprocess, delete, consolidation and report paths.
-It also owns the column grammar the table may use: ``system.{field}`` and
+shared by every member that needs that build -- so each distinct build is done once, and
+drives the member-wide submit, reprocess, delete, consolidation, and report paths.
+The class also owns the column grammar the table may use. The grammar covers ``system.{field}`` and
 ``analysis.{field}`` overlay columns and the ``hpc.`` alias columns.
 """
 
@@ -16,7 +16,6 @@ import hashlib
 import json
 import os
 import uuid
-import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -31,6 +30,7 @@ from hhemt import orchestrator_sentinels as _osent
 from hhemt.cf_conventions import apply_global_attributes, stamp_parameter_units
 from hhemt.config.analysis import ClearRawValue, ForceRerunValue
 from hhemt.config.hpc_system import resolve_additional_modules, resolve_gpu_target
+from hhemt.config.report import REPORT_FORMAT_MARKER
 from hhemt.exceptions import ConfigurationError
 from hhemt.scenario import TRITONSWMM_scenario
 from hhemt.utils import current_datetime_string, open_store, write_datatree_zarr
@@ -255,17 +255,17 @@ class TRITONSWMM_sensitivity_analysis:
     """
     Manages sensitivity analysis by creating and orchestrating multiple members.
 
-    This class creates a separate TRITONSWMM_analysis instance for each row in a
-    sensitivity analysis configuration table (CSV or Excel). Each member runs
+    The class creates a separate TRITONSWMM_analysis instance for each row in a
+    sensitivity analysis configuration table in CSV or Excel form. Each member runs
     with different parameter values, and results are consolidated at the primary level.
 
     The sensitivity analysis workflow:
-    1. Reads sensitivity configuration (CSV/Excel with parameter combinations)
+    1. Reads sensitivity configuration from a CSV or Excel table of parameter combinations
     2. Creates member for each configuration row
     3. Runs simulations for all members
     4. Consolidates outputs across all parameter combinations
     5. Assembles ``experiment_datatree.zarr``: one ``member_{member_id}`` node per
-       completed member, holding that member's consolidated tree with its parameter
+       completed member, holding the consolidated tree of the member with the parameter
        values as attrs, plus a root ``parameters`` dataset covering every member
 
     Parameters
@@ -328,8 +328,8 @@ class TRITONSWMM_sensitivity_analysis:
             ``_build_unique_system_targets`` (an invalid per-row system config,
             e.g. a row using both ``system_config_yaml`` and ``system.*`` columns).
         pydantic.ValidationError
-            From ``_create_members``: a row's ``analysis.*``, ``hpc.*`` or bare
-            analysis-field values fail ``analysis_config`` validation; that path is
+            From ``_create_members``: a row's ``analysis.*`` or ``hpc.*``
+            values fail ``analysis_config`` validation; that path is
             not wrapped in ``ConfigurationError``.
         """
         self.experiment = analysis
@@ -409,14 +409,10 @@ class TRITONSWMM_sensitivity_analysis:
                     target_partition=_fast_target_partition,
                 )
             ]
-        from hhemt.config.analysis import analysis_config as _analysis_config_for_df_setup
-
         analysis_cols = [
             c
             for c in df_setup_full.columns
-            if c in _analysis_config_for_df_setup.model_fields
-            or _is_analysis_overlay_column(c)
-            or _is_hpc_overlay_column(c)  # retain hpc.* alias columns so
+            if _is_analysis_overlay_column(c) or _is_hpc_overlay_column(c)  # retain hpc.* alias columns so
             # the per-sub overlay application in _create_members can resolve them.
         ]
         self.df_setup = df_setup_full.loc[:, analysis_cols]
@@ -432,13 +428,13 @@ class TRITONSWMM_sensitivity_analysis:
         concurrent: bool = True,
         verbose: bool = False,
     ):
-        """Prepare every scenario across every member (workflow phase 2a).
+        """Prepare every scenario across every member in workflow phase 2a.
 
-        Generates per-event SWMM `.inp` files, boundary conditions and TRITON
+        Generates per-event SWMM `.inp` files, boundary conditions, and TRITON
         `.cfg` files for each member defined by the sensitivity table.
 
-        Scenario preparation always forks into subprocesses: PySwmm raises
-        ``MultiSimulationError`` if two SWMM simulations are instantiated in one
+        Scenario preparation always forks into subprocesses, because PySwmm raises
+        ``MultiSimulationError`` if more than one SWMM simulation is instantiated in one
         Python process, so ``concurrent`` controls how many subprocesses run at
         once, never whether they are used.
 
@@ -447,11 +443,11 @@ class TRITONSWMM_sensitivity_analysis:
         overwrite_scenario_if_already_set_up : bool
             Re-prepare scenarios whose outputs already exist.
         rerun_swmm_hydro_if_outputs_exist : bool
-            Re-run the SWMM hydrology step even when its outputs are present.
+            Re-run the SWMM hydrology step even when the outputs are present.
         concurrent : bool
             When True, every member's scenario launchers are pooled into one list and
             run through ``run_python_functions_concurrently``, so scenarios from all
-            members are prepared in parallel; when False they run one at a time.
+            members are prepared in parallel. When False they run one at a time.
         verbose : bool
             Emit per-scenario progress.
         """
@@ -500,48 +496,48 @@ class TRITONSWMM_sensitivity_analysis:
         dry_run: bool = False,
         verbose: bool = True,
         overrides: "RunOverrides | None" = None,
-        report_formats: list[str] | None = None,
+        override_report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
     ) -> dict:
         """
         Submit sensitivity analysis workflow using Snakemake.
 
-        This orchestrates multiple member workflows and a final primary
+        The class orchestrates multiple member workflows and a final primary
         consolidation step that combines all member outputs.
 
         Parameters
         ----------
         mode : Literal["local", "slurm", "auto"]
             Execution mode. Read on every config by the login-node cross-node
-            preflight (``assert_configs_visible_cross_node``), which runs only when
+            preflight ``assert_configs_visible_cross_node``. The preflight runs only when
             the resolved locus is ``"slurm"``, so an explicit ``"local"`` skips that
-            check on any config. The builder's launch routing reads it only for a
-            ``multi_sim_run_method="local"`` config: ``1_job_many_srun_tasks`` and
+            check on any config. The builder's launch routing reads the parameter only for a
+            ``multi_sim_run_method="local"`` config. ``1_job_many_srun_tasks`` and
             ``batch_job`` configs are routed by that method and the routing ignores
             ``mode``. For a ``local`` config, ``"auto"`` resolves to ``"local"`` from
             the config, never from SLURM environment variables.
         process_system_level_inputs : bool
-            If True, process system-level inputs (DEM, Mannings)
+            If True, process system-level inputs for the DEM and Mannings
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
         compile_TRITON_SWMM : bool
-            Accepted for signature parity and inert on the generated workflow: the
-            primary Snakefile generator carries no read of it, so it changes no emitted
-            rule. It does not compile, because no emitted setup rule carries a
-            ``--compile-*`` flag and the rule asserts the solver tier rather than
-            building it. In container mode it performs no such check, because the
-            SIF carries the binary. Its one surviving effect is the ``phases_completed`` roll-up
-            reported by ``TRITONSWMM_analysis.run()``, which lists ``"setup"`` when this
+            Accepted for signature parity and inert on the generated workflow. The
+            primary Snakefile generator carries no read of the parameter, so the parameter changes no emitted
+            rule. The parameter compiles no solver, because no emitted setup rule carries a
+            ``--compile-*`` flag and the rule asserts the solver tier and avoids
+            building the solver. In container mode the rule performs no such check, because the
+            SIF carries the binary. The one surviving effect is the ``phases_completed`` roll-up
+            reported by ``TRITONSWMM_analysis.run()``. The roll-up lists ``"setup"`` when this
             or ``process_system_level_inputs`` is True.
         recompile_if_already_done_successfully : bool
             Forwarded to the generated setup rule's ``hhemt.setup_workflow``
-            invocation as ``--recompile-if-already-done``, where it has no reachable
-            consumer: each of that module's three pass-downs to ``TRITONSWMM_system``
+            invocation as ``--recompile-if-already-done``, where the flag has no reachable
+            consumer. Each pass-down of that module to ``TRITONSWMM_system``
             sits behind an ``args.compile_*`` gate that no emitted rule sets.
-            The parameter itself is NOT dead —
+            The parameter itself is NOT dead.
             ``TRITONSWMM_system.compile_TRITON_SWMM`` / ``compile_TRITON_only`` /
-            ``compile_SWMM`` each read it — but only when called directly, never
+            ``compile_SWMM`` each read the parameter, but only when called directly, never
             through this workflow.
         prepare_scenarios : bool
             If True, prepare scenarios before running
@@ -552,19 +548,19 @@ class TRITONSWMM_sensitivity_analysis:
         process_timeseries : bool
             If True, process timeseries outputs after simulations
         which : Literal["TRITON", "SWMM", "both"]
-            Which outputs to process
+            The outputs to process
         overrides : RunOverrides | None
-            Runtime override carrier (``clear_raw``, ``force_rerun``,
-            ``hpc_total_nodes``, ``hpc_restart_times_simulate/other``); ``None``
+            Runtime override carrier holding ``clear_raw``, ``force_rerun``,
+            ``hpc_total_nodes``, and ``hpc_restart_times_simulate/other``. ``None``
             reads every value from the config.
         compression_level : int
-            Compression level for output files (0-9)
+            Compression level from 0 to 9 for output files
         pickup_where_leftoff : bool
             If True, resume simulations from last checkpoint
         debug : bool
-            The run's ``--debug`` flag, threaded to the workflow builder, which emits
-            ``--debug`` on every run-simulation rule shell. Today it does one thing: a coupled
-            clean start keeps the previous run's snapshot files instead of removing them.
+            The run's ``--debug`` flag, threaded to the workflow builder. The builder emits
+            ``--debug`` on every run-simulation rule shell. Today the flag has one effect. A coupled
+            clean start keeps the snapshot files of the previous run and skips their removal.
         dry_run : bool
             If True, only perform a dry run and return that result
         verbose : bool
@@ -573,15 +569,15 @@ class TRITONSWMM_sensitivity_analysis:
         Returns
         -------
         dict
-            Status dictionary from the launch path the config selects, so its keys
+            Status dictionary from the launch path the config selects, so the keys
             vary with that path. The common keys are:
-            - success: bool
-            - mode: str
-            - snakefile_path: Path
-            - message: str
-            A SLURM launch may also carry ``job_id`` or ``session_name``, which this
-            method reads to enrich the orchestrator sentinel. Not established that
-            every path sets all four common keys.
+            - ``success`` as bool
+            - ``mode`` as str
+            - ``snakefile_path`` as Path
+            - ``message`` as str
+            A SLURM launch may also carry ``job_id`` or ``session_name``. The
+            method reads them to enrich the orchestrator sentinel. Not established that
+            every path sets all of the common keys.
         """
         # Login-node preflight (assert_configs_visible_cross_node): fail before any
         # submission if a config file the compute nodes must read is not visible to
@@ -695,7 +691,7 @@ class TRITONSWMM_sensitivity_analysis:
                 dry_run=dry_run,
                 verbose=verbose,
                 overrides=overrides,
-                report_formats=report_formats,
+                override_report_formats=override_report_formats,
                 extra_sbatch_args=extra_sbatch_args,
                 snakemake_diagnostics=snakemake_diagnostics,
             )
@@ -754,7 +750,7 @@ class TRITONSWMM_sensitivity_analysis:
         compression_level: int = 5,
         verbose: bool = True,
         dry_run: bool = False,
-        report_formats: list[str] | None = None,
+        override_report_formats: list[str] | None = None,
         *,
         regenerate_existing: bool = False,
         delete_via_slurm: bool | None = None,
@@ -762,45 +758,45 @@ class TRITONSWMM_sensitivity_analysis:
     ) -> dict:
         """Primary-level reprocess for sensitivity analyses.
 
-        Invalidates per-member consolidate flags (subset via ``member_ids``
-        or all members by default) plus the primary consolidate flag,
+        Invalidates per-member consolidate flags, for a subset via ``member_ids``
+        or for all members by default, plus the primary consolidate flag,
         then emits a scoped primary Snakefile via
-        :meth:`SensitivityAnalysisWorkflowBuilder.generate_reprocess_master_snakefile_content`
-        and submits it via
-        :meth:`SensitivityAnalysisWorkflowBuilder.submit_reprocess_workflow`.
+        ``SensitivityAnalysisWorkflowBuilder.generate_reprocess_master_snakefile_content``
+        and submits that Snakefile via
+        ``SensitivityAnalysisWorkflowBuilder.submit_reprocess_workflow``.
 
-        Unlike :meth:`TRITONSWMM_analysis.reprocess`, this method does NOT
-        invoke the ``override_clear_raw`` orphan/abort gate — sensitivity
+        Unlike ``TRITONSWMM_analysis.reprocess``, this method AVOIDS
+        invoking the ``override_clear_raw`` orphan/abort gate. Sensitivity
         primary reprocess is a downstream-only refresh of consolidation +
-        plotting + rendering against existing per-member sim outputs and does
-        not need the in-flight reconciliation logic that the analysis-level
+        plotting + rendering against existing per-member sim outputs and
+        needs none of the in-flight reconciliation logic that the analysis-level
         ``override_clear_raw`` flow uses.
 
         Parameters
         ----------
         start_with
-            Stage to re-fire from. ``"consolidate"`` (default) deletes per-member
+            Stage to re-fire from. The default ``"consolidate"`` deletes per-member
             ``e_consolidate_member-{id}_complete.flag`` files and the primary
             ``f_consolidate_experiment_complete.flag``, then re-runs the consolidate
             + experiment_consolidation + plot/render rule chain. ``"render"``
             invalidates only the report artifacts. ``"process"`` reconciles
             stale ``d_process`` flags against summary existence and re-emits the
-            per-(member, event) rebuild rules; it does NOT collapse
+            per-member and per-event rebuild rules. The method avoids collapsing
             onto the ``"consolidate"`` Snakefile.
         member_ids
-            Optional subset of member IDs (string-cast) to invalidate.
-            When ``None`` (default), every member's per-member consolidate
-            flag is invalidated. IDs not in ``members`` are silently
-            ignored at the unlink call (``missing_ok=True``).
+            Optional subset of member IDs, string-cast, to invalidate.
+            When ``None``, the default, the per-member consolidate
+            flag of every member is invalidated. IDs not in ``members`` are silently
+            ignored at the unlink call, ``missing_ok=True``.
         execution_mode
             ``"auto"`` resolves the locus from the config's ``multi_sim_run_method``
-            through ``orchestration.resolve_execution_locus``, which never reads the
-            environment; ``"local"`` / ``"slurm"`` force the mode.
+            through ``orchestration.resolve_execution_locus``. The function never reads the
+            environment. ``"local"`` and ``"slurm"`` force the mode.
         which
-            ``"both"`` / ``"TRITON"`` / ``"SWMM"`` — threaded into the
+            ``"both"``, ``"TRITON"``, or ``"SWMM"``, threaded into the
             consolidate rule shells' ``--which`` flag.
         compression_level
-            Compression level (0-9) for the consolidate rule shells.
+            Compression level from 0 to 9 for the consolidate rule shells.
         verbose
             If True, print progress messages.
         dry_run
@@ -819,6 +815,12 @@ class TRITONSWMM_sensitivity_analysis:
         # toolkit's own printed instruction. FIRST statement, above stamp_new_target and
         # above every destructive step, for the same reason as the non-sensitivity twin.
         _m = self.experiment
+        # A re-process renders with the analysis config's report settings; this entry is
+        # reachable directly, so the method resets the four attributes run() sets, on the experiment and
+        # on this wrapper, before any Snakefile is generated.
+        _m._reset_run_report_settings()
+        for _name in _m._RUN_REPORT_ATTRIBUTES:
+            setattr(self, _name, None)
         assert_configs_visible_cross_node(
             _m._system.cfg_system,
             _m.cfg_analysis,
@@ -858,6 +860,7 @@ class TRITONSWMM_sensitivity_analysis:
         # processing-log records, both filesystem mutations the dry-run
         # no-destructive-mutation contract forbids.
         if not dry_run:
+            override_force_rerun = self.experiment._reconcile_report_settings_force(override_force_rerun, dry_run=False)
             # The sensitivity reprocess generator reads the config's clear-raw alone.
             self.experiment._apply_force_rerun(override_force_rerun, override_clear_raw=None, for_reprocess=True)
 
@@ -966,12 +969,13 @@ class TRITONSWMM_sensitivity_analysis:
             # regenerates from the preserved zarr on the default path.
             _report_html = experiment_dir / "analysis_report.html"
             _report_zip = experiment_dir / "analysis_report.zip"
+            _report_marker = experiment_dir / REPORT_FORMAT_MARKER
             # The DELETION runs on a dry run (it is the sanctioned mtime trigger); the
             # SENTINEL WRITE does not. Before the deletion tool was unified this site
             # carried `if not dry_run` around a separate restamp call; the conversion
             # dropped the gate with the line it lived on.
             delete_and_account_unless_dry_run(
-                [_report_html, _report_zip], scope_dir=experiment_dir, scope="analysis", dry_run=dry_run
+                [_report_html, _report_zip, _report_marker], scope_dir=experiment_dir, scope="analysis", dry_run=dry_run
             )
             # The report deletion is accounted by the tool call above; no
             # per-mutation ancestor restamp follows it.
@@ -1082,8 +1086,9 @@ class TRITONSWMM_sensitivity_analysis:
             # gate now lives in the helper rather than in an `if` at this site.
             _report_html = experiment_dir / "analysis_report.html"
             _report_zip = experiment_dir / "analysis_report.zip"
+            _report_marker = experiment_dir / REPORT_FORMAT_MARKER
             delete_and_account_unless_dry_run(
-                [_report_html, _report_zip], scope_dir=experiment_dir, scope="analysis", dry_run=dry_run
+                [_report_html, _report_zip, _report_marker], scope_dir=experiment_dir, scope="analysis", dry_run=dry_run
             )
         else:
             raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
@@ -1097,7 +1102,7 @@ class TRITONSWMM_sensitivity_analysis:
             claimed_driver_id=_reprocess_claim,
             dry_run=dry_run,
             verbose=verbose,
-            report_formats=report_formats,
+            override_report_formats=override_report_formats,
         )
 
     def delete(
@@ -1113,9 +1118,9 @@ class TRITONSWMM_sensitivity_analysis:
         the guard.
 
         ``override_multi_sim_run_method`` overrides the configured run method for
-        this delete only, which selects whether the delete rules run locally
-        (``--cores N``) or are submitted through the SLURM executor. It follows the
-        ``override_`` prefix convention: None reads the config.
+        this delete only. The run method selects whether the delete rules run locally,
+        with ``--cores N``, or are submitted through the SLURM executor. The method follows the
+        ``override_`` prefix convention, and None reads the config.
         """
         from hhemt.utils import fast_rmtree
 
@@ -1169,41 +1174,46 @@ class TRITONSWMM_sensitivity_analysis:
 
     def render_report(
         self,
-        format: Literal["html", "zip"] = "zip",
+        format: Literal["html", "zip"] | None = None,
         *,
         reprocess: bool = False,
         declare_stale_plots: bool = False,
     ) -> "Path":
         """Render the primary report for the sensitivity analysis.
 
-        Idempotent: invokes ``snakemake --report`` against the primary Snakefile
-        without re-executing any rules. Renders only the primary-level report;
-        per-member reports are not generated.
+        Idempotent. Invokes ``snakemake --report`` against the primary Snakefile
+        without re-executing any rules. Renders only the primary-level report.
+        Per-member reports are not generated.
 
         Parameters
         ----------
-        format : Literal["html", "zip"], default "zip"
-            Output format. ``"html"`` produces a single self-contained
+        format : Literal["html", "zip"] or None, default None
+            Output format. ``None`` reads ``report.interactive.report_html_mode``:
+            ``"html"`` and ``"zip"`` select the format named, and ``"auto"`` adds up the
+            bytes of the figure files under the primary's ``plots/`` and renders
+            ``"html"`` below 15 MB, the ``config.report.AUTO_HTML_MAX_BYTES`` threshold, and
+            ``"zip"`` otherwise. An explicit value overrides the setting.
+            ``"html"`` produces a single self-contained
             ``analysis_report.html`` with all figures inlined as base64.
             ``"zip"`` produces ``analysis_report.zip`` containing the unbundled
-            report tree (separate HTML + assets). BOTH formats receive the
-            React-bundle post-process surgery: the HTML in place, the zip by
-            editing the ``report.html`` inside it.
+            report tree of separate HTML and assets. BOTH formats receive the
+            React-bundle post-process surgery. The HTML is edited in place and the zip by
+            editing the ``report.html`` inside the archive.
         reprocess : bool, default False
-            When ``True``, render against ``Snakefile.reprocess`` (the filtered
-            reprocess DAG) instead of the production ``Snakefile``, so the
+            When ``True``, render against ``Snakefile.reprocess``, the filtered
+            reprocess DAG, in place of the production ``Snakefile``, so the
             ``snakemake --report`` step only expects the figures the reprocess
-            DAG built. Keyword-only; set by the reprocess ``render_report`` rule
+            DAG built. Keyword-only and set by the reprocess ``render_report`` rule
             shell. Default ``False`` keeps the production render path
             byte-identical.
         declare_stale_plots : bool, default False
-            Before anything is rendered, the build stamps in the figure sidecars
-            (``*.manifest.json``) under the primary's ``plots/`` -- its own figures'
-            and the per-member figures' under ``plots/sensitivity/per_sim/`` -- are
-            compared with the toolkit build now running. When ``False``, a mismatch,
-            or figures that carry no stamp, raises ``StalePlotsError`` and no report
-            is written. When ``True``, the mismatch is printed to standard output and
-            the render continues. Keyword-only; the same keyword as
+            Before anything is rendered, the build stamps in the figure sidecars,
+            ``*.manifest.json``, under the primary's ``plots/`` -- the figures of the primary
+            and the per-member figures under ``plots/sensitivity/per_sim/`` -- are
+            compared with the toolkit build now running. With ``False``, a mismatch
+            raises ``StalePlotsError``. No report is written, and figures that carry no
+            stamp raise the same error. With ``True``, the mismatch is printed to standard output and
+            the render continues. Keyword-only and the same keyword as
             ``TRITONSWMM_analysis.render_report``.
         """
         import subprocess
@@ -1225,6 +1235,16 @@ class TRITONSWMM_sensitivity_analysis:
         snakefile_name = "Snakefile.reprocess" if reprocess else "Snakefile"
         snakefile = primary_dir / snakefile_name
         _assert_snakefile_package_current(snakefile)
+        _chose_format_here = format is None
+        if format is None:
+            from .config.report import report_figure_bytes, resolve_report_format
+
+            _cfg_report = (
+                getattr(self, "_cfg_report", None)
+                or getattr(self.experiment, "_cfg_report", None)
+                or self.cfg_analysis.report
+            )
+            format = resolve_report_format(_cfg_report.interactive.report_html_mode, report_figure_bytes(primary_dir))
         out = primary_dir / f"analysis_report.{format}"
         css_path = primary_dir / "report" / "report.css"
         # Brand-theme resolution: cfg_analysis.brand_theme when set, else the
@@ -1322,7 +1342,21 @@ class TRITONSWMM_sensitivity_analysis:
                 member_labels=_member_labels,
                 event_labels=_event_labels,
             )
-        stamp_report_stage(self.analysis_paths.analysis_dir, out)
+        # The record of the settings this render used: the run-entry config (set in this process,
+        # or through --report-config), else the analysis config's section. The wrapper reads its own
+        # attributes, else those of the experiment that run() set. The settings are recorded as given:
+        # run() overlays brand colors onto its own copy (_cfg_report).
+        _given = getattr(self, "_run_entry_report_cfg", None) or getattr(self.experiment, "_run_entry_report_cfg", None)
+        stamp_report_stage(
+            self.analysis_paths.analysis_dir,
+            out,
+            _given if _given is not None else self.cfg_analysis.report,
+            "run_entry" if _given is not None else "analysis_config",
+        )
+        if _chose_format_here:
+            # The generated workflow's render rule declares this file as its output, and a
+            # direct call that chose the format records the choice for the same reader.
+            (out.parent / REPORT_FORMAT_MARKER).write_text(f"{format}\n")
         if format != "html":
             return out
         out_html = out
@@ -1351,20 +1385,20 @@ class TRITONSWMM_sensitivity_analysis:
     ) -> "Path":
         """Emit a portable render bundle for the sensitivity primary analysis.
 
-        Opt-in only — NEVER invoked from analysis.run() or
-        submit_workflow(). The bundle includes the sensitivity primary's
+        Opt-in only and NEVER invoked from ``analysis.run()`` or
+        ``submit_workflow()``. The bundle includes the sensitivity primary's
         consolidated outputs plus the union of source paths declared by
-        every renderer in the primary's render_report(), including per-sim
-        renderers wildcarded over (member_id, event_id).
+        every renderer in ``render_report()`` of the primary, including per-sim
+        renderers wildcarded over ``(member_id, event_id)``.
 
         Parameters
         ----------
         output_path : Path or None
             Target path for the bundle.
         container_defs : list of Path, or None
-            One Apptainer ``.def`` per distinct architecture to carry. Required, and
-            repeatable, for a container-mode analysis: the config names ONE recipe per
-            container reference and cannot express a multi-architecture SET. Ignored
+            One Apptainer ``.def`` per distinct architecture to carry. Required
+            and repeatable for a container-mode analysis. The config names ONE recipe per
+            container reference and is unable to express a multi-architecture SET. Ignored
             for a native analysis.
 
         Returns
@@ -1382,21 +1416,21 @@ class TRITONSWMM_sensitivity_analysis:
         container_defs: "list[Path] | None" = None,
     ) -> "Path":
         """Emit a reprex-ready Workflow-Run-Crate bundle for the sensitivity primary and
-        return its extracted directory root.
+        return the extracted directory root.
 
-        Parity peer of ``bundle_report_data()``. The sensitivity primary is the primary
+        Parity peer to ``bundle_report_data()``. The sensitivity primary is the primary
         reprex surface, because the ``(member_id, column)`` problem-pair emission is
         intrinsically a sensitivity concept. ``emit_bundle`` already carries the reprex
-        runnable-template set and the Workflow-Run-Crate; this facade extracts the
+        runnable-template set and the Workflow-Run-Crate. The facade extracts the
         emitted zip to a sibling directory so the round-trip consumes a directory root
         directly, as ``Bundle.from_directory(...).reprex(...)``. Opt-in only.
 
         Parameters
         ----------
         container_defs : list of Path, or None
-            One Apptainer ``.def`` per distinct architecture to carry. Required, and
-            repeatable, for a container-mode analysis: the config names ONE recipe per
-            container reference and cannot express a multi-architecture SET. Ignored
+            One Apptainer ``.def`` per distinct architecture to carry. Required
+            and repeatable for a container-mode analysis. The config names ONE recipe per
+            container reference and is unable to express a multi-architecture SET. Ignored
             for a native analysis.
 
         Returns
@@ -1421,11 +1455,11 @@ class TRITONSWMM_sensitivity_analysis:
     ) -> dict:
         """Deposit the sensitivity PRIMARY tree to a DOI-minting repo.
 
-        Opt-in only — NEVER invoked from run()/submit_workflow(), mirroring
-        render_report()/bundle_report_data(). Deposits the primary
-        experiment_datatree.zarr, the primary-rooted ro-crate sidecar, and the two
-        materialized configs (cfg_analysis.yaml, cfg_system.yaml) — see
-        publishing._deposit_set, which filters that list by existence. The license is
+        Opt-in only and NEVER invoked from ``run()`` or ``submit_workflow()``, mirroring
+        ``render_report()`` and ``bundle_report_data()``. Deposits the primary
+        experiment_datatree.zarr, the primary-rooted ro-crate sidecar, and the
+        materialized configs, ``cfg_analysis.yaml`` and ``cfg_system.yaml``. See
+        ``publishing._deposit_set``. The function filters the list by existence. The license is
         read from the emitted crate. Returns {"target","data_doi","software_doi","record_url"}.
         """
         from hhemt.publishing import publish_analysis
@@ -1453,13 +1487,13 @@ class TRITONSWMM_sensitivity_analysis:
         """Deposit the runnable reprex bundle for the sensitivity primary.
 
         Sensitivity parallel of ``TRITONSWMM_analysis.publish_reprex_bundle``, and the
-        emit half of the DOI round-trip. Opt-in only; never invoked from ``run()``.
+        emit half of the DOI round-trip. Opt-in only, and never invoked from ``run()``.
 
         Parameters
         ----------
         exclude_config : Path or None
-            Path to an operator-authored exclude-config YAML; see the analysis-tier
-            facade. Omit it and the deposited bundle is self-contained.
+            Path to an operator-authored exclude-config YAML. See the analysis-tier
+            facade. Omit the file and the deposited bundle is self-contained.
         """
         return self.experiment.publish_reprex_bundle(
             target,
@@ -1480,20 +1514,20 @@ class TRITONSWMM_sensitivity_analysis:
         override_clear_raw: ClearRawValue | None = None,
         verbose=False,
     ):
-        """Execute every simulation across every member (workflow phase 2b).
+        """Execute every simulation across every member in workflow phase 2b.
 
         Parameters
         ----------
         pickup_where_leftoff : bool
-            Resume from existing completion state instead of re-running
+            Resume from existing completion state and skip re-running
             simulations already recorded as complete.
         concurrent : bool
-            Not supported: ``concurrent=True`` raises ``RuntimeError`` before any
+            Not supported. ``concurrent=True`` raises ``RuntimeError`` before any
             simulation starts. With the default False, members run one after another,
-            each through its own ``run_sims_in_sequence``.
+            each through the ``run_sims_in_sequence`` of the member.
         process_outputs_after_sim_completion : bool
             Convert raw solver output to Zarr/NetCDF as each simulation
-            finishes, rather than in a separate later pass.
+            finishes and skips a separate later pass.
         which : {"TRITON", "SWMM", "both"}
             Restrict to one side of the coupled pair.
         compression_level : int
@@ -1501,7 +1535,7 @@ class TRITONSWMM_sensitivity_analysis:
 
         Notes
         -----
-        Completion is detected from solver LOG MARKERS, not from exit codes — a
+        Completion is detected from solver LOG MARKERS and never from exit codes, because a
         simulation can exit 0 having failed partway. A run that reports complete
         with an implausibly short elapsed time is the signature to check.
         """
@@ -1533,7 +1567,7 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = False,
         compression_level: int = 5,
     ):
-        """Convert raw solver output to Zarr/NetCDF across all members (phase 2c).
+        """Convert raw solver output to Zarr/NetCDF across all members in phase 2c.
 
         Parameters
         ----------
@@ -1542,7 +1576,7 @@ class TRITONSWMM_sensitivity_analysis:
         override_clear_raw : ClearRawValue or None
             Override ``analysis_config.clear_raw`` for this invocation only.
             ``None`` reads the config. Per the override-prefix convention this
-            never falls through silently: if both are absent, it raises.
+            never falls through silently, and the method raises if both are absent.
         verbose : bool
             Emit per-scenario progress.
         compression_level : int
@@ -1577,9 +1611,9 @@ class TRITONSWMM_sensitivity_analysis:
     def TRITON_analyses_outputs_consolidated(self):
         """True when every member has a completed TRITON-side summary.
 
-        Which flag is checked depends on the enabled model: the coupled
+        The flag checked depends on the enabled model. The flag is the coupled
         TRITON-SWMM summary when ``toggle_tritonswmm_model`` is set, otherwise
-        the TRITON-only summary. An aggregate over all members — one
+        the TRITON-only summary. An aggregate over all members, so one
         incomplete member makes this False.
         """
         cfg_sys = self.experiment._system.cfg_system
@@ -1595,7 +1629,7 @@ class TRITONSWMM_sensitivity_analysis:
     def SWMM_analyses_outputs_consolidated(self):
         """True when every member has completed SWMM node AND link summaries.
 
-        Both must be present; a member with nodes but not links reads
+        Both must be present. A member with nodes but no links reads
         False. An aggregate over all members.
         """
         cfg_sys = self.experiment._system.cfg_system
@@ -1616,11 +1650,11 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = True,
         compression_level: int = 5,
     ):
-        """Consolidate per-scenario summaries into analysis-level datasets (phase 3).
+        """Consolidate per-scenario summaries into analysis-level datasets in phase 3.
 
-        Calls :meth:`create_analysis_summaries` once, which consolidates every member,
-        then :meth:`consolidate_analysis_outputs`, which runs each member's consolidation
-        a second time and assembles the primary ``experiment_datatree.zarr``.
+        Calls ``create_analysis_summaries`` once to consolidate every member,
+        then ``consolidate_analysis_outputs`` to run the consolidation of each member
+        a second time and assemble the primary ``experiment_datatree.zarr``.
 
         Parameters
         ----------
@@ -1631,22 +1665,22 @@ class TRITONSWMM_sensitivity_analysis:
 
         Notes
         -----
-        This method RAISES on a member whose per-scenario summaries are absent: its
-        first pass, :meth:`create_analysis_summaries`, consolidates every member with
+        This method RAISES on a member whose per-scenario summaries are absent. The
+        first pass, ``create_analysis_summaries``, consolidates every member with
         no error handling, and the summary read raises ``FileNotFoundError``. The
         skip-with-warning behaviour belongs to
         ``consolidate_sensitivity_datatree(allow_incomplete=True)`` called
-        directly: that skips each incomplete member, so the primary tree assembles
+        directly. The call skips each incomplete member, so the primary tree assembles
         over the completed subset, the root ``parameters`` dataset still lists
         every DEFINED member, and only completed ones appear as tree nodes.
 
-        That second run returns at once for a member the first pass just wrote, provided
+        The second run returns at once for a member the first pass just wrote, provided
         the toolkit build reads the same as when the first pass ran. If the toolkit
-        checkout has uncommitted changes to tracked files, or its commit identity cannot
-        be read, the build-identity check fails and each pass rebuilds the member instead
-        — unless ``HHEMT_DECLARE_STALE_BUILD=1`` is set, in which case the store is reused
-        and the mismatch is printed. An analysis cannot be constructed in either state, so
-        this arises only when the checkout changes, or its identity becomes unreadable,
+        checkout has uncommitted changes to tracked files, or the commit identity of the checkout is unreadable,
+        the build-identity check fails and each pass rebuilds the member instead,
+        unless ``HHEMT_DECLARE_STALE_BUILD=1`` is set. With the variable set, the store is reused
+        and the mismatch is printed. An analysis fails to construct in either state, so
+        the situation arises only when the checkout changes, or the identity of the checkout becomes unreadable,
         after construction.
         """
         self.create_analysis_summaries(
@@ -1668,7 +1702,7 @@ class TRITONSWMM_sensitivity_analysis:
         """Consolidate members into a hierarchical sensitivity DataTree zarr.
 
         Replaces the previous per-mode flat ``xr.concat`` path. Each member
-        first builds its per-analysis DataTree (``analysis_datatree.zarr``); then
+        first builds a per-analysis DataTree, ``analysis_datatree.zarr``. Then
         the primary assembles all members into a single
         ``experiment_datatree.zarr`` at the primary analysis dir.
         """
@@ -1681,7 +1715,7 @@ class TRITONSWMM_sensitivity_analysis:
     def build_sensitivity_datatree(self) -> "xr.DataTree":
         """Assemble the primary sensitivity DataTree lazily from member trees.
 
-        Each member's consolidated DataTree (``analysis_datatree.zarr``) is
+        Each ``analysis_datatree.zarr`` holds the consolidated DataTree of a member and is
         opened lazily and grafted under a ``member_{member_id}/`` subtree. Sensitivity
         parameters for each member are attached as ``.attrs`` on the
         ``member_{member_id}`` node. A parameter-summary Dataset is written at the root
@@ -1762,19 +1796,19 @@ class TRITONSWMM_sensitivity_analysis:
     ) -> Path:
         """Build and write the primary sensitivity DataTree zarr.
 
-        Ensures each member has its own consolidated ``analysis_datatree.zarr``
+        Ensures each member has a consolidated ``analysis_datatree.zarr``
         first, then assembles them into a single hierarchical store at
-        ``experiment_datatree.zarr`` (the ``sensitivity_datatree_zarr`` path).
+        ``experiment_datatree.zarr``, the ``sensitivity_datatree_zarr`` path.
 
-        When ``allow_incomplete`` is True (the default), members whose
-        per-scenario summaries are not all present on disk are SKIPPED (with a
-        logged warning naming the ``member_id``) instead of crashing the primary
+        When ``allow_incomplete`` is True, the default, members whose
+        per-scenario summaries are not all present on disk are SKIPPED with a
+        logged warning naming the ``member_id`` and avoid crashing the primary
         assembly with ``FileNotFoundError``/``ValueError``. The skip is
         whole-member because ``_retrieve_combined_output`` concatenates
         per-scenario summaries along ``event_iloc`` and is all-or-nothing per
         member. Pass ``allow_incomplete=False`` to restore fail-fast.
 
-        NOTE (decided 2026-06-02, explicitly provisional): the default is ``True``
+        NOTE of 2026-06-02, a provisional decision. The default is ``True``
         so reprocess AND canonical runs tolerate partial-completion sensitivity
         suites by default. To restore strict fail-fast on canonical runs, flip
         this default back to ``False``.
@@ -2011,9 +2045,9 @@ class TRITONSWMM_sensitivity_analysis:
     ):
         """Build each member's own analysis-level summary datasets.
 
-        The per-member half of :meth:`consolidate_outputs`, which calls
-        this before assembling the primary tree. Useful on its own to
-        re-consolidate one tier without rebuilding the primary.
+        ``consolidate_outputs`` calls this per-member half before assembling the primary tree.
+        The per-member half is useful alone to re-consolidate one tier
+        without rebuilding the primary.
 
         Parameters
         ----------
@@ -2036,13 +2070,10 @@ class TRITONSWMM_sensitivity_analysis:
     def analysis_independent_vars(self) -> list[str]:
         """Analysis-config attributes varied across members.
 
-        Returns the canonical (stripped) field name for each varied analysis-config
-        column. Recognizes both `analysis.{field}` (canonical) and bare `field`
-        names (deprecated; emits DeprecationWarning at member construction
-        time via `_create_members`).
+        Returns the canonical, stripped field name for each varied analysis-config
+        column. Recognizes `analysis.{field}` and `hpc.{key}` columns. `_retrieve_df_setup` refuses a bare `field`
+        column.
         """
-        from hhemt.config.analysis import analysis_config
-
         seen: list[str] = []
         for col in self._df_setup_full.columns:
             if col == "system_config_yaml":
@@ -2053,8 +2084,6 @@ class TRITONSWMM_sensitivity_analysis:
                 field_name = _resolve_hpc_alias_to_analysis_field(col)
             elif _is_analysis_overlay_column(col):
                 field_name = _strip_analysis_prefix(col)
-            elif col in analysis_config.model_fields:
-                field_name = col  # bare name; DeprecationWarning fires at member construction time
             else:
                 continue  # Defensive — should be caught by _retrieve_df_setup allowlist
             if field_name not in seen:
@@ -2065,8 +2094,8 @@ class TRITONSWMM_sensitivity_analysis:
     def system_independent_vars(self) -> list[str]:
         """System-config attributes varied across members.
 
-        Recognizes only `system.{field}` columns: bare-name system_config columns are
-        rejected at the column allowlist gate in `_retrieve_df_setup`.
+        Recognizes only `system.{field}` columns. The column allowlist gate in `_retrieve_df_setup`
+        rejects bare-name system_config columns.
         """
         seen: list[str] = []
         for col in self._df_setup_full.columns:
@@ -2080,18 +2109,18 @@ class TRITONSWMM_sensitivity_analysis:
     def df_setup_with_system_overlays(self) -> pd.DataFrame:
         """`df_setup` unioned with the `system.*` overlay columns from the full frame.
 
-        `df_setup` is filtered to analysis-config columns only (the projection in
-        `__init__`); the `system.*` overlay columns are retained on
+        `df_setup` is filtered to analysis-config columns only by the projection in
+        `__init__`. The `system.*` overlay columns are retained on
         `_df_setup_full`. Report renderers that plot a system-axis independent
-        variable (`system.target_dem_resolution`, `system.constant_mannings`, ...)
-        need both sets in one frame. This accessor unions them on the shared
-        `member_id` index, preserving the PREFIXED column names so a renderer's
-        `independent_var="system.target_dem_resolution"` lookup resolves directly.
+        variable, such as `system.target_dem_resolution` or `system.constant_mannings`,
+        need both sets in one frame. The accessor unions the sets on the shared
+        `member_id` index, preserving the PREFIXED column names so the
+        `independent_var="system.target_dem_resolution"` lookup of a renderer resolves directly.
 
-        The frame is analysis-columns + system-overlay-columns only — NOT the
-        raw `_df_setup_full` (which also carries `system_config_yaml` and
-        non-overlay annotation columns), keeping the renderer's column
-        membership check scoped to the resolvable independent-var set.
+        The frame is analysis-columns + system-overlay-columns only. The frame excludes the
+        raw `_df_setup_full`, and that frame also carries `system_config_yaml` and
+        non-overlay annotation columns. The exclusion keeps the column
+        membership check of the renderer scoped to the resolvable independent-var set.
         """
         overlay_cols = [c for c in self._df_setup_full.columns if _is_system_overlay_column(c)]
         if not overlay_cols:
@@ -2103,24 +2132,23 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def independent_vars(self) -> list[str]:
-        """Backward-compatible alias, kept for downstream callers that haven't migrated.
+        """Backward-compatible alias, kept for downstream callers that have not migrated.
 
         Returns the union of `analysis_independent_vars` and
-        `system_independent_vars` (latter prefixed with `system.` to
-        disambiguate). Downstream callers should migrate to the explicit
-        `analysis_independent_vars` and `system_independent_vars` properties;
-        this alias may be deprecated in a future release.
+        `system_independent_vars`, with the latter prefixed with `system.` to
+        disambiguate. Downstream callers should migrate to the explicit
+        `analysis_independent_vars` and `system_independent_vars` properties.
 
-        Contract for prefixed-name entries: every entry of the returned list is
-        an opaque label suitable for Snakemake wildcards (charset
-        `^[A-Za-z0-9_.]+$`). Consumers MUST NOT deconstruct entries by `.`-split
-        or by Pydantic-field lookup against a single model — entries may name
-        either an `analysis_config` field (bare) OR a `system.{field}` overlay
-        column. The readers of this list (`analysis.py`, `workflow.py`,
+        Contract for prefixed-name entries. Every entry of the returned list is
+        an opaque label suitable for Snakemake wildcards with the charset
+        `^[A-Za-z0-9_.]+$`. Consumers MUST NOT deconstruct entries by `.`-split
+        or by Pydantic-field lookup against a single model. Entries may name
+        either a bare `analysis_config` field OR a `system.{field}` overlay
+        column. The readers of this list, namely `analysis.py`, `workflow.py`,
         `report_templates/workflow_description.rst.j2`, `config/report.py`,
-        `bundle/snakefile_generator.py`) are expected to treat entries as opaque
-        labels and to accept the prefixed form unmodified. Not established: no test
-        or instrument here checks that they do.
+        and `bundle/snakefile_generator.py`, are expected to treat entries as opaque
+        labels and to accept the prefixed form unmodified. No test
+        or instrument here checks that the readers do.
         """
         return self.analysis_independent_vars + [f"system.{f}" for f in self.system_independent_vars]
 
@@ -2168,10 +2196,20 @@ class TRITONSWMM_sensitivity_analysis:
         from hhemt.config.analysis import analysis_config
         from hhemt.config.system import system_config
 
+        bare_analysis_cols = sorted(str(c) for c in df_setup.columns if c in analysis_config.model_fields)
+        if bare_analysis_cols:
+            raise ConfigurationError(
+                field="sensitivity_analysis.csv_columns",
+                message=(
+                    f"Sensitivity-CSV columns {bare_analysis_cols} are bare analysis_config field "
+                    f"names. Rename each header cell to its prefixed form "
+                    f"{[_ANALYSIS_COLUMN_PREFIX + c for c in bare_analysis_cols]}; the values stay in place."
+                ),
+                config_path=snstivity_definition,
+            )
         KNOWN_BARE_COLS = {"system_config_yaml"}
         valid_columns = (
             KNOWN_BARE_COLS
-            | set(analysis_config.model_fields)
             | {_SYSTEM_COLUMN_PREFIX + f for f in system_config.model_fields}
             | {_ANALYSIS_COLUMN_PREFIX + f for f in analysis_config.model_fields}
             | {_HPC_COLUMN_PREFIX + k for k in _HPC_ALIAS_TO_ANALYSIS_FIELD}
@@ -2193,7 +2231,7 @@ class TRITONSWMM_sensitivity_analysis:
                 message=(
                     f"Unknown sensitivity-CSV columns: {sorted(unknown)}. "
                     f"Valid columns: member_id (required, becomes index), system_config_yaml, "
-                    f"bare analysis_config field names, `system.{{field}}` for system_config fields, "
+                    f"`system.{{field}}` for system_config fields, "
                     f"`analysis.{{field}}` for analysis_config fields, and the HPC-resource "
                     f"aliases `hpc.partition` / `hpc.setup_partition` (resolving to the "
                     f"analysis_config partition selectors)." + hpc_gpu_hint
@@ -2205,9 +2243,9 @@ class TRITONSWMM_sensitivity_analysis:
     def export_sensitivity_definition_csv(self) -> Path:
         """Export sensitivity analysis definition to analysis directory as CSV.
 
-        Exports only the fields that vary across members (self.df_setup columns)
+        Exports only the fields that vary across members, namely the ``self.df_setup`` columns,
         to a standardized 'sensitivity_analysis_definition.csv' file in the analysis directory.
-        This allows easier inspection of the sensitivity analysis configuration during debugging.
+        The file allows easier inspection of the sensitivity analysis configuration during debugging.
 
         Returns
         -------
@@ -2223,14 +2261,14 @@ class TRITONSWMM_sensitivity_analysis:
         """Return member directories on disk whose member_id is absent from the current CSV.
 
         The authoritative set of expected member directory names is derived
-        from ``self.df_setup.index`` (the sensitivity CSV's ``member_id`` column) and
-        the ``self.member_prefix`` constant. This ties orphan detection to
+        from ``self.df_setup.index``, the ``member_id`` column of the sensitivity CSV, and
+        the ``self.member_prefix`` constant. The derivation ties orphan detection to
         the CSV directly, so a partially-constructed ``self.members`` dict
-        cannot cause legitimate directories to be misclassified as orphans.
+        is unable to cause legitimate directories to be misclassified as orphans.
         On-disk ``member_*`` directories whose suffix fails the Snakemake-wildcard-safe
-        charset ``^[A-Za-z0-9_.]+$`` are skipped — they were not created by this
-        toolkit and must not be deleted by it. If ``self.members_dir`` does
-        not exist, returns ``[]``.
+        charset ``^[A-Za-z0-9_.]+$`` are skipped, because the toolkit did not create them
+        and must not delete them. If ``self.members_dir`` is
+        absent, returns ``[]``.
         """
         import re as _re
 
@@ -2259,15 +2297,15 @@ class TRITONSWMM_sensitivity_analysis:
     ) -> list[Path]:
         """Identify and optionally delete orphaned member directories.
 
-        Uses :meth:`find_orphan_member_dirs` to locate directories under
+        Uses ``find_orphan_member_dirs`` to locate directories under
         ``members/`` whose ``member_id`` no longer appears in the current CSV.
 
         Parameters
         ----------
         dry_run : bool
-            If True (default), only reports orphans without deleting.
+            If True, the default, only reports orphans without deleting.
         force : bool
-            Required when ``dry_run=False``. Without it, the method raises
+            Required when ``dry_run=False``. Without the flag, the method raises
             ``ValueError`` to guard against accidental deletion of expensive
             HPC outputs.
         verbose : bool
@@ -2276,7 +2314,7 @@ class TRITONSWMM_sensitivity_analysis:
         Returns
         -------
         list[Path]
-            The orphan directories (either deleted or proposed for deletion).
+            The orphan directories that the call deleted or proposed for deletion.
 
         Raises
         ------
@@ -2323,18 +2361,18 @@ class TRITONSWMM_sensitivity_analysis:
     def find_orphan_status_flags(self) -> list[Path]:
         """Return _status/ flag files whose embedded member_id is absent from df_setup.index.
 
-        Matches against the four Snakemake rule-output flag families that embed
-        a member_id (verified against workflow.py rule generation):
+        Matches against the Snakemake rule-output flag families that embed
+        a member_id, verified against workflow.py rule generation:
 
         - ``b_prepare_member-{member_id}_evt-{event_id}_complete.flag``
         - ``c_run_{model_type}_member-{member_id}_evt-{event_id}_complete.flag``
         - ``d_process_{model_type}_member-{member_id}_evt-{event_id}_complete.flag``
         - ``e_consolidate_member-{member_id}_complete.flag``
 
-        The member_id charset is constrained to ``^[A-Za-z0-9_.]+$`` (enforced in
-        ``_retrieve_df_setup``, because member_id becomes a Snakemake wildcard
-        value). Returns an empty list if the ``_status/``
-        directory does not exist.
+        The member_id charset is constrained to ``^[A-Za-z0-9_.]+$``, enforced in
+        ``_retrieve_df_setup`` because member_id becomes a Snakemake wildcard
+        value. Returns an empty list if the ``_status/``
+        directory is absent.
         """
         import re as _re
 
@@ -2365,7 +2403,7 @@ class TRITONSWMM_sensitivity_analysis:
         The per-member_id input-fingerprint files are written by
         ``SensitivityAnalysisWorkflowBuilder`` at Snakefile-build time and named
         ``member-{member_id}_inputs.json`` under ``_status/``. When a member_id is removed
-        from the sensitivity CSV its fingerprint is orphaned just like its
+        from the sensitivity CSV the fingerprint is orphaned just like the member
         dirs/flags/datatree groups. Returns an empty list if ``_status/`` is absent.
         """
         import re as _re
@@ -2390,8 +2428,8 @@ class TRITONSWMM_sensitivity_analysis:
 
         Inspects on-disk subdirectories of the primary ``experiment_datatree.zarr/`` matching
         ``{prefix}{member_id}`` where ``prefix`` is ``self.member_prefix``. Returns
-        the member_id strings (without prefix). Returns an empty list if the zarr
-        does not exist.
+        the member_id strings without prefix. Returns an empty list if the zarr
+        is absent.
         """
         zarr_path = self.analysis_paths.sensitivity_datatree_zarr
         if zarr_path is None or not zarr_path.exists():
@@ -2415,17 +2453,17 @@ class TRITONSWMM_sensitivity_analysis:
         force: bool = False,
         verbose: bool = True,
     ) -> dict[str, list]:
-        """Detect and (optionally) delete orphan member dirs, flags, datatree groups, and input fingerprints.
+        """Detect orphan member dirs, flags, datatree groups, and input fingerprints, and optionally delete them.
 
         When any orphan is detected and deletion proceeds, the entire
-        ``experiment_datatree.zarr`` is removed (rebuilt rather than surgically
-        edited) and the primary-consolidation status flag is also removed so
+        ``experiment_datatree.zarr`` is removed and rebuilt in full, with no surgical
+        edit, and the primary-consolidation status flag is also removed so
         Snakemake re-runs the experiment_consolidation rule on the next workflow run.
 
         Parameters
         ----------
         dry_run : bool
-            If True (default), only reports without deleting.
+            If True, the default, only reports without deleting.
         force : bool
             Required when ``dry_run=False``.
         verbose : bool
@@ -2434,11 +2472,10 @@ class TRITONSWMM_sensitivity_analysis:
         Returns
         -------
         dict[str, list | bool]
-            Keys: ``"dirs"`` (list[Path]), ``"status_flags"`` (list[Path]),
-            ``"datatree_groups"`` (list[str]), ``"input_fingerprints"`` (list[Path]),
-            and (after deletion only)
-            ``"sensitivity_datatree_removed"`` (bool) and
-            ``"master_flag_removed"`` (bool) reporting whether the
+            Keys are ``"dirs"`` as list[Path], ``"status_flags"`` as list[Path],
+            ``"datatree_groups"`` as list[str], and ``"input_fingerprints"`` as list[Path].
+            The keys ``"sensitivity_datatree_removed"`` and ``"master_flag_removed"`` appear after deletion only.
+            Both hold a bool that reports whether the
             rebuild-trigger artifacts were actually removed.
 
         Raises
@@ -2777,15 +2814,6 @@ class TRITONSWMM_sensitivity_analysis:
                     overlay_cells[_resolve_hpc_alias_to_analysis_field(k)] = v
                 elif _is_analysis_overlay_column(k):
                     overlay_cells[_strip_analysis_prefix(k)] = v
-                elif k in analysis_config.model_fields:
-                    warnings.warn(
-                        f"Bare-name analysis-config column `{k}` is deprecated; "
-                        f"rename to `analysis.{k}` for the canonical prefixed-column form. "
-                        f"Bare-name support will be removed in a future release.",
-                        DeprecationWarning,
-                        stacklevel=2,
-                    )
-                    overlay_cells[k] = v
                 else:
                     # Defensive — `_retrieve_df_setup`'s column allowlist plus the
                     # analysis-only `self.df_setup` projection should have filtered
@@ -2973,7 +3001,7 @@ class TRITONSWMM_sensitivity_analysis:
     ):
         """Process system-level inputs and compile TRITON-SWMM for each unique target.
 
-        Iterates ``self.unique_system_targets`` (populated in ``__init__``) and runs
+        Iterates ``self.unique_system_targets``, populated in ``__init__``, and runs
         ``process_system_level_inputs()`` + ``compile_TRITON_SWMM()`` once per target.
         In the no-per-member-config case the list contains a single target
         wrapping the primary system, so this method is the unified entry point for
@@ -3002,13 +3030,13 @@ class TRITONSWMM_sensitivity_analysis:
     ):
         """Compile the solver once per distinct build.
 
-        Direct-execution helper. The emitted workflow does not call it: the
-        per-target setup rules assert an existing build rather than building.
+        Direct-execution helper. The emitted workflow skips the helper, because the
+        per-target setup rules assert an existing build and avoid building.
 
         Members that agree on the compile-relevant tuple
         ``(target_dem_resolution, gpu_hardware, gpu_compilation_backend)`` share
         one compile target -- one per distinct build, used by every member that
-        needs it -- so this compiles once per DISTINCT target rather than once per
+        needs the target -- so this compiles once per DISTINCT target and not once per
         row. A sweep whose rows differ only in rank count therefore compiles once.
 
         Parameters
@@ -3017,7 +3045,7 @@ class TRITONSWMM_sensitivity_analysis:
             Stream compiler output.
         recompile_if_already_done_successfully : bool
             Rebuild even when the compilation log already records success.
-            Compilation success is detected by log markers rather than by exit
+            Compilation success is detected by log markers and not by exit
             code, so a partially-failed build can exit 0 and be skipped.
         """
         for target in self.unique_system_targets:
@@ -3035,18 +3063,18 @@ class TRITONSWMM_sensitivity_analysis:
         Returns
         -------
         list of str
-            One directory path per scenario whose scenario-level log does not
+            One directory path per scenario whose scenario-level log fails to
             record ``scenario_creation_complete``. Empty when preparation is
             complete everywhere.
 
         Notes
         -----
-        Preparation only. Clearing outputs does not reset
-        ``scenario_creation_complete``, whose only writer sets it True, so a prepared
-        scenario reappears here only if its scenario log no longer records the flag
-        -- for example after its scenario directory, and with it the log, is
-        deleted. It says nothing about simulation state, for which see
-        :attr:`scenarios_not_run`.
+        Preparation only. Clearing outputs leaves
+        ``scenario_creation_complete`` unchanged, and the only writer of the flag sets the flag True, so a prepared
+        scenario reappears here only if the scenario log no longer records the flag
+        -- for example after the scenario directory, and with the directory the log, is
+        deleted. The property reports no simulation state. See
+        ``scenarios_not_run`` for simulation state.
         """
         scenarios_not_created = []
         for _analysis_iloc, analysis in self.members.items():
@@ -3063,7 +3091,7 @@ class TRITONSWMM_sensitivity_analysis:
         Returns
         -------
         list of str
-            One directory path per scenario for which any enabled model type is
+            One directory path per scenario where any enabled model type is
             missing a completed run. Empty when every enabled model has
             completed for every scenario.
 
@@ -3071,7 +3099,7 @@ class TRITONSWMM_sensitivity_analysis:
         -----
         Checks every enabled model, so a scenario whose TRITON run finished but
         whose SWMM run did not still appears here. Completion is read from the
-        per-model logs, which are separate from the scenario preparation log.
+        per-model logs, and the logs are separate from the scenario preparation log.
         """
         scens_not_run = []
         for _analysis_iloc, analysis in self.members.items():
@@ -3089,16 +3117,16 @@ class TRITONSWMM_sensitivity_analysis:
 
         Aggregates ``_classify_model_log_failure()`` across all members.
         Works for both ``"1_job_many_srun_tasks"`` and ``"batch_job"`` execution
-        methods — the SLURM cancellation marker appears in the model log in both cases.
+        methods. The SLURM cancellation marker appears in the model log in both cases.
 
         Returns
         -------
         dict[str, str]
             Maps scenario identifier ``"member-{member_id}_evt-{event_id}"`` to failure class:
 
-            - ``"timeout"`` — log contains ``DUE TO TIME LIMIT``
-            - ``"unclassified"`` — log exists but no known failure marker found
-            - ``"no_log"`` — model log file does not exist
+            - ``"timeout"``: log contains ``DUE TO TIME LIMIT``
+            - ``"unclassified"``: log exists but no known failure marker found
+            - ``"no_log"``: model log file is absent
         """
         results: dict[str, str] = {}
         for member_id, analysis in self.members.items():
@@ -3116,7 +3144,7 @@ class TRITONSWMM_sensitivity_analysis:
     def is_timeout_only_failure(self) -> bool:
         """True iff all incomplete simulations across members have timeout-classified failures.
 
-        Returns False if there are no incomplete sims (all done), or if any
+        Returns False if there are no incomplete sims, meaning all are done, or if any
         incomplete sim has an unclassified or no_log failure.
         """
         failures = self.classify_incomplete_sim_failures()
@@ -3132,12 +3160,12 @@ class TRITONSWMM_sensitivity_analysis:
         Returns
         -------
         pd.DataFrame
-            Concatenated status table from all members. This includes
+            Concatenated status table from all members. The table includes
             member-specific setup columns plus the canonical status
-            schema from ``TRITONSWMM_analysis.df_status`` (e.g. ``scenario_setup``
-            and ``run_completed``), with a leading column:
+            schema from ``TRITONSWMM_analysis.df_status``, such as ``scenario_setup``
+            and ``run_completed``, with a leading column:
 
-            - member_id: str - the member the row belongs to
+            - ``member_id``: str - the member the row belongs to
         """
         status_frames = []
 
@@ -3254,7 +3282,7 @@ class TRITONSWMM_sensitivity_analysis:
         Notes
         -----
         Performance timeseries are the per-rank timing records used for the
-        benchmarking figures; they are processed separately from the physical
+        benchmarking figures. The records are processed separately from the physical
         results, so this can be non-empty while the flood results are complete.
         """
         lst_scens = []

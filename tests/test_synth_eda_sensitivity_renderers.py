@@ -1,6 +1,8 @@
-"""Registration + stub-emit + backing-map + absence-gate coverage for the three
-compute-sensitivity EDA renderers (Phase 4). Figure BODIES are /eda-spinup stubs, so this
-asserts the emit/source-declaration/registration seam only -- never figure content."""
+"""Registration + emit + backing-map + absence-gate coverage for the three
+compute-sensitivity EDA renderers (Phase 4). The figure bodies are built (see
+``tests/test_eda_figures_built.py`` for their content); this module asserts the
+emit/source-declaration/registration seam over an artifact of the shape the calc members
+write."""
 
 from __future__ import annotations
 
@@ -42,21 +44,33 @@ def test_config_diff_backing_stem_maps_to_cross_sim_identity():
         assert _RENDERER_BACKING_ARTIFACT.get(kind, kind) == kind
 
 
-def _write_stub_artifact(root: Path, plot_id: str) -> None:
+def _write_artifact(root: Path, plot_id: str) -> None:
+    """An artifact of the calc members' shape: float64 ``(sa_id, event_iloc)`` grids."""
     eda_dir = root / "eda"
     eda_dir.mkdir(parents=True, exist_ok=True)
-    xr.Dataset({"identical": (("sa_id",), [1.0])}, coords={"sa_id": ["x"]}).to_zarr(
-        eda_dir / f"{plot_id}.zarr", mode="w"
-    )
+    dims = ("sa_id", "event_iloc")
+    xr.Dataset(
+        {
+            "identical": (dims, [[1.0, 1.0], [1.0, 0.0]]),
+            "max_abs_depth_diff": (dims, [[0.0, 0.0], [0.0, 0.012]]),
+            "rmse_wetted_depth": (dims, [[0.0, 0.0], [0.0, 0.004]]),
+            "relative_depth_diff_p95": (dims, [[0.0, 0.0], [0.0, 1.5]]),
+            "n_newly_wet": (dims, [[0.0, 0.0], [0.0, 3.0]]),
+            "n_extent_disagree": (dims, [[0.0, 0.0], [0.0, 6.0]]),
+        },
+        coords={"sa_id": ["sa_1", "sa_2"], "event_iloc": [0, 1]},
+    ).to_zarr(eda_dir / f"{plot_id}.zarr", mode="w", consolidated=False)
     (eda_dir / f"{plot_id}.verdict.json").write_text(json.dumps({"passed": True}))
 
 
-def test_each_stub_renderer_emits_and_declares_both_sources(tmp_path):
+def test_each_renderer_emits_and_declares_both_sources(tmp_path):
     for kind in _SENS_KINDS:
         root = tmp_path / kind
         root.mkdir()
-        _write_stub_artifact(root, kind)
-        paths = render_eda_plots(root, cfg_analysis=None, eda_cfg=eda_config(enabled_plots=[kind]))
+        _write_artifact(root, kind)
+        paths = render_eda_plots(
+            root, cfg_analysis=None, eda_cfg=eda_config(enabled_plots=[kind], plotly_js_mode="cdn")
+        )
         assert len(paths) == 1
         out = paths[0]
         assert out == root / "plots" / "eda" / f"{kind}.html"

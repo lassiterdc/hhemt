@@ -163,7 +163,7 @@ _EXCUSES: tuple[_Excuse, ...] = (
         'analysis_config.write_text("version: 1\\n")',
         (
             "tests/test_cli_01_validation.py::test_from_scratch_and_resume_mutually_exclusive",
-            "tests/test_cli_01_validation.py::test_event_ilocs_and_range_mutually_exclusive",
+            "tests/test_cli_01_validation.py::test_removed_event_selection_options_are_refused_as_unknown",
             "tests/test_cli_01_validation.py::test_verbose_and_quiet_mutually_exclusive",
             "tests/test_cli_01_validation.py::test_system_config_is_required",
             "tests/test_cli_01_validation.py::test_analysis_config_is_required",
@@ -229,6 +229,37 @@ _EXCUSES: tuple[_Excuse, ...] = (
             "tests/test_cli_05_run_experiment.py::test_schema_invalid_config_exits_2",
             "tests/test_cli_05_run_experiment.py::test_exit_1_is_not_a_run_experiment_code",
         ),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_report_html_mode_wiring.py",
+        'monkeypatch.setattr(generator, "write_reprocess_snakefile", _writer)',
+        (
+            "tests/test_report_html_mode_wiring.py::test_submit_reprocess_workflow_forwards_the_override_to_the_writer[None]",
+            "tests/test_report_html_mode_wiring.py::test_submit_reprocess_workflow_forwards_the_override_to_the_writer[override1]",
+            "tests/test_report_html_mode_wiring.py::test_submit_reprocess_workflow_forwards_the_override_to_the_writer[override2]",
+        ),
+    ),
+    _Excuse(
+        _REFUSES,
+        "tests/test_planning_cruft_code.py",
+        'with pytest.raises(TypeError, match="events"):',
+        ("tests/test_planning_cruft_code.py::test_run_accepts_no_events_argument",),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_report_config_run_entry.py",
+        'monkeypatch.setattr(analysis, "_build_sifs_prestep", _raise, raising=False)',
+        (
+            "tests/test_report_config_run_entry.py::test_run_records_the_run_entry_config",
+            "tests/test_report_config_run_entry.py::test_control_run_without_report_config_records_none",
+        ),
+    ),
+    _Excuse(
+        _REFUSES,
+        "tests/test_unread_settings_rulings.py",
+        "with pytest.raises(ConfigurationError) as exc:",
+        ("tests/test_unread_settings_rulings.py::test_run_experiment_verifies_the_pin_digest_before_anything_else",),
     ),
     _Excuse(
         _STUBBED,

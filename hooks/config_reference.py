@@ -25,6 +25,13 @@ from pathlib import Path
 from typing import Any
 
 GENERATED_URI = "reference/config-schema.md"
+
+#: The two long tables that also get a standalone full-width page: (config key, page title, file name beside
+#: the schema page). Every other table stays on the schema page only.
+_STANDALONE_PAGES = (
+    ("system", "System config", "config-schema-system.html"),
+    ("analysis", "Analysis config", "config-schema-analysis.html"),
+)
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Bind the generator to THIS checkout's source tree.
@@ -184,7 +191,7 @@ def _required_cell(record: dict[str, Any]) -> str:
     if record["required"]:
         return "Always"
     if record["applies_when"]:
-        return f"Optional; applies when {_cell(render_clauses(record['applies_when']))}"
+        return f"Optional, applies when {_cell(render_clauses(record['applies_when']))}"
     return "Optional"
 
 
@@ -350,16 +357,110 @@ def _nested_section(already: tuple[type, ...]) -> str:
     out += [
         "## Nested config blocks",
         "",
-        "Reached from a config above by a field's type. You write these as nested",
-        "blocks inside the configs above, never as files of their own, and many of",
-        "them are report styling you can leave at its defaults. They are tabled here",
-        "because this page's population is every config an entry config can reach --",
-        "so nothing a config references can go undocumented.",
+        "A field's type in a config above reaches each block below. You write each block",
+        "nested inside the configs above and never as a separate file. Many blocks are",
+        "report styling that you can leave at the defaults. The page tables them because the",
+        "population of this page is every config an entry config can reach, so every",
+        "referenced config is documented.",
         "",
     ]
     for model in nested:
         out += [f"### {model.__name__}", "", f"From `{model.__module__}`.", "", _table(model), ""]
     return "\n".join(out)
+
+
+#: Style of the standalone configuration pages. The page follows the visitor's colour scheme through the
+#: `prefers-color-scheme` media query (the one signal a static page has) and takes its colours from the two palettes
+#: of `mkdocs.yml` `theme.palette`: scheme `slate` (primary blue grey, accent light blue) and scheme `default`
+#: (primary blue grey, accent blue). Material's stylesheet (palette.*.min.css) defines blue grey as #546d78 (dark
+#: variant #455a63, light variant #607c8a), accent light blue as #0091eb and accent blue as #4287ff; the header,
+#: borders and links use those. The two background greys are not Material's. Dark is the
+#: base because the site opens in `slate`; the light rules sit inside the media query. The selectors start at `body`
+#: so that they win over the Tabulator style that the page inlines, whatever order the two arrive in.
+_STANDALONE_STYLE = (
+    "body{font-family:system-ui,sans-serif;margin:1rem 1.5rem;background:#2e303e;color:#ffffffde}"
+    "h1{font-size:1.4rem;margin:0 0 .4rem}"
+    "a{color:#0091eb}"
+    "body .tabulator{background-color:#2e303e;border:1px solid #455a63;color:#ffffffde}"
+    "body .tabulator .tabulator-header{background-color:#455a63;color:#fff;border-bottom:1px solid #455a63}"
+    "body .tabulator .tabulator-header .tabulator-col{background-color:#455a63;border-right:1px solid #607c8a}"
+    "body .tabulator .tabulator-header .tabulator-col input"
+    "{background:#2e303e;color:#ffffffde;border:1px solid #607c8a}"
+    "body .tabulator .tabulator-tableholder .tabulator-table{background-color:#2e303e;color:#ffffffde}"
+    "body .tabulator .tabulator-row{background-color:#2e303e;color:#ffffffde}"
+    "body .tabulator .tabulator-row.tabulator-row-even{background-color:#363948}"
+    "body .tabulator .tabulator-row .tabulator-cell{border-right:1px solid #455a63}"
+    "@media (prefers-color-scheme: light){"
+    "body{background:#fff;color:#000000de}"
+    "a{color:#4287ff}"
+    "body .tabulator{background-color:#fff;border:1px solid #cfd8dc;color:#000000de}"
+    "body .tabulator .tabulator-header .tabulator-col input{background:#fff;color:#000000de;border:1px solid #b0bec5}"
+    "body .tabulator .tabulator-tableholder .tabulator-table{background-color:#fff;color:#000000de}"
+    "body .tabulator .tabulator-row{background-color:#fff;color:#000000de}"
+    "body .tabulator .tabulator-row.tabulator-row-even{background-color:#f5f7f8}"
+    "body .tabulator .tabulator-row .tabulator-cell{border-right:1px solid #cfd8dc}"
+    "}"
+)
+
+
+def _standalone_table_page(model: type, title: str) -> str:
+    """A full-width HTML page with the sortable, filterable Tabulator table of one config model.
+
+    The page uses the table builder of the reports, with the Tabulator assets inlined, so it needs no network
+    at view time. It is plain text per cell: the markdown escapes of `_table` belong to the schema page only.
+    Deliberately NOT a markdown page: the theme caps the width of a page, and the width is the reason this
+    page exists, because the Description column forces sideways scrolling on the schema page.
+    """
+    import pandas as pd
+
+    from hhemt.report_renderers._tabulator_defaults import (
+        build_columns_spec,
+        build_html_document,
+        build_options_dict,
+    )
+
+    rows = []
+    for record in field_records(model):
+        options = record["options"] or {}
+        type_text = "\n".join([str(record["type"]), *(f"{k} {v}" for k, v in options.items())])
+        rows.append(
+            {
+                "Field": str(record["name"]),
+                "Type": type_text,
+                "Required": _required_cell(record),
+                "Default": "" if record["default"] is None else str(record["default"]),
+                "Description": str(record["description"]),
+            }
+        )
+    frame = pd.DataFrame(rows)
+    columns = build_columns_spec(frame, visible_columns_default=None, header_filter=True)
+    widths = {"Field": 260, "Type": 220, "Required": 220, "Default": 160, "Description": 900}
+    for spec in columns:
+        spec["width"] = widths[spec["field"]]
+        if spec["field"] in ("Type", "Required", "Description"):
+            spec["formatter"] = "textarea"
+    options = build_options_dict(
+        frame,
+        columns_spec=columns,
+        table_height="calc(100vh - 7rem)",
+        pagination_size=0,
+        persistence_id=None,
+        extra_options={"layout": "fitDataStretch"},
+    )
+    heading = (
+        f"<style>{_STANDALONE_STYLE}</style>\n"
+        f"<h1>{title}: configuration schema</h1>\n"
+        '<p><a href="config-schema/">Back to the configuration schema</a></p>\n'
+    )
+    return build_html_document(
+        title=f"{title}: configuration schema",
+        container_id="config_schema_table",
+        body_heading_html=heading,
+        options=options,
+        js_mode="inline",
+        renderer_name="config_reference",
+        column_panel=False,
+    )
 
 
 def _render() -> str:
@@ -376,43 +477,47 @@ def _render() -> str:
     marker = _load_lint().GENERATED_MARKER
     sections = [
         f"<!-- {marker} -->",
-        "<!-- DO NOT EDIT THIS FILE. It is rewritten from the config models on",
-        "     every documentation build by hooks/config_reference.py, so any",
-        "     hand-edit is silently discarded at the next build. To change what",
-        "     appears here, edit the Pydantic field or this hook. -->",
+        "<!-- DO NOT EDIT THIS FILE. hooks/config_reference.py rewrites this file from the config models on",
+        "     every documentation build, so any",
+        "     hand-edit is silently discarded at the next build. To change the page,",
+        "     edit the Pydantic field or this hook. -->",
         "",
         "# Configuration schema",
         "",
-        "Every field of every config you fill in -- the system, analysis and HPC-system",
-        "configs, the SIF build config, the experiment descriptor and the reprex config",
-        "-- plus every config reachable from those by following a field's type, derived",
-        "from the models at documentation build time. Nothing here is hand-maintained",
-        "and nothing is hand-selected: the population is that transitive closure, so a",
-        "nested config appears by being referenced rather than by being remembered.",
+        "The tables below hold every field of every config you fill in. The configs are the system,",
+        "analysis, and HPC-system configs, the SIF build config, the experiment descriptor, and",
+        "the reprex config. The tables also hold every config reachable from them by following",
+        "a field's type. The models supply every row at documentation build time. No row is",
+        "hand-maintained or hand-selected. The population is that transitive closure, so a",
+        "nested config appears when a field's type references the config.",
         "Config models no entry config reaches are not tabled here.",
         "",
-        'All config models set `extra="forbid"`, so an unrecognised key is an error and',
-        "a mistyped one is caught at load rather than at dispatch.",
+        'All config models set `extra="forbid"`, so an unrecognised key is an error and the',
+        "load step catches a mistyped key before dispatch.",
         "",
-        "Start from the in-repo templates:",
+        "Start from the in-repo templates",
         "`test_data/norfolk_coastal_flooding/template_system_config.yaml` and",
-        "`template_analysis_config.yaml`. For the task-oriented path through these",
-        "fields see [Fill in your configuration](../how-to/config-filling.md); for the",
+        "`template_analysis_config.yaml`. The page [Fill in your configuration](../how-to/config-filling.md)",
+        "gives a step-by-step path through the fields. For the",
         "cluster profile see [HPC-profile setup](../how-to/hpc-profile-setup.md).",
         "",
         "## System config",
         "",
-        "Describes the modelled area: the DEM, the SWMM model, and the toggles that",
-        "decide which of the three model types are built and run.",
+        "Describes the modelled area. The config holds the DEM, the SWMM model, and the toggles that",
+        "decide the model types to build and run. The types are TRITON, TRITON-SWMM, and SWMM.",
         "",
         _table(system_config),
         "",
+        f"The [full-width system table]({_STANDALONE_PAGES[0][2]}) sorts and filters the fields.",
+        "",
         "## Analysis config",
         "",
-        "Describes the study: which events to simulate, how each simulation is run,",
-        "and what is produced from the results.",
+        "Describes the analysis. The config holds the events to simulate, the way each simulation runs,",
+        "and the outputs produced from the results.",
         "",
         _table(analysis_config),
+        "",
+        f"The [full-width analysis table]({_STANDALONE_PAGES[1][2]}) sorts and filters the fields.",
         "",
         "## HPC-system config",
         "",
@@ -428,25 +533,25 @@ def _render() -> str:
         "",
         "## SIF build config",
         "",
-        "Describes the machine that BUILDS container images: where they are written,",
-        "which partition builds them, and which checkout is the toolkit being baked in.",
-        "You write this one only in container mode, and `hhemt build-sifs` names its",
-        "path on the command line.",
+        "Describes the machine that BUILDS container images. The config holds the place the images are written,",
+        "the partition that builds them, and the checkout of the toolkit that is baked in.",
+        "You write this config only in container mode, and `hhemt build-sifs` takes the",
+        "config path on the command line.",
         "",
         _table(sif_build_config),
         "",
         "## Experiment descriptor",
         "",
-        "The `experiment.yaml` at the root of an experiment definition: it names the configs",
-        "the run uses, the datasets it consumes, and the toolkit release it is pinned to,",
+        "The `experiment.yaml` at the root of an experiment definition. The file names the configs",
+        "the run uses, the datasets the run consumes, and the toolkit release that the run is pinned to,",
         "so a third party can obtain everything the run needed.",
         "",
         _table(ExperimentConfig),
         "",
         "## Reprex config",
         "",
-        "The file a REPRODUCER fills in to run someone else's bundle on their own system:",
-        "their account, their partitions, and where their copy of the image lives. It ships",
+        "A REPRODUCER fills in this file to run someone else's bundle on their own system.",
+        "The file holds their account, their partitions, and the location of their copy of the image. The file ships",
         "in the bundle as a template with the producer's values removed.",
         "",
         _table(reprex_config),
@@ -467,11 +572,10 @@ def _render() -> str:
         "",
         "## See also",
         "",
-        "- [Reporting sets](reporting-sets.md): choosing which figures and tables a report contains.",
-        "- [Fill in your configuration](../how-to/config-filling.md): the task-oriented path through these fields.",
-        "- [HPC-profile setup](../how-to/hpc-profile-setup.md): the third config, describing your cluster.",
-        "- [When and why re-runs happen](../explanation/rerun-faq.md): why editing the derived sensitivity CSV does "
-        "not work.",
+        "- [Reporting sets](reporting-sets.md) covers the choice of the figures and tables in a report.",
+        "- [Fill in your configuration](../how-to/config-filling.md) gives the step-by-step path through the fields.",
+        "- [HPC-profile setup](../how-to/hpc-profile-setup.md) covers the third config, describing your cluster.",
+        "- [Rerun triggers](rerun-triggers.md) covers the limits of editing the derived sensitivity CSV.",
         "",
     ]
     return "\n".join(sections)
@@ -501,10 +605,10 @@ def _conditional_section() -> str:
         "## Toggle-dependent required fields",
         "",
         "Setting one field can make others required. Each row below is the same",
-        "predicate the validator enforces, so this table cannot disagree with what",
-        "the code does.",
+        "predicate the validator enforces, so the table always agrees with the",
+        "code.",
         "",
-        "| When | These become required |",
+        "| Trigger | Required fields |",
         "|---|---|",
     ]
     for trigger in sorted(by_trigger):
@@ -539,4 +643,10 @@ def on_config(config):
     target = Path(config.docs_dir) / GENERATED_URI
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(markdown, encoding="utf-8")
+    from hhemt.config.analysis import analysis_config
+    from hhemt.config.system import system_config
+
+    models = {"system": system_config, "analysis": analysis_config}
+    for key, title, name in _STANDALONE_PAGES:
+        (target.parent / name).write_text(_standalone_table_page(models[key], title), encoding="utf-8")
     return config

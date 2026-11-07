@@ -393,12 +393,19 @@ def _persist_verdict(primary: TRITONSWMM_analysis, plot_id: str, verdict: CheckR
 
 
 def _scalar_grid(
-    records: list[tuple[str, list[dict]]], key: str, *, from_magnitude: bool = False
+    records: list[tuple[str, list[dict]]], key: str, *, from_magnitude: bool = False, reduce: str = "max"
 ) -> xr.DataArray | None:
     """Assemble an ``(member_id, event_iloc)`` grid of one scalar across comparison records.
 
     ``records`` are ``(member_id, [per-event record])`` pairs. Returns None when no record
     carries the key (e.g. no magnitude computed).
+
+    One member and event carries SEVERAL records (one per enabled mode and tracked
+    variable), so the cell is the ``reduce`` of them: ``"min"`` for the ``identical`` grid
+    (a cell reads bit-identical only when EVERY record is) and ``"max"`` for the magnitude
+    grids (the worst divergence). Writing each record over the last, as an earlier version
+    did, made the cell depend on record order: a member whose peak depth differed but whose
+    last-compared variable matched drew as byte-identical.
     """
     cells: list[tuple[str, int, float]] = []
     for member_id, recs in records:
@@ -422,8 +429,10 @@ def _scalar_grid(
         dims=("sa_id", "event_iloc"),
         coords={"sa_id": member_ids, "event_iloc": events},
     )
+    combine = np.fmin if reduce == "min" else np.fmax
     for member_id, e, val in cells:
-        out.loc[{"sa_id": member_id, "event_iloc": e}] = val
+        loc = {"sa_id": member_id, "event_iloc": e}
+        out.loc[loc] = combine(float(out.loc[loc]), val)
     return out
 
 
@@ -433,6 +442,7 @@ def _artifact_vars(labeled_records: list[tuple[str, list[dict]]]) -> dict[str, x
     identical = _scalar_grid(
         [(member, [{**r, "identical": float(r["identical"])} for r in recs]) for member, recs in labeled_records],
         "identical",
+        reduce="min",
     )
     if identical is not None:
         ds_vars["identical"] = identical
@@ -471,13 +481,13 @@ def _skipped(name: str, summary: str) -> EdaResult:
 
 
 def check_rank_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg) -> EdaResult:
-    """WITHIN-family mpi rank-sensitivity: rank N vs rank 1 byte-identity + magnitude.
+    """WITHIN-family mpi rank-sensitivity, covering rank N versus rank 1 byte-identity and magnitude.
 
     Returns a skipped ``EdaResult`` on a non-sensitivity analysis. On a sensitivity
     primary, groups the ``run_mode == "mpi"`` subs by ``hpc_ensemble_partition`` family
-    and, within each family, anchors to the ``n_mpi_procs == 1`` reference (R10); a
+    and, within each family, anchors to the ``n_mpi_procs == 1`` reference. A
     family with no rank-1 mpi reference is skipped with a disclosed reason. Bit-
-    identity is asserted within-family (a divergence is ``passed=False``); the
+    identity is asserted within-family, and a divergence is ``passed=False``. The
     magnitude metrics characterize any divergence.
     """
     name = "Rank sensitivity"
@@ -578,12 +588,12 @@ def check_rank_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_cf
 
 
 def check_resume_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg) -> EdaResult:
-    """Clean-vs-resume byte-identity + magnitude, paired per compute-config (R9).
+    """Clean-vs-resume byte-identity + magnitude, paired per compute-config.
 
-    Reads ``n_resumes`` from ``primary.df_status`` to classify each sub as clean
-    (``n_resumes == 0``) or resume (``> 0``); pairs a clean and a resume sub sharing a
-    compute-config identity and compares them (a resumed sim MUST reproduce its clean
-    counterpart bit-for-bit). A config lacking BOTH a clean and a resume member is
+    Reads ``n_resumes`` from ``primary.df_status`` to classify each sub as clean,
+    with ``n_resumes == 0``, or resume, with ``> 0``. Pairs a clean and a resume sub sharing a
+    compute-config identity and compares the pair, because a resumed sim MUST reproduce the clean
+    counterpart bit-for-bit. A config lacking BOTH a clean and a resume member is
     skipped with a disclosed reason. Returns a skipped ``EdaResult`` on a non-
     sensitivity analysis, or when no clean/resume pair exists in the primary.
     """
@@ -691,13 +701,13 @@ def check_resume_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_
 
 
 def check_cross_hardware_magnitude(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg) -> EdaResult:
-    """ADR-4 CROSS-hardware characterized-divergence: 1-GPU vs 1-rank serial-CPU (D-XHW).
+    """Cross-hardware characterized-divergence between a 1-GPU run and a 1-rank serial-CPU run.
 
-    Uses the SAME ``compute_magnitude`` kernel as the within-family members but does
-    NOT assert equality — cross-family (e.g. GPU vs CPU) bit-identity is not
-    achievable, so the DISCLOSED divergence bounds ARE the contribution
-    (``passed=True``). Reference = the 1-rank serial-CPU run; test = each 1-GPU run
-    (one per GPU partition). Surfaced distinctly for the Phase-4 cross-hardware panel.
+    Uses the SAME ``compute_magnitude`` kernel as the within-family members but asserts
+    NO equality. Cross-family bit-identity between GPU and CPU is not
+    achievable, so the DISCLOSED divergence bounds ARE the contribution,
+    with ``passed=True``. The reference is the 1-rank serial-CPU run. Each 1-GPU run is a test,
+    with a single run per GPU partition. Surfaced distinctly for the cross-hardware panel.
     Returns a skipped ``EdaResult`` when either endpoint is absent.
     """
     name = "Cross-hardware magnitude"

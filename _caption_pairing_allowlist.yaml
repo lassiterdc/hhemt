@@ -53,7 +53,33 @@
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
-    renderer_sha256: 625688f9b6529e8340d0d54635f4d544732d2567ba399626c640c3dbc0b4a7d2
+    renderer_sha256: 151218d1ed4b1f759626b981214350a978a5f18a18052f5251007dcd18c6c977
+    justification_2026_11_04_3c10_comments: >-
+      Re-read 2026-11-04 against this renderer's diff (removal of the unread gpu_marker setting). The
+      diff holds four hunks, all comment lines: the module note and two notes in _draw_panel that named the removed
+      sens_cfg.gpu_marker are reworded. Measured: the AST of the file at HEAD equals the AST of the working file, and
+      the same comparison with one string constant changed in a scratch copy reports a difference, so no code line,
+      label, title, default or displayed string moved. The caption was read in full. It states the plotted time, the
+      slowest-rank wall-clock meaning, the aggregation statistic and the matplotlib minimum, and the axis scaling; it
+      names neither gpu_marker nor the reworded notes, so no clause is falsified, weakened or left ambiguous and there
+      is no caption edit to make. Digest recorded at the post-change renderer, so this exemption expires on the next
+      change to the renderer.
+    justification_2026_11_04_develop_merge: >-
+      Re-read 2026-11-04 against this renderer as merged with develop at layout 28, after
+      the caption was edited. The merge brought in develop's edits to the file: a wall_label
+      helper that names the time axis for the measure plotted (SWMM elapsed time when every member runs
+      SWMM only, Wall-clock time otherwise), one reworded hover label, and the matching y-axis title in
+      the matplotlib and plotly branches. The caption on disk is develop's text plus one sentence added
+      by that edit. The caption was read in full. It states that the y-axis title names the measure and that
+      a TRITON or TRITON-SWMM member plots the slowest-rank wall-clock time summed over restarts, which
+      the merged renderer does. The added sentence states that the plotly backend collapses the
+      replicates of each configuration by the aggregation statistic before the best configuration per
+      device count is chosen, which is the read at sensitivity_benchmarking.py line 826
+      (sens_cfg.aggregation, inside the use_plotly branch) and line 2564 (_plotly_metric_panel), and
+      that the matplotlib backend takes the minimum over the individual runs, which _draw_panel does at
+      the per_x_min line and which reads no aggregation. Every clause is true of the merged renderer.
+      This is a PAIRING discharge on a re-read. Digest recorded at the merged renderer content, so this
+      exemption expires on the next change to the renderer.
     justification_2026_11_02_develop_integration: >-
       Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that the store opens go through `open_store`, with no change to any displayed text.
       Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
@@ -1079,7 +1105,26 @@ unpaired_allowlist:
       change to this file rather than on arrival.
   - renderer: system_overview
     caption: src/hhemt/report_templates/captions/system_map.rst
-    renderer_sha256: 3db9f3a5be13ed3fc1ff5854000217e4b29b79fa5f492195389b602ca2318236
+    renderer_sha256: 5625c1f8deb9cad1de68150ac9edadc8bf31746b4d14848b88973a442cc1b777
+    justification_2026_11_04_develop_merge: >-
+      Re-read 2026-11-04 against this renderer as merged with develop at layout 28. The
+      merge brought in develop's edits to the file: the panel headings become named constants, the
+      Manning's n panel heading and colour-bar label are set after the shared plotter returns, the
+      conditional hydrology and hydraulics headings gain a descriptive line, and the document title
+      and the easting axis title change punctuation. The caption was read in full. It names the TRITON
+      DEM panel and the Manning's n panel, which carry the headings DEM_PANEL_TITLE and
+      MANNINGS_PANEL_TITLE, and it names no conditional panel, which the renderer's own comment states
+      is deliberate. The colour-range and over-color statements and the CRS statement are on lines the
+      diff leaves in place. No clause is falsified, weakened or left ambiguous, so the caption needs no
+      edit. Digest recorded at the merged renderer content, so this exemption expires on the next
+      change to the renderer.
+    justification_2026_11_03: >-
+      Re-read 2026-11-03 against this renderer's diff. The diff adds a helper that
+      draws a panel label and one call to it, both reached only when a publication static
+      configuration sets subplot_label; the report path passes no static configuration, so no
+      emitted panel, column, unit or colour range of the figure this caption describes moved. This
+      caption was read in full and no clause is falsified, weakened or left ambiguous, so there is
+      no caption edit to make. Digest recorded at the post-change renderer content.
     justification_2026_10_18: >-
       Re-read 2026-10-18. The caption described a watershed/DEM-extent/BC-marker/SWMM
       overlay map this renderer does not draw; it was rewritten to the figure the renderer
@@ -1363,69 +1408,84 @@ unpaired_allowlist:
       caption edit follows.
   - renderer: eda_compute_sensitivity
     caption: src/hhemt/report_templates/captions/eda_dem_resolution_cost_error.rst
-    renderer_sha256: bdc88d215eee86385ef762794f9ca9686fbc8edda049ee7f583316da5747c023
-    justification_2026_10_26: >-
-      Re-read 2026-10-26 (the reporting-set key rename). The renderer change is two comment
-      blocks (lines 39 and 41) that name the reporting-set key, b4b becoming
-      compute_config_byte_identity; with docstrings and comments stripped the renderer is
-      AST-identical to HEAD, so no emitted column, unit or panel moved. This caption was
-      read in full and names no reporting-set key (matcher: grep -c -E
-      "b4b|compute.sensitivity|dem.resolution|compute_config_byte_identity|dem_resolution",
-      unit lines, result 0), so no clause is falsified, weakened or left ambiguous and
-      there is no caption edit to make. Digest recorded at the post-change renderer
-      content, so this exemption expires on the next change to the renderer.
+    renderer_sha256: d1b2d838c8f295570df32832931d37859e1e622fbf49a81af688133dfd22cd4c
+    justification_2026_11_05: >-
+      Re-read 2026-11-05 (repair of an adapter keyword). The adapter's change is one keyword
+      argument, cfg_system, passed through to render_eda_plots (the system object the rule's --system-
+      config loaded), plus a comment. It adds no column, unit, panel or text of its own. This caption
+      (x axis compute cost on a log scale, y axis the 95th-percentile depth error against the finest
+      run, one labeled point per rung, the finest run as reference) describes the figure's axes and
+      points. On the real layout the figure used to fail before it drew; with the object supplied it
+      draws those axes and points from the stored tree, and the object supplies only the EPSG code the
+      regrid kernel needs. No clause is falsified, weakened or left ambiguous; no caption edit. Digest
+      recorded at the post-change renderer content, so this exemption expires on the next change to
+      the renderer.
   - renderer: eda_compute_sensitivity
     caption: src/hhemt/report_templates/captions/eda_dem_resolution_coupling_table.rst
-    renderer_sha256: bdc88d215eee86385ef762794f9ca9686fbc8edda049ee7f583316da5747c023
-    justification_2026_10_26: >-
-      Re-read 2026-10-26 (the reporting-set key rename). The renderer change is two comment
-      blocks (lines 39 and 41) that name the reporting-set key, b4b becoming
-      compute_config_byte_identity; with docstrings and comments stripped the renderer is
-      AST-identical to HEAD, so no emitted column, unit or panel moved. This caption was
-      read in full and names no reporting-set key (matcher: grep -c -E
-      "b4b|compute.sensitivity|dem.resolution|compute_config_byte_identity|dem_resolution",
-      unit lines, result 0), so no clause is falsified, weakened or left ambiguous and
-      there is no caption edit to make. Digest recorded at the post-change renderer
-      content, so this exemption expires on the next change to the renderer.
+    renderer_sha256: d1b2d838c8f295570df32832931d37859e1e622fbf49a81af688133dfd22cd4c
+    justification_2026_11_05: >-
+      Re-read 2026-11-05 (repair of an adapter keyword). The adapter's change is one keyword
+      argument, cfg_system, passed through to render_eda_plots (the system object the rule's --system-
+      config loaded), plus a comment. It adds no column, unit, panel or text of its own. This caption
+      (one row per rung; columns resolution, cells, coupling junctions, peaks, and the over- and
+      under-estimates of depth and flow versus the finest run) lists the table's columns. The object
+      also supplies the watershed polygon, so the depth delta columns are restricted to the polygon on
+      the real layout, as they are wherever a root carries the system file; the figure states that
+      scope in its own annotation, and the caption makes no claim about which cells the deltas cover.
+      No emitted column, unit or panel moved; no caption edit. Digest recorded at the post-change
+      renderer content, so this exemption expires on the next change to the renderer.
   - renderer: eda_compute_sensitivity
     caption: src/hhemt/report_templates/captions/eda_dem_resolution_diff_maps.rst
-    renderer_sha256: bdc88d215eee86385ef762794f9ca9686fbc8edda049ee7f583316da5747c023
-    justification_2026_10_26: >-
-      Re-read 2026-10-26 (the reporting-set key rename). The renderer change is two comment
-      blocks (lines 39 and 41) that name the reporting-set key, b4b becoming
-      compute_config_byte_identity; with docstrings and comments stripped the renderer is
-      AST-identical to HEAD, so no emitted column, unit or panel moved. This caption was
-      read in full and names no reporting-set key (matcher: grep -c -E
-      "b4b|compute.sensitivity|dem.resolution|compute_config_byte_identity|dem_resolution",
-      unit lines, result 0), so no clause is falsified, weakened or left ambiguous and
-      there is no caption edit to make. Digest recorded at the post-change renderer
-      content, so this exemption expires on the next change to the renderer.
+    renderer_sha256: d1b2d838c8f295570df32832931d37859e1e622fbf49a81af688133dfd22cd4c
+    justification_2026_11_05: >-
+      Re-read 2026-11-05 (repair of an adapter keyword). The adapter's change is one keyword
+      argument, cfg_system, passed through to render_eda_plots (the system object the rule's --system-
+      config loaded), plus a comment. It adds no column, unit, panel or text of its own. This caption
+      (panel A the finest run in absolute depth, then a signed-difference row and a percent-difference
+      row per coarser rung, the tau floor, the newly-wet count) describes the panels. The object
+      supplies the EPSG code and the watershed polygon, so on the real layout the depth maps and their
+      colorbar ranges are masked to the polygon, as they are wherever a root carries the system file;
+      the caption makes no claim about the mask, and no panel, unit or colour rule moved. No caption
+      edit. Digest recorded at the post-change renderer content, so this exemption expires on the next
+      change to the renderer.
   - renderer: eda_compute_sensitivity
     caption: src/hhemt/report_templates/captions/eda_dem_resolution_error_ecdf.rst
-    renderer_sha256: bdc88d215eee86385ef762794f9ca9686fbc8edda049ee7f583316da5747c023
-    justification_2026_10_26: >-
-      Re-read 2026-10-26 (the reporting-set key rename). The renderer change is two comment
-      blocks (lines 39 and 41) that name the reporting-set key, b4b becoming
-      compute_config_byte_identity; with docstrings and comments stripped the renderer is
-      AST-identical to HEAD, so no emitted column, unit or panel moved. This caption was
-      read in full and names no reporting-set key (matcher: grep -c -E
-      "b4b|compute.sensitivity|dem.resolution|compute_config_byte_identity|dem_resolution",
-      unit lines, result 0), so no clause is falsified, weakened or left ambiguous and
-      there is no caption edit to make. Digest recorded at the post-change renderer
-      content, so this exemption expires on the next change to the renderer.
+    renderer_sha256: d1b2d838c8f295570df32832931d37859e1e622fbf49a81af688133dfd22cd4c
+    justification_2026_11_05: >-
+      Re-read 2026-11-05 (repair of an adapter keyword). The adapter's change is one keyword
+      argument, cfg_system, passed through to render_eda_plots (the system object the rule's --system-
+      config loaded), plus a comment. It adds no column, unit, panel or text of its own. This caption
+      (one curve per coarser rung, absolute depth error on x, cumulative fraction of union-wet cells
+      on y, the p95 legend line, the flooded-area table below) describes the curves and the table. The
+      object supplies only the EPSG code; the tolerance line comes from the EDA configuration, not
+      from the adapter. No clause is falsified, weakened or left ambiguous; no caption edit. Digest
+      recorded at the post-change renderer content, so this exemption expires on the next change to
+      the renderer.
   - renderer: eda_compute_sensitivity
     caption: src/hhemt/report_templates/captions/raw_byte_identity.rst
-    renderer_sha256: bdc88d215eee86385ef762794f9ca9686fbc8edda049ee7f583316da5747c023
-    justification_2026_10_26: >-
-      Re-read 2026-10-26 (the reporting-set key rename). The renderer change is two comment
-      blocks (lines 39 and 41) that name the reporting-set key, b4b becoming
-      compute_config_byte_identity; with docstrings and comments stripped the renderer is
-      AST-identical to HEAD, so no emitted column, unit or panel moved. This caption was
-      read in full and names no reporting-set key (matcher: grep -c -E
-      "b4b|compute.sensitivity|dem.resolution|compute_config_byte_identity|dem_resolution",
-      unit lines, result 0), so no clause is falsified, weakened or left ambiguous and
-      there is no caption edit to make. Digest recorded at the post-change renderer
-      content, so this exemption expires on the next change to the renderer.
+    renderer_sha256: d1b2d838c8f295570df32832931d37859e1e622fbf49a81af688133dfd22cd4c
+    justification_2026_11_05: >-
+      Re-read 2026-11-05 (repair of an adapter keyword). The adapter's change is one keyword
+      argument, cfg_system, passed through to render_eda_plots (the system object the rule's --system-
+      config loaded), plus a comment. It adds no column, unit, panel or text of its own. This caption
+      (raw TRITON output rasters compared timestep by timestep within each hardware family, the CPU
+      and GPU references, green for identical cells, white to vermillion by the largest absolute
+      difference, the verdict sentence) describes the raw byte-identity figure. That renderer accepts
+      the keyword and ignores it, so the figure is unchanged. No caption edit. Digest recorded at the
+      post-change renderer content, so this exemption expires on the next change to the renderer.
+  - renderer: eda_compute_sensitivity
+    caption: src/hhemt/report_templates/captions/eda_compute_sensitivity.rst
+    renderer_sha256: d1b2d838c8f295570df32832931d37859e1e622fbf49a81af688133dfd22cd4c
+    justification_2026_11_05: >-
+      Re-read 2026-11-05 (repair of an adapter keyword). The adapter's change is one keyword
+      argument, cfg_system, passed through to render_eda_plots (the system object the rule's --system-
+      config loaded), plus a comment. It adds no column, unit, panel or text of its own. This caption
+      (a table of each configuration's identity and absolute difference from the serial-CPU baseline,
+      then signed-difference and percent-difference maps per group of byte-identical configurations,
+      labels from each member's compute configuration) describes the config-diff figure. That renderer
+      accepts the keyword and ignores it, so the figure is unchanged. No caption edit. Digest recorded
+      at the post-change renderer content, so this exemption expires on the next change to the
+      renderer.
   - renderer: cross_experiment_errors_and_warnings
     caption: src/hhemt/report_templates/captions/cross_experiment_errors_and_warnings.rst
     renderer_sha256: ffc705d5da36ace171b55a10d5ca60086fd9c25dcb3af263fbc7e093f1cb9ad8
@@ -1472,6 +1532,17 @@ unpaired_allowlist:
       none of those is touched by the diff, so no clause is falsified, weakened or left ambiguous and
       there is no caption edit to make. Digest recorded at the post-change renderer content, so this
       exemption expires on the next change to the renderer.
+  - renderer: per_sim_conduit_flow
+    caption: src/hhemt/report_templates/captions/per_sim_conduit_flow.rst
+    renderer_sha256: 669ccfeb1af2360514dddc51ab137732b75c0fd529e1828a6693f8891e699acb
+    justification_2026_11_03: >-
+      Re-read 2026-11-03 against this renderer's diff. The diff adds a panel label and a
+      quantile upper bound for the peak-flow colour bar, both reached only when a publication static
+      configuration sets subplot_label or vmin_vmax_strategy; the report path passes no static
+      configuration, and a static figure carries no report caption, so the panels, the max / full flow
+      and peak flow descriptions, the watershed overlay note and the Flood Drivers note of this caption
+      stay true. This caption was read in full and no clause is falsified, weakened or left ambiguous,
+      so there is no caption edit to make. Digest recorded at the post-change renderer content.
   - renderer: per_sim_event_page
     caption: src/hhemt/report_templates/captions/per_sim_event_page.rst
     renderer_sha256: 29db65491930268e76e3eec33430e3d197cce0acf5b53a3e047d8a1a31856ef7
@@ -1487,7 +1558,7 @@ unpaired_allowlist:
       renderer.
   - renderer: per_sim_conduit_flow
     caption: src/hhemt/report_templates/captions/per_sim_conduit_flow.rst
-    renderer_sha256: 1c9bbeec0e0d7ae1febff9a183dfc8e3bf6cb09933342f4daa83dddd7a87448c
+    renderer_sha256: b294f29079310aad7258b9f3e72114605fb5235b7221fe9f7906717b3d53695e
     justification_2026_11_02_develop_merge: >-
       Re-read 2026-11-02 against this renderer's diff on top of the merged origin/develop (the SWMM link
       maximum flow it reads is named max_flow, not max_flow_cms, in
@@ -1507,3 +1578,15 @@ unpaired_allowlist:
       left ambiguous and there is no caption edit to make. Caption RE-READ in full by a reviewer who is not the
       author and reads true. This is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded
       at the post-change renderer content, so this exemption expires on the next change to the renderer.
+    justification_2026_11_04_develop_merge: >-
+      Re-read 2026-11-04 against this renderer as merged with develop at layout 28. The
+      merge brought in develop's edits to the file: the link maximum flow is read under the name
+      max_flow, two hover notes and the bin note are reworded, the manifest key peak_flow_max gains a
+      units key, and the watershed trace takes its name from WATERSHED_LEGEND_LABEL, whose value in
+      src/hhemt/figure_panels.py is "watershed polygon". The caption was read in full. It names the
+      legend label watershed polygon, which the constant states; it defines Max / full flow and Peak
+      flow as the ratio of maximum flow to full-pipe capacity and the peak flow magnitude per conduit,
+      which the two arrays max_over_full_flow and max_flow carry; and it names the Flood Drivers
+      rainfall and boundary-condition panels, which the diff leaves in place. No clause is falsified,
+      weakened or left ambiguous, so the caption needs no edit. Digest recorded at the merged renderer
+      content, so this exemption expires on the next change to the renderer.

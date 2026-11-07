@@ -38,7 +38,7 @@ __all__ = ["Toolkit"]
 class Toolkit:
     """High-level API facade for TRITON-SWMM workflow orchestration.
 
-    This class provides a simplified interface to the toolkit, wrapping the
+    The class provides a simplified interface to the toolkit, wrapping the
     underlying Analysis class with notebook-friendly methods and sensible defaults.
 
     Attributes
@@ -52,30 +52,34 @@ class Toolkit:
     --------
     Basic workflow execution:
 
-    >>> from hhemt import Toolkit
-    >>>
-    >>> # Load configurations
-    >>> tk = Toolkit.from_configs(
-    ...     system_config="configs/system.yaml",
-    ...     analysis_config="configs/analysis.yaml"
-    ... )
-    >>>
-    >>> # Run from scratch
-    >>> result = tk.run(mode="fresh")
-    >>> if result.success:
-    ...     print(f"✓ Workflow succeeded: {len(result.events_processed)} events in scope")
-    ... else:
-    ...     print(f"✗ Workflow failed: {result.message}")
+    ```python
+    from hhemt import Toolkit
+
+    # Load configurations
+    tk = Toolkit.from_configs(
+        system_config="configs/system.yaml",
+        analysis_config="configs/analysis.yaml"
+    )
+
+    # Run from scratch
+    result = tk.run(mode="fresh")
+    if result.success:
+        print(f"✓ Workflow succeeded: {len(result.events_processed)} events in scope")
+    else:
+        print(f"✗ Workflow failed: {result.message}")
+    ```
 
     Resume interrupted workflow:
 
-    >>> # Check current status
-    >>> status = tk.get_status()
-    >>> print(status)
-    >>> print(f"Recommendation: {status.recommendation}")
-    >>>
-    >>> # Check current_phase first: recommended_mode may be "fresh", which wipes
-    >>> result = tk.run(mode=status.recommended_mode)
+    ```python
+    # Check current status
+    status = tk.get_status()
+    print(status)
+    print(f"Recommendation: {status.recommendation}")
+
+    # Check current_phase first: recommended_mode may be "fresh", and "fresh" wipes
+    result = tk.run(mode=status.recommended_mode)
+    ```
     """
 
     def __init__(self, system: "TRITONSWMM_system"):
@@ -105,10 +109,10 @@ class Toolkit:
     ) -> "Toolkit":
         """Create Toolkit instance from configuration files.
 
-        This is the recommended way to initialize the toolkit. It handles:
+        The method is the recommended way to initialize the toolkit and handles:
         - Loading and validating configurations
         - Instantiating system and analysis objects
-        - Running preflight validation checks (if validate=True)
+        - Running preflight validation checks when ``validate=True``
 
         Parameters
         ----------
@@ -117,17 +121,16 @@ class Toolkit:
         analysis_config : str or Path
             Path to the analysis configuration YAML file.
         hpc_system_config : str or Path, optional
-            Path to the per-HPC-system configuration YAML file
-            (``hpc_system_config.yaml``). When None, the default, the analysis is
-            built without one, so nothing it supplies is available: the
-            per-partition caps ``validate()`` checks, the partition GPU hardware the
-            SLURM emitters resolve, and the SBATCH account.
+            Path to the per-HPC-system configuration YAML file, ``hpc_system_config.yaml``.
+            When None, the default, the analysis is built without the file, so the config supplies no value
+            to the analysis. The unavailable values are the per-partition caps ``validate()`` checks, the
+            partition GPU hardware the SLURM emitters resolve, and the SBATCH account.
         case_manifest_yaml : str or Path, optional
             Path to the case study's ``case.yaml`` manifest. Forwarded to the
-            analysis constructor so ``case_name`` is bundled, which is a blocking
+            analysis constructor so ``case_name`` is bundled, as a blocking
             combine-compatibility field, and the RO-Crate root name resolves from
-            the real manifest. When None, the default, no ``case.yaml`` is bundled
-            and the RO-Crate root name falls back to the ``analysis_id``; a manifest
+            the real manifest. When None, the default, the bundle holds no ``case.yaml``
+            and the RO-Crate root name falls back to the ``analysis_id``. A manifest
             that fails to load falls back for the name too.
         validate : bool, default True
             Whether to run preflight validation. Raises ConfigurationError if
@@ -147,16 +150,18 @@ class Toolkit:
 
         Examples
         --------
-        >>> from hhemt import Toolkit
-        >>>
-        >>> tk = Toolkit.from_configs(
-        ...     system_config="configs/system.yaml",
-        ...     analysis_config="configs/analysis.yaml"
-        ... )
-        >>>
-        >>> # Toolkit is ready - configs loaded, validated, and bound
-        >>> print(f"Analysis directory: {tk.analysis_dir}")
-        >>> print(f"Scenarios: {tk.n_simulations}")
+        ```python
+        from hhemt import Toolkit
+
+        tk = Toolkit.from_configs(
+            system_config="configs/system.yaml",
+            analysis_config="configs/analysis.yaml"
+        )
+
+        # Toolkit is ready - configs loaded, validated, and bound
+        print(f"Analysis directory: {tk.analysis_dir}")
+        print(f"Scenarios: {tk.n_simulations}")
+        ```
         """
         from .analysis import TRITONSWMM_analysis
         from .system import TRITONSWMM_system
@@ -190,13 +195,15 @@ class Toolkit:
         dest_dir: str | Path | None = None,
         dry_run: bool = False,
     ) -> dict:
-        """Load-smoke facade for the synthetic compute-config experiment.
+        """Load-smoke facade for the synthetic experiment.
 
-        Loads and validates the ``synthetic_experiment_config``, which runs every one
-        of its validators: the ``model_arms`` field check and the coupling-invariant,
-        partition-cap and DEM-ladder model checks. The partition-cap check is the one
-        that loads the per-cluster ``hpc_system_config``. Builds the partition-as-axis
-        experiment matrix. Unless ``dry_run`` is set, writes the matrix CSV and
+        Loads and validates the ``synthetic_experiment_config`` and runs every validator
+        of the config. The validators are the ``model_arms`` field check and the coupling-invariant,
+        partition-cap, and DEM-ladder model checks. The partition-cap check is the one
+        that loads the per-cluster ``hpc_system_config``. Builds the experiment matrix.
+        The matrix holds the compute-config rows for an empty ``dem_resolution_ladder``, with the
+        partition as an axis, and the DEM-resolution rows for a set ladder. Unless
+        ``dry_run`` is set, writes the matrix CSV and
         generates the synthetic model under ``dest_dir``.
 
         Parameters
@@ -204,7 +211,7 @@ class Toolkit:
         config : str or Path
             Path to a ``synthetic_experiment_config`` YAML.
         hpc_system_config : str or Path, optional
-            Path to the per-cluster ``hpc_system_config`` YAML. When given it
+            Path to the per-cluster ``hpc_system_config`` YAML. When given, the path
             overrides the config's own ``hpc_system_config_yaml``.
         dest_dir : str or Path, optional
             Output directory for the matrix CSV and generated model on a non-dry
@@ -216,13 +223,14 @@ class Toolkit:
         Returns
         -------
         dict
-            ``{"config": synthetic_experiment_config, "n_matrix_rows": int,
-            "matrix_csv": Path | None, "model_dir": Path | None}``.
+            A dict with the keys ``config``, ``n_matrix_rows``, ``matrix_csv``, and ``model_dir``.
+            ``config`` holds the ``synthetic_experiment_config``. ``n_matrix_rows`` holds an int.
+            ``matrix_csv`` and ``model_dir`` each hold a Path or None.
 
         Notes
         -----
-        It does not compose or run the analysis ensemble the matrix describes;
-        ``scripts/experiments/synth_compute_config.py`` composes and runs it.
+        The method composes and runs no analysis ensemble the matrix describes.
+        ``scripts/experiments/synth_compute_config.py`` composes and runs the ensemble.
         """
         import yaml
 
@@ -256,7 +264,6 @@ class Toolkit:
     def run(
         self,
         mode: RunMode | str = RunMode.resume,
-        events: list[int] | None = None,
         dry_run: bool = False,
         verbose: bool = True,
         report_config: Path | None = None,
@@ -268,74 +275,70 @@ class Toolkit:
     ) -> WorkflowResult:
         """Run TRITON-SWMM workflow.
 
-        This is the main entry point for workflow execution. It handles:
-        - System input processing (DEM, Manning's coefficients)
-        - Asserting that every enabled model already has a successful build (native mode)
-        - Scenario preparation (SWMM model generation)
-        - Simulation execution (TRITON-SWMM runs)
-        - Output processing (timeseries extraction, compression)
-        - Consolidation (analysis-level aggregation)
+        The method is the main entry point for workflow execution and handles:
+        - System input processing for the DEM and Manning's coefficients
+        - Asserting that every enabled model already has a successful build in native mode
+        - Scenario preparation, covering SWMM model generation
+        - Simulation execution, covering TRITON-SWMM runs
+        - Output processing for timeseries extraction and compression
+        - Consolidation, covering analysis-level aggregation
 
-        The solver is not built here. In native mode, build it once per
-        machine and GPU target before the first run; see
+        The solver is not built here. In native mode, build the solver once per
+        machine and GPU target before the first run. See
         [Compile the solver](../how-to/compiling-the-solver.md).
 
         Parameters
         ----------
         mode : RunMode or {'fresh', 'resume'}, default 'resume'
             Execution mode controlling checkpoint behavior. ``fresh`` deletes the
-            analysis directory and rebuilds everything (refused while it holds
-            completed work unless ``override_wipe_nonempty=True``); ``resume``
+            analysis directory and rebuilds everything, and is refused while the directory holds
+            completed work unless ``override_wipe_nonempty=True``. ``resume``
             continues from the last checkpoint. Any other value raises
             ``ConfigurationError``. To re-run completed scenarios without a wipe,
             pass ``override_force_rerun`` instead.
-        events : list of int, or None
-            Not yet supported: any value other than None makes ``analysis.run()``
-            raise ``NotImplementedError``. None, the default, runs every event in the
-            analysis.
         dry_run : bool, default False
-            Print the workflow plan without executing it.
+            Print the workflow plan without executing the plan.
         verbose : bool, default True
             Print progress messages during execution.
         report_config : Path, optional
-            A report config YAML used instead of ``cfg_analysis.report`` for this
+            A report config YAML that replaces ``cfg_analysis.report`` for this
             run. None, the default, uses the config's own.
         override_force_rerun : {'all', 'none'} or dict, optional
             Runtime override for ``cfg_analysis.force_rerun`` for this invocation
-            only; ``"all"`` re-runs every completed scenario and everything
+            only. ``"all"`` re-runs every completed scenario and everything
             downstream without deleting the analysis directory. None, the default,
             reads the config field.
         wait_for_completion : bool, optional
             Whether to block until the workflow finishes. None, the default, defers
-            to ``analysis.run()``'s own default, which blocks unless the resolved
-            locus is SLURM; a bool overrides it.
+            to ``analysis.run()`` for the default. The default blocks unless the resolved
+            locus is SLURM. A bool overrides the default.
         override_wipe_nonempty : bool, default False
             With ``mode="fresh"``, permit deleting an analysis directory that holds
-            completed work; without it that wipe is refused.
+            completed work. Without the flag that wipe is refused.
         override_clean_restart_member_ids : list of str, or None
-            Sensitivity member ids to CLEAN-RESTART: each named member's runtime
-            children are wiped, including the per-model log that carries
-            ``n_resumes``, so the member re-runs from checkpoint 0 and its resume
-            counter resets to zero. ``eda/compute_sensitivity.py`` reads
+            Sensitivity member ids to CLEAN-RESTART. The runtime children of each named member
+            are wiped, including the per-model log that carries
+            ``n_resumes``, so the member re-runs from checkpoint 0 and the resume
+            counter of the member resets to zero. ``eda/compute_sensitivity.py`` reads
             ``n_resumes == 0`` as the clean member of a clean/resume pair, so use this
             when a member must re-run as a CLEAN member. Not applied on a dry run.
-            None, the default, wipes nothing.
+            None, the default, wipes no member.
         debug : bool, default False
-            Run in debug mode. Today it does exactly one thing: a coupled simulation that
-            starts from the beginning asks the solver to keep the previous run's snapshot
-            files rather than remove them. Passed through to
+            Run in debug mode. Today the flag has one effect. A coupled simulation that
+            starts from the beginning asks the solver to keep the snapshot files of the
+            previous run and skips their removal. Passed through to
             ``TRITONSWMM_analysis.run(debug=)``.
 
         Returns
         -------
         WorkflowResult
-            Execution details: ``success``, ``mode``, ``execution_time`` in seconds,
+            Execution details covering ``success``, ``mode``, ``execution_time`` in seconds,
             ``phases_completed``, ``events_processed``, ``snakefile_path`` to the
-            generated Snakefile, ``job_id``, a ``message`` and ``partial_failures``.
-            On a ``batch_job`` tmux launch that is not waited on -- the default on a
-            SLURM locus, when ``wait_for_completion`` is None or False --
-            ``success=True`` means the launch was made, not that every rule
-            succeeded; ``WorkflowResult`` states what each field holds.
+            generated Snakefile, ``job_id``, a ``message``, and ``partial_failures``.
+            On a ``batch_job`` tmux launch that is not waited on, the default on a
+            SLURM locus when ``wait_for_completion`` is None or False,
+            ``success=True`` means the launch was made and leaves the outcome of every rule open.
+            ``WorkflowResult`` documents each field.
 
         Raises
         ------
@@ -348,28 +351,34 @@ class Toolkit:
         --------
         Fresh run, overwriting everything:
 
-        >>> result = tk.run(mode="fresh")
-        >>> print(f"Success: {result.success}")
-        >>> print(f"Runtime: {result.execution_time:.1f}s")
-        >>> print(f"Events: {result.events_processed}")
+        ```python
+        result = tk.run(mode="fresh")
+        print(f"Success: {result.success}")
+        print(f"Runtime: {result.execution_time:.1f}s")
+        print(f"Events: {result.events_processed}")
+        ```
 
         Resume interrupted workflow:
 
-        >>> # Check what's done
-        >>> status = tk.get_status()
-        >>> print(f"Progress: {status.simulations_completed}/{status.total_simulations}")
-        >>>
-        >>> # Continue from checkpoint
-        >>> result = tk.run(mode="resume")
+        ```python
+        # Check what's done
+        status = tk.get_status()
+        print(f"Progress: {status.simulations_completed}/{status.total_simulations}")
 
-        Dry run (preview without executing):
+        # Continue from checkpoint
+        result = tk.run(mode="resume")
+        ```
 
-        >>> result = tk.run(mode="fresh", dry_run=True)
-        >>> print(result.message)  # a one-line summary of the dry run
+        Dry run, a preview without executing:
+
+        ```python
+        result = tk.run(mode="fresh", dry_run=True)
+        print(result.message)  # a one-line summary of the dry run
+        ```
 
         Notes
         -----
-        - Execution mode, local or SLURM, is auto-detected from the configuration.
+        - Execution mode is auto-detected from the configuration and is local or SLURM.
         - Use ``get_status()`` to check current progress before resuming.
         - For fine-grained control, use ``analysis.run()`` directly.
         """
@@ -399,7 +408,6 @@ class Toolkit:
             from_scratch=from_scratch,
             override_wipe_nonempty=override_wipe_nonempty,
             override_clean_restart_member_ids=override_clean_restart_member_ids,
-            events=events,
             execution_mode=execution_mode,
             dry_run=dry_run,
             verbose=verbose,
@@ -412,15 +420,15 @@ class Toolkit:
     def get_status(self) -> WorkflowStatus:
         """Get current workflow status report.
 
-        This method reads the system, scenario and per-model logs to determine the
-        completion state of each workflow phase. It writes no log, flag or output,
-        but it does create any missing per-scenario directories, because each
-        ``TRITONSWMM_scenario`` it constructs creates them. It provides:
+        The method reads the system, scenario, and per-model logs to determine the
+        completion state of each workflow phase. The method writes no log, flag, or output,
+        but the method does create any missing per-scenario directories, because each
+        ``TRITONSWMM_scenario`` that the method constructs creates them. The method provides:
         - Per-phase completion status
-        - Counts of scenarios completed, failed and not yet started (scenarios, not
-          model runs, despite the ``simulations_*`` field names)
+        - Counts of scenarios completed, failed, and waiting to start. The counts cover scenarios and
+          no model runs, despite the ``simulations_*`` field names
         - Current workflow phase
-        - Recommended mode for next run()
+        - Recommended mode for the next ``run()``
         - Actionable recommendation message
 
         Returns
@@ -432,8 +440,12 @@ class Toolkit:
         --------
         Check status and decide next action:
 
-        >>> status = tk.get_status()
-        >>> print(status)  # abbreviated: per-phase detail lines elided as "..."
+        ```python
+        status = tk.get_status()
+        print(status)  # abbreviated, with per-phase detail lines elided as "..."
+        ```
+
+        ```text
         Workflow Status Report
         ══════════════════════════════════════════════════════════════════
         Analysis: my_analysis
@@ -451,43 +463,49 @@ class Toolkit:
             ...
         Recommendation:
           ...
-        >>>
+        ```
 
-        The report prints no overall progress count and no current-phase line; read
-        those from ``status.simulations_completed`` and ``status.current_phase``.
+        The report prints no overall progress count and no current-phase line. Read
+        the values from ``status.simulations_completed`` and ``status.current_phase``.
 
-        >>> # Follow the recommendation
-        >>> if not status.simulation.complete:
-        ...     result = tk.run(mode=status.recommended_mode)
+        ```python
+        # Follow the recommendation
+        if not status.simulation.complete:
+            result = tk.run(mode=status.recommended_mode)
+        ```
 
         Inspect phase details:
 
-        >>> status = tk.get_status()
-        >>> print(f"Setup complete: {status.setup.complete}")
-        >>> print(f"Scenarios run: {status.simulations_completed}")
-        >>> print(f"Scenarios failed: {status.simulations_failed}")
-        >>> print(f"Recommended mode: {status.recommended_mode}")
+        ```python
+        status = tk.get_status()
+        print(f"Setup complete: {status.setup.complete}")
+        print(f"Scenarios run: {status.simulations_completed}")
+        print(f"Scenarios failed: {status.simulations_failed}")
+        print(f"Recommended mode: {status.recommended_mode}")
+        ```
 
         Check if workflow is fully complete:
 
-        >>> status = tk.get_status()
-        >>> if all([
-        ...     status.setup.complete,
-        ...     status.preparation.complete,
-        ...     status.simulation.complete,
-        ...     status.processing.complete,
-        ...     status.consolidation.complete,
-        ... ]):
-        ...     print("✓ Workflow fully complete!")
+        ```python
+        status = tk.get_status()
+        if all([
+            status.setup.complete,
+            status.preparation.complete,
+            status.simulation.complete,
+            status.processing.complete,
+            status.consolidation.complete,
+        ]):
+            print("✓ Workflow fully complete!")
+        ```
 
         Notes
         -----
-        - Status is read from the logs on every call; nothing is cached between calls.
+        - Status is read from the logs on every call, and no status is cached between calls.
         - ``recommended_mode`` is ``fresh`` both when setup is incomplete and when every
           phase is done, and ``fresh`` deletes the analysis directory, so check
-          ``current_phase`` before passing it to ``run()``.
+          ``current_phase`` before passing the recommendation to ``run()``.
         - ``simulations_failed`` counts scenarios with a model run that started and did
-          not finish; ``simulations_pending`` counts those with no run started.
+          not finish. ``simulations_pending`` counts the scenarios with no run started.
         """
         return self.analysis.get_workflow_status()
 
@@ -527,9 +545,11 @@ class Toolkit:
 
         Examples
         --------
-        >>> tk = Toolkit.from_configs(system_cfg, analysis_cfg)
-        >>> print(f"Outputs at: {tk.analysis_dir}")
-        Outputs at: /path/to/system_directory/my_analysis
+        ```python
+        tk = Toolkit.from_configs(system_cfg, analysis_cfg)
+        print(f"Outputs at: {tk.analysis_dir}")
+        # Outputs at: /path/to/system_directory/my_analysis
+        ```
         """
         return self.analysis.analysis_paths.analysis_dir
 
@@ -540,15 +560,17 @@ class Toolkit:
         Returns
         -------
         int
-            Events times sensitivity members (members are 1 without a sensitivity
-            analysis). Despite the name it counts scenarios, not model runs;
+            Events times sensitivity members, where the member count is 1 without a sensitivity
+            analysis. Despite the name the field counts scenarios and no model runs.
             ``tk.analysis.n_sims`` counts model runs.
 
         Examples
         --------
-        >>> tk = Toolkit.from_configs(system_cfg, analysis_cfg)
-        >>> print(f"Scenarios: {tk.n_simulations}")
-        Scenarios: 24
+        ```python
+        tk = Toolkit.from_configs(system_cfg, analysis_cfg)
+        print(f"Scenarios: {tk.n_simulations}")
+        # Scenarios: 24
+        ```
         """
         return self.analysis.nsims
 

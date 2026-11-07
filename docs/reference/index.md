@@ -1,36 +1,12 @@
 # Reference Table of Contents
 
-Information-oriented lookup material: the API surface, the configuration
-schema, and what the toolkit produces.
-
-- [API Reference](api.md): the `hhemt` package API.
-- [Configuration schema](config-schema.md): annotated system and analysis
-  configs, and the toggle-dependency table.
-- [CLI reference](cli.md): every `hhemt` command and the structured exit codes.
-- [Output data model](output-data-model.md): what a completed analysis writes,
-  the output tiers, and the CF-1.13 variables.
-- [FAIR scope table](fair-scope-table.md): item-by-item F/A/I/R posture over
-  the whole reproducibility dataset.
-- [Reporting sets](reporting-sets.md): the named renderer selections that decide
-  what a report contains, and how to choose one.
-- [Glossary](glossary.md): the terms these pages use, each with a short
-  definition.
-- [The interactive analysis report](example-report.md): what a rendered report
-  contains and how to open one.
-
-## Example experiments
-
-The repository ships the anonymized UVA and Frontier benchmarking experiment
-definitions under `test_data/norfolk_coastal_flooding/`: the production suites
-`full_benchmarking_experiment_uva.xlsx` and
-`full_benchmarking_experiment_frontier.xlsx`, and a lighter
-`benchmarking_uva_minimal.xlsx` used by the
-[Norfolk tutorial](../tutorials/norfolk-end-to-end.md). Substitute
-`{your-allocation}` in the example HPC profiles
-(`hpc_system_config_{uva,frontier}.yaml`) to run them on your own allocation.
-Note that the definitions describe the suites; reproducing the published results
-also requires the input datasets, which are fetched separately by DOI (see
-[Publishing and fetching](../how-to/publishing.md)). Reporting is not configured
-per suite. The renderer settings live in the `report:` block inline in the
-analysis config. See [Configuration schema](config-schema.md) for the fields and
-[Reporting sets](reporting-sets.md) for how to choose what a report contains.
+- [API Reference](api.md) documents the `hhemt` package API.
+- [Configuration schema](config-schema.md) annotates the system and analysis configs and lists the toggle dependencies.
+- [CLI reference](cli.md) covers every `hhemt` command and the structured exit codes.
+- [Output data model](output-data-model.md) lists the files that a completed analysis writes, the output tiers, and the CF-1.13 variables.
+- [FAIR scope table](fair-scope-table.md) gives the F/A/I/R posture of each item in the reproducibility dataset.
+- [Reporting sets](reporting-sets.md) covers the named renderer selections that decide the contents of a report.
+- [The interactive analysis report](example-report.md) covers the containers, the sidebar sections, and the finished examples.
+- [Rerun triggers](rerun-triggers.md) covers the conditions that make a step re-run.
+- [Coupled inflow nodes](coupled-inflow-nodes.md) covers the selection of the nodes that exchange water between the surface and the pipe network.
+- [Glossary](glossary.md) defines the terms of the pages.

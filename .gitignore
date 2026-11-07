@@ -86,6 +86,8 @@ docs/_build/
 # page is derived entirely from description= strings in src/hhemt/config/, and
 # those are tracked.
 docs/reference/config-schema.md
+docs/reference/config-schema-system.html
+docs/reference/config-schema-analysis.html
 
 # PyBuilder
 .pybuilder/
@@ -243,6 +245,8 @@ __marimo__/
 # blanket *.zarr rule must not hide the files a regeneration adds.
 !test_data/swmm_refactoring_reference/**/*.zarr
 !test_data/swmm_refactoring_reference/**/*.zarr/**
+# The committed example result that the interactive Python tutorial notebook reads.
+!docs/tutorials/assets/irene-example-result.zarr
 
 # TRITON-SWMM toolkit custom
 *_archive*

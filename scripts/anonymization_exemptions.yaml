@@ -29,7 +29,7 @@ exemptions:
     reason: "two published bundle report pages: one fixed generic word in the user-segment position that matches no token of the producer-specific list, and site filesystem mount names with no user segment"
   - glob: "docs/reference/bundles/norfolk-observed-events-report.html"
     class: "path"
-    reason: "two published bundle report pages: one fixed generic word in the user-segment position that matches no token of the producer-specific list, and site filesystem mount names with no user segment"
+    reason: "published bundle report page: the generic word in every user-segment position, written by scripts/prepare_example_report.py scrub and held there by tests/docs/test_example_report_publishable.py, and site filesystem mount names with no user segment"
   - glob: "tests/test_check_docs_content_tracked_absent_page.py"
     class: "email"
     reason: "test fixture that uses a reserved .invalid domain"

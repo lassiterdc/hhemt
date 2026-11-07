@@ -340,8 +340,8 @@ def test_golden_zip_carries_the_new_names_and_no_retired_name(golden):
 def _triton_doc_section() -> str:
     """The text of the reference page's TRITON results section, up to the SWMM network section."""
     text = (REPO / "docs" / "reference" / "output-data-model.md").read_text()
-    start = text.index("2D surface results (TRITON)")
-    end = text.index("### Network results (SWMM)", start)
+    start = text.index("2D surface results from TRITON")
+    end = text.index("### Network results from SWMM", start)
     return text[start:end]
 
 

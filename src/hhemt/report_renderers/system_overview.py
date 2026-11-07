@@ -322,6 +322,7 @@ def render(
     # overrides the elevation-panel cmap + over-color in publication mode.
     ax_dem = _axes[0][0]
     ax_mannings = _axes[0][1]
+    _draw_static_subplot_label(ax_dem, static_cfg)
     _draw_elevation_panel(
         ax_dem,
         dem,
@@ -999,6 +1000,29 @@ def _resolve_inp_sources(analysis: TRITONSWMM_analysis) -> tuple[Path, Path]:
         first_sub = subs[next(iter(subs))]
         return _pick(first_sub._retrieve_sim_runs(0)._scenario.scen_paths)
     return _pick(analysis._retrieve_sim_runs(0)._scenario.scen_paths)
+
+
+def _draw_static_subplot_label(ax, static_cfg) -> None:
+    """Draw the publication panel label (`StaticPlotBaseConfig.subplot_label`) at the axes' upper left.
+
+    The four static renderers call this on their first panel. A None `subplot_label`
+    (the default) or no `static_cfg` draws nothing, so the figure is today's. The size
+    is the `FontTarget.subplot_label` entry of `static_cfg.font_sizes`.
+    """
+    if static_cfg is None or static_cfg.subplot_label is None:
+        return
+    from hhemt.config.viz_vocabulary import FontTarget
+
+    ax.text(
+        0.0,
+        1.02,
+        static_cfg.subplot_label,
+        transform=ax.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=static_cfg.font_sizes[FontTarget.subplot_label],
+        fontweight="bold",
+    )
 
 
 def _apply_rcparams(report_cfg: report_config) -> None:

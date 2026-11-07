@@ -256,18 +256,8 @@ def run_command(
         help="Processing scope: TRITON, SWMM, or both",
     ),
     # ═══════════════════════════════════════════════════════════════
-    # Scenario/Event Selection
+    # Status
     # ═══════════════════════════════════════════════════════════════
-    event_ilocs: str | None = typer.Option(
-        None,
-        "--event-ilocs",
-        help="Comma-separated event indices (e.g., '0,1,2,10')",
-    ),
-    event_range: str | None = typer.Option(
-        None,
-        "--event-range",
-        help="Event range START:END (e.g., '0:100', inclusive start, exclusive end)",
-    ),
     status_flag: bool = typer.Option(
         False,
         "--status",
@@ -364,11 +354,6 @@ def run_command(
         $ hhemt run \\
             --system-config system.yaml --analysis-config analysis.yaml
 
-        # Fresh run with selected events
-        $ hhemt run \\
-            --system-config system.yaml --analysis-config analysis.yaml \\
-            --from-scratch --event-ilocs 0,1,2
-
         # Run with HPC overrides
         $ hhemt run \\
             --system-config system.yaml --analysis-config analysis.yaml \\
@@ -404,8 +389,6 @@ def run_command(
             resume=resume,
             verbose=verbose,
             quiet=quiet,
-            event_ilocs=event_ilocs,
-            event_range=event_range,
             model=model,
             which=which,
             redownload=redownload,
@@ -499,7 +482,6 @@ def run_command(
         # Execute workflow via high-level orchestration API
         result = analysis.run(
             from_scratch=from_scratch,
-            events=None,  # Process all events
             execution_mode=execution_mode,
             dry_run=dry_run,
             verbose=verbose,
@@ -992,7 +974,7 @@ def check_invalidating_fixes_command(
         "--check-remote/--no-check-remote",
         help=(
             "Also check the canonical git remote for invalidating fixes registered at a "
-            "later version than your install (ADR-17 version-skew discovery, opt-in). "
+            "later version than your install (version-skew discovery, opt-in). "
             "Best-effort raw HTTPS GET; offline degrades to a non-silent INFO, never blocks."
         ),
     ),
@@ -1232,9 +1214,10 @@ def synth_experiment_command(
         help="Load-smoke: validate config + build matrix in memory, no files written / no model generated.",
     ),
 ):
-    """Load-smoke the synthetic compute-config experiment: validate the config
-    (coupling + partition-cap validators) and build the partition-as-axis matrix;
-    unless --dry-run, also write the matrix CSV and generate the synthetic model.
+    """Load-smoke the synthetic experiment: validate the config
+    (coupling + partition-cap validators) and build the matrix, the compute-config
+    rows for an empty dem_resolution_ladder and the DEM-resolution rows for a set
+    ladder; unless --dry-run, also write the matrix CSV and generate the synthetic model.
     The full ensemble run is via scripts/experiments/synth_compute_config.py."""
     try:
         from .toolkit import Toolkit
@@ -1243,9 +1226,10 @@ def synth_experiment_command(
             config, hpc_system_config=hpc_system_config, dest_dir=dest_dir, dry_run=dry_run
         )
         cfg = result["config"]
+        swept = f"ladder={cfg.dem_resolution_ladder}" if cfg.dem_resolution_ladder else f"ranks={cfg.rank_sweep}"
         console.print(
             f"[green]synthetic_experiment_config validated[/green] "
-            f"({result['n_matrix_rows']} matrix rows; ranks={cfg.rank_sweep}, "
+            f"({result['n_matrix_rows']} matrix rows; {swept}, "
             f"grid={cfg.n_cols}x{cfg.n_rows} @ {cfg.cell_size_m} m)"
         )
         if dry_run:
@@ -1671,7 +1655,7 @@ def publish_command(
 
 
 reprex_app = typer.Typer(
-    help="Emit an experiment's reprex bundle, or check that one can run on your cluster.",
+    help="Emit an experiment's reprex bundle, check that one can run on your cluster, or write its runnable config.",
     no_args_is_help=True,
 )
 app.add_typer(reprex_app, name="reprex")
@@ -1772,6 +1756,182 @@ def reprex_check_command(
         # class maps to 1 in EXIT_CODE_MAP, so a script can tell a negative answer from a
         # check that could not run (2 or above) without reading the printed result.
         if not result.runnable:
+            raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _exit_on_error(exc)
+
+
+@reprex_app.command(name="config")
+def reprex_config_command(
+    bundle: Path = typer.Option(
+        ...,
+        "--bundle",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to an unpacked reprex bundle directory (the one holding cfg_system.yaml).",
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        dir_okay=False,
+        help="File to write. Default: system_config.yaml inside the bundle directory.",
+    ),
+    software_dir: Path | None = typer.Option(
+        None,
+        "--software-dir",
+        file_okay=False,
+        help=(
+            "A writable directory for the SWMM and TRITON-SWMM builds. Set it to run the experiment: "
+            "the config then points the two build directories at its swmm and tritonswmm subdirectories. "
+            "Default: both stay null, which suits rendering and EDA from the bundle."
+        ),
+    ),
+) -> None:
+    """Write a runnable system_config.yaml from a reprex bundle and print the path it wrote.
+
+    The bundle carries a scrubbed system config whose paths are relative to the bundle.
+    This command resolves them to absolute paths under the bundle directory, so the inputs
+    you fetched into the bundle load as they are, and keeps every other value as the
+    bundle has it.
+    """
+    try:
+        from .bundle._emit import reconstitute_runnable_config
+
+        if not (bundle / "cfg_system.yaml").is_file():
+            raise CLIValidationError(
+                argument="--bundle",
+                message=f"{bundle} holds no cfg_system.yaml, so it is not a reprex bundle directory",
+                fix_hint="Pass the unpacked directory that `hhemt reprex emit` wrote or `hhemt ingest` fetched.",
+            )
+        written = reconstitute_runnable_config(bundle, target_path=output, software_dir=software_dir)
+        print_verbatim(written)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _exit_on_error(exc)
+
+
+@app.command(name="cancel")
+def cancel_command(
+    experiment: Path | None = typer.Option(
+        None,
+        "--experiment",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to the experiment definition directory (the one holding experiment.yaml).",
+    ),
+    cluster: str | None = typer.Option(
+        None,
+        "--cluster",
+        help="With --experiment: target cluster key. Optional when the definition declares exactly one cluster.",
+    ),
+    system_config: Path | None = typer.Option(
+        None,
+        "--system-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Path to the system configuration YAML file. Give it with --analysis-config instead of --experiment.",
+    ),
+    analysis_config: Path | None = typer.Option(
+        None,
+        "--analysis-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Path to the analysis configuration YAML file. Give it with --system-config instead of --experiment.",
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="With --system-config and --analysis-config: optional path to the per-HPC-system configuration YAML file.",
+    ),
+    rule_class: list[str] | None = typer.Option(
+        None,
+        "--rule-class",
+        help=(
+            "Cancel only the jobs whose rule name starts with this prefix, pending and running, and leave "
+            "the other jobs running. Repeatable. Without it the whole workflow is cancelled."
+        ),
+    ),
+    wait_timeout: int = typer.Option(
+        120,
+        "--wait-timeout",
+        help="Maximum seconds to wait for the workflow process to exit after the cancel signal.",
+    ),
+) -> None:
+    """Cancel the running workflow of an analysis and print the cancellation record.
+
+    Name the analysis the way you started it: an experiment folder (`--experiment`, with
+    `--cluster` when the definition declares several clusters), or the configuration pair
+    (`--system-config` with `--analysis-config`). Exactly one of the two forms is required.
+
+    The record that `analysis.cancel()` returns is printed as it stands. The command exits 0
+    when the record's `success` is true and 1 otherwise, so a script can tell a refused or
+    unanswerable cancellation from a clean one. A `jobs_were_running` of `None` means the
+    command could not establish whether jobs were running.
+    """
+    try:
+        given_experiment = experiment is not None
+        given_pair = system_config is not None or analysis_config is not None
+        if given_experiment == given_pair:
+            raise CLIValidationError(
+                argument="--experiment/--system-config",
+                message=(
+                    "Give --experiment or the --system-config and --analysis-config pair, not both and not neither"
+                    if given_experiment
+                    else "Give --experiment or the --system-config and --analysis-config pair"
+                ),
+                fix_hint="Use the form you started the run with: `hhemt cancel --experiment DIR` or "
+                "`hhemt cancel --system-config CFG_SYS --analysis-config CFG_ANA`",
+            )
+        if given_pair and (system_config is None or analysis_config is None):
+            raise CLIValidationError(
+                argument="--system-config/--analysis-config",
+                message="--system-config and --analysis-config are given together",
+                fix_hint="Add the missing one, or use --experiment",
+            )
+        if given_experiment and hpc_system_config is not None:
+            raise CLIValidationError(
+                argument="--hpc-system-config",
+                message="--hpc-system-config applies only with --system-config and --analysis-config",
+                fix_hint="Drop it; --experiment reads the cluster from the experiment definition",
+            )
+        if given_pair and cluster is not None:
+            raise CLIValidationError(
+                argument="--cluster",
+                message="--cluster applies only with --experiment",
+                fix_hint="Drop --cluster, or use --experiment",
+            )
+
+        if given_experiment:
+            analysis = build_experiment_analysis(experiment, cluster)
+        else:
+            from .analysis import TRITONSWMM_analysis
+            from .system import TRITONSWMM_system
+
+            system = TRITONSWMM_system(system_config)
+            analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
+            system._analysis = analysis
+
+        record = analysis.cancel(
+            wait_timeout=wait_timeout,
+            rule_classes=tuple(rule_class) if rule_class else None,
+        )
+        print_verbatim(record)
+        if record.get("success") is not True:
             raise typer.Exit(1)
     except typer.Exit:
         raise
@@ -2422,14 +2582,6 @@ def _validate_cli_arguments(**kwargs) -> None:
             fix_hint="Choose one or omit both (default is --resume)",
         )
 
-    # Mutually exclusive: --event-ilocs and --event-range
-    if kwargs["event_ilocs"] and kwargs["event_range"]:
-        raise CLIValidationError(
-            argument="--event-ilocs/--event-range",
-            message="Cannot use both --event-ilocs and --event-range",
-            fix_hint="Choose one event selection method",
-        )
-
     # Mutually exclusive: --verbose and --quiet
     if kwargs["verbose"] and kwargs["quiet"]:
         raise CLIValidationError(
@@ -2513,14 +2665,6 @@ def _print_dry_run_summary(args: dict) -> None:
     # it was typed, so echoing that flag would report "False" on a dry run that resumes.
     console.print(f"  Mode:   {'fresh' if args['from_scratch'] else 'resume'}")
 
-    # Event selection
-    if args["event_ilocs"] or args["event_range"]:
-        console.print("\n[bold]Event Selection:[/bold]")
-        if args["event_ilocs"]:
-            console.print(f"  Indices: {args['event_ilocs']}")
-        if args["event_range"]:
-            console.print(f"  Range: {args['event_range']}")
-
     # HPC overrides (if any)
     hpc_overrides = {
         k: v
@@ -2552,7 +2696,7 @@ def _list_excludable_callback(value: bool) -> bool:
     from hhemt.bundle._path_policy import _EXCLUDABLE_CATALOG
 
     console.print(
-        "\n[bold]Inputs that MAY be excluded from a reprex bundle[/bold] (ADR-20 opt-out).\n"
+        "\n[bold]Inputs that MAY be excluded from a reprex bundle[/bold] (opt-out).\n"
         "A bundle with no exclude-config is SELF-CONTAINED: every input below is carried.\n"
         "Excluding an input carries it BY REFERENCE instead — supply a [cyan]citation[/cyan] "
         "(required) and, if a consumer can download it directly, a [cyan]contentUrl[/cyan].\n"
@@ -2613,7 +2757,7 @@ def bundle_command(
         None,
         "--case-manifest",
         help=(
-            "Optional case.yaml (ADR-12 CaseManifest). When given, the bundle "
+            "Optional case.yaml (a CaseManifest). When given, the bundle "
             "carries case.yaml so the combine checker sources case_name (BLOCKING: "
             "two different case studies refuse to combine)."
         ),
@@ -2634,7 +2778,7 @@ def bundle_command(
         dir_okay=False,
         readable=True,
         help=(
-            "ADR-20 governed opt-out: an operator-authored YAML naming inputs to carry BY "
+            "Governed opt-out: an operator-authored YAML naming inputs to carry BY "
             "REFERENCE instead of in-bundle. Omit for a SELF-CONTAINED bundle (the default). "
             "Run --list-excludable to see what may be opted out."
         ),
@@ -2655,7 +2799,7 @@ def bundle_command(
         readable=True,
         help=(
             "Optional experiment definition DIRECTORY (containing experiment.yaml), recorded as the "
-            "bundle's experiment identity. Images are carried by manifest (ADR-21); no .def is needed."
+            "bundle's experiment identity. Images are carried by manifest; no .def is needed."
         ),
     ),
     omit_output_zarrs: bool = typer.Option(
@@ -2922,8 +3066,8 @@ def ingest_command(
         None,
         "--hpc-system-config",
         help=(
-            "Path to YOUR cluster's hpc_system_config.yaml (ADR-6); this option is the only "
-            "place it comes from. The bundle never carries one (ADR-9), and it is "
+            "Path to YOUR cluster's hpc_system_config.yaml; this option is the only "
+            "place it comes from. The bundle never carries one, and it is "
             "REQUIRED for a container-mode bundle: the ContainerSpec that renders "
             "`apptainer exec {sif}` lives on it. Start from a worked example at "
             "test_data/norfolk_coastal_flooding/hpc_system_config_{uva,frontier}.yaml, "
@@ -3042,14 +3186,14 @@ def combine_command(
 ) -> None:
     """Combine N completed render bundles into one cross-experiment report + standalone bundle.
 
-    Each input is a bundle directory or a bundle ``.zip`` file; neither is modified. The
-    combine extracts each input's render set (everything but raw solver output) into a
-    private working folder, runs a metadata-compatibility check across the bundles
+    Each input is a bundle directory or a bundle ``.zip`` file, and the combine modifies
+    neither. The combine extracts each input's render set (everything but raw solver
+    output) into a private working folder, checks metadata compatibility across the bundles
     (aborting on any blocking divergence), renders one cross-experiment report, and emits
     a standalone combined RO-Crate bundle as one zip (``{output}.zip``, or a
     ``combined_{n}bundles_{git_sha}.zip`` beside the first bundle; ``--unzipped`` writes a
-    folder instead), then prints its path. Re-rendering a combined bundle's report is not
-    yet available from the zip.
+    folder instead), then prints the path. ``hhemt report-from-bundle`` regenerates the
+    report from the combined zip or from the folder.
     """
     from hhemt.bundle import combine_bundle
 
@@ -3063,6 +3207,36 @@ def combine_command(
     console.print(f"[green]Combined bundle emitted:[/green] {cb.root}")
 
 
+def _is_combined_bundle(bundle_path: Path) -> bool:
+    """Whether ``bundle_path`` is a combined bundle (``hhemt combine`` output) and not a single-analysis bundle.
+
+    ``bundle_path`` is a bundle zip or an unpacked bundle directory. A combined bundle holds
+    ``child_crates`` and ``bundle_manifest.json`` and carries no root ``cfg_analysis.yaml``; a
+    single-analysis bundle carries that config at its root. The root ``cfg_analysis.yaml`` decides
+    when both kinds' files are present, because the single-bundle path is the command's original
+    one and a bundle that holds the config is read as that kind. A zip is read from its entry
+    names, so the check unpacks nothing.
+    """
+    import zipfile
+
+    if bundle_path.is_file():
+        try:
+            with zipfile.ZipFile(bundle_path) as zf:
+                names = zf.namelist()
+        except (OSError, zipfile.BadZipFile):
+            return False
+        return (
+            "bundle_manifest.json" in names
+            and any(n.startswith("child_crates/") for n in names)
+            and "cfg_analysis.yaml" not in names
+        )
+    return (
+        (bundle_path / "child_crates").is_dir()
+        and (bundle_path / "bundle_manifest.json").is_file()
+        and not (bundle_path / "cfg_analysis.yaml").exists()
+    )
+
+
 @app.command(name="report-from-bundle")
 def report_from_bundle_command(
     bundle_path: Path = typer.Argument(
@@ -3071,27 +3245,38 @@ def report_from_bundle_command(
         file_okay=True,
         dir_okay=True,
         readable=True,
-        help="Path to the bundle zip (or unpacked bundle directory).",
+        help="Path to the bundle zip (or unpacked bundle directory), single or combined.",
     ),
-    format: str = typer.Option(
-        "zip",
+    format: str | None = typer.Option(
+        None,
         "--format",
-        help="Output format: 'zip' (single-HTML wrapped in a zip — default) or 'html' (uncompressed single-file).",
+        help=(
+            "Output format: 'zip' (single-HTML wrapped in a zip) or 'html' (uncompressed single-file). "
+            "Default: the report_html_mode setting of the bundle's analysis config; a combined bundle "
+            "carries no analysis config and reads 'auto'."
+        ),
+    ),
+    declare_stale_plots: bool = typer.Option(
+        False,
+        "--declare-stale-plots",
+        help=(
+            "Render although the bundle's figures carry a build stamp that differs from the running "
+            "build, or no stamp. Without this flag the render refuses with a StalePlotsError."
+        ),
     ),
 ) -> None:
-    # Render a fresh analysis_report from a portable render bundle.
-    #
-    # This is a thin wrapper over
-    # Bundle.from_directory(bundle_root).regenerate_report(format=format).
-    # The Bundle class derives the static_backend from the bundle's
-    # cfg_analysis.yaml (cfg-controlled, default 'plotly'), so no
-    # static_backend kwarg is threaded through the CLI.
-    #
-    import json
-    import zipfile
+    """Render a fresh analysis_report from a portable render bundle.
 
+    The bundle is a single-analysis bundle (``hhemt bundle``) or a combined bundle
+    (``hhemt combine``), each given as a zip or as an unpacked directory. A bundle that
+    holds ``child_crates`` and ``bundle_manifest.json`` and no root ``cfg_analysis.yaml``
+    is a combined bundle and renders through ``CombinedBundle.regenerate_report``; any
+    other bundle renders through ``Bundle.regenerate_report``. The single-analysis
+    ``Bundle`` derives the static_backend from the bundle's ``cfg_analysis.yaml``
+    (default 'plotly'), so the command threads no static_backend option.
+    """
     from hhemt.bundle import Bundle, _get_toolkit_git_sha
-    from hhemt.bundle._combine import CombinedBundle, is_combined_manifest, unpack_member_zip
+    from hhemt.bundle._combine import CombinedBundle, unpack_member_zip
 
     is_zip = bundle_path.is_file() and bundle_path.suffix == ".zip"
     if not is_zip and not bundle_path.is_dir():
@@ -3100,24 +3285,25 @@ def report_from_bundle_command(
             message=f"{bundle_path} is neither a .zip file nor a directory",
             fix_hint=("Pass a path to a bundle.zip produced by `hhemt bundle`, or to an unpacked bundle directory."),
         )
-    # The manifest says which kind of bundle this is: a combined bundle (it carries child_crates) is
-    # re-rendered through CombinedBundle, a single-analysis bundle through Bundle.
-    try:
-        if is_zip:
-            with zipfile.ZipFile(bundle_path) as zf:
-                head = json.loads(zf.read("bundle_manifest.json"))
-        else:
-            head = json.loads((bundle_path / "bundle_manifest.json").read_text())
-    except (KeyError, OSError, ValueError):
-        head = {}
-    combined = is_combined_manifest(head)
-    if combined:
+
+    if _is_combined_bundle(bundle_path):
         bundle = CombinedBundle.from_zip(bundle_path) if is_zip else CombinedBundle.from_directory(bundle_path)
         bundle_root = bundle.root
         bundle_manifest = json.loads((bundle_root / "bundle_manifest.json").read_text())
     else:
         bundle_root = unpack_member_zip(bundle_path) if is_zip else bundle_path
-        bundle = Bundle.from_directory(bundle_root)
+        try:
+            bundle = Bundle.from_directory(bundle_root)
+        except FileNotFoundError as exc:
+            raise CLIValidationError(
+                argument="bundle_path",
+                message=(
+                    f"{bundle_path} holds neither a single-analysis bundle's files "
+                    f"(bundle_manifest.json and cfg_analysis.yaml) nor a combined bundle's files "
+                    f"(bundle_manifest.json and child_crates, no cfg_analysis.yaml)"
+                ),
+                fix_hint="Pass a bundle produced by `hhemt bundle` or `hhemt combine`, as a zip or unpacked.",
+            ) from exc
         bundle_manifest = bundle.manifest
 
     local_sha = _get_toolkit_git_sha(strict=False)
@@ -3148,7 +3334,7 @@ def report_from_bundle_command(
         fast_rmtree(locks_dir)
         locks_dir.mkdir(parents=True, exist_ok=True)
 
-    rendered = bundle.regenerate_report(format=format)
+    rendered = bundle.regenerate_report(format=format, declare_stale_plots=declare_stale_plots)
     console.print(f"[green]Report rendered:[/green] {rendered}")
 
 

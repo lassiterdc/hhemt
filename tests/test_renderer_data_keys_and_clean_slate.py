@@ -230,11 +230,13 @@ _ALTERNATIVES = (
     "|" r"\b" "1" "a" r"\.[0-9]+" r"\b",
     "|" r"\(" "D" "[0-9]{1,2}" r"\)",
     "|" r"\b" "D" "(1[0-9]|2[0-9]) " "(ruled|option)",
+    "|" r"(?-i:\b([0-9][a-z]\.[0-9]+|I[0-9]{1,3}|[EO]-[0-9]{1,3}|D-[A-Z])\b)",
+    "|" r"(?-i:(?<![-\w])N[0-9]{1,2}\b|\b" "run " "G" r"-B\b|\b[Bb]inding[ -][0-9]+\b)",
 )
 MATCHER = re.compile("".join(_ALTERNATIVES), re.IGNORECASE)
 
 #: The roots and the exclusions of the clean-slate census. The versioning system is where history is the subject.
-ROOTS = ("src", "docs", "scripts", "tests", "README*")
+ROOTS = ("src", "docs", "scripts", "tests", "README*", "_layout_relevant_files.yaml", "_caption_pairing_allowlist.yaml")
 EXCLUDED = (
     ":!docs/reference/bundles",
     ":!src/hhemt/version_migration",
@@ -248,8 +250,10 @@ EXCLUDED = (
 
 #: (path, substring) pairs of added lines that the matcher reports and that are NOT history: an identifier or a string
 #: that names a name in order to assert it is absent, or a data description a variable's attributes carry. The measured
-#: set is empty: every added line the matcher reports at the working tree is rewritten.
-EXCEPTIONS: tuple[tuple[str, str], ...] = ()
+#: set is the one code value below; every other added line the matcher reports at the working tree is rewritten.
+EXCEPTIONS: tuple[tuple[str, str], ...] = (
+    ("docs/reference/coupled-inflow-nodes.md", "| `lega" + "cy`, an explicit opt-in |"),
+)
 
 
 def _added_lines(diff_text: str) -> list[tuple[str, int, str]]:
@@ -269,8 +273,16 @@ def _added_lines(diff_text: str) -> list[tuple[str, int, str]]:
     return out
 
 
+#: A notebook member that carries an embedded image: the key `image/png` or `image/jpeg` and a value that is a
+#: single run of at least two hundred base64 characters (with the optional trailing line break the notebook format
+#: writes), and nothing else on the line. A person cannot read such a value, and a short run of its characters can
+#: match any word pattern by chance, so the line is not text a reader meets. A line that holds anything besides the
+#: member, and a member whose value is short or holds a character outside the base64 alphabet, is read as before.
+_EMBEDDED_IMAGE = re.compile(r'^\s*"image/(?:png|jpeg)":\s*"[A-Za-z0-9+/=]{200,}(?:\\n)?",?\s*$')
+
+
 def _hits(diff_text: str) -> list[tuple[str, int, str]]:
-    return [h for h in _added_lines(diff_text) if MATCHER.search(h[2])]
+    return [h for h in _added_lines(diff_text) if MATCHER.search(h[2]) and not _EMBEDDED_IMAGE.match(h[2])]
 
 
 def _excepted(hit: tuple[str, int, str]) -> bool:
@@ -331,8 +343,22 @@ def test_the_matcher_fires_on_each_of_its_alternatives_in_an_included_path_and_o
         "# stored at " + "layout " + "2" + "6",
         "# decided " + "(D" + "17" + ")",
         "# " + "D" + "19 " + "ruled" + " this",
+        "# built in chunk " + "6" + "b" + ".1",
+        "# the item " + "I" + "62" + " rewrote it",
+        "# erratum " + "E" + "-55" + " applies",
+        "# ruled at " + "O" + "-28",
+        "# decision " + "D" + "-H" + " binds it",
+        "# decision row " + "N" + "16 owns it",
+        "# the " + "run " + "G" + "-B review found it",
+        "# binding " + "13 of the style brief",
     )
-    present = ("# the depth above the bed", "# a name that states no unit", "# the layout is 28", "# a bold design")
+    present = (
+        "# the depth above the bed",
+        "# a name that states no unit",
+        "# the layout is 28",
+        "# a bold design",
+        "# the n16 offset of the grid",
+    )
     header = "diff --git a/src/hhemt/x.py b/src/hhemt/x.py\n+++ b/src/hhemt/x.py\n"
     diff = header + f"@@ -0,0 +1,{len(phrases) + len(present)} @@\n"
     diff += "".join(f"+{p}\n" for p in (*phrases, *present))
@@ -386,6 +412,37 @@ def test_the_exclusions_keep_the_versioning_system_and_the_fixtures_out_of_the_c
     assert reported == sorted(included), reported
 
 
+def test_the_census_reads_the_two_root_level_allowlists(tmp_path):
+    """Control for the roots: in a scratch repository, a history phrase added to each root-level allowlist is reported.
+
+    Class: one scratch repository whose second commit adds the same history phrase to ``_layout_relevant_files.yaml``,
+    to ``_caption_pairing_allowlist.yaml`` and to an unlisted root-level file, diffed with the census's own pathspecs.
+    Why required: the roots are git pathspecs, so only a real ``git diff`` shows that they take the two files in and
+    take nothing else in.
+    Kills it: a root that is misspelled; a root so wide that it reads every root-level file.
+    """
+    phrase = "# " + "lega" + "cy path\n"
+    listed = ["_layout_relevant_files.yaml", "_caption_pairing_allowlist.yaml"]
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+    git("init", "-q")
+    for rel in (*listed, "justfile"):
+        (tmp_path / rel).write_text("x: 1\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    for rel in (*listed, "justfile"):
+        (tmp_path / rel).write_text("x: 1\n" + phrase, encoding="utf-8")
+    reported = sorted({p for p, _, _ in _hits(_diff("HEAD", None, repo=tmp_path))})
+    assert reported == sorted(listed), reported
+
+
 @pytest.mark.skipif(not _git_has(TIP_BEFORE_SWEEP), reason="the commit before the sweep is not in this clone")
 @needs_base
 def test_the_matcher_returns_source_lines_over_the_branch_as_it_was_before_the_sweep():
@@ -400,3 +457,36 @@ def test_the_matcher_returns_source_lines_over_the_branch_as_it_was_before_the_s
     src = [h for h in hits if h[0].startswith("src/")]
     assert len(src) >= 5, [f"{p}:{n}" for p, n, _ in src]
     assert len(hits) >= 150, len(hits)
+
+
+def _notebook_diff(*added: str) -> str:
+    body = "".join(f"+{line}\n" for line in added)
+    return f"+++ b/docs/tutorials/example.ipynb\n@@ -0,0 +1,{len(added)} @@\n{body}"
+
+
+def test_an_embedded_image_member_is_not_read_and_every_other_notebook_line_still_is():
+    """Property: the census skips a diff line that holds only an embedded base64 image member and reads every other
+    added line of a notebook, markdown cells and code cells included.
+
+    Class: added lines of a notebook diff. A line is skipped only when it is a member keyed ``image/png`` or
+    ``image/jpeg`` whose whole value is a run of at least two hundred base64 characters.
+    Why required: a long base64 value holds, by chance, substrings that look like a label; no person reads the value.
+    Kills it: a skip keyed on the notebook path (the cells would go unread); a skip keyed on the key alone.
+    Passes under: any predicate that skips the same lines and no others.
+    Must-fire control: (a) a base64 image member holding a label-shaped run is not reported; (b) the same diff with a
+    real label added in a markdown-cell line is reported; (c) a short ``image/png`` value, a value outside the base64
+    alphabet and a line that adds text after the member are reported.
+    """
+    label_shaped = "A" * 120 + "+N" + "12+" + "A" * 120
+    member = f'      "image/png": "{label_shaped}",'
+    assert MATCHER.search(member), "the planted member must be one the matcher would report without the skip"
+    assert _hits(_notebook_diff(member)) == []
+    assert _hits(_notebook_diff(member.replace("image/png", "image/jpeg"), member.replace('",', '\\n",'))) == []
+    real_label = '    "The choice follows ' + "O" + "-32 and chunk " + "10c" + '.1 of the plan.\\n",'
+    reported = _hits(_notebook_diff(member, real_label))
+    assert [t for _, _, t in reported] == [real_label]
+    short = '      "image/png": "x",'
+    non_base64 = f'      "image/png": "{label_shaped[:100]} {label_shaped[100:]}",'
+    trailing = member + " N" + "12 trailing text"
+    assert MATCHER.search(trailing) and MATCHER.search(non_base64)
+    assert [t for _, _, t in _hits(_notebook_diff(short, non_base64, trailing))] == [non_base64, trailing]

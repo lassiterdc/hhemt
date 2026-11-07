@@ -2,7 +2,7 @@
 `VIRTUAL_ENV` (work package 5a, chunk 5a.4).
 
 `tests/test_check_docs_content.py` imports `mkdocstrings_handlers`, which only the `docs` extra provides; CI installs
-`.[test,docs]` but no recipe did, so a laptop run on an interpreter without the handler failed four tests. The shell
+`.[test,docs]` but no recipe did, so a run on an interpreter without the handler failed four tests. The shell
 exports `VIRTUAL_ENV` and `uv run --active` follows it, so the three `conda run ... uv run --active` recipes are run
 with `env -u VIRTUAL_ENV` BEFORE `conda run` (`conda run` re-exports its own prefix to what it launches, so removing
 the variable inside the command would not work). The checks read the justfile text only: nothing is built or run.
@@ -96,20 +96,21 @@ def _selects(expression: str, markers: set[str]) -> bool:
     return Expression.compile(expression).evaluate(lambda name, **_kw: name in markers)
 
 
-def test_the_laptop_recipe_excludes_the_snakemake_subprocess_tests_and_their_own_recipe_selects_them():
-    """Property: `test-laptop`'s `-m` expression does not select a test marked `requires_snakemake_subprocess`, and
-    `test-snakemake-subprocess` selects exactly those that are not `compile_tier`.
+def test_the_no_compile_recipe_excludes_the_snakemake_subprocess_tests_and_their_own_recipe_selects_them():
+    """Property: `test-no-compile-no-subprocess`'s `-m` expression does not select a test marked
+    `requires_snakemake_subprocess`, and `test-snakemake-subprocess` selects exactly those that are not `compile_tier`.
 
-    Class: DR-12 Q1 (the 96 leave the laptop tier). Why required: the pool without them measured 354.57 s, with them
-    843.49 s. What kills it: dropping `not requires_snakemake_subprocess` from the laptop recipe, or misspelling the
+    Class: the tests that start Snakemake as a child process stay out of the parallel tier. Why required: run serially
+    they cost several times the rest of the pool. What kills it: dropping `not requires_snakemake_subprocess` from
+    the no-compile recipe, or misspelling the
     marker (the misspelt expression selects a marked test again). Control: an unmarked non-compile test is still
-    selected by the laptop recipe, and a `compile_tier` test is selected by neither."""
+    selected by the no-compile recipe, and a `compile_tier` test is selected by neither."""
     text = _JUSTFILE.read_text(encoding="utf-8")
-    laptop = _marker_expression(text, "test-laptop")
-    assert not _selects(laptop, {"requires_snakemake_subprocess"}), laptop
-    assert not _selects(laptop, {"requires_snakemake_subprocess", "slow"}), laptop
-    assert _selects(laptop, set()) and _selects(laptop, {"slow"}), "control: ordinary tests stay selected"
-    assert not _selects(laptop, {"compile_tier"})
+    no_compile = _marker_expression(text, "test-no-compile-no-subprocess")
+    assert not _selects(no_compile, {"requires_snakemake_subprocess"}), no_compile
+    assert not _selects(no_compile, {"requires_snakemake_subprocess", "slow"}), no_compile
+    assert _selects(no_compile, set()) and _selects(no_compile, {"slow"}), "control: ordinary tests stay selected"
+    assert not _selects(no_compile, {"compile_tier"})
     own = _marker_expression(text, "test-snakemake-subprocess")
     assert _selects(own, {"requires_snakemake_subprocess"})
     assert not _selects(own, {"requires_snakemake_subprocess", "compile_tier"}) and not _selects(own, set())

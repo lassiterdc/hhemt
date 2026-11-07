@@ -1,38 +1,21 @@
 # Combining experiments into one cross-experiment report
 
-`hhemt combine` ingests **two or more** completed render bundles from different
-experiments, checks that they are compatible, and emits a single standalone
-**combined bundle** with one cross-experiment report, itself a valid RO-Crate
-containing each input bundle intact.
+## Goal
 
-Use this when you have run the same (or a compatible) analysis under different
-conditions (e.g. two compute configurations, or two clusters) and want one
-report that presents them side by side.
+Merge completed render bundles of compatible experiments into one standalone **combined bundle** with a single cross-experiment report. The combined bundle is a valid RO-Crate that contains each input bundle intact. Combine experiments that ran the same analysis, or compatible analyses, under different conditions such as compute configurations or clusters, and read the results side by side.
 
 ## Prerequisites
 
---8<-- "prerequisites-base.md"
-- **Two or more emitted bundles on disk.** Produce each with `hhemt bundle`
-  after a run that has rendered its report. `hhemt bundle --system-config
-  my_system.yaml --analysis-config my_analysis.yaml` writes the archive; see the
-  [CLI reference](../reference/cli.md) for its optional flags.
-- Each input is a bundle **zip** (as `hhemt bundle` writes it) or an **unpacked
-  bundle directory**; give them as they are, with no unzip step. A bundle zip is
-  compressed entry by entry: zarr chunk files are stored (the toolkit already
-  compresses them) and every other entry is deflated at zlib level 6. A zip made by an
-  earlier toolkit stores every entry uncompressed, and is accepted too. The inputs are
-  never modified.
-- Combine operates on **single-analysis** bundles (each ships its consolidated
-  `analysis_datatree.zarr` at the bundle root) **and on sensitivity-primary
-  bundles** (each ships `experiment_datatree.zarr` at the bundle root; a bundle
-  produced before the store unification ships `analysis_datatree.zarr` or
-  `sensitivity_datatree.zarr` and is still accepted). The
-  combine step resolves whichever consolidated tree a bundle ships. It records
-  the divergences its compatibility check finds in the combined bundle's
-  `combined_compatibility.json`, and the cross-experiment report presents, for a
-  clean-vs-resume sensitivity-primary pair, a
-  `cross_experiment_intercomparison` panel derived cross-bundle from the two
-  consolidated trees (see *Compatibility gates* below).
+- A working [installation](installation.md).
+- More than one emitted bundle on disk. `hhemt bundle --system-config my_system.yaml --analysis-config my_analysis.yaml` writes the archive for an analysis with a rendered report, and the [CLI reference](../reference/cli.md) lists the optional flags.
+- Each input is a bundle **zip**, as `hhemt bundle` writes the zip, or an **unpacked bundle directory**. Give the inputs without unzipping them. The toolkit never modifies the inputs. A bundle zip is compressed entry by entry. Zarr chunk files are stored because the toolkit compresses them already, and every other entry is deflated at zlib level 6. A zip that stores every entry uncompressed is accepted too.
+- Single-analysis bundles ship the consolidated `analysis_datatree.zarr` at the bundle root, and sensitivity-primary bundles ship `experiment_datatree.zarr` at the bundle root. Combine operates on both. A bundle with `analysis_datatree.zarr` or `sensitivity_datatree.zarr` at the root is accepted too. Combine resolves whichever consolidated tree a bundle ships and records the divergences that the compatibility check finds in `combined_compatibility.json` of the combined bundle. For a clean-versus-resume sensitivity-primary pair, the report presents a `cross_experiment_intercomparison` panel that the combine derives from both consolidated trees, as [Compatibility gates](#compatibility-gates) describes.
+
+## Key references
+
+- The [CLI reference](../reference/cli.md#inspecting-and-reporting) lists the flags of `hhemt combine` and `hhemt report-from-bundle`.
+- The [Bundles API reference](../reference/api-bundles.md) documents `CombinedBundle`.
+- [Producing a report](../reference/example-report.md#producing-a-report) describes the report container.
 
 ## Combine the bundles
 
@@ -40,68 +23,39 @@ report that presents them side by side.
 hhemt combine bundle_a.zip bundle_b.zip -o combined
 ```
 
-- Positional arguments: two or more bundle zips or bundle directories.
-- `-o` / `--output` (optional): the combined bundle is written as one zip,
-  `{output}.zip` (a value that already ends in `.zip` is used as given). Defaults to
-  `{first_bundle}/../combined_{n}bundles_{git_sha}.zip`.
-- `--unzipped` (optional): write a folder at `--output` instead, holding each
-  experiment's full bundle under `child_crates/{experiment_id}/`.
-- `--workdir` (optional): the directory under which the combine makes its private working
-  folder. Defaults to the system temporary directory. The folder holds each input's
-  render set (everything except the raw `out_*/bin` solver output, which no combine step
-  reads) and is removed when the combine ends, including on SIGTERM.
+- The positional arguments name the bundle zips or bundle directories of several bundles.
+- `-o` or `--output`, optional, writes the combined bundle as the zip `{output}.zip`, and a value that already ends in `.zip` is used as given. The default is `{first_bundle}/../combined_{n}bundles_{git_sha}.zip`.
+- `--unzipped`, optional, writes a folder at `--output` in place of a zip, with the full bundle of each experiment under `child_crates/{experiment_id}/`.
+- `--workdir`, optional, sets the directory that holds the private working folder of the combine. The default is the system temporary directory. The folder holds the render set of each input, meaning everything except the raw `out_*/bin` solver output that the combine ignores. The combine removes the folder on exit, including on SIGTERM.
 
-The command (1) refuses an input whose consolidated tree was carried without its data,
-(2) extracts each input's render set into the working folder, (3) runs a
-metadata-compatibility check, (4) renders one cross-experiment report, and (5) writes the
-combined bundle at the output path, replacing any earlier output. It **aborts with an
-error** if the bundles carry a *blocking* divergence (see below). The combined zip holds
-the root files (crate, read-models, manifest, report, `plots/`) and, per experiment,
-`child_crates/{experiment_id}.zip` (that experiment's own bundle zip) and
-`child_crates/{experiment_id}.refreshed/` (the two child figures the combine re-rendered).
+The command takes the steps below in order.
+
+1. Refuse an input whose consolidated tree was carried without data.
+2. Extract the render set of each input into the working folder.
+3. Run a metadata-compatibility check.
+4. Render one cross-experiment report.
+5. Write the combined bundle at the output path, replacing any earlier output.
+
+The command **aborts with an error** when the bundles carry a *blocking* divergence, as the severity table below describes. The combined zip holds the root files, meaning the crate, the read-models, the manifest, the report, and `plots/`. Per experiment, the zip also holds `child_crates/{experiment_id}.zip`, the bundle zip of the experiment, and `child_crates/{experiment_id}.refreshed/`, the child figures that the combine re-rendered.
 
 ## Read the compatibility report
 
-The combined bundle's report opens with a **Combine Provenance & Compatibility**
-section. Its table, *What Was Combined (data provenance)*, lists each combined
-experiment with its role, model, member count, and the toolkit and solver builds
-that produced it. The compatibility check itself runs before the report is built.
-It compares a fixed set of identity, sensitivity and compute fields, plus the
-RO-Crate schema version, and leaves out the analysis id and the toolkit version. It
-classifies each difference it finds by severity, and it records the result in the
-combined bundle's `combined_compatibility.json`. A non-blocking
-divergence that the combine's intended structure does not account for appears as a
-warning row under **Cross-Experiment Errors and Warnings**:
+The report of the combined bundle opens with a **Combine Provenance & Compatibility** section. The provenance table lists each combined experiment with the role, the model, the member count, the toolkit build, and the solver build that produced the experiment. The compatibility check runs before the report is built. The check compares a fixed set of identity, sensitivity, and compute fields, plus the RO-Crate schema version, and leaves out the analysis id and the toolkit version. The check classifies each difference by severity and records the result in `combined_compatibility.json` of the combined bundle. A non-blocking divergence that the intended structure of the combine leaves unexplained appears as a warning row under **Cross-Experiment Errors and Warnings**.
 
 | Severity | Meaning | Effect |
 |----------|---------|--------|
-| `informational` | An expected divergence (e.g. HPC/compute config). | Recorded only in `combined_compatibility.json`; non-blocking. |
-| `warning` | A surfaced difference that may matter (e.g. a sensitivity-axis field, or an RO-Crate schema-version skew). | Recorded in `combined_compatibility.json`, and also listed under **Cross-Experiment Errors and Warnings** unless the combine expects it (a model toggle between paired arms, `sensitivity_analysis`, or `TRITONSWMM_branch_key`); non-blocking. |
-| `blocking` | A different experiment entirely (e.g. differing weather events or enabled models). | **Aborts** the combine. |
+| `informational` | An expected divergence, such as the HPC compute config. | Recorded in `combined_compatibility.json` only. Non-blocking. |
+| `warning` | A surfaced difference that may matter, such as a sensitivity-axis field or an RO-Crate schema-version skew. | Recorded in `combined_compatibility.json` and listed under **Cross-Experiment Errors and Warnings**, unless the combine expects the difference. A model toggle between paired arms, `sensitivity_analysis`, and `TRITONSWMM_branch_key` are expected. Non-blocking. |
+| `blocking` | A different experiment entirely, such as differing weather events or enabled models. | **Aborts** the combine. |
 
-??? note "How this severity differs from the bug-registry severity"
-    `CompatibilitySeverity` (combine-admissibility) is distinct from the
-    bug-registry `severity` (output-invalidation). They answer different questions:
-    one decides whether two bundles may be combined, the other whether a recorded
-    bug invalidates an output.
+??? note "Compatibility severity versus bug-registry severity"
+    `CompatibilitySeverity` decides whether bundles may be combined. The bug-registry `severity` decides whether a recorded bug invalidates an output.
 
 ### Compatibility gates
 
-`hhemt combine` refuses to combine bundles from two different case studies: a
-`case_name` divergence (sourced from each bundle's `case.yaml`) is classified
-**blocking** and aborts the combine. A compute-config divergence, a difference in the
-`partitions` map or `gpu_allocation_flavor`, sourced from each bundle's scrubbed
-`hpc_system_config.identity.yaml`, is classified **informational**: it is expected, so
-it is recorded only in the combined bundle's `combined_compatibility.json` and does not
-abort, because comparing the same experiment across UVA and Frontier is a supported use. The combined report additionally carries a
-clean-vs-resume `cross_experiment_intercomparison` figure under the "Cross-Experiment
-Results" category, projected from the `combined_intercomparison.json` read-model, so a
-local re-render of the combined report picks it up with no re-merge.
+`hhemt combine` refuses to combine bundles from different case studies. A `case_name` divergence, sourced from the `case.yaml` of each bundle, is classified **blocking** and aborts the combine. A compute-config divergence, meaning a difference in the `partitions` map or `gpu_allocation_flavor` sourced from the scrubbed `hpc_system_config.identity.yaml` of each bundle, is classified **informational**. The divergence is expected, so the combine records the divergence only in `combined_compatibility.json` of the combined bundle and leaves the combine running, because comparing the same experiment across clusters is a supported use. The combined report also carries a clean-versus-resume `cross_experiment_intercomparison` figure under the "Cross-Experiment Results" category, projected from the `combined_intercomparison.json` read-model, so a local re-render of the combined report picks up the figure with no re-merge.
 
-The enabled models come from the system config's toggles. Bundles from the same
-experiment agree on them; the paired model arms of one experiment are the one
-divergence the combine admits as a warning rather than a block. A single-model arm
-sets, for example:
+The enabled models come from the toggles of the system config. Bundles from the same experiment agree on the toggles. The paired model arms of a single experiment are the sole divergence that the combine admits as a warning and never as a block. A single-model arm sets the toggles below.
 
 ```yaml
 toggle_triton_model: false
@@ -111,44 +65,25 @@ toggle_swmm_model: false
 
 ## Regenerate or inspect the combined report
 
-`hhemt report-from-bundle combined.zip` re-renders a combined bundle. It unpacks the
-render set beside the zip, into `combined/`, and renders there; a second run reuses the
-folder while the zip is unchanged. In Python, `CombinedBundle.from_zip(path)` does the
-unpack and `CombinedBundle.from_directory(folder)` opens a folder, and either handle's
-`regenerate_report()` renders.
+`hhemt report-from-bundle` regenerates a combined report. Point the command at the combined zip or at the combined folder.
 
-Each input experiment is preserved intact: as `child_crates/{experiment_id}.zip` in the
-combined zip, and as `child_crates/{experiment_id}/` in a `--unzipped` folder or after unpacking.
-A child is a complete single-analysis bundle, so `hhemt report-from-bundle` renders
-one once every figure's recorded build stamp matches the running build. It refuses with
-a `StalePlotsError` otherwise, and also when the figures carry no stamp at all or
-disagree with each other, and the override is Python-only:
-`Bundle.from_directory(child).regenerate_report(declare_stale_plots=True)`.
-A child's EDA surface is the per-experiment one, reached through the Python API
-(`Bundle.from_directory(child).eda()`), which carries no build guard. A combined
-bundle has no aggregate EDA surface.
+```bash
+hhemt report-from-bundle combined.zip
+```
 
-??? note "How the combined report is laid out"
-    The combined report is one cohesive Snakemake `--report`. Its sidebar opens
-    with four cross-experiment sections, in this order:
-    **Combine Provenance & Compatibility**, **Cross-Experiment Results** (the
-    clean-vs-resume intercomparison, as a table and as maps),
-    **Cross-Experiment Errors and Warnings** (each experiment's validation checks,
-    side by side), and **Cross-Experiment Disk Utilization**. Below them, the
-    combined experiments' own figures are filed under the section each figure has
-    in a single-experiment report (for example System Information). The
-    sub-heading names the experiment, followed by the figure's own sub-heading when
-    it has one. The name is the experiment id without its trailing
-    model token, so `synth_cc_clean_tritonswmm` and `synth_cc_clean_triton` both
-    appear as `synth_cc_clean`. An experiment's TRITON-SWMM and pure-TRITON runs
-    share one page, with the pure-TRITON figure below the TRITON-SWMM one. A figure
-    that no section claims is listed under Other. These pages are composed at
-    combine time under `paired_figures/` from each experiment's figures in
-    `child_crates/{experiment_id}/plots/`, so there is no click-through to a
-    separate document. There is no `index.html` front door: everything is
-    navigable inside the single `analysis_report.html` (or the size-friendly
-    `analysis_report.zip`).
+The command unpacks the render set of a zip beside the zip, into `combined/`, and renders there. A second invocation reuses the folder while the zip is unchanged. A bundle is a combined bundle when the bundle holds `child_crates` and `bundle_manifest.json` and carries no root `cfg_analysis.yaml`. A combined bundle has no analysis config, so the report container defaults to `auto`. `--format html` or `--format zip` chooses the container, as [Producing a report](../reference/example-report.md#producing-a-report) describes. The render refuses with a `StalePlotsError` when the build stamp of a figure differs from the running build, and `--declare-stale-plots` overrides the refusal, as the [CLI reference](../reference/cli.md#inspecting-and-reporting) describes. In Python, `CombinedBundle.from_zip(path)` unpacks a zip, `CombinedBundle.from_directory(folder)` opens a folder, and `regenerate_report()` on either handle renders. The [Bundles API reference](../reference/api-bundles.md) documents both.
 
-The combined report is a first-class Snakemake `--report` (shared chrome, nav, and CSS
-with the single-experiment reports), and re-rendering it locally from the bundled
-read-models needs no re-merge.
+??? note "Rendering or inspecting a single child of a combined bundle"
+    Each input experiment stays intact, as `child_crates/{experiment_id}.zip` in the combined zip and as `child_crates/{experiment_id}/` in an `--unzipped` folder or after unpacking. A child is a complete single-analysis bundle, so `hhemt report-from-bundle` renders a child once the recorded build stamp of every figure matches the running build. The command refuses with a `StalePlotsError` otherwise, and when the figures carry no stamp or disagree with each other. The override is `hhemt report-from-bundle --declare-stale-plots` on the directory of the child, or in Python `Bundle.from_directory(child).regenerate_report(declare_stale_plots=True)`. The EDA surface of a child is the per-experiment surface, reached through the Python API with `Bundle.from_directory(child).eda()`, and that call carries no build guard. A combined bundle has no aggregate EDA surface.
+
+??? note "Layout of the combined report"
+    The combined report is one cohesive Snakemake `--report`. The sidebar opens with the cross-experiment sections below in order.
+
+    - **Combine Provenance & Compatibility**
+    - **Cross-Experiment Results**, the clean-versus-resume intercomparison as a table and as maps
+    - **Cross-Experiment Errors and Warnings**, the validation checks of each experiment side by side
+    - **Cross-Experiment Disk Utilization**
+
+    Below the sections, the figures of the combined experiments are filed under the section that each figure has in a single-experiment report, such as System Information. The sub-heading names the experiment, followed by the sub-heading of the figure, when the figure carries a sub-heading. The name is the experiment id without the trailing model token. The ids `synth_cc_clean_tritonswmm` and `synth_cc_clean_triton` both appear as `synth_cc_clean`. The TRITON-SWMM and pure-TRITON analyses of an experiment share one page, with the pure-TRITON figure below the TRITON-SWMM figure. A figure that no section claims is listed under Other. The combine composes the pages under `paired_figures/` from the figures of each experiment in `child_crates/{experiment_id}/plots/`, so no click-through to a separate document exists. No `index.html` front door exists, and everything is navigable inside the single `analysis_report.html`, or the size-friendly `analysis_report.zip`.
+
+The combined report is a Snakemake `--report` with the navigation and styling of the single-experiment reports. Re-rendering the report locally from the bundled read-models needs no re-merge.

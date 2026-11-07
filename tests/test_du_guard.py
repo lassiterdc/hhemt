@@ -918,8 +918,11 @@ def test_the_gone_driver_transcript_does_not_claim_a_kill_or_a_completed_workflo
 def test_the_full_cancel_distinguishes_an_unanswerable_probe_from_a_gone_session(tmp_path, monkeypatch):
     """Property: on the FULL cancel (`rule_classes=None`, the arm that has no selective arm
     and therefore nothing to cancel either way) an unanswerable probe returns
-    `jobs_were_running` that is not False, while a GONE probe returns the documented False --
-    so the two are distinguishable on that arm too.
+    `jobs_were_running` that is not False, while a GONE probe returns `None` (the running
+    state is unknown: only the driver's session was checked, never the workers it submitted).
+    The two arms report the same value for that field and are told apart by `errors` and
+    `success`: the UNKNOWN arm reports the failed probe and `success` False, the GONE arm
+    reports no error and `success` True.
 
     Class: NEW CAPABILITY -- the fourth arm. The three sibling tests all pass
     `rule_classes`, so nothing exercised UNKNOWN or GONE on the arm where the probe result
@@ -942,10 +945,8 @@ def test_the_full_cancel_distinguishes_an_unanswerable_probe_from_a_gone_session
     Invocation not isolatable from this tree -- discrimination shown instead: collapsing the
     UNKNOWN arm onto the GONE return re-reds the first assertion.
 
-    Residual, named: this pins the DISTINCTION and does not ask the full-cancel GONE arm to
-    stop reporting False. That arm still answers a question about the sims with a fact about
-    the session, and it is recorded as a per-package erratum rather than fixed here, because
-    changing a public return on that path is a shape decision.
+    The full-cancel GONE arm answers a question about the sims with a fact about the session,
+    so it reports `None` rather than False, and the last assertion below pins it.
     """
     unknown = _cancel_harness(tmp_path / "full_unknown")
     unknown_argvs: list[list[str]] = []
@@ -963,8 +964,8 @@ def test_the_full_cancel_distinguishes_an_unanswerable_probe_from_a_gone_session
         f"the full cancel reported a determined absence from an unanswerable probe: {u_res}"
     )
     assert u_res.get("errors"), f"the failed probe was not reported on the full cancel: {u_res}"
-    assert g_res.get("jobs_were_running") is False, (
-        f"the GONE full-cancel arm changed its documented no-op report: {g_res}"
+    assert g_res.get("jobs_were_running") is None, (
+        f"the GONE full-cancel arm must report the running state as unknown: {g_res}"
     )
     assert not g_res.get("errors"), f"a gone session was reported as an error: {g_res}"
 

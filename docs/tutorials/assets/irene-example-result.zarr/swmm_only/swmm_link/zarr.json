@@ -1,0 +1,11 @@
+{
+  "attributes": {
+    "flow_units": "cms",
+    "runoff_continuity_error_units": "percent",
+    "flow_continuity_error_units": "percent",
+    "system_flooding_units": "10^6 L",
+    "sim_date": ""
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

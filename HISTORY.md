@@ -1,5 +1,20 @@
 # Release history
 
+## v0.2.0 (unreleased)
+
+Relicensed under the GNU Affero General Public License v3.0 or later
+(AGPL-3.0-or-later). Release 0.1.0, on PyPI and Zenodo, was published under the
+PolyForm Noncommercial License 1.0.0.
+
+A report whose figure files total fewer than 15,000,000 bytes is now a single HTML file
+instead of a zip. The `report_html_mode` setting, `auto` by default, chooses the
+container on every render that is given no explicit format, and the `report_formats`
+argument of `run()` and `submit_workflow()` is now `override_report_formats`.
+
+A bundle now carries the report settings its report was rendered with, and a run or re-process whose report settings differ from the existing report's re-renders the figures and the report.
+
+A bundle written before layout 29 that sets a report, EDA or land-use column setting that no module read fails to load, because the models refuse an unknown key; write the bundle again from its migrated analysis with the current toolkit.
+
 ## v0.1.0 (2026-07-14)
 
 First public release of the H&H Ensemble Modeling Toolkit (hhemt). Coupled

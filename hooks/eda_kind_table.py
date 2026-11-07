@@ -1,10 +1,10 @@
 """Substitute the EDA renderer-kind table into `how-to/running-eda.md` at build time.
 
 WHY A BUILD-TIME SUBSTITUTION RATHER THAN A COMMITTED TABLE. Which renderer kinds
-exist, and which of them a design pass has filled in, are two facts the code already
-carries: `eda/_plotting.py::_EDA_RENDERERS` is the dispatch registry and
-`eda/_sensitivity_figures.py::_PENDING_EDA_FIGURE_STEMS` is the not-yet-designed set.
-A hand-maintained table restates both and falls behind whichever one moves first.
+exist, and which artifact each one reads, are two facts the code already carries:
+`eda/_plotting.py::_EDA_RENDERERS` is the dispatch registry and
+`_RENDERER_BACKING_ARTIFACT` names the artifact a kind reads where it differs from the
+kind. A hand-maintained table restates both and falls behind whichever one moves first.
 There is no artifact between builds, so the table cannot drift.
 
 WHY A MARKER RATHER THAN A WHOLE GENERATED PAGE. `hooks/config_reference.py`
@@ -60,36 +60,26 @@ def kind_records() -> list[dict]:
 
     `backing` is the `eda/{stem}.zarr` the kind's calc member actually writes, which
     is the kind itself except where `_RENDERER_BACKING_ARTIFACT` declares otherwise.
-    `designed` is False for exactly the stems `_PENDING_EDA_FIGURE_STEMS` names.
     """
     from hhemt.eda._plotting import _EDA_RENDERERS, _RENDERER_BACKING_ARTIFACT
-    from hhemt.eda._sensitivity_figures import _PENDING_EDA_FIGURE_STEMS
 
-    return [
-        {
-            "kind": kind,
-            "backing": _RENDERER_BACKING_ARTIFACT.get(kind, kind),
-            "designed": kind not in _PENDING_EDA_FIGURE_STEMS,
-        }
-        for kind in sorted(_EDA_RENDERERS)
-    ]
+    return [{"kind": kind, "backing": _RENDERER_BACKING_ARTIFACT.get(kind, kind)} for kind in sorted(_EDA_RENDERERS)]
 
 
 def render_table() -> str:
     """The markdown table, derived from the two registries and from nothing else.
 
-    Every cell is either an identifier read out of the code or one of two fixed
-    words, so the docs-content vocabulary and punctuation rules cannot be violated
-    by a value this function emits. That is why there is no lint pass here, where
-    `hooks/config_reference.py` needs one over its own authored prose.
+    Every cell is an identifier read out of the code, so the docs-content vocabulary
+    and punctuation rules cannot be violated by a value this function emits. That is
+    why there is no lint pass here, where `hooks/config_reference.py` needs one over
+    its own authored prose.
     """
     lines = [
-        "| Renderer kind | Backing artifact | Figure |",
-        "|---|---|---|",
+        "| Plot | Backing artifact |",
+        "|---|---|",
     ]
     for record in kind_records():
-        mark = "Designed" if record["designed"] else "Not yet designed"
-        lines.append(f"| `{record['kind']}` | `eda/{record['backing']}.zarr` | {mark} |")
+        lines.append(f"| `{record['kind']}` | `eda/{record['backing']}.zarr` |")
     return "\n".join(lines)
 
 

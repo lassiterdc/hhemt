@@ -9,7 +9,7 @@ Overview
 
 This report summarizes the {{ snakemake.config['analysis_id'] }} analysis.
 {%- set n_sims = snakemake.config.get('n_sims') %}
-{%- if n_sims %} It covers {{ n_sims }} scenario{{ '' if n_sims == 1 else 's' }}.{% endif %}
+{%- if n_sims %} The analysis covers {{ n_sims }} scenario{{ '' if n_sims == 1 else 's' }}.{% endif %}
 {% if snakemake.config['is_sensitivity'] and snakemake.config.get('n_members') and snakemake.config.get('independent_vars') %}
 The sweep varies {{ snakemake.config['independent_vars'] | join(', ') }}{% if snakemake.config.get('group_by_var') %} (grouped by {{ snakemake.config['group_by_var'] }}){% endif %} across {{ snakemake.config['n_members'] }} member{{ '' if snakemake.config['n_members'] == 1 else 's' }}.
 {% endif %}

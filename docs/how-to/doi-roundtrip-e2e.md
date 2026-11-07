@@ -1,53 +1,34 @@
-# Reproduce an experiment by DOI (operator round-trip)
+# DOI round-trip for operators
 
-This runbook mints a DOI for a runnable reprex bundle, then fetches and runs it on another
-machine: the end-to-end reproducibility round-trip.
+## Goal
 
-The bundle is **self-contained by default**: it carries every input the experiment declares,
-so a consumer can run it from scratch. Excluding an input is a governed opt-out for data you
-cannot redistribute. See [Excluding an input](#excluding-an-input-the-governed-opt-out).
+Mint a DOI for a runnable reprex bundle. Then fetch and run the bundle on another machine as the end-to-end reproducibility round-trip. The bundle is **self-contained by default** and carries every input that the experiment declares, so a consumer can run the bundle from scratch. [Excluding an input](#excluding-an-input) covers the governed opt-out for data you may not redistribute.
 
 ## Prerequisites
 
---8<-- "prerequisites-base.md"
-- A completed analysis with a rendered report (`analysis.render_report()` must have run at
-  least once, so the provenance sidecars the bundle is built from exist).
-- **Deposit credentials, under exactly these names.** These are the variables the code reads
-  (`publishing.py::_require_env`); a wrong name fails with
-  `PublishError: missing required credential env var …`:
+- A working [installation](installation.md).
+- A completed analysis with a rendered report. Render the report at least once, so that the provenance sidecars the bundle is built from exist.
+- **Deposit credentials** in the environment variables that [Provide credentials as environment variables](publishing.md#provide-credentials-as-environment-variables) names.
 
-  | Target | Environment variables |
-  |---|---|
-  | Zenodo | `HHEMT_ZENODO_TOKEN` (optionally `HHEMT_ZENODO_BASE_URL` to target the sandbox) |
-  | HydroShare | `HHEMT_HYDROSHARE_USERNAME` and `HHEMT_HYDROSHARE_PASSWORD` |
+## Key references
 
-## 1. Deposit the reprex bundle (mint the DOI)
+- [Publish a dataset and fetch inputs by DOI/PID](publishing.md) describes the deposit units and the credentials.
+- [Reprex round-trip](reprex-roundtrip.md) describes the bundle and the check on another cluster.
+
+## 1. Deposit the reprex bundle to mint the DOI
 
 ```bash
 export HHEMT_ZENODO_TOKEN={your-token}
 ```
 
-```python
-from hhemt import Toolkit
-
-tk = Toolkit.from_configs("system.yaml", "analysis.yaml")
-result = tk.analysis.publish_reprex_bundle(target="zenodo")
-print(result["data_doi"], result["record_url"])
-```
-
-The same deposit from an experiment definition:
+Deposit the bundle from the experiment definition. The command prints the deposit record with the minted DOI under `data_doi` and the record address under `record_url`.
 
 ```bash
 hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --target zenodo --reprex-bundle
 ```
 
-??? note "What happens if the bundle is too large for the target"
-    Before uploading, a size validator measures the bundle against the target's
-    **documented** limits (Zenodo 50 GB/record; HydroShare 20 GB default account
-    quota) and warns, with the exact overflow and a remediation menu, if it will not
-    fit. It does not block: neither platform exposes a queryable quota, so the
-    deposit is attempted, and a live storage rejection is caught and reframed with
-    the real numbers.
+??? note "Bundle larger than the target limit"
+    Before uploading, a size validator measures the bundle against the **documented** limits of the target, Zenodo 50 GB per record and HydroShare 20 GB default account quota, and warns when the bundle will not fit. The warning states the exact overflow and a menu of remedies. The validator never blocks, because neither platform exposes a queryable quota. The deposit is attempted, and the toolkit catches a live storage rejection and reframes the rejection with the real numbers.
 
 ## 2. Fetch and reconstitute on another machine
 
@@ -55,13 +36,9 @@ hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --tar
 hhemt ingest --doi {minted-doi} --host zenodo --target-dir {target} --hpc-system-config {your-cluster-hpc-system-config.yaml}
 ```
 
-A reconstituted analysis that dispatches with `batch_job` needs your own cluster's
-`hpc_system_config`, so pass it here; without it the ingest stops at preflight with
-a configuration error (the download has already happened by then).
+A reconstituted analysis that dispatches with `batch_job` needs the `hpc_system_config` of your own cluster, so pass the config here. Without the config the ingest stops at preflight with a configuration error, after the download has happened.
 
-If you minted against the **sandbox** in step 1, set the same base URL on the fetch side.
-The ingest resolves the Zenodo host from `HHEMT_ZENODO_BASE_URL`, so a sandbox DOI resolves
-against the sandbox instead of 404ing on production:
+Deposits made to the **sandbox** in step 1 need the same base URL on the fetch side. [Choose a deposit unit](publishing.md#choose-a-deposit-unit-data-doi-or-runnable-doi) explains the sandbox and the behavior of `hhemt ingest` with the variable.
 
 ```bash
 export HHEMT_ZENODO_BASE_URL=https://sandbox.zenodo.org
@@ -74,41 +51,25 @@ hhemt ingest --doi {minted-doi} --host zenodo --target-dir {target} --hpc-system
 hhemt run --system-config {reconstituted-system.yaml} --analysis-config {reconstituted-analysis.yaml} --hpc-system-config {your-cluster-hpc-system-config.yaml}
 ```
 
-The `Run it with:` line that ingest prints omits `--hpc-system-config`; add it, as above,
-or the run is refused for the same reason.
+The `Run it with:` line that ingest prints omits `--hpc-system-config`. Add the flag as above. Without the flag the analysis is refused for the same reason.
 
-!!! example "Verified against a live deposit (Zenodo sandbox)"
-    The command forms on this page were run against a Zenodo **sandbox** deposit of a
-    15-configuration CPU sensitivity analysis: one data deposit and one runnable
-    reprex-bundle deposit. The reprex-bundle deposit is far larger because it carries the
-    declared inputs. The `10.5072` DOI prefix marks the sandbox: a sandbox record is
-    discardable and is not a citable DOI, and production Zenodo mints `10.5281`.
-    `HHEMT_ZENODO_BASE_URL=https://sandbox.zenodo.org` together with a sandbox token
-    selects the sandbox. Not verified: the 15-member sweep was not re-run from the
-    deposit; only `hhemt run --dry-run` on the reconstituted configs was.
+!!! example "Verified against a live Zenodo sandbox deposit"
+    The command forms on this page were run against a Zenodo **sandbox** deposit of a CPU sensitivity analysis of compute configurations, with one data deposit and one runnable reprex-bundle deposit. The reprex-bundle deposit is larger because the bundle carries the declared inputs. [Choose a deposit unit](publishing.md#choose-a-deposit-unit-data-doi-or-runnable-doi) explains the sandbox and the sandbox DOI prefix. The check did not re-run the sweep from the deposit and ran only `hhemt run --dry-run` on the reconstituted configs.
 
-## Excluding an input (the governed opt-out)
+## Excluding an input
 
-Use this when an input is too large to deposit, or when you are **not permitted to
-redistribute it** (licensed, proprietary, or otherwise restricted data). The excluded input
-is carried *by reference* instead: the bundle records where it came from, what it hashes to,
-and how to obtain it.
+Use the exclusion when an input is too large to deposit, or when you may **not redistribute the input** because the data is licensed, proprietary, or otherwise restricted. The bundle carries the excluded input *by reference*. The bundle records the origin of the input, the hash of the input, and the way to obtain the input.
 
-**This is a three-step sequence, and the order matters.** The excluded input must already
-have a durable record before you author the exclude-config. The toolkit has no per-file
-deposit helper and cannot mint one for you.
+Follow the steps below in order. Each excluded input needs a durable record before you author the exclude-config. The toolkit offers no per-file deposit helper to mint a record.
 
 ### Step 1: give the input a durable record
 
-- **Data you own**: deposit it as its own Zenodo/HydroShare resource. Note its
-  direct-download URL and its DOI.
-- **Third-party or licensed data**: locate its original source. **The toolkit must not
-  redeposit it**, and you should not either.
+- **Data you own.** Deposit the data as a separate Zenodo or HydroShare resource, and note the direct-download URL and the DOI.
+- **Third-party or licensed data.** Locate the original source. **The toolkit must not redeposit the data**, and neither should you.
 
 ### Step 2: author the exclude-config
 
-`hhemt bundle --list-excludable` prints every input you may opt out of, with the
-reproducibility cost of each. It needs no configs, so run it before you have written anything.
+`hhemt bundle --list-excludable` prints every input you may opt out of, with the reproducibility cost of each. The command needs no configs and runs before you write any file.
 
 ```yaml
 # bundle_exclude.yaml
@@ -127,34 +88,20 @@ exclusions:
     url: "https://gis.example-county.gov/data-request"
 ```
 
-`citation` is **required** for every excluded input. `contentUrl` is what decides what a
-consumer experiences:
+`citation` is **required** for every excluded input. `contentUrl` decides the experience of a consumer.
 
-- **`contentUrl` present**: `hhemt ingest` downloads the file automatically and verifies it
-  against the recorded sha256.
-- **`contentUrl` omitted**: ingest **fails closed** and prints your citation, the landing
-  page, the expected sha256, and the exact path to place the file at. **This is the correct
-  outcome for restricted data, not a degraded one.** The bundle still carries complete,
-  public, machine-readable metadata about the input; only the bytes are withheld, which is
-  what the license requires.
+- **`contentUrl` present.** `hhemt ingest` downloads the file automatically and verifies the file against the recorded sha256.
+- **`contentUrl` omitted.** Ingest **fails closed** and prints your citation, the landing page, the expected sha256, and the path to place the file at. **Failing closed is the correct outcome for restricted data.** The bundle still carries complete, public, machine-readable metadata about the input, and the license requires only that the bytes stay withheld.
 
 ### Step 3: emit and deposit
 
-```python
-tk.analysis.publish_reprex_bundle(target="zenodo", exclude_config="bundle_exclude.yaml")
+```bash
+hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --target zenodo --reprex-bundle --exclude-config bundle_exclude.yaml
 ```
 
 ## Notes and caveats
 
-- **A green Zenodo run is not a green HydroShare run.** `hsclient` v1.1.6 cannot mint a DOI
-  programmatically, so the HydroShare path publishes the resource and then *stops*, printing
-  a manual web-UI DOI-mint instruction. The "fetch back by DOI" leg is therefore **not** a
-  single automated round-trip on that host: mint the DOI in the web UI first, then ingest.
-- **Deposit record ids are yours, not the repo's.** Supply them via environment variables
-  (`HHEMT_E2E_ZENODO_RECORD` / `HHEMT_E2E_HYDROSHARE_RESOURCE`); never commit them.
-- **Match the toolkit version.** The bundle-schema guard is exact-match: install the version
-  named in the crate's `SoftwareApplication.softwareVersion`, or `hhemt ingest` fails with a
-  `BundleSchemaError`. Re-emit from source if you cannot.
-- **Ingesting a DOI and running it executes shell derived from the fetched config.** Ingest
-  only deposits you trust. `hhemt ingest --sha256 {digest}` pins the fetched bundle's
-  integrity.
+- **HydroShare mints the DOI in the web UI.** Mint the DOI there before the ingest step. `hhemt publish` stops after the upload, as [Publish to HydroShare](publishing.md#publish-to-hydroshare) describes.
+- **Deposit record ids belong to you.** Supply them through the environment variables `HHEMT_E2E_ZENODO_RECORD` and `HHEMT_E2E_HYDROSHARE_RESOURCE`, and never commit them.
+- **Match the toolkit version.** Install the version named in `SoftwareApplication.softwareVersion` of the crate. A different version fails with a `BundleSchemaError`. [Reproducibility boundaries](../explanation/limitations.md#reproducibility-boundaries) explains the error.
+- **Ingesting a DOI and running the ingested analysis executes shell derived from the fetched config.** Ingest only deposits you trust. `hhemt ingest --sha256 {digest}` checks the fetched bundle zip against the SHA-256 and refuses a mismatch. The check verifies transfer integrity and authenticates no deposit, so a match leaves an untrusted deposit unsafe to run. Take the digest from the depositor by a channel other than the record, or compute the digest with `sha256sum` on a copy you inspected. Zenodo shows an `md5:` checksum for each file and no SHA-256, so the record page supplies no digest.

@@ -19,8 +19,12 @@ import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]
-#: The commit the change starts from; the working tree is compared with it.
+#: The commit the change starts from.
 BASE = "5a5fa54f"
+#: The commit that ends the change: the tip of the series on `develop`, whose tree equals the series' own last
+#: commit. The tests compare this commit with BASE and never the working tree, so a later change to any file, from
+#: any branch, leaves them as they were.
+END = "1d2bff5a"
 
 _STEM = "m" + "e" + "tr" + "e"
 _OLD = re.compile(_STEM + "(s?)", re.IGNORECASE)
@@ -51,8 +55,11 @@ LAYOUT_PATHS = (
 )
 
 needs_base = pytest.mark.skipif(
-    subprocess.run(["git", "-C", str(REPO), "cat-file", "-e", BASE], capture_output=True).returncode != 0,
-    reason="the starting commit is not in this clone",
+    any(
+        subprocess.run(["git", "-C", str(REPO), "cat-file", "-e", commit], capture_output=True).returncode != 0
+        for commit in (BASE, END)
+    ),
+    reason="the starting or ending commit is not in this clone",
 )
 
 
@@ -118,7 +125,9 @@ def test_every_changed_line_is_the_earlier_line_with_the_spelling_swapped_except
     Kills it: a word added or dropped while a spelling was fixed; a number or a name changed on the same line.
     Must-fire control: appending one word to a spelling-only line adds a report.
     """
-    diff_text = _git("diff", "-U0", BASE)
+    # Files the series added are left out: the comparison was written over tracked files that the series modified,
+    # and the series' two test files were still untracked when it ran.
+    diff_text = _git("diff", "-U0", "--diff-filter=a", BASE, END)
     found = unexpected_non_spelling(diff_text)
     assert found == EXPECTED_NON_SPELLING, found
     for path, expected in REPAIRED_TEST_FILES.items():
@@ -164,15 +173,15 @@ def test_no_changed_python_module_moved_a_statement_beyond_the_field_description
     Kills it: an executable statement edited together with a comment; a function given another name; a changed default.
     Must-fire control: a planted ``return not`` is reported.
     """
-    changed = [p for p in _git("diff", "--name-only", "--diff-filter=M", BASE).split() if p.endswith(".py")]
+    changed = [p for p in _git("diff", "--name-only", "--diff-filter=M", BASE, END).split() if p.endswith(".py")]
     assert len(changed) >= 15, changed
-    differing = [p for p in changed if _dump(_git("show", f"{BASE}:{p}")) != _dump((REPO / p).read_text())]
+    differing = [p for p in changed if _dump(_git("show", f"{BASE}:{p}")) != _dump(_git("show", f"{END}:{p}"))]
     assert differing == sorted(["src/hhemt/config/analysis.py", *REPAIRED_TEST_FILES]), differing
-    work = (REPO / "src/hhemt/config/analysis.py").read_text()
+    work = _git("show", f"{END}:src/hhemt/config/analysis.py")
     assert work.count("interaction nodes, in meters.") == 1
     earlier = _git("show", f"{BASE}:src/hhemt/config/analysis.py")
     assert _dump(earlier) == _dump(work.replace("interaction nodes, in meters.", "interaction nodes."))
-    sample = (REPO / changed[0]).read_text()
+    sample = _git("show", f"{END}:{changed[0]}")
     assert _dump(sample.replace("return ", "return not ", 1)) != _dump(sample)
 
 

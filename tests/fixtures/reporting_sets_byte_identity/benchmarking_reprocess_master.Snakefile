@@ -19,7 +19,7 @@ config["n_sims"] = 4
 config["is_sensitivity"] = True
 config["n_members"] = 4
 config["independent_vars"] = ['n_devices']
-config["group_by_var"] = 'run_mode'
+config["group_by_var"] = 'analysis.run_mode'
 config["report"] = {"generated_at": _dt.now().isoformat(timespec="seconds")}
 
 MEMBER_EVENT_PAIRS_MEMBER = []
@@ -41,7 +41,7 @@ onerror:
 
 rule all:
     input:
-        "_status/f_consolidate_experiment_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "plots/workflow_performance.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.zip"
+        "_status/f_consolidate_experiment_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "plots/workflow_performance.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.format"
 
 rule experiment_consolidation:
     input: 
@@ -341,10 +341,8 @@ rule render_report:
         "workflow_summary.md",
         expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices'])
     output:
-        "analysis_report.{format}"
-    wildcard_constraints:
-        format="zip|html"
-    log: "{PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/render_report_{format}.log"
+        "analysis_report.format"
+    log: "{PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/render_report.log"
     resources:
         slurm_partition="None",
         runtime=30,
@@ -357,7 +355,6 @@ rule render_report:
         python -m hhemt.render_report_runner \
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
-            --format {wildcards.format} \
             --reprocess \
             2>&1 | tee {log}
         """

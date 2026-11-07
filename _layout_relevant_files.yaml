@@ -4555,6 +4555,74 @@ non_breaking_allowlist:
     layout_signature: dd28b7f7b7147c1920e6b212b8635191422024ec356f3ce6f4499cc2112e7263
     justification: |-
       NON-BREAKING. src/hhemt/scenario.py, TRITONSWMM_scenario._generate_TRITON_SWMM_cfg: the coupled-only validations (require_triton_couples_the_listed_nodes, and require_dem_rim_capable_triton beside it) now run only for a system with toggle_tritonswmm_model on. Both are validation calls that return None and write nothing, so no on-disk layout changes: no file is added, renamed, removed or re-keyed, no JSON key, LogField, zarr attr or path convention moves, and every cfg byte the function writes is unchanged (held by the byte-identity test in tests/test_triton_only_coupling_guard_reviewer.py). It repairs a FileNotFoundError that stopped scenario preparation of the TRITON-only arm on a solver that does not read swmm_coupling_nodes. No migration is owed.
+  - path: src/hhemt/config/report.py
+    layout_signature: ecf429527e63642c82179f6abb421b66fa6ab0110e25c18737557fad617211ff
+    justification: |-
+      NON-BREAKING (developer ruled "agreed", 2026-11-01), report_html_mode wired. WHAT CHANGED IN THIS FILE: the report_html_mode field description is rewritten to say what the code now does, and four module-level names are added (AUTO_HTML_MAX_BYTES, REPORT_FORMAT_MARKER, report_figure_bytes, resolve_report_format). No persisted path, filename, zarr group, attr, flag name or log key moved, and no persisted structure changed in any existing analysis. The render-rule log file is render_report.log under auto, in place of render_report_{format}.log (the explicit-format rule keeps its name). No reader of either log name exists: git grep -n -E "render_report_(zip|html)|render_report\.log" -- src scripts docs shows one comment in src/hhemt/suite/_runner.py and the new rule_head line only. THE ONE NEW PERSISTED ARTIFACT: the generated workflow, when report_html_mode is auto, declares a NEW marker file analysis_report.format as the render rule's output and the rule-all target, and the render writes the chosen format (html or zip) into it. No reader of an existing analysis requires it: readers still find a rendered report by the existence of analysis_report.html or analysis_report.zip, and an older analysis without the marker stays readable and re-renders once, because the render rule's declared output is then absent. The expiry clause of the existing row for src/hhemt/sensitivity_analysis.py reads "Any change to the report manifest's name or payload shape, or that makes a reader REQUIRE either artifact, is NOT this class." This change is ruled non-breaking despite the workflow requiring the marker because the requirement binds only the render rule of a Snakefile that this toolkit version generates, never a reader of an analysis written by an older version; the stale-marker and missing-marker states both converge by one render. EXPIRY CONDITION: covers these additions and this description only. A change to the marker's name or content, or one that makes a reader of an existing analysis REQUIRE it, is NOT this class.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 166d4c7926647026318010572993286c7facc5432ed4af43a51d553a4fbf363e
+    justification: |-
+      NON-BREAKING (developer ruled "agreed", 2026-11-01), report_html_mode wired. WHAT CHANGED IN THIS FILE: the keyword parameter report_formats takes the name override_report_formats at the sites of submit_workflow and its helpers that this file defines, TRITONSWMM_sensitivity_analysis.render_report takes format=None and reads the report_html_mode setting when it is None, and the reprocess delete arms also delete the marker file named below. No persisted path, filename, zarr group, attr, flag name or log key moved, and no persisted structure changed in any existing analysis. The render-rule log file is render_report.log under auto, in place of render_report_{format}.log (the explicit-format rule keeps its name). No reader of either log name exists: git grep -n -E "render_report_(zip|html)|render_report\.log" -- src scripts docs shows one comment in src/hhemt/suite/_runner.py and the new rule_head line only. THE ONE NEW PERSISTED ARTIFACT: with report_html_mode auto the generated workflow declares a NEW marker file analysis_report.format as the render rule's output and the rule-all target, and the render writes the chosen format into it. No reader of an existing analysis requires it: readers find a rendered report by the existence of analysis_report.html or analysis_report.zip, and an older analysis without the marker stays readable and re-renders once. The expiry clause of the existing row for this file (the report_manifest.json row) reads "Any change to the report manifest's name or payload shape, or that makes a reader REQUIRE either artifact, is NOT this class." This change is ruled non-breaking despite the workflow requiring the marker because the requirement binds only the render rule of a Snakefile that this toolkit version generates, never a reader of an analysis written by an older version. EXPIRY CONDITION: covers this rename, the format=None default and the marker deletion only. A change that makes a reader of an existing analysis REQUIRE the marker is NOT this class.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 7a77d38bea225a5db5a5e77ebce392cc0ff8b8bdf3c8dffca6c11852891300e6
+    justification: |-
+      Docstring-only edit of src/hhemt/sensitivity_analysis.py (second style pass over the reference subset): the 28 reviewer specs rewrite docstring text only; no persisted path, filename, layout key or column moved, and the docstring-stripped ast dump of the file is equal before and after.
+  - path: src/hhemt/config/hpc_system.py
+    layout_signature: 7111606b0bde7de2794b29ac1727c688cf421626c8e5c0c0f76c50e3c71c054a
+    justification: |-
+      Second style pass over the how-to subset: two documentation-link strings inside field descriptions of src/hhemt/config/hpc_system.py are retargeted from the heading 'Verify two site caps before you rely on them' to the heading 'Verify the site caps before you rely on them'; no persisted path, filename, layout key or column moved, and the docstring-stripped ast dump with Field descriptions blanked is equal before and after.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: e67e70f9ccec4025c6f3d68becafb21c7899e729746fadf2145d1128db4dabdf
+    justification: |-
+      render_report writes the report-format marker beside the report when the setting chose the format (analysis_report.format, a file REPORT_FORMAT_MARKER already names and the render rule already declares as its output). The runner's own write of the same file with the same content is removed in the same change, so a workflow render writes the same marker and the runner also deletes a leftover report file of the format the setting did not choose, a file no generated rule declares under auto; a direct render_report() call with no format now writes that one file too, a file the layout already names. No log field, zarr group, fingerprint, Snakemake rule, figure stem or _version.json change.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 907e4f22a206b4ff6fe230b1634c108d5fa981225990d6444e1ae6c36cbcac71
+    justification: |-
+      The render records the report settings that render used. The sensitivity render_report passes the report config the render used, its sha256 and its source to stamp_report_stage, and that function writes three more keys (report_settings, report_settings_sha256, report_settings_source) into the existing report_manifest.json; the sensitivity reprocess resets the four run-entry attributes and calls the report-settings reconciler before the force-rerun pre-delete. No path, filename, log field, zarr group, fingerprint, Snakemake rule or figure stem changes, and _version.json is untouched; a manifest without the keys reads as no record. KNOWN EXPIRY: this row expires on the next change to this path.
+  - path: src/hhemt/config/hpc_system.py
+    layout_signature: 8950cd4c0f3eed89fb274d753f03322c6feb313d2233d37e542cdf890cdabfa7
+    justification: |-
+      Removes hpc_system_config.default_execution_mode (no reader; no written analysis directory holds an hpc_system_config, the bundle copy hpc_system_config.identity.yaml carries only partitions and gpu_allocation_flavor and is read as a plain dictionary), changes PartitionSpec.supports_mpi default to true so a partition that omits the key keeps accepting mpi and hybrid runs once preflight reads it, and rewrites descriptions. No on-disk analysis state changes.
+  - path: src/hhemt/config/static_plots.py
+    layout_signature: 5ca0bb817f3b4d2bc63c0fe50fcb470b6145dcda17016d8b48cc980c7258f657
+    justification: |-
+      Removes SensitivityBenchmarkingStaticConfig.gpu_marker (the renderer already ignored it) and rewrites the descriptions of four StaticPlotBaseConfig fields now that renderers read them. Static-plot files are authored by the researcher and no written analysis directory holds one. No on-disk analysis state changes.
+  - path: src/hhemt/config/synthetic_experiment.py
+    layout_signature: f44b00625abb7ac457de1532b16bae4667f724b94d77a91f11d07a849ad67b81
+    justification: |-
+      Removes synthetic_experiment_config.include_resume (no reader; the definition was its only occurrence in src). A synthetic experiment configuration is authored by the researcher and no written analysis directory holds one. No on-disk analysis state changes.
+  - path: src/hhemt/config/static_plots.py
+    layout_signature: b546cd1fac44ae84f75c242a8ee90adc450555019358d26137be71f46a3512ea
+    justification: |-
+      Rewrites the description of value_encoding_policy to the style brief's wording after the first stamp of this file. Descriptions only; no on-disk analysis state changes.
+  - path: src/hhemt/config/static_plots.py
+    layout_signature: a6952ffe4158cfd4215edec983e686474b42bf639d6970690328aea23952cfb6
+    justification: |-
+      Rewrites the descriptions of panel_scale_policy and vmin_vmax_strategy to state the ranges the renderers compute. Descriptions only; no on-disk analysis state changes.
+  - path: src/hhemt/config/report.py
+    layout_signature: 6e9d0d17fd6f0824db177e1dc71cb313d8518e8a2e923f6630279a4d542615c5
+    justification: |-
+      Removes the SensitivityReportConfig validator that rewrote a mode key; report.sensitivity now refuses mode: through extra=forbid. A written cfg_analysis.yaml never holds the key because the dump writes field names. No on-disk analysis state changes.
+  - path: src/hhemt/config/synthetic_experiment.py
+    layout_signature: 354c5b9a301c90eeeb2598dfd1f30033a3906b2f127d044c367b69648680c9f7
+    justification: |-
+      The cap validator reads the analysis.-prefixed keys of the experiment matrix rows. A synthetic experiment configuration is authored by the researcher and no written analysis directory holds one. No on-disk analysis state changes.
+  - path: src/hhemt/scenario.py
+    layout_signature: 72788c117d48bf7317ccb9fc7b8b579338f6d5beda53bb485d4dfc3373f72ea0
+    justification: |-
+      Rewords the four storage and divider coupling refusals without 'yet'. Message text only; no path, log field, zarr group, fingerprint, Snakemake rule or figure stem changes.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 219b1074d4d90a811dc0994ff6d523907c69554669deb6a122d81052da8ea64a
+    justification: |-
+      A bare-name analysis column in a sensitivity table is refused by ConfigurationError at the column allowlist, in place of a deprecation warning, and one docstring sentence is removed. Input-table validation only; no path, filename, log field, zarr group, fingerprint, Snakemake rule or figure stem changes, and _version.json is untouched.
+  - path: src/hhemt/config/report.py
+    layout_signature: b67c6d2834d9dec2dd8034a90b61a290591b1fe7dd6ac2290a03fdb16df3446e
+    justification: |-
+      Removes the SensitivityReportConfig validator that rewrote a mode key (report.sensitivity now refuses mode: through extra=forbid; a written cfg_analysis.yaml never holds the key) and corrects the group_by_var description to the analysis.-prefixed typical value. Config schema and description text only; no on-disk analysis state changes.
+  - path: src/hhemt/config/eda.py
+    layout_signature: 6514e33d465a8ef525ac4e2c2dadfd7539df6b0e3c233162e011c3f2fc8ab271
+    justification: |-
+      Removes the config-load rewrite of EDA figure kinds the render refuses from eda_config, so a cfg_analysis.yaml that still lists such a kind loads untouched and is refused at the EDA render like an unknown kind; restates the enabled_plots description to say which callers pass the whole list to the render; adds the optional field dem_resolution_tolerance_m (default None). No analysis directory, system directory or output store changes: eda_config is a configuration copy, the developer scoped the migration to outputs, and V0029 does not rewrite configuration copies. A saved cfg_analysis.yaml that names a kind the render refuses is edited to the current kind.
   - path: src/hhemt/config/analysis.py
     layout_signature: eafd69ee21776c24f174b5c2c58370b5925ec5cb13748f981c2ac74e1ea82bf0
     justification: |-
@@ -4587,3 +4655,139 @@ non_breaking_allowlist:
     layout_signature: 170790758b2ee3a884aa5529eb0b4b8040cde0dd494cc3ed400528b276d1fb87
     justification: |-
       NON-BREAKING, MERGE RE-SIGN. The merge of origin/develop (tip 1d2bff5a) into the render-and-report-path-robustness run branch changed this path on BOTH sides, so neither side's row signature equals the merged file. Run side: chunk 2b.1 (C1(b), DR-10), three keyword passes (for_reprocess, override_clear_raw) and two comments (row 1e5ef67e above). Develop side: stamp_parameter_units applied to the parameters dataset, open_store in place of xr.open_datatree, and the _assert_store_index_current call before the consolidated write, accounted for by develop's own rows and by LAYOUT_VERSION 28 with V0028. The merge is a textual union of the two and adds no on-disk change of its own. LAYOUT_VERSION is unchanged (check-a passes).
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 43b451ee261051bf071599df5bd83cc31a4752ae69c22bda45c52d3f83d4662e
+    justification: |-
+      NON-BREAKING, MERGE RE-SIGN. The merge of origin/develop (tip 8ab54844) into the run branch changed this path on BOTH sides, so neither side's row signature equals the merged file. Run side: the report-settings reconciliation call before the force-rerun pre-delete in reprocess, with the style passes' docstring and comment edits (row 219b1074 above stamps the run's file before this merge). Develop side (row 17079075 above stamps develop's file at its tip): _apply_force_rerun takes override_clear_raw and for_reprocess, the submit path passes override_clear_raw=overrides.clear_raw with for_reprocess=False, and the reprocess path passes override_clear_raw=None with for_reprocess=True; render_report passes for_reprocess=reprocess to report_rule_figure_stems. The merged reprocess site runs the reconciliation and then the new _apply_force_rerun call. The merge is a textual union of the two and adds no persisted path, filename, layout key or column of its own. LAYOUT_VERSION is unchanged (check-a passes).
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 2c73bfb3bebdddfa2daddb44fd879c01e2d50eabc89a281743376d77c028a2bf
+    justification: |-
+      NON-BREAKING. The description of the hpc_cpu_sim_partition field names no cluster: the text that read UVA Rivanna -p gpu now reads sbatch -p naming that partition, and the sentence says the partition rejects the sim instead of it. Text of one Field description only; no field, default, validator or stored value changes.
+  - path: src/hhemt/config/experiment_definition.py
+    layout_signature: d5a0bc657eaa54ce1a6e3e0f970c9e3f204b350530bae0a8d5af4f3c95303470
+    justification: |-
+      NON-BREAKING. The description of the destinations field no longer promises a provisioning CLI; it states that staging tools read the per-cluster path. Text of one Field description only; no field, default, validator or stored value changes.
+  - path: src/hhemt/config/report.py
+    layout_signature: 68be876c9c96d5e02c95d8c34bd1b5e0206bd936fc35d201aa88e8078e4bf53a
+    justification: |-
+      NON-BREAKING. Field descriptions, one class docstring and one comment of the report config state the present behaviour; the porting notes (verbatim hardcoded values with source file and line numbers), the pointer to a follow-up idea in scratch, and em dashes in two descriptions are removed, and the independent_var_labels description names its two keys. Text only; no field, default, validator or stored value changes.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 9078ebb7bee21e9992330f1ebfbc53375b97eaacf3db1279d27c1742b5cc8d7b
+    justification: |-
+      NON-BREAKING. The message of the RuntimeError raised by _clear_raw_outputs no longer cites a stipulation file path; the sentence that states when clearing is safe stays. One string literal in an error message; no condition, path, filename, log field or stored value changes.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 5bf7068e77e3ce535a320406ebe8e1c524a4b625f6b951a5b392a5a74ef9645f
+    justification: |-
+      NON-BREAKING. Description wording only (style pass): no executable line changes; the AST with string constants blanked equals the previous version's.
+  - path: src/hhemt/config/eda.py
+    layout_signature: 7395d7e42c191912813f8613a6d6736ae9a5b5c2bda8092ee035ee5f8ab8c4cd
+    justification: |-
+      NON-BREAKING. Description wording only (style pass): no executable line changes; the AST with string constants blanked equals the previous version's.
+  - path: src/hhemt/config/experiment_definition.py
+    layout_signature: c5ead63f628e92e934cac0ccb76a3f33f1bde2a4c27563b6fa60e2a9564236f8
+    justification: |-
+      NON-BREAKING. Description wording only (style pass): no executable line changes; the AST with string constants blanked equals the previous version's.
+  - path: src/hhemt/config/hpc_system.py
+    layout_signature: 6483ed8a151fc159b17b23e6642525c3e8d56b7977a1c76c724e713cebe355ff
+    justification: |-
+      NON-BREAKING. Description wording only (style pass): no executable line changes; the AST with string constants blanked equals the previous version's.
+  - path: src/hhemt/config/report.py
+    layout_signature: cbeda503124bf8db9af7f3c8a391399e8c661fe2c9f3d3ba8a467eed95b850fd
+    justification: |-
+      NON-BREAKING. Description wording only (style pass): no executable line changes; the AST with string constants blanked equals the previous version's.
+  - path: src/hhemt/config/reprex_config.py
+    layout_signature: 1211d3b8f9621085c6504ed207c6a72d382b783cea8768a750722845f8578483
+    justification: |-
+      NON-BREAKING. Description wording only (style pass): no executable line changes; the AST with string constants blanked equals the previous version's.
+  - path: src/hhemt/config/sif_build.py
+    layout_signature: 300c3e86d7b95a46448deaf9ea61c9c4577746705e476c0fa4fa9191df710755
+    justification: |-
+      NON-BREAKING. Description wording only (style pass): no executable line changes; the AST with string constants blanked equals the previous version's.
+  - path: src/hhemt/config/system.py
+    layout_signature: f7139cb0110d3256ad37945c31d7879afee9b664d9987385334b0c20762ff5bf
+    justification: |-
+      NON-BREAKING. Description wording only (style pass): no executable line changes; the AST with string constants blanked equals the previous version's.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 808761d0afe1a1371159b7ebb0fdb8d026d369befeaef8672620e1979e8b466a
+    justification: |-
+      NON-BREAKING. Description wording only (style pass): no executable line changes; the AST with string constants blanked equals the previous version's.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 0e2e1bda6f9efbd6ac387866ad293b75f73f0ac17a0fcd7e12d2b9c65e01392f
+    justification: |-
+      NON-BREAKING. Comment and description wording only (clean-slate repair): no executable line changes; the AST with string constants blanked equals the previous version's.
+  - path: src/hhemt/config/eda.py
+    layout_signature: d79db1505a19482a3df1f4ba9bcedf08d02e195355507f607b1c473c04ebdbc0
+    justification: |-
+      NON-BREAKING. Comment and description wording only (clean-slate repair): no executable line changes; the AST with string constants blanked equals the previous version's.
+  - path: src/hhemt/config/static_plots.py
+    layout_signature: bdcd8f0317f77bd29a92e5a0076d2ecdfdd54c2b67ac1670bd29ec4d21021b27
+    justification: |-
+      NON-BREAKING. Comment and description wording only (clean-slate repair): no executable line changes; the AST with string constants blanked equals the previous version's.
+  - path: src/hhemt/config/system.py
+    layout_signature: ed3607cb3f573238a074b613e490575523a83a842322f09b91e212c65c50e1da
+    justification: |-
+      NON-BREAKING. Comment and description wording only (clean-slate repair): no executable line changes; the AST with string constants blanked equals the previous version's.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: c795f71ae60f03a54ca66775c871e7743f8b880a3e26f1ba43ea81bba269e127
+    justification: |-
+      NON-BREAKING. Comment and description wording only (clean-slate repair): no executable line changes; the AST with string constants blanked equals the previous version's.
+  - path: src/hhemt/config/system.py
+    layout_signature: be1f39115a3ca2bc9c5c9f1886e41026e551c429366a5f8bb267724ca23abf90
+    justification: |-
+      NON-BREAKING. Comment and description wording only (clean-slate repair): no executable line changes; the AST with string constants blanked equals the previous version's.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: d344d16907b1a1822fc6e8f4cd2342e505469ac5fd1e44b5f4edf088729219c9
+    justification: |-
+      NON-BREAKING. Comment wording only (clean-slate repair): two line-number citations of process_simulation.py replaced by the function name; no executable line changes; the AST equals the previous version.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 49e689e5f548dc893a145cc32a57eff14d99af8794568955e0c043c87b595fb3
+    justification: |-
+      chunk 10g.1 rewrote Field descriptions (config) or docstrings (sensitivity_analysis.py) under the docs style rules; the docstring-only ast dump (docstrings and description keywords blanked) is equal before and after, so no on-disk layout changes.
+  - path: src/hhemt/config/eda.py
+    layout_signature: 0f92fa2d0c6eb4c348a1abb81b53b3e74ff79241bbee6ed9b74b82bc032002f2
+    justification: |-
+      chunk 10g.1 rewrote Field descriptions (config) or docstrings (sensitivity_analysis.py) under the docs style rules; the docstring-only ast dump (docstrings and description keywords blanked) is equal before and after, so no on-disk layout changes.
+  - path: src/hhemt/config/experiment_definition.py
+    layout_signature: c03c73401978e7470dfe32dce7fed98e151e4860ef89785c0c23ac41934a6675
+    justification: |-
+      chunk 10g.1 rewrote Field descriptions (config) or docstrings (sensitivity_analysis.py) under the docs style rules; the docstring-only ast dump (docstrings and description keywords blanked) is equal before and after, so no on-disk layout changes.
+  - path: src/hhemt/config/hpc_system.py
+    layout_signature: 961776a4ad56972a36bc5682f23b7c6e08d9ba8a3efca04d354c9934f5df1305
+    justification: |-
+      chunk 10g.1 rewrote Field descriptions (config) or docstrings (sensitivity_analysis.py) under the docs style rules; the docstring-only ast dump (docstrings and description keywords blanked) is equal before and after, so no on-disk layout changes.
+  - path: src/hhemt/config/report.py
+    layout_signature: c534bd0633c7e9e9eca2f0cb30059a9c7209cd249e24dc42445831bcb84f4546
+    justification: |-
+      chunk 10g.1 rewrote Field descriptions (config) or docstrings (sensitivity_analysis.py) under the docs style rules; the docstring-only ast dump (docstrings and description keywords blanked) is equal before and after, so no on-disk layout changes.
+  - path: src/hhemt/config/reprex_config.py
+    layout_signature: f5a17f9b68aea0bd741e5bd1bf8c5d603c3d7b45ad7fc28b4ebff78a448535ac
+    justification: |-
+      chunk 10g.1 rewrote Field descriptions (config) or docstrings (sensitivity_analysis.py) under the docs style rules; the docstring-only ast dump (docstrings and description keywords blanked) is equal before and after, so no on-disk layout changes.
+  - path: src/hhemt/config/sif_build.py
+    layout_signature: 9d73d07f1135c27810649c2e0751fd0f9834d2be6263950c16830ab582878d6a
+    justification: |-
+      chunk 10g.1 rewrote Field descriptions (config) or docstrings (sensitivity_analysis.py) under the docs style rules; the docstring-only ast dump (docstrings and description keywords blanked) is equal before and after, so no on-disk layout changes.
+  - path: src/hhemt/config/system.py
+    layout_signature: e84faa327af4f0fd774968425ff9293931e09fe98deb1b3c95d06461414fa7b9
+    justification: |-
+      chunk 10g.1 rewrote Field descriptions (config) or docstrings (sensitivity_analysis.py) under the docs style rules; the docstring-only ast dump (docstrings and description keywords blanked) is equal before and after, so no on-disk layout changes.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 46efe2b6e5d54b8994cdafc6511b211ca8445a5d7e3f411a7e6ab48aeb17fcb2
+    justification: |-
+      chunk 10g.1 rewrote Field descriptions (config) or docstrings (sensitivity_analysis.py) under the docs style rules; the docstring-only ast dump (docstrings and description keywords blanked) is equal before and after, so no on-disk layout changes.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 3bb699727699835c629700dbdf37e3b50eb00145d8cfac051fad31e328e59d33
+    justification: |-
+      chunk 10g.1 round 2 rewrote the string values of field_meta options= glossaries (and Field descriptions or docstrings) under the docs style rules; the ast dump with docstrings, description keywords and options= string values blanked is equal before and after (keys, order and every other string compared), so no on-disk layout changes.
+  - path: src/hhemt/config/system.py
+    layout_signature: aac27df81ed129955d953731c27eb1997640244b2a8a89a98890ac856a144f98
+    justification: |-
+      chunk 10g.1 round 2 rewrote the string values of field_meta options= glossaries (and Field descriptions or docstrings) under the docs style rules; the ast dump with docstrings, description keywords and options= string values blanked is equal before and after (keys, order and every other string compared), so no on-disk layout changes.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: ecb4f97591a7b796a5b473056b38a3160cd3ee517a9ea6b9c82ed19537d2ba55
+    justification: |-
+      chunk 10g.1 round 3 applied the reviewer's description-text specs; the ast dump with docstrings, description keywords and options= string values blanked is equal before and after, so no on-disk layout changes.
+  - path: src/hhemt/config/hpc_system.py
+    layout_signature: 00e799d823432d89e122b278e1b312a122f3a217258ea41851792e51475a617f
+    justification: |-
+      chunk 10g.1 round 3 applied the reviewer's description-text specs; the ast dump with docstrings, description keywords and options= string values blanked is equal before and after, so no on-disk layout changes.

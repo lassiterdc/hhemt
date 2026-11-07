@@ -421,7 +421,7 @@ def emit_plot_with_sources(
     source_paths = list(source_paths)
     if not source_paths and not allow_empty_sources:
         raise ProcessingError(
-            operation="provenance gate (ADR-6): figure declares no data sources",
+            operation="provenance gate: figure declares no data sources",
             filepath=output_path,
             reason=(
                 "emit_plot_with_sources was called with empty source_paths. "
@@ -551,7 +551,7 @@ def emit_data_artifact_with_sources(
     source_paths = list(source_paths)
     if not source_paths and not allow_empty_sources:
         raise ProcessingError(
-            operation="provenance gate (ADR-6): data artifact declares no data sources",
+            operation="provenance gate: data artifact declares no data sources",
             filepath=artifact_path,
             reason=(
                 "emit_data_artifact_with_sources was called with empty source_paths. "

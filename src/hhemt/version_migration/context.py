@@ -41,6 +41,7 @@ OpKind = Literal[
     "yaml_rename_field",
     "zarr_unify_to_experiment_tree",
     "yaml_add_field",
+    "yaml_remove_key",
     "csv_add_column",
     "csv_assert_unique",
     "flag_rewrite_paths",
@@ -669,6 +670,35 @@ class MigrationContext:
         if name in data:
             return
         data[name] = default
+        p.write_text(yaml.safe_dump(data, sort_keys=False))
+
+    def yaml_remove_key(self, path: Path, key_path: tuple[str, ...]) -> None:
+        """Remove the key at `key_path`, a path of keys from the document root.
+
+        The last key is deleted only when every key before it names a mapping. An absent
+        path is no change, and a file with no change is not rewritten. The path is exact:
+        a name that also sits at another path keeps the other copy.
+        """
+        self.plan.append(
+            PlannedOp(
+                "yaml_remove_key",
+                {"path": str(path), "key_path": tuple(key_path)},
+            )
+        )
+
+    def _apply_yaml_remove_key(self, path: str, key_path: tuple[str, ...]) -> None:
+        p = Path(path)
+        if not key_path or not p.is_file():
+            return
+        data = yaml.safe_load(p.read_text())
+        node = data
+        for key in key_path[:-1]:
+            if not isinstance(node, dict) or key not in node:
+                return
+            node = node[key]
+        if not isinstance(node, dict) or key_path[-1] not in node:
+            return
+        del node[key_path[-1]]
         p.write_text(yaml.safe_dump(data, sort_keys=False))
 
     def csv_add_column(

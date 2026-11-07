@@ -134,14 +134,13 @@ Units      None
 # whose interior conveyance span (_node_matrix_rows) is >= N. You do NOT get more
 # ranks by editing rank_sweep alone — this cap is enforced at config-load by
 # config.synthetic_experiment._validate_coupling_invariant (guard 1:
-# max(rank_sweep) <= _N_COUPLING_NODES), which FAILS FAST. The companion R14
-# geometric precheck synthetic_experiment.assert_coupling_nodes_distinct (no two
-# in-line nodes share a coarsened DEM cell) is NOT wired into any runtime path —
-# it is exercised only by tests/test_synth_dem_resolution_matrix.py. It is
-# unreachable-by-construction today (the dem_resolution_ladder has no runtime
-# consumer, and dem_resolution_matrix_rows pins a 1-rank _DEM_FIXED_CONFIG so no
-# rank can be stranded); wire it at the call site that first makes a ladder
-# runnable. See the knowledge doc "synth coupling-node count taxonomy".
+# max(rank_sweep) <= _N_COUPLING_NODES), which FAILS FAST. The companion geometric
+# precheck synthetic_experiment.assert_coupling_nodes_distinct (no two in-line
+# nodes share a coarsened DEM cell) runs in synthetic_experiment.build_experiment_matrix
+# whenever dem_resolution_ladder is set, so every ladder that reaches an emitted
+# matrix has passed it. dem_resolution_matrix_rows pins a 1-rank _DEM_FIXED_CONFIG,
+# so no rung strands a rank; the precheck guards the retained in-line node count
+# at each rung. See the knowledge doc "synth coupling-node count taxonomy".
 # (2026-06-14: replaced the hardcoded-for-16x30 _NODES list with this
 # n_rows-driven generator — the old list clustered all nodes in the bottom
 # ~22% of the 64x120 experiment grid, deadlocking every multi-rank run.)

@@ -277,7 +277,7 @@ def test_backward_compat_no_system_config_yaml_column(monkeypatch, tmp_path):
     """
     master_system = _make_stub_system(10.0, None, None, (tmp_path / "master.yaml").resolve())
     df_setup_full = pd.DataFrame(
-        {"run_mode": ["mpi", "openmp", "serial"]}, index=pd.Index(["0", "1", "2"], name="sa_id")
+        {"analysis.run_mode": ["mpi", "openmp", "serial"]}, index=pd.Index(["0", "1", "2"], name="sa_id")
     )
     monkeypatch.setattr(TRITONSWMM_sensitivity_analysis, "_retrieve_df_setup", lambda self: df_setup_full)
     monkeypatch.setattr(TRITONSWMM_sensitivity_analysis, "_create_members", lambda self: {})
@@ -401,11 +401,13 @@ def test_attributes_varied_filters_system_config_yaml():
     Analysis-side and system-side independent variables are separate properties,
     `analysis_independent_vars` and `system_independent_vars`, each reading
     `self._df_setup_full.columns` directly. `system_config_yaml` is skipped
-    explicitly in `analysis_independent_vars`; bare `run_mode` / `n_omp_threads`
+    explicitly in `analysis_independent_vars`; `analysis.run_mode` / `analysis.n_omp_threads`
     are recognized as analysis_config fields.
     """
     instance = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
-    instance._df_setup_full = pd.DataFrame(columns=["run_mode", "n_omp_threads", "system_config_yaml"])
+    instance._df_setup_full = pd.DataFrame(
+        columns=["analysis.run_mode", "analysis.n_omp_threads", "system_config_yaml"]
+    )
     keys = instance.analysis_independent_vars
     assert "system_config_yaml" not in keys
     assert "run_mode" in keys
@@ -483,7 +485,6 @@ def _minimal_system_dict(tmp_path: Path) -> dict:
         "SWMM_full": str(_touch(tmp_path / "inputs" / "swmm_full.inp")),
         "landuse_lookup_file": str(_touch(tmp_path / "inputs" / "landuse_lookup.csv")),
         "landuse_raster": str(_touch(tmp_path / "inputs" / "landuse.tif")),
-        "landuse_description_colname": "landuse_description",
         "landuse_lookup_class_id_colname": "landuse_class_id",
         "landuse_lookup_mannings_colname": "mannings",
         "subcatchment_raingage_mapping": str(_touch(tmp_path / "inputs" / "subcatchment_raingage_mapping.csv")),

@@ -265,70 +265,76 @@ def combine_bundle(
     workdir: Path | None = None,
     unzipped: bool = False,
 ) -> CombinedBundle:
-    """Combine N completed render bundles into one standalone combined bundle.
+    """Combine completed render bundles into one standalone combined bundle.
 
-    Ingests two or more **completed** render bundles from different experiments, each
-    given as an unpacked bundle directory or as a bundle ``.zip`` file, and emits a single
-    standalone bundle carrying one cross-experiment report. The pipeline is: (1) refuse any
-    input whose root tree was carried metadata-only, then open each input in turn and extract
-    its render set (everything except raw solver output) into a private working folder under
-    ``child_crates/{experiment_id}/``; (2) check metadata compatibility across the extracted
-    bundles and ABORT on any blocking divergence (an EXPERIMENT-identity field mismatch),
-    then check solver provenance and that each ships a root consolidated tree; (3) write the
-    read-models and render the ``combined`` reporting set against the working folder; (4)
-    write the combined bundle at ``output_path``. No input is modified and the working folder
-    is removed on success, on failure and on SIGTERM.
+    Ingests multiple **completed** render bundles from different experiments. Each bundle is
+    given as an unpacked bundle directory or as a bundle ``.zip`` file. The combine emits a single
+    standalone bundle carrying one cross-experiment report. The pipeline runs in the order below.
 
-    The output is one zip by default (``{output_path}.zip``; an ``output_path`` that already ends
-    in ``.zip`` is used as given). It holds the root files (crate, read-models, manifest, report,
-    ``plots/``) and, per experiment, ``child_crates/{experiment_id}.zip`` plus the two re-rendered
-    child figures as ``child_crates/{experiment_id}.refreshed/{path}``. With ``unzipped=True`` the
-    output is a folder at ``output_path`` holding each experiment's full bundle under
-    ``child_crates/{experiment_id}/``. An existing output is replaced, and a failed or killed
-    combine leaves no loadable output.
+    1. Refuse any input whose root tree was carried metadata-only. Then open each input in turn and extract
+       the render set, meaning everything except raw solver output, into a private working folder under
+       ``child_crates/{experiment_id}/``.
+    2. Check metadata compatibility across the extracted
+       bundles and ABORT on any blocking divergence, such as an EXPERIMENT-identity field mismatch.
+       Then check solver provenance and that each bundle ships a root consolidated tree.
+    3. Write the read-models and render the ``combined`` reporting set against the working folder.
+    4. Write the combined bundle at ``output_path``.
 
-    Both single-analysis bundles (which ship ``analysis_datatree.zarr`` at their
-    root) and sensitivity-primary bundles (``sensitivity_datatree.zarr``) are
-    accepted; the root tree is resolved by existence.
+    The combine modifies no input and removes the working folder on success, on failure, and on SIGTERM.
+
+    The output is one zip by default, at ``{output_path}.zip``. An ``output_path`` that already ends
+    in ``.zip`` is used as given. The zip holds the root files, namely the crate, read-models, manifest,
+    report, and ``plots/``, and, per experiment, ``child_crates/{experiment_id}.zip`` plus the
+    re-rendered child figures as ``child_crates/{experiment_id}.refreshed/{path}``. With
+    ``unzipped=True`` the output is a folder at ``output_path`` holding the full bundle of each experiment
+    under ``child_crates/{experiment_id}/``. An existing output is replaced. A failed
+    or killed combine leaves no loadable output.
+
+    A single-analysis bundle ships ``analysis_datatree.zarr`` at the bundle root and a
+    sensitivity-primary bundle ships ``experiment_datatree.zarr`` there,
+    named ``sensitivity_datatree.zarr`` before V0021. The root tree is resolved by existence.
 
     Parameters
     ----------
     bundle_paths : list of Path
-        Paths to at least two bundles: unpacked bundle directories or bundle ``.zip`` files.
+        Paths to the bundles to combine. A single bundle is refused. Each path names an unpacked bundle directory or
+        a bundle ``.zip`` file.
     output_path : Path, optional
         Destination directory for the combined bundle. When omitted, a sibling of
         the first bundle named ``combined_{N}bundles_{toolkit_git_sha}`` is used.
     declare_solver_split : bool, optional
         Accept bundles pinned to different solver versions on purpose.
     workdir : Path, optional
-        Directory under which the private working folder is created. Defaults to the
+        Directory that holds the private working folder created during the call. Defaults to the
         system temporary directory.
     unzipped : bool, optional
-        Write a folder instead of a zip.
+        Write a folder in place of a zip.
 
     Returns
     -------
     CombinedBundle
-        Consume-side handle for the emitted combined bundle: ``root`` is the ``.zip`` path and
-        ``is_archive`` is true for a zipped output; ``root`` is the folder for ``unzipped=True``.
+        Consume-side handle for the emitted combined bundle. ``root`` is the ``.zip`` path and
+        ``is_archive`` is true for a zipped output. ``root`` is the folder when ``unzipped=True``.
 
     Raises
     ------
     ConfigurationError
-        If fewer than two bundles are supplied, if an input is neither a directory nor a
-        zip, if the bundles carry a blocking compatibility divergence (they do not describe
-        the same experiment family), or if bundles sharing one ``TRITONSWMM_branch_key``
-        carry differing ``triton_producing_sha`` or commit-date root attrs (one pin label
-        would cover two builds). The last check has no waiver; ``declare_solver_split`` does
-        not apply to it.
+        If the input is a single bundle or empty, if an input is neither a directory nor a
+        zip, if the bundles carry a blocking compatibility divergence because they describe different
+        experiment families, or if bundles sharing one ``TRITONSWMM_branch_key``
+        carry differing ``triton_producing_sha`` or commit-date root attrs, so that one pin label
+        would cover differing builds. The last check has no waiver. ``declare_solver_split`` leaves
+        that check in force.
     ProcessingError
         If an input's root consolidated tree was carried metadata-only.
 
     Examples
     --------
-    >>> from hhemt.bundle import combine_bundle
-    >>> combined = combine_bundle([Path("bundle_a"), Path("bundle_b")])  # doctest: +SKIP
-    >>> combined.regenerate_report()  # doctest: +SKIP
+    ```python
+    from hhemt.bundle import combine_bundle
+    combined = combine_bundle([Path("bundle_a"), Path("bundle_b")])
+    combined.regenerate_report()
+    ```
     """
     inputs = sorted(Path(p).resolve() for p in bundle_paths)
     if len(inputs) < 2:
@@ -1599,13 +1605,8 @@ def unpack_member_zip(zip_path: Path) -> Path:
     return unpack
 
 
-def is_combined_manifest(manifest: dict) -> bool:
-    """Whether a parsed ``bundle_manifest.json`` is a combined bundle's (it carries ``child_crates``)."""
-    return "child_crates" in manifest
-
-
 class CombinedBundle:
-    """Consume-side handle for a standalone combined bundle (mirrors Bundle)."""
+    """Consume-side handle for a standalone combined bundle, mirroring ``Bundle``."""
 
     def __init__(self, root: Path, *, is_archive: bool = False) -> None:
         self._root = root.resolve()
@@ -1613,15 +1614,15 @@ class CombinedBundle:
 
     @property
     def is_archive(self) -> bool:
-        """True when ``root`` is the combined ``.zip`` file rather than an unpacked folder."""
+        """True when ``root`` is the combined ``.zip`` file and False for an unpacked folder."""
         return self._is_archive
 
     @classmethod
     def from_directory(cls, path: Path | str) -> CombinedBundle:
-        """Construct a :class:`CombinedBundle` from an unpacked combined-bundle directory.
+        """Construct a ``CombinedBundle`` from an unpacked combined-bundle directory.
 
         The combined-bundle counterpart of :meth:`hhemt.bundle.Bundle.from_directory`,
-        for a bundle produced by ``hhemt combine`` rather than by a single
+        for a bundle produced by ``hhemt combine`` and not by a single
         analysis.
 
         Parameters
@@ -1641,17 +1642,17 @@ class CombinedBundle:
         FileNotFoundError
             No ``bundle_manifest.json`` under ``path``.
         BundleSchemaError
-            The manifest's ``bundle_schema_version`` does not EXACTLY equal the
-            local ``COMBINED_BUNDLE_SCHEMA_VERSION``. This guard compares the combined
-            bundle's own version, not the member version: :meth:`Bundle.from_directory`
-            tests each member bundle against ``BUNDLE_SCHEMA_VERSION`` and refuses
-            older member bundles too, so both readers are exact-match and neither admits
-            an older bundle. A combined bundle emitted by any other toolkit version must
-            be re-combined from its children rather than read here.
+            The manifest's ``bundle_schema_version`` differs from the local
+            ``COMBINED_BUNDLE_SCHEMA_VERSION``. The guard compares the combined bundle's own
+            version and ignores the member version. ``Bundle.from_directory`` tests each member
+            bundle against ``BUNDLE_SCHEMA_VERSION`` and refuses older member bundles too, so both
+            readers require an exact match and neither admits an older bundle. Re-combine a
+            combined bundle emitted by any other toolkit version from the children of the bundle and leave
+            the bundle unread here.
 
         Notes
         -----
-        ``eda()`` is deliberately unavailable on a combined bundle — there is no
+        ``eda()`` is unavailable on a combined bundle because there is no
         aggregate EDA surface across experiments. Run ``.eda()`` on each intact
         child bundle instead.
         """
@@ -1676,14 +1677,14 @@ class CombinedBundle:
         """Unpack a combined ``.zip`` beside itself and return a handle on the unpacked folder.
 
         The render set of the bundle is extracted into ``{zip stem}/`` next to the zip, the
-        place ``hhemt report-from-bundle`` unpacks a member zip: the root files, and for each
-        experiment the render set (everything but raw ``out_*/bin`` solver output) of its nested
-        member zip at ``child_crates/{experiment_id}/``, with the zip's
-        ``child_crates/{experiment_id}.refreshed/`` figures laid over it. A nested member
-        zip that was stored as one compressed entry is inflated to a temporary file first, and
-        that file is removed once its render set is out. A repeat call reuses what a previous
-        call extracted when the zip is the same file (size and modification time), restoring
-        any missing or resized file; a different zip of the same name starts from an empty folder.
+        place ``hhemt report-from-bundle`` unpacks a member zip. The extraction covers the root files and, for each
+        experiment, the render set of the nested member zip, meaning everything but raw ``out_*/bin`` solver output,
+        at ``child_crates/{experiment_id}/``, with the
+        ``child_crates/{experiment_id}.refreshed/`` figures of the zip laid over the nested zip. A nested member
+        zip that was stored as a single compressed entry is inflated to a temporary file first, and
+        that file is removed once the render set is out. A repeat call reuses the files that an earlier
+        call extracted when the zip is the same file by size and modification time. A missing or
+        resized file is restored. A different zip of the same name starts from an empty folder.
 
         Parameters
         ----------
@@ -1693,8 +1694,8 @@ class CombinedBundle:
         Returns
         -------
         CombinedBundle
-            A handle on the unpacked folder (``is_archive`` false); ``regenerate_report()``
-            on it re-renders in place.
+            A handle on the unpacked folder, with ``is_archive`` false. ``regenerate_report()``
+            on the folder re-renders in place.
 
         Raises
         ------
@@ -1752,17 +1753,24 @@ class CombinedBundle:
     def root(self) -> Path:
         """Absolute path to the unpacked combined-bundle directory.
 
-        Its ``child_crates/{experiment_id}/`` subdirectories hold one intact
-        crate per combined experiment; the cross-experiment report is rendered
-        by harvesting their already-rendered figures in place.
+        The ``child_crates/{experiment_id}/`` subdirectories of the root hold one intact
+        crate per combined experiment. The cross-experiment report is rendered
+        by harvesting the already-rendered figures of the crates in place.
         """
         return self._root
 
-    def regenerate_report(self, *, format: Literal["html", "zip"] = "zip", declare_stale_plots: bool = False) -> Path:
-        """Regenerate the combined report from the bundled data (mirrors Bundle.regenerate_report).
+    def regenerate_report(
+        self, *, format: Literal["html", "zip"] | None = None, declare_stale_plots: bool = False
+    ) -> Path:
+        """Regenerate the combined report from the bundled data, mirroring ``Bundle.regenerate_report()``.
 
-        Re-invokes the SAME render path against the bundle root — a REAL
-        ``snakemake --report`` over the combined Snakefile (first-class chrome/nav/CSS).
+        ``format=None`` reads ``auto``, because a combined bundle carries no analysis config.
+        ``auto`` yields ``"html"`` when the figure files under the bundle's ``plots/`` and under each
+        ``child_crates/*/plots/`` total less than 15 MB, the
+        ``config.report.AUTO_HTML_MAX_BYTES`` threshold, and ``"zip"`` otherwise.
+
+        Re-invokes the SAME render path against the bundle root, with a REAL
+        ``snakemake --report`` over the combined Snakefile and first-class chrome, nav, and CSS.
         The renderers read the bundled ``combined_{compatibility,intercomparison}.json``
         read-models, so no re-merge is needed.
         """
@@ -1775,6 +1783,14 @@ class CombinedBundle:
                 format=format, declare_stale_plots=declare_stale_plots
             )
         assert_plots_match_running_build(self._root, declare_stale_plots=declare_stale_plots)
+        if format is None:
+            from hhemt.config.report import report_figure_bytes, resolve_report_format
+
+            # The combined report shows its own figures and the child bundles' figures in place.
+            _children = sorted(c for c in (self._root / "child_crates").glob("*") if c.is_dir())
+            format = resolve_report_format(
+                "auto", report_figure_bytes(self._root) + sum(report_figure_bytes(c) for c in _children)
+            )
         _render_combined_report(None, None, self._root, formats=(format,))
         report = self._root / f"analysis_report.{format}"
         if not report.exists():
@@ -1782,9 +1798,9 @@ class CombinedBundle:
         return report
 
     def eda(self, *, plots_only: bool = True):
-        """Combined bundles have no aggregate EDA surface (see child bundles)."""
+        """Combined bundles have no aggregate EDA surface, so see the child bundles."""
         raise NotImplementedError(
-            "Combined bundles have no aggregate EDA surface. The cross-experiment "
-            "byte-identity panel is deferred (R6); run .eda() on each child bundle "
-            "under child_crates/{experiment_id}/ via Bundle.from_directory(...)."
+            "Combined bundles have no aggregate EDA surface. Each child bundle runs its own "
+            "EDA: call .eda() on Bundle.from_directory(...) of each child bundle under "
+            "child_crates/{experiment_id}/."
         )

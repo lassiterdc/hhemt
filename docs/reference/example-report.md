@@ -1,71 +1,49 @@
 # The interactive analysis report
 
-Every completed analysis renders a self-contained `analysis_report.html`. This
-page documents what that report contains and how to open one. It is a reference
-for the artifact, and [Example reports](#example-reports) links two finished ones.
+A completed analysis renders a self-contained report as `analysis_report.html` or `analysis_report.zip`. The report renders from the outputs of the completed workflow. Rendering is idempotent, and a repeat render executes no simulation rule. The `hhemt eda` command writes a separate report and notebook. See [Exploratory analysis](../tutorials/exploratory-analysis.md).
 
 ## Producing a report
 
-The report is rendered from completed-workflow outputs. It is idempotent:
-re-rendering does not re-execute any simulation rule.
+`render_report()` renders a single analysis, and the same method of the sensitivity facade renders a sensitivity primary.
 
-```python
-analysis.render_report()          # multisim
-sensitivity.render_report()       # sensitivity primary
-```
+The container follows the `report.interactive.report_html_mode` setting of the report config the analysis used. The config is the file passed as `report_config=` to `analysis.run()` when the call gave one, and the `report` block of the analysis config otherwise. The setting defaults to `auto`.
 
-The container is chosen by the `format` argument, which defaults to `"zip"`.
-`render_report()` with no argument writes `{analysis_dir}/analysis_report.zip`,
-containing `report.html` plus per-figure `data/*.html` entries. Pass
-`format="html"` for a single self-contained `analysis_report.html` with every
-figure inlined, larger than the zip but opened with no unzip step. There is no
-size-based selection between them.
+- `html` writes a single self-contained `analysis_report.html` with every figure inlined. The file is larger than the zip and opens without an unzip step.
+- `zip` writes `analysis_report.zip`, containing `report.html` plus per-figure `data/*.html` entries.
+- `auto` adds up the bytes of the figure files under `plots/` when the render starts. The render writes the HTML file when the total is below 15 MB, or 15,000,000 bytes, and writes the zip at that size or above. A workflow that renders under `auto` also writes `analysis_report.format`, a file that names the container of the render.
+
+The `format` argument of `render_report()` overrides the setting for one render. The `format` argument of `Bundle.regenerate_report` and the `--format` option of `hhemt report-from-bundle` work the same way. Without an override, a single-analysis render reads the setting. A combined bundle carries no analysis config and renders under `auto`.
 
 ## Sidebar sections
 
-Which sections appear is driven by the active reporting set, selected with
-`report.reporting_set` (see [Reporting sets](reporting-sets.md)). The default
-set renders, in sidebar order:
+The active reporting set, selected with `report.reporting_set`, decides the sections. [Reporting sets](reporting-sets.md) lists the sets. The default set renders the sections below in sidebar order.
 
 | Section | Contents |
 |---|---|
 | Workflow Status | Per-scenario completion state across every phase |
-| Errors and Warnings | The post-completion validation report: system-level checks, aggregate per-scenario checks, granular per-scenario failures, and resource-utilisation mismatches |
-| System Information | DEM, Manning's roughness, boundary conditions, SWMM network elements, and disk utilisation |
-| Per Simulation Results | One figure group per simulated event |
-| Workflow Performance | Per-rule scheduler and runtime accounting |
-| Metadata | RO-Crate provenance, the reproduction guide, and SLURM efficiency |
-| Appendix | The `scenario_status.csv` table (emitted by the default set, but not yet declared in its sidebar order) |
+| Errors and Warnings | The post-completion validation report with system-level checks, aggregate per-scenario checks, resource-utilization mismatches, and a table of granular per-scenario failures when any exist |
+| System Information | DEM, Manning's roughness, boundary conditions, SWMM network elements, and disk utilization |
+| Per Simulation Results | A figure group per simulated event |
+| Workflow Performance | The timeline of workflow rules and the SLURM efficiency report |
+| Metadata | RO-Crate provenance summary, data availability, and the reproduction guide |
+| Appendix | The `scenario_status.csv` table that the default set emits and the declared sidebar order omits, so the table sorts last |
 
-The `compute_config_byte_identity`, `benchmarking`, `combined`, `compute_sensitivity` and
-`dem_resolution` sets render different selections; each declares its own
-sidebar order.
+The other reporting sets render different selections. Only `combined` has a distinct sidebar order, because the categories depend on the experiments that `hhemt combine` receives. See [Cross-experiment sets](reporting-sets.md#cross-experiment-sets).
 
 ## Example reports
 
-Two finished reports are committed with the documentation and open from this site. Each
-needs no sibling files, but its figure pages load the Plotly library from a CDN (34 of 40
-pages in the first report below, 7 of 13 in the second), so figures stay blank without a
-network connection.
+Finished reports are committed with the documentation and open from this site. Each report needs no sibling files. The figure and table pages load the Plotly and Tabulator libraries from a CDN. Figures and tables stay blank without a network connection.
 
-- [Compute-configuration sweep report](bundles/norfolk-compute-config-sweep-report.html):
-  one storm run under a sweep of compute configurations, with run time, compute cost, speedup and
-  efficiency for each. The tutorial [Compute configurations](../tutorials/norfolk-compute-config-sweep.md)
-  reads it and states the decision it supports.
-- [Observed events report](bundles/norfolk-observed-events-report.html): an ensemble over
-  six observed storms with all three model families, one page per event. The tutorial
-  [Observed events](../tutorials/norfolk-observed-events.md) shows the config that produced it.
+- [Compute-configuration sweep report](bundles/norfolk-compute-config-sweep-report.html) belongs to the tutorial [Compute configurations](../tutorials/norfolk-compute-config-sweep.md) and shows run time, compute cost, speedup, and efficiency per configuration.
+- [Observed events report](bundles/norfolk-observed-events-report.html) belongs to the tutorial [Observed events](../tutorials/norfolk-observed-events.md) and has one page per event.
 
 ## Viewing a report you did not generate
 
-A rendered report is portable: it carries its own JavaScript and needs no
-server. Open the HTML file directly in a browser, or unzip the `.zip` form and
-open `report.html` from the extracted directory.
+A rendered report is portable and needs no server, because the report is a static HTML file or a zip of static files. Open the HTML file in a browser, or unzip the `.zip` form and open `report.html` from the extracted directory.
 
 ## Embedding a report in your own documentation
 
-MkDocs copies everything under `docs/` into the built site verbatim, so a
-report dropped under `docs/` is embeddable directly:
+MkDocs copies everything under `docs/` into the built site verbatim, so a report placed under `docs/` embeds directly.
 
 ```html
 <iframe
@@ -77,5 +55,4 @@ report dropped under `docs/` is embeddable directly:
 </iframe>
 ```
 
-Reports are large: a full analysis report, whose figure pages load the Plotly library from a CDN, runs to
-several megabytes, so weigh the repository cost before committing one.
+A report embeds every figure, and each example report on this page is roughly 100 MB. Weigh the repository cost before committing a report.

@@ -29,9 +29,9 @@ from .raw import NODE_OUTFALL, Dimensions, Network
 
 # SPEC.md 5.2: extraction replaces the token with the extraction directory's path, in the text file types listed there.
 TOKEN = "@GOLDEN_ROOT@"
-# SPEC.md 3: the value at the commit that regenerates the golden (28 at the commit that adds V0028, after the
+# SPEC.md 3: the value at the commit that regenerates the golden (29 at the commit that adds V0029, after V0028 and the
 # consolidated-metadata index of V0027). A literal, because this module imports nothing from hhemt.
-LAYOUT_VERSION = 28
+LAYOUT_VERSION = 29
 CELL_SIZE_M = 10.0  # SPEC.md 2 (cell size); the config field target_dem_resolution is in the SPEC.md 5.1 table
 FIXED_TIME = "2000-01-01T00:00:00+00:00"
 MODELS = ("triton", "tritonswmm", "swmm")  # model_type values of the flag and log names
@@ -378,7 +378,9 @@ def write_configs(root: Path, analysis_id: str, *, sensitivity: bool, arms: tupl
     write_text(root / "system_config.yaml", yaml_text(system_config_dict(arms)))
     write_text(root / "analysis_config.yaml", yaml_text(analysis_config_dict(analysis_id, sensitivity=sensitivity)))
     if sensitivity:
-        header = "member_id,run_mode,n_mpi_procs,n_omp_threads,n_gpus,n_nodes\n"
+        header = (
+            "member_id,analysis.run_mode,analysis.n_mpi_procs,analysis.n_omp_threads,analysis.n_gpus,analysis.n_nodes\n"
+        )
         rows = "".join(
             f"{m},{c['run_mode']},{c['n_mpi_procs']},{c['n_omp_threads']},{c['n_gpus']},{c['n_nodes']}\n"
             for m, c in SENSITIVITY_MEMBERS.items()

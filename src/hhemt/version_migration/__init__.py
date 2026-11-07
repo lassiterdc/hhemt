@@ -1,14 +1,15 @@
 """hhemt version-migration system.
 
-Forward-only migrations of persistent on-disk state (analysis trees and
-system directories), authored as numbered Python modules under
+Forward-only migrations of persistent on-disk state in analysis trees and
+system directories, authored as numbered Python modules under
 ``versions/`` and applied via the ``MigrationContext`` primitive DSL.
 
-Public surface:
-    LAYOUT_VERSION         - current canonical layout version
-    MINIMUM_SUPPORTED_VERSION - floor below which migration is refused
-    run_migration, status, baseline, verify - high-level functions (also CLI)
-    MigrationError        - exception base
+The public surface:
+
+- ``LAYOUT_VERSION`` is the current canonical layout version.
+- ``MINIMUM_SUPPORTED_VERSION`` is the lowest layout version that migration accepts.
+- ``run_migration``, ``status``, ``baseline``, and ``verify`` are high-level functions that the CLI also exposes.
+- ``MigrationError`` is the exception base.
 """
 
 from __future__ import annotations

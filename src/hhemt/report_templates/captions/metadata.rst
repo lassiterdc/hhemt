@@ -11,9 +11,9 @@ Experiment provenance and reproduction metadata for **{{ snakemake.config.analys
 - **Data Availability**: whether the post-processing reclaim was recorded and is consistent.
   An absent timeseries or raw output is a recorded reclaim, not a loss.
 - **Reproduction Guide**: every configuration field grouped by what a reproducer must do
-  with it: *supply* (user-specific, never bundled), *amend* (HPC-specific, bundled but
+  with the field: *supply* (producer-specific, never bundled), *amend* (HPC-specific, bundled but
   machine-dependent), or *keep* (experiment-defining). Values shown are schema descriptions
-  and placeholders only, never the producing user's configuration.
+  and placeholders only, never the producer's configuration.
 
 **Sources:**
 

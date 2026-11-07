@@ -26,7 +26,6 @@ def _uva_shaped_dict() -> dict:
         "hpc_name": "uva-rivanna",
         "default_account": "{your-allocation}",
         "login_node": "login1.hpc.virginia.edu",
-        "default_execution_mode": "batch_job",
         "gpu_allocation_flavor": "gres",
         "additional_modules": ["apptainer", "gcc/11.4.0"],
         "partitions": {

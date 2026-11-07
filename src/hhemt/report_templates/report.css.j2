@@ -1,10 +1,10 @@
-/* report/report.css — hhemt report stylesheet */
+/* report/report.css: hhemt report stylesheet */
 
 /* UVA brand palette (https://brand.virginia.edu/design-assets/colors).
  * Primary: UVA Blue (#232D4B); Accent: UVA Orange (#E57200); supporting
  * neutrals + link blue for tabular and link contexts.
  */
-/* Rendered from the brand theme via string.Template (NOT jinja2 — the
+/* Rendered from the brand theme via string.Template (NOT jinja2; the
  * .j2 extension is the repo convention shared with workflow_description.rst.j2).
  * Placeholders use the braced dollar-name form so adjacent CSS punctuation is
  * unambiguous. CSS rule braces { } are NOT placeholders under string.Template. */
@@ -19,7 +19,7 @@
 
 /* Navbar brand: keep the colored bar but emit no brand text. The empty
  * <div id="brand"> from Snakemake's React stays empty; no ::after pseudo
- * is used (per user request to remove the brand text entirely).
+ * is used (the brand text is removed entirely).
  */
 #brand {
     background: var(--uva-blue);
@@ -39,15 +39,15 @@ body, .navbar, .panel, .table {
 }
 
 /* Link color: UVA Link Blue in the main content panel; keep WHITE inside the
- * sidebar `<nav>` (which has dark `bg-slate-900/70`) — a dark-blue link on a
+ * sidebar `<nav>` (dark `bg-slate-900/70`), because a dark-blue link on a
  * dark sidebar is unreadable. UVA orange is the hover state in both contexts.
  */
 a, a:visited { color: var(--uva-link-blue); }
 a:hover, a:focus { color: var(--uva-orange); }
 nav a, nav a:visited { color: white; }
-/* Subiteration 10.3 — sidebar nav links stay white on hover (was UVA orange);
+/* Subiteration 10.3: sidebar nav links stay white on hover (was UVA orange);
  * the dark-slate row-hover background already reads as a button affordance,
- * orange text on top of that combo is jarring per user feedback. */
+ * orange text on top of that combo is jarring. */
 nav a:hover, nav a:focus { color: white; }
 
 /* Nav icon color: Snakemake's React applies `text-emerald-500` (Tailwind green)
@@ -55,7 +55,7 @@ nav a:hover, nav a:focus { color: white; }
  * orange so brand colors carry through to the sidebar icons.
  */
 .text-emerald-500, .text-emerald-600 { color: var(--uva-orange) !important; }
-/* Subiteration 10.3 — on hover, switch to white (was UVA orange) so sidebar
+/* Subiteration 10.3: on hover, switch to white (was UVA orange) so sidebar
  * nav text + icons read white-on-dark-slate, consistent with the result-row
  * hover styling from Subiteration 10.2. */
 .hover\:text-emerald-500:hover,
@@ -65,8 +65,8 @@ nav a:hover, nav a:focus { color: white; }
  * UVA-Blue branded bar showing "H&H Ensemble Modeling Toolkit Report" (text-only; the
  * Snakemake leaf `<img>` is hidden, and the "Snakemake" span text is
  * replaced via post-process in `render_report()` to "H&H Ensemble Modeling Toolkit").
- * Selector targets the navbar's `<h1>` which uses `sticky` + `bg-white/80`
- * + `text-slate-700` — verified via JS-bundle inspection of `Navbar.render()`.
+ * Selector targets the navbar's `<h1>` that uses `sticky` + `bg-white/80`
+ * + `text-slate-700`, verified via JS-bundle inspection of `Navbar.render()`.
  */
 nav h1 {
     background: var(--uva-blue) !important;
@@ -74,7 +74,7 @@ nav h1 {
 }
 nav h1 img { display: none !important; }
 /* Make the entire "H&H Ensemble Modeling Toolkit Report" bold (Snakemake renders the
- * brand as two spans where only "H&H Ensemble Modeling Toolkit" carries `font-bold`;
+ * brand as a pair of spans where only "H&H Ensemble Modeling Toolkit" carries `font-bold`;
  * "Report" sits in a non-bold `grow mr-5` span). */
 nav h1 span { font-weight: bold; }
 
@@ -84,9 +84,9 @@ nav h1 span { font-weight: bold; }
     color: white;
 }
 
-/* Cross-experiment compatibility table (F7): the renderer emits
- * <table class='compat'> but no selector styled it, so cells collapsed with no
- * boundaries (text mashed together). Give it collapsed borders, padded cells,
+/* Cross-experiment compatibility table: the renderer emits
+ * <table class='compat'>, and no selector styled the table, so cells collapsed with no
+ * boundaries (text mashed together). The rules below give the table collapsed borders, padded cells,
  * a branded header, and left alignment for readability.
  */
 table.compat {
@@ -113,12 +113,12 @@ table.compat tbody tr:nth-child(even) {
  * scroll inside their result panel. The Snakemake report's `ContentDisplay`
  * wraps results in `<div class="grow flex items-center justify-center
  * h-screen overflow-auto">` (verified by JS-bundle inspection). The
- * `items-center` flex alignment vertically centers the content — for tall
+ * `items-center` flex alignment vertically centers the content; for tall
  * figures (e.g., the multi-panel sensitivity benchmarking SVG with
  * Wall-clock / Compute cost / Speedup / Efficiency rows stacked), this
  * clips the TOP of the figure equally with the bottom because the
  * scroll-position-default starts in the middle. Override `align-items` to
- * `flex-start` so tall figures top-align and the user sees the figure from
+ * `flex-start` so tall figures top-align and the figure shows from
  * the top with `overflow-auto` providing scroll for the rest.
  */
 .grow.flex.items-center.justify-center.h-screen { align-items: flex-start !important; }
@@ -135,7 +135,7 @@ table.compat tbody tr:nth-child(even) {
  * The home page mounts the DAG alongside the workflow_description container
  * (`#workflow-desc`); we scope the hide to vega-embed elements that are
  * siblings or descendants of the workflow-description so the dedicated
- * "Workflow" sidebar menu's rulegraph view (which also uses .vega-embed) is
+ * "Workflow" sidebar menu's rulegraph view (also built on .vega-embed) is
  * not hidden. If the scoped selectors miss in your DOM, the unscoped
  * `.vega-embed` rule below acts as a fallback (uncomment to enable).
  */
@@ -147,7 +147,7 @@ table.compat tbody tr:nth-child(even) {
     display: none !important;
 }
 /* Fallback: hide ALL vega-embed elements (also hides the dedicated rulegraph
- * view). Uncomment if scoped selectors above don't match the DOM.
+ * view). Uncomment if the scoped selectors above do not match the DOM.
  */
 /* .vega-embed { display: none !important; } */
 
@@ -167,11 +167,11 @@ div.py-2 > #brand {
     display: none !important;
 }
 
-/* Subiteration 9.3 — Sources list bullets render as dark dots on the dark
+/* Subiteration 9.3: Sources list bullets render as dark dots on the dark
  * `bg-slate-800` info-icon panel, making them invisible. The Sources list
  * lives inside `.prose.prose-invert.prose-sm` (per the className grep). Use
  * `::marker` so the bullet glyph itself takes the white color rather than
- * just the text content (which is already white via prose-invert). Targets
+ * just the text content (already white via prose-invert). Targets
  * both the standard <ul> bullets AND the nested sub-bullets.
  */
 .prose.prose-invert ul > li::marker,
@@ -179,7 +179,7 @@ div.py-2 > #brand {
     color: white !important;
 }
 
-/* Iteration 10 B5a/B5b — result-row UX matching the sidebar GENERAL/RESULTS
+/* Result-row UX matching the sidebar GENERAL/RESULTS
  * rows: full-row clickable button + UVA-orange hover highlight + leading
  * folder icon + hidden eye icon. Scoped via `:has(td.text-right >
  * div.inline-flex)` so non-result tables (Statistics page) are NOT affected.
@@ -191,8 +191,8 @@ table.table-auto tbody tr:has(td.text-right > div.inline-flex) {
     cursor: pointer;
     transition: background-color 0.15s ease;
 }
-/* Subiteration 10.1 — match sidebar hover (hover:bg-slate-800 = #1e293b).
- * Subiteration 10.2 — force text white on hover (per user: "i prefer the
+/* Subiteration 10.1: match sidebar hover (hover:bg-slate-800 = #1e293b).
+ * Subiteration 10.2: force text white on hover ("i prefer the
  * text to stay white" for result rows, distinct from the sidebar's
  * orange-on-hover behavior).
  */
@@ -204,11 +204,11 @@ table.table-auto tbody tr:has(td.text-right > div.inline-flex):hover td,
 table.table-auto tbody tr:has(td.text-right > div.inline-flex):hover a {
     color: white !important;
 }
-/* Subiteration 10.4 — info-circle icon stays orange on hover (was getting
- * forced to white by the rule above which broadly targets `tr:hover a`).
+/* Subiteration 10.4: info-circle icon stays orange on hover (was getting
+ * forced to white by the rule above that broadly targets `tr:hover a`).
  * The info-circle button lives inside `td.text-right > div.inline-flex` and
  * is the visible (not :first-child = hidden eye-icon) action button. Higher
- * specificity than the white-on-hover rule above so it wins.
+ * specificity than the white-on-hover rule above, so the rule wins.
  */
 table.table-auto tbody tr:has(td.text-right > div.inline-flex):hover td.text-right div.inline-flex > a,
 table.table-auto tbody tr:has(td.text-right > div.inline-flex):hover td.text-right div.inline-flex > button,
@@ -219,7 +219,7 @@ table.table-auto td.text-right div.inline-flex > a:first-child,
 table.table-auto td.text-right div.inline-flex > button:first-child {
     display: none !important;
 }
-/* Subiteration 10.1 — orange chart-bar icon via SVG mask (so background-color
+/* Subiteration 10.1: orange chart-bar icon via SVG mask (so background-color
  * controls the rendered color; emoji `📁` was always-yellow). Heroicons
  * "chart-bar" outline path inlined as data-URI mask.
  */

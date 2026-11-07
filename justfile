@@ -61,26 +61,26 @@ test-fast *ARGS:
     @echo "Gate A (fast tier) with arg: {{ARGS}}"
     HHEMT_FORBID_COMPILE=1 PYTHONPATH="${PWD}/src/hhemt/suite" HHEMT_SUITE_LOGREPORT_OUT="${PWD}/suite_ledger_fast.jsonl" env -u VIRTUAL_ENV conda run --no-capture-output -n hhemt uv run --active --extra test --extra docs pytest -p _runner -m "not slow and not compile_tier and not requires_snakemake_subprocess" {{ARGS}}
 
-# LAPTOP TIER -- everything that does not compile or run a solver and is not a Snakemake-subprocess test. Solver
-# compiles and runs belong to the Rivanna tier, so `-m "not compile_tier"` leaves them out, and HHEMT_FORBID_COMPILE=1
-# makes any test that still reaches a compile fail loudly instead of costing minutes. The 96 tests marked
-# `requires_snakemake_subprocess` (they start Snakemake as a child process) are NOT in this tier: they cost about 25
-# minutes run serially (1,498.28 s, run laptop-20261104T173100Z-11ac40f5) against 354.57 s for the rest (run
-# laptop-20261104T172458Z-11ac40f5). They run in every whole-suite Rivanna array, and in `test-snakemake-subprocess`
-# below on a laptop; a `--select-tier compile_tier` Rivanna run excludes them because they are not `compile_tier`.
+# NO-COMPILE, NO-SUBPROCESS TIER -- everything that does not compile or run a solver and is not a Snakemake-subprocess
+# test. Solver compiles and runs belong to a cluster run, so `-m "not compile_tier"` leaves them out, and
+# HHEMT_FORBID_COMPILE=1 makes any test that still reaches a compile fail loudly instead of costing minutes. The tests
+# marked `requires_snakemake_subprocess` (they start Snakemake as a child process) are NOT in this tier: run serially
+# they cost several times the rest of the pool together. They run in every whole-suite array run, and in
+# `test-snakemake-subprocess` below; a `--select-tier compile_tier` run excludes them because they are not
+# `compile_tier`.
 # ONE invocation: `--dist loadgroup` spreads every selected test over every core (`-n` equal to the core count) and
 # keeps each `xdist_group` on one worker, so the tests derived as `shared_runs_root` (tests/conftest.py) run together
 # on one worker while the rest are handed out one at a time, which has no consecutive-batch tail. The recipe exports
 # nothing for the runs root: an autouse fixture in tests/conftest.py points each unmarked test at an empty session
 # directory and leaves it unset for each marked one. `-p _runner` writes the JSONL ledger named by
 # HHEMT_SUITE_LOGREPORT_OUT.
-test-laptop *ARGS:
-    @echo "Laptop tier, with arg: {{ARGS}}"
-    HHEMT_FORBID_COMPILE=1 PYTHONPATH="${PWD}/src/hhemt/suite" HHEMT_SUITE_LOGREPORT_OUT="${PWD}/suite_ledger_laptop.jsonl" env -u VIRTUAL_ENV conda run --no-capture-output -n hhemt uv run --active --extra test --extra docs pytest -p _runner -n "$(nproc)" --dist loadgroup -m "not compile_tier and not requires_snakemake_subprocess" {{ARGS}}
+test-no-compile-no-subprocess *ARGS:
+    @echo "No-compile, no-subprocess tier, with arg: {{ARGS}}"
+    HHEMT_FORBID_COMPILE=1 PYTHONPATH="${PWD}/src/hhemt/suite" HHEMT_SUITE_LOGREPORT_OUT="${PWD}/suite_ledger_no_compile_no_subprocess.jsonl" env -u VIRTUAL_ENV conda run --no-capture-output -n hhemt uv run --active --extra test --extra docs pytest -p _runner -n "$(nproc)" --dist loadgroup -m "not compile_tier and not requires_snakemake_subprocess" {{ARGS}}
 
-# The tests the laptop tier leaves out: `requires_snakemake_subprocess` and not `compile_tier`, run LOCALLY AND SERIALLY
-# (no `-n`: a child Snakemake scheduler under xdist is nested parallelism). About 25 minutes: 1,498.28 s for the 96 in
-# run laptop-20261104T173100Z-11ac40f5. Same shape as the other pytest recipes.
+# The tests `test-no-compile-no-subprocess` leaves out: `requires_snakemake_subprocess` and not `compile_tier`, run
+# LOCALLY AND SERIALLY (no `-n`: a child Snakemake scheduler under xdist is nested parallelism). Same shape as the
+# other pytest recipes.
 test-snakemake-subprocess *ARGS:
     @echo "Snakemake-subprocess tests (serial), with arg: {{ARGS}}"
     HHEMT_FORBID_COMPILE=1 PYTHONPATH="${PWD}/src/hhemt/suite" HHEMT_SUITE_LOGREPORT_OUT="${PWD}/suite_ledger_snakemake_subprocess.jsonl" env -u VIRTUAL_ENV conda run --no-capture-output -n hhemt uv run --active --extra test --extra docs pytest -p _runner -m "requires_snakemake_subprocess and not compile_tier" {{ARGS}}

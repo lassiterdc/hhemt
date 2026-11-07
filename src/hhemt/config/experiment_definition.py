@@ -47,31 +47,31 @@ class DatasetRef(BaseModel):
     local_path: str | None = Field(
         default=None,
         description=(
-            "Producer-side read location, ${VAR}-templated (e.g. "
-            "'${HHEMT_DATA_ROOT}/weather/design_storm_timeseries_SSR.nc'). Optional: "
-            "absent once the dataset resolves by DOI. Never a literal operator path."
+            "Producer-side read location, ${VAR}-templated, such as "
+            "'${HHEMT_DATA_ROOT}/weather/design_storm_timeseries_SSR.nc'. Optional, and absent once the "
+            "dataset resolves by DOI. Never a literal operator path."
         ),
     )
     deposit: bool = Field(
         default=False,
         description=(
-            "True => these bytes are part of the publish payload (publish_analysis "
-            "deposits them). False => referenced only. Required True for any input a "
-            "third party cannot otherwise obtain."
+            "True means the bytes are part of the publish payload, and publish_analysis deposits them. "
+            "False means the bytes are referenced only. Required True for any input that a third party is "
+            "unable to otherwise obtain."
         ),
     )
     sha256: str | None = Field(default=None, description="Hex sha256 of the file, when pinned.")
     doi: str | None = Field(default=None, description="DOI of the durable deposit, once minted.")
     pid: str | None = Field(default=None, description="Host-native record id when no DOI exists.")
     host: Literal["hydroshare", "zenodo"] | None = Field(
-        default=None, description="Data-host backend; interpretation key for pid."
+        default=None, description="Data-host backend. The value is the interpretation key for pid."
     )
     destinations: dict[str, str] = Field(
         default_factory=dict,
         description=(
-            "Cluster-name -> absolute on-cluster destination path. Consumed by the "
-            "provisioning CLI (routed follow-up); declared here so the descriptor is "
-            "the single source of experiment identity."
+            "Cluster-name -> absolute on-cluster destination path. Staging tools read the "
+            "path for the named cluster. The descriptor holds the path so that the "
+            "descriptor stays the single source of experiment identity."
         ),
     )
 
@@ -102,9 +102,9 @@ class ToolkitPin(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    version: str = Field(description="PyPI version, e.g. '0.1.0'.")
+    version: str = Field(description="PyPI version, such as '1.4.2'.")
     sdist_sha256: str | None = Field(default=None, description="sha256 of the PyPI sdist.")
-    commit: str | None = Field(default=None, description="ADVISORY ONLY — may be orphaned.")
+    commit: str | None = Field(default=None, description="ADVISORY ONLY and may be orphaned.")
     tag: str | None = Field(default=None, description="ADVISORY ONLY.")
 
 
@@ -151,13 +151,13 @@ class ExperimentConfig(BaseModel):
     hpc_system_config: dict[str, str] = Field(
         default_factory=dict,
         description=(
-            "Cluster-name -> hpc_system_config path: absolute, or relative to the experiment definition directory, "
-            "the directory holding experiment.yaml."
+            "Cluster-name -> hpc_system_config path. The path is absolute or relative to the experiment "
+            "definition directory, the directory holding experiment.yaml."
         ),
     )
     inputs: list[DatasetRef] = Field(default_factory=list, description="Input datasets.")
     toolkit_pin: ToolkitPin = Field(
-        description="Which toolkit release this experiment is pinned to, so a third party can obtain it."
+        description="The toolkit release this experiment is pinned to, so a third party can obtain that release."
     )
     container: ContainerRef | None = Field(default=None, description="None => native execution.")
 

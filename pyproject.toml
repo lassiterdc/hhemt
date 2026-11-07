@@ -153,6 +153,9 @@ docs = [
     # import name and is not what provides this package here.
     "griffelib>=2,<3",
     "mkdocs-htmlproofer-plugin",
+    # Renders `docs/tutorials/interactive-python.ipynb` as a page. The plugin is configured with `execute: false`
+    # in `mkdocs.yml`, so the strict build never runs a cell and needs no solver, kernel or result store.
+    "mkdocs-jupyter",
 ]
 
 [project.urls]
@@ -244,7 +247,12 @@ hhemt = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-norecursedirs = ["test_data", "docs", ".git", ".venv", "venv", "dev"]
+# `docs` is absent from this list on purpose. pytest matches these patterns against a
+# directory's basename, so a `docs` entry also skips tests/docs/ during recursion and
+# `pytest -m docs` (no path argument, collecting from testpaths) would find none of
+# the tests there. The root docs/ directory holds no Python file, so removing the entry
+# changes what pytest imports from it by nothing.
+norecursedirs = ["test_data", ".git", ".venv", "venv", "dev"]
 # census-green-up Phase 1 — systematic tmp hygiene. Default "all" keeps every
 # test's tmp_path for the whole run (and the last 3 base dirs across runs); with
 # large per-test fixture artifacts that accumulates to tens of GB within one run
@@ -257,6 +265,7 @@ markers = [
     "publish_e2e: end-to-end publish (HydroShare/Zenodo) tests; require credentials and HHEMT_PUBLISH_E2E=1",
     "requires_snakemake_subprocess: deselected by Gate A. Measured NOT to spawn in 36 of the 107 tests this marker removes from Gate A; population under re-derivation. Rationale: incompatible with pytest-xdist nested parallelism, never wired.",
     "compile_tier: DERIVED at collection from the fixture closure (tests/conftest.py) for any test holding `tritonswmm_cpu_compiled`; hand-applied ONLY where a body compiles directly. Deselected by Gate A, required by Gate B.",
+    "docs: compares a published page with the code it describes and runs no solver. tests/docs/conftest.py adds it to every test under tests/docs/.",
     "shared_runs_root: DERIVED at collection (tests/conftest.py), never hand-applied. The test builds or reads a tree under the shared slug runs root: a fixture in its closure, or its own body, calls a `retrieve_*` test-case builder before any runs-root override is set. The laptop tier keeps these tests off the pool's per-test override directory.",
 ]
 # Dump every thread's traceback after this many seconds in ONE test, to the stderr fd

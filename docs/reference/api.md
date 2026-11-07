@@ -1,10 +1,8 @@
 # API Reference
 
-The `hhemt` package API, one page per part of the toolkit:
-
-- [The toolkit and its errors](api-toolkit.md): `hhemt`
-- [Analyses](api-analysis.md): `hhemt.analysis`, `hhemt.sensitivity_analysis`
-- [Bundles](api-bundles.md): `hhemt.bundle`
-- [Experiments](api-experiments.md): `hhemt.synthetic_experiment`, `hhemt.experiments`, `hhemt.experiment_definition`
-- [Exploratory data analysis](api-eda.md): `hhemt.eda`
-- [Layout version migration](api-version-migration.md): `hhemt.version_migration`
+- [Error handling](api-toolkit.md) documents `hhemt` and the errors that the package raises.
+- [Analyses](api-analysis.md) documents `hhemt.analysis` and `hhemt.sensitivity_analysis`.
+- [Bundles](api-bundles.md) documents `hhemt.bundle`.
+- [Experiments](api-experiments.md) documents `hhemt.synthetic_experiment`, `hhemt.experiments`, and `hhemt.experiment_definition`.
+- [Exploratory data analysis](api-eda.md) documents `hhemt.eda`.
+- [Layout version migration](api-version-migration.md) documents `hhemt.version_migration`.

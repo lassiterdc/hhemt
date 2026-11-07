@@ -122,10 +122,8 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "force_rerun": "experiment",
     "hydraulic_timestep_s": "experiment",
     "is_experiment_member": "experiment",
-    "landuse_description_colname": "experiment",
     "landuse_lookup_class_id_colname": "experiment",
     "landuse_lookup_mannings_colname": "experiment",
-    "landuse_plot_color_colname": "experiment",
     "manhole_diameter": "experiment",
     "manhole_loss_coefficient": "experiment",
     # "experiment": it decides which manholes exchange water with the surface, so it is part

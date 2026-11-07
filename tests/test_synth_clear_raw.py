@@ -253,7 +253,9 @@ def test_clear_raw_guard_raises_when_mid_multi_allocation(tmp_path: Path):
     _seed_tritonswmm_out_dir(out_dir)
 
     proc = _make_proc("out_tritonswmm", out_dir, multi_allocation_in_progress=True)
-    with pytest.raises(RuntimeError, match="clear raw triton outputs deferred"):
+    with pytest.raises(
+        RuntimeError, match=r"mid-multi-allocation \(multi_allocation_in_progress=True\)\. This is forbidden"
+    ):
         TRITONSWMM_sim_post_processing._clear_raw_outputs(proc, "tritonswmm")  # type: ignore[arg-type]
 
     # Guard fired before the _CLEAR_RAW_DELETE_SUBDIRS walk — nothing deleted.

@@ -1,23 +1,25 @@
 # Compile the solver
 
-**Goal:** build the TRITON-SWMM solver once on the machine that will run your
-simulations, so that the setup step of every run finds it.
+## Goal
 
-**Prerequisites:** a working install ([Installation](installation.md)) with the
-`hhemt` environment activated, and `git` and `make` on your `PATH`. The compiler,
-`cmake` and MPI come with the conda environment; `git` and `make` come from the
-operating system.
+Build the TRITON-SWMM solver once on the machine that runs your simulations, so that the setup step of every analysis finds the solver.
 
-## Why this is a separate step
+## Prerequisites
 
-In native mode (`execution_environment: native`, the default) a run executes the
-solver it finds under your system config's `TRITONSWMM_software_directory`. The
-setup step of every run checks that each enabled model is already compiled there
-and stops with an error when one is missing. It never compiles. The build is yours
-to run, once per machine and once per GPU target, and it is cached afterwards: a
-second call skips a backend whose build already succeeded.
+- A working [installation](installation.md) with the `hhemt` environment activated.
+- `git` and `make` on your `PATH`. The operating system provides both. The conda environment provides the compiler, `cmake`, and MPI.
 
-The system config fields that decide what gets built and where look like this:
+## Key references
+
+- [Diagnosing a failed analysis](diagnosing-a-failed-run.md) reads the `_status/` ladder and the logs.
+- [HPC-profile setup](hpc-profile-setup.md) describes the GPU hardware entry and the modules that a build uses.
+- [Configuration schema](../reference/config-schema.md) lists the `toggle_*` and `TRITONSWMM_*` fields.
+
+## Compilation as a separate step
+
+In native mode, the default `execution_environment: native`, an analysis executes the solver under `TRITONSWMM_software_directory` of your system config. The setup step of every analysis checks that each enabled model is compiled there and stops with an error when a model is missing. The setup step never compiles. You run the build once per machine and once per GPU target, and later calls skip a backend whose build succeeded.
+
+The system config fields that select the models and the source location look like this.
 
 ```yaml
 toggle_triton_model: false
@@ -27,55 +29,34 @@ TRITONSWMM_software_directory: /path/to/triton
 TRITONSWMM_git_URL: https://code.ornl.gov/hydro/triton.git
 ```
 
-In container mode the solver ships inside the image and there is nothing to
-compile; [`hhemt build-sifs`](../reference/cli.md#publishing-and-reproducing) creates
-the images your experiment needs.
+In container mode the solver ships inside the image, and [Building container images](building-container-images.md) covers the images.
 
-## On a laptop or workstation
+## On a workstation
 
-Compile from the same Python session you run from. For the Norfolk example:
+Compile with the standalone setup command. The command takes the same system and analysis configs as an analysis.
 
-```python
-from hhemt.experiments import NorfolkIreneExperiment
-# hhemt_sha is the commit you run: `git rev-parse HEAD`
-norfolk = NorfolkIreneExperiment.load(hhemt_sha="REPLACE-WITH-THE-FULL-40-HEX-HHEMT-COMMIT")
-norfolk.system.compile_TRITON_SWMM()
+```bash
+python -m hhemt.setup_workflow \
+    --system-config my_system.yaml \
+    --analysis-config my_analysis.yaml \
+    --compile-triton-swmm
 ```
 
-For your own configs, the system object hangs off the toolkit:
+On first use the command clones the pinned TRITON-SWMM source into `TRITONSWMM_software_directory`, writes a build script named `compile_cpu.sh` into your system directory, and runs the script. A build takes a few minutes. The command prints `[CPU] ✓ Compilation successful!` when the build finishes. After a failure the command prints `[CPU] ✗ Compilation failed` and the path of the log to read. An existing build makes the command print `[CPU] Already compiled successfully (skipping)` and return at once.
 
-```python
-from hhemt import Toolkit
-tk = Toolkit.from_configs("my_system.yaml", "my_analysis.yaml")
-tk.system.compile_TRITON_SWMM()
-```
+Pass one flag for each model that the system config enables.
 
-The call clones the pinned TRITON-SWMM source into `TRITONSWMM_software_directory`
-on first use, writes a build script into your system directory (`compile_cpu.sh`),
-and runs it. Expect a few minutes. It prints `[CPU] ✓ Compilation successful!` when
-done, or `[CPU] ✗ Compilation failed` followed by the path of the log to read. When
-the build already exists it prints `[CPU] Already compiled successfully (skipping)`
-and returns at once.
+| Toggle | Command-line flag |
+|---|---|
+| `toggle_tritonswmm_model` | `--compile-triton-swmm` |
+| `toggle_triton_model` | `--compile-triton-only` |
+| `toggle_swmm_model` | `--compile-swmm` |
 
-Call one method for each model you have enabled in the system config:
-
-| Toggle | Method | Command-line flag |
-|---|---|---|
-| `toggle_tritonswmm_model` | `system.compile_TRITON_SWMM()` | `--compile-triton-swmm` |
-| `toggle_triton_model` | `system.compile_TRITON_only()` | `--compile-triton-only` |
-| `toggle_swmm_model` | `system.compile_SWMM()` | `--compile-swmm` |
-
-To see what is built, call `system.print_compilation_status()`.
+Run the same command again to list the built backends. The command skips and reports a backend whose build succeeded.
 
 ## On a cluster
 
-A run on a GPU partition needs a GPU build, and that build is keyed to the
-partition: the GPU architecture and backend come from the partition's entry in your
-[HPC system profile](hpc-profile-setup.md), and the environment modules the profile
-lists are loaded inside the build script. The Python calls above never read the
-profile, so on their own they build only the CPU backend. On a cluster use the
-command-line form, which reads it, and pass the
-partition your analysis config names in `hpc_ensemble_partition`:
+An analysis on a GPU partition needs a GPU build keyed to the partition. The partition entry in your HPC system profile sets the GPU architecture and backend, as [Choose a partition](hpc-profile-setup.md#choose-a-partition) describes. The build script loads the environment modules that the profile lists. The command reads the profile only when you pass `--hpc-system-config`, and without the flag the command builds the CPU backend alone. A cluster build takes the profile and the partition that `hpc_ensemble_partition` of your analysis config names.
 
 ```bash
 python -m hhemt.setup_workflow \
@@ -86,57 +67,21 @@ python -m hhemt.setup_workflow \
     --compile-triton-swmm
 ```
 
-Add `--compile-triton-only` or `--compile-swmm` for the other models you have
-enabled. The command builds the CPU backend and, when the partition declares a
-`gpu_compilation_backend`, the GPU backend as well, each into its own directory
-under `TRITONSWMM_software_directory` (`build_tritonswmm_cpu` and
-`build_tritonswmm_gpu_{gpu_hardware}`). Run it once for each GPU partition you will
-submit to; a CPU partition needs only the CPU build. Running it a second time is
-also the way to check what is built, because a backend whose build already
-succeeded is skipped.
+Add `--compile-triton-only` or `--compile-swmm` for the other models that you enabled. The command builds the CPU backend and, when the partition declares a `gpu_compilation_backend`, the GPU backend as well. Each backend gets a directory under `TRITONSWMM_software_directory`, named `build_tritonswmm_cpu` or `build_tritonswmm_gpu_{gpu_hardware}`. Run the command once per GPU partition that you submit to. A CPU partition needs only the CPU build. A second call also lists the built backends, because the command skips a backend whose build succeeded.
 
-For an [experiment definition](running-an-experiment-definition.md), the two config paths
-are the resolved copies that `hhemt run-experiment --dry-run` writes to
-`$SCRATCH_DIR/resolved_configs/`.
+An [experiment definition](running-an-experiment-definition.md) supplies the config paths as the resolved copies that `hhemt run-experiment --dry-run` writes to `$SCRATCH_DIR/resolved_configs/`.
 
-## When to compile again
+## Recompilation triggers
 
-The check a run performs reads the log the build left in its build directory and
-asks whether that build succeeded. It compares nothing against your config or the
-source pin, so a change to either is yours to act on:
+The check of an analysis reads the log that the build left in the build directory and asks whether the build succeeded. The check compares no value against your config or the source pin, so a change to either needs your action.
 
-- **You changed `TRITONSWMM_branch_key`.** Remove the clone at
-  `TRITONSWMM_software_directory` (the build directories live inside it) and
-  compile again. A compile refuses to proceed while the clone's checkout disagrees
-  with the pin, and its message says what to remove.
-- **You changed `TRITONSWMM_git_URL`.** Remove the clone the same way. Nothing
-  compares the clone's remote against the config, so a clone from the old URL whose
-  checkout still matches the pin is reused in silence.
-- **You will submit to a GPU partition whose `gpu_hardware` you have not built
-  for.** Compile with that partition as `--target-partition`; the new build lands in
-  its own directory and the existing ones are untouched.
-- **You want an existing backend rebuilt**, after a change to the modules the
-  profile loads, or because a build is suspect. Pass
-  `recompile_if_already_done_successfully=True` to the method, or
-  `--recompile-if-already-done` to the command.
+- **You changed `TRITONSWMM_branch_key`.** Remove the clone at `TRITONSWMM_software_directory` and compile again. The build directories live inside the clone. A compile refuses to proceed while the checkout of the clone disagrees with the pin, and the message names the directory to remove.
+- **You changed `TRITONSWMM_git_URL`.** Remove the clone the same way. No check compares the remote of the clone against the config, so a clone from the old URL with a checkout that matches the pin is reused silently.
+- **You will submit to a GPU partition with a `gpu_hardware` you have no build for.** Compile with that partition as `--target-partition`. The new build lands in a separate directory, and the existing builds stay untouched.
+- **You want an existing backend rebuilt** after a change to the modules that the profile loads, or because a build is suspect. Pass `--recompile-if-already-done` to the command.
 
-Nothing else calls for a rebuild. Updating hhemt itself, changing `execution_mode` or
-`multi_sim_run_method`, editing the analysis config, and
-`analysis.run(from_scratch=True)` all leave the build in place: `from_scratch`
-clears the analysis directory, and the build lives under the software directory.
+No other change calls for a rebuild. Updating hhemt, changing `execution_mode` or `multi_sim_run_method`, editing the analysis config, and `hhemt run --from-scratch` all leave the build in place. `--from-scratch` clears the analysis directory. The build lives under the software directory.
 
-## If a run stops at setup
+## If an analysis stops at setup
 
-A run stops at its first step when the setup check finds an uncompiled model.
-[Diagnosing a failed run](diagnosing-a-failed-run.md#setup-says-a-model-is-enabled-but-not-compiled)
-shows the line it leaves in the setup log and what to do; the compile it asks for is
-the one on this page for your machine.
-
-## See also
-
-- [Diagnosing a failed run](diagnosing-a-failed-run.md): reading the `_status/`
-  ladder and the logs.
-- [HPC-profile setup](hpc-profile-setup.md): where the GPU hardware and the modules
-  a build uses come from.
-- [Configuration schema](../reference/config-schema.md): the `toggle_*` and
-  `TRITONSWMM_*` fields.
+An analysis stops at the first step when the setup check finds an uncompiled model. [Diagnosing a failed analysis](diagnosing-a-failed-run.md#setup-says-a-model-is-enabled-but-not-compiled) shows the line that the setup check leaves in the setup log and the remedy. The compile on this page for your machine satisfies the check.

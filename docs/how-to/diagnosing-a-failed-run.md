@@ -1,81 +1,71 @@
-# Diagnose a failed or incomplete run
+# Diagnose a failed or incomplete analysis
 
-**Goal:** find out what actually went wrong, in an order that narrows quickly,
-without re-running anything.
+## Goal
 
-**Prerequisites:** a completed or partially-completed analysis directory.
+Name the phase that failed, the artifact that shows the failure, and whether the raw outputs needed to retry still exist. The steps below narrow the search and re-run no step.
 
-This is the page for *"it said it ran and produced nothing"* and *"the job died
-at eleven hours."* Start from the symptom you actually have. If no entry in the
-symptom index matches, or you do not yet know enough to pick one, work through
-the numbered steps instead.
+## Prerequisites
+
+- A completed or partially completed analysis directory.
+
+## Key references
+
+- [Operating on an analysis while jobs are in flight](in-flight-operations.md) describes the operations that leave running jobs in place.
+- [Rerun triggers](../reference/rerun-triggers.md) explains the re-run triggers.
+- The [CLI reference](../reference/cli.md) lists the commands and exit codes.
 
 ## Symptom index
 
-| Symptom | What it usually means |
+Start from the symptom you have. When no entry matches or the information to pick one is missing, work through the numbered steps instead.
+
+| Symptom | Usual meaning |
 |---|---|
-| [It ran but produced nothing](#it-ran-but-produced-nothing) | A phase never started: find which flag is missing |
-| [Setup says a model is enabled but not compiled](#setup-says-a-model-is-enabled-but-not-compiled) | Native mode needs a one-time compile, and nothing has been built on this machine |
-| [The job died at walltime](#the-job-died-at-walltime) | Expected; it resumes from its last checkpoint |
-| [The report is wrong but the results are fine](#the-report-is-wrong-but-the-results-are-fine) | The simulations are sound; the stages after them need rebuilding |
-| [A run I expected to be a no-op re-executed everything](#a-run-i-expected-to-be-a-no-op-re-executed-everything) | **Not a failure**: a re-run trigger fired |
-| [Results look wrong and I do not know if it is me](#results-look-wrong-and-i-do-not-know-if-it-is-me) | Possibly a known bug rather than your configuration |
+| [The analysis produced no output](#the-analysis-produced-no-output) | A phase never started, so find the missing flag |
+| [Setup says a model is enabled but not compiled](#setup-says-a-model-is-enabled-but-not-compiled) | Native mode needs a one-time compile, and the machine has no build |
+| [The job died at walltime](#the-job-died-at-walltime) | Expected, and the job resumes from the last checkpoint |
+| [The report is wrong but the results are fine](#the-report-is-wrong-but-the-results-are-fine) | The simulations are sound, and the stages after them need rebuilding |
+| [A resumed analysis that I expected to be a no-op re-executed everything](#a-resumed-analysis-that-i-expected-to-be-a-no-op-re-executed-everything) | A re-run trigger fired and no failure occurred |
+| [Results look wrong and the cause is unknown](#results-look-wrong-and-the-cause-is-unknown) | Possibly a known bug and no configuration error |
 
 !!! warning "A green exit is not evidence of success"
-    Two things about this toolkit make that specifically true, and both are
-    deliberate rather than defects:
+    - **The toolkit detects completion from solver log markers and ignores exit codes.** A solver can exit `0` after failing partway.
+    - **In `batch_job` dispatch, a successful return means the tmux session exited.** The return carries no information about the workflow inside the session.
 
-    - **Completion is detected from solver log markers, not exit codes.** A
-      solver can exit `0` having failed partway.
-    - **In `batch_job` dispatch, a successful return means the tmux session
-      exited**, not that the workflow inside it succeeded.
-
-    So start from artifacts, never from a return code.
+    Start from artifacts and never from a return code.
 
 ## 1. Ask what the toolkit thinks happened
 
-```python
-status = analysis.get_workflow_status()
+```bash
+hhemt run --system-config my_system.yaml --analysis-config my_analysis.yaml --status
 ```
 
-This inspects logs and outputs to report per-phase completion. It is the fastest
-way to find out *which phase* to look at, which is the only thing you need from
-step 1.
+The command inspects logs and outputs and reports completion per phase. The report is the fastest way to find the phase to examine, and step 1 needs no other output.
 
-If you prefer the filesystem, the same information is in the status flags:
+The status flags hold the same information on the filesystem.
 
 ```bash
 ls analysis_dir/_status/
 ```
 
-The table below is in execution order. The leading letter encodes that order
-with one exception, `f_consolidate_scenario_evt-*`, which runs before
-`e_consolidate_*` and so sorts after the rung it precedes; read progress down
-this table rather than down a sorted listing:
+The table below lists the phases in execution order. The leading letter encodes the order with one exception. The flag `f_consolidate_scenario_evt-*` runs before `e_consolidate_*` and sorts after that rung. Read progress down the table and never down a sorted listing.
 
 | Prefix | Phase |
 |---|---|
-| `a_setup_*` | System setup: DEM and Manning's processing, plus a check that every enabled solver is already compiled |
-| `b_prepare_*` | Scenario preparation: SWMM `.inp` generation, boundary conditions. Emitted only when preparation runs as its own rule; on a run where it does not, the ladder reads `a_` then `c_` with no gap. |
-| `c_run_*` | Simulation, one flag per (model type, event) |
-| `d_process_*` | Per-scenario output processing, one flag per (model type, event) |
-| `f_consolidate_scenario_evt-*` | Per-scenario fan-in once every enabled model has processed that event; when `remove_after_processing` elects scenario-scoped classes, their inputs are reclaimed here. Regular analyses only, and it runs before `e_consolidate_*` despite its letter |
-| `e_consolidate_*` | Analysis-level consolidation: `e_consolidate_complete.flag` on a regular analysis, `e_consolidate_member-*` per member of an experiment |
+| `a_setup_*` | System setup of the DEM and Manning's roughness, plus a check that every enabled solver is compiled |
+| `b_prepare_*` | Scenario preparation by SWMM `.inp` generation and boundary conditions. Emitted only when preparation runs as a separate rule. Otherwise the ladder reads `a_` then `c_` with no gap. |
+| `c_run_*` | Simulation, one flag per model type and event |
+| `d_process_*` | Per-scenario output processing, one flag per model type and event |
+| `f_consolidate_scenario_evt-*` | Per-scenario fan-in once every enabled model has processed the event. When `remove_after_processing` elects scenario-scoped classes, the phase reclaims their inputs. Regular analyses only. The flag runs before `e_consolidate_*` despite the letter. |
+| `e_consolidate_*` | Analysis-level consolidation, with `e_consolidate_complete.flag` on a regular analysis and `e_consolidate_member-*` per member of an experiment |
 | `f_consolidate_experiment_*` | Experiment consolidation |
 
-**The last rung present, reading down the table, is the phase that completed; the
-failure is in the next rung down.** Each flag has a `.flag.json` sidecar naming the rule, model type,
-member and event it belongs to.
+**The last rung present, reading down the table, is the phase that completed, and the failure is in the next rung down.** Each flag has a `.flag.json` sidecar that names the rule, model type, member, and event of the flag.
 
-A cold-cache failure shows here as no `a_setup_*` flag at all, with the uncompiled
-model named in `logs/setup.log` (`logs/setup_target_{N}.log` on an experiment): the
-setup rule asserts the build and never performs it. A container run makes no such
-check, because its solver ships inside the image.
+A cold-cache failure shows as a missing `a_setup_*` flag, with the uncompiled model named in `logs/setup.log`, or in `logs/setup_target_{N}.log` on an experiment. In native mode the setup rule checks that every enabled solver is compiled, and a container ships the solver inside the image. [Compile the solver](compiling-the-solver.md#compilation-as-a-separate-step) describes the compile.
 
 ## 2. Read the log for the phase that did not complete
 
-Per-simulation logs are written at the analysis level, one per
-(event, model type):
+The analysis level holds one log per event and model type.
 
 ```bash
 ls analysis_dir/logs/sims/
@@ -83,116 +73,67 @@ ls analysis_dir/logs/sims/
 # model_{model_type}_{analysis_id}_evt{N}.log        (sensitivity member)
 ```
 
-Look for the completion marker. TRITON writes `Simulation ends` and standalone
-SWMM writes `EPA SWMM completed` (with no `There are errors.` on the same line)
-into the model log above. The runner's own `Simulation completed successfully`
-line goes to the rule log beside it, `{model_type}_evt-{event_id}.log`
-(`simulation_member_{member_id}_evt_{event_id}.log` on an experiment).
-**Absence of the marker on a job that
-`sacct` reports COMPLETED is the signature of a silent early exit**. That
-combination means the process was reaped or returned early, so the elapsed time
-the scheduler reports is not the time the solver ran.
+Look for the completion marker in the model log. TRITON writes `Simulation ends`, and standalone SWMM writes `EPA SWMM completed` with no `There are errors.` on the same line. The runner writes the line `Simulation completed successfully` to the rule log beside the model log, named `{model_type}_evt-{event_id}.log`, or `simulation_member_{member_id}_evt_{event_id}.log` on an experiment. **A job that `sacct` reports as COMPLETED with the marker absent signals a silent early exit.** The combination means the process was reaped or returned early, so the elapsed time that the scheduler reports differs from the time the solver ran.
 
-!!! danger "These logs are truncated on every attempt"
-    The per-simulation log is opened in `"w"` mode on **every** exec, so it holds
-    only the most recent attempt. If retries fired, earlier attempts are gone
-    from here.
-    For per-attempt history read the scheduler logs instead:
+!!! danger "The per-simulation logs are truncated on every attempt"
+    The per-simulation log opens in `"w"` mode on **every** execution, so the log holds only the most recent attempt, and retries erase the earlier attempts. The scheduler logs hold the history per attempt.
 
     ```bash
     ls analysis_dir/.snakemake/slurm_logs/
     ```
 
-    That directory also holds the runner's own stderr, including the `Command:`
-    line showing exactly what was executed, which is where to confirm a
-    container wrap or an MPI launcher did what you expected.
+    The directory also holds the stderr of the runner, including the `Command:` line that shows the executed command. Use the line to confirm that a container wrap or an MPI launcher behaved as expected.
 
 ## 3. Match the symptom
 
-### It ran but produced nothing
+### The analysis produced no output
 
-If no `c_run_*` flag exists in `analysis_dir/_status/`, the simulation never
-started, and the cause is upstream: setup, compilation, or dispatch. If
-`c_run_*` exists but `d_process_*` does not, the simulation ran and processing
-failed; the raw outputs are still on disk under `sims/{event_id}/out_*/`, so
-nothing is lost and `reprocess` can retry.
+When no `c_run_*` flag exists in `analysis_dir/_status/`, the simulation never started. The cause is upstream in setup, compilation, or dispatch. When a `c_run_*` flag exists and no `d_process_*` flag does, the simulation completed. Processing failed. The raw outputs stay on disk under `sims/{event_id}/out_*/`, so no output is lost and `reprocess` can retry.
 
 ### Setup says a model is enabled but not compiled
 
-No `a_setup_*` flag exists, and `logs/setup.log` (`logs/setup_target_{N}.log` on
-an experiment) ends with a line of this shape:
+No `a_setup_*` flag exists, and `logs/setup.log`, or `logs/setup_target_{N}.log` on an experiment, ends with a line of the form below.
 
 ```text
 TRITON-SWMM is enabled but not compiled and --compile-triton-swmm not specified
 ```
 
-The TRITON-only and SWMM checks write the same line with their own names and
-flags. In native mode the setup step checks for a compiled solver and never builds one.
-The flag the line names belongs to the standalone compile command, and neither
-`hhemt run` nor `analysis.run()` takes it. Compile once, following
-[Compile the solver](compiling-the-solver.md), then start the run again: setup work
-that completed is kept.
+The TRITON-only and SWMM checks write the same line with their own names and flags. The flag in the line belongs to the standalone compile command. `hhemt run` and `analysis.run()` both reject the flag. Compile once, following [Compile the solver](compiling-the-solver.md), and start the analysis again. Setup work that completed stays.
 
 ### The job died at walltime
 
-A killed simulation resumes from its most recent checkpoint on the next attempt:
-it does not restart from zero. Raise the simulation retry count rather than the
-walltime if checkpoints are frequent enough.
+Raise the simulation retry count in place of the walltime when checkpoints are frequent enough. [Scale and hardware](../explanation/limitations.md#scale-and-hardware) states that a killed simulation resumes from the latest checkpoint.
 
-??? note "Why `perf_*` exceeds the scheduler's elapsed time on a resumed run"
-    [A caveat on performance columns](../reference/output-data-model.md#a-caveat-on-performance-columns)
-    explains it, and why it is correct.
+??? note "`perf_*` exceeding the scheduler's elapsed time on a resumed analysis"
+    [A caveat on performance columns](../reference/output-data-model.md#a-caveat-on-performance-columns) explains the excess and why the excess is correct.
 
 ### The report is wrong but the results are fine
 
-Do not re-run. Use
-`reprocess`, which re-runs processing, consolidation and rendering against
-existing simulation outputs.
+Avoid a re-run. Use `reprocess` to repeat processing, consolidation, and rendering against the existing simulation outputs.
 
-### A run I expected to be a no-op re-executed everything
+### A resumed analysis that I expected to be a no-op re-executed everything
 
-A re-run trigger fired; nothing failed. See
-[When and why re-runs happen](../explanation/rerun-faq.md).
+A re-run trigger fired and no failure occurred. [Rerun triggers](../reference/rerun-triggers.md) explains the triggers.
 
-### Results look wrong and I do not know if it is me
+### Results look wrong and the cause is unknown
 
-Run
-`hhemt check-invalidating-fixes`. It reports whether a known invalidating bug
-matches this analysis, i.e. whether its outputs are suspect for a reason that has
-already been identified and fixed. `hhemt recompute-plan` then shows what would
-need re-running.
+Run `hhemt check-invalidating-fixes` and then `hhemt recompute-plan` to list the work that needs re-running. The [CLI reference](../reference/cli.md#checking-correctness) describes both commands.
 
-## 4. Read the exit code, if you have one
+## 4. Read the exit code
 
-The CLI uses structured exit codes, one per failure class. The
-[CLI reference](../reference/cli.md#exit-codes) lists them and says what to do about a
-code it does not map.
+The CLI uses one structured exit code per failure class. The [CLI reference](../reference/cli.md#exit-codes) lists the codes and the remedy for an unmapped code.
 
-## 5. Check the report's own validation section
+## 5. Check the validation section of the report
 
-A rendered report carries an **Errors and Warnings** section, whose contents
-[The interactive analysis report](../reference/example-report.md#sidebar-sections)
-lists. On an analysis that completed far enough to
-render, read that before reading logs: it is the same information, already
-triaged.
-
-**Verifiable end state:** you can name the phase that failed, the artifact that
-shows it, and whether the raw outputs needed to retry still exist.
+A rendered report carries an **Errors and Warnings** section, and [The interactive analysis report](../reference/example-report.md#sidebar-sections) lists the contents. On an analysis that completed far enough to render, read the section before the logs, because the section holds the same information, already triaged.
 
 ## Before you re-run
 
-Re-running a whole analysis to fix a downstream problem is the most common
-expensive mistake here. In increasing order of cost:
+Re-running a whole analysis to fix a downstream problem is the most common expensive mistake. The options below run in increasing order of cost.
 
-1. `render_report()`: the report is wrong, the data is fine.
-2. `reprocess()`: processing or consolidation is wrong, the simulations are fine.
-3. `run()` with force-rerun scoped to what actually needs it.
+1. `hhemt reprocess --start-with render` when the report is wrong and the data is fine.
+2. `hhemt reprocess --start-with consolidate` or `process` when processing or consolidation is wrong and the simulations are fine.
+3. `hhemt run` with `--override-force-rerun` scoped to the work that needs a re-run.
 4. A full re-run.
 
-See [Forcing and suppressing re-runs](forcing-reruns.md) for how to scope 3.
-
-## See also
-
-- [Operating on an analysis while jobs are in flight](in-flight-operations.md): monitoring a run that has not failed yet.
-- [When and why re-runs happen](../explanation/rerun-faq.md)
-- [CLI reference](../reference/cli.md)
+Scope option 3 as [Forcing and suppressing re-runs](forcing-reruns.md) describes.

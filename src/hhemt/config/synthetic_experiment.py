@@ -109,9 +109,6 @@ class synthetic_experiment_config(cfgBaseModel):
             "divisor-only AND constant-ratio by _validate_dem_ladder."
         ),
     )
-    include_resume: bool = Field(
-        default=True, description="Emit the clean+resume (kill-and-hotstart) combined experiment."
-    )
 
     # --- HPC targeting (partition-as-axis) ---
     hpc_system_config_yaml: Path = Field(
@@ -294,9 +291,9 @@ class synthetic_experiment_config(cfgBaseModel):
                     ),
                     config_path=None,
                 )
-            n_nodes = int(row["n_nodes"])
-            n_gpus = int(row["n_gpus"])
-            n_tasks = int(row["n_mpi_procs"]) * max(int(row["n_omp_threads"]), 1)
+            n_nodes = int(row["analysis.n_nodes"])
+            n_gpus = int(row["analysis.n_gpus"])
+            n_tasks = int(row["analysis.n_mpi_procs"]) * max(int(row["analysis.n_omp_threads"]), 1)
 
             if spec.max_nodes is not None and n_nodes > spec.max_nodes:
                 _raise_cap(row, part_name, "n_nodes", n_nodes, "max_nodes", spec.max_nodes)
@@ -320,7 +317,7 @@ class synthetic_experiment_config(cfgBaseModel):
                     "cpus_per_node*n_nodes",
                     spec.cpus_per_node * n_nodes,
                 )
-            runtime = row.get("hpc_time_min_per_sim")
+            runtime = row.get("analysis.hpc_time_min_per_sim")
             if runtime is not None:
                 hpc.check_runtime_within_cap(part_name, int(runtime))
         return self

@@ -18,10 +18,8 @@ preferred_slurm_option_for_allocating_gpus: gpus
 additional_modules_needed_to_run_TRITON_SWMM_on_hpc: null
 subcatchment_raingage_mapping: external/subcatchment_raingage_mapping.csv
 triton_swmm_configuration_template: external/tritonswmm.cfg
-landuse_description_colname: landuse_description
 landuse_lookup_class_id_colname: landuse_class_id
 landuse_lookup_mannings_colname: mannings
-landuse_plot_color_colname: null
 subcatchment_raingage_mapping_gage_id_colname: raingage_id
 dem_outside_watershed_height: null
 dem_building_height: null

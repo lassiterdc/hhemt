@@ -8,7 +8,7 @@ authors:
     email: "daniel.lassiter@outlook.com"
 version: "0.1.0"
 date-released: "2026-07-14"
-license: PolyForm-Noncommercial-1.0.0
+license: AGPL-3.0-or-later
 repository-code: "https://github.com/lassiterdc/hhemt"
 url: "https://hhemt.readthedocs.io"
 # The CONCEPT DOI, deliberately, and not the version DOI for this release. A

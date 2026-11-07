@@ -101,6 +101,7 @@ EXPECTED_LADDER: list[str] = [
     "V0026__raw_byte_identity_stem",
     "V0027__consolidate_zarr_metadata",
     "V0028__flood_depth_and_unit_discharge_names",
+    "V0029__remove_unread_settings",
 ]
 
 

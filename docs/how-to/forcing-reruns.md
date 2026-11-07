@@ -1,20 +1,25 @@
 # Forcing and suppressing re-runs
 
-Task recipes for taking control of the workflow when the default resume
-behavior is not what you want. For the *why* behind the default behavior, see
-[When and why re-runs happen](../explanation/rerun-faq.md).
+## Goal
 
-Every command below takes a system and an analysis config; the
-[CLI reference](../reference/cli.md) lists every verb and option.
+Override the default resume behavior by forcing a re-run, adding work to a running sweep, or regenerating processed results without simulating again.
+
+## Prerequisites
+
+- An analysis started with `hhemt run`.
+
+## Key references
+
+- [Rerun triggers](../reference/rerun-triggers.md) explains the default resume behavior.
+- The [CLI reference](../reference/cli.md) covers the options of each command below.
+- [Running an experiment definition](running-an-experiment-definition.md#run-modes-and-the-wipe-guard) describes the wipe guard.
 
 ## Force a full re-run of specific scenarios
 
-Pass `--override-force-rerun` to `hhemt run`:
+Pass `--override-force-rerun` to `hhemt run`.
 
-??? note "Why a forced re-run clears two things, not one"
-    The invalidation is two-layer: it deletes the `_status/*.flag` markers *and*
-    clears the per-scenario processing-log records, because completion is tracked
-    by both ([Surprising cases](../explanation/rerun-faq.md#surprising-cases)).
+??? note "Flag and log records cleared by a forced re-run"
+    The invalidation has a flag layer and a log layer. A forced re-run deletes the `_status/*.flag` markers and clears the per-scenario processing-log records, because both layers track completion. [Rerun triggers](../reference/rerun-triggers.md) gives the reason.
 
 ```bash
 # Re-run everything, regardless of the recorded completion state
@@ -38,30 +43,15 @@ hhemt run --system-config my_system.yaml --analysis-config my_analysis.yaml \
     --override-force-rerun '{"subject": {"sa_id": ["member_3", "member_7"]}, "stage": "process"}'
 ```
 
-`--override-force-rerun` carries two orthogonal axes: *which* scenarios to force
-(the subject) and *how far back* to force them (the stage).
+`--override-force-rerun` carries a subject axis and a stage axis. The subject names the scenarios to force, and the stage names how far back to force them.
 
-The short forms set the subject and leave the stage at `"simulate"`: `all`,
-`none`, or a JSON dict with exactly one key, `"event_iloc"` (non-sensitivity only)
-or `"sa_id"` (sensitivity only), mapping to a non-empty list of identifiers. The
-two-axis form is a dict carrying `subject` and `stage`, where `subject` takes any
-of the short forms: `{"subject": "all", "stage": "render"}`.
+The short forms set the subject and leave the stage at `"simulate"`. The short forms are `all`, `none`, or a JSON dict with one key, either `"event_iloc"` for a non-sensitivity analysis or `"sa_id"` for a sensitivity analysis, mapping to a non-empty list of identifiers. The full form is a dict that carries `subject` and `stage`, where `subject` takes any short form, as in `{"subject": "all", "stage": "render"}`.
 
-`stage` is a **floor**: that stage and everything downstream re-run. Its values
-are `"simulate"` (the default, and the historical meaning of this field),
-`"process"`, `"consolidate"` and `"render"`. Two things to know about the
-`"render"` floor. It cannot be scoped to a subject, and a scoped one is rejected
-when the value is validated, because `plots/` also holds cross-analysis aggregate
-figures that carry no subject token and a scoped re-render would leave those
-stale. It also works by deleting the figures so the plot rules re-fire, which
-means it removes everything under `plots/` except `plots/eda/`: those come from
-`hhemt eda`, which no Snakemake rule regenerates.
+`stage` is a **floor**. The named stage and everything downstream re-run. The default `"simulate"` keeps the historical meaning of the field. The other values are `"process"`, `"consolidate"`, and `"render"`. The `"render"` floor accepts no subject scope, and value validation rejects a scoped floor, because `plots/` also holds cross-analysis aggregate figures with no subject token, and a scoped re-render would leave the aggregates stale. The floor works by deleting figures so that the plot rules fire again, so the floor removes everything under `plots/` except `plots/eda/`. The `plots/eda/` figures come from `hhemt eda`, and no Snakemake rule regenerates them.
 
-Either form overrides the config's `force_rerun` field for a single invocation
-without mutating the config. `hhemt run-experiment` and `hhemt reprocess` carry
-the same flag, taking the same values written as JSON.
+Either form overrides the `force_rerun` field of the config for a single invocation and leaves the config unchanged. `hhemt run-experiment` and `hhemt reprocess` carry the same flag and take the same values written as JSON.
 
-Written in the analysis config, the two-axis form is:
+The analysis config holds the full form as follows.
 
 ```yaml
 force_rerun:
@@ -71,36 +61,19 @@ force_rerun:
 
 ## Add scenarios or events to a running sweep
 
-Re-run in the default resume mode. Under the toolkit's graceful-rerun semantics,
-`hhemt run` picks up the newly added scenarios and resume-sweeps only the
-additions. Completed scenarios are not re-run, and any still-queued jobs from a
-previous submission are waited on rather than re-submitted:
+Resume in the default mode. Under the graceful-rerun semantics of the toolkit, `hhemt run` picks up the added scenarios and sweeps only the additions. Completed scenarios stay as they are, and the command waits on jobs that a previous submission left queued, without resubmitting them.
 
 ```bash
 hhemt run --system-config my_system.yaml --analysis-config my_analysis.yaml
 ```
 
-Do **not** reach for `--from-scratch` to add work. It is the run path's full-tree
-delete, and it is guarded: `hhemt run --from-scratch` raises
-`ConfigurationError` and deletes nothing whenever the analysis directory holds
-completed simulations (`_status/c_run_*.flag`), a consolidated root store,
-in-flight submission sentinels (`_status/_submitted`, `_status/_queued`), or an
-orchestrator sentinel (`_status/_orchestrator`). The refusal names what it found.
-Only a directory the guard sees as empty is wiped and rebuilt from the beginning.
+Avoid `--from-scratch` for adding work. The flag is the full-tree delete of `hhemt run`, and the guard refuses whenever the analysis directory holds work. Only a directory that the guard sees as empty is wiped and rebuilt from the beginning.
 
-`hhemt run` offers no flag that overrides that guard. The deliberate-wipe flag is
-`--override-wipe-nonempty`, on `hhemt run-experiment --mode fresh`; the cost is
-printed before the delete. To remove an analysis rather than re-run it, use
-`hhemt delete`, which carries its own confirmation and in-flight guards. Both are
-described under
-[Run modes and the wipe guard](running-an-experiment-definition.md#run-modes-and-the-wipe-guard),
-which also gives the command-line form of the same guard.
+`hhemt run` offers no flag that overrides the guard. The flag for a wipe on purpose is `--override-wipe-nonempty` on `hhemt run-experiment --mode fresh`, and the command prints the cost before the delete. To remove an analysis, use `hhemt delete`. The command carries a confirmation and in-flight guards. [Run modes and the wipe guard](running-an-experiment-definition.md#run-modes-and-the-wipe-guard) describes the wipe flag and the delete, and gives the command-line form of the guard.
 
 ## See re-processed results without re-simulating
 
-When you have completed simulations and only want to regenerate the processed
-outputs, consolidation, or report (for example after fixing a renderer), use
-`hhemt reprocess`. `--start-with` controls how far back the re-processing begins:
+To regenerate the processed outputs, the consolidation, or the report, use `hhemt reprocess`. `--start-with` controls how far back the re-processing begins.
 
 ```bash
 # On a non-sensitivity analysis these recipes re-render the regenerable figures
@@ -125,31 +98,11 @@ hhemt reprocess --system-config my_system.yaml --analysis-config my_analysis.yam
     --start-with process --regenerate-existing
 ```
 
-`--regenerate-existing` decides whether an existing consolidated store or existing
-per-scenario processed outputs are rebuilt. It defaults to off. At that default
-`hhemt reprocess` deletes the rendered report and re-renders it against whatever is
-already on disk: an existing consolidated store and existing per-scenario processed
-outputs are left in place. On an already-consolidated analysis the `consolidate`
-and `process` stages therefore leave the store as it is even when `--start-with`
-names them. An analysis whose simulations are all complete but that has never been
-consolidated is consolidated. `hhemt reprocess` under `--start-with render` never
-touches `plots/`, but under `--start-with consolidate` or `process` it re-renders
-the plots too. On a non-sensitivity analysis that plot re-render works by deleting
-the regenerable figures under `plots/` and sparing `plots/eda/`, which nothing
-regenerates. On a dry run no figure is deleted at all. Only the report shell is,
-because it is the mtime trigger the preview depends on. Pass
-`--regenerate-existing` to delete and rebuild the store and the processed outputs.
-Rebuilding the consolidated store is also what re-emits `ro-crate-metadata.json`,
-which [Publishing and fetching](publishing.md) requires.
+`--regenerate-existing` decides whether an existing consolidated store or existing per-scenario processed outputs are rebuilt, and the flag defaults to off. At the default, `hhemt reprocess` deletes the rendered report and renders a new report against the outputs already on disk, and an existing consolidated store and existing per-scenario processed outputs stay in place. The `consolidate` and `process` stages therefore leave the store unchanged on an already-consolidated analysis, even when `--start-with` names them. An analysis with complete simulations that was never consolidated is consolidated.
 
-`hhemt reprocess` never re-runs simulations: it operates on the raw outputs
-already on disk, and it runs Snakemake with `--nolock`, so queued or running
-simulation jobs do not block it. It does refuse in two cases. The first is while an
-`_status/_orchestrator` sentinel names a run or reprocess driver that is alive or
-that this host cannot prove dead. The refusal names the sentinel. The way out is
-to wait for that driver to finish or for its age cap to elapse, or to re-run from
-the sentinel's origin host so the probe can answer. Only once you have
-independently confirmed the driver is gone should you delete the named sentinel
-file instead. The second is `--start-with process --regenerate-existing` while any
-`_status/_submitted` sentinel is present, because deleting a processed output a
-live worker may be re-writing is not safe.
+Under `--start-with render`, `hhemt reprocess` leaves `plots/` untouched. Under `--start-with consolidate` or `process`, the command re-renders the plots as well. On a non-sensitivity analysis, the plot re-render deletes the regenerable figures under `plots/` and spares `plots/eda/`, and no rule regenerates `plots/eda/`. A dry run deletes no figure and deletes only the report shell, because the shell is the mtime trigger that the preview depends on. Pass `--regenerate-existing` to delete and rebuild the store and the processed outputs. Rebuilding the consolidated store also re-emits `ro-crate-metadata.json`, and [Publishing and fetching](publishing.md) requires that file.
+
+`hhemt reprocess` never re-runs simulations. The command operates on the raw outputs on disk and runs Snakemake with `--nolock`. Queued or running simulation jobs leave the command unblocked. The command refuses in the cases below.
+
+- A sentinel under `_status/_orchestrator` names an analysis or reprocess driver that may be alive. The [CLI reference](../reference/cli.md#running-an-analysis) describes the driver check that `hhemt run` makes. The refusal names the sentinel. Wait for the driver to finish or for the age cap of the driver to elapse, or resume from the host that wrote the sentinel so that the probe can answer. Delete the named sentinel file only after you confirm independently that the driver is gone.
+- `--start-with process --regenerate-existing` meets an `_status/_submitted` sentinel. Deleting a processed output that a live worker may be rewriting is unsafe.

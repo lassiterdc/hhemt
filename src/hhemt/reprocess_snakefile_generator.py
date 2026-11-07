@@ -54,8 +54,10 @@ from hhemt.report_plot_ids import (
     plot_output_template as _plot_output_template,
 )
 from hhemt.workflow import (
+    _render_target_plan,
     _resolve_rule_all_extensions,
     _scenario_summaries_present,
+    _shape_report_cfg,
 )
 
 if TYPE_CHECKING:
@@ -115,6 +117,7 @@ def generate_reprocess_snakefile(
     builder: SnakemakeWorkflowBuilder,
     *,
     start_with: Literal["process", "consolidate", "render"],
+    override_report_formats: list[str] | None = None,
 ) -> str:
     """Generate the reprocess Snakefile body as a string.
 
@@ -127,6 +130,10 @@ def generate_reprocess_snakefile(
     start_with
         Stage to start reprocessing from. Determines which downstream rule
         families are emitted (see module docstring).
+    override_report_formats
+        Report formats the render rule targets. ``None`` reads
+        ``report.interactive.report_html_mode``: ``auto`` targets the format-neutral
+        marker file, ``html`` and ``zip`` target that format. A list overrides it.
 
     Notes
     -----
@@ -210,8 +217,10 @@ def generate_reprocess_snakefile(
     # Report extension resolution (matches source-side via _resolve_rule_all_extensions).
     static_backend = builder._get_report_cfg_static_backend()
     _ext = _resolve_rule_all_extensions(static_backend)
-    report_formats: list[str] = ["zip"]
-    render_targets_in_rule_all = "".join(f',\n        "analysis_report.{fmt}"' for fmt in report_formats)
+    _render_plan = _render_target_plan(
+        override_report_formats, _shape_report_cfg(builder.analysis).interactive.report_html_mode
+    )
+    render_targets_in_rule_all = "".join(f",\n        {target}" for target in _render_plan.rule_all_targets)
 
     # ADR-2 (OE-1 anti-drift): the reprocess rule_all / render_report per-sim
     # input stems derive from the same single-source helper as the rule OUTPUTS,
@@ -449,19 +458,14 @@ onerror:
 rule render_report:
     input:
         {_render_report_input_block},
-    output:
-        "analysis_report.{{format}}"
-    wildcard_constraints:
-        format="zip|html"
-    log: "{log_dir_str}/render_report_{{format}}.log"
+{_render_plan.rule_head(log_dir_str)}
     resources:
 {render_resources}
     shell:
         """
         {builder.python_executable} -m hhemt.render_report_runner \\
-            {config_args} \\
-            --format {{wildcards.format}} \\
-            --reprocess \\
+            {config_args}{builder._report_config_args()} \\
+{_render_plan.format_shell_line}            --reprocess \\
             2>&1 | tee {{log}}
         """
 '''
@@ -473,6 +477,7 @@ def write_reprocess_snakefile(
     builder: SnakemakeWorkflowBuilder,
     *,
     start_with: Literal["process", "consolidate", "render"],
+    override_report_formats: list[str] | None = None,
 ) -> Path:
     """Generate the reprocess Snakefile and write it to ``Snakefile.reprocess``.
 
@@ -482,7 +487,7 @@ def write_reprocess_snakefile(
     """
     from hhemt.workflow import _write_snakefile_atomic
 
-    text = generate_reprocess_snakefile(builder, start_with=start_with)
+    text = generate_reprocess_snakefile(builder, start_with=start_with, override_report_formats=override_report_formats)
     out = builder.analysis_paths.analysis_dir / "Snakefile.reprocess"
     # Atomic + one-deep archive. Gotcha 39: render_report(reprocess=True) runs
     # `snakemake --report` against THIS file, so a clobber here reaches a

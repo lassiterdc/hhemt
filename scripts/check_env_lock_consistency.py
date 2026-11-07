@@ -8,11 +8,12 @@ distributions to satisfy a cap. So ANY pip spec that constrains ``pyswmm``
 silently downgrades the conda ``pyswmm 2.0.1`` -> ``1.5.1`` during
 ``conda env create``, breaking ``prepare_scenario``'s SWMM-runoff step upstream
 of every render. ``swmmio`` WAS such a spec: its 0.8.5 metadata declared
-``pyswmm<2.0,>=1.2`` (and ``numpy<2.0``). At the pinned 0.8.2 it declares no
+``pyswmm<2.0,>=1.2`` (and ``numpy<2.0``). At the pinned version swmmio declares no
 ``pyswmm`` requirement at all and its numpy/pandas entries are floors, so the
 historical downgrade risk is gone; ``--no-deps`` now guards only against PyPI
 wheels displacing conda's numpy/pandas. swmmio is still installed post-create
-with ``pip install --no-deps "swmmio==0.8.2"`` and MUST NOT appear in any
+with ``pip install --no-deps "swmmio=={pin}"``, the pin that
+``docs/_snippets/install-commands.md`` states, and MUST NOT appear in any
 ``pip:`` block. ``pyswmm``/``swmm-toolkit`` from PyPI additionally
 re-ship the exit-134 ``free(): double free detected in tcache 2`` teardown
 crash and MUST come from conda-forge.
@@ -40,6 +41,7 @@ Exit 0 when both files are consistent.
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -52,7 +54,7 @@ LOCK_FILE = REPO_ROOT / "environment-lock.yaml"
 # Packages that must never be named in a `pip:` block. swmm-toolkit/pyswmm from
 # PyPI re-ship the teardown crash. swmmio's `pyswmm<2.0` metadata cap made pip
 # downgrade the conda pyswmm during the block's single joint resolve at 0.8.5;
-# at the pinned 0.8.2 that cap is absent, so `--no-deps` now guards only against
+# at the pinned version that cap is absent, so `--no-deps` now guards only against
 # PyPI wheels displacing conda's numpy/pandas — the exclusion still stands.
 GUARDED = ("swmm-toolkit", "pyswmm")
 GUARDED_PIP = ("swmm-toolkit", "pyswmm", "swmmio")
@@ -66,7 +68,7 @@ PYPROJECT_FILE = REPO_ROOT / "pyproject.toml"
 # pyproject CORE deps that environment.yaml is NOT required to declare.
 # `swmmio` is the ONLY sanctioned omission: it must stay out of every `pip:` block
 # (its `pyswmm<2.0` cap downgrades the conda pyswmm), so it is installed post-create
-# with `pip install --no-deps "swmmio==0.8.2"`. Anything else missing is a real bug.
+# with `pip install --no-deps "swmmio=={pin}"`. Anything else missing is a real bug.
 # All three are installed post-create with `pip install --no-deps` and must stay out of
 # every `pip:` block, so environment.yaml declares no spec for any of them. swmmio is the
 # original case (its 0.8.5 `pyswmm<2.0` cap downgraded the conda pyswmm during the block's
@@ -103,7 +105,7 @@ PYPROJECT_VERSION_EXEMPT: dict[str, str] = {
         "CORE_DEP_EXEMPT). It cannot be a conda dep: pyproject requires >=0.15.3,<0.16 and "
         "conda-forge's 0.15 line stops at 0.15.2, so the intersection is empty. Its version "
         "is enforced instead by assertion (g), which checks the literal post-create pin "
-        "in every file listed in NO_DEPS_PIN_FILES."
+        "in every tracked file that carries one (see tracked_pin_files)."
     ),
     "pyswmm": (
         "installed post-create alongside swmm-toolkit in the same `pip install --no-deps` "
@@ -120,15 +122,17 @@ PYPROJECT_VERSION_EXEMPT: dict[str, str] = {
     ),
 }
 
-# Files carrying the literal `swmmio==X` post-create pin. `scripts/` is deliberately
-# EXCLUDED so this guard's own docstring and error strings do not self-match.
-NO_DEPS_PIN_FILES: tuple[str, ...] = (
-    "environment.yaml",
-    "README.md",
-    "ENVIRONMENT_SNAPSHOT.md",
-    "docs/how-to/installation.md",
-    ".github/workflows/compile-tests.yml",
-)
+# Directories whose files are never scanned for post-create pins. `scripts/` holds this
+# guard's own docstring and error strings, which would match the pin pattern. `tests/`
+# holds fixtures and assertions that quote a deliberately stale pin (`swmmio==0.8.5`,
+# `pyswmm==1.5.1`) to prove the guard refuses it, so scanning them reports the proof as
+# a drift.
+PIN_SCAN_EXCLUDED_DIRS: tuple[str, ...] = ("scripts/", "tests/")
+# The page that states the post-create install command. The remedy of assertion (a) names the
+# version this page pins, so the script holds no copy of the version.
+INSTALL_SNIPPET = "docs/_snippets/install-commands.md"
+# Cheap candidate filter for `git grep`; NO_DEPS_PIN_RE then decides per line.
+_PIN_CANDIDATE_ERE = r"(swmmio|swmm-toolkit|pyswmm)[[:space:]]*=="
 # All three post-create pins are checked, not just swmmio: after the engine moved out of the
 # conda block, swmm-toolkit/pyswmm live ONLY in these prose install blocks, so an unchecked
 # pin there is the same silent-drift class the conda pin had. Group 1 is the NAME, group 2
@@ -136,6 +140,54 @@ NO_DEPS_PIN_FILES: tuple[str, ...] = (
 NO_DEPS_PIN_RE = re.compile(r"(?<![\w-])(swmmio|swmm-toolkit|pyswmm)\s*==\s*([0-9][0-9A-Za-z.\-]*)")
 
 _SPEC_RE = re.compile(r'^\s*"?\s*([A-Za-z0-9_.\-]+)\s*(.*?)\s*"?\s*$')
+
+
+def tracked_pin_files(root: Path) -> list[str]:
+    """Repo-relative paths of the tracked text files that may carry a post-create pin.
+
+    The list comes from git so a new page or workflow that carries a pin is scanned
+    without anyone adding it to a tuple. A hand-kept tuple missed
+    `docs/_snippets/install-commands.md` and `.github/workflows/type-gate.yml`, and a
+    mismatched pin in either passed the guard. `git grep -I` skips files that contain a
+    NUL byte and reads the working tree, so an uncommitted edit to a tracked file is
+    scanned.
+
+    A failure of git raises SystemExit with git's message. Without it the empty list
+    would surface only as the vacuous-scan error in `main`, which names no cause.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(root), "grep", "-I", "-l", "-z", "-E", _PIN_CANDIDATE_ERE, "--", "."],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode not in (0, 1):  # 1 is git grep's "no match"
+        raise SystemExit(
+            f"check_env_lock_consistency: `git grep` failed in {root} (exit {result.returncode}): "
+            f"{result.stderr.strip()}. Refusing to continue with an empty file list."
+        )
+    paths = [rel for rel in result.stdout.split("\0") if rel]
+    return sorted(rel for rel in paths if not rel.startswith(PIN_SCAN_EXCLUDED_DIRS))
+
+
+def _install_snippet_pin(package: str) -> str | None:
+    """The version `INSTALL_SNIPPET` pins `package` to, or None when the page or the pin is absent."""
+    path = REPO_ROOT / INSTALL_SNIPPET
+    if not path.is_file():
+        return None
+    for line in path.read_text().splitlines():
+        for match in NO_DEPS_PIN_RE.finditer(line):
+            if match.group(1) == package:
+                return match.group(2)
+    return None
+
+
+def _post_create_remedy(package: str) -> str:
+    """The install command that replaces a forbidden `pip:` entry for `package`."""
+    pin = _install_snippet_pin(package)
+    if pin is None:
+        return f"`pip install --no-deps` of the {package} pin that {INSTALL_SNIPPET} states"
+    return f'`pip install --no-deps "{package}=={pin}"`'
 
 
 def _split_spec(spec: str) -> tuple[str, str]:
@@ -266,8 +318,8 @@ def main() -> int:
                     f"block with a single `pip install -U -r`, and pip will downgrade "
                     f"the conda pyswmm 2.0.1 -> 1.5.1 to satisfy it (swmmio 0.8.5 caps "
                     f"`pyswmm<2.0`; PyPI pyswmm/swmm-toolkit additionally re-ship the "
-                    f"exit-134 teardown crash). Install swmmio post-create with "
-                    f'`pip install --no-deps "swmmio==0.8.2"` instead.'
+                    f"exit-134 teardown crash). Install {base} post-create with "
+                    f"{_post_create_remedy(base)} instead."
                 )
 
     # (c) The lock must not carry a self-referential project entry — `conda env export`
@@ -410,13 +462,14 @@ def main() -> int:
     #     and pyswmm joined that exemption on 2026-08-28, when the engine left the conda block
     #     (conda-forge's 0.15 line stops at 0.15.2, below pyproject's >=0.15.3 floor). Scanning
     #     only swmmio would have re-opened the identical blind spot one package over.
+    pin_files = tracked_pin_files(REPO_ROOT)
     for _pkg in GUARDED_PIP:
         _pj_constraint = pj_constraints.get(_pkg, ("", ""))[1]
         if not _pj_constraint:
             continue
         _want = SpecifierSet(_pj_constraint)
         seen_pins = 0
-        for rel in NO_DEPS_PIN_FILES:
+        for rel in pin_files:
             path = REPO_ROOT / rel
             if not path.is_file():
                 continue
@@ -437,10 +490,10 @@ def main() -> int:
                         )
         if seen_pins == 0:
             errors.append(
-                f"no `{_pkg}==` post-create pin found in "
-                + ", ".join(NO_DEPS_PIN_FILES)
+                f"no `{_pkg}==` post-create pin found in any tracked file outside "
+                + ", ".join(PIN_SCAN_EXCLUDED_DIRS)
                 + " — the scan is vacuous, which reads as a pass. Restore the pin or "
-                "update NO_DEPS_PIN_FILES."
+                "track the file that carries it."
             )
 
     if errors:

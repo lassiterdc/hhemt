@@ -41,6 +41,7 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.io as pio
 
+from hhemt.exceptions import ConfigurationError
 from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.figure_panels import PanelBudget, panel_geometry
 from hhemt.member_identity import member_id_from_mapping
@@ -219,10 +220,10 @@ def _styled_diff_heatmap(
     """Datashader-gated + symmetric-diverging styling for ONE signed depth/pct raster.
 
     Routes through _dem_diff_heatmap_trace (the tested gate seam), then applies the
-    shared symmetric range + colorbar. FIRST-DRAFT limitation: the above-threshold
-    (datashader) branch carries the seam's INTEGER canvas coords, not real x/y -- the
-    synth fixture is below threshold so the reviewed figure uses real coords; the
-    real-coord remap on the datashaded path is D10-amendment-2 review work.
+    shared symmetric range + colorbar. Limitation: the above-threshold (datashader)
+    branch carries the seam's INTEGER canvas coords, not real x/y. The synthetic
+    fixture is below threshold, so the reviewed figure uses real coords and the
+    datashaded path has no real-coord remap.
     """
     trace, _used = _dem_diff_heatmap_trace(grid, threshold_cells=threshold_cells, x=xd, y=yd)
     if trace.x is None:  # below-threshold branch returns z only
@@ -245,33 +246,87 @@ def _styled_diff_heatmap(
     return trace
 
 
-def dem_resolution_diff_source_paths(root: Path) -> list[Path]:
+def dem_resolution_diff_source_paths(root: Path, *, cfg_system=None) -> list[Path]:
     """fig-3 declares: the datatree + ONE conduit inp (shared geometry) + the watershed
-    geojson when present (Gotcha-53 renderer-IO audit: actual reads must be a subset)."""
+    geojson when present (Gotcha-53 renderer-IO audit: actual reads must be a subset).
+
+    ``cfg_system`` is the system object the build received; the declared polygon is the file
+    ``_watershed_polygon`` opens for that same object (see ``_watershed_polygon_file``)."""
+    from hhemt.eda._config_diff import _watershed_polygon_file
     from hhemt.utils import resolve_experiment_tree
 
     srcs: list[Path] = [resolve_experiment_tree(root)]
     inps = sorted(root.glob("members/*/sims/*/swmm/hydraulics.inp"))
     if inps:
         srcs.append(inps[0])
-    wpath = root / "external" / "watershed.geojson"
-    if wpath.exists():
+    wpath = _watershed_polygon_file(root, cfg_system)
+    if wpath is not None:
         srcs.append(wpath)
     return srcs
 
 
-def dem_resolution_coupling_source_paths(root: Path) -> list[Path]:
+def dem_resolution_coupling_source_paths(root: Path, *, cfg_system=None) -> list[Path]:
     """fig-4 declares: the datatree (peak/error) + EVERY sub's hydraulics.inp (the
     `Coupling junctions` count is read per resolution from each sub's processed [INFLOWS]
-    junctions; a universal, DATA-derived count decoupled from any generator constant)."""
+    junctions; a universal, DATA-derived count decoupled from any generator constant) + the
+    watershed polygon the build masks the depth columns with, resolved for the same
+    ``cfg_system`` the build received."""
+    from hhemt.eda._config_diff import _watershed_polygon_file
     from hhemt.utils import resolve_experiment_tree
 
     srcs: list[Path] = [resolve_experiment_tree(root)]
     srcs += sorted(root.glob("members/*/sims/*/swmm/hydraulics.inp"))
+    wpath = _watershed_polygon_file(root, cfg_system)
+    if wpath is not None:
+        srcs.append(wpath)
     return srcs
 
 
-def build_dem_resolution_cost_error_figure(root: Path) -> go.Figure:
+def _horizontal_epsg(root: Path, cfg_system=None) -> int:
+    """``crs.horizontal_epsg`` for the regrid kernel's CRS fill, from a source that exists.
+
+    The value lives in the system configuration, and a figure builder is handed only ``root``
+    (the analysis directory, or a render bundle's root), so the caller supplies it:
+
+    1. ``cfg_system``, the system configuration object the caller already holds. The report
+       rule's adapter holds it (it loads the ``--system-config`` the rule passes), and in that
+       route the analysis directory carries no system configuration file at all.
+    2. ``{root}/cfg_system.yaml``, the fixed-name copy that ``analysis.eda()`` writes before it
+       renders and that a render bundle carries; the notebook's seed cell renders from a root
+       that holds it.
+
+    The first source that is given wins and the second is consulted only when the first is
+    absent. When neither exists this raises, naming the field and both places, because a
+    missing CRS would otherwise surface as a regrid failure far from its cause. Deliberately
+    NOT a ``system_config.yaml`` beside the analysis directory: that location exists only in
+    the synthetic fixtures' layout; a real run keeps its system configuration outside the
+    system directory, so every figure failed there with a FileNotFoundError.
+    """
+    if cfg_system is not None:
+        return int(cfg_system.crs.horizontal_epsg)
+    persisted = Path(root) / "cfg_system.yaml"
+    if persisted.is_file():
+        import yaml
+
+        raw = yaml.safe_load(persisted.read_text(encoding="utf-8")) or {}
+        epsg = (raw.get("crs") or {}).get("horizontal_epsg")
+        if epsg is None:
+            raise ConfigurationError(
+                "crs.horizontal_epsg",
+                f"{persisted} exists but holds no crs.horizontal_epsg, so the DEM-resolution figures cannot "
+                "fill a missing raster CRS.",
+                config_path=persisted,
+            )
+        return int(epsg)
+    raise ConfigurationError(
+        "crs.horizontal_epsg",
+        "the DEM-resolution figures need the horizontal EPSG code and found it in neither place they look: "
+        f"the system configuration object the caller passes (none was passed) and {persisted} (absent).",
+        fix_hint="Pass cfg_system to render_eda_plots, or render from a root that carries cfg_system.yaml.",
+    )
+
+
+def build_dem_resolution_cost_error_figure(root: Path, *, cfg_system=None) -> go.Figure:
     """Figure 1 (HEADLINE): cost vs error. plot_id `dem_resolution_cost_error`.
 
     x = compute-hours (`wallclock_hr x n_devices`), y = the signed depth-magnitude
@@ -321,21 +376,12 @@ def build_dem_resolution_cost_error_figure(root: Path) -> go.Figure:
     """
     from plotly.subplots import make_subplots
 
-    from hhemt.config.loaders import yaml_to_model
-    from hhemt.config.system import system_config
     from hhemt.eda._dem_resolution import compare_resolution_pair
     from hhemt.report_renderers.sensitivity_benchmarking import _adaptive_time_unit
 
-    # horizontal_epsg for the kernel's Guard-1 CRS fill. Canonical source is
-    # cfg_system.crs.horizontal_epsg; at a sensitivity-PRIMARY root the system config
-    # sits one level up as system_config.yaml (the primary root carries no cfg_system.yaml,
-    # so load_eda_context does not apply here). [DRAFT: EPSG-source is a /design-figure
-    # confirm point -- see the figure-family EPSG note.]
-    # `metadata`: this reads ONE scalar (crs.horizontal_epsg) off a live analysis tree's
-    # config. Its declared inputs may have been reclaimed since the campaign, and none of
-    # them is needed to render a figure from the consolidated tree.
-    cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config, existence="metadata")
-    epsg = cfg_system.crs.horizontal_epsg
+    # horizontal_epsg for the kernel's Guard-1 CRS fill; see _horizontal_epsg for the two
+    # sources and the loud error when neither exists.
+    epsg = _horizontal_epsg(root, cfg_system)
 
     dt = open_store(str(resolve_experiment_tree(root)))
 
@@ -536,7 +582,7 @@ def build_dem_resolution_cost_error_figure(root: Path) -> go.Figure:
     return fig
 
 
-def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
+def build_dem_resolution_diff_maps_figure(root: Path, *, cfg_system=None) -> go.Figure:
     """Figure 3: signed per-cell diff map vs the finest reference.
     plot_id `dem_resolution_diff_maps`.
 
@@ -560,12 +606,9 @@ def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
     Watershed mask: rasterize ONCE on the finest grid and reuse. geometry_mask's default
     centroid rule makes a per-rung rasterization an inconsistent physical footprint.
     """
-    # ── FIRST DRAFT (Phase 3 /design-figure iterates the geometry) ───────────────
     from plotly.subplots import make_subplots
 
-    from hhemt.config.loaders import yaml_to_model
     from hhemt.config.report import report_config
-    from hhemt.config.system import system_config
     from hhemt.eda._config_diff import (
         _PANEL_H_PX,
         _REF_DEPTH,
@@ -582,11 +625,8 @@ def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
 
     threshold_cells = report_config().per_sim.interactive.datashader_threshold_cells
 
-    # horizontal_epsg for the kernel's Guard-1 CRS fill (same source as fig-1;
-    # [DRAFT: EPSG-source is a /design-figure confirm point]).
-    # `metadata` -- see the sibling call in the cost/error figure for the reason.
-    cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config, existence="metadata")
-    epsg = cfg_system.crs.horizontal_epsg
+    # horizontal_epsg for the kernel's Guard-1 CRS fill (same source as fig-1).
+    epsg = _horizontal_epsg(root, cfg_system)
 
     dt = open_store(str(resolve_experiment_tree(root)))
 
@@ -624,7 +664,7 @@ def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
     yd = [float(v) for v in fine_w["y"].values]
 
     geom = _load_conduit_geometry(root)  # shared conduit geometry (topology invariant)
-    wpoly = _watershed_polygon(root)
+    wpoly = _watershed_polygon(root, cfg_system)
     wmask = _watershed_mask(wpoly, xd, yd)  # rasterize ONCE on the finest grid, reuse (plan risk 3)
 
     # per-coarser diffs + GLOBAL shared symmetric ranges (DECISION regime, honesty doc:
@@ -1066,20 +1106,20 @@ def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
     return fig
 
 
-def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | None = None) -> go.Figure:
+def build_dem_resolution_error_ecdf_figure(
+    root: Path, *, eda_cfg: eda_config | None = None, cfg_system=None
+) -> go.Figure:
     """Figure 2: depth-error ECDF per resolution. plot_id `dem_resolution_error_ecdf`.
 
     ASYMMETRY (deliberate): this is the ONLY one of the four DEM builders that
-    takes eda_cfg -- it reads the user-declared depth-error tolerance for the
-    tolerance line. The other three read nothing off the config, so they take
-    `root` alone and match config_diff_maps_figure_from_root's shape exactly.
-    `eda_cfg=None` means "no declared tolerance" and yields the DRAFT placeholder
-    line, which is today's behavior on every path: `dem_resolution_tolerance_m`
-    is not a field on eda_config, so the getattr below always takes its default.
-    When that field is added, thread it through
-    dem_resolution_error_ecdf_figure_from_root as well or the notebook figure
-    will show a draft tolerance while the standalone artifact shows the declared
-    one.
+    takes eda_cfg -- it reads the analyst-declared depth-error tolerance
+    (``eda_cfg.dem_resolution_tolerance_m``) for the tolerance line. The other three read
+    nothing off the config, so they take `root` alone and match
+    config_diff_maps_figure_from_root's shape exactly. ``eda_cfg=None`` and an unset
+    tolerance both mean "no declared tolerance": the figure draws no tolerance line and
+    no placeholder in its place. Every caller threads the same config: the standalone
+    renderer, ``eda._report.dem_resolution_error_ecdf_figure_from_root`` and the
+    notebook seed cell, so the notebook figure and the standalone artifact agree.
 
     One curve per coarser rung; x = ABSOLUTE depth error |coarse - fine| (m); y =
     cumulative fraction of UNION-wet cells (EITHER run at/above tau). A curve that rises
@@ -1101,8 +1141,8 @@ def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | 
     the ECDF is what shows the reader that.
 
     The tolerance line is a legend entry shown ONLY when a tolerance T is declared
-    (eda_cfg.dem_resolution_tolerance_m); on a draft with no T it is absent from the legend
-    entirely. T is user-declared and DISCLOSED, never fitted.
+    (eda_cfg.dem_resolution_tolerance_m); with no T it is absent from the legend
+    entirely. T is analyst-declared and DISCLOSED, never fitted.
 
     NO fitted knee. Richardson/GCI and breakpoint regression are both REJECTED (see the
     decision doc): TRITON is first-order with wet/dry fronts (a moving discontinuity, not
@@ -1110,19 +1150,12 @@ def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | 
     data AND the discretization at once and a fitted order has no referent; and N~4 with
     no asymptotic-range verification is arithmetic, not estimation.
     """
-    # ── FIRST DRAFT (Phase 3 /design-figure iterates) ───────────────────────────
     from plotly.subplots import make_subplots
 
-    from hhemt.config.loaders import yaml_to_model
-    from hhemt.config.system import system_config
     from hhemt.eda._dem_resolution import regrid_to_fine
 
-    # horizontal_epsg for the regrid kernel's Guard-1 CRS fill. Canonical source is
-    # cfg_system.crs.horizontal_epsg; at a sensitivity-PRIMARY root the system config sits
-    # one level up as system_config.yaml (the primary root carries no cfg_system.yaml).
-    # `metadata` -- see the sibling call in the cost/error figure for the reason.
-    cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config, existence="metadata")
-    epsg = cfg_system.crs.horizontal_epsg
+    # horizontal_epsg for the regrid kernel's Guard-1 CRS fill (same source as fig-1).
+    epsg = _horizontal_epsg(root, cfg_system)
 
     dt = open_store(str(resolve_experiment_tree(root)))
 
@@ -1142,11 +1175,9 @@ def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | 
     fine_da = recs[0]["wlevel"]
     finest_res = recs[0]["res_m"]
 
-    # A user-declared depth-error tolerance (m), read off the config when present. NEVER
-    # fitted to the data; a DRAFT placeholder is shown until the user declares one in review.
-    tol_declared = getattr(eda_cfg, "dem_resolution_tolerance_m", None)
-    tol_m = float(tol_declared) if tol_declared is not None else 0.1
-    tol_is_draft = tol_declared is None
+    # An analyst-declared depth-error tolerance (m), read off the config. NEVER fitted to
+    # the data; an unset tolerance draws no line.
+    tol_m = eda_cfg.dem_resolution_tolerance_m if eda_cfg is not None else None
 
     # Okabe-Ito CVD-safe qualitative ordering: adjacent series never form a red/green pair,
     # so an N-rung ladder stays distinguishable under deuteranopia/protanopia. The prior
@@ -1262,10 +1293,9 @@ def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | 
             row=1,
             col=1,
         )
-        # The tolerance line appears ONLY when a real T is declared -- no legend entry on a
-        # draft with no T. The mechanism is kept (eda_cfg.dem_resolution_tolerance_m); T is
-        # user-declared, never fitted.
-        if not tol_is_draft:
+        # The tolerance line appears ONLY when a T is declared -- no legend entry without
+        # one. T is analyst-declared (eda_cfg.dem_resolution_tolerance_m), never fitted.
+        if tol_m is not None:
             fig.add_trace(
                 go.Scatter(
                     x=[tol_m, tol_m],
@@ -1333,7 +1363,7 @@ def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | 
     return fig
 
 
-def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
+def build_dem_resolution_coupling_table_figure(root: Path, *, cfg_system=None) -> go.Figure:
     """Artifact 4 (a TABLE, not a panel): DEM resolution x coupling / peak / over-under.
     plot_id `dem_resolution_coupling_table`.
 
@@ -1351,17 +1381,12 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
     flow on the shared conduit index; finest = reference, delta = 0). The total junction
     count is in the caption.
     """
-    # ── FIRST DRAFT (Phase 3 /design-figure iterates) ───────────────────────────
     import swmmio
 
-    from hhemt.config.loaders import yaml_to_model
-    from hhemt.config.system import system_config
     from hhemt.eda._config_diff import _apply_mask, _watershed_mask, _watershed_polygon
     from hhemt.eda._dem_resolution import regrid_to_fine
 
-    # `metadata` -- see the sibling call in the cost/error figure for the reason.
-    cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config, existence="metadata")
-    epsg = cfg_system.crs.horizontal_epsg
+    epsg = _horizontal_epsg(root, cfg_system)
 
     dt = open_store(str(resolve_experiment_tree(root)))
 
@@ -1399,7 +1424,7 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
     # NETWORK quantity, not a raster, so no mask applies there.
     _xd = [float(v) for v in fine_w["x"].values]
     _yd = [float(v) for v in fine_w["y"].values]
-    _wmask = _watershed_mask(_watershed_polygon(root), _xd, _yd)
+    _wmask = _watershed_mask(_watershed_polygon(root, cfg_system), _xd, _yd)
     # Empty when the run has no watershed polygon. Describing an absent mask is Tier-1 cruft, and
     # `_apply_mask` is a pass-through in that case, so there is no restriction to disclose.
     _scope_txt = " Δ columns cover cells inside the watershed." if _wmask is not None else ""
@@ -1533,18 +1558,21 @@ def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
 # documents that cannot be concatenated -- the same reason
 # config_diff_maps_figure_from_root delegates to build_config_diff_figure.
 #
-# The builders take ONLY `root`: figure construction reads neither cfg_analysis
-# (which was signature-only on all four renderers, never dereferenced) nor
-# eda_cfg (whose sole live use is plotly_js_mode, a WRITE-time concern). The
-# renderers keep the full (root, *, cfg_analysis, eda_cfg) signature because
-# _EDA_RENDERERS dispatches every renderer uniformly.
+# Three builders take ONLY `root`: their figure construction reads neither
+# cfg_analysis (which was signature-only on all four renderers, never dereferenced) nor
+# eda_cfg. The error-ECDF builder also takes eda_cfg, for
+# ``dem_resolution_tolerance_m``; elsewhere eda_cfg's live use is plotly_js_mode, a
+# WRITE-time concern. The renderers keep the full (root, *, cfg_analysis, eda_cfg)
+# signature because _EDA_RENDERERS dispatches every renderer uniformly.
 # ---------------------------------------------------------------------------
 
 
-def _render_dem_resolution_cost_error(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
+def _render_dem_resolution_cost_error(
+    root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config, cfg_system=None
+) -> Path:
     """Write figure 1 (cost vs error). See build_dem_resolution_cost_error_figure."""
     return _emit_dem_resolution_figure(
-        build_dem_resolution_cost_error_figure(root),
+        build_dem_resolution_cost_error_figure(root, cfg_system=cfg_system),
         root,
         plot_key="dem_resolution_cost_error",
         source_paths=dem_resolution_source_paths(root),
@@ -1552,21 +1580,25 @@ def _render_dem_resolution_cost_error(root: Path, *, cfg_analysis: analysis_conf
     )
 
 
-def _render_dem_resolution_diff_maps(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
+def _render_dem_resolution_diff_maps(
+    root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config, cfg_system=None
+) -> Path:
     """Write figure 3 (signed diff maps). See build_dem_resolution_diff_maps_figure."""
     return _emit_dem_resolution_figure(
-        build_dem_resolution_diff_maps_figure(root),
+        build_dem_resolution_diff_maps_figure(root, cfg_system=cfg_system),
         root,
         plot_key="dem_resolution_diff_maps",
-        source_paths=dem_resolution_diff_source_paths(root),
+        source_paths=dem_resolution_diff_source_paths(root, cfg_system=cfg_system),
         eda_cfg=eda_cfg,
     )
 
 
-def _render_dem_resolution_error_ecdf(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
+def _render_dem_resolution_error_ecdf(
+    root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config, cfg_system=None
+) -> Path:
     """Write figure 2 (depth-error ECDF). See build_dem_resolution_error_ecdf_figure."""
     return _emit_dem_resolution_figure(
-        build_dem_resolution_error_ecdf_figure(root),
+        build_dem_resolution_error_ecdf_figure(root, eda_cfg=eda_cfg, cfg_system=cfg_system),
         root,
         plot_key="dem_resolution_error_ecdf",
         source_paths=dem_resolution_source_paths(root),
@@ -1574,13 +1606,15 @@ def _render_dem_resolution_error_ecdf(root: Path, *, cfg_analysis: analysis_conf
     )
 
 
-def _render_dem_resolution_coupling_table(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
+def _render_dem_resolution_coupling_table(
+    root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config, cfg_system=None
+) -> Path:
     """Write artifact 4 (coupling table). See build_dem_resolution_coupling_table_figure."""
     return _emit_dem_resolution_figure(
-        build_dem_resolution_coupling_table_figure(root),
+        build_dem_resolution_coupling_table_figure(root, cfg_system=cfg_system),
         root,
         plot_key="dem_resolution_coupling_table",
-        source_paths=dem_resolution_coupling_source_paths(root),
+        source_paths=dem_resolution_coupling_source_paths(root, cfg_system=cfg_system),
         eda_cfg=eda_cfg,
     )
 

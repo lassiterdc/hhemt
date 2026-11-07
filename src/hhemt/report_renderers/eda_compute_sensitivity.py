@@ -58,9 +58,13 @@ def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
     # output is what Snakemake will demand. Handing it to render_eda_plots as `must_emit` is
     # what makes "a ReportingSet enumerated this figure" imply "this figure's file is produced",
     # for every current and future enumerating set, with no per-kind list to maintain.
+    # The analysis directory of a real run holds no system configuration file, so the
+    # DEM-resolution figures take `crs.horizontal_epsg` from the system object this adapter
+    # already holds (the one the rule's `--system-config` argument loaded).
     render_eda_plots(
         root,
         cfg_analysis=analysis.cfg_analysis,
         eda_cfg=scoped_cfg,
         must_emit={target_stem},
+        cfg_system=getattr(getattr(analysis, "_system", None), "cfg_system", None),
     )

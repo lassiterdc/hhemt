@@ -156,7 +156,9 @@ def _submit_stand_in(*, sensitivity: bool, applied: list, reconciled: list) -> S
 
     analysis = SimpleNamespace(
         _system=SimpleNamespace(cfg_system=SimpleNamespace(), system_config_yaml=None),
-        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=sensitivity, multi_sim_run_method="local"),
+        cfg_analysis=SimpleNamespace(
+            toggle_sensitivity_analysis=sensitivity, multi_sim_run_method="local", report=None
+        ),
         analysis_config_yaml=None,
         hpc_system_config_yaml=None,
         analysis_paths=SimpleNamespace(analysis_dir=Path("/nonexistent/an_x")),
@@ -171,6 +173,7 @@ def _submit_stand_in(*, sensitivity: bool, applied: list, reconciled: list) -> S
             submit_workflow=_stop,
         ),
         _reconcile_build_stamp_force=reconcile,
+        _reconcile_report_settings_force=lambda value, **_k: value,
         _apply_force_rerun=apply,
     )
     if sensitivity:

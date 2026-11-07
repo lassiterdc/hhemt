@@ -25,12 +25,12 @@ class reprex_config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # ---- USER-bucket (host-local; never inherited from the bundle) ----
-    default_account: str = Field(..., description="Target user's HPC allocation/account.")
+    default_account: str = Field(..., description="HPC allocation/account of the reproducer.")
     login_node: str | None = Field(None, description="Target cluster login node hostname.")
     sif_root: Path = Field(
         ...,
         description=(
-            "Target-local directory under which fetched or rebuilt SIFs live at their identity path (found by digest)."
+            "Target-local directory that holds fetched or rebuilt SIFs at their identity path, found by digest."
         ),
     )
     scratch_dir: Path | None = Field(None, description="Target-local scratch base for run outputs.")
@@ -38,7 +38,7 @@ class reprex_config(BaseModel):
     # ---- HPC-revisable SELECTORS (target partition axis) ----
     target_ensemble_partition: str = Field(..., description="Target partition for the ensemble sims.")
     target_setup_and_analysis_processing_partition: str | None = Field(
-        None, description="Target partition for setup + processing (defaults to the ensemble partition)."
+        None, description="Target partition for setup and processing, defaulting to the ensemble partition."
     )
 
     @model_validator(mode="before")

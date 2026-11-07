@@ -298,16 +298,12 @@ def _native_compile_error_or_skip_in_container(analysis, system, model_type: str
     if analysis.cfg_analysis.execution_environment == "container":
         return None
     if model_type == "triton":
-        if not hasattr(system, "compilation_triton_only_successful"):
-            return "TRITON-only compilation check not implemented"
         if not system.compilation_triton_only_successful:
             return "TRITON-only has not been compiled"
     elif model_type == "tritonswmm":
         if not system.compilation_successful:
             return "TRITON-SWMM has not been compiled"
     elif model_type == "swmm":
-        if not hasattr(system, "compilation_swmm_successful"):
-            return "SWMM compilation check not implemented"
         if not system.compilation_swmm_successful:
             return "SWMM has not been compiled"
     return None

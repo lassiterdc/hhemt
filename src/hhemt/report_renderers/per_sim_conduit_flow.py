@@ -20,11 +20,13 @@ import swmmio
 from plotly.subplots import make_subplots
 
 from hhemt import units
+from hhemt.config.viz_vocabulary import VminVmaxStrategy
 from hhemt.figure_panels import (
     WATERSHED_LEGEND_GROUP,
     WATERSHED_LEGEND_LABEL,
     watershed_legend_marker,
 )
+from hhemt.report_renderers.system_overview import _draw_static_subplot_label
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
@@ -243,6 +245,7 @@ def render(
     )
     gs_hydro_inner = gs_hydro_outer[0, 0].subgridspec(2, 1, height_ratios=[1, 1])
     ax1 = fig.add_subplot(gs_util[0, 0])
+    _draw_static_subplot_label(ax1, static_cfg)
     cax_util = fig.add_subplot(gs_util_cbar[0, 1])
     ax2 = fig.add_subplot(gs_peak[0, 0], sharex=ax1, sharey=ax1)
     cax_peak = fig.add_subplot(gs_peak_cbar[0, 1])
@@ -271,9 +274,15 @@ def render(
     UTILIZATION_CMAP = static_cfg.utilization_cmap if static_cfg is not None else map_cfg.utilization_cmap
     PEAK_FLOW_CMAP = static_cfg.peak_flow_cmap if static_cfg is not None else map_cfg.peak_flow_cmap
     if static_cfg is not None:
-        peak_flow_vmax = (
-            float(static_cfg.peak_flow_vmax) if static_cfg.peak_flow_vmax is not None else float(peak_flow.max() or 1.0)
-        )
+        if static_cfg.peak_flow_vmax is not None:
+            peak_flow_vmax = float(static_cfg.peak_flow_vmax)
+        elif static_cfg.vmin_vmax_strategy == VminVmaxStrategy.quantile and static_cfg.vmax_quantile is not None:
+            # `vmin_vmax_strategy="quantile"`: the colour bar's upper bound is the
+            # `vmax_quantile` of the peak flows, clipping top-end outliers. The default
+            # `absolute` keeps the maximum.
+            peak_flow_vmax = float(np.nanquantile(np.asarray(peak_flow, dtype=float), static_cfg.vmax_quantile) or 1.0)
+        else:
+            peak_flow_vmax = float(peak_flow.max() or 1.0)
     else:
         peak_flow_vmax = _shared_peak_flow_vmax(analysis, cfg) or _resolve_peak_flow_vmax(peak_flow, cfg)
     panels = [

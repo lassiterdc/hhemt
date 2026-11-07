@@ -1689,6 +1689,114 @@ def _validate_setup_mem_sizing(
         )
 
 
+_MPI_RUN_MODES = frozenset({"mpi", "hybrid"})
+"""``run_mode`` values that launch more than one rank, so a partition must declare
+``supports_mpi`` for them."""
+
+
+def _check_partition_spec_request(
+    result: ValidationResult,
+    *,
+    field_prefix: str,
+    who: str,
+    partition_name: str,
+    spec: Any,
+    n_omp_threads: Any,
+    mem_gb_per_cpu: Any,
+    run_mode: Any,
+) -> None:
+    """Refuse a request over the four ``PartitionSpec`` caps that bound a task's shape.
+
+    ``max_cpus_per_task`` bounds ``n_omp_threads``; ``max_mem_mb_per_cpu`` bounds
+    ``mem_gb_per_cpu`` times 1000 (the cap is in MB, the request in GB);
+    ``supports_mpi: false`` refuses a ``run_mode`` of ``mpi`` or ``hybrid``;
+    ``available_gpu_models`` refuses a partition whose ``gpu_hardware`` is outside the
+    list. A request value of None is not checked. The caller names the request
+    (``who``) and the partition, and builds the error field from ``field_prefix``.
+    """
+    cap = spec.max_cpus_per_task
+    if cap is not None and n_omp_threads is not None and float(n_omp_threads) > cap:
+        result.add_error(
+            field=f"{field_prefix}.n_omp_threads",
+            message=(
+                f"{who}: requests n_omp_threads={float(n_omp_threads):g} on partition "
+                f"'{partition_name}', exceeding its max_cpus_per_task cap of {cap}."
+            ),
+            current_value=n_omp_threads,
+            fix_hint=(f"Reduce n_omp_threads to <= {cap} or choose a partition with a higher max_cpus_per_task."),
+        )
+    cap = spec.max_mem_mb_per_cpu
+    if cap is not None and mem_gb_per_cpu is not None and float(mem_gb_per_cpu) * 1000 > cap:
+        result.add_error(
+            field=f"{field_prefix}.mem_gb_per_cpu",
+            message=(
+                f"{who}: requests mem_gb_per_cpu={float(mem_gb_per_cpu):g} "
+                f"({float(mem_gb_per_cpu) * 1000:g} MB per CPU) on partition "
+                f"'{partition_name}', exceeding its max_mem_mb_per_cpu cap of {cap} MB."
+            ),
+            current_value=mem_gb_per_cpu,
+            fix_hint=(f"Reduce mem_gb_per_cpu to <= {cap / 1000:g} or choose a partition with a higher cap."),
+        )
+    if run_mode in _MPI_RUN_MODES and not spec.supports_mpi:
+        result.add_error(
+            field=f"{field_prefix}.run_mode",
+            message=(
+                f"{who}: run_mode '{run_mode}' launches multiple ranks, and partition "
+                f"'{partition_name}' does not declare supports_mpi: true."
+            ),
+            current_value=run_mode,
+            fix_hint=(
+                f"Set supports_mpi: true on partition '{partition_name}' in hpc_system_config "
+                f"if multi-rank jobs run there, or choose a partition that supports MPI."
+            ),
+        )
+    models = spec.available_gpu_models
+    hardware = spec.gpu_hardware
+    if models is not None and hardware is not None and hardware not in models:
+        result.add_error(
+            field=f"hpc_system.partitions.{partition_name}.gpu_hardware",
+            message=(
+                f"{who}: partition '{partition_name}' names gpu_hardware '{hardware}', "
+                f"which is outside its available_gpu_models list {sorted(models)}."
+            ),
+            current_value=hardware,
+            fix_hint=(f"Set gpu_hardware to one of {sorted(models)} or add '{hardware}' to available_gpu_models."),
+        )
+
+
+def _validate_partition_spec_caps_for_analysis(
+    cfg_analysis: analysis_config,
+    cfg_hpc_system: Any | None,
+    result: ValidationResult,
+) -> None:
+    """Check the analysis's own request against the ensemble partition's ``PartitionSpec`` caps.
+
+    A plain analysis (and the base values a sensitivity table's rows inherit) carries
+    ``n_omp_threads``, ``mem_gb_per_cpu`` and ``run_mode`` that the cap check on
+    sensitivity-table rows never sees. No-op unless a ``cfg_hpc_system`` is supplied
+    and the analysis names an ensemble partition (``hpc_ensemble_partition``), so a
+    run without an HPC profile is unchanged.
+    """
+    if cfg_hpc_system is None:
+        return
+    partition_name = cfg_analysis.hpc_ensemble_partition
+    if partition_name is None:
+        return
+    spec = cfg_hpc_system.partitions.get(partition_name)
+    if spec is None:
+        return  # an undeclared partition is reported by the partition checks above
+    _check_partition_spec_request(
+        result,
+        field_prefix="analysis",
+        who="analysis",
+        partition_name=partition_name,
+        spec=spec,
+        n_omp_threads=cfg_analysis.n_omp_threads,
+        mem_gb_per_cpu=cfg_analysis.mem_gb_per_cpu,
+        run_mode=cfg_analysis.run_mode,
+    )
+
+
 def _validate_per_member_row_caps(
     cfg_analysis: analysis_config,
     cfg_hpc_system: Any | None,
@@ -1802,6 +1910,28 @@ def _validate_per_member_row_caps(
                     current_value=requested,
                     fix_hint=(f"Reduce {col} to <= {cap} or choose a partition with a higher {cap_attr} cap."),
                 )
+
+        # The four PartitionSpec caps that bound a task's shape. A row that omits a
+        # column inherits the analysis's own value, so the row is checked against ITS
+        # partition with the value it will actually run with.
+        def _row_value(row: Any, candidates: tuple[str, ...], fallback: Any) -> Any:
+            for c in candidates:
+                if c in df.columns:
+                    v = row.get(c)
+                    if not pd.isna(v) and str(v).strip() != "":
+                        return v
+            return fallback
+
+        _check_partition_spec_request(
+            result,
+            field_prefix=f"sensitivity_analysis.row[{member_id_str}]",
+            who=f"member_id={member_id_str}",
+            partition_name=partition_name,
+            spec=spec,
+            n_omp_threads=_row_value(row, ("n_omp_threads", "analysis.n_omp_threads"), cfg_analysis.n_omp_threads),
+            mem_gb_per_cpu=_row_value(row, ("mem_gb_per_cpu", "analysis.mem_gb_per_cpu"), cfg_analysis.mem_gb_per_cpu),
+            run_mode=str(_row_value(row, ("run_mode", "analysis.run_mode"), cfg_analysis.run_mode)),
+        )
 
 
 _LABELS_PATH = Path("/.singularity.d/labels.json")
@@ -2134,6 +2264,9 @@ def preflight_validate(
     # native / non-reprex preflight is byte-identical. Emits the reprex problem pairs
     # when validation.py is re-aimed at a target HPC profile via bundle._reprex.reprex.
     _validate_per_member_row_caps(cfg_analysis, cfg_hpc_system, result)
+    # The analysis's own request against the PartitionSpec caps that bound a task's shape
+    # (max_cpus_per_task, max_mem_mb_per_cpu, supports_mpi, available_gpu_models).
+    _validate_partition_spec_caps_for_analysis(cfg_analysis, cfg_hpc_system, result)
 
     # Per-row partition variation requires batch_job mode (DQ6). Runs only when
     # the sensitivity CSV varies the ensemble partition across rows.

@@ -129,7 +129,7 @@ _REPORT_STAGE = frozenset(
         "plot_scenario_status_appendix",
         "plot_system_overview",
         "plot_workflow_performance",
-        "render_report[format=zip]",
+        "render_report",
     }
 )
 _MULTISIM_REPORT_JOBS = _REPORT_STAGE | {f"plot_per_sim_event_page[event_id={e}]" for e in _EVENTS}

@@ -542,35 +542,35 @@ def _references_by_family(ordered_present: list[tuple[str, object]]) -> dict[str
 
 
 def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bool = True) -> EdaResult:
-    """ADR-4: verify cross-sim reproducibility and EMIT a characterized-divergence verdict.
+    """Verify cross-sim reproducibility and EMIT a characterized-divergence verdict.
 
     Returns a skipped ``EdaResult`` on a non-sensitivity analysis. On a sensitivity
     primary, compares each enabled ``(event_iloc, mode, variable)`` across
-    members against ITS OWN HARDWARE FAMILY's reference (serial-CPU for the cpu
-    family, 1-GPU for the gpu family; smallest present compute config, then
-    lexicographic ``member_id``, as deterministic fallbacks),
-    writes ``{analysis_dir}/eda/<plot_id>.zarr`` (max-abs-diff + identical maps) and
-    ``<plot_id>.verdict.json``, and returns an ``EdaResult`` carrying the verdict +
+    members against the reference of the member's OWN HARDWARE FAMILY. The reference is serial-CPU for the cpu
+    family and 1-GPU for the gpu family, with the smallest present compute config and then
+    the lexicographic ``member_id`` as deterministic fallbacks.
+    The function writes ``{analysis_dir}/eda/<plot_id>.zarr`` with max-abs-diff and identical maps, writes
+    ``<plot_id>.verdict.json``, and returns an ``EdaResult`` carrying the verdict and
     artifact path.
 
-    ``within_family=True`` (default): each sub is compared against its OWN hardware
-    family's reference and bit-identity is asserted
-    (``np.array_equal(equal_nan=True)``); a divergence is a ``CheckResult``
-    ``passed=False``. The STRICTNESS is unchanged — only the reference each sub is
-    measured against is. A cross-family pair is no longer compared at all, so it can
-    neither pass nor fail; ``within_family=False`` is where that pair is measured.
+    With ``within_family=True``, the default, each sub is compared against the reference of the sub's OWN hardware
+    family and bit-identity is asserted
+    with ``np.array_equal(equal_nan=True)``. A divergence is a ``CheckResult``
+    ``passed=False``. The STRICTNESS is unchanged, and only the reference of each sub
+    changes. A cross-family pair is no longer compared at all, so the pair can
+    neither pass nor fail. ``within_family=False`` measures that pair.
 
-    ``within_family=False`` (across hardware families, e.g. Frontier-ROCm vs
-    UVA-CUDA): ONE global reference (no family partition — partitioning here would
-    make this arm measure within-family divergence and label it "across-family").
-    Do NOT assert equality — ADR-4 concedes cross-family bit-identity is
-    not achievable. Instead compute the BOUNDED divergence (max abs diff and max
-    relative diff per tracked variable) and emit it as a ``passed=True``
-    characterized-divergence verdict. The boundary disclosure IS the contribution
-    (disclosed -> verifiable), not an equality claim. The persisted
-    ``<plot_id>.verdict.json`` shape is unchanged (still
-    ``dataclasses.asdict(CheckResult)``); only the verdict's ``passed``/``summary``/
-    ``details`` semantics branch on ``within_family``.
+    With ``within_family=False``, the comparison spans hardware families such as a ROCm cluster and
+    a CUDA cluster. The arm uses ONE global reference with no family partition, because partitioning here would
+    make this arm measure within-family divergence and label the result "across-family".
+    Do NOT assert equality, because the toolkit concedes that cross-family bit-identity is
+    not achievable. Instead compute the BOUNDED divergence, meaning the max abs diff and max
+    relative diff per tracked variable, and emit the divergence as a ``passed=True``
+    characterized-divergence verdict. The boundary disclosure IS the contribution.
+    Disclosure makes the result verifiable and makes no equality claim. The persisted
+    ``<plot_id>.verdict.json`` shape is unchanged and remains
+    ``dataclasses.asdict(CheckResult)``. Only the ``passed``, ``summary``, and
+    ``details`` semantics of the verdict branch on ``within_family``.
     """
     name = "Byte identity across compute configurations"
     sub_items = list(_iter_members_or_self(analysis))

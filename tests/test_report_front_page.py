@@ -64,7 +64,7 @@ def test_a_bundle_counts_scenarios_from_its_scenario_status_csv(tmp_path: Path) 
     """Four events run by two models are 4 scenarios, not 8 rows and not the configuration's absent field."""
     config = _bundle_config(tmp_path, "multi_sim", _PLAIN_CSV)
     assert config["n_sims"] == 4
-    assert "It covers 4 scenarios." in _render(config)
+    assert "The analysis covers 4 scenarios." in _render(config)
 
 
 def test_a_sweep_bundle_counts_members_and_scenarios_from_its_csv(tmp_path: Path) -> None:
@@ -83,7 +83,7 @@ def test_a_bundle_without_the_csv_prints_no_scenario_count(tmp_path: Path, fixtu
 
 
 def test_one_scenario_is_singular() -> None:
-    assert "It covers 1 scenario." in _render({**_BASE, "is_sensitivity": False, "n_sims": 1})
+    assert "The analysis covers 1 scenario." in _render({**_BASE, "is_sensitivity": False, "n_sims": 1})
 
 
 def test_the_sweep_sentence_needs_every_value_it_prints() -> None:

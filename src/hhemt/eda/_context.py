@@ -80,12 +80,12 @@ def _holds_relative_path_records(cfg_analysis_path: Path, cfg_system_path: Path)
 
 
 def load_eda_context(root: Path | str) -> EdaContext:
-    """Re-derive the 9 EdaContext fields from artifacts resident at ``root``.
+    """Re-derive the EdaContext fields from artifacts resident at ``root``.
 
-    Raises ``FileNotFoundError`` only for the two config files (a root without a
-    config is not a valid EDA root). Every data field is ``None`` when its artifact
-    is legitimately absent (non-sensitivity → no ``sensitivity_datatree``; a bundle
-    or partial tree → no ``datatree``/``scenario_status``/``swmm_features``/``triton_dem``).
+    Raises ``FileNotFoundError`` only for the config files, because a root without a
+    config is not a valid EDA root. Every data field is ``None`` when the artifact
+    is absent. A non-sensitivity analysis has no ``sensitivity_datatree``. A bundle
+    or partial tree has no ``datatree``, ``scenario_status``, ``swmm_features``, or ``triton_dem``.
     """
     import geopandas as gpd
     import pandas as pd

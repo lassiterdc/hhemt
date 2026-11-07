@@ -402,10 +402,10 @@ def test_each_reference_store_has_the_renamed_keys_their_units_companions_and_th
 
 
 def test_the_layout_is_28_with_exactly_one_module_per_number_and_a_ladder_that_ends_at_it():
-    """Property: `LAYOUT_VERSION` is 28; the version directory lists exactly one module claiming 27
+    """Property: `LAYOUT_VERSION` is 29; the version directory lists exactly one module claiming 27
     (develop's consolidation) and one claiming 28 (the unit-token migration, whose `version_from` is 27); the
-    ladder test's expected list ends with the two stems in that order; the temporary suffix of the module's
-    swap is `.v0028tmp` and `.v0027tmp` is nowhere in `src`.
+    ladder test's expected list holds the two stems in that order, followed by the stem of layout 29; the temporary
+    suffix of the module's swap is `.v0028tmp` and `.v0027tmp` is nowhere in `src`.
 
     Class: the module files, their declared numbers, the ladder list and the source text.
     Why required: two modules claiming one number cannot both run; a stale suffix would
@@ -415,7 +415,7 @@ def test_the_layout_is_28_with_exactly_one_module_per_number_and_a_ladder_that_e
     """
     from hhemt.version_migration.constants import LAYOUT_VERSION
 
-    assert LAYOUT_VERSION == 28
+    assert LAYOUT_VERSION == 29
     vdir = REPO / "src" / "hhemt" / "version_migration" / "versions"
     claims = {}
     for path in sorted(vdir.glob("V00*.py")):
@@ -430,7 +430,7 @@ def test_the_layout_is_28_with_exactly_one_module_per_number_and_a_ladder_that_e
     ladder = (REPO / "tests" / "test_version_migration_ladder.py").read_text()
     expected = re.search(r"EXPECTED_LADDER: list\[str\] = \[(.*?)\n\]", ladder, re.S).group(1)
     stems = re.findall(r'"(V\d{4}__[^"]+)"', expected)
-    assert stems[-2:] == ["V0027__consolidate_zarr_metadata", V0028_STEM], stems[-3:]
+    assert stems[-3:-1] == ["V0027__consolidate_zarr_metadata", V0028_STEM], stems[-3:]
     assert len(stems) == len(set(stems))
     leftovers = [
         p.relative_to(REPO).as_posix()
@@ -465,20 +465,20 @@ def test_the_layout_28_fixture_is_a_byte_copy_of_the_layout_27_fixture():
 
 
 @pytest.mark.parametrize("zip_name", ["multisim", "sensitivity"])
-def test_the_regenerated_golden_zips_are_stamped_28_carry_indexed_roots_and_hold_no_old_name(zip_name):
-    """Property: each golden zip carries `_version.json` files stamped 28, every root `zarr.json` of its zarr stores
+def test_the_regenerated_golden_zips_are_stamped_29_carry_indexed_roots_and_hold_no_old_name(zip_name):
+    """Property: each golden zip carries `_version.json` files stamped 29, every root `zarr.json` of its zarr stores
     carries a consolidated-metadata index, and no member path holds a unit-token variable name.
 
     Class: the two zips, every `_version.json`, every store root and every member path.
     Why required: the generator rebuilds both zips, and a stamp left at 27 or a store written without an index
     would pass the stores' own readers and fail only the conformance test.
-    Kills it: a zip generated before `records.py` held 28; one generated with a generator that skips the index.
+    Kills it: a zip generated before `records.py` held 29; one generated with a generator that skips the index.
     Passes under: any generation with the same properties.
     """
     zf = zipfile.ZipFile(REPO / "tests" / "fixtures" / "goldens" / f"{zip_name}.zip")
     names = zf.namelist()
     stamps = [n for n in names if n.endswith("_version.json")]
-    assert stamps and all(json.loads(zf.read(n))["layout_version"] == 28 for n in stamps), stamps
+    assert stamps and all(json.loads(zf.read(n))["layout_version"] == 29 for n in stamps), stamps
     roots = [n for n in names if re.search(r"\.zarr/zarr\.json$", n) and n.count(".zarr/") == 1]
     assert len(roots) >= 30, len(roots)
     unindexed = [n for n in roots if json.loads(zf.read(n)).get("consolidated_metadata") is None]

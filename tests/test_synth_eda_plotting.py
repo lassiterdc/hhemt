@@ -84,42 +84,39 @@ def test_b4b_absent_backing_zarr_emits_degradation_panel_not_skip(tmp_path):
     assert "unavailable" in out.read_text().lower()  # the honest-degradation annotation text
 
 
-def test_eda_config_drops_retired_b4b_clean_vs_resume_kind():
+def test_eda_config_refuses_retired_b4b_clean_vs_resume_kind_at_render(tmp_path):
     """A frozen pre-F8 cfg_analysis.yaml carrying enabled_plots: [..., b4b_clean_vs_resume, ...]
-    must DROP the retired kind at config-load (mode='before') with a DeprecationWarning, so the
-    no-wipe report re-render's render_eda_plots no longer raises 'unknown EDA plot kind' at that
-    position (F8: the within-master figure was removed; the result lives on hhemt combine)."""
+    loads untouched and is REFUSED at render by the kind validation, as an unknown kind is
+    (F8: the within-master figure was removed; the result lives on hhemt combine). Config load
+    neither drops the refused kind nor warns."""
+    import warnings
+
     import pytest
 
     from hhemt.config.eda import eda_config
 
-    with pytest.warns(DeprecationWarning, match="retired EDA figure kind"):
-        cfg = eda_config(
-            enabled_plots=[
-                "config_diff_maps",
-                "raw_byte_identity",
-                "b4b_clean_vs_resume",
-                "eda_rank_sensitivity",
-            ]
-        )
-    assert "b4b_clean_vs_resume" not in cfg.enabled_plots
-    assert cfg.enabled_plots == [
-        "config_diff_maps",
-        "raw_byte_identity",
-        "eda_rank_sensitivity",
-    ]
+    plots = ["config_diff_maps", "raw_byte_identity", "b4b_clean_vs_resume", "eda_rank_sensitivity"]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        cfg = eda_config(enabled_plots=plots)
+    assert cfg.enabled_plots == plots
+    (tmp_path / "eda").mkdir()
+    with pytest.raises(ValueError, match="unknown EDA plot kind 'b4b_clean_vs_resume'"):
+        render_eda_plots(tmp_path, cfg_analysis=None, eda_cfg=cfg)
 
 
-def test_eda_config_renames_legacy_eda_cross_sim_identity_kind():
-    """Precedent coverage (previously untested): the eda_cross_sim_identity -> config_diff_maps
-    rename still fires at config-load with a DeprecationWarning."""
+def test_eda_config_refuses_legacy_eda_cross_sim_identity_kind_at_render(tmp_path):
+    """The eda_cross_sim_identity -> config_diff_maps rename is no longer applied at config
+    load: the old kind loads as written and is refused at render. The edit that repairs a
+    saved config is the new kind."""
     import pytest
 
     from hhemt.config.eda import eda_config
 
-    with pytest.warns(DeprecationWarning):
-        cfg = eda_config(enabled_plots=["eda_cross_sim_identity"])
-    assert cfg.enabled_plots == ["config_diff_maps"]
+    cfg = eda_config(enabled_plots=["eda_cross_sim_identity"])
+    assert cfg.enabled_plots == ["eda_cross_sim_identity"]
+    with pytest.raises(ValueError, match="unknown EDA plot kind 'eda_cross_sim_identity'"):
+        render_eda_plots(tmp_path, cfg_analysis=None, eda_cfg=cfg)
 
 
 def test_enumerated_config_diff_maps_emits_when_backing_artifact_absent(tmp_path):
@@ -155,30 +152,34 @@ def test_enumerated_config_diff_maps_emits_when_backing_artifact_absent(tmp_path
     assert "not applicable" in output_path.read_text().lower()
 
 
-def test_eda_config_renames_the_raw_byte_identity_predecessor_kind():
-    """A config naming the raw byte-identity figure's pre-rename kind loads with it renamed.
+def test_eda_config_refuses_the_raw_byte_identity_predecessor_kind_at_render(tmp_path):
+    """A config naming the raw byte-identity figure's pre-rename kind loads as written and is
+    refused at render.
 
     Property: an ``eda.enabled_plots`` entry naming the kind ``raw_byte_identity`` carried
-    before its rename is rewritten to ``raw_byte_identity`` at config load, with a
-    DeprecationWarning, and the other entries keep their order.
+    before its rename is kept verbatim at config load, with no warning, and
+    ``render_eda_plots`` refuses it as an unknown kind. The rename map still records the
+    predecessor, because the render-time degradation panel and the combine guard read it.
 
     Class: every saved analysis config and every bundle's baked ``cfg_analysis.yaml`` written
-    before the rename. Without the rewrite, ``analysis.eda()`` skips the unknown kind
-    silently and ``Bundle.eda()`` raises on it, so the figure is lost either way.
+    before the rename. The refusal is the documented behavior; the repair is editing the
+    config to name the current kind.
 
     What kills it: removing the ``raw_byte_identity`` entry from ``config/eda.py``'s
-    ``_EDA_RENAMES``, misspelling its key, or mapping it to another kind; the predecessor
-    list below then differs from the anchor.
+    ``_EDA_RENAMES`` or misspelling its key (the predecessor list below then differs from the
+    anchor), restoring a config-load rewrite (the list would change), or registering the
+    predecessor as a renderer (the render would not raise).
 
-    A second correct implementation under which it still passes: performing the rewrite in a
-    field validator on ``enabled_plots`` instead of the model's before-validator; the
-    assertions read only the map's predecessor, the loaded list and the warning.
+    A second correct implementation under which it still passes: moving the refused-kind
+    check into the renderer registry lookup with another message; the assertions read only
+    the loaded list, the absence of a warning and the exception type and key.
 
     The old name is taken from V0026's ``OLD_STEM``, the stem the layout migration moves on
     disk, rather than spelled here or derived from the rename map. A name derived from the
     map would only show that the map agrees with itself, and a misspelled key would pass.
     """
     import importlib
+    import warnings
 
     import pytest
 
@@ -187,37 +188,39 @@ def test_eda_config_renames_the_raw_byte_identity_predecessor_kind():
     v0026 = importlib.import_module("hhemt.version_migration.versions.V0026__raw_byte_identity_stem")
     predecessors = [old for old, new in _EDA_RENAMES.items() if new == "raw_byte_identity"]
     assert predecessors == [v0026.OLD_STEM]
-    with pytest.warns(DeprecationWarning, match="retired EDA figure kind"):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         cfg = eda_config(enabled_plots=["config_diff_maps", v0026.OLD_STEM])
-    assert cfg.enabled_plots == ["config_diff_maps", "raw_byte_identity"]
+    assert cfg.enabled_plots == ["config_diff_maps", v0026.OLD_STEM]
+    (tmp_path / "eda").mkdir()
+    with pytest.raises(ValueError, match="unknown EDA plot kind"):
+        render_eda_plots(tmp_path, cfg_analysis=None, eda_cfg=cfg)
 
 
-def test_eda_config_rename_warning_names_the_rename_it_applied():
-    """The rename DeprecationWarning names the rename actually applied, from the rename map.
+def test_eda_refusal_of_a_retired_kind_names_the_key_and_the_known_kinds(tmp_path):
+    """The refusal of a kind the render refuses names the key it refused and lists the kinds that render.
 
-    Property: loading a config whose ``enabled_plots`` carries the raw byte-identity figure's
-    predecessor kind warns with ``{old} -> raw_byte_identity`` and does not name the
-    ``eda_cross_sim_identity -> config_diff_maps`` rename, which was not applied.
+    Property: the ``ValueError`` message carries the refused key and every registered kind,
+    so a reader of the failure can edit the config to a kind that exists.
 
-    Class: every load that rewrites a subset of ``_EDA_RENAMES``; the message must describe
-    that subset and nothing else.
+    Class: every refused key; the arms below take one predecessor of a figure now under another name and
+    one dropped kind, which are the two forms a refused key takes.
 
-    What kills it: a warning text that hard-codes one rename's arrow, or that lists the whole
-    map instead of the renames applied.
+    What kills it: a refusal that omits the key, or one that lists no known kinds.
 
-    A second correct implementation under which it still passes: naming each applied rename
-    on its own line, or in a different order; the assertions test only containment.
+    A second correct implementation under which it still passes: any message format that
+    contains the key and the registered kind names.
     """
-    import warnings
+    import pytest
 
-    from hhemt.config.eda import _EDA_RENAMES, eda_config
+    from hhemt.config.eda import _EDA_DROPS, _EDA_RENAMES, eda_config
+    from hhemt.eda._plotting import _EDA_RENDERERS
 
-    predecessors = [old for old, new in _EDA_RENAMES.items() if new == "raw_byte_identity"]
-    assert len(predecessors) == 1, predecessors
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        eda_config(enabled_plots=[predecessors[0]])
-    messages = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert len(messages) == 1, messages
-    assert f"{predecessors[0]} -> raw_byte_identity" in messages[0]
-    assert "eda_cross_sim_identity -> config_diff_maps" not in messages[0]
+    (tmp_path / "eda").mkdir()
+    for stem in (sorted(_EDA_RENAMES)[0], sorted(_EDA_DROPS)[0]):
+        with pytest.raises(ValueError) as caught:
+            render_eda_plots(tmp_path, cfg_analysis=None, eda_cfg=eda_config(enabled_plots=[stem]))
+        message = str(caught.value)
+        assert repr(stem) in message
+        for kind in _EDA_RENDERERS:
+            assert kind in message

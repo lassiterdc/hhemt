@@ -306,8 +306,8 @@ def test_docs_table_rows_for_the_depth_variables():
     Passes under: a table rendered from the CF map by a generator, with the same rows.
     """
     text = (REPO / "docs" / "reference" / "output-data-model.md").read_text()
-    start = text.index("2D surface results (TRITON)")
-    section = text[start : text.index("### Network results (SWMM)", start)]
+    start = text.index("2D surface results from TRITON")
+    section = text[start : text.index("### Network results from SWMM", start)]
     rows = {
         m.group(1): [c.strip().strip("`") for c in m.group(0).strip("|\n").split("|")]
         for m in re.finditer(r"^\| `([a-z0-9_]+)` .*$", section, re.M)
@@ -325,7 +325,7 @@ def test_docs_table_rows_for_the_depth_variables():
         assert forbidden not in rows and forbidden not in section, forbidden
     assert "sea_surface_height_above_geoid" not in section
     meaning = rows["max_flood_depth"][3]
-    assert "running maximum" in meaning and "b3820a44" in meaning and "below a printed depth" in meaning, meaning
+    assert "running maximum" in meaning and "above the largest depth printed" in meaning, meaning
 
 
 def test_eda_units_map_names_the_depth_rows_in_meters():

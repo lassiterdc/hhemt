@@ -2999,13 +2999,13 @@ _INELIGIBLE_NODE_REASONS = {
         "outfall."
     ),
     "STORAGE": (
-        "Storage node {id} carries an [INFLOWS] line, but TRITON-SWMM does not yet couple "
-        "storage nodes correctly (it reads max depth for junctions only). This is a solver "
+        "Storage node {id} carries an [INFLOWS] line, but TRITON-SWMM does not couple "
+        "storage nodes and reads max depth for junctions only. This is a solver "
         "limitation, not a judgement that the node should not receive surface flow."
     ),
     "DIVIDER": (
-        "Divider node {id} carries an [INFLOWS] line, but TRITON-SWMM does not yet couple "
-        "divider nodes correctly (it reads max depth for junctions only). Under dynamic wave a "
+        "Divider node {id} carries an [INFLOWS] line, but TRITON-SWMM does not couple "
+        "divider nodes and reads max depth for junctions only. Under dynamic wave a "
         "divider acts as a junction; this is a solver limitation."
     ),
 }
@@ -3023,14 +3023,14 @@ _INELIGIBLE_LISTED_NODE_REASONS = {
         "instead of at the outfall."
     ),
     "STORAGE": (
-        "Storage node {id} is named in the coupling-node list, but TRITON-SWMM does not yet couple "
-        "storage nodes correctly (it reads max depth for junctions only). This is a solver "
+        "Storage node {id} is named in the coupling-node list, but TRITON-SWMM does not couple "
+        "storage nodes and reads max depth for junctions only. This is a solver "
         "limitation, not a judgement that the node should not receive surface flow. Remove it "
         "from the coupling-node list."
     ),
     "DIVIDER": (
-        "Divider node {id} is named in the coupling-node list, but TRITON-SWMM does not yet couple "
-        "divider nodes correctly (it reads max depth for junctions only). Under dynamic wave a "
+        "Divider node {id} is named in the coupling-node list, but TRITON-SWMM does not couple "
+        "divider nodes and reads max depth for junctions only. Under dynamic wave a "
         "divider acts as a junction; this is a solver limitation. Remove it from the "
         "coupling-node list."
     ),

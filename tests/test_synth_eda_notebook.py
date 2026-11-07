@@ -9,7 +9,6 @@ import pytest
 class _FakeEdaCfg:
     enabled_plots = ["config_diff_maps"]
     plotly_js_mode = "inline"
-    tabulator_js_mode = "cdn"
     eda = None  # the seed cell reads ctx.cfg_analysis.eda at EXECUTION, not at emit.
 
 
@@ -59,8 +58,8 @@ def test_is_bundle_omits_calc_cell(tmp_path):
     )
     a_src = "\n".join(c.source for c in analysis_nb.cells)
     b_src = "\n".join(c.source for c in bundle_nb.cells)
-    assert "byte-identity" in a_src  # calc cell present on a source root
-    assert "byte-identity" not in b_src  # omitted on a bundle root
+    assert "Byte identity across compute configurations" in a_src  # calc cell present on a source root
+    assert "Byte identity across compute configurations" not in b_src  # omitted on a bundle root
 
 
 @pytest.mark.parametrize("is_bundle", [False, True], ids=["source_root", "bundle_root"])

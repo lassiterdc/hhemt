@@ -19,14 +19,7 @@ figure_defaults:
 system_map:
   target_epsg: null
   figsize_inches: [10.0, 8.0]
-  watershed_color: red
-  dem_extent_color: blue
-  bc_marker: o
   bc_color: orange
-  swmm_node_color: black
-  swmm_node_size: 8.0
-  swmm_link_color: gray
-  swmm_link_width: 0.6
 
 per_sim:
   peak_flood_depth:
@@ -49,10 +42,9 @@ per_analysis_summary:
     - enabled_model_types
 
 sensitivity:
-  mode: benchmarking
   independent_vars:
     - n_devices
   dependent_var: performance.Total
   aggregation: mean
-  group_by_var: run_mode
+  group_by_var: analysis.run_mode
   show_gridlines: true

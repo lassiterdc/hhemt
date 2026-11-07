@@ -106,15 +106,15 @@ def test_registered_surface_carries_every_experiment_verb():
     Class: the top-level command set and the subjects of the `reprex` and `test` groups, as
     Click registers them. Why it is required: a verb exists for a user only if it is in this
     tree, and a verb with no help text gives `--help` nothing to say. What kills it: any of
-    `publish`, `reprex`, `status` unregistered; `reprex`'s subjects other than exactly `emit`
-    and `check`; `test`'s other than exactly `toolkit` and `analysis`; or an empty help. A
+    `publish`, `reprex`, `status` unregistered; `reprex`'s subjects other than exactly `emit`,
+    `check` and `config`; `test`'s other than exactly `toolkit` and `analysis`; or an empty help. A
     second correct implementation under which it still passes: registering the verbs from a
     different module or attaching `reprex` through a helper, since only the resulting tree is
     read.
     """
     cmd = typer.main.get_command(app)
     assert {"publish", "reprex", "status"} <= set(cmd.commands)
-    assert set(cmd.commands["reprex"].commands) == {"emit", "check"}
+    assert set(cmd.commands["reprex"].commands) == {"emit", "check", "config"}
     assert set(cmd.commands["test"].commands) == {"toolkit", "analysis"}
     new = [
         cmd.commands["publish"],
@@ -122,6 +122,7 @@ def test_registered_surface_carries_every_experiment_verb():
         cmd.commands["reprex"],
         cmd.commands["reprex"].commands["emit"],
         cmd.commands["reprex"].commands["check"],
+        cmd.commands["reprex"].commands["config"],
         cmd.commands["test"].commands["analysis"],
     ]
     for command in new:
