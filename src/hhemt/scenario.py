@@ -499,6 +499,9 @@ SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS = frozenset(
         "a146fb6ed7c22790fb9a15ff854c446db4519ad2",
         "bd18215972c348020d53b3a8a1a64ee6266cae28",
         "bb13ea28603d50879f8d85cd041c17f440fbdb2b",
+        # ORNL triton-swmm head: ``git show faba223212408f04b7a3dbf6580adedf4a4e6b13:src/config_utils.h``
+        # carries ``argsd("swmm_node_rim_from_dem"`` (line 535), the content test this set admits by.
+        "faba223212408f04b7a3dbf6580adedf4a4e6b13",
     }
 )
 

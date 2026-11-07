@@ -2757,6 +2757,15 @@ def test_the_dem_rim_option_passes_a_native_build_that_reads_the_key_without_des
     with pytest.raises(ConfigurationError, match="swmm_node_rim_from_dem"):
         guard()
     assert "a146fb6ed7c22790fb9a15ff854c446db4519ad2" in SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS
+    # ORNL's current triton-swmm head reads the key (config_utils.h line 535), so a container
+    # image recorded at it is admitted; the container-mode arm of the guard must accept it.
+    assert "faba223212408f04b7a3dbf6580adedf4a4e6b13" in SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS
+    require_dem_rim_capable_triton(
+        execution_environment="container",
+        software_directory=None,
+        branch_key="faba223212408f04b7a3dbf6580adedf4a4e6b13",
+        recorded_sha="faba223212408f04b7a3dbf6580adedf4a4e6b13",
+    )
 
 
 # ---------------------------------------------------------------------------
