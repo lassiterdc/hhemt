@@ -1791,7 +1791,7 @@ class TRITONSWMM_sim_post_processing:
         """
         from hhemt.coupling_exchange import exchange_statistics, read_exchange_sidefile, to_reporting_intervals
         from hhemt.scenario import coupling_nodes_file_for
-        from hhemt.swmm_output_parser import RPT_DATETIME_FORMAT, _rpt_starting_date
+        from hhemt.swmm_output_parser import RPT_DATETIME_FORMAT, read_rpt_starting_date
 
         nodes_file = coupling_nodes_file_for(f_inp)
         names = [line.strip() for line in nodes_file.read_text().splitlines() if line.strip()]
@@ -1820,11 +1820,9 @@ class TRITONSWMM_sim_post_processing:
                 "_reclaim_exchange_replay_sidefiles deletes it, and it must not run before the node store is written",
             )
         rpt_file = self.scen_paths.swmm_hydraulics_rpt
-        with open(rpt_file, encoding="latin-1") as rpt:
-            head = "".join(line for _, line in zip(range(200), rpt, strict=False))
-        starting = _rpt_starting_date(head)
+        starting = read_rpt_starting_date(rpt_file)
         if starting is None:
-            raise ProcessingError("attach coupling exchange flow", rpt_file, "no Starting Date in the report header")
+            raise ProcessingError("attach coupling exchange flow", rpt_file, "the report has no Starting Date line")
         start = pd.to_datetime(starting, format=RPT_DATETIME_FORMAT)
         report_times_s = (pd.to_datetime(ds_nodes["date_time"].values) - start).total_seconds().to_numpy()
         series = read_exchange_sidefile(sidefiles[0], nodes_file)

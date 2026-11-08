@@ -4831,3 +4831,7 @@ non_breaking_allowlist:
     layout_signature: a75463f994fbdce211555b472121655337408c6b9068d2d463f077503da3ef6f
     justification: |-
       NON-BREAKING. Adds the ORNL triton-swmm commit faba223212408f04b7a3dbf6580adedf4a4e6b13 to SWMM_QUALITY_SNAPSHOT_SHAS, the set snapshot_carries_quality_state reads, whose snapshot.c carries the node and link quality state (oldQual count 7, the count of the two members it joins). For a quality-routed coupled run recorded at that build with swmm_snapshot_disable unset, the resolver returns False instead of True, so the scenario cfg omits the line swmm_snapshot_disable=1 and the run resumes from its snapshot; the cfg is an input file rewritten at every preparation. No path, filename, log field, zarr group, fingerprint, Snakemake rule or figure stem changes, and _version.json is untouched.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 71190fd47cc5cbccb2ea1d16c8d50de6673132f8b0edf6a9b92527660141f25e
+    justification: |-
+      NON-BREAKING for the stored layout. The change reads the SWMM report's Starting Date line from the whole file instead of its first 200 lines, and words the error for a report without the line. It writes no variable, attribute, path or file that the stored layout holds, and no stored value changes.

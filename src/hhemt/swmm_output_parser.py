@@ -572,10 +572,19 @@ def _declared_pollutants(f_inp):
     return pollutants
 
 
-def _rpt_starting_date(text: str) -> str | None:
-    """The report's ``Starting Date`` value as ``MM/DD/YYYY HH:MM:SS`` text, or None when absent."""
-    match = _RE_START_DATE.search(text)
-    return match.group(1) if match else None
+def read_rpt_starting_date(rpt_file) -> str | None:
+    """The ``Starting Date`` of a SWMM report file, read line by line, or None when no line carries it.
+
+    The value sits in the ``Analysis Options`` block, which follows every input warning SWMM printed, so its
+    line number scales with the model: a coupled Norfolk report holds it at line 4147, and a fixed-size head
+    read misses it. The file is read only as far as the first match.
+    """
+    with open(rpt_file, encoding="latin-1") as rpt:
+        for line in rpt:
+            match = _RE_START_DATE.search(line)
+            if match:
+                return match.group(1)
+    return None
 
 
 def pollutant_time_of_max_conc(conc, simulation_start, tstep_dimname="date_time"):
