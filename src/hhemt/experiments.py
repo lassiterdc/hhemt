@@ -396,11 +396,6 @@ class TRITON_SWMM_experiment:
             the producer used, on THIS checkout. The checkout must be at the carried ``hhemt_sha``,
             and ``ConfigurationError`` refuses a different commit or a wheel install.
         """
-        from hhemt.bundle import Bundle
-        from hhemt.bundle._emit import (
-            reconstitute_runnable_analysis_config,
-            reconstitute_runnable_config,
-        )
         from hhemt.bundle._reprex import extract_reprex_bundle
 
         if not (doi or pid):
@@ -433,6 +428,83 @@ class TRITON_SWMM_experiment:
             expected_sha256=expected_sha256,
         )
         bundle_root = extract_reprex_bundle(zip_path)
+        return cls._reconstitute_from_bundle_root(
+            bundle_root,
+            software_dir=software_dir,
+            hpc_system_config_yaml=hpc_system_config_yaml,
+            validate=validate,
+            sif_build_config_yaml=sif_build_config_yaml,
+        )
+
+    @classmethod
+    def from_bundle_zip(
+        cls,
+        zip_path: Path,
+        *,
+        target_dir: Path | None = None,
+        software_dir: Path | None = None,
+        hpc_system_config_yaml: Path | None = None,
+        validate: bool = True,
+        sif_build_config_yaml: Path | None = None,
+    ) -> "TRITON_SWMM_experiment":
+        """Reconstitute a reprex bundle from a LOCAL zip and return a runnable experiment.
+
+        The call needs no DOI and no network access.
+
+        The deposited zip is reconstituted directly, so a reproducer can check the deposit end to end, and the
+        producer can check the deposit before depositing the zip. Everything after the extraction follows the path of
+        ``from_doi``, ``_reconstitute_from_bundle_root``. Both entry points therefore share the schema guard,
+        the ``mainEntity`` gate, the materialize-or-fail input check, the container-image handling, and the
+        validation.
+
+        Parameters
+        ----------
+        zip_path : Path
+            The emitted bundle zip. The call reads the zip and never modifies the zip.
+        target_dir : Path or None
+            Directory to extract into, as ``{target_dir}/{zip stem}``. An existing directory of that name is
+            REPLACED, except when the directory holds the zip, is a filesystem root or the home directory, or holds
+            the current working directory. A refused directory raises ``ProcessingError`` before anything is
+            removed. None extracts beside the zip, as ``extract_reprex_bundle`` does for the emit-side facades.
+        software_dir, hpc_system_config_yaml, validate, sif_build_config_yaml
+            The same parameters as ``from_doi`` takes.
+        """
+        from hhemt.bundle._reprex import extract_reprex_bundle
+
+        zip_path = Path(zip_path)
+        if not zip_path.is_file():
+            raise FileNotFoundError(f"bundle zip not found: {zip_path}")
+        dest = None
+        if target_dir is not None:
+            target_dir = Path(target_dir)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            dest = target_dir / zip_path.with_suffix("").name
+        bundle_root = extract_reprex_bundle(zip_path, dest=dest)
+        return cls._reconstitute_from_bundle_root(
+            bundle_root,
+            software_dir=software_dir,
+            hpc_system_config_yaml=hpc_system_config_yaml,
+            validate=validate,
+            sif_build_config_yaml=sif_build_config_yaml,
+        )
+
+    @classmethod
+    def _reconstitute_from_bundle_root(
+        cls,
+        bundle_root: Path,
+        *,
+        software_dir: Path | None,
+        hpc_system_config_yaml: Path | None,
+        validate: bool,
+        sif_build_config_yaml: Path | None,
+    ) -> "TRITON_SWMM_experiment":
+        """The ONE post-extraction path of ``from_doi`` and ``from_bundle_zip``: validate the extracted bundle,
+        reconstitute its configs, check its inputs and images, and return the runnable experiment."""
+        from hhemt.bundle import Bundle
+        from hhemt.bundle._emit import (
+            reconstitute_runnable_analysis_config,
+            reconstitute_runnable_config,
+        )
 
         # Schema guard: raises BundleSchemaError on version skew, FileNotFoundError when
         # the directory carries no bundle_manifest.json.

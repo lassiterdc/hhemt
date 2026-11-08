@@ -111,6 +111,9 @@ def _lookalike_src_layout(root: Path, monkeypatch) -> tuple[Path, Path]:
     (package / "__init__.py").write_text("", encoding="utf-8")
     monkeypatch.setattr(hhemt, "__file__", str(package / "__init__.py"))
     monkeypatch.setattr(getpass, "getuser", lambda: "zz")
+    # Paths under the running user's home are rewritten to a home token, so a base temp directory under it would
+    # rewrite ``{base}`` itself; a home that is no ancestor of the layout keeps the expectation independent of it.
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: Path("/nonexistent-home-for-the-test")))
     return base, package
 
 

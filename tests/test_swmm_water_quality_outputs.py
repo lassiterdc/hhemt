@@ -1,8 +1,8 @@
 """SWMM water-quality outputs: the gate, the pollutant series, the per-event statistics, A3 and A2.
 
-Problem these tests guard. A SWMM model that declares a pollutant and routes quality writes one
-concentration column per pollutant into every time-series row of its report, prints extra summary
-tables, and writes pollutant results into its binary output. The toolkit must turn those into a
+Problem these tests guard. A SWMM model that declares a pollutant and routes quality prints extra summary
+tables in its report and writes pollutant results into its binary output (the report's own per-timestep rows carry
+the same concentrations, but the series are read from the binary output). The toolkit must turn those into a
 `pollutant` dimension and a bounded set of per-event statistics, ONLY when SWMM itself says quality
 was routed, and it must refuse to publish statistics a snapshot resume has spoiled.
 
@@ -19,6 +19,7 @@ compiles or runs a solver.
 
 from __future__ import annotations
 
+import datetime
 import json
 from types import SimpleNamespace
 
@@ -26,7 +27,6 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from hhemt.exceptions import ProcessingError
 from hhemt.swmm_output_parser import (
     parse_hydrology_rpt_summary,
     retrieve_SWMM_outputs_as_datasets,
@@ -175,11 +175,12 @@ def make_rpt(
         head = "  ".join(f"{name:>10}" for name, _ in pollutants)
         # Outfall Loading Summary, SWMM's layout: rows sit between the 2nd and 3rd dashed lines.
         dash = "  " + "-" * 60
+        outfall_dash = "  " + "-" * (59 + 14 * n)  # 59 dashes plus 14 per declared pollutant, as `statsrpt.c` prints
         vol = f"{outfall_vol:12.3f}"
         loads = "".join(f"{x:14.3f}" for x in outfall_loads[:n])
         parts.append(
-            f"  Outfall Loading Summary\n{dash}\n   header {head}\n   header\n{dash}\n"
-            f"  {'OUT1':<20}{98.45:7.2f} {0.123:9.3f} {0.456:9.3f}{vol}{loads}\n{dash}\n"
+            f"  Outfall Loading Summary\n{outfall_dash}\n   header {head}\n   header\n{outfall_dash}\n"
+            f"  {'OUT1':<20}{98.45:7.2f} {0.123:9.3f} {0.456:9.3f}{vol}{loads}\n{outfall_dash}\n"
             f"  {'System':<20}{98.45:7.2f} {0.123:9.3f} {0.456:9.3f}{vol}{loads}\n  \n"
         )
         link_cells = "".join(f"{x:14.3f}" if x < 10000.0 else f"{x:14.3e}" for x in link_loads[:n])
@@ -232,9 +233,116 @@ def _write(tmp_path, pollutants, rpt_text, ignore_quality=False, name="m"):
     return inp, rpt
 
 
+_HYDRAULIC_NODE_ATTRS = ("total_inflow", "flooding_losses", "invert_depth", "hydraulic_head")
+_HYDRAULIC_LINK_ATTRS = ("flow_rate", "flow_velocity", "flow_depth", "capacity")
+
+
+def _body_blocks(rpt_text):
+    """``({node: [(time, values...)]}, {link: [...]})`` read from the constructed report's per-timestep rows.
+
+    A test-local reader: the series a model's binary output would hold are taken from the rows this module writes
+    into its constructed report, so each fixture keeps one source for its values.
+    """
+    nodes, links = {}, {}
+    current = None
+    for line in rpt_text.splitlines():
+        if "<<<" in line:
+            _, kind, ident, _ = line.split()[:4]
+            current = (nodes if kind == "Node" else links).setdefault(ident, [])
+            continue
+        tokens = line.split()
+        if current is not None and len(tokens) >= 6 and tokens[0] == "01/01/2000":
+            current.append((tokens[1], [float(v) for v in tokens[2:]]))
+    return nodes, links
+
+
+def _install_pyswmm_from_rpt(monkeypatch, rpt_text, n_out_pollutants):
+    """Stand in for pyswmm's ``Output`` with the series of the constructed report's body.
+
+    The hydraulic attributes are the report's four columns; pollutant ``p`` is attribute ``6 + p`` (node) and
+    ``5 + p`` (link) of ``node_series`` / ``link_series``; the three series the report cannot hold are zero.
+    """
+    import pyswmm
+
+    nodes, links = _body_blocks(rpt_text)
+
+    def when(step):
+        return np.datetime64(f"2000-01-01T{step}").astype("datetime64[s]").item()
+
+    class _Out:
+        def __init__(self, _path):
+            self.nodes = dict.fromkeys(nodes, 0)
+            self.links = dict.fromkeys(links, 0)
+            self.units = {"flow": "CMS", "system": "SI"}
+            self.project_size = [0, 0, len(nodes), len(links), n_out_pollutants]
+            self.start = datetime.datetime(2000, 1, 1)  # the simulation start the binary output records
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def node_series(self, ident, attribute):
+            return {when(s): v[attribute - 6 + 4] for s, v in nodes[ident]}
+
+        def link_series(self, ident, attribute):
+            return {when(s): v[attribute - 5 + 4] for s, v in links[ident]}
+
+    def make_series(blocks, attrs):
+        class _Series:
+            def __init__(self, _out):
+                self._id = None
+
+            def __getitem__(self, ident):
+                self._id = ident
+                return self
+
+            def __getattr__(self, attr):
+                rows = blocks[self._id]
+                if attr in attrs:
+                    return {when(s): v[attrs.index(attr)] for s, v in rows}
+                return {when(s): 0.0 for s, _v in rows}
+
+        return _Series
+
+    monkeypatch.setattr(pyswmm, "Output", _Out)
+    monkeypatch.setattr(pyswmm, "NodeSeries", make_series(nodes, _HYDRAULIC_NODE_ATTRS))
+    monkeypatch.setattr(pyswmm, "LinkSeries", make_series(links, _HYDRAULIC_LINK_ATTRS))
+
+    # The reader reads through two swmm-toolkit seams, not through pyswmm's series accessors (pyswmm 2.1.0 drops
+    # the final report period through them): the stand-ins answer at the seams with the same series as above.
+    from hhemt import swmm_output_parser as sop
+
+    first_rows = next(iter(nodes.values()))
+    monkeypatch.setattr(sop, "_out_time_axis", lambda out, f_outfile: [when(s) for s, _v in first_rows])
+    node_series_of, link_series_of = (
+        make_series(nodes, _HYDRAULIC_NODE_ATTRS),
+        make_series(links, _HYDRAULIC_LINK_ATTRS),
+    )
+    out_stub = _Out(None)
+
+    def _values(out, kind, ident, index, attribute):
+        if isinstance(attribute, str):
+            series = (node_series_of if kind == "node" else link_series_of)(None)[ident]
+            return np.array(list(getattr(series, attribute).values()), dtype=float)
+        reader = out_stub.node_series if kind == "node" else out_stub.link_series
+        return np.array(list(reader(ident, attribute).values()), dtype=float)
+
+    monkeypatch.setattr(sop, "_out_series_values", _values)
+
+
 def _datasets(tmp_path, pollutants, **kwargs):
-    inp, rpt = _write(tmp_path, pollutants, make_rpt(pollutants, **kwargs))
-    return retrieve_SWMM_outputs_as_datasets(inp, rpt)
+    """The coupled assembly of a constructed report and a stand-in binary output holding the report's series."""
+    text = make_rpt(pollutants, **kwargs)
+    inp, rpt = _write(tmp_path, pollutants, text)
+    out = rpt.with_suffix(".out")
+    out.write_bytes(b"")
+    # SWMM writes zero pollutants into the binary output whenever quality is ignored or none is declared.
+    n_out = len(pollutants) if kwargs.get("gate", "YES") == "YES" and kwargs.get("extra_columns", True) else 0
+    with pytest.MonkeyPatch.context() as mp:
+        _install_pyswmm_from_rpt(mp, text, n_out)
+        return retrieve_SWMM_outputs_as_datasets(inp, out, family="tritonswmm")
 
 
 # --------------------------------------------------------------------------- test 1
@@ -272,7 +380,7 @@ def _mk(path):
 
 # --------------------------------------------------------------------------- test 2
 def test_series_carry_pollutants_in_declared_order_with_units(tmp_path):
-    """T1 and T2: the pollutant dimension, its order and units, and the values the report prints.
+    """T1 and T2: the pollutant dimension, its order and units, and the values the binary output holds.
 
     Class: NEW CAPABILITY. Plausible wrong implementation: naming pollutants from the report's column
     headers (the 12-character ID `Coliform_ABC` runs into its neighbour there), or reading units from
@@ -280,7 +388,7 @@ def test_series_carry_pollutants_in_declared_order_with_units(tmp_path):
     Reachability: a two-pollutant model with a 12-character ID and a `#/L` second pollutant is the
     class SWMM prints with header run-in; artifact: the fixture's own header row.
     Both-states property: "the value read equals the value printed" (true of any correct reader).
-    Invocation isolation: the short-row case is a second input, an invalid row, not a re-run.
+    Invocation isolation: the 12-character ID and the `#/L` unit are the differently positioned inputs.
     Second correct implementation: reading names from the `.inp` with a regex rather than SWMM's
     tokenizer passes.
     """
@@ -294,9 +402,6 @@ def test_series_carry_pollutants_in_declared_order_with_units(tmp_path):
     link = ds_links["link_pollutant_conc"].sel(link_id="L1")
     assert link.sel(pollutant="TSS").values.tolist() == [0.1, 0.2, 0.3]
     assert link.sel(pollutant="Coliform_ABC").values.tolist() == [1.0, 0.0, 2.0]
-    inp, rpt = _write(_mk(tmp_path / "s"), TWO, make_rpt(TWO, short_row=True))
-    with pytest.raises(ProcessingError):
-        retrieve_SWMM_outputs_as_datasets(inp, rpt)
 
 
 # --------------------------------------------------------------------------- test 3
@@ -643,7 +748,8 @@ def test_compared_column_set_is_the_same_with_and_without_water_quality(tmp_path
     off, _ = _datasets(_mk(tmp_path / "off"), TWO, gate="NO", extra_columns=False)
     on_set = derive_compared_columns(summarize_swmm_simulation_results(on, 0))[2]
     off_set = derive_compared_columns(summarize_swmm_simulation_results(off, 0))[2]
-    assert on_set == off_set and len(on_set) == 8
+    # six node series (depth, head, inflow, flooding, volume, lateral inflow) give twelve `_max`/`_last` columns
+    assert on_set == off_set and len(on_set) == 12
     violating = xr.Dataset(
         {
             "pollutant_conc_max": ("n", [1.0]),
@@ -708,11 +814,30 @@ def _stub_pyswmm(monkeypatch, n_pollutants):
                 flow_depth=ts,
                 flow_velocity=ts,
                 capacity=ts,
+                ponded_volume=ts,
+                lateral_inflow=ts,
+                flow_volume=ts,
             )
 
     monkeypatch.setattr(pyswmm, "Output", make)
     monkeypatch.setattr(pyswmm, "NodeSeries", _Series)
     monkeypatch.setattr(pyswmm, "LinkSeries", _Series)
+
+    # The reader reads through two swmm-toolkit seams, not through pyswmm's series accessors (pyswmm 2.1.0 drops
+    # the final report period through them): the stand-ins answer at the seams. A pollutant attribute (an int)
+    # goes to the stub output's own `node_series` / `link_series`, which log it, so the index assertions still read it.
+    from hhemt import swmm_output_parser as sop
+
+    only_time = np.datetime64("2000-01-01T00:10:00").astype("datetime64[s]").item()
+    monkeypatch.setattr(sop, "_out_time_axis", lambda out, f_outfile: [only_time])
+
+    def _values(out, kind, ident, index, attribute):
+        if isinstance(attribute, str):
+            return np.array([1.0])
+        reader = out.node_series if kind == "node" else out.link_series
+        return np.array(list(reader(ident, attribute).values()), dtype=float)
+
+    monkeypatch.setattr(sop, "_out_series_values", _values)
     return holder
 
 
@@ -743,11 +868,11 @@ def test_out_path_reads_pollutants_by_index_and_gates_on_the_out_count(tmp_path,
     assert float(ds_n["pollutant_conc"].sel(pollutant="Coliform_ABC").isel(node_id=0, date_time=0)) == 7.0
     assert "link_pollutant_conc" in ds_l
     # no companion .rpt exists above: T1/T2 are still written, S3-S10 are absent
-    ds_nodes, _ = retrieve_SWMM_outputs_as_datasets(inp, out_file)
+    ds_nodes, _ = retrieve_SWMM_outputs_as_datasets(inp, out_file, family="swmm")
     assert "pollutant_conc" in ds_nodes and "outfall_total_load" not in ds_nodes
     # a zero-count .out yields no pollutant dimension
     _stub_pyswmm(monkeypatch, 0)
-    ds_nodes0, _ = retrieve_SWMM_outputs_as_datasets(inp, out_file)
+    ds_nodes0, _ = retrieve_SWMM_outputs_as_datasets(inp, out_file, family="swmm")
     assert "pollutant" not in ds_nodes0.dims
 
 
@@ -862,7 +987,7 @@ def _export(tmp_path, monkeypatch, rows):
     monkeypatch.setattr(
         ps,
         "retrieve_SWMM_outputs_as_datasets",
-        lambda f_inp, f_rpt: (_per_scenario_node_ds(), _per_scenario_link_ds()),
+        lambda f_inp, f_out, family: (_per_scenario_node_ds(), _per_scenario_link_ds()),
     )
     written = {}
 
@@ -877,6 +1002,7 @@ def _export(tmp_path, monkeypatch, rows):
         n_resumes=None,
         add_sim_processing_entry=lambda *args, **kwargs: None,
     )
+    (tmp_path / "m.out").write_bytes(b"")  # the coupled export refuses a missing binary output
     paths = SimpleNamespace(
         output_tritonswmm_node_time_series=tmp_path / "nodes.nc",
         output_tritonswmm_link_time_series=tmp_path / "links.nc",
@@ -892,6 +1018,9 @@ def _export(tmp_path, monkeypatch, rows):
         _resolve_clear_raw=lambda value: None,
         _validate_path=lambda path, name: path,
         _swmm_node_outputs_processed=lambda model: False,
+        # The coupling-node flag and exchange flux are attached by their own method; this test is about the
+        # quality withholding rule, so the stand-in passes the node dataset through untouched.
+        _attach_coupling_outputs=lambda ds, f_inp: ds,
         _swmm_link_outputs_processed=lambda model: False,
         _write_output=_write_output,
         _should_clear_raw_for_model=lambda *args: False,
@@ -968,13 +1097,17 @@ def test_washoff_descriptor_states_its_subcatchment_geometry_and_outfall_sources
     one pure table. Second correct implementation: building the two strings without the shared
     helper passes.
     """
+    from hhemt.cf_conventions import _QUANTITY_PROVENANCE
     from hhemt.cf_conventions import _WQ_QUANTITY_PROVENANCE as table
 
     assert table["washoff_total_load"]["spatial_representation"] == "polygon (subcatchment)"
     assert table["outfall_total_load"]["source_variables"] == (
         "SWMM report, Outfall Loading Summary, column Total {pollutant}"
     )
-    assert table["outfall_total_vol"]["source_variables"] == (
+    # `outfall_total_vol` is written without quality since the flow columns are always read, so its descriptor lives
+    # with the base table and keeps the same column wording.
+    assert "outfall_total_vol" not in table
+    assert _QUANTITY_PROVENANCE["outfall_total_vol"]["source_variables"] == (
         "SWMM report, Outfall Loading Summary, column Total Volume"
     )
     assert table["link_total_load"]["source_variables"] == "SWMM report, Link Pollutant Load Summary, row per link"

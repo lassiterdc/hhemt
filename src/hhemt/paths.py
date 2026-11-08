@@ -62,6 +62,15 @@ class AnalysisPaths(MainDataClass):
     # Sensitivity-level hierarchical DataTree zarr (aggregates member trees).
     sensitivity_datatree_zarr: Path | None = None
 
+    # Consolidated per-scenario SWMM node/link time series, appended one scenario at a time on the elapsed_s axis.
+    # Beside analysis_datatree.zarr, never inside it: a reprocess deletes the datatree outright, and with
+    # toggle_clear_scenario_timeseries_after_consolidation on this store holds the only copy of the series.
+    # Bound on the regular arm only, like analysis_datatree_zarr.
+    analysis_timeseries_zarr: Path | None = None
+
+    # The sensitivity master's counterpart, grafted from each member's analysis_timeseries.zarr.
+    sensitivity_timeseries_zarr: Path | None = None
+
     bash_script_path: Path | None = None
 
 

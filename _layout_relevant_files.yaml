@@ -4795,3 +4795,39 @@ non_breaking_allowlist:
     layout_signature: 94e41dd4f21d8c39ac5639a0eb95286423dfb10023ac782d8fb7f471c0ea9e0c
     justification: |-
       Adds the ORNL triton-swmm commit faba223212408f04b7a3dbf6580adedf4a4e6b13 to SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS, the set require_dem_rim_capable_triton admits a container build by. The set is read only by that guard, which returns None or raises ConfigurationError and writes nothing; a larger set only turns a refusal into a pass for the added commit. No path, filename, log field, zarr group, fingerprint, Snakemake rule or figure stem changes, and _version.json is untouched. The signature is the blob of src/hhemt/scenario.py at commit 8d5e8f49, the commit this row covers, because check-b in its range venue compares each graded commit's own blob against the signature.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 309e04fc3c87f09941c8fcae49fdddcf0a1a6240b131afbf97bc929e88220bfd
+    justification: |-
+      NON-BREAKING: the text of field descriptions and docstrings is rewritten to the published-surface style brief; no field, name, default, validator or stored value changes, and no on-disk state changes.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: a8050de213aa0dcbcafc8fd7b63e39ce3692f6c06eb2d99f557c50525c987766
+    justification: |-
+      NON-BREAKING: the text of field descriptions and docstrings is rewritten to the published-surface style brief; no field, name, default, validator or stored value changes, and no on-disk state changes.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 7fed1b02260f3e89397be43e006a5e8ab5bd625e8a95956895add3e93028ecd3
+    justification: |-
+      NON-BREAKING: the three time-series keep-fields are read through one helper in the time-series selection module that names each field literally; the values read, the stores written and every stored name are unchanged, and no on-disk state changes.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 91951cff61cf0803dddb81e597bf22f8b10d2d4cf7bb0f927e459410d3d818d8
+    justification: |-
+      NON-BREAKING: the three time-series keep-fields are read through one helper in the time-series selection module that names each field literally; the values read, the stores written and every stored name are unchanged, and no on-disk state changes.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: c443d47b73ba9fc0c1dec739391b9d2e69df2ba17912fb0355c21b4c1a0f1e9a
+    justification: |-
+      NON-BREAKING: the field description of toggle_coupling_exchange_flow states the count of per-node statistics; no field, name, default, validator or stored value changes, and no on-disk state changes.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 9e7a73295140604864510c48b4e6015cf9d0dbad38000a9ad9d6857b32ed1f52
+    justification: |-
+      NON-BREAKING: the scoped time-series consolidation decides each scenario write in a planning method and the caller performs the write inside its deferred-consolidation block; the stores written, their groups and every stored name are unchanged, and no on-disk state changes.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 1078e7783f68440c474cdf422e240304af040642930d8096938390cbdbafed89
+    justification: |-
+      NON-BREAKING for the stored layout: this module declares CF attributes for the variables the coupled node store and the SWMM output inventory carry (the coupling-node flag, the exchange flow and its statistics, the inventory tables and run-level figures) and the helpers that build them; the one entry that moves, outfall_total_vol, keeps its units and cell methods, and its long_name gains the source table in parentheses and a comment. Five existing Node Flooding Summary variables (max_flood_rate, time_of_max_flood, hours_flooded, tot_flooded_vol, max_ponded_depth) each gain a comment attribute that a store written before this change lacks; their names, units, cell methods and values are unchanged. No variable, dimension or stored value is added or removed by this file; the layout change of the stores that carry these variables is made by LAYOUT_VERSION 30 and its migration.
+  - path: src/hhemt/scenario.py
+    layout_signature: 6b7f4f95edfe9e075b875adc8ee40ad76777097393faac417d1132af322d1792
+    justification: |-
+      NON-BREAKING. Adds the ORNL triton-swmm commit faba223212408f04b7a3dbf6580adedf4a4e6b13 to SWMM_QUALITY_SNAPSHOT_SHAS, the set snapshot_carries_quality_state reads, whose snapshot.c carries the node and link quality state (oldQual count 7, the count of the two members it joins). For a quality-routed coupled run recorded at that build with swmm_snapshot_disable unset, the resolver returns False instead of True, so the scenario cfg omits the line swmm_snapshot_disable=1 and the run resumes from its snapshot; the cfg is an input file rewritten at every preparation. No path, filename, log field, zarr group, fingerprint, Snakemake rule or figure stem changes, and _version.json is untouched.
+  - path: src/hhemt/scenario.py
+    layout_signature: a75463f994fbdce211555b472121655337408c6b9068d2d463f077503da3ef6f
+    justification: |-
+      NON-BREAKING. Adds the ORNL triton-swmm commit faba223212408f04b7a3dbf6580adedf4a4e6b13 to SWMM_QUALITY_SNAPSHOT_SHAS, the set snapshot_carries_quality_state reads, whose snapshot.c carries the node and link quality state (oldQual count 7, the count of the two members it joins). For a quality-routed coupled run recorded at that build with swmm_snapshot_disable unset, the resolver returns False instead of True, so the scenario cfg omits the line swmm_snapshot_disable=1 and the run resumes from its snapshot; the cfg is an input file rewritten at every preparation. No path, filename, log field, zarr group, fingerprint, Snakemake rule or figure stem changes, and _version.json is untouched.

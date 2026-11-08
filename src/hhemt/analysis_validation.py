@@ -2411,6 +2411,8 @@ def check_eda_calc_ran(analysis: TRITONSWMM_analysis) -> CheckResult:
 _RECLAIM_LOG_FIELDS: dict[str, str] = {
     "full_TRITON_timeseries_cleared": "TRITON timeseries",
     "full_SWMM_timeseries_cleared": "SWMM node/link timeseries",
+    "consolidated_node_timeseries_cleared": "SWMM node timeseries (cleared; copy in analysis_timeseries.zarr)",
+    "consolidated_link_timeseries_cleared": "SWMM link timeseries (cleared; copy in analysis_timeseries.zarr)",
     "raw_SWMM_binaries_reclaimed": "coupled raw SWMM .out binaries",
     "coupled_rpt_truncated": "coupled SWMM report body (truncated in place)",
     "hydro_out_reclaimed": "SWMM hydrology output (hydro.out)",

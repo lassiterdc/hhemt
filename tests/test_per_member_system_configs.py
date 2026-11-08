@@ -685,6 +685,14 @@ def test_preflight_invokes_per_member_validator(tmp_path, monkeypatch):
         # per-member wiring point rather than the partition surface.
         multi_sim_run_method="local",
         target_processed_output_type="zarr",
+        # The coupling-flux and time-series-clearing refusals read these three toggles; all default False.
+        toggle_coupling_exchange_flow=False,
+        toggle_clear_scenario_timeseries_after_consolidation=False,
+        toggle_consolidate_timeseries=False,
+        # preflight's keep-list check reads the three keep fields; None keeps everything.
+        timeseries_keep_swmm_node=None,
+        timeseries_keep_swmm_link=None,
+        timeseries_keep_triton_gridded=None,
         # Minimal analysis-side attrs touched by other preflight validators
         # are bypassed by patching validate_analysis_config and
         # validate_data_consistency to no-ops; this test exercises only the

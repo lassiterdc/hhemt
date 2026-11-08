@@ -245,6 +245,8 @@ __marimo__/
 # blanket *.zarr rule must not hide the files a regeneration adds.
 !test_data/swmm_refactoring_reference/**/*.zarr
 !test_data/swmm_refactoring_reference/**/*.zarr/**
+!test_data/swmm_binary_reference/**/*.zarr
+!test_data/swmm_binary_reference/**/*.zarr/**
 # The committed example result that the interactive Python tutorial notebook reads.
 !docs/tutorials/assets/irene-example-result.zarr
 

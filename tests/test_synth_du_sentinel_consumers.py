@@ -132,11 +132,14 @@ def test_disk_utilization_renderer_emits_table_when_sentinel_present(tmp_path):
     assert output_path.exists()
     html = output_path.read_text()
     assert 'id="disk-utilization"' in html
-    assert "Disk utilization sentinel absent" not in html
+    assert "The disk use table is not shown" not in html
     # Total formatted to MiB:
     assert "MiB" in html
     # Both breakdown rows present:
-    assert "sims" in html and "_status" in html
+    assert "sims" in html
+    # The renderer skips every entry whose name starts with `_status` by design (disk_utilization.py), so the
+    # bookkeeping directory is never a row of the breakdown.
+    assert "_status" not in html
 
 
 def test_disk_utilization_renderer_emits_missing_banner_when_absent(tmp_path):
@@ -157,7 +160,7 @@ def test_disk_utilization_renderer_emits_missing_banner_when_absent(tmp_path):
 
     assert output_path.exists()
     html = output_path.read_text()
-    assert "Disk utilization sentinel absent" in html
+    assert "The disk use table is not shown" in html
     # Mirror of the populated-path assertion above, deliberately over the SAME token.
     # Asserting `"du-table" not in html` would go vacuous under the Tabulator route --
     # that string appears in NEITHER state, so it would keep passing even if the banner

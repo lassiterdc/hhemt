@@ -158,13 +158,26 @@ def test_independent_text_reading_equals_the_tracked_reference_node_store(expect
     _check_node_dataset(ds, inflow, flooding)
 
 
+def _parse_with_stand_in_binary_output(inp, rpt):
+    """The parser's real entry point on ``rpt`` and a stand-in binary output holding that report's series.
+
+    The parser reads its series from the binary output beside the report (``hydraulics.out``), which a laptop
+    cannot produce; the stand-in carries the printed series so the SUMMARY variables this module checks go
+    through the real assembly. The ``.out`` path is never opened, so it need not exist.
+    """
+    from hhemt.swmm_output_parser import retrieve_SWMM_outputs_as_datasets
+    from tests.test_swmm_output_inventory import _body_series, _install_stub_pyswmm
+
+    with pytest.MonkeyPatch.context() as mp:
+        _install_stub_pyswmm(mp, *_body_series(Path(rpt).read_text(encoding="latin-1")))
+        return retrieve_SWMM_outputs_as_datasets(inp, Path(rpt).with_suffix(".out"), family="tritonswmm")
+
+
 @pytest.fixture(scope="module")
 def reference_parse():
-    from hhemt.swmm_output_parser import retrieve_SWMM_outputs_as_datasets
-
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return retrieve_SWMM_outputs_as_datasets(REF_INP, REF_RPT)
+        return _parse_with_stand_in_binary_output(REF_INP, REF_RPT)
 
 
 def test_independent_text_reading_equals_a_fresh_parse_of_the_reference_report(expected_node, reference_parse):
@@ -303,12 +316,10 @@ def test_d15_and_d16_through_the_real_parse_of_an_edited_report(tmp_path):
     swapped node time sources; the rule changing a neighbouring column.
     Passes under: a parser that reads the header word with a regex, or applies the rule per node.
     """
-    from hhemt.swmm_output_parser import retrieve_SWMM_outputs_as_datasets
-
     rpt, lines = _edited_report(tmp_path)
     try:
         with pytest.warns(UserWarning, match="max_ponded_depth"):
-            ds_nodes, _ = retrieve_SWMM_outputs_as_datasets(REF_INP, rpt)
+            ds_nodes, _ = _parse_with_stand_in_binary_output(REF_INP, rpt)
     finally:
         rpt.unlink()
     inflow, flooding = _expected_from(lines)

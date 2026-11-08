@@ -1,4 +1,3 @@
-import io
 import re
 import warnings
 from collections import Counter
@@ -20,9 +19,21 @@ except NameError:  # pragma: no cover
 
 
 from hhemt.constants import (
+    FLOW_ROUTING_CONTINUITY_TERMS,
+    LST_COL_HEADERS_CONDUIT_SURCHARGE_SUMMARY,
+    LST_COL_HEADERS_FLOW_CLASSIFICATION_SUMMARY,
     LST_COL_HEADERS_LINK_FLOW_SUMMARY,
+    LST_COL_HEADERS_NODE_DEPTH_SUMMARY,
     LST_COL_HEADERS_NODE_FLOOD_SUMMARY,
     LST_COL_HEADERS_NODE_FLOW_SUMMARY,
+    LST_COL_HEADERS_NODE_SURCHARGE_SUMMARY,
+    LST_COL_HEADERS_OUTFALL_LOADING_SUMMARY,
+    LST_COL_HEADERS_PUMPING_SUMMARY,
+    LST_COL_HEADERS_STORAGE_VOLUME_SUMMARY,
+    LST_OUTFALL_SYSTEM_VARIABLES,
+    LST_RUN_LEVEL_CONTINUITY_VARIABLES,
+    ROUTING_STEP_FREQUENCY_VARIABLE,
+    SWMM_STAT_RANK_LENGTH,
 )
 
 TDELTA_PATTERN = re.compile(r"^\s*(\d+)\s+(\d+):(\d+)")
@@ -33,26 +44,43 @@ _ADJACENT_VALUE_SOLUTION = (
     "using spacing. Parsing by referencing a normal line."
 )
 
-# Bulk-parse regex patterns for parse_rpt_single_pass.
-# Each <<< Node|Link {id} >>> block has the structure:
-#   <<< (Node|Link) {id} >>>
-#   ------------ (separator 1)
-#   {column-name lines}
-#   ------------ (separator 2)
-#   {numeric rows: " MM/DD/YYYY HH:MM:SS  v1  v2  v3  v4"}
-#   (blank line, blank line)
-# The numeric block ends at the next <<< marker or two consecutive blank lines.
-_RE_TSERIES_BLOCK = re.compile(
-    r"<<<\s+(?P<kind>Node|Link)\s+(?P<id>\S+)\s+>>>"
-    r".*?"  # column-name lines + first separator (non-greedy; DOTALL spans newlines)
-    r"^\s*-{30,}\s*$"  # second separator (anchored to line)
-    # Data iterations use `[^\n]*` (not `.*`) so each iteration captures ONE line
-    # even under re.DOTALL — otherwise `.*` would greedily span the whole section.
-    r"(?P<data>(?:\n[ \t]+\d{1,2}/\d{1,2}/\d{4}[ \t]+\d{1,2}:\d{2}:\d{2}[^\n]*)+)",
-    re.DOTALL | re.MULTILINE,
+# The banner that opens a report's per-timestep body. Everything the toolkit reads from a report precedes it, apart
+# from the trailer (`Analysis ended on`), which follows both time-series sections and is read from the file's last
+# lines. The same sentinel is the truncator's body start (`process_simulation._RPT_BODY_START_SENTINEL`), so the
+# reader and the reclaim agree on where the head ends.
+_RPT_TSERIES_BANNER = "Node Time Series Results"
+# SWMM writes at most three lines after the last time-series row (begun, ended, elapsed); this window holds them with
+# room to spare and is the only part of a multi-hundred-megabyte coupled report read after the banner.
+_RPT_TAIL_BYTES = 8192
+# A table SWMM did not print says so in one sentence instead of its header (`statsrpt.c`: "No nodes were flooded.",
+# "No nodes were surcharged.", "No conduits were surcharged.").
+_RE_NO_ROWS_SENTENCE = re.compile(r"^\s*No (?:nodes|conduits) were \w+\.")
+# Report sections that are a title, one rule line and then lines of text up to a blank line, not a dashed table.
+_TEXT_BLOCK_SECTION_TITLES = frozenset(
+    {
+        "Flow Routing Continuity",
+        "Highest Continuity Errors",
+        "Time-Step Critical Elements",
+        "Highest Flow Instability Indexes",
+        "Most Frequent Nonconverging Nodes",
+        "Routing Time Step Summary",
+    }
 )
-_RE_NODE_TSERIES_SECTION = re.compile(r"Node Time Series Results")
-_RE_LINK_TSERIES_SECTION = re.compile(r"Link Time Series Results")
+#: Every section title `_scan_metadata_and_summaries` collects the lines of: the dashed tables (the three the toolkit
+#: has always read, then the ones added with the binary-output series) and the text blocks above.
+_REPORT_SECTION_HEADERS = (
+    "Node Flooding Summary",
+    "Node Inflow Summary",
+    "Link Flow Summary",
+    "Node Depth Summary",
+    "Node Surcharge Summary",
+    "Storage Volume Summary",
+    "Outfall Loading Summary",
+    "Flow Classification Summary",
+    "Conduit Surcharge Summary",
+    "Pumping Summary",
+    *sorted(_TEXT_BLOCK_SECTION_TITLES),
+)
 
 
 def retrieve_swmm_performance_stats_from_rpt(
@@ -193,7 +221,18 @@ def format_node_inflow_summary(lst_section_lines, lst_col_headers) -> pd.DataFra
 def retrieve_SWMM_outputs_as_datasets(
     f_swmm_inp: Path,
     swmm_timeseries_result_file: Path,
+    *,
+    family: str,
 ):
+    """Read one SWMM run into a node dataset and a link dataset.
+
+    The per-step series of BOTH families come from the binary output ``swmm_timeseries_result_file`` (a ``.out``),
+    and the summary tables, continuity figures and ranked lists from the report beside it (same stem, ``.rpt``).
+    ``family`` is REQUIRED and names the model that wrote them: ``"tritonswmm"`` for the coupled model (its link
+    capacity series is ``capacity_setting``) or ``"swmm"`` for standalone SWMM (``capacity``); omitting
+    it is a TypeError, so a coupled caller cannot silently get the standalone name. A coupled run's report is
+    required; a standalone run without a report yields the series alone.
+    """
     # TODO - reindex nodes and links by entity type; this will likely resolve parsing errors as well
     # TODO - record warnings as attributes in dataset and in sim processing log
     ds_nodes, ds_links = return_swmm_outputs(
@@ -202,9 +241,47 @@ def retrieve_SWMM_outputs_as_datasets(
         LST_COL_HEADERS_NODE_FLOOD_SUMMARY,
         LST_COL_HEADERS_NODE_FLOW_SUMMARY,
         LST_COL_HEADERS_LINK_FLOW_SUMMARY,
+        family=family,
     )
 
     return ds_nodes, ds_links
+
+
+def _read_report_head_and_tail(f_rpt: Path) -> tuple[list[str], list[str]]:
+    """The report lines before the time-series banner, and the file's last lines when a banner cut the read short.
+
+    A coupled report is mostly its per-timestep body (82 to 99 percent of its lines), which no reader parses, so the
+    body is never held in memory: the file is read line by line up to the banner and the trailer, which follows
+    both time-series sections, is read from the last ``_RPT_TAIL_BYTES`` of the file. A report with no banner (a
+    truncated one, or a model that reports no node series) is read whole and its tail is empty, because its
+    trailer is already among the lines.
+    """
+    head: list[str] = []
+    banner_seen = False
+    with open(f_rpt, encoding="latin-1") as fh:
+        for line in fh:
+            if _RPT_TSERIES_BANNER in line:
+                banner_seen = True
+                break
+            head.append(line)
+    if not banner_seen:
+        return head, []
+    with open(f_rpt, "rb") as fh:
+        fh.seek(0, 2)
+        fh.seek(max(0, fh.tell() - _RPT_TAIL_BYTES))
+        tail = fh.read().decode("latin-1").splitlines(keepends=True)
+    return head, tail
+
+
+def _clean_link_id(link_id):
+    """Clean a single link_id value."""
+    try:
+        return str(int(float(link_id)))
+    except (ValueError, TypeError):
+        if isinstance(link_id, str):
+            parts = link_id.split()
+            return parts[0] if parts else link_id
+        return str(link_id)
 
 
 def return_swmm_outputs(
@@ -213,134 +290,106 @@ def return_swmm_outputs(
     lst_col_headers_node_flood_summary,
     lst_col_headers_node_flow_summary,
     lst_col_headers_link_flow_summary,
+    *,
+    family: str,
 ):
-    dict_system_results = {}
-    lst_node_fld_summary = []
-    lst_node_flow_summary = []
-    lst_link_flow_summary = []
-    rpt_lines = None
-    if swmm_timeseries_result_file.name.split(".")[-1] == "rpt":
-        use_rpt_for_tseries = True
-    elif swmm_timeseries_result_file.name.split(".")[-1] == "out":
-        use_rpt_for_tseries = False
-    else:
-        raise ValueError(
-            f"SWMM output file not recognized while parsing time series. File passed: {swmm_timeseries_result_file}"
-        )
+    """Assemble the node and link datasets of one run: series from the binary output, tables from the report.
 
+    One reader serves both model families (see `retrieve_SWMM_outputs_as_datasets`). The report is read by ONE scan
+    that stops at the time-series banner, so the per-timestep body is never parsed; a report the scan cannot read
+    RAISES, because a coupled report failure that warned instead would write a store whose summary variables are
+    silently absent.
+    """
+    from hhemt.exceptions import ProcessingError
+
+    if family not in ("swmm", "tritonswmm"):
+        raise ValueError(f"family must be 'swmm' or 'tritonswmm', not {family!r}")
+    out_file = Path(swmm_timeseries_result_file)
+    if out_file.suffix != ".out":
+        raise ProcessingError(
+            operation="return_swmm_outputs",
+            filepath=out_file,
+            reason=(
+                "the SWMM time series are read from the binary output, not from a report; pass the sibling "
+                f"{out_file.with_suffix('.out').name} instead (the report beside it supplies the summary tables)."
+            ),
+        )
     quality_vars: dict[str, xr.DataArray] = {}
-    pollutants: list[tuple[str, str]] = []
     simulation_start: str | None = None
-    if use_rpt_for_tseries:
+    ds_node_tseries, ds_link_tseries, pollutants, out_start = return_node_time_series_results_from_outfile(
+        out_file,
+        f_inp=f_swmm_inp,
+        return_quality=True,
+        capacity_name="capacity_setting" if family == "tritonswmm" else "capacity",
+    )
+    if pollutants:
+        simulation_start = out_start
+        quality_vars["pollutant_conc"] = ds_node_tseries["pollutant_conc"]
+        quality_vars["link_pollutant_conc"] = ds_link_tseries["link_pollutant_conc"]
+        ds_node_tseries = ds_node_tseries.drop_vars("pollutant_conc")
+        ds_link_tseries = ds_link_tseries.drop_vars("link_pollutant_conc")
+
+    rpt_file = out_file.with_suffix(".rpt")
+    dict_system_results: dict[str, Any] = {}
+    dict_section_lines: dict[str, list[str]] = {}
+    head_lines: list[str] | None = None
+    if rpt_file.exists():
+        head_lines, tail_lines = _read_report_head_and_tail(rpt_file)
         (
             dict_section_lines,
-            ds_node_tseries,
-            ds_link_tseries,
-            dict_system_results,
-            valid,
-        ) = parse_rpt_single_pass(swmm_timeseries_result_file)
-        # The coupled model's report is read as m3/s with no conversion, and SWMM writes its
-        # flows in the model's own unit, so a report in any other unit is refused here --
-        # the guard for reports the preparation check never saw, such as a reprocess of an
-        # existing analysis. Deliberately NOT in `_build_system_results`, which the
-        # hydrology report summary also reaches, and the hydrology model accepts LPS and
-        # MLD because its flows are converted.
-        if dict_system_results["flow_units"] != "cms":
-            from hhemt.exceptions import ProcessingError
-
+            line_flw_units,
+            runoff_continuity_error_line,
+            flow_continuity_error_line,
+            system_flood_loss_line,
+            analysis_end_line,
+            _valid,
+        ) = _scan_metadata_and_summaries(head_lines, _REPORT_SECTION_HEADERS, tail_lines=tail_lines)
+        dict_system_results = _build_system_results(
+            line_flw_units,
+            runoff_continuity_error_line,
+            flow_continuity_error_line,
+            system_flood_loss_line,
+            analysis_end_line,
+        )
+        # The coupled model's flows are read as m3/s with no conversion, so a report in any other unit is refused even
+        # when the binary output beside it passed its own unit check: the guard for reports the preparation check
+        # never saw, such as a reprocess of an existing analysis. Deliberately NOT in `_build_system_results`, which
+        # the hydrology report summary also reaches, and the hydrology model accepts LPS and MLD because its flows
+        # are converted.
+        if family == "tritonswmm" and dict_system_results["flow_units"] != "cms":
             raise ProcessingError(
                 operation="return_swmm_outputs",
-                filepath=Path(swmm_timeseries_result_file),
+                filepath=rpt_file,
                 reason=(
-                    f"SWMM report flow units are {dict_system_results['flow_units'].upper()!r}; "
-                    "the toolkit reads the coupled model's report flows as m3/s without "
-                    "conversion, so the hydraulics model's [OPTIONS] FLOW_UNITS must be CMS. "
-                    "Fix it in the SWMM template named by system_config."
+                    f"SWMM report flow units are {dict_system_results['flow_units'].upper()!r}; the toolkit reads "
+                    "the coupled model's flows as m3/s without conversion, so the hydraulics model's [OPTIONS] "
+                    "FLOW_UNITS must be CMS. Fix it in the SWMM template named by system_config."
                 ),
             )
-        if valid is False:
-            print(f"The RPT file seems to not contain any information: {swmm_timeseries_result_file}")
-        # make sure the data arrays are data type float
-        ds_node_tseries = convert_datavars_to_dtype(ds_node_tseries, lst_dtypes_to_try=[float])
-        ds_link_tseries = convert_datavars_to_dtype(ds_link_tseries, lst_dtypes_to_try=[float])
-        # make sure the coordinates are the right data type
-        ds_node_tseries = convert_coords_to_dtype(
-            ds_node_tseries,
-            lst_dtypes_to_try=[str],
-            coords_to_coerce=["node_id", "link_id"],
-        )
-        ds_link_tseries = convert_coords_to_dtype(
-            ds_link_tseries,
-            lst_dtypes_to_try=[str],
-            coords_to_coerce=["node_id", "link_id"],
-        )
-        # Water quality: only when the report itself says quality was routed.
-        if rpt_prints_water_quality(swmm_timeseries_result_file):
-            pollutants = _declared_pollutants(f_swmm_inp)
-            da_node_conc, da_link_conc = parse_rpt_pollutant_tseries(swmm_timeseries_result_file, pollutants)
-            if da_node_conc is not None:
-                quality_vars["pollutant_conc"] = da_node_conc
-            if da_link_conc is not None:
-                quality_vars["link_pollutant_conc"] = da_link_conc
-            rpt_content = Path(swmm_timeseries_result_file).read_text(encoding="latin-1")
-            simulation_start = _rpt_starting_date(rpt_content)
+        if pollutants and lines_print_water_quality(head_lines):
             quality_vars.update(
                 parse_rpt_quality_summaries(
-                    rpt_content.splitlines(),
-                    pollutants,
-                    include_runoff_quality=False,
-                    filepath=swmm_timeseries_result_file,
+                    head_lines, pollutants, include_runoff_quality=(family == "swmm"), filepath=rpt_file
                 )
             )
-            del rpt_content
-    else:
-        ds_node_tseries, ds_link_tseries, pollutants, out_start = return_node_time_series_results_from_outfile(
-            swmm_timeseries_result_file, f_inp=f_swmm_inp, return_quality=True
+    elif family == "tritonswmm":
+        raise ProcessingError(
+            operation="return_swmm_outputs",
+            filepath=rpt_file,
+            reason="the coupled SWMM report is missing; the summary tables and continuity figures are read from it.",
         )
-        if pollutants:
-            simulation_start = out_start
-            quality_vars["pollutant_conc"] = ds_node_tseries["pollutant_conc"]
-            quality_vars["link_pollutant_conc"] = ds_link_tseries["link_pollutant_conc"]
-            ds_node_tseries = ds_node_tseries.drop_vars("pollutant_conc")
-            ds_link_tseries = ds_link_tseries.drop_vars("link_pollutant_conc")
-        rpt_file = swmm_timeseries_result_file.with_suffix(".rpt")
-        if rpt_file.exists():
-            try:
-                with open(rpt_file, encoding="latin-1") as file:
-                    rpt_lines = file.readlines()
-                if pollutants and lines_print_water_quality(rpt_lines):
-                    quality_vars.update(
-                        parse_rpt_quality_summaries(
-                            rpt_lines, pollutants, include_runoff_quality=True, filepath=rpt_file
-                        )
-                    )
-                lst_node_fld_summary = return_lines_for_section_of_rpt("Node Flooding Summary", lines=rpt_lines)
-                lst_node_flow_summary = return_lines_for_section_of_rpt("Node Inflow Summary", lines=rpt_lines)
-                lst_link_flow_summary = return_lines_for_section_of_rpt("Link Flow Summary", lines=rpt_lines)
-                dict_system_results = return_swmm_system_outputs(rpt_lines)
-            except Exception as exc:
-                warnings.warn(
-                    f"Failed to parse SWMM RPT summaries from {rpt_file}: {exc}",
-                    UserWarning,
-                    stacklevel=2,
-                )
-    #
-    if use_rpt_for_tseries:
-        lst_node_fld_summary = dict_section_lines.get("Node Flooding Summary", [])
-        lst_node_flow_summary = dict_section_lines.get("Node Inflow Summary", [])
-        lst_link_flow_summary = dict_section_lines.get("Link Flow Summary", [])
     df_node_flood_summary = format_rpt_section_into_dataframe(
-        lst_node_fld_summary, lst_col_headers_node_flood_summary, section_name="Node Flooding Summary"
+        dict_section_lines.get("Node Flooding Summary", []),
+        lst_col_headers_node_flood_summary,
+        section_name="Node Flooding Summary",
     )
-    if use_rpt_for_tseries:
-        with open(swmm_timeseries_result_file, encoding="latin-1") as _rpt:
-            _ponded_field = node_flooding_ponded_field(_rpt)
-    else:
-        _ponded_field = node_flooding_ponded_field(rpt_lines) if rpt_lines is not None else None
-    _apply_ponded_depth_rule(df_node_flood_summary, _ponded_field, swmm_timeseries_result_file.with_suffix(".rpt").name)
-    df_node_flow_summary = format_node_inflow_summary(lst_node_flow_summary, lst_col_headers_node_flow_summary)
-    df_link_flow_summary = format_rpt_section_into_dataframe(
-        lst_link_flow_summary, lst_col_headers_link_flow_summary, section_name="Link Flow Summary"
+    _ponded_field = node_flooding_ponded_field(head_lines) if head_lines is not None else None
+    _apply_ponded_depth_rule(df_node_flood_summary, _ponded_field, rpt_file.name)
+    df_node_flow_summary = format_node_inflow_summary(
+        dict_section_lines.get("Node Inflow Summary", []), lst_col_headers_node_flow_summary
+    )
+    df_link_flow_summary = format_link_flow_summary(
+        dict_section_lines.get("Link Flow Summary", []), lst_col_headers_link_flow_summary
     )
     # combine event summary dataframes into an xarray dataset
     df_node_flood_summary.set_index("node_id", inplace=True)
@@ -373,19 +422,18 @@ def return_swmm_outputs(
         df_link_flow_summary["time_of_max_flow_d_hr_mn"]
     )
     df_link_flow_summary = df_link_flow_summary.drop(columns=["time_of_max_flow_d_hr_mn"])
-
-    def _clean_link_id(link_id):
-        """Clean a single link_id value."""
-        try:
-            return str(int(float(link_id)))
-        except (ValueError, TypeError):
-            if isinstance(link_id, str):
-                parts = link_id.split()
-                return parts[0] if parts else link_id
-            return str(link_id)
-
     df_link_flow_summary["link_id"] = df_link_flow_summary["link_id"].apply(_clean_link_id)
     df_link_flow_summary.set_index("link_id", inplace=True)
+
+    # The tables beyond the first three, each outer-joined onto the frame of its element on the id exactly as the Node
+    # Flooding Summary is: an element a table does not print is NaN in that table's columns.
+    new_node_frames, new_link_frames, outfall_system_max_flow = _read_new_report_tables(
+        dict_section_lines, head_lines, rpt_file
+    )
+    for frame in new_node_frames:
+        df_node_summaries = df_node_summaries.join(frame, how="outer")
+    for frame in new_link_frames:
+        df_link_flow_summary = df_link_flow_summary.join(frame, how="outer")
 
     ds_node_summaries = df_node_summaries.to_xarray()
     ds_link_flow_summary = df_link_flow_summary.to_xarray()
@@ -403,10 +451,16 @@ def return_swmm_outputs(
     )
     ds_link_flow_summary = convert_datavars_to_dtype(ds_link_flow_summary, lst_dtypes_to_try=[float, str])
 
-    ds_nodes = xr.merge([ds_node_summaries, ds_node_tseries], join="outer")
-    ds_links = xr.merge([ds_link_flow_summary, ds_link_tseries], join="outer")
+    ds_node_run, ds_link_run = _run_level_datasets(
+        dict_section_lines, dict_system_results, outfall_system_max_flow, rpt_file, has_report=head_lines is not None
+    )
+    ds_nodes = xr.merge([ds_node_summaries, ds_node_tseries, ds_node_run], join="outer")
+    ds_links = xr.merge([ds_link_flow_summary, ds_link_tseries, ds_link_run], join="outer")
     #
     if quality_vars:
+        # Both frames above read the Outfall Loading Summary's volume column, so the quality path's copy of it is
+        # the same printed number and is not merged a second time.
+        quality_vars.pop("outfall_total_vol", None)
         link_only = ("link_pollutant_conc", "link_total_load")
         node_vars = {k: v for k, v in quality_vars.items() if k not in link_only and k != "washoff_total_load"}
         link_vars = {k: v for k, v in quality_vars.items() if k in link_only}
@@ -417,8 +471,13 @@ def return_swmm_outputs(
         ds_nodes = _attach_pollutant_coords(ds_nodes, pollutants)
         ds_links = _attach_pollutant_coords(ds_links, pollutants)
     #
-    ds_nodes.attrs = dict_system_results
-    ds_links.attrs = dict_system_results
+    # `flow_units` and `analysis_end_datetime` are equal for every event of an analysis, so they survive
+    # consolidation's `drop_conflicts`; the continuity figures that DIFFER by event are data variables instead.
+    stable_attrs = {
+        k: dict_system_results[k] for k in ("flow_units", "analysis_end_datetime") if k in dict_system_results
+    }
+    ds_nodes.attrs = dict(stable_attrs)
+    ds_links.attrs = dict(stable_attrs)
     if "pollutant_conc" in ds_nodes.data_vars:
         # The peak's time is measured here, where the simulation start is known, and stored as the declared
         # variable it is. The start itself is NOT stored: a dataset attribute carrying it would be persisted
@@ -725,85 +784,6 @@ def parse_rpt_quality_summaries(lines, pollutants, *, include_runoff_quality, fi
     return out
 
 
-def _bulk_parse_pollutant_section(section_text, kind_filter, idx_colname, pollutants, filepath):
-    """Pollutant concentration columns of one rpt time-series section, as (idx, date_time, pollutant).
-
-    Every data row of a block must carry ``2 + 4 + n`` fields (date, time, the four hydraulic
-    columns, one concentration per declared pollutant); anything else raises a ``ProcessingError``
-    naming the file and ``n``. The pollutant names come from the model's ``[POLLUTANTS]`` section,
-    never from the report's column headers, which run together for identifiers of ten or more
-    characters. Returns None when the section holds no block of ``kind_filter``.
-    """
-    n = len(pollutants)
-    expected = 2 + 4 + n
-    ids, row_counts, parts = [], [], []
-    for match in _RE_TSERIES_BLOCK.finditer(section_text):
-        if match.group("kind") != kind_filter:
-            continue
-        data_text = match.group("data")
-        n_rows = data_text.count("\n")
-        if n_rows == 0:
-            continue
-        for row in data_text.split("\n"):
-            if row.strip() and len(row.split()) != expected:
-                from hhemt.exceptions import ProcessingError
-
-                raise ProcessingError(
-                    operation="parse_rpt_pollutant_tseries",
-                    filepath=Path(filepath),
-                    reason=(
-                        f"a {kind_filter} time-series row carries {len(row.split())} field(s); {expected} "
-                        f"were expected for {n} declared pollutant(s) (date, time, 4 hydraulic, {n} concentration)."
-                    ),
-                )
-        ids.append(match.group("id"))
-        row_counts.append(n_rows)
-        parts.append(data_text)
-    if not parts:
-        return None
-    cols = [f"c{k}" for k in range(n)]
-    df = pd.read_csv(
-        io.StringIO("".join(parts)),
-        sep=r"\s+",
-        header=None,
-        names=["date", "time", *cols],
-        usecols=[0, 1, *range(6, 6 + n)],
-        engine="c",
-        dtype={"date": str, "time": str},
-    )
-    df["date_time"] = pd.to_datetime(df["date"] + " " + df["time"], format=RPT_DATETIME_FORMAT, errors="coerce")
-    if df["date_time"].isna().any():
-        raise ValueError(
-            f"Parsed RPT date_time values contained NaT. Verify the RPT datetime format matches {RPT_DATETIME_FORMAT}."
-        )
-    df[idx_colname] = np.repeat(ids, row_counts)
-    ds = df.set_index([idx_colname, "date_time"])[cols].to_xarray()
-    da = ds.to_dataarray(dim="pollutant").transpose(idx_colname, "date_time", "pollutant")
-    return da.assign_coords(pollutant=[name for name, _ in pollutants]).astype(float)
-
-
-def parse_rpt_pollutant_tseries(f_rpt: Path, pollutants):
-    """Pollutant concentration series of a coupled report: ``(node DataArray, link DataArray)``.
-
-    ``pollutant_conc`` is (node_id, date_time, pollutant) and ``link_pollutant_conc`` is
-    (link_id, date_time, pollutant). The hydraulic columns are read by ``_bulk_parse_tseries``
-    and are untouched here; this is a second ``read_csv`` over the concentration columns only.
-    """
-    content = Path(f_rpt).read_text(encoding="latin-1")
-    m_node = _RE_NODE_TSERIES_SECTION.search(content)
-    m_link = _RE_LINK_TSERIES_SECTION.search(content)
-    node_end = m_link.start() if m_link else len(content)
-    node_section = content[m_node.end() : node_end] if m_node else ""
-    link_section = content[m_link.end() :] if m_link else ""
-    da_node = _bulk_parse_pollutant_section(node_section, "Node", "node_id", pollutants, f_rpt)
-    da_link = _bulk_parse_pollutant_section(link_section, "Link", "link_id", pollutants, f_rpt)
-    if da_node is not None:
-        da_node.name = "pollutant_conc"
-    if da_link is not None:
-        da_link.name = "link_pollutant_conc"
-    return da_node, da_link
-
-
 # The continuity tables SWMM prints in a `.rpt`, by the header line that opens each. A `Continuity Error (%)`
 # line and a `Flooding Loss` line mean different things in different tables, so the scans below take a figure
 # only from the table that owns it. Taking the LAST such line, as the scans did before, returns the water-quality
@@ -885,31 +865,16 @@ def return_swmm_system_outputs(rpt_lines):
     )
 
 
-@profile
 def parse_rpt_single_pass(f_rpt: Path):
     """
-    Parse an RPT file in a single pass, extracting summaries and time series.
+    Parse a SWMM report's head in a single pass, extracting summaries and the system-level figures.
 
-    Returns section lines for summary tables, node/link time series datasets,
-    system-level outputs, and a validity flag.
-
-    Bulk-parse path: reads the full file once, slices time-series sections via
-    pre-compiled regex, and parses numeric rows with `pd.read_csv` (C engine).
-    Summary tables remain on the per-line classifier (low-volume, irregular rows
-    handled by ``format_rpt_section_into_dataframe``).
+    Returns ``(section_lines, system_results, valid)``: the data lines of every section in
+    ``_REPORT_SECTION_HEADERS``, the dictionary `_build_system_results` builds, and a flag that is True when the
+    report carries an ``Element Count`` block. The per-timestep body is never read (the series come from the binary
+    output), and the trailer is read from the file's last lines.
     """
-    content = Path(f_rpt).read_text(encoding="latin-1")
-
-    summary_section_headers = (
-        "Node Flooding Summary",
-        "Node Inflow Summary",
-        "Link Flow Summary",
-    )
-
-    # Single-shot metadata + summary-table extraction over splitlines.
-    # The summary-table classifier mirrors the legacy state machine exactly so
-    # output equivalence holds for the orifice/irregular-row edge cases.
-    lines = content.splitlines(keepends=True)
+    head_lines, tail_lines = _read_report_head_and_tail(Path(f_rpt))
     (
         dict_section_lines,
         line_flw_units,
@@ -918,10 +883,7 @@ def parse_rpt_single_pass(f_rpt: Path):
         system_flood_loss_line,
         analysis_end_line,
         valid,
-    ) = _scan_metadata_and_summaries(lines, summary_section_headers)
-
-    # Bulk tseries extraction via regex slicing + pd.read_csv per entity.
-    ds_node_tseries, ds_link_tseries = _bulk_parse_tseries(content)
+    ) = _scan_metadata_and_summaries(head_lines, _REPORT_SECTION_HEADERS, tail_lines=tail_lines)
 
     dict_system_results = _build_system_results(
         line_flw_units,
@@ -930,21 +892,20 @@ def parse_rpt_single_pass(f_rpt: Path):
         system_flood_loss_line,
         analysis_end_line,
     )
-    return (
-        dict_section_lines,
-        ds_node_tseries,
-        ds_link_tseries,
-        dict_system_results,
-        valid,
-    )
+    return dict_section_lines, dict_system_results, valid
 
 
-def _scan_metadata_and_summaries(lines, summary_section_headers):
-    """Single-pass scan for single-shot metadata lines + summary-section row lists.
+def _scan_metadata_and_summaries(lines, summary_section_headers, tail_lines=None):
+    """Single-pass scan for single-shot metadata lines + section line lists.
 
-    Skips the time-series section entirely — that work is delegated to
-    ``_bulk_parse_tseries``. The result is identical to the legacy parser's
-    summary-table extraction.
+    Reads ``lines`` (any iterable of report lines) and STOPS at the ``Node Time Series Results`` banner, so the
+    per-timestep body is never tested, let alone parsed. Everything the scan needs precedes the banner except the
+    ``Analysis ended on`` trailer, which follows both time-series sections: when the scan stopped before reaching it,
+    it is taken from ``tail_lines`` (the file's last lines), or from the last lines of ``lines`` when that is a list.
+
+    A header in ``summary_section_headers`` that is a dashed table collects the lines after the table's second
+    rule (a rule that follows the header block is skipped, which keeps the Outfall Loading Summary's System row);
+    a header in ``_TEXT_BLOCK_SECTION_TITLES`` collects the non-blank lines after its single rule line.
     """
     dict_section_lines = {header: [] for header in summary_section_headers}
     valid = False
@@ -957,9 +918,15 @@ def _scan_metadata_and_summaries(lines, summary_section_headers):
     current_summary_section = None
     summary_begin_header = False
     summary_end_header = False
-    tseries_section_started = False
+    block_title = None
+    block_rule_pending = False
 
     for line_num, line in enumerate(lines):
+        # The literal, not `_RPT_TSERIES_BANNER`: `tests/test_synth_remove_after_processing.py` derives the markers the
+        # reclaim truncator must preserve by reading the string constants of THIS function, and the body-start
+        # sentinel it must find here is the one marker truncation is allowed to consume.
+        if "Node Time Series Results" in line:
+            break
         if "Element Count" in line:
             valid = True
         if "Flow Units" in line:
@@ -977,21 +944,30 @@ def _scan_metadata_and_summaries(lines, summary_section_headers):
         if "Analysis ended on" in line:
             analysis_end_line = line
 
-        # Skip summary-section extraction once we enter the time-series section.
-        if not tseries_section_started and "Node Time Series Results" in line:
-            tseries_section_started = True
-        if tseries_section_started:
+        if block_title is not None:
+            if block_rule_pending:
+                block_rule_pending = False
+                continue
+            if not line.strip():
+                block_title = None
+                continue
+            dict_section_lines[block_title].append(line)
             continue
 
         for header in summary_section_headers:
             if header in line:
-                current_summary_section = header
-                summary_begin_header = False
-                summary_end_header = False
+                if header in _TEXT_BLOCK_SECTION_TITLES:
+                    block_title = header
+                    block_rule_pending = True
+                    current_summary_section = None
+                else:
+                    current_summary_section = header
+                    summary_begin_header = False
+                    summary_end_header = False
                 break
-        if current_summary_section is None:
+        if block_title is not None or current_summary_section is None:
             continue
-        if "No nodes were flooded." in line:
+        if _RE_NO_ROWS_SENTENCE.match(line):
             current_summary_section = None
             continue
         if "------------" in line:
@@ -1001,6 +977,7 @@ def _scan_metadata_and_summaries(lines, summary_section_headers):
             if not summary_end_header:
                 summary_end_header = True
                 continue
+            continue
         if not (summary_begin_header and summary_end_header):
             continue
         if line_num == 0:
@@ -1009,6 +986,13 @@ def _scan_metadata_and_summaries(lines, summary_section_headers):
             current_summary_section = None
             continue
         dict_section_lines[current_summary_section].append(line)
+
+    if analysis_end_line is None:
+        if tail_lines is None and isinstance(lines, list):
+            tail_lines = lines[-16:]
+        for line in tail_lines or ():
+            if "Analysis ended on" in line:
+                analysis_end_line = line
 
     return (
         dict_section_lines,
@@ -1021,90 +1005,400 @@ def _scan_metadata_and_summaries(lines, summary_section_headers):
     )
 
 
-def _bulk_parse_tseries(content: str):
-    """Slice node/link time-series blocks via regex and parse via a single pd.read_csv.
+# --- The report tables beyond the first three (depth, surcharge, storage, outfall, flow class, pumps, ranked lists) --
+#
+# Every table prints an id with `%-20s` and then a FIXED number of cells (`statsrpt.c`, one `write*` function per
+# table), and SWMM ids contain no whitespace, so each row is split on whitespace and read by token position. A row
+# whose token count is not the table's fixed count is REFUSED (naming the table, the report and the row) rather than
+# read with a shifted column: a shifted column is a wrong number, and a refusal is not. Deliberately NOT
+# `format_rpt_section_into_dataframe`: its colon rule joins any token containing ':' onto the previous cell, which
+# misreads an id containing ':' and has no count check.
 
-    Replaces the per-line state machine + per-row Python split that previously
-    drove the time-series ingest. All per-section numeric rows are concatenated
-    and parsed in ONE `pd.read_csv` (C engine) call to amortize fixed setup cost.
-    Entity ids are reconstructed via `np.repeat` against per-block row counts.
+
+class _TableSpec(NamedTuple):
+    """One report table: its title, the element it describes, its fixed token count, and its stored columns."""
+
+    title: str
+    kind: str
+    n_tokens: int
+    names: list[str]
+    slots: tuple
+
+
+#: `slots` aligns one entry with every name after the id: a token index, or a ``(days, clock)`` pair of token
+#: indexes for a ``days hr:min`` cell, which is stored as minutes. Token 0 is the id. Positions are the `fprintf`
+#: formats of `statsrpt.c`; `tests/test_swmm_output_inventory.py` holds each against a printed row.
+_TABLE_SPECS: tuple[_TableSpec, ...] = (
+    # id, type, avg depth, max depth, max HGL, days, clock, reported max depth (left out)
+    _TableSpec("Node Depth Summary", "node", 8, LST_COL_HEADERS_NODE_DEPTH_SUMMARY, (2, 3, 4, (5, 6))),
+    # id, type, hours surcharged, height above crown, depth below rim
+    _TableSpec("Node Surcharge Summary", "node", 5, LST_COL_HEADERS_NODE_SURCHARGE_SUMMARY, (2, 3, 4)),
+    # id, avg volume, avg pct, evap pct, exfil pct, max volume, max pct, days, clock, max outflow
+    _TableSpec(
+        "Storage Volume Summary",
+        "node",
+        10,
+        LST_COL_HEADERS_STORAGE_VOLUME_SUMMARY,
+        (1, 2, 3, 4, 5, 6, (7, 8), 9),
+    ),
+    # id, adjusted/actual length, seven flow classes, normal-flow-limited, inlet-controlled
+    _TableSpec(
+        "Flow Classification Summary",
+        "link",
+        11,
+        LST_COL_HEADERS_FLOW_CLASSIFICATION_SUMMARY,
+        tuple(range(1, 11)),
+    ),
+    # id, hours full both ends / upstream / downstream, above full normal flow, capacity limited
+    _TableSpec("Conduit Surcharge Summary", "link", 6, LST_COL_HEADERS_CONDUIT_SURCHARGE_SUMMARY, (1, 2, 3, 4, 5)),
+    # id, utilized, start-ups, min flow (left out), avg flow, max flow (left out), volume, energy, off-curve low/high
+    _TableSpec("Pumping Summary", "link", 10, LST_COL_HEADERS_PUMPING_SUMMARY, (1, 2, 4, 6, 7, 8, 9)),
+)
+_TABLE_SPEC_BY_TITLE = {spec.title: spec for spec in _TABLE_SPECS}
+#: Outfall Loading Summary: id, flow frequency, average flow, maximum flow, total volume, then one load per pollutant.
+_OUTFALL_FIXED_TOKENS = 5
+#: The header rule is 59 dashes plus 14 per pollutant column (`statsrpt.c`, `writeOutfallLoads`).
+_OUTFALL_RULE_BASE = 59
+_OUTFALL_RULE_PER_POLLUTANT = 14
+
+
+def _refuse_table_row(filepath, title, row, n_expected):
+    """Raise the ProcessingError for a report table row whose token count is wrong."""
+    from hhemt.exceptions import ProcessingError
+
+    raise ProcessingError(
+        operation="read_report_table",
+        filepath=Path(filepath),
+        reason=(
+            f"a {title} row ({row[0] if row else '<blank>'!r}) has {len(row)} field(s); {n_expected} were expected, "
+            "so a column would be misread."
+        ),
+    )
+
+
+def _float_token(token, filepath, title):
+    """A printed number as a float, refusing an unreadable one by table."""
+    try:
+        return float(token)
+    except ValueError:
+        from hhemt.exceptions import ProcessingError
+
+        raise ProcessingError(
+            operation="read_report_table",
+            filepath=Path(filepath),
+            reason=f"a {title} cell {token!r} is not a number.",
+        ) from None
+
+
+def _clock_to_minutes(days_token, clock_token):
+    """Minutes for a printed ``days hr:min`` pair (the report's time-of-occurrence cell), NaN when unreadable.
+
+    The same arithmetic as `convert_swmm_tdeltas_to_minutes`, done on the tokens directly: that function builds a
+    pandas Series per call, which costs milliseconds a row on a table of a thousand rows.
     """
-    m_node = _RE_NODE_TSERIES_SECTION.search(content)
-    m_link = _RE_LINK_TSERIES_SECTION.search(content)
-
-    node_section_end = m_link.start() if m_link else len(content)
-    node_section = content[m_node.end() : node_section_end] if m_node else ""
-    link_section = content[m_link.end() :] if m_link else ""
-
-    ds_node_tseries = _bulk_parse_section(
-        node_section,
-        kind_filter="Node",
-        idx_colname="node_id",
-        value_cols=["inflow_flow", "flooding", "depth", "head"],
-    )
-    ds_link_tseries = _bulk_parse_section(
-        link_section,
-        kind_filter="Link",
-        idx_colname="link_id",
-        value_cols=["flow", "velocity", "link_depth", "capacity_setting"],
-    )
-    return ds_node_tseries, ds_link_tseries
+    hours, _, minutes = clock_token.partition(":")
+    try:
+        return float(int(days_token) * 1440 + int(hours) * 60 + int(minutes))
+    except ValueError:
+        return float("nan")
 
 
-def _bulk_parse_section(section_text, kind_filter, idx_colname, value_cols):
-    """Single-pass: collect all matching blocks' data into one buffer + parse once.
+def read_report_table(title: str, section_lines, filepath="<rpt>") -> pd.DataFrame:
+    """One of the dashed tables of `_TABLE_SPECS` as a float frame indexed by its element id.
 
-    Returns an xarray Dataset with dims (idx_colname, date_time) — the same shape
-    the legacy `create_tseries_ds` produced for time-series blocks.
-
-    Only the date, the time and the declared `value_cols` are read. When a model
-    declares pollutants and routes quality, SWMM appends one concentration column
-    per pollutant to every row; those extra columns are not read, because with the
-    fixed `names=` below they would shift the fields and break the date parse.
+    ``section_lines`` are the data lines `_scan_metadata_and_summaries` collected for ``title``. Cells are read by
+    token position; a row of the wrong token count is refused. A table the report did not print (no lines) yields
+    an empty frame with the table's columns, which the caller's outer join turns into NaN for every element.
     """
-    ids = []
-    row_counts = []
-    parts = []
-    for match in _RE_TSERIES_BLOCK.finditer(section_text):
-        if match.group("kind") != kind_filter:
+    spec = _TABLE_SPEC_BY_TITLE[title]
+    id_name = spec.names[0]
+    rows = []
+    for line in section_lines:
+        tokens = line.split()
+        if not tokens:
             continue
-        data_text = match.group("data")
-        # The regex's data group starts with `\n` and each iteration begins with
-        # `\n` + one row, so a leading newline always exists. count("\n") equals
-        # the number of rows captured.
-        n_rows = data_text.count("\n")
-        if n_rows == 0:
+        if len(tokens) != spec.n_tokens:
+            _refuse_table_row(filepath, title, tokens, spec.n_tokens)
+        record: dict[str, Any] = {id_name: tokens[0]}  # the id exactly as printed, which is the binary output's key
+        for name, slot in zip(spec.names[1:], spec.slots, strict=True):
+            if isinstance(slot, tuple):
+                _float_token(tokens[slot[0]], filepath, title)  # the days cell must be a number
+                record[name] = _clock_to_minutes(tokens[slot[0]], tokens[slot[1]])
+            else:
+                record[name] = _float_token(tokens[slot], filepath, title)
+        rows.append(record)
+    frame = pd.DataFrame.from_records(rows, columns=spec.names)
+    return frame.set_index(id_name)
+
+
+def outfall_pollutant_columns(head_lines) -> int:
+    """The number of pollutant columns the Outfall Loading Summary's header prints (zero when it prints none).
+
+    ``writeOutfallLoads`` prints one column per DECLARED pollutant whether or not quality is routed, so the model
+    file's ``[POLLUTANTS]`` decides, not the ``Water Quality`` option. The count is read from the header rule's
+    width (59 dashes plus 14 per pollutant), which is the report's own statement of it.
+    """
+    in_section = False
+    for line in head_lines:
+        if not in_section:
+            in_section = "Outfall Loading Summary" in line
             continue
-        ids.append(match.group("id"))
-        row_counts.append(n_rows)
-        parts.append(data_text)
+        stripped = line.strip()
+        if stripped.startswith("---"):
+            extra = len(stripped) - _OUTFALL_RULE_BASE
+            if extra < 0 or extra % _OUTFALL_RULE_PER_POLLUTANT:
+                from hhemt.exceptions import ProcessingError
 
-    if not parts:
-        empty_df = pd.DataFrame(columns=[idx_colname, "date_time", *value_cols])
-        empty_df["date_time"] = pd.to_datetime([], format=RPT_DATETIME_FORMAT)
-        empty_df = empty_df.set_index([idx_colname, "date_time"])
-        return empty_df.to_xarray()
+                raise ProcessingError(
+                    operation="read_report_table",
+                    filepath=Path("<rpt>"),
+                    reason=(
+                        f"the Outfall Loading Summary header rule is {len(stripped)} characters wide, which is not "
+                        f"{_OUTFALL_RULE_BASE} plus a whole number of {_OUTFALL_RULE_PER_POLLUTANT}-character "
+                        "pollutant columns."
+                    ),
+                )
+            return extra // _OUTFALL_RULE_PER_POLLUTANT
+    return 0
 
-    buf = io.StringIO("".join(parts))
-    df = pd.read_csv(
-        buf,
-        sep=r"\s+",
-        header=None,
-        names=["date", "time", *value_cols],
-        usecols=list(range(2 + len(value_cols))),
-        engine="c",
-        dtype={"date": str, "time": str},
-    )
-    df["date_time"] = pd.to_datetime(df["date"] + " " + df["time"], format=RPT_DATETIME_FORMAT, errors="coerce")
-    if df["date_time"].isna().any():
-        raise ValueError(
-            f"Parsed RPT date_time values contained NaT. Verify the RPT datetime format matches {RPT_DATETIME_FORMAT}."
+
+def read_outfall_loading_summary(section_lines, n_pollutants: int, filepath="<rpt>"):
+    """The Outfall Loading Summary's flow columns and its System row's maximum flow.
+
+    Returns ``(frame, system_max_flow)``: a float frame indexed by outfall id with the four stored flow columns,
+    and the System row's Max Flow cell (NaN when the report printed no System row). Each row has
+    ``5 + n_pollutants`` tokens, the System row included; the pollutant loads are read by the quality path from
+    the same rows and are not read here. The cell kept from the System row is the maximum over steps of the SUM of
+    outfall flows, which no per-outfall column gives.
+    """
+    title = "Outfall Loading Summary"
+    names = LST_COL_HEADERS_OUTFALL_LOADING_SUMMARY
+    n_tokens = _OUTFALL_FIXED_TOKENS + n_pollutants
+    rows = []
+    system_max_flow = float("nan")
+    for line in section_lines:
+        tokens = line.split()
+        if not tokens:
+            continue
+        if len(tokens) != n_tokens:
+            _refuse_table_row(filepath, title, tokens, n_tokens)
+        if tokens[0] == "System":
+            system_max_flow = _float_token(tokens[3], filepath, title)
+            continue
+        rows.append(
+            {
+                names[0]: tokens[0],
+                names[1]: _float_token(tokens[1], filepath, title),
+                names[2]: _float_token(tokens[2], filepath, title),
+                names[3]: _float_token(tokens[3], filepath, title),
+                names[4]: _float_token(tokens[4], filepath, title),
+            }
         )
-    df = df.drop(columns=["date", "time"])
-    df[idx_colname] = np.repeat(ids, row_counts)
-    df = df.set_index([idx_colname, "date_time"])
-    df = df[value_cols]
-    return df.to_xarray()
+    return pd.DataFrame.from_records(rows, columns=names).set_index(names[0]), system_max_flow
+
+
+def _read_new_report_tables(dict_section_lines, head_lines, filepath):
+    """Frames for every table beyond the first three: ``(node frames, link frames, outfall system max flow)``."""
+    node_frames, link_frames = [], []
+    for spec in _TABLE_SPECS:
+        frame = read_report_table(spec.title, dict_section_lines.get(spec.title, []), filepath)
+        (node_frames if spec.kind == "node" else link_frames).append(frame)
+    n_pollutants = outfall_pollutant_columns(head_lines) if head_lines is not None else 0
+    outfall_frame, system_max_flow = read_outfall_loading_summary(
+        dict_section_lines.get("Outfall Loading Summary", []), n_pollutants, filepath
+    )
+    node_frames.append(outfall_frame)
+    return node_frames, link_frames, system_max_flow
+
+
+# --- Run-level and ranked measures: data variables, not attributes ------------------------------------------------
+
+_RE_ROUTING_STEP_LABELS = {
+    "Minimum Time Step": "routing_step_smallest",
+    "Average Time Step": "routing_step_mean",
+    "Maximum Time Step": "routing_step_largest",
+    "% of Time in Steady State": "routing_steady_state_time",
+    "Average Iterations per Step": "routing_iterations_mean",
+    "% of Steps Not Converging": "routing_nonconverging_steps",
+}
+_RE_STEP_FREQUENCY = re.compile(r"^\s*(?P<upper>[\d.]+)\s*-\s*(?P<lower>[\d.]+)\s*sec\s*:\s*(?P<pct>[-\d.]+)\s*%")
+#: The Routing Time Step Summary prints this many step-size bins (`report_RouteStepFreq`: `TIMELEVELS` = 6 edges).
+_N_ROUTING_STEP_BINS = 5
+_RE_RANKED = re.compile(r"^\s*(?P<kind>Node|Link)\s+(?P<id>\S+)\s+\((?P<value>-?[\d.]+)%?\)\s*$")
+
+
+def read_flow_routing_continuity(section_lines, filepath="<rpt>") -> dict[str, float]:
+    """The ten Flow Routing Continuity rows the toolkit did not keep, from their ``10^6 L`` column.
+
+    Each row prints a hectare-meter figure and then a ``10^6 L`` figure; the second is read. A row the report does
+    not print is NaN; a row with any other number of figures is refused.
+    """
+    from hhemt.exceptions import ProcessingError
+
+    found: dict[str, float] = {}
+    for line in section_lines:
+        match = _RE_CONTINUITY_ROW.match(line.rstrip("\r\n"))
+        if match is None:
+            continue
+        label = match.group("label").strip()
+        stem = FLOW_ROUTING_CONTINUITY_TERMS.get(label)
+        if stem is None:
+            continue
+        values = match.group("vals").split()
+        if len(values) != 2:
+            raise ProcessingError(
+                operation="read_report_table",
+                filepath=Path(filepath),
+                reason=f"the Flow Routing Continuity row {label!r} has {len(values)} figure(s); 2 were expected.",
+            )
+        found[stem] = float(values[1])
+    return {
+        f"routing_continuity_{stem}": found.get(stem, float("nan")) for stem in FLOW_ROUTING_CONTINUITY_TERMS.values()
+    }
+
+
+def read_routing_time_step_summary(section_lines, filepath="<rpt>"):
+    """The Routing Time Step Summary: ``(scalars, upper bounds, lower bounds, frequencies)``.
+
+    The scalars are keyed by stored name. The frequency table prints ``upper - lower sec : pct %`` for five
+    step-size bins; when the report prints none (it does so only for Dynamic Wave routing with a Courant factor)
+    the three arrays are NaN. A bin count other than five is refused.
+    """
+    from hhemt.exceptions import ProcessingError
+
+    scalars = dict.fromkeys(_RE_ROUTING_STEP_LABELS.values(), float("nan"))
+    uppers, lowers, freqs = [], [], []
+    for line in section_lines:
+        freq = _RE_STEP_FREQUENCY.match(line)
+        if freq is not None:
+            uppers.append(float(freq.group("upper")))
+            lowers.append(float(freq.group("lower")))
+            freqs.append(float(freq.group("pct")))
+            continue
+        label, sep, rest = line.partition(":")
+        name = _RE_ROUTING_STEP_LABELS.get(label.strip())
+        if name is not None and sep:
+            scalars[name] = float(rest.split()[0])
+    if freqs and len(freqs) != _N_ROUTING_STEP_BINS:
+        raise ProcessingError(
+            operation="read_report_table",
+            filepath=Path(filepath),
+            reason=(
+                f"the Routing Time Step Summary prints {len(freqs)} frequency bin(s); "
+                f"{_N_ROUTING_STEP_BINS} were expected."
+            ),
+        )
+    nan = [float("nan")] * _N_ROUTING_STEP_BINS
+    return scalars, np.array(uppers or nan), np.array(lowers or nan), np.array(freqs or nan)
+
+
+def read_ranked_list(section_lines, *, filepath="<rpt>", title="ranked list"):
+    """One of SWMM's lists of at most five elements as ``(kinds, ids, values)``, each padded to five.
+
+    A line is ``Node|Link {id} ({value})``. The all-clear sentences (``All links are stable.``, ``Convergence
+    obtained at all time steps.``) and ``None`` yield an EMPTY list, which is read as all-NaN and never as zero:
+    SWMM prints the sentence whenever the top element's INDEX is 0, which is also the case of a nonzero value at the
+    first node or link of the file, so the sentence does not prove the quantity was zero. An unprinted rank holds the
+    empty string for a kind or an id and NaN for a value.
+    """
+    from hhemt.exceptions import ProcessingError
+
+    kinds, ids, values = [], [], []
+    for line in section_lines:
+        stripped = line.strip()
+        if not stripped or stripped in ("None", "All links are stable.", "Convergence obtained at all time steps."):
+            continue
+        match = _RE_RANKED.match(line)
+        if match is None:
+            raise ProcessingError(
+                operation="read_report_table",
+                filepath=Path(filepath),
+                reason=f"a {title} line {stripped!r} is not 'Node|Link id (value)'.",
+            )
+        kinds.append(match.group("kind").lower())
+        ids.append(match.group("id"))
+        values.append(float(match.group("value")))
+    if len(ids) > SWMM_STAT_RANK_LENGTH:
+        raise ProcessingError(
+            operation="read_report_table",
+            filepath=Path(filepath),
+            reason=f"a {title} prints {len(ids)} element(s); SWMM prints at most {SWMM_STAT_RANK_LENGTH}.",
+        )
+    pad = SWMM_STAT_RANK_LENGTH - len(ids)
+    return (
+        np.array(kinds + [""] * pad, dtype=str),
+        np.array(ids + [""] * pad, dtype=str),
+        np.array(values + [float("nan")] * pad, dtype=float),
+    )
+
+
+def _run_level_datasets(dict_section_lines, dict_system_results, outfall_system_max_flow, filepath, *, has_report):
+    """The run-level and ranked variables as ``(node dataset, link dataset)``.
+
+    The flow instability list names links and goes to the link dataset; every other variable goes to the node
+    dataset. A run with no report yields two empty datasets. A table the report did not print yields NaN (or the
+    empty string for an id) for every variable it feeds.
+    """
+    if not has_report:
+        return xr.Dataset(), xr.Dataset()
+    nan = float("nan")
+    node_vars: dict[str, Any] = {}
+    for name in LST_RUN_LEVEL_CONTINUITY_VARIABLES:
+        node_vars[name] = ((), float(dict_system_results.get(name, nan)))
+    for name, value in read_flow_routing_continuity(
+        dict_section_lines.get("Flow Routing Continuity", []), filepath
+    ).items():
+        node_vars[name] = ((), value)
+    scalars, uppers, lowers, freqs = read_routing_time_step_summary(
+        dict_section_lines.get("Routing Time Step Summary", []), filepath
+    )
+    for name, value in scalars.items():
+        node_vars[name] = ((), value)
+    node_vars[ROUTING_STEP_FREQUENCY_VARIABLE] = (("routing_step_bin",), freqs)
+    node_vars[LST_OUTFALL_SYSTEM_VARIABLES[0]] = ((), float(outfall_system_max_flow))
+
+    rank = ("swmm_stat_rank",)
+    _kinds, ids, values = read_ranked_list(
+        dict_section_lines.get("Most Frequent Nonconverging Nodes", []),
+        filepath=filepath,
+        title="Most Frequent Nonconverging Nodes list",
+    )
+    node_vars["nonconverging_node_id"] = (rank, ids)
+    node_vars["nonconverging_node_frequency"] = (rank, values)
+    kinds, ids, values = read_ranked_list(
+        dict_section_lines.get("Time-Step Critical Elements", []),
+        filepath=filepath,
+        title="Time-Step Critical Elements list",
+    )
+    node_vars["courant_critical_element_id"] = (rank, ids)
+    node_vars["courant_critical_element_kind"] = (rank, kinds)
+    node_vars["courant_critical_frequency"] = (rank, values)
+    _kinds, ids, values = read_ranked_list(
+        dict_section_lines.get("Highest Continuity Errors", []),
+        filepath=filepath,
+        title="Highest Continuity Errors list",
+    )
+    node_vars["continuity_error_node_id"] = (rank, ids)
+    node_vars["continuity_error_node_relative"] = (rank, values)
+    ds_node_run = xr.Dataset(
+        node_vars,
+        coords={
+            "routing_step_bin": np.arange(_N_ROUTING_STEP_BINS),
+            "routing_step_bin_upper": ("routing_step_bin", uppers),
+            "routing_step_bin_lower": ("routing_step_bin", lowers),
+            "swmm_stat_rank": np.arange(SWMM_STAT_RANK_LENGTH),
+        },
+    )
+    _kinds, ids, values = read_ranked_list(
+        dict_section_lines.get("Highest Flow Instability Indexes", []),
+        filepath=filepath,
+        title="Highest Flow Instability Indexes list",
+    )
+    ds_link_run = xr.Dataset(
+        {"flow_instability_link_id": (rank, ids), "flow_instability_index": (rank, values)},
+        coords={"swmm_stat_rank": np.arange(SWMM_STAT_RANK_LENGTH)},
+    )
+    return ds_node_run, ds_link_run
 
 
 def _iter_rpt_lines(f_rpt: Path):
@@ -1328,33 +1622,6 @@ def _parse_analysis_end_line(end_line: str):
     return pd.to_datetime(datetime_string, format="%b-%d-%Y %H:%M:%S")
 
 
-def _build_tseries_datasets(dict_nodes, dict_links):
-    """Create node/link time series datasets."""
-    ds_node_tseries = create_tseries_ds(
-        dict_nodes,
-        [
-            "date_time",
-            "inflow_flow",
-            "flooding",
-            "depth",
-            "head",
-        ],
-        "node_id",
-    )
-    ds_link_tseries = create_tseries_ds(
-        dict_links,
-        [
-            "date_time",
-            "flow",
-            "velocity",
-            "link_depth",
-            "capacity_setting",
-        ],
-        "link_id",
-    )
-    return ds_node_tseries, ds_link_tseries
-
-
 def return_lines_for_section_of_rpt(section_header, f_rpt=None, lines=None):
     lst_section_lines = []
     if lines is None:
@@ -1393,6 +1660,56 @@ def return_lines_for_section_of_rpt(section_header, f_rpt=None, lines=None):
     return lst_section_lines
 
 
+# Width of each cell of a Link Flow Summary row, counted from the END of the id field. SWMM prints the id
+# with `%-20s`, which pads short ids to 20 characters and leaves longer ones whole, so the id field is
+# `max(20, len(id))` wide and every later cell sits at a fixed offset from its end: type 9 characters,
+# largest flow 9 (`%9.3f` or `%9.2f`), time of occurrence 13 (`  %4d  %02d:%02d`), velocity 10
+# (`   %7.2f` or `    >50.00`), flow ratio 8 and depth ratio 8 (`  %6.2f`).
+_LINK_FLOW_CELL_WIDTHS = (9, 9, 13, 10, 8, 8)
+
+
+def format_link_flow_summary(lst_section_lines, lst_col_headers):
+    """Read the Link Flow Summary into a frame by fixed columns measured from the end of the id field.
+
+    Parameters
+    ----------
+    lst_section_lines : list of str
+        The section's data rows as `return_lines_for_section_of_rpt` returns them.
+    lst_col_headers : list of str
+        The seven column names, in print order (`LST_COL_HEADERS_LINK_FLOW_SUMMARY`).
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per link; a cell the row's link type does not print, including trailing cells a row
+        ends before, is the empty string.
+
+    Notes
+    -----
+    Fixed columns rather than whitespace tokens, because the tokens of different link types do not line
+    up: a pump with a curve prints its flow ratio under the velocity cell's neighbour, a weir prints only
+    a depth ratio, an outlet or dummy link stops after the time cell, and an id containing a colon is
+    one token that the shared whitespace reader would join to the previous cell. Anchoring at the left
+    edge instead of the end of the id field would shift every cell of a link whose id is longer than 20
+    characters (`statsrpt.c` pads the id but does not truncate it); anchoring at the right edge would put a
+    pump's ratio in the depth column, because rows end at different cells by type.
+    """
+    records = []
+    for raw_line in lst_section_lines:
+        body = raw_line.rstrip("\r\n")[2:]
+        if not body.strip():
+            continue
+        link_id = body.split(None, 1)[0]
+        id_field_width = max(20, len(link_id))
+        cursor = id_field_width
+        cells = []
+        for width in _LINK_FLOW_CELL_WIDTHS:
+            cells.append(" ".join(body[cursor : cursor + width].split()))
+            cursor += width
+        records.append([link_id, *cells])
+    return pd.DataFrame.from_records(records, columns=lst_col_headers)
+
+
 @profile
 def format_rpt_section_into_dataframe(lst_section_lines, lst_col_headers, section_name=None):
     if len(lst_section_lines) == 0:
@@ -1419,76 +1736,125 @@ def format_rpt_section_into_dataframe(lst_section_lines, lst_col_headers, sectio
     return pd.DataFrame.from_records(records, columns=lst_col_headers)
 
 
-def return_node_time_series_results_from_rpt(
-    section_header="Node Time Series Results",
-    f_rpt=None,
-    lines=None,
-):
-    # section_header, lines = "Node Time Series Results", rpt_lines
-    # lst_section_lines = []
-    if lines is None:
-        with open(f_rpt, encoding="latin-1") as file:  # type: ignore
-            # Read all lines from the file
-            lines = file.readlines()
-    encountered_header = False
-    dict_lst_node_time_series = {}
-    dict_lst_link_time_series = {}
-    begin_header_line_num = None
-    end_header_line_num = None
-    encountered_end = False
-    key = None
-    is_link = False
-    is_node = False
-    lst_vals = []
-    for line_num, line in enumerate(lines):
-        # return node flooding summaries
-        if not encountered_header:
-            if section_header in line:
-                encountered_header = True
-            else:
-                continue
-        if "<<<" in line:
-            # define new list for values and the node name
-            key = line.split("<<<")[1].split(" ")[2]
-            lower_line = line.lower()
-            is_link = "link" in lower_line
-            is_node = "node" in lower_line
-            lst_vals = []
-            begin_header_line_num = None
-            end_header_line_num = None
-            encountered_end = False
-            continue
-        # find the start of the next node flow section
-        if begin_header_line_num is None and "------------" in line:
-            begin_header_line_num = line_num
-            continue
-        if begin_header_line_num is not None and "------------" in line:
-            end_header_line_num = line_num
-        if (begin_header_line_num is None) or (end_header_line_num is None):
-            continue
-        if line_num <= end_header_line_num:  # skip one more line
-            continue
-        if len(line.split(" ")) <= 3:
-            encountered_end = True
-            if key is not None:
-                if is_link:
-                    dict_lst_link_time_series[key] = lst_vals
-                if is_node:
-                    dict_lst_node_time_series[key] = lst_vals
-        if encountered_end is False:
-            # dict_lst_node_time_series[node_id].append(line)
-            lst_vals.append(line)
-    #
-    ds_node_tseries, ds_link_tseries = _build_tseries_datasets(
-        dict_lst_node_time_series,
-        dict_lst_link_time_series,
+def _out_series_values(out, kind: str, ident: str, index: int, attribute) -> np.ndarray:
+    """One element's series over EVERY report period, read straight from ``swmm.toolkit.output``.
+
+    ``kind`` is ``"node"`` or ``"link"``; ``ident`` is the element's id (used only in the refusal message and by
+    test stand-ins) and ``index`` its position in the output; ``attribute`` is a pyswmm attribute name
+    (``"invert_depth"``) or a toolkit attribute index.
+
+    The read does not go through pyswmm's ``NodeSeries`` / ``Output.node_series``
+    because pyswmm 2.1.0 resolves their default end to the INCLUSIVE index ``num_periods - 1`` and hands it to the
+    toolkit's END-EXCLUSIVE ``get_node_series``, so the final report period is silently dropped (the same file
+    reads whole under pyswmm 2.0.1). The window ``(0, num_periods)`` is passed here explicitly, so the result does
+    not depend on how any pyswmm version resolves a default end. A series shorter or longer than the output's
+    period count raises, so a future accessor change cannot truncate the stores quietly.
+    """
+    from swmm.toolkit import output as swmm_output
+    from swmm.toolkit import shared_enum
+
+    from hhemt.exceptions import ProcessingError
+
+    n_periods = int(swmm_output.get_times(out.handle, shared_enum.Time.NUM_PERIODS))
+    group = shared_enum.NodeAttribute if kind == "node" else shared_enum.LinkAttribute
+    attr = getattr(group, attribute.upper()) if isinstance(attribute, str) else attribute
+    reader = swmm_output.get_node_series if kind == "node" else swmm_output.get_link_series
+    values = np.asarray(reader(out.handle, index, attr, 0, n_periods), dtype=float)
+    if len(values) != n_periods:
+        raise ProcessingError(
+            operation="read SWMM output series",
+            filepath=Path(getattr(out, "binfile", "") or "."),
+            reason=f"the {kind} series of {ident!r} has {len(values)} values for {n_periods} report periods.",
+        )
+    return values
+
+
+def _out_time_axis(out, f_outfile) -> list:
+    """The report times of ``out`` (``Output.times``), refused unless there is one per ``NUM_PERIODS`` period.
+
+    The count check ties the axis to the same period count the series are read over, so a time axis one step
+    shorter than the series (or the reverse) cannot be paired with them.
+    """
+    from swmm.toolkit import output as swmm_output
+    from swmm.toolkit import shared_enum
+
+    from hhemt.exceptions import ProcessingError
+
+    times = list(out.times)
+    n_periods = int(swmm_output.get_times(out.handle, shared_enum.Time.NUM_PERIODS))
+    if len(times) != n_periods:
+        raise ProcessingError(
+            operation="return_node_time_series_results_from_outfile",
+            filepath=Path(f_outfile),
+            reason=f"the output's time axis has {len(times)} steps for {n_periods} report periods.",
+        )
+    return times
+
+
+def _out_series_dataset(out, kind, entity_index, spec, idx_colname, f_outfile) -> xr.Dataset:
+    """One dataset of ``(idx, date_time)`` series for every entity, read over every report period.
+
+    ``entity_index`` maps entity id to its index in the output (pyswmm's ``Output.nodes`` or ``Output.links``);
+    ``spec`` is ``(stored name, pyswmm attribute)`` pairs. Every entity of a SWMM output shares the run's report
+    steps, so each variable is stacked into one array instead of being built entity by entity as a frame, which is
+    what made the read cost scale with entities times variables. The time axis comes from ``_out_time_axis``. The
+    ids and the steps come out sorted, the order a MultiIndex ``to_xarray`` gave them, so stores written before
+    this reader existed compare equal.
+    """
+    entity_ids = list(entity_index.keys())
+    ids = [str(i) for i in entity_ids]
+    if not ids:
+        return xr.Dataset()
+    times = _out_time_axis(out, f_outfile)
+    id_order = np.argsort(np.array(ids, dtype=str), kind="stable")
+    time_index = pd.DatetimeIndex(times)
+    time_order = np.argsort(time_index.values, kind="stable")
+    data_vars = {
+        name: (
+            (idx_colname, "date_time"),
+            np.array([_out_series_values(out, kind, ident, entity_index[ident], attribute) for ident in entity_ids])[
+                id_order
+            ][:, time_order],
+        )
+        for name, attribute in spec
+    }
+    return xr.Dataset(
+        data_vars,
+        coords={idx_colname: np.array(ids, dtype=str)[id_order], "date_time": time_index[time_order]},
     )
-    #
-    return ds_node_tseries, ds_link_tseries
 
 
-def return_node_time_series_results_from_outfile(f_outfile, f_inp=None, return_quality=False):
+#: pyswmm's per-element series for the NODE variables of SWMM's binary output (`enums.h`: NODE_DEPTH, NODE_HEAD,
+#: NODE_INFLOW, NODE_OVERFLOW, then NODE_VOLUME and NODE_LATFLOW), as (stored name, pyswmm
+#: attribute). `ponded_volume` is pyswmm's name for NODE_VOLUME, which holds the node's WHOLE stored volume, ponded
+#: volume included, so the stored name is the plain `volume`.
+_OUT_NODE_SERIES = (
+    ("depth", "invert_depth"),
+    ("head", "hydraulic_head"),
+    ("inflow_flow", "total_inflow"),
+    ("flooding", "flooding_losses"),
+    ("volume", "ponded_volume"),
+    ("lateral_inflow", "lateral_inflow"),
+)
+#: The LINK variables (LINK_FLOW, LINK_VELOCITY, LINK_DEPTH, LINK_CAPACITY, LINK_VOLUME). The capacity series takes
+#: its stored name from the caller, because the two model families name it differently (see below).
+_OUT_LINK_SERIES = (
+    ("flow", "flow_rate"),
+    ("velocity", "flow_velocity"),
+    ("link_depth", "flow_depth"),
+    (None, "capacity"),
+    ("link_volume", "flow_volume"),
+)
+
+
+def return_node_time_series_results_from_outfile(f_outfile, f_inp=None, return_quality=False, capacity_name="capacity"):
     """Read node and link time series from a SWMM ``.out`` file.
+
+    This is the one series reader of both model families. Node series: ``depth``, ``head``, ``inflow_flow``,
+    ``flooding``, ``volume`` (the node's stored volume, ponded volume included) and ``lateral_inflow``. Link series:
+    ``flow``, ``velocity``, ``link_depth``, the capacity series and ``link_volume``. ``capacity_name`` is
+    ``"capacity_setting"`` for the coupled family and ``"capacity"`` for standalone SWMM: for a conduit the series is
+    the filled fraction of the section, and for a pump, orifice, weir or outlet it is the control setting.
 
     With ``return_quality`` the function returns ``(node ds, link ds, pollutants, start)`` where
     ``pollutants`` is the model's ``[(name, unit)]`` list when the ``.out`` holds pollutant results
@@ -1499,7 +1865,7 @@ def return_node_time_series_results_from_outfile(f_outfile, f_inp=None, return_q
     ``[POLLUTANTS]`` section and never from the ``.out``'s unit flags, which report only the
     first pollutant's unit. Without ``return_quality`` the two datasets are returned alone.
     """
-    from pyswmm import LinkSeries, NodeSeries, Output
+    from pyswmm import Output
 
     pollutants: list[tuple[str, str]] = []
     out_start = None
@@ -1532,103 +1898,23 @@ def return_node_time_series_results_from_outfile(f_outfile, f_inp=None, return_q
                     "per-scenario .inp, which inherits it."
                 ),
             )
-        # PROCESSING NODES
-        dic_dfs = dict(depth=[], head=[], inflow_flow=[], flooding=[])
-        for node_id in d_nodes.keys():
-            ts_depth = NodeSeries(out)[node_id].invert_depth
-            ts_head = NodeSeries(out)[node_id].hydraulic_head
-            ts_inflow = NodeSeries(out)[node_id].total_inflow
-            ts_flooding = NodeSeries(out)[node_id].flooding_losses
-            # create dataframes
-            df_depth = convert_pyswmm_output_to_df(
-                pyswmm_tseries=ts_depth,
-                valname="depth",
-                item_idx_name="node_id",
-                item_idx=node_id,
-                idx_name="date_time",
+        if not d_nodes or not d_links:
+            from hhemt.exceptions import ProcessingError
+
+            raise ProcessingError(
+                operation="return_node_time_series_results_from_outfile",
+                filepath=Path(f_outfile),
+                reason=(
+                    f"the binary output holds {len(d_nodes)} node(s) and {len(d_links)} link(s); SWMM writes series "
+                    "only "
+                    "for objects the model's [REPORT] section lists, so add `NODES ALL` and `LINKS ALL` to [REPORT] "
+                    "in the SWMM template named by system_config."
+                ),
             )
-            df_head = convert_pyswmm_output_to_df(
-                pyswmm_tseries=ts_head,
-                valname="head",
-                item_idx_name="node_id",
-                item_idx=node_id,
-                idx_name="date_time",
-            )
-            df_inflow = convert_pyswmm_output_to_df(
-                pyswmm_tseries=ts_inflow,
-                valname="inflow_flow",
-                item_idx_name="node_id",
-                item_idx=node_id,
-                idx_name="date_time",
-            )
-            df_flooding = convert_pyswmm_output_to_df(
-                pyswmm_tseries=ts_flooding,
-                valname="flooding",
-                item_idx_name="node_id",
-                item_idx=node_id,
-                idx_name="date_time",
-            )
-            # add dataframes to dictionary
-            dic_dfs["depth"].append(df_depth)
-            dic_dfs["head"].append(df_head)
-            dic_dfs["inflow_flow"].append(df_inflow)
-            dic_dfs["flooding"].append(df_flooding)
-        #
-        lst_dfs = []
-        for key in dic_dfs.keys():
-            df = pd.concat(dic_dfs[key]).reset_index().set_index(["node_id", "date_time"])
-            lst_dfs.append(df)
-        #
-        ds_node_tseries = pd.concat(lst_dfs, axis=1).to_xarray()
-        #
-        # PROCESSING LINKS
-        dic_dfs = dict(flow=[], velocity=[], link_depth=[], capacity=[])
-        for link_id in d_links.keys():
-            ts_fr = LinkSeries(out)[link_id].flow_rate
-            ts_dpth = LinkSeries(out)[link_id].flow_depth
-            ts_vel = LinkSeries(out)[link_id].flow_velocity
-            ts_cap = LinkSeries(out)[link_id].capacity
-            # create dataframes
-            df_fr = convert_pyswmm_output_to_df(
-                pyswmm_tseries=ts_fr,
-                valname="flow",
-                item_idx_name="link_id",
-                item_idx=link_id,
-                idx_name="date_time",
-            )
-            df_dpth = convert_pyswmm_output_to_df(
-                pyswmm_tseries=ts_dpth,
-                valname="link_depth",
-                item_idx_name="link_id",
-                item_idx=link_id,
-                idx_name="date_time",
-            )
-            df_vel = convert_pyswmm_output_to_df(
-                pyswmm_tseries=ts_vel,
-                valname="velocity",
-                item_idx_name="link_id",
-                item_idx=link_id,
-                idx_name="date_time",
-            )
-            df_cap = convert_pyswmm_output_to_df(
-                pyswmm_tseries=ts_cap,
-                valname="capacity",
-                item_idx_name="link_id",
-                item_idx=link_id,
-                idx_name="date_time",
-            )
-            # add dataframes to dictionary
-            dic_dfs["flow"].append(df_fr)
-            dic_dfs["velocity"].append(df_vel)
-            dic_dfs["link_depth"].append(df_dpth)
-            dic_dfs["capacity"].append(df_cap)
-        #
-        lst_dfs = []
-        for key in dic_dfs.keys():
-            df = pd.concat(dic_dfs[key]).reset_index().set_index(["link_id", "date_time"])
-            lst_dfs.append(df)
-        #
-        ds_link_tseries = pd.concat(lst_dfs, axis=1).to_xarray()
+        # PROCESSING NODES AND LINKS
+        ds_node_tseries = _out_series_dataset(out, "node", d_nodes, _OUT_NODE_SERIES, "node_id", f_outfile)
+        link_series_spec = tuple((capacity_name if name is None else name, attr) for name, attr in _OUT_LINK_SERIES)
+        ds_link_tseries = _out_series_dataset(out, "link", d_links, link_series_spec, "link_id", f_outfile)
         # WATER QUALITY, gated on the .out's own pollutant count (zero when quality is ignored).
         n_out_pollutants = int(out.project_size[4]) if return_quality else 0
         if n_out_pollutants > 0:
@@ -1647,11 +1933,9 @@ def return_node_time_series_results_from_outfile(f_outfile, f_inp=None, return_q
                     filepath=Path(f_outfile),
                     reason=(f"the .out holds {n_out_pollutants} pollutant(s) but {f_inp} declares {len(pollutants)}."),
                 )
-            ds_node_tseries["pollutant_conc"] = _out_pollutant_series(
-                out.node_series, list(d_nodes.keys()), 6, "node_id", pollutants
-            )
+            ds_node_tseries["pollutant_conc"] = _out_pollutant_series(out, "node", d_nodes, 6, "node_id", pollutants)
             ds_link_tseries["link_pollutant_conc"] = _out_pollutant_series(
-                out.link_series, list(d_links.keys()), 5, "link_id", pollutants
+                out, "link", d_links, 5, "link_id", pollutants
             )
         if return_quality:
             start = getattr(out, "start", None)
@@ -1662,21 +1946,21 @@ def return_node_time_series_results_from_outfile(f_outfile, f_inp=None, return_q
     return ds_node_tseries, ds_link_tseries
 
 
-def _out_pollutant_series(series_reader, entity_ids, first_attribute, idx_colname, pollutants):
+def _out_pollutant_series(out, kind, entity_index, first_attribute, idx_colname, pollutants):
     """Concentration series for every entity and pollutant as (idx, date_time, pollutant).
 
-    ``series_reader(entity_id, attribute_index)`` is pyswmm's ``Output.node_series`` or
-    ``Output.link_series``; pollutant ``p`` is attribute ``first_attribute + p``.
+    Pollutant ``p`` is toolkit attribute ``first_attribute + p``; every series is read over every report period
+    by ``_out_series_values`` (see its note on pyswmm 2.1.0's dropped final period).
     """
+    idx = pd.DatetimeIndex(_out_time_axis(out, "the SWMM binary output"), name="date_time")
     frames = []
     for p, (name, _) in enumerate(pollutants):
         rows = []
-        for entity_id in entity_ids:
-            series = series_reader(entity_id, first_attribute + p)
-            idx = pd.DatetimeIndex(list(series.keys()), name="date_time")
+        for entity_id, position in entity_index.items():
+            values = _out_series_values(out, kind, entity_id, position, first_attribute + p)
             rows.append(
                 pd.Series(
-                    list(series.values()),
+                    values,
                     index=pd.MultiIndex.from_arrays(
                         [np.repeat(entity_id, len(idx)), idx], names=[idx_colname, "date_time"]
                     ),
@@ -1686,34 +1970,6 @@ def _out_pollutant_series(series_reader, entity_ids, first_attribute, idx_colnam
     df = pd.concat(frames, axis=1)
     da = df.to_xarray().to_dataarray(dim="pollutant").transpose(idx_colname, "date_time", "pollutant")
     return da.assign_coords(pollutant=[name for name, _ in pollutants]).astype(float)
-
-
-def create_tseries_ds(dict_lst_time_series, lst_col_headers, idx_colname):
-    # dict_lst_time_series, lst_col_headers, idx_colname = dict_lst_node_time_series, lst_col_headers, "link_id"
-    # dict_lst_time_series, lst_col_headers, idx_colname = dict_lst_node_time_series, lst_col_headers, "node_id"
-    lst_dfs = []
-    for key, lst_section_lines in dict_lst_time_series.items():
-        df_tseries = format_rpt_section_into_dataframe(
-            lst_section_lines, lst_col_headers, section_name=f"time series of {key}"
-        )
-        if df_tseries.empty:
-            continue
-        df_tseries[idx_colname] = key
-        lst_dfs.append(df_tseries)
-    if not lst_dfs:
-        empty_df = pd.DataFrame(columns=[idx_colname, *lst_col_headers])
-        if "date_time" not in empty_df.columns:
-            empty_df["date_time"] = pd.to_datetime([], format=RPT_DATETIME_FORMAT)
-        empty_df = empty_df.set_index([idx_colname, "date_time"])
-        return empty_df.to_xarray()
-    df_tseries = pd.concat(lst_dfs, ignore_index=True)
-    df_tseries["date_time"] = pd.to_datetime(df_tseries["date_time"], format=RPT_DATETIME_FORMAT, errors="coerce")
-    if df_tseries["date_time"].isna().any():
-        raise ValueError(
-            f"Parsed RPT date_time values contained NaT. Verify the RPT datetime format matches {RPT_DATETIME_FORMAT}."
-        )
-    df_tseries = df_tseries.set_index([idx_colname, "date_time"])
-    return df_tseries.to_xarray()
 
 
 def convert_pyswmm_output_to_df(pyswmm_tseries, valname, item_idx_name, item_idx, idx_name="date_time"):

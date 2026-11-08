@@ -674,6 +674,18 @@ def test_a_golden_compares_equal_to_its_re_emission_under_any_runs_root(golden_n
     assert emitted == want, _unified_diff_excerpt(want, emitted)
 
 
+#: The goldens carry no relative path (the figure rules read their source paths from the render manifest), so the three
+#: layout mutations below would match nothing in them. The same three kinds of path are planted after the golden text
+#: instead: a non-model relative path, a model path whose `../` run climbs to the cache root, and a model file path.
+#: The control assertion then holds for the planted text too, and each mutation changes exactly one planted token.
+_PLANTED_RELATIVE_PATHS = """
+# planted by test_workflow_snakefile_byte_identity: layout-sensitive relative paths (see the comment above)
+planted_dem_rel_path = '../elevation_10.00m.dem'
+planted_watershed_rel_path = '../../../../synthetic_test_models/{MODEL_KEY}/watershed.geojson'
+planted_boundary_rel_path = '../../../../synthetic_test_models/{MODEL_KEY}/boundary.geojson'
+"""
+
+
 def _drop_a_model_hop(text: str) -> str:
     """One ``../`` fewer on the first relative model path."""
     return _MODEL_PATH_RUN.sub(lambda m: m.group(1)[3:] + m.group(2), text, count=1)
@@ -709,7 +721,7 @@ def test_a_layout_regression_still_reddens_the_golden_under_an_exported_override
 
     Each arm also asserts that its mutation changed the text, so an arm that matches nothing cannot pass."""
     monkeypatch.setenv(_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
-    golden = (GOLDENS_DIR / golden_name).read_text()
+    golden = (GOLDENS_DIR / golden_name).read_text() + _PLANTED_RELATIVE_PATHS
     got, analysis_dir = _emitted_from_golden(golden, case, f"{tmp_path}/synthetic_test_runs")
     emitted, want = _canonical_forms(got, golden, analysis_dir)
     assert emitted == want, "control: the unmutated re-emission must equal the golden"

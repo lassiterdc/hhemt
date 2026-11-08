@@ -539,10 +539,12 @@ class TRITONSWMM_analysis:
         # renderer that reads the root group would then raise AssertionError.
         if not cfg_analysis.toggle_sensitivity_analysis:
             analysis_paths_kwargs["analysis_datatree_zarr"] = analysis_dir / "analysis_datatree.zarr"
+            analysis_paths_kwargs["analysis_timeseries_zarr"] = analysis_dir / "analysis_timeseries.zarr"
 
         # Sensitivity-level DataTree zarr: the experiment root store that aggregates the members.
         if cfg_analysis.toggle_sensitivity_analysis:
             analysis_paths_kwargs["sensitivity_datatree_zarr"] = analysis_dir / "experiment_datatree.zarr"
+            analysis_paths_kwargs["sensitivity_timeseries_zarr"] = analysis_dir / "sensitivity_timeseries.zarr"
 
         self.analysis_paths = AnalysisPaths(**analysis_paths_kwargs)
         # Running identity: this process runs the hhemt commit the config names, or it

@@ -11,16 +11,21 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
+import pandas as pd
 import xarray as xr
 
 from hhemt.cf_conventions import (
     apply_cf_attributes,
     apply_global_attributes,
 )
+from hhemt.exceptions import ProcessingError
 from hhemt.member_identity import resolve_member_id_column
 from hhemt.scenario import TRITONSWMM_scenario
 from hhemt.utils import (
+    append_zarr,
     current_datetime_string,
+    deferred_consolidation,
     get_file_size_MiB,
     open_store,
     write_datatree_zarr,
@@ -260,7 +265,10 @@ class TRITONSWMM_analysis_post_processing:
     def __init__(self, analysis: "TRITONSWMM_analysis") -> None:
         self._analysis = analysis
 
-    CONSOLIDATION_VERSION = 1
+    # 2: the SWMM node/link time series left the datatree for analysis_timeseries.zarr (elapsed_s axis), the
+    # coupling-node flag is always present in a coupled node store, and the flux and clearing toggles join the
+    # fingerprint. Every tree consolidated at version 1 rebuilds once.
+    CONSOLIDATION_VERSION = 2
 
     def _consolidation_inputs_fingerprint(self) -> str:
         """Hash of every input that determines the SHAPE of the consolidated tree.
@@ -298,6 +306,13 @@ class TRITONSWMM_analysis_post_processing:
             "toggle_consolidate_timeseries": bool(
                 getattr(self._analysis.cfg_analysis, "toggle_consolidate_timeseries", False)
             ),
+            "toggle_coupling_exchange_flow": bool(
+                getattr(self._analysis.cfg_analysis, "toggle_coupling_exchange_flow", False)
+            ),
+            "toggle_clear_scenario_timeseries_after_consolidation": bool(
+                getattr(self._analysis.cfg_analysis, "toggle_clear_scenario_timeseries_after_consolidation", False)
+            ),
+            "timeseries_keep": self._timeseries_keep_for_fingerprint(),
             "enabled_model_types": sorted(self._analysis._get_enabled_model_types()),
             "scenario_ids": sorted(
                 compute_event_id_slug(self._analysis._retrieve_weather_indexer_using_integer_index(ei))
@@ -305,6 +320,25 @@ class TRITONSWMM_analysis_post_processing:
             ),
         }
         return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+    def _timeseries_keep_for_fingerprint(self) -> dict[str, list[str]]:
+        """The RESOLVED keep-lists, per kind and enabled family, sorted so a reordered list does not rebuild.
+
+        The keep-lists gate which variables land in ``analysis_timeseries.zarr``, so what they RESOLVE to (not the
+        raw field text: ``None`` and ``"all"`` are one selection) joins the fingerprint.
+        """
+        from hhemt.timeseries_selection import FAMILIES_BY_KIND, keep_setting, resolve_keep
+
+        enabled = set(self._analysis._get_enabled_model_types())
+        family_of = {"tritonswmm": "tritonswmm", "swmm": "swmm_only", "triton": "triton_only"}
+        families = {family_of[m] for m in enabled if m in family_of}
+        out: dict[str, list[str]] = {}
+        for kind, kind_families in FAMILIES_BY_KIND.items():
+            value = keep_setting(self._analysis.cfg_analysis, kind)
+            for family in kind_families:
+                if family in families:
+                    out[f"{kind}/{family}"] = sorted(resolve_keep(kind, family, value))
+        return out
 
     def consolidate_to_datatree(
         self,
@@ -406,19 +440,13 @@ class TRITONSWMM_analysis_post_processing:
             apply_cf_attributes(ds, mode)
             tree_dict[tree_path] = ds
 
-        # Per-scenario timeseries nodes (opt-in). Default OFF. When enabled, each SWMM
-        # node/link timeseries is concatenated along event_iloc exactly as the summaries
-        # are, and grafts up to the sensitivity master for free via
-        # build_sensitivity_datatree's subtree_with_keys copy. A missing timeseries file
-        # raises FileNotFoundError here, which the master consolidate loop already tolerates
-        # under allow_incomplete=True (whole-sub skip), mirroring the summary path.
+        # Per-scenario time series (opt-in, default OFF) are NOT tree nodes: they are appended one scenario at a time
+        # to analysis_timeseries.zarr, beside the tree. Deleting or rebuilding this tree (a reprocess deletes it
+        # outright) therefore never touches the series, which with the clearing toggle on exist nowhere else. A
+        # missing per-scenario store raises FileNotFoundError here exactly as the summary path does, which the
+        # master's member-ensure loop already tolerates under allow_incomplete=True.
         if getattr(self._analysis.cfg_analysis, "toggle_consolidate_timeseries", False):
-            for ts_mode, ts_tree_path in self._TIMESERIES_MODE_TO_TREE_PATH.items():
-                ts_scen_attr = self._TIMESERIES_MODE_CONFIG[ts_mode]
-                first_scen = TRITONSWMM_scenario(self._analysis.df_sims.index[0], self._analysis)
-                if getattr(first_scen.scen_paths, ts_scen_attr) is None:
-                    continue
-                tree_dict[ts_tree_path] = self._retrieve_combined_timeseries(ts_mode)
+            self.consolidate_timeseries(verbose=verbose)
 
         tree_dict["/"] = xr.Dataset(
             attrs={
@@ -583,6 +611,286 @@ class TRITONSWMM_analysis_post_processing:
                 "False or unset). Run consolidate_to_datatree() first."
             )
         return open_store(path, chunks="auto")
+
+    # ------------------------------------------------------------------------------------------------
+    # Consolidated per-scenario time series: analysis_timeseries.zarr
+    # ------------------------------------------------------------------------------------------------
+
+    def _timeseries_axis(self) -> tuple[dict[int, "pd.Timestamp"], float, np.ndarray]:
+        """Each event's simulation start, the reporting step, and the ``elapsed_s`` axis shared by every event.
+
+        The axis runs from one reporting step to the longest simulation duration among ALL events in ``df_sims``
+        (each duration is the analysis's own event window, ``_resolve_event_window``, not the length of whatever
+        series happens to be on disk), and it is fixed here, before the first append. An append whose
+        non-append dimension differs from the store's raises, so every scenario is reindexed to this axis.
+        """
+        step = float(self._analysis.cfg_analysis.TRITON_reporting_timestep_s)
+        starts: dict[int, pd.Timestamp] = {}
+        longest_s = 0.0
+        for event_iloc in self._analysis.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, self._analysis)
+            start, end = scen._resolve_event_window()
+            starts[int(event_iloc)] = pd.Timestamp(start)
+            longest_s = max(longest_s, (pd.Timestamp(end) - pd.Timestamp(start)).total_seconds())
+        n_steps = int(round(longest_s / step))
+        if n_steps < 1:
+            raise ProcessingError(
+                "consolidate timeseries",
+                self._analysis.analysis_paths.analysis_timeseries_zarr,
+                f"the longest event window ({longest_s} s) is shorter than one reporting step ({step} s)",
+            )
+        values = step * np.arange(1, n_steps + 1)
+        axis = values.astype("int64") if float(step).is_integer() else values
+        return starts, step, axis
+
+    @staticmethod
+    def _timeseries_group_state(store: Path, group: str) -> tuple[list[str], list[int]] | None:
+        """The group's data-variable names and its ``event_iloc`` values, or None when the group does not exist.
+
+        Opened WITHOUT the consolidated index, because inside ``deferred_consolidation`` the store has none.
+        """
+        group_dir = Path(store) / group
+        if not ((group_dir / "zarr.json").is_file() or (group_dir / ".zgroup").is_file()):
+            return None
+        stored = xr.open_zarr(store, group=group, consolidated=zarr_store_has_index(store), chunks=None)
+        return sorted(stored.data_vars), [int(v) for v in stored["event_iloc"].values]
+
+    def _timeseries_slice(
+        self,
+        scen: TRITONSWMM_scenario,
+        ts_mode: str,
+        event_iloc: int,
+        start: "pd.Timestamp",
+        step: float,
+        axis: np.ndarray,
+    ) -> xr.Dataset:
+        """One scenario's contribution to the consolidated store: time-variant variables and the flag, on ``elapsed_s``.
+
+        The appended Dataset holds the per-scenario store's variables that carry ``date_time`` and, for the node
+        store, ``is_coupling_node``, and no other variable: the static report variables reach the analysis level
+        through the summary tree, so a scenario written before a static variable existed does not differ from a
+        later one. Every data variable gets ``event_iloc`` (``expand_dims``), the flag included, because a variable
+        without it is silently overwritten by each append (a per-node 0 then 10 reads back as 10 for both events).
+        A node store lacking the flag (written by a toolkit older than the coupling outputs) gets it derived from
+        the scenario's own ``coupling_nodes.txt``.
+        """
+        path = getattr(scen.scen_paths, self._TIMESERIES_MODE_CONFIG[ts_mode])
+        is_node = ts_mode.endswith("_node_ts")
+        open_kwargs = {"chunks": "auto", "engine": self._open_engine(), "decode_timedelta": False}
+        if open_kwargs["engine"] == "zarr":
+            open_kwargs["consolidated"] = zarr_store_has_index(path)
+        full = xr.open_dataset(path, **open_kwargs)
+        keep = [v for v in full.data_vars if "date_time" in full[v].dims]
+        if is_node and "is_coupling_node" in full.data_vars:
+            keep.append("is_coupling_node")
+        ds = full[keep].load()
+        slug = self._event_slug(event_iloc)
+        if is_node and "is_coupling_node" not in ds.data_vars:
+            from hhemt.scenario import coupling_nodes_file_for
+
+            nodes_file = coupling_nodes_file_for(scen.scen_paths.swmm_hydraulics_inp)
+            if not nodes_file.is_file():
+                raise ProcessingError(
+                    "derive is_coupling_node for the consolidated time series",
+                    nodes_file,
+                    f"scenario {slug} (event_iloc {event_iloc}) has no coupling-node list to derive the flag from",
+                )
+            listed = {ln.strip() for ln in nodes_file.read_text().splitlines() if ln.strip()}
+            flag = np.array([str(n) in listed for n in ds["node_id"].values], dtype="int8")
+            ds["is_coupling_node"] = ("node_id", flag)
+        seconds = (pd.to_datetime(ds["date_time"].values) - start).total_seconds().to_numpy()
+        index = np.rint(seconds / step).astype("int64")
+        if not np.allclose(seconds, index * step, atol=1e-6) or index.min() < 1 or index.max() > len(axis):
+            raise ProcessingError(
+                "place a scenario on the shared elapsed_s axis",
+                path,
+                f"scenario {slug} (event_iloc {event_iloc}) has report times that are not whole multiples of the "
+                f"{step} s reporting step after its start {start}, or that run past the longest event "
+                f"({len(axis)} steps); first/last elapsed seconds {seconds.min()}/{seconds.max()}",
+            )
+        ds = ds.assign_coords(elapsed_s=("date_time", axis[index - 1])).swap_dims(date_time="elapsed_s")
+        ds = ds.drop_vars("date_time").reindex(elapsed_s=axis)
+        apply_cf_attributes(ds, "tritonswmm_swmm_node" if is_node else "tritonswmm_swmm_link")
+        ds = ds.expand_dims(event_iloc=[int(event_iloc)])
+        return ds.assign_coords(
+            event_id=("event_iloc", [slug]),
+            event_start_datetime=("event_iloc", np.array([start.to_datetime64()], dtype="datetime64[ns]")),
+        )
+
+    def _event_slug(self, event_iloc: int) -> str:
+        from hhemt.scenario import compute_event_id_slug
+
+        return compute_event_id_slug(self._analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
+
+    @staticmethod
+    def _stored_slice_equals(store: Path, group: str, expected: xr.Dataset, event_iloc: int) -> bool:
+        """Read the event's slice back from the store and compare it NaN-aware with ``expected``, every data variable.
+
+        The comparison is of VALUES read from disk. Shape metadata and chunk presence do not qualify: an append
+        persists the new shape before its chunks, and chunk presence is inexact where empty chunks are not written.
+        """
+        stored = xr.open_zarr(store, group=group, consolidated=zarr_store_has_index(store), chunks=None)
+        positions = [int(v) for v in stored["event_iloc"].values]
+        if event_iloc not in positions:
+            return False
+        read = stored.isel(event_iloc=[positions.index(event_iloc)])
+        if sorted(read.data_vars) != sorted(expected.data_vars):
+            return False
+        for name in expected.data_vars:
+            want = expected[name]
+            got = read[name]
+            if got.dims != want.dims:
+                want = want.transpose(*got.dims)
+            a, b = np.asarray(got.values), np.asarray(want.values)
+            if a.shape != b.shape:
+                return False
+            same = np.array_equal(a, b, equal_nan=True) if a.dtype.kind == "f" else np.array_equal(a, b)
+            if not same:
+                return False
+        return True
+
+    def _plan_timeseries_write(
+        self,
+        scen: TRITONSWMM_scenario,
+        ts_mode: str,
+        group: str,
+        event_iloc: int,
+        start: "pd.Timestamp",
+        step: float,
+        axis: np.ndarray,
+        cleared_already: bool,
+    ) -> tuple[str, xr.Dataset | None, int | None]:
+        """Decide how this scenario's slice gets into ``group``; the caller performs the write.
+
+        Returns ``(action, dataset, position)``. ``"verified"``: the slice is already in the store and passed its
+        read-back, nothing to write. ``"rewrite"``: the event is in the store without a passing read-back, so it is
+        rewritten in place at ``position`` from the scenario's own store (refused when that store was already
+        cleared). ``"append"``: the group exists and gains the event along ``event_iloc``. ``"create"``: the group
+        does not exist yet. An unconditional re-append would duplicate the event (measured ``[0, 1, 1]``). The writes
+        themselves stay in the caller, inside its ``deferred_consolidation`` block.
+        """
+        store = self._analysis.analysis_paths.analysis_timeseries_zarr
+        path = getattr(scen.scen_paths, self._TIMESERIES_MODE_CONFIG[ts_mode])
+        state = self._timeseries_group_state(store, group)
+        present = state is not None and event_iloc in state[1]
+        slug = self._event_slug(event_iloc)
+        if not path.exists():
+            if present and cleared_already:
+                return "verified", None, None
+            if present:
+                raise ProcessingError(
+                    "consolidate timeseries",
+                    path,
+                    f"scenario {slug} (event_iloc {event_iloc}) is in {store.name} but its own store is gone and the "
+                    "log records no verified clearing, so the stored slice cannot be checked or rewritten",
+                )
+            raise FileNotFoundError(
+                f"Timeseries file not found: {path}. Run timeseries processing before consolidating."
+            )
+        ds = self._timeseries_slice(scen, ts_mode, event_iloc, start, step, axis)
+        if present:
+            if self._stored_slice_equals(store, group, ds, event_iloc):
+                return "verified", None, None
+            return "rewrite", ds, state[1].index(event_iloc)
+        if state is not None:
+            missing = sorted(set(state[0]) - set(ds.data_vars))
+            extra = sorted(set(ds.data_vars) - set(state[0]))
+            if missing or extra:
+                raise ProcessingError(
+                    "append a scenario to the consolidated time series",
+                    store,
+                    f"scenario {slug} (event_iloc {event_iloc}) differs from {group} in its variables: "
+                    f"missing {missing}, not in the store {extra}; nothing was written",
+                )
+            return "append", ds, None
+        return "create", ds, None
+
+    def consolidate_timeseries(self, verbose: bool = False) -> Path:
+        """Append each scenario's SWMM node and link time series to ``analysis_timeseries.zarr``, one at a time.
+
+        Written through ``append_zarr(..., append_dim="event_iloc")`` inside ``deferred_consolidation(store)``, so
+        the store's index is rebuilt once, at the end. With ``toggle_clear_scenario_timeseries_after_consolidation``
+        on, a scenario's own node and link stores are deleted as soon as both of its slices have been read back from
+        the store and found equal, so peak disk use stays near one copy of the series. The store is NOT a member of
+        ``ROOT_TREE_NAMES`` and not an analysis-level artifact of the consolidation delete: neither the reprocess
+        delete nor the consolidation delete removes it, because with clearing on it holds the only copy.
+        """
+        store = self._analysis.analysis_paths.analysis_timeseries_zarr
+        if store is None:
+            raise ValueError("analysis_timeseries_zarr path is not configured on AnalysisPaths.")
+        clear = bool(
+            getattr(self._analysis.cfg_analysis, "toggle_clear_scenario_timeseries_after_consolidation", False)
+        )
+        first = TRITONSWMM_scenario(self._analysis.df_sims.index[0], self._analysis)
+        modes = [
+            (ts_mode, self._TIMESERIES_MODE_TO_TREE_PATH[ts_mode])
+            for ts_mode, attr in self._TIMESERIES_MODE_CONFIG.items()
+            if getattr(first.scen_paths, attr) is not None
+        ]
+        if not modes:
+            return store
+        starts, step, axis = self._timeseries_axis()
+        with deferred_consolidation(store):
+            for event_iloc in self._analysis.df_sims.index:
+                event_iloc = int(event_iloc)
+                scen = TRITONSWMM_scenario(event_iloc, self._analysis)
+                log = scen.get_log("tritonswmm")
+                verified = {}
+                for ts_mode, group in modes:
+                    flag_name = (
+                        "consolidated_node_timeseries_cleared"
+                        if ts_mode.endswith("_node_ts")
+                        else "consolidated_link_timeseries_cleared"
+                    )
+                    cleared_field = getattr(log, flag_name, None)
+                    cleared_already = bool(cleared_field is not None and cleared_field.get())
+                    action, ds, position = self._plan_timeseries_write(
+                        scen, ts_mode, group, event_iloc, starts[event_iloc], step, axis, cleared_already
+                    )
+                    if action == "rewrite":
+                        append_zarr(
+                            ds.drop_vars([c for c in ds.coords if "event_iloc" not in ds[c].dims]),
+                            store,
+                            group=group,
+                            consolidate=False,
+                            mode="r+",
+                            region={"event_iloc": slice(position, position + 1)},
+                        )
+                    elif action == "append":
+                        append_zarr(ds, store, group=group, consolidate=False, mode="a", append_dim="event_iloc")
+                    elif action == "create":
+                        append_zarr(ds, store, group=group, consolidate=False, mode="a")
+                    ok = action == "verified" or self._stored_slice_equals(store, group, ds, event_iloc)
+                    if not ok:
+                        raise ProcessingError(
+                            "read back the consolidated time series",
+                            store,
+                            f"the slice of scenario {self._event_slug(event_iloc)} (event_iloc {event_iloc}) in "
+                            f"{group} does not equal the data it was written from; its own store was kept",
+                        )
+                    verified[ts_mode] = flag_name
+                if clear:
+                    self._clear_scenario_timeseries(scen, log, verified)
+        return store
+
+    def _clear_scenario_timeseries(self, scen: TRITONSWMM_scenario, log, verified: dict[str, str]) -> None:
+        """Delete the scenario's node and link time-series stores and record each deletion in its model log.
+
+        Only called once every slice of the scenario has passed its read-back. The deletion goes through the
+        deletion tool so the scenario's disk-use sentinel is adjusted once.
+        """
+        from hhemt.du_sentinels import delete_and_account
+        from hhemt.log import LogField
+
+        paths = [getattr(scen.scen_paths, self._TIMESERIES_MODE_CONFIG[m]) for m in verified]
+        delete_and_account(
+            [p for p in paths if p is not None and p.exists()], scope_dir=scen.scen_paths.sim_folder, scope="scenario"
+        )
+        for flag_name in verified.values():
+            if getattr(log, flag_name) is None:
+                setattr(log, flag_name, LogField())
+                log.model_post_init(None)
+            getattr(log, flag_name).set(True)
 
     def _retrieve_combined_timeseries(self, ts_mode: str) -> xr.Dataset:
         """Load per-scenario TIMESERIES zarrs and concatenate them along event_iloc.

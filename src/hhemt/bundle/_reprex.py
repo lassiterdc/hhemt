@@ -198,18 +198,45 @@ def _scan_zero_user_info(bundle_root: Path) -> list[str]:
         return [exc.reason]
 
 
-def extract_reprex_bundle(zip_path: Path) -> Path:
-    """Extract an emitted bundle ``.zip`` to a sibling directory (same stem) and return
+def _refuse_to_replace_unsafe_destination(dest: Path, zip_path: Path) -> None:
+    """Raise ``ProcessingError``, before ``dest`` is deleted, when that would destroy more than an old extraction.
+
+    ``extract_reprex_bundle`` replaces an existing ``dest``, and a caller can name any directory. Refused: a ``dest``
+    that is, or contains, the zip being extracted (the deletion would remove the zip before it is opened, and every
+    file beside it, and a filesystem root contains every zip, so a root is refused by this same rule); the user's home
+    directory; and a directory that is, or contains, the current working directory. The default destination (a
+    sibling of the zip named for its stem) can be none of the first kind, and is subject to the rest.
+    """
+    resolved = dest.resolve()
+    reason = None
+    if zip_path.resolve().is_relative_to(resolved):
+        reason = "it is, or contains, the zip being extracted, so replacing it would delete the zip first"
+    elif resolved == Path.home().resolve():
+        reason = "it is the user's home directory"
+    elif Path.cwd().resolve().is_relative_to(resolved):
+        reason = "it is, or contains, the current working directory"
+    if reason is not None:
+        raise ProcessingError(
+            "extract a reprex bundle",
+            dest,
+            f"refusing to replace the destination directory: {reason}. Name an empty or absent directory.",
+        )
+
+
+def extract_reprex_bundle(zip_path: Path, dest: Path | None = None) -> Path:
+    """Extract an emitted bundle ``.zip`` to ``dest`` (default: a sibling directory, same stem) and return
     it. The reprex round-trip consumes a directory root (``Bundle.from_directory``),
     while ``emit_bundle`` yields a zip; the emit-side facades call this so a reprex
-    bundle is directly consumable."""
+    bundle is directly consumable. An existing ``dest`` is replaced, except one it is unsafe to delete
+    (see ``_refuse_to_replace_unsafe_destination``), which raises ``ProcessingError`` before anything is removed."""
     import shutil
 
     from hhemt.bundle._archive import extract_zip
 
     zip_path = Path(zip_path)
-    dest = zip_path.with_suffix("")  # strip the trailing ".zip"
+    dest = Path(dest) if dest is not None else zip_path.with_suffix("")  # strip the trailing ".zip"
     if dest.exists():
+        _refuse_to_replace_unsafe_destination(dest, zip_path)
         # EXEMPT-DU: bundle-root
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
@@ -401,3 +428,177 @@ def _emit_amendments(
         )
 
     return amendments
+
+
+# ---- Reference-output comparison ---------------------------------------------------------------------------------
+
+#: Where the emit carries the producer's ``analysis.test()`` summaries (``bundle/_emit.py::_copy_reference_outputs``).
+REFERENCE_OUTPUTS_DIRNAME = "reference_outputs"
+
+#: The shape of a stored summary under both ``reference_outputs/`` and a reproducer's ``{analysis_dir}/_test/``.
+_REFERENCE_STORE_GLOB = "group_*/sims/*/processed/*_summary.*"
+
+
+@dataclass(frozen=True)
+class ReferenceStoreVerdict:
+    """The verdict on one reference store.
+
+    ``status`` is ``equal``, ``differs`` or ``missing_in_rerun`` (the bundle carries the store and the re-run produced
+    no store at that path). ``variables`` maps each variable that differs, is absent from the re-run, or differs in
+    shape to a short reason that names the largest absolute difference when there is one.
+    """
+
+    store: str
+    status: Literal["equal", "differs", "missing_in_rerun"]
+    variables: dict[str, str] = field(default_factory=dict)
+    extra_variables: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReferenceComparison:
+    """The per-store verdicts of ``compare_reference_outputs``.
+
+    ``extra_stores`` are summary stores the re-run produced that the bundle does not carry, and each store's
+    ``extra_variables`` are variables the re-run holds that the reference does not. Both are REPORTED and neither fails
+    the comparison: the reference is the producer's own subset, and a later toolkit may add a store or a variable
+    without changing any value the reference records.
+    """
+
+    verdicts: tuple[ReferenceStoreVerdict, ...]
+    extra_stores: tuple[str, ...]
+    rtol: float
+    atol: float
+
+    @property
+    def passed(self) -> bool:
+        """True when the bundle carried at least one store and every one is ``equal``."""
+        return bool(self.verdicts) and all(v.status == "equal" for v in self.verdicts)
+
+    def summary(self) -> str:
+        """One line per store that did not pass, naming the store and each variable, then a totals line."""
+        lines = []
+        for verdict in self.verdicts:
+            if verdict.status == "missing_in_rerun":
+                lines.append(f"{verdict.store}: not produced by the re-run")
+            elif verdict.status == "differs":
+                for name, reason in sorted(verdict.variables.items()):
+                    lines.append(f"{verdict.store}: variable {name!r} {reason}")
+        equal = sum(v.status == "equal" for v in self.verdicts)
+        lines.append(
+            f"{equal} of {len(self.verdicts)} reference stores equal (rtol={self.rtol}, atol={self.atol}); "
+            f"{len(self.extra_stores)} store(s) in the re-run are not in the bundle"
+        )
+        return "\n".join(lines)
+
+    def raise_if_failed(self) -> None:
+        """Raise ``ProcessingError`` carrying ``summary()`` unless ``passed``."""
+        if not self.passed:
+            raise ProcessingError("compare re-run outputs with the bundle's reference outputs", None, self.summary())
+
+
+def _open_reference_store(path: Path):
+    """The store at ``path`` as a fully loaded Dataset: a zarr store through its index when it has one, else NetCDF."""
+    import xarray as xr
+
+    from hhemt.utils import open_store
+
+    if path.is_dir():
+        with open_store(path, kind="dataset", chunks=None) as ds:
+            return ds.load()
+    with xr.open_dataset(path, engine="h5netcdf") as ds:
+        return ds.load()
+
+
+def _values_equal(reference, rerun, rtol: float, atol: float) -> tuple[bool, str]:
+    """Whether two arrays hold the same values, NaN-aware, and a reason when they do not.
+
+    Exact (``rtol == atol == 0``) uses equality with NaN and NaT equal to themselves, so a value that differs by one
+    unit in the last place is a difference. Otherwise numeric arrays are compared with ``numpy.isclose`` (NaN equal to
+    NaN); non-numeric arrays (text, times) are always compared exactly.
+    """
+    import numpy as np
+
+    a, b = np.asarray(reference), np.asarray(rerun)
+    if a.shape != b.shape:
+        return False, f"differs in shape: reference {a.shape}, re-run {b.shape}"
+    numeric = a.dtype.kind in "fc" and b.dtype.kind in "fiuc"
+    if a.dtype.kind in "mM" and b.dtype.kind == a.dtype.kind:
+        same = (a == b) | (np.isnat(a) & np.isnat(b))
+    elif numeric and (rtol or atol):
+        same = np.isclose(a, b, rtol=rtol, atol=atol, equal_nan=True)
+    elif a.dtype.kind in "fc" or b.dtype.kind in "fc":
+        same = (a == b) | (np.isnan(a.astype(float)) & np.isnan(b.astype(float)))
+    else:
+        same = a == b
+    if bool(np.all(same)):
+        return True, ""
+    reason = f"differs at {int(np.size(same) - np.count_nonzero(same))} of {int(np.size(same))} values"
+    if a.dtype.kind in "fiu" and b.dtype.kind in "fiu":
+        with np.errstate(invalid="ignore"):
+            gap = np.nanmax(np.abs(a.astype(float) - b.astype(float))[~np.asarray(same)])
+        reason += f" (largest absolute difference {float(gap)!r})"
+    return False, reason
+
+
+def compare_reference_outputs(
+    bundle_root: Path, analysis_dir: Path, *, rtol: float = 0.0, atol: float = 0.0
+) -> ReferenceComparison:
+    """Compare a reproducer's ``analysis.test()`` summaries with the producer's, carried in the bundle.
+
+    Each ``reference_outputs/group_i/sims/{event_id}/processed/*_summary.*`` store of ``bundle_root`` is compared,
+    variable by variable and coordinate by coordinate, with the store at the same path under ``{analysis_dir}/_test/``
+    (the reproducer's own ``test()`` output), NaN-aware.
+
+    Tolerance. The default is EXACT (``rtol = atol = 0``), because the emit carries these stores "for per-arch
+    within-family EXACT equality" (``_copy_reference_outputs``): the producer's ``test()`` and a reproducer's on the
+    same CPU or GPU family and the same pinned solver build are expected to agree to the bit. A re-run on a DIFFERENT
+    architecture or compiler need not agree to the bit, and no tolerance is wide enough to be right for every
+    variable, so the caller who knows the architectures differ passes ``rtol`` and ``atol`` explicitly; they apply to
+    floating-point variables only (text, integers and times stay exact).
+
+    What counts as a failure. A store the bundle carries and the re-run did not produce; a variable the reference holds
+    that the re-run lacks; a variable or coordinate whose values or shape differ. What does not: a store or variable
+    only the re-run has (reported in ``extra_stores`` and ``extra_variables``).
+
+    Raises ``ProcessingError`` when the bundle carries no ``reference_outputs/`` (it was emitted with no producer
+    ``test()``), because an absent reference cannot support a claim of reproduction.
+    """
+    bundle_root, analysis_dir = Path(bundle_root), Path(analysis_dir)
+    ref_root = bundle_root / REFERENCE_OUTPUTS_DIRNAME
+    reference = sorted(ref_root.glob(_REFERENCE_STORE_GLOB)) if ref_root.is_dir() else []
+    if not reference:
+        raise ProcessingError(
+            "compare re-run outputs with the bundle's reference outputs",
+            ref_root,
+            "the bundle carries no reference_outputs/ summary stores (it was emitted with no producer "
+            "analysis.test()), so there is nothing to compare the re-run with",
+        )
+    test_root = analysis_dir / "_test"
+    verdicts: list[ReferenceStoreVerdict] = []
+    for ref_path in reference:
+        rel = ref_path.relative_to(ref_root).as_posix()
+        rerun_path = test_root / rel
+        if not rerun_path.exists():
+            verdicts.append(ReferenceStoreVerdict(rel, "missing_in_rerun"))
+            continue
+        ref_ds, new_ds = _open_reference_store(ref_path), _open_reference_store(rerun_path)
+        differing: dict[str, str] = {}
+        for name in sorted(ref_ds.variables, key=str):
+            if name not in new_ds.variables:
+                differing[str(name)] = "is absent from the re-run"
+                continue
+            same, reason = _values_equal(ref_ds[name].values, new_ds[name].values, rtol, atol)
+            if not same:
+                differing[str(name)] = reason
+        extra = tuple(sorted(str(n) for n in new_ds.variables if n not in ref_ds.variables))
+        verdicts.append(
+            ReferenceStoreVerdict(rel, "differs" if differing else "equal", variables=differing, extra_variables=extra)
+        )
+    carried = {v.store for v in verdicts}
+    extra_stores = tuple(
+        sorted(p.relative_to(test_root).as_posix() for p in test_root.glob(_REFERENCE_STORE_GLOB))
+        if test_root.is_dir()
+        else ()
+    )
+    extra_stores = tuple(s for s in extra_stores if s not in carried)
+    return ReferenceComparison(tuple(verdicts), extra_stores, rtol, atol)

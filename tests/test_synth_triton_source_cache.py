@@ -218,10 +218,12 @@ _RUNS_ROOT_SITES = {
     # Assertion sites that check the path's VALUE; comparing a function against its own return would assert nothing.
     "tests/test_cache_clear.py": "asserts the path's value",
     "tests/test_cache_substrate.py": "asserts the path's value",
-    # Stand-in trees laid out like a runs root, so the code under test (the marker derivation and the harness's
-    # reach observer) has a layout to recognise; they build no product path.
+    # Stand-in trees laid out like a runs root, so the code under test (the marker derivation, the harness's
+    # reach observer and the report rule's system-config lookup) has a layout to recognise; they build no product
+    # path.
     "tests/test_shared_runs_root_marker.py": "stand-in tree named like a runs root",
     "tests/test_suite_chunk_workers.py": "stand-in tree named like a runs root",
+    "tests/test_eda_dem_figures_real_layout.py": "stand-in tree named like a runs root",
 }
 
 
@@ -263,8 +265,9 @@ def test_single_sourced_runs_root_literal():
       test, so it imports ``hhemt`` only lazily inside functions (its comment at lines 857-862).
     - ``tests/fixtures/test_case_builder.py``: the retained ``runs_root_override`` and scratch branches.
     - ``tests/test_cache_clear.py`` and ``tests/test_cache_substrate.py``: assertions on the path's value.
-    - ``tests/test_shared_runs_root_marker.py`` and ``tests/test_suite_chunk_workers.py``: stand-in trees named
-      like a runs root, which build no product path.
+    - ``tests/test_shared_runs_root_marker.py``, ``tests/test_suite_chunk_workers.py`` and
+      ``tests/test_eda_dem_figures_real_layout.py``: stand-in trees named like a runs root, which build no product
+      path.
 
     Granularity limit, stated so the guard is not over-read: the scan matches the double-quoted literal in ``.py``
     files and counts a FILE once, so a new file turns it red but a second definition added to an already

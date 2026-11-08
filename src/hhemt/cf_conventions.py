@@ -9,7 +9,16 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import numpy as np
 import xarray as xr
+
+from hhemt.constants import (
+    FLOW_ROUTING_CONTINUITY_TERMS,
+    LST_COL_HEADERS_FLOW_CLASSIFICATION_SUMMARY,
+    LST_COL_HEADERS_OUTFALL_LOADING_SUMMARY,
+    LST_COL_HEADERS_PUMPING_SUMMARY,
+    LST_COL_HEADERS_STORAGE_VOLUME_SUMMARY,
+)
 
 CF_CONVENTIONS_VERSION = "CF-1.13"
 
@@ -202,6 +211,41 @@ _CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = {
     "flooding_max": _cf(
         "Maximum flooding rate at the node over the report steps", "m3 s-1", cell_methods="time: maximum"
     ),
+    # TRITON-SWMM coupling outputs of the coupled node store. The sign is the solver's and SWMM's own: the
+    # exchange is added to the node's lateral inflow, so positive is water entering the sewer.
+    "is_coupling_node": {
+        **_cf("Whether the node is a TRITON-SWMM coupling node", "1"),
+        # int8 like the flag variable: CF 3.5 wants flag_values to have the variable's type, and a list becomes int64
+        "flag_values": np.array([0, 1], dtype="int8"),
+        "flag_meanings": "not_coupled coupled",
+    },
+    "coupling_exchange_flow": _cf(
+        "Exchange flow between the street surface and the sewer at the coupling node", "m3 s-1"
+    ),
+    "coupling_exchange_peak_to_network": _cf(
+        "Largest surface-to-sewer exchange flow at the coupling node", "m3 s-1", cell_methods="time: maximum"
+    ),
+    "coupling_exchange_peak_to_surface": _cf(
+        "Largest sewer-to-surface exchange flow at the coupling node", "m3 s-1", cell_methods="time: maximum"
+    ),
+    "coupling_exchange_volume_to_network": _cf(
+        "Water moved from the street surface into the sewer at the coupling node", "m3", cell_methods="time: sum"
+    ),
+    "coupling_exchange_volume_to_surface": _cf(
+        "Water moved from the sewer onto the street at the coupling node", "m3", cell_methods="time: sum"
+    ),
+    "coupling_exchange_volume_net": _cf(
+        "Net water moved between the street surface and the sewer at the coupling node", "m3", cell_methods="time: sum"
+    ),
+    "coupling_exchange_time_of_peak_to_network": _cf(
+        "Time of the largest surface-to-sewer exchange flow (minutes from the start of the simulation)", "min"
+    ),
+    "coupling_exchange_time_of_peak_to_surface": _cf(
+        "Time of the largest sewer-to-surface exchange flow (minutes from the start of the simulation)", "min"
+    ),
+    "coupling_exchange_duration_to_surface": _cf(
+        "Time during which water ran from the sewer onto the street at the coupling node", "s", cell_methods="time: sum"
+    ),
     # SWMM node report columns (Node Inflow Summary and Node Flooding Summary), read as SWMM printed them
     "max_lateral_inflow": _cf(
         "Maximum lateral inflow to the node (Node Inflow Summary)", "m3 s-1", cell_methods="time: maximum"
@@ -309,6 +353,361 @@ _CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = {
         "percent",
     ),
 }
+
+
+# --- The SWMM output inventory: the variables the node and link stores gain from the binary output and report
+#
+# Grounded in `swmm_output_parser` (the series from the binary output, the tables from the report) and in SWMM's
+# `statsrpt.c` and `report.c` print formats. Every name below is emitted by that module, so none is a phantom
+# `variableMeasured` claim; `tests/test_cf_conventions.py` holds the emitted-name set and
+# `tests/test_quantity_provenance.py` holds this map in bijection with the provenance table. The extra `comment` key
+# carries what an ABSENT row or an unprinted rank means for a table, which is a property of the table and not of
+# the unit.
+_HOURS_FLOOR_COMMENT = "SWMM prints the larger of 0.01 and the computed hours, so a printed 0.01 means at most 0.01 h."
+_RANKED_ALL_CLEAR_COMMENT = (
+    "An unprinted rank is NaN (the empty string for an id); when SWMM prints its all-clear sentence or no section "
+    "every rank is. Such a sentence does not prove stability or convergence: SWMM prints it whenever the top "
+    "element's index is 0, which is also the case of a nonzero value at the first node or link of the file."
+)
+_ABSENT_ROW_COMMENTS = {
+    "surcharged": (
+        "NaN where the Node Surcharge Summary does not list the node: SWMM omits a node whose time surcharged is "
+        "exactly 0, so an unlisted node never surcharged and its hours surcharged and height above crown were "
+        "exactly 0 (a node never at or above its crown has maximum depth plus invert below the crown). NaN for "
+        "every node when SWMM prints no such table."
+    ),
+    "surcharged_rim": (
+        "NaN where the Node Surcharge Summary does not list the node; SWMM prints this column only for a node that "
+        "surcharged, so an unlisted node's value is not stated."
+    ),
+    "flooded": (
+        "NaN where the Node Flooding Summary does not list the node: SWMM omits a node whose time flooded is "
+        "exactly 0, so an unlisted node never flooded."
+    ),
+    "conduit": (
+        "NaN where the Conduit Surcharge Summary does not list the conduit: SWMM omits a conduit whose four "
+        "full-time totals (both ends, upstream, downstream, above full normal flow) are all exactly 0."
+    ),
+    "conduit_capacity": (
+        "NaN where the Conduit Surcharge Summary does not list the conduit, which does not state this column: "
+        "capacity-limited hours are not part of the omission test (the first four totals are) and may be nonzero."
+    ),
+    "storage": "NaN for a node that is not a storage unit, and for every node when the model has no storage unit.",
+    "outfall": "NaN for a node that is not an outfall, and for every node when the model has no outfall.",
+    "pump": "NaN for a link that is not a pump, and for every link when the model has no pump.",
+    "flow_class": (
+        "NaN for a link that is not a conduit (or whose cross section is a dummy), and for every link when SWMM "
+        "prints no Flow Classification Summary (it does so only for Dynamic Wave routing)."
+    ),
+    "node_depth": "NaN for every node when SWMM prints no Node Depth Summary (a model with no links).",
+}
+
+
+def _with_comment(entry: dict[str, str | None], comment: str) -> dict[str, str | None]:
+    return {**entry, "comment": comment}
+
+
+def _string_variable(long_name: str, comment: str) -> dict[str, str | None]:
+    """An entry for a string-valued variable: it states no unit (a string has none) and says why in `comment`."""
+    return {**_cf(long_name, None), "comment": comment}
+
+
+def _swmm_inventory_cf_entries() -> dict[str, dict[str, str | None]]:
+    """CF entries for the SWMM output inventory (the series, tables and run-level figures the parser emits)."""
+    mx, mn, su, me = "time: maximum", "time: minimum", "time: sum", "time: mean"
+    entries: dict[str, dict[str, str | None]] = {
+        # Per-step series read from the binary output, and their reductions
+        "volume": _cf("Stored volume at the node at each report step (ponded volume above full depth included)", "m3"),
+        "lateral_inflow": _cf("Lateral inflow to the node at each report step (signed; negative is outflow)", "m3 s-1"),
+        "link_volume": _cf("Volume of water in the link at each report step", "m3"),
+        "volume_last": _cf("Stored volume at the node at the final report step", "m3"),
+        "volume_max": _cf("Maximum stored volume at the node over the report steps", "m3", cell_methods=mx),
+        "lateral_inflow_last": _cf("Lateral inflow to the node at the final report step (signed)", "m3 s-1"),
+        "lateral_inflow_max": _cf(
+            "Maximum lateral inflow to the node over the report steps (largest signed value)", "m3 s-1", cell_methods=mx
+        ),
+        "link_volume_last": _cf("Volume of water in the link at the final report step", "m3"),
+        "link_volume_max": _cf("Maximum volume of water in the link over the report steps", "m3", cell_methods=mx),
+        # Node Depth Summary
+        "average_depth": _with_comment(
+            _cf("Average depth at the node over the routing steps (Node Depth Summary)", "m", cell_methods=me),
+            _ABSENT_ROW_COMMENTS["node_depth"],
+        ),
+        "max_depth": _with_comment(
+            _cf("Maximum depth at the node over every routing step (Node Depth Summary)", "m", cell_methods=mx),
+            _ABSENT_ROW_COMMENTS["node_depth"],
+        ),
+        "max_hgl": _with_comment(
+            _cf(
+                "Maximum hydraulic grade line at the node: maximum depth plus invert (Node Depth Summary)",
+                "m",
+                cell_methods=mx,
+            ),
+            _ABSENT_ROW_COMMENTS["node_depth"],
+        ),
+        "time_of_max_depth": _with_comment(
+            _cf("Time of maximum depth at the node (Node Depth Summary)", "min"), _ABSENT_ROW_COMMENTS["node_depth"]
+        ),
+        # Node Surcharge Summary
+        "hours_surcharged": _with_comment(
+            _cf(
+                "Hours the node was surcharged: water at or above the crown of its highest conduit "
+                "(Node Surcharge Summary)",
+                "h",
+            ),
+            f"{_ABSENT_ROW_COMMENTS['surcharged']} {_HOURS_FLOOR_COMMENT}",
+        ),
+        "max_height_above_crown": _with_comment(
+            _cf(
+                "Maximum height of water above the crown of the highest conduit at the node (Node Surcharge Summary)",
+                "m",
+                cell_methods=mx,
+            ),
+            _ABSENT_ROW_COMMENTS["surcharged"],
+        ),
+        "smallest_depth_below_rim": _with_comment(
+            _cf(
+                "Minimum depth of water below the node's rim: full depth minus maximum depth, floored at 0 "
+                "(Node Surcharge Summary)",
+                "m",
+                cell_methods=mn,
+            ),
+            _ABSENT_ROW_COMMENTS["surcharged_rim"],
+        ),
+        # Storage Volume Summary
+        "storage_average_volume": _cf(
+            "Average stored volume of the storage unit (Storage Volume Summary)", "10^3 m3", cell_methods=me
+        ),
+        "storage_average_fill": _cf(
+            "Average fill of the storage unit as a percentage of its full volume (Storage Volume Summary)",
+            "percent",
+            cell_methods=me,
+        ),
+        "storage_evaporation_loss": _cf(
+            "Evaporation loss of the storage unit as a percentage of its inflow (Storage Volume Summary)", "percent"
+        ),
+        "storage_exfiltration_loss": _cf(
+            "Exfiltration loss of the storage unit as a percentage of its inflow (Storage Volume Summary)", "percent"
+        ),
+        "storage_max_volume": _cf(
+            "Maximum stored volume of the storage unit (Storage Volume Summary)", "10^3 m3", cell_methods=mx
+        ),
+        "storage_max_fill": _cf(
+            "Maximum fill of the storage unit as a percentage of its full volume (Storage Volume Summary)",
+            "percent",
+            cell_methods=mx,
+        ),
+        "time_of_storage_max_volume": _cf(
+            "Time of maximum stored volume of the storage unit (Storage Volume Summary)", "min"
+        ),
+        "storage_max_outflow": _cf(
+            "Maximum outflow from the storage unit (Storage Volume Summary)", "m3 s-1", cell_methods=mx
+        ),
+        # Outfall Loading Summary (flow columns; `outfall_total_vol` moved here from the water-quality map)
+        "outfall_flow_frequency": _cf(
+            "Share of routing steps with flow at the outfall (Outfall Loading Summary, Flow Freq)", "percent"
+        ),
+        "outfall_average_flow": _cf(
+            "Average flow at the outfall over the steps with flow (Outfall Loading Summary)", "m3 s-1", cell_methods=me
+        ),
+        "outfall_max_flow": _cf("Maximum flow at the outfall (Outfall Loading Summary)", "m3 s-1", cell_methods=mx),
+        "outfall_total_vol": _cf(
+            "Total volume discharged at the outfall over the event (Outfall Loading Summary)", "10^6 L", cell_methods=su
+        ),
+        "outfall_system_max_flow": _cf(
+            "Maximum over the routing steps of the summed flow of all outfalls (Outfall Loading Summary, System row)",
+            "m3 s-1",
+            cell_methods=mx,
+        ),
+        # Flow Classification Summary
+        "conduit_lengthening_ratio": _cf(
+            "Adjusted over actual length of the conduit (Flow Classification Summary)", "1"
+        ),
+        "flow_class_dry": _cf("Fraction of the routing time the conduit was dry (Flow Classification Summary)", "1"),
+        "flow_class_upstream_dry": _cf(
+            "Fraction of the routing time the conduit's upstream end was dry (Flow Classification Summary)", "1"
+        ),
+        "flow_class_downstream_dry": _cf(
+            "Fraction of the routing time the conduit's downstream end was dry (Flow Classification Summary)", "1"
+        ),
+        "flow_class_subcritical": _cf(
+            "Fraction of the routing time the conduit's flow was subcritical (Flow Classification Summary)", "1"
+        ),
+        "flow_class_supercritical": _cf(
+            "Fraction of the routing time the conduit's flow was supercritical (Flow Classification Summary)", "1"
+        ),
+        "flow_class_upstream_critical": _cf(
+            "Fraction of the routing time the conduit's flow was critical at its upstream end "
+            "(Flow Classification Summary)",
+            "1",
+        ),
+        "flow_class_downstream_critical": _cf(
+            "Fraction of the routing time the conduit's flow was critical at its downstream end "
+            "(Flow Classification Summary)",
+            "1",
+        ),
+        "normal_flow_limited_fraction": _cf(
+            "Fraction of the routing time the conduit's flow was limited to its normal flow "
+            "(Flow Classification Summary)",
+            "1",
+        ),
+        "inlet_control_fraction": _cf(
+            "Fraction of the routing time the conduit was inlet controlled (Flow Classification Summary)", "1"
+        ),
+        # Conduit Surcharge Summary
+        "hours_full_both_ends": _cf("Hours the conduit was full at both ends (Conduit Surcharge Summary)", "h"),
+        "hours_full_upstream": _cf("Hours the conduit was full at its upstream end (Conduit Surcharge Summary)", "h"),
+        "hours_full_downstream": _cf(
+            "Hours the conduit was full at its downstream end (Conduit Surcharge Summary)", "h"
+        ),
+        "hours_above_full_normal_flow": _cf(
+            "Hours the conduit's flow was above its full normal flow (Conduit Surcharge Summary)", "h"
+        ),
+        "hours_capacity_limited": _cf("Hours the conduit's flow was capacity limited (Conduit Surcharge Summary)", "h"),
+        # Pumping Summary
+        "pump_utilization": _cf("Percent of the run the pump was utilized (Pumping Summary)", "percent"),
+        "pump_startups": _cf("Number of start-ups of the pump (Pumping Summary)", "1"),
+        "pump_average_flow": _cf(
+            "Average flow of the pump while running (Pumping Summary; printed with two decimals)",
+            "m3 s-1",
+            cell_methods=me,
+        ),
+        "pump_total_volume": _cf("Total volume pumped over the run (Pumping Summary)", "10^6 L", cell_methods=su),
+        "pump_energy": _cf("Energy used by the pump over the run (Pumping Summary)", "kW h", cell_methods=su),
+        "pump_off_curve_low": _cf("Percent of the pump's running time below its curve (Pumping Summary)", "percent"),
+        "pump_off_curve_high": _cf("Percent of the pump's running time above its curve (Pumping Summary)", "percent"),
+        # Run-level continuity and routing figures (data variables; the first three were dataset attributes before)
+        "flow_continuity_error": _cf(
+            "Continuity error of the flow routing balance over the run (Flow Routing Continuity)", "percent"
+        ),
+        "runoff_continuity_error": _cf(
+            "Continuity error of the runoff quantity balance over the run (Runoff Quantity Continuity)", "percent"
+        ),
+        "system_flooding": _cf(
+            "Flooding loss of the flow routing balance over the run (Flow Routing Continuity)", "10^6 L"
+        ),
+        "routing_step_smallest": _cf(
+            "Smallest routing time step of the run (Routing Time Step Summary)", "s", cell_methods=mn
+        ),
+        "routing_step_mean": _cf(
+            "Average routing time step of the run (Routing Time Step Summary)", "s", cell_methods=me
+        ),
+        "routing_step_largest": _cf(
+            "Largest routing time step of the run (Routing Time Step Summary)", "s", cell_methods=mx
+        ),
+        "routing_steady_state_time": _cf(
+            "Percent of the routing time the system was in steady state (Routing Time Step Summary)", "percent"
+        ),
+        "routing_iterations_mean": _cf(
+            "Average iterations per routing step (Routing Time Step Summary)", "1", cell_methods=me
+        ),
+        "routing_nonconverging_steps": _cf(
+            "Percent of routing steps that did not converge (Routing Time Step Summary)", "percent"
+        ),
+        "routing_step_frequency": _with_comment(
+            _cf(
+                "Percent of routing steps in each step-size bin (Routing Time Step Summary, Time Step Frequencies)",
+                "percent",
+            ),
+            "On dimension routing_step_bin, whose coordinates routing_step_bin_upper and routing_step_bin_lower give "
+            "each bin's bounds in seconds. SWMM prints the table only for Dynamic Wave routing with a Courant "
+            "factor above 0; "
+            "otherwise every value is NaN.",
+        ),
+    }
+    for label, stem in FLOW_ROUTING_CONTINUITY_TERMS.items():
+        entries[f"routing_continuity_{stem}"] = _cf(
+            f"{label} of the flow routing balance over the run (Flow Routing Continuity)", "10^6 L"
+        )
+    # Ranked lists of at most five elements, on dimension swmm_stat_rank
+    entries["flow_instability_link_id"] = _string_variable(
+        "Identifier of the link at each rank of the highest flow instability indexes "
+        "(Highest Flow Instability Indexes)",
+        f"A string variable, so it states no unit. {_RANKED_ALL_CLEAR_COMMENT}",
+    )
+    entries["flow_instability_index"] = _with_comment(
+        _cf(
+            "Flow instability index of the link at each rank (flow-turn count scaled by 100 / (2/3 (N - 2)), "
+            "N the routing-step count)",
+            "1",
+        ),
+        _RANKED_ALL_CLEAR_COMMENT,
+    )
+    entries["nonconverging_node_id"] = _string_variable(
+        "Identifier of the node at each rank of the most frequently nonconverging nodes "
+        "(Most Frequent Nonconverging Nodes)",
+        f"A string variable, so it states no unit. {_RANKED_ALL_CLEAR_COMMENT}",
+    )
+    entries["nonconverging_node_frequency"] = _with_comment(
+        _cf(
+            "Share of routing steps in which the node at each rank did not converge "
+            "(Most Frequent Nonconverging Nodes)",
+            "percent",
+        ),
+        _RANKED_ALL_CLEAR_COMMENT,
+    )
+    courant = (
+        "SWMM prints this list only for Dynamic Wave routing with a Courant factor above 0; it prints None, or no "
+        "section, otherwise, and every rank is then NaN (the empty string for an id or kind)."
+    )
+    entries["courant_critical_element_id"] = _string_variable(
+        "Identifier of the node or link at each rank of the time-step critical elements (Time-Step Critical Elements)",
+        f"A string variable, so it states no unit. {courant}",
+    )
+    entries["courant_critical_element_kind"] = _string_variable(
+        "Whether the time-step critical element at each rank is a node or a link (Time-Step Critical Elements)",
+        f"A string variable (node or link), so it states no unit. {courant}",
+    )
+    entries["courant_critical_frequency"] = _with_comment(
+        _cf(
+            "Share of routing steps in which the element at each rank was Courant-critical "
+            "(Time-Step Critical Elements)",
+            "percent",
+        ),
+        courant,
+    )
+    highest = (
+        "SWMM prints this list only for Dynamic Wave routing; otherwise every rank is NaN (the empty string for "
+        "an id). It is not derivable from flow_balance_error, which SWMM prints in litres for a node whose outflow is "
+        "below 1 ft3."
+    )
+    entries["continuity_error_node_id"] = _string_variable(
+        "Identifier of the node at each rank of the highest continuity errors (Highest Continuity Errors)",
+        f"A string variable, so it states no unit. {highest}",
+    )
+    entries["continuity_error_node_relative"] = _with_comment(
+        _cf(
+            "Continuity error of the node at each rank: 100 (1 - outflow / inflow) (Highest Continuity Errors)",
+            "percent",
+        ),
+        highest,
+    )
+    return entries
+
+
+_CF_VARIABLE_MAP.update(_swmm_inventory_cf_entries())
+# The existing Node Flooding Summary variables gain the same absent-row statement the new tables carry.
+for _name in ("max_flood_rate", "time_of_max_flood", "hours_flooded", "tot_flooded_vol", "max_ponded_depth"):
+    _CF_VARIABLE_MAP[_name] = _with_comment(
+        _CF_VARIABLE_MAP[_name],
+        _ABSENT_ROW_COMMENTS["flooded"] + (f" {_HOURS_FLOOR_COMMENT}" if _name == "hours_flooded" else ""),
+    )
+# Absent-row and hours-floor statements of the tables whose variables are read per element.
+for _name in ("hours_full_both_ends", "hours_full_upstream", "hours_full_downstream", "hours_above_full_normal_flow"):
+    _CF_VARIABLE_MAP[_name] = _with_comment(
+        _CF_VARIABLE_MAP[_name], f"{_ABSENT_ROW_COMMENTS['conduit']} {_HOURS_FLOOR_COMMENT}"
+    )
+_CF_VARIABLE_MAP["hours_capacity_limited"] = _with_comment(
+    _CF_VARIABLE_MAP["hours_capacity_limited"], f"{_ABSENT_ROW_COMMENTS['conduit_capacity']} {_HOURS_FLOOR_COMMENT}"
+)
+for _name in LST_COL_HEADERS_STORAGE_VOLUME_SUMMARY[1:]:
+    _CF_VARIABLE_MAP[_name] = _with_comment(_CF_VARIABLE_MAP[_name], _ABSENT_ROW_COMMENTS["storage"])
+for _name in LST_COL_HEADERS_OUTFALL_LOADING_SUMMARY[1:]:
+    _CF_VARIABLE_MAP[_name] = _with_comment(_CF_VARIABLE_MAP[_name], _ABSENT_ROW_COMMENTS["outfall"])
+for _name in LST_COL_HEADERS_PUMPING_SUMMARY[1:]:
+    _CF_VARIABLE_MAP[_name] = _with_comment(_CF_VARIABLE_MAP[_name], _ABSENT_ROW_COMMENTS["pump"])
+for _name in LST_COL_HEADERS_FLOW_CLASSIFICATION_SUMMARY[1:]:
+    _CF_VARIABLE_MAP[_name] = _with_comment(_CF_VARIABLE_MAP[_name], _ABSENT_ROW_COMMENTS["flow_class"])
 
 
 # Stored numeric variables of the EDA artifacts that are NOT in `_CF_VARIABLE_MAP`, kept out of it on purpose
@@ -752,6 +1151,12 @@ _CF_PERFORMANCE_RANK_AXIS_VARIABLES: dict[str, dict[str, str | None]] = {
 # these overrides were load-bearing (they differed in `long_name`); the base now describes the conduit, so
 # the overrides are redundant and are kept only so that a link mode still resolves the name through its own
 # mode entry. No variable in the live tables diverges between its base entry and a mode override any more.
+_COUPLED_FLOODING_COMMENT = (
+    "In TRITON-SWMM every node can pond, so this is the rate at which the volume stored at the node above its "
+    "full volume grows: nonzero at coupled and uncoupled junctions while that volume is growing, and zero while "
+    "it is steady or falling. It is not water lost from the network."
+)
+
 _CF_VARIABLE_OVERRIDES_BY_MODE: dict[str, dict[str, dict[str, str | None]]] = {
     # The unsuffixed performance modes are the SUMMARY, not a shared name for both
     # artifacts. `processing_analysis._MODE_CONFIG` already binds each of these two keys to
@@ -764,6 +1169,36 @@ _CF_VARIABLE_OVERRIDES_BY_MODE: dict[str, dict[str, dict[str, str | None]]] = {
     # series is never consolidated.
     "tritonswmm_performance_tseries": _CF_PERFORMANCE_VARIABLES,
     "triton_only_performance_tseries": _CF_PERFORMANCE_VARIABLES,
+    # In the coupled build every node can pond, so `flooding` is the growth rate of the volume stored at the
+    # node above its full volume, not water lost from the network. SWMM-only keeps the stock text of the base entry.
+    # The sign comments of the exchange outputs live here, not on the base entries, because the base map's rule
+    # is that an entry carrying a `comment` states no unit.
+    "tritonswmm_swmm_node": {
+        **{
+            _name: {**_CF_VARIABLE_MAP[_name], "comment": _COUPLED_FLOODING_COMMENT}
+            for _name in ("flooding", "flooding_last", "flooding_max")
+        },
+        **{
+            _name: {**_CF_VARIABLE_MAP[_name], "comment": _comment}
+            for _name, _comment in (
+                (
+                    "coupling_exchange_flow",
+                    "Positive when water drains from the street surface into the sewer, negative when the sewer "
+                    "surcharges onto the street. Each value is the mean over the report interval ending at its "
+                    "time; the interval is stated in cell_methods. NaN at nodes that are not coupling nodes.",
+                ),
+                (
+                    "coupling_exchange_peak_to_surface",
+                    "A magnitude: zero or positive. Taken from the solver's own steps, not from the "
+                    "report-interval means.",
+                ),
+                (
+                    "coupling_exchange_volume_net",
+                    "Positive when more water went from the street surface into the sewer than came back out of it.",
+                ),
+            )
+        },
+    },
     "tritonswmm_swmm_link": {
         "max_velocity": {
             "standard_name": "sea_water_speed",
@@ -780,6 +1215,122 @@ _CF_VARIABLE_OVERRIDES_BY_MODE: dict[str, dict[str, dict[str, str | None]]] = {
             "cell_methods": "time: maximum",
         },
     },
+}
+
+
+# --- What the coupled model changes about a variable's meaning ----------------------------------------------------
+#
+# The SWMM-only modes keep each variable's stock text; the coupled modes (`tritonswmm_swmm_node` and
+# `tritonswmm_swmm_link`) carry the entry below appended to the variable's own comment. Every statement is read from
+# the coupled build's solver source (`routing.c`, `dynwave.c`, `stats.c`, `swmm5.c` in ORNL TRITON-SWMM at faba2232).
+_COUPLED_NET_LATERAL_SPLIT = (
+    "Under Dynamic Wave routing each iteration books a step's net lateral flow (FLOW inflow plus the coupling "
+    "exchange, netted within the step) as INFLOW when it drains to the sewer and as OUTFLOW when it surcharges to "
+    "the street."
+)
+_COUPLED_READS_EXCHANGE_THROUGH_SPLIT = (
+    "In the coupled model this reads the coupling exchange through the inflow/outflow split. "
+    f"{_COUPLED_NET_LATERAL_SPLIT}"
+)
+_COUPLED_MEANING_NODE: dict[str, str] = {
+    "volume": (
+        "In the coupled model every node can pond, so this includes the volume above full depth and grows while the "
+        "flooding rate is positive."
+    ),
+    "lateral_inflow": (
+        "In the coupled model this is the node's external FLOW inflow plus the coupling exchange, signed: negative "
+        "when the sewer surcharges to the street."
+    ),
+    "inflow_flow": (
+        "In the coupled model this includes the coupling exchange only when a step's net lateral flow drains to the "
+        f"sewer. {_COUPLED_NET_LATERAL_SPLIT}"
+    ),
+    "average_depth": (
+        "In the coupled model the mean weights each coupled (TRITON) step equally, not each second: SWMM divides by "
+        "the count of routing steps."
+    ),
+    "max_depth": "In the coupled model every node can pond, so this may exceed the node's full depth.",
+    "max_lateral_inflow": (
+        "In the coupled model this includes the coupling exchange, so it is signed (see lateral_inflow)."
+    ),
+    "lateral_inflow_vol": (
+        "In the coupled model this includes the coupling exchange, so it is signed and a negative volume is net "
+        "sewer-to-street flow."
+    ),
+    "total_inflow_vol": _COUPLED_READS_EXCHANGE_THROUGH_SPLIT,
+    "max_total_inflow": _COUPLED_READS_EXCHANGE_THROUGH_SPLIT,
+    "flow_balance_error": (
+        "In the coupled model the exchange enters the balance as one more inflow or outflow term through the "
+        f"inflow/outflow split, so the column keeps its stock meaning. {_COUPLED_NET_LATERAL_SPLIT}"
+    ),
+    "smallest_depth_below_rim": (
+        "In the coupled model this reads 0 for any node whose water reached its full depth, which is where "
+        "sewer-to-street exchange becomes possible."
+    ),
+    "system_flooding": (
+        "In the coupled model this is near 0 because overflow is held as ponded volume above full depth rather than "
+        "lost from the network."
+    ),
+    "routing_continuity_external_inflow": (
+        "In the coupled model this is the sum over nodes and steps of the positive part of FLOW inflow plus exchange."
+    ),
+    "routing_continuity_external_outflow": (
+        "In the coupled model this adds the negative part of FLOW inflow plus exchange to outfall discharge."
+    ),
+    "routing_step_smallest": "In the coupled model the step sizes are TRITON's coupled step as applied to SWMM.",
+    "routing_step_mean": "In the coupled model the step sizes are TRITON's coupled step as applied to SWMM.",
+    "routing_step_largest": "In the coupled model the step sizes are TRITON's coupled step as applied to SWMM.",
+    "routing_step_frequency": "In the coupled model the bins count TRITON's coupled steps as applied to SWMM.",
+    "courant_critical_element_id": (
+        "In the coupled model the list names the node or link that WOULD have limited SWMM's own Courant step, a "
+        "step the coupled run discards in favour of TRITON's; it is not an element that limited the step applied."
+    ),
+    "courant_critical_element_kind": (
+        "In the coupled model the list names elements that WOULD have limited SWMM's own Courant step, a step the "
+        "coupled run discards in favour of TRITON's."
+    ),
+    "courant_critical_frequency": (
+        "In the coupled model the shares are of steps in which the element WOULD have limited SWMM's own Courant "
+        "step, a step the coupled run discards in favour of TRITON's."
+    ),
+    "continuity_error_node_id": (
+        "In the coupled model the inflow and outflow totals carry the exchange through the inflow/outflow split. "
+        f"{_COUPLED_NET_LATERAL_SPLIT}"
+    ),
+    "continuity_error_node_relative": (
+        "In the coupled model the percentage keeps its stock meaning with the exchange as one more inflow or "
+        f"outflow term. {_COUPLED_NET_LATERAL_SPLIT}"
+    ),
+}
+# The reductions of a series carry the series' coupled meaning.
+for _series in ("volume", "lateral_inflow", "inflow_flow"):
+    for _suffix in ("last", "max"):
+        _COUPLED_MEANING_NODE[f"{_series}_{_suffix}"] = _COUPLED_MEANING_NODE[_series]
+_COUPLED_MEANING_LINK: dict[str, str] = {
+    "flow_instability_link_id": "In the coupled model the routing-step count N counts coupled steps.",
+    "flow_instability_index": "In the coupled model the routing-step count N counts coupled steps.",
+}
+
+
+def _coupled_overrides(
+    base: dict[str, dict[str, str | None]], meanings: dict[str, str]
+) -> dict[str, dict[str, str | None]]:
+    """Each variable's entry with its coupled meaning appended to its own comment."""
+    out: dict[str, dict[str, str | None]] = {}
+    for name, text in meanings.items():
+        entry = base[name]
+        stock = entry.get("comment")
+        out[name] = {**entry, "comment": f"{stock} {text}" if stock else text}
+    return out
+
+
+_CF_VARIABLE_OVERRIDES_BY_MODE["tritonswmm_swmm_node"] = {
+    **_CF_VARIABLE_OVERRIDES_BY_MODE.get("tritonswmm_swmm_node", {}),
+    **_coupled_overrides(_CF_VARIABLE_MAP, _COUPLED_MEANING_NODE),
+}
+_CF_VARIABLE_OVERRIDES_BY_MODE["tritonswmm_swmm_link"] = {
+    **_CF_VARIABLE_OVERRIDES_BY_MODE.get("tritonswmm_swmm_link", {}),
+    **_coupled_overrides(_CF_VARIABLE_MAP, _COUPLED_MEANING_LINK),
 }
 
 
@@ -1039,6 +1590,64 @@ _QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
     "inflow_flow_max": _swmm_max("point (node)", "inflow_flow", "max_t Q_in"),
     "flooding_last": _swmm_last("point (node)", "flooding", "Q_flood(t_max)"),
     "flooding_max": _swmm_max("point (node)", "flooding", "max_t Q_flood"),
+    # TRITON-SWMM coupling outputs, decoded from the solver's exchange side-file (`coupling_exchange.py`)
+    "is_coupling_node": {
+        "spatial_representation": "point (node)",
+        "source_variables": "coupling_nodes.txt",
+        "operation": "1 where the node's id is a line of the scenario's coupling-node list, else 0",
+        "operation_expr": "id in coupling_nodes",
+        "reduced_coordinate": "none",
+    },
+    "coupling_exchange_flow": {
+        "spatial_representation": "point (node)",
+        "source_variables": "exchange side-file, exchange_q per solver step",
+        "operation": "volume-conserving mean of the stepwise exchange over each report interval, in m3/s",
+        "operation_expr": "(1/R) sum_k q_k |(t_k-1, t_k] ∩ (τ-R, τ]|",
+        "reduced_coordinate": "none (time series)",
+    },
+    **{
+        _name: {
+            "spatial_representation": "point (node)",
+            "source_variables": "exchange side-file, exchange_q per solver step",
+            "operation": _operation,
+            "operation_expr": _expr,
+            "reduced_coordinate": "solver step",
+        }
+        for _name, _operation, _expr in (
+            ("coupling_exchange_peak_to_network", "largest positive stepwise exchange flow", "max_k max(q_k, 0)"),
+            (
+                "coupling_exchange_peak_to_surface",
+                "largest stepwise exchange flow into the street, as a magnitude",
+                "max_k max(-q_k, 0)",
+            ),
+            (
+                "coupling_exchange_volume_to_network",
+                "sum of positive stepwise flow times step length",
+                "sum_k max(q_k, 0) dt_k",
+            ),
+            (
+                "coupling_exchange_volume_to_surface",
+                "sum of negative stepwise flow times step length, as a magnitude",
+                "sum_k max(-q_k, 0) dt_k",
+            ),
+            ("coupling_exchange_volume_net", "sum of stepwise flow times step length", "sum_k q_k dt_k"),
+            (
+                "coupling_exchange_time_of_peak_to_network",
+                "end of the first step carrying the largest positive flow",
+                "t_k at argmax_k max(q_k, 0)",
+            ),
+            (
+                "coupling_exchange_time_of_peak_to_surface",
+                "end of the first step carrying the largest negative flow",
+                "t_k at argmax_k max(-q_k, 0)",
+            ),
+            (
+                "coupling_exchange_duration_to_surface",
+                "total length of the steps whose flow is negative",
+                "sum_k dt_k [q_k < 0]",
+            ),
+        )
+    },
     # SWMM node report columns, read as printed. `time_of_max_*` minutes are elapsed from the REPORT start,
     # clamped at 0 (a maximum before the report start reads 0), at one-minute resolution (seconds are decoded
     # and discarded); the two origins coincide with the simulation start only when a model's report start equals
@@ -1215,6 +1824,307 @@ _QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
         "reduced_coordinate": "x, y",
     },
 }
+
+
+# --- Computed-quantity provenance for the SWMM output inventory (the matching block of `_CF_VARIABLE_MAP`) ---------
+_TIME_ORIGIN = "in minutes elapsed from the report start, clamped at 0, at one-minute resolution"
+
+
+def _swmm_inventory_provenance_entries() -> dict[str, dict[str, str]]:
+    """Descriptors for the series, tables and run-level figures of the SWMM output inventory."""
+    node, link, whole = "point (node)", "line (conduit)", "whole domain (scalar)"
+    entries: dict[str, dict[str, str]] = {
+        "volume": _swmm_series(
+            node, "SWMM binary output NODE_VOLUME timeseries (node stored volume, ponded volume included)", "V(t)"
+        ),
+        "lateral_inflow": _swmm_series(
+            node,
+            "SWMM binary output NODE_LATFLOW timeseries (lateral inflow, exchange included in the coupled model)",
+            "Q_lat(t)",
+        ),
+        "link_volume": _swmm_series(link, "SWMM binary output LINK_VOLUME timeseries", "V_link(t)"),
+        "volume_last": _swmm_last(node, "volume", "V(t_max)"),
+        "volume_max": _swmm_max(node, "volume", "max_t V"),
+        "lateral_inflow_last": _swmm_last(node, "lateral_inflow", "Q_lat(t_max)"),
+        "lateral_inflow_max": _swmm_max(node, "lateral_inflow", "max_t Q_lat"),
+        "link_volume_last": _swmm_last(link, "link_volume", "V_link(t_max)"),
+        "link_volume_max": _swmm_max(link, "link_volume", "max_t V_link"),
+        "average_depth": _swmm_printed(
+            node,
+            "Node Depth Summary",
+            "Average Depth",
+            "mean depth over the routing steps (SWMM divides by the count of routing steps)",
+        ),
+        "max_depth": _swmm_printed(
+            node,
+            "Node Depth Summary",
+            "Maximum Depth",
+            "maximum depth over every routing step, not only the report steps",
+        ),
+        "max_hgl": _swmm_printed(
+            node, "Node Depth Summary", "Maximum HGL", "maximum depth plus the node's invert elevation"
+        ),
+        "time_of_max_depth": _swmm_printed(
+            node, "Node Depth Summary", "Time of Max Occurrence", f"time of the maximum depth, {_TIME_ORIGIN}"
+        ),
+        "hours_surcharged": _swmm_printed(
+            node,
+            "Node Surcharge Summary",
+            "Hours Surcharged",
+            "hours the water stood at or above the crown of the node's highest conduit, as printed (floored at 0.01)",
+        ),
+        "max_height_above_crown": _swmm_printed(
+            node,
+            "Node Surcharge Summary",
+            "Max. Height Above Crown",
+            "maximum height of the water above the crown of the highest conduit, floored at 0",
+        ),
+        "smallest_depth_below_rim": _swmm_printed(
+            node, "Node Surcharge Summary", "Min. Depth Below Rim", "full depth minus maximum depth, floored at 0"
+        ),
+        "storage_average_volume": _swmm_printed(
+            node, "Storage Volume Summary", "Average Volume", "mean stored volume over the report steps"
+        ),
+        "storage_average_fill": _swmm_printed(
+            node, "Storage Volume Summary", "Avg Pcnt Full", "average volume as a percentage of the unit's full volume"
+        ),
+        "storage_evaporation_loss": _swmm_printed(
+            node, "Storage Volume Summary", "Evap Pcnt Loss", "evaporation loss as a percentage of the unit's inflow"
+        ),
+        "storage_exfiltration_loss": _swmm_printed(
+            node, "Storage Volume Summary", "Exfil Pcnt Loss", "exfiltration loss as a percentage of the unit's inflow"
+        ),
+        "storage_max_volume": _swmm_printed(node, "Storage Volume Summary", "Maximum Volume", "maximum stored volume"),
+        "storage_max_fill": _swmm_printed(
+            node, "Storage Volume Summary", "Max Pcnt Full", "maximum volume as a percentage of the unit's full volume"
+        ),
+        "time_of_storage_max_volume": _swmm_printed(
+            node,
+            "Storage Volume Summary",
+            "Time of Max Occurrence",
+            f"time of the maximum stored volume, {_TIME_ORIGIN}",
+        ),
+        "storage_max_outflow": _swmm_printed(
+            node, "Storage Volume Summary", "Maximum Outflow", "maximum outflow from the unit"
+        ),
+        "outfall_flow_frequency": _swmm_printed(
+            node, "Outfall Loading Summary", "Flow Freq Pcnt", "percent of routing steps with inflow at least 0.001 cfs"
+        ),
+        "outfall_average_flow": _swmm_printed(
+            node, "Outfall Loading Summary", "Avg Flow", "mean flow over the steps with flow"
+        ),
+        "outfall_max_flow": _swmm_printed(node, "Outfall Loading Summary", "Max Flow", "maximum flow"),
+        "outfall_total_vol": _swmm_printed(
+            node, "Outfall Loading Summary", "Total Volume", "total volume discharged over the run, as printed"
+        ),
+        "outfall_system_max_flow": _swmm_printed(
+            whole,
+            "Outfall Loading Summary, System row",
+            "Max Flow",
+            "maximum over the routing steps of the SUM of outfall flows, which no per-outfall column gives",
+        ),
+        "conduit_lengthening_ratio": _swmm_printed(
+            link,
+            "Flow Classification Summary",
+            "Adjusted/Actual Length",
+            "adjusted over actual conduit length, as printed",
+        ),
+        "flow_class_dry": _swmm_printed(
+            link, "Flow Classification Summary", "Dry", "fraction of the routing time in flow class dry"
+        ),
+        "flow_class_upstream_dry": _swmm_printed(
+            link, "Flow Classification Summary", "Up Dry", "fraction of the routing time with the upstream end dry"
+        ),
+        "flow_class_downstream_dry": _swmm_printed(
+            link, "Flow Classification Summary", "Down Dry", "fraction of the routing time with the downstream end dry"
+        ),
+        "flow_class_subcritical": _swmm_printed(
+            link, "Flow Classification Summary", "Sub Crit", "fraction of the routing time in subcritical flow"
+        ),
+        "flow_class_supercritical": _swmm_printed(
+            link, "Flow Classification Summary", "Sup Crit", "fraction of the routing time in supercritical flow"
+        ),
+        "flow_class_upstream_critical": _swmm_printed(
+            link,
+            "Flow Classification Summary",
+            "Up Crit",
+            "fraction of the routing time with critical flow at the upstream end",
+        ),
+        "flow_class_downstream_critical": _swmm_printed(
+            link,
+            "Flow Classification Summary",
+            "Down Crit",
+            "fraction of the routing time with critical flow at the downstream end",
+        ),
+        "normal_flow_limited_fraction": _swmm_printed(
+            link,
+            "Flow Classification Summary",
+            "Norm Ltd",
+            "fraction of the routing time the flow was limited to normal flow",
+        ),
+        "inlet_control_fraction": _swmm_printed(
+            link,
+            "Flow Classification Summary",
+            "Inlet Ctrl",
+            "fraction of the routing time the conduit was inlet controlled",
+        ),
+        "hours_full_both_ends": _swmm_printed(
+            link,
+            "Conduit Surcharge Summary",
+            "Hours Full Both Ends",
+            "hours the conduit was full at both ends, as printed (floored at 0.01)",
+        ),
+        "hours_full_upstream": _swmm_printed(
+            link,
+            "Conduit Surcharge Summary",
+            "Hours Full Upstream",
+            "hours the conduit was full at its upstream end, as printed (floored at 0.01)",
+        ),
+        "hours_full_downstream": _swmm_printed(
+            link,
+            "Conduit Surcharge Summary",
+            "Hours Full Dnstream",
+            "hours the conduit was full at its downstream end, as printed (floored at 0.01)",
+        ),
+        "hours_above_full_normal_flow": _swmm_printed(
+            link,
+            "Conduit Surcharge Summary",
+            "Hours Above Full Normal Flow",
+            "hours the flow was above full normal flow, as printed (floored at 0.01)",
+        ),
+        "hours_capacity_limited": _swmm_printed(
+            link,
+            "Conduit Surcharge Summary",
+            "Hours Capacity Limited",
+            "hours the flow was capacity limited, as printed (floored at 0.01)",
+        ),
+        "pump_utilization": _swmm_printed(
+            link, "Pumping Summary", "Percent Utilized", "percent of the run the pump was running"
+        ),
+        "pump_startups": _swmm_printed(link, "Pumping Summary", "Number of Start-Ups", "number of pump start-ups"),
+        "pump_average_flow": _swmm_printed(
+            link,
+            "Pumping Summary",
+            "Avg Flow",
+            "mean flow while running (printed with two decimals in every unit system)",
+        ),
+        "pump_total_volume": _swmm_printed(link, "Pumping Summary", "Total Volume", "total volume pumped"),
+        "pump_energy": _swmm_printed(link, "Pumping Summary", "Power Usage Kw-hr", "energy used"),
+        "pump_off_curve_low": _swmm_printed(
+            link, "Pumping Summary", "% Time Off Pump Curve, Low", "percent of running time below the pump curve"
+        ),
+        "pump_off_curve_high": _swmm_printed(
+            link, "Pumping Summary", "% Time Off Pump Curve, High", "percent of running time above the pump curve"
+        ),
+        "flow_continuity_error": _swmm_printed(
+            whole,
+            "Flow Routing Continuity",
+            "Continuity Error (%)",
+            "percentage continuity error of the flow routing balance, as printed",
+        ),
+        "runoff_continuity_error": _swmm_printed(
+            whole,
+            "Runoff Quantity Continuity",
+            "Continuity Error (%)",
+            "percentage continuity error of the runoff quantity balance, as printed; NaN when the model routes no "
+            "runoff",
+        ),
+        "system_flooding": _swmm_printed(
+            whole,
+            "Flow Routing Continuity",
+            "Flooding Loss (10^6 L)",
+            "flooding loss of the flow routing balance, as printed",
+        ),
+        "routing_step_smallest": _swmm_printed(
+            whole, "Routing Time Step Summary", "Minimum Time Step", "smallest routing step of the run"
+        ),
+        "routing_step_mean": _swmm_printed(
+            whole,
+            "Routing Time Step Summary",
+            "Average Time Step",
+            "total routing time over the count of routing steps",
+        ),
+        "routing_step_largest": _swmm_printed(
+            whole, "Routing Time Step Summary", "Maximum Time Step", "largest routing step of the run"
+        ),
+        "routing_steady_state_time": _swmm_printed(
+            whole,
+            "Routing Time Step Summary",
+            "% of Time in Steady State",
+            "percent of the routing time spent in steady state",
+        ),
+        "routing_iterations_mean": _swmm_printed(
+            whole, "Routing Time Step Summary", "Average Iterations per Step", "trials over the count of routing steps"
+        ),
+        "routing_nonconverging_steps": _swmm_printed(
+            whole,
+            "Routing Time Step Summary",
+            "% of Steps Not Converging",
+            "percent of routing steps that did not converge",
+        ),
+        "routing_step_frequency": _swmm_printed(
+            whole,
+            "Routing Time Step Summary",
+            "Time Step Frequencies",
+            "percent of routing steps in each of five step-size bins",
+        ),
+        "flow_instability_link_id": _swmm_printed(
+            link, "Highest Flow Instability Indexes", "Link", "identifier of the link at each rank, highest index first"
+        ),
+        "flow_instability_index": _swmm_printed(
+            link,
+            "Highest Flow Instability Indexes",
+            "Link (index)",
+            "flow-turn count scaled by 100 / (2/3 (N - 2)), N the routing-step count",
+        ),
+        "nonconverging_node_id": _swmm_printed(
+            node,
+            "Most Frequent Nonconverging Nodes",
+            "Node",
+            "identifier of the node at each rank, most frequent first",
+        ),
+        "nonconverging_node_frequency": _swmm_printed(
+            node,
+            "Most Frequent Nonconverging Nodes",
+            "Node (percent)",
+            "share of routing steps in which the node did not converge",
+        ),
+        "courant_critical_element_id": _swmm_printed(
+            whole,
+            "Time-Step Critical Elements",
+            "Node or Link",
+            "identifier of the node or link that would have limited SWMM's own Courant step, at each rank",
+        ),
+        "courant_critical_element_kind": _swmm_printed(
+            whole, "Time-Step Critical Elements", "Node or Link", "whether the element at each rank is a node or a link"
+        ),
+        "courant_critical_frequency": _swmm_printed(
+            whole,
+            "Time-Step Critical Elements",
+            "(percent)",
+            "share of routing steps in which the element was Courant-critical",
+        ),
+        "continuity_error_node_id": _swmm_printed(
+            node, "Highest Continuity Errors", "Node", "identifier of the node at each rank, highest error first"
+        ),
+        "continuity_error_node_relative": _swmm_printed(
+            node,
+            "Highest Continuity Errors",
+            "Node (percent)",
+            "100 (1 - outflow / inflow) over nodes with at least one conduit and inflow above 0.1 ft3",
+        ),
+    }
+    for label, stem in FLOW_ROUTING_CONTINUITY_TERMS.items():
+        entries[f"routing_continuity_{stem}"] = _swmm_printed(
+            whole,
+            "Flow Routing Continuity",
+            f"{label} (10^6 ltr column)",
+            f"{label.lower()} term of the flow routing balance over the run, from the 10^6 L column",
+        )
+    return entries
+
+
+_QUANTITY_PROVENANCE.update(_swmm_inventory_provenance_entries())
 
 
 # Computed-quantity provenance for the THIRTEEN performance columns.
@@ -1554,12 +2464,6 @@ def _water_quality_cf_entries() -> dict[str, dict[str, str | None]]:
             "units": None,
             "cell_methods": "time: sum",
         },
-        "outfall_total_vol": {
-            "standard_name": None,
-            "long_name": "Total volume discharged at the outfall over the event",
-            "units": "10^6 L",
-            "cell_methods": "time: sum",
-        },
         "outfall_emc": {
             "standard_name": None,
             "long_name": "Event mean concentration at the outfall (total load over total volume)",
@@ -1621,7 +2525,7 @@ def _water_quality_cf_entries() -> dict[str, dict[str, str | None]]:
 _WATER_QUALITY_CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = _water_quality_cf_entries()
 
 
-# Computed-quantity provenance for the 30 water-quality variables (SWMM models that route quality).
+# Computed-quantity provenance for the 29 water-quality variables (SWMM models that route quality).
 #
 # A separate table, joined into `_DESCRIBED_VARIABLES` below, for the reason `_PERF_QUANTITY_PROVENANCE`
 # is: these names are advertised only through the gated union, and the drift guard holds the descriptor
@@ -1690,14 +2594,6 @@ _WQ_QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
         "Total {pollutant}",
         "total pollutant mass discharged over the run, as printed by SWMM; a count pollutant is linearized",
         "M_out (10**x for a count pollutant)",
-        kind="column",
-    ),
-    "outfall_total_vol": _wq_printed(
-        "point (node)",
-        "Outfall Loading Summary",
-        "Total Volume",
-        "total volume discharged over the run, as printed by SWMM",
-        "V_out",
         kind="column",
     ),
     "outfall_emc": {

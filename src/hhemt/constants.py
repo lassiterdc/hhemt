@@ -92,6 +92,137 @@ LST_COL_HEADERS_LINK_FLOW_SUMMARY = [
     "max_over_full_depth",
 ]
 
+# The report tables the SWMM node and link stores carry beyond the three the toolkit read first. Each list holds the
+# STORED variable names of its table in print order, the id column first; a printed column the toolkit does not
+# store (Reported Max Depth, a pump's minimum and maximum flow) is not listed because no variable carries it.
+# `tests/test_cf_conventions.py` reads these lists as the emitted-name set, and the parser's `_TABLE_SPECS` aligns one
+# token position (or one days/clock pair) with every name after the id.
+LST_COL_HEADERS_NODE_DEPTH_SUMMARY = [
+    "node_id",
+    "average_depth",
+    "max_depth",
+    "max_hgl",
+    "time_of_max_depth",
+]
+LST_COL_HEADERS_NODE_SURCHARGE_SUMMARY = [
+    "node_id",
+    "hours_surcharged",
+    "max_height_above_crown",
+    "smallest_depth_below_rim",
+]
+LST_COL_HEADERS_STORAGE_VOLUME_SUMMARY = [
+    "node_id",
+    "storage_average_volume",
+    "storage_average_fill",
+    "storage_evaporation_loss",
+    "storage_exfiltration_loss",
+    "storage_max_volume",
+    "storage_max_fill",
+    "time_of_storage_max_volume",
+    "storage_max_outflow",
+]
+LST_COL_HEADERS_OUTFALL_LOADING_SUMMARY = [
+    "node_id",
+    "outfall_flow_frequency",
+    "outfall_average_flow",
+    "outfall_max_flow",
+    "outfall_total_vol",
+]
+LST_COL_HEADERS_FLOW_CLASSIFICATION_SUMMARY = [
+    "link_id",
+    "conduit_lengthening_ratio",
+    "flow_class_dry",
+    "flow_class_upstream_dry",
+    "flow_class_downstream_dry",
+    "flow_class_subcritical",
+    "flow_class_supercritical",
+    "flow_class_upstream_critical",
+    "flow_class_downstream_critical",
+    "normal_flow_limited_fraction",
+    "inlet_control_fraction",
+]
+LST_COL_HEADERS_CONDUIT_SURCHARGE_SUMMARY = [
+    "link_id",
+    "hours_full_both_ends",
+    "hours_full_upstream",
+    "hours_full_downstream",
+    "hours_above_full_normal_flow",
+    "hours_capacity_limited",
+]
+LST_COL_HEADERS_PUMPING_SUMMARY = [
+    "link_id",
+    "pump_utilization",
+    "pump_startups",
+    "pump_average_flow",
+    "pump_total_volume",
+    "pump_energy",
+    "pump_off_curve_low",
+    "pump_off_curve_high",
+]
+
+# Run-level variables (one value per run; no node or link dimension). The three that were dataset attributes
+# before, the Flow Routing Continuity rows the toolkit did not keep, the Routing Time Step Summary
+# figures and the one cell of the Outfall Loading Summary's System row that no per-outfall column gives.
+LST_RUN_LEVEL_CONTINUITY_VARIABLES = [
+    "flow_continuity_error",
+    "runoff_continuity_error",
+    "system_flooding",
+]
+#: Flow Routing Continuity row label -> the stem of the variable that holds the row's `10^6 L` column. Flooding
+#: Loss is `system_flooding` and Continuity Error (%) is `flow_continuity_error`, so neither is here.
+FLOW_ROUTING_CONTINUITY_TERMS: dict[str, str] = {
+    "Dry Weather Inflow": "dry_weather_inflow",
+    "Wet Weather Inflow": "wet_weather_inflow",
+    "Groundwater Inflow": "groundwater_inflow",
+    "RDII Inflow": "rdii_inflow",
+    "External Inflow": "external_inflow",
+    "External Outflow": "external_outflow",
+    "Evaporation Loss": "evaporation_loss",
+    "Exfiltration Loss": "exfiltration_loss",
+    "Initial Stored Volume": "initial_stored_volume",
+    "Final Stored Volume": "final_stored_volume",
+}
+LST_ROUTING_CONTINUITY_VARIABLES = [f"routing_continuity_{stem}" for stem in FLOW_ROUTING_CONTINUITY_TERMS.values()]
+#: Routing Time Step Summary scalars in print order: minimum, average and maximum step, percent of time in steady
+#: state, average iterations per step, percent of steps not converging.
+LST_COL_HEADERS_ROUTING_TIME_STEP_SUMMARY = [
+    "routing_step_smallest",
+    "routing_step_mean",
+    "routing_step_largest",
+    "routing_steady_state_time",
+    "routing_iterations_mean",
+    "routing_nonconverging_steps",
+]
+#: The five-bin step-size frequency table, on dimension `routing_step_bin`.
+ROUTING_STEP_FREQUENCY_VARIABLE = "routing_step_frequency"
+LST_OUTFALL_SYSTEM_VARIABLES = ["outfall_system_max_flow"]
+#: The four lists of at most `MAX_STATS` = 5 elements SWMM prints, on dimension `swmm_stat_rank`. The flow
+#: instability list is a list of links and goes to the link dataset; the other three are lists of nodes (the
+#: Courant list names nodes or links and carries the kind beside each id) and go to the node dataset.
+SWMM_STAT_RANK_LENGTH = 5
+LST_RANKED_LINK_VARIABLES = ["flow_instability_link_id", "flow_instability_index"]
+# `continuity_error_node_relative`, not `continuity_error_node_percent`, and `smallest_depth_below_rim`, not
+# `min_depth_below_rim`: `tests/test_every_stored_variable_has_units.py` forbids a unit token in a stored variable
+# name (`UNIT_TOKEN` matches `percent` and `min`), so the unit rides in `units` and the name says what the value is.
+LST_RANKED_NODE_VARIABLES = [
+    "nonconverging_node_id",
+    "nonconverging_node_frequency",
+    "courant_critical_element_id",
+    "courant_critical_element_kind",
+    "courant_critical_frequency",
+    "continuity_error_node_id",
+    "continuity_error_node_relative",
+]
+#: The string-valued names of the ranked lists: an unprinted rank holds the empty string, because a numpy unicode
+#: array cannot hold NaN and an object array cannot be written by `write_zarr`.
+LST_STRING_VALUED_RANKED_VARIABLES = [
+    "flow_instability_link_id",
+    "nonconverging_node_id",
+    "courant_critical_element_id",
+    "courant_critical_element_kind",
+    "continuity_error_node_id",
+]
+
 TEST_SYSTEM_DIRNAME = "tests"
 CASE_SYSTEM_DIRNAME = "cases"
 TEST_N_REPORTING_TSTEPS_PER_SIM = 12

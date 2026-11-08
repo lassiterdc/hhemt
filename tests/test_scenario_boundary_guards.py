@@ -1087,12 +1087,28 @@ class _FakeOutUnits:
         self.units = units
         self.nodes = {"J1": None}
         self.links = {"C1": None}
+        self.project_size = [0, 0, 1, 1, 0]  # no pollutants
+        self.start = None
 
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
         return False
+
+
+def _patch_out_seams(monkeypatch):
+    """Stand in for the reader's two swmm-toolkit seams: a one-step time axis and one 2.0 value per series.
+
+    The reader no longer goes through pyswmm's ``NodeSeries`` / ``LinkSeries`` (pyswmm 2.1.0 drops the final period
+    through them), so the fakes below are installed at the seams it does use.
+    """
+    import numpy as np
+
+    from hhemt import swmm_output_parser as sop
+
+    monkeypatch.setattr(sop, "_out_time_axis", lambda out, f_outfile: [pd.Timestamp("2020-01-01")])
+    monkeypatch.setattr(sop, "_out_series_values", lambda out, kind, ident, index, attribute: np.array([2.0]))
 
 
 class _FakeSeries:
@@ -1112,6 +1128,9 @@ class _FakeSeries:
             flow_depth=series,
             flow_velocity=series,
             capacity=series,
+            ponded_volume=series,
+            lateral_inflow=series,
+            flow_volume=series,
         )
 
 
@@ -1138,6 +1157,7 @@ def test_a_standalone_output_not_in_cms_is_refused_when_read(tmp_path, monkeypat
     monkeypatch.setattr(pyswmm, "Output", lambda path: _FakeOutUnits({"system": system, "flow": flow}))
     monkeypatch.setattr(pyswmm, "NodeSeries", _FakeSeries)
     monkeypatch.setattr(pyswmm, "LinkSeries", _FakeSeries)
+    _patch_out_seams(monkeypatch)
     out = tmp_path / "full.out"
     if refused:
         with pytest.raises(ProcessingError, match="full.out"):
@@ -1170,16 +1190,19 @@ def _coupled_rpt(path: Path, unit: str) -> Path:
 
 @pytest.mark.parametrize(("unit", "refused"), [("LPS", True), ("MLD", True), ("CFS", True), ("CMS", False)])
 def test_a_coupled_report_not_in_cms_is_refused_when_read(tmp_path, monkeypatch, unit, refused):
-    """Property: the coupled report reader refuses a report whose flow unit is not CMS.
+    """Property: the coupled assembly refuses a report whose flow unit is not CMS even when the binary output beside
+    it says CMS.
 
-    Class: coupled ``.rpt`` files in each SWMM flow unit. Why: the coupled model's report
-    flows are read as m3/s with no conversion, and before this the report's unit was recorded
-    and compared with nothing, so a reprocessed US-unit run, or an LPS or MLD one, was read
-    with no error. What kills it: placing no comparison on the report path, or comparing
-    case-sensitively against the report's own casing. Second correct implementation:
-    comparing the raw ``Flow Units`` line after folding it; the assertion reads only whether
-    the read raises before the time-series step, which a fake stops.
+    Class: coupled reports in each SWMM flow unit. Why: the coupled model's flows are read as m3/s with no
+    conversion, and the report's unit was once recorded and compared with nothing, so a reprocessed US-unit run, or
+    an LPS or MLD one, was read with no error; the binary output carries its own unit check, and this is the second
+    guard for a report that disagrees with it. What kills it: placing no comparison on the report path, or comparing
+    case-sensitively against the report's own casing. Second correct implementation: comparing the raw ``Flow
+    Units`` line after folding it; the assertion reads only whether the read raises before the time-series merge,
+    which a fake stops.
     """
+    import pyswmm
+
     from hhemt import swmm_output_parser as sop
     from hhemt.exceptions import ProcessingError
 
@@ -1188,14 +1211,46 @@ def test_a_coupled_report_not_in_cms_is_refused_when_read(tmp_path, monkeypatch,
         raise _StopAfterTheChecks
 
     monkeypatch.setattr(sop, "convert_datavars_to_dtype", stop)
+    monkeypatch.setattr(pyswmm, "Output", lambda path: _FakeOutUnits({"system": "SI", "flow": "CMS"}))
+    monkeypatch.setattr(pyswmm, "NodeSeries", _FakeSeries)
+    monkeypatch.setattr(pyswmm, "LinkSeries", _FakeSeries)
+    _patch_out_seams(monkeypatch)
     inp = _inp(tmp_path / "hydraulics.inp", "[OPTIONS]\nFLOW_UNITS CMS\n")
     rpt = _coupled_rpt(tmp_path / "hydraulics.rpt", unit)
+    out = tmp_path / "hydraulics.out"
+    out.write_bytes(b"")
     if refused:
         with pytest.raises(ProcessingError, match="hydraulics.rpt"):
-            sop.retrieve_SWMM_outputs_as_datasets(inp, rpt)
+            sop.retrieve_SWMM_outputs_as_datasets(inp, out, family="tritonswmm")
     else:
         with pytest.raises(_StopAfterTheChecks):
-            sop.retrieve_SWMM_outputs_as_datasets(inp, rpt)
+            sop.retrieve_SWMM_outputs_as_datasets(inp, out, family="tritonswmm")
+    assert rpt.exists()
+
+
+@pytest.mark.parametrize(("system", "flow"), [("SI", "LPS"), ("US", "CFS")])
+def test_a_coupled_binary_output_not_in_cms_is_refused_when_read(tmp_path, monkeypatch, system, flow):
+    """Property: the coupled assembly refuses a binary output whose flow unit is not CMS, naming the file.
+
+    Class: coupled binary outputs in a non-CMS flow unit. Why: every coupled series is now read from the binary
+    output, so its unit is the first guard; the report is checked second. What kills it: reading the series before
+    the unit. Second correct implementation: checking the report's unit first and the binary output's second.
+    """
+    import pyswmm
+
+    from hhemt import swmm_output_parser as sop
+    from hhemt.exceptions import ProcessingError
+
+    monkeypatch.setattr(pyswmm, "Output", lambda path: _FakeOutUnits({"system": system, "flow": flow}))
+    monkeypatch.setattr(pyswmm, "NodeSeries", _FakeSeries)
+    monkeypatch.setattr(pyswmm, "LinkSeries", _FakeSeries)
+    _patch_out_seams(monkeypatch)
+    inp = _inp(tmp_path / "hydraulics.inp", "[OPTIONS]\nFLOW_UNITS CMS\n")
+    _coupled_rpt(tmp_path / "hydraulics.rpt", "CMS")
+    out = tmp_path / "hydraulics.out"
+    out.write_bytes(b"")
+    with pytest.raises(ProcessingError, match="hydraulics.out"):
+        sop.retrieve_SWMM_outputs_as_datasets(inp, out, family="tritonswmm")
 
 
 @pytest.mark.parametrize("unit", ["LPS", "MLD"])

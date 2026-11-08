@@ -94,6 +94,10 @@ def _quiet_world(tmp_path, monkeypatch, **kw):
     """A world whose login name cannot match its temp directories, with no private list configured."""
     _no_carrier(monkeypatch)
     monkeypatch.setattr(getpass, "getuser", lambda: "zz")
+    # The placeholder table rewrites every path under the running user's home, so a pytest base temp directory
+    # that sits under it (TMPDIR or --basetemp set there) would rewrite the world's own paths and leave the gate
+    # nothing to find. A home that is no ancestor of the world makes the world independent of where pytest puts it.
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: Path("/nonexistent-home-for-the-test")))
     return _world(tmp_path, **kw)
 
 

@@ -148,8 +148,20 @@ def pd_numeric(series):
 
 @pytest.fixture(scope="module")
 def reference_parse():
-    ds_nodes, ds_links = retrieve_SWMM_outputs_as_datasets(REF_INP, REF_RPT)
-    return ds_nodes, ds_links, REF_RPT.read_text(encoding="latin-1").splitlines()
+    """The real assembly on the reference report and a stand-in binary output holding that report's series.
+
+    The series come from ``hydraulics.out``, which a laptop cannot produce; the stand-in carries the printed series
+    and the ``.out`` path is never opened. The summary variables this module checks come from the report itself.
+    """
+    from tests.test_swmm_output_inventory import _body_series, _install_stub_pyswmm
+
+    text = REF_RPT.read_text(encoding="latin-1")
+    with pytest.MonkeyPatch.context() as mp:
+        _install_stub_pyswmm(mp, *_body_series(text))
+        ds_nodes, ds_links = retrieve_SWMM_outputs_as_datasets(
+            REF_INP, REF_RPT.with_suffix(".out"), family="tritonswmm"
+        )
+    return ds_nodes, ds_links, text.splitlines()
 
 
 def _section_rows(lines, header):

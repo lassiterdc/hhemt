@@ -205,8 +205,7 @@ def test_swmm_cross_model_consistency(synth_all_models_analysis_cached):
                     "diverged."
                 )
 
-        if set(ds_swmm_nodes.data_vars) != set(ds_tritonswmm_nodes.data_vars):
-            pytest.fail("Node time series data variables do not match")
+        tst_ut.assert_node_vars_consistent(ds_swmm_nodes, ds_tritonswmm_nodes, synth_all_models_analysis_cached)
         swmm_link_vars = {str(v) for v in ds_swmm_links.data_vars}
         tritonswmm_link_vars = {str(v) for v in ds_tritonswmm_links.data_vars}
 

@@ -54,6 +54,8 @@ OpKind = Literal[
     "zarr_rewrite",
     "zarr_replace_string_values",
     "netcdf_rewrite",
+    "zarr_attrs_to_scalar_variables",
+    "netcdf_attrs_to_scalar_variables",
     "record_applied",
 ]
 
@@ -1101,6 +1103,97 @@ class MigrationContext:
         mtime = target.stat().st_mtime
         os.utime(tmp, (mtime, mtime))
         os.replace(tmp, target)
+
+    # ---- Store attributes that become scalar data variables ----
+
+    def zarr_attrs_to_scalar_variables(self, store: Path, names: tuple[str, ...]) -> None:
+        """Plan the conversion of the named root attributes of one zarr store into scalar data variables.
+
+        For each name present as a root attribute: a scalar float64 variable of the same name and value is
+        written (carrying a ``units`` attribute taken from the ``{name}_units`` companion attribute when the store
+        has one), and the attribute and its companion are removed. A name whose variable already exists keeps the
+        variable and loses only the attribute. The metadata index is rebuilt when the store had one. A store
+        holding none of the names is left byte-identical, which is what makes a second run a no-op.
+        """
+        self.plan.append(PlannedOp("zarr_attrs_to_scalar_variables", {"store": str(store), "names": tuple(names)}))
+
+    def _apply_zarr_attrs_to_scalar_variables(self, store: str, names: tuple[str, ...]) -> None:
+        import zarr
+
+        from hhemt.utils import consolidate_zarr_store, zarr_store_has_index
+
+        root = Path(store)
+        indexed = zarr_store_has_index(root)
+        # Opened without the consolidated index: after an interrupted run the index predates the arrays
+        # that run created.
+        group = zarr.open_group(str(root), mode="r+", use_consolidated=False)
+        attrs = dict(group.attrs)
+        present = [name for name in names if name in attrs]
+        if not present:
+            return
+        stat = root.stat()
+        existing = set(group.array_keys())
+        zarr_format = group.metadata.zarr_format
+        for name in present:
+            if name in existing:
+                continue
+            unit = attrs.get(f"{name}_units")
+            var_attrs: dict[str, Any] = {"units": unit} if isinstance(unit, str) else {}
+            kwargs: dict[str, Any] = {}
+            if zarr_format == 3:
+                kwargs["dimension_names"] = ()
+            else:
+                var_attrs["_ARRAY_DIMENSIONS"] = []
+            value = attrs[name]
+            array = group.create_array(
+                name, shape=(), dtype="float64", fill_value=float("nan"), attributes=var_attrs, **kwargs
+            )
+            array[...] = float("nan") if value is None else float(value)
+        retired = set(present) | {f"{name}_units" for name in present}
+        group.attrs.put({k: v for k, v in attrs.items() if k not in retired})
+        if indexed:
+            consolidate_zarr_store(root)
+        os.utime(root, (stat.st_atime, stat.st_mtime))
+
+    def netcdf_attrs_to_scalar_variables(self, path: Path, names: tuple[str, ...]) -> None:
+        """Plan the same conversion as ``zarr_attrs_to_scalar_variables`` for one NetCDF file: loaded, written to a
+        temporary sibling file and moved over the original with an atomic replace, keeping its mtime."""
+        self.plan.append(PlannedOp("netcdf_attrs_to_scalar_variables", {"path": str(path), "names": tuple(names)}))
+
+    def _apply_netcdf_attrs_to_scalar_variables(self, path: str, names: tuple[str, ...]) -> None:
+        import numpy as np
+        import xarray as xr
+
+        from hhemt.utils import write_netcdf
+
+        target = Path(path)
+        with xr.open_dataset(target, engine="h5netcdf") as opened:
+            attrs = dict(opened.attrs)
+            present = [name for name in names if name in attrs]
+            if not present:
+                return
+            ds = opened.load()
+        for name in present:
+            if name in ds.variables:
+                continue
+            unit = attrs.get(f"{name}_units")
+            value = attrs[name]
+            ds[name] = xr.DataArray(
+                np.float64(float("nan") if value is None else float(value)),
+                attrs={"units": unit} if isinstance(unit, str) else {},
+            )
+        retired = set(present) | {f"{name}_units" for name in present}
+        ds.attrs = {k: v for k, v in attrs.items() if k not in retired}
+        temporary = target.with_name(target.name + ".v0030tmp")
+        mtime = target.stat().st_mtime
+        try:
+            write_netcdf(ds, temporary)
+            os.utime(temporary, (mtime, mtime))
+            os.replace(temporary, target)
+        except BaseException:
+            if temporary.exists():
+                temporary.unlink()  # EXEMPT-DU: transient-intermediate
+            raise
 
     # ---- Cross-cutting ----
 

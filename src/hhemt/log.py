@@ -831,6 +831,12 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     SWMM_link_summary_written: LogField[bool] | None = None
     raw_SWMM_outputs_cleared: LogField[bool] | None = None
     full_SWMM_timeseries_cleared: LogField[bool] | None = None
+    # The scenario's node / link time-series store was deleted after its slice was read back from
+    # analysis_timeseries.zarr (toggle_clear_scenario_timeseries_after_consolidation). Additive and defaulted None, so
+    # every pre-existing log_{model}.json deserialises unchanged. Distinct from full_SWMM_timeseries_cleared, which the
+    # remove_after_processing reclaim writes: that one does not imply a consolidated copy exists, this one does.
+    consolidated_node_timeseries_cleared: LogField[bool] | None = None
+    consolidated_link_timeseries_cleared: LogField[bool] | None = None
     # Post-processing reclaim (analysis_config.remove_after_processing) of
     # out_tritonswmm/swmm/*.out -- the coupled-SWMM binary outputs, NEVER the .rpt, which
     # is a live completion predicate. Distinct from raw_SWMM_outputs_cleared, which records
@@ -871,6 +877,8 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         "SWMM_link_summary_written",
         "raw_SWMM_outputs_cleared",
         "full_SWMM_timeseries_cleared",
+        "consolidated_node_timeseries_cleared",
+        "consolidated_link_timeseries_cleared",
         "raw_SWMM_binaries_reclaimed",
         "coupled_rpt_truncated",
         "hydro_out_reclaimed",
@@ -914,6 +922,8 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         "SWMM_link_summary_written",
         "raw_SWMM_outputs_cleared",
         "full_SWMM_timeseries_cleared",
+        "consolidated_node_timeseries_cleared",
+        "consolidated_link_timeseries_cleared",
         "raw_SWMM_binaries_reclaimed",
         "coupled_rpt_truncated",
         "hydro_out_reclaimed",

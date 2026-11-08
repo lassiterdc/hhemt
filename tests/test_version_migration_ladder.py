@@ -102,6 +102,7 @@ EXPECTED_LADDER: list[str] = [
     "V0027__consolidate_zarr_metadata",
     "V0028__flood_depth_and_unit_discharge_names",
     "V0029__remove_unread_settings",
+    "V0030__swmm_run_attributes_to_variables",
 ]
 
 

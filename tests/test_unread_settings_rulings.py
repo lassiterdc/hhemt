@@ -679,6 +679,9 @@ def test_preflight_validate_checks_the_analysis_request_against_its_partition_ca
         "_validate_setup_mem_sizing",
         "_validate_container_config",
         "_validate_resume_interruption_schedule",
+        "_validate_coupling_exchange_flow",
+        "_validate_clear_scenario_timeseries",
+        "_validate_timeseries_keep",
     ):
         monkeypatch.setattr(validation, name, lambda *a, **k: None)
     hpc = SimpleNamespace(partitions={"p": PartitionSpec(max_cpus_per_task=4)})

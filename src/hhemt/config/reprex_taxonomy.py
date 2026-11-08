@@ -173,6 +173,15 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     # docstring names — which had been red for both fields.
     "resume_interruption_schedule": "experiment",
     "toggle_consolidate_timeseries": "experiment",
+    # Gates WHAT LANDS in the coupled node time-series store (the exchange flux series and its eight
+    # statistics), so it is an experiment field by the RULE above, like its sibling directly above.
+    "toggle_coupling_exchange_flow": "experiment",
+    # Gates whether the per-scenario time-series stores survive the consolidation, so it decides WHAT LANDS on disk.
+    "toggle_clear_scenario_timeseries_after_consolidation": "experiment",
+    # The three keep-lists decide which time-series variables survive on disk and in the consolidated store.
+    "timeseries_keep_swmm_node": "experiment",
+    "timeseries_keep_swmm_link": "experiment",
+    "timeseries_keep_triton_gridded": "experiment",
     # "experiment" by the RULE above (non-Path, not an HPC-execution field) and
     # independently by SIBLING CONSISTENCY with `resume_interruption_schedule`
     # directly above: both are resume-EXPERIMENT arm selectors, and this one

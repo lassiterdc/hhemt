@@ -55,12 +55,20 @@ _SWMM_MARKERS = ("swmm", "hydraulics.inp", "hydro.inp", "swmm_link", "max_flow",
 # disjoint sets named -- it fails loud, never silently.
 _MODEL_KEYED_STATUS_FLAG = re.compile(r"^(c_run|d_process)_(tritonswmm|triton|swmm)_")
 
+# A Snakemake invocation log, `.snakemake/log/{ISO timestamp to the microsecond}.snakemake.log`, which
+# `workflow_performance` declares (the SLURM-efficiency join names the invocation each job belongs to). The two masters
+# are built by SEPARATE workflow runs, so the timestamps in the names differ by construction; that is the build time
+# of each master, the same kind of axis as the build location, and not a difference in the data the page reads.
+# Anchored to the whole file name, so no other source is touched.
+_SNAKEMAKE_INVOCATION_LOG = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{6}\.\d+\.snakemake\.log$")
+
 
 def _normalize_source(src: str, analysis_name: str) -> str:
     """Collapse a declared source to a build-location- and analysis-identity-independent key.
 
-    Three axes are collapsed: build location, analysis identity, and MODEL TYPE (see
-    ``_MODEL_KEYED_STATUS_FLAG``). ``source_paths_relative`` are relative to each master's own
+    Four axes are collapsed: build location, analysis identity, MODEL TYPE (see
+    ``_MODEL_KEYED_STATUS_FLAG``) and the timestamp of a Snakemake invocation log (see
+    ``_SNAKEMAKE_INVOCATION_LOG``). ``source_paths_relative`` are relative to each master's own
     ``analysis_dir``. A source OUTSIDE
     that dir (e.g. the ``_sensitivity_configs/{analysis_name}.csv`` compute-config manifest) carries
     a ``../`` prefix whose depth reflects where the master was BUILT and embeds the master's own
@@ -71,6 +79,7 @@ def _normalize_source(src: str, analysis_name: str) -> str:
     cross-arm DATA-source divergence still differs by basename and is still caught, while the
     per-analysis provenance CSV and the in-dir data zarr both normalize equal across arms."""
     key = Path(src).name.replace(analysis_name, "{ANALYSIS}")
+    key = _SNAKEMAKE_INVOCATION_LOG.sub("{INVOCATION}.snakemake.log", key)
     return _MODEL_KEYED_STATUS_FLAG.sub(r"\1_{MODEL}_", key)
 
 

@@ -1,24 +1,20 @@
-"""SWMM report parser: extra pollutant columns and block-scoped continuity figures.
+"""SWMM report parser: block-scoped continuity figures.
 
-Problem these tests guard. When a model declares a pollutant and routes quality, SWMM
-appends one concentration column to every row of the node and link time-series blocks and
-prints extra continuity tables (`Runoff Quality Continuity`, `Quality Routing Continuity`,
-and, for a model with groundwater, `Groundwater Continuity`) after the quantity tables.
-The parser must read only the declared hydraulic columns and must take each continuity
-figure from its own table.
+Problem these tests guard. When a model declares a pollutant and routes quality, SWMM prints extra continuity
+tables (`Runoff Quality Continuity`, `Quality Routing Continuity`, and, for a model with groundwater,
+`Groundwater Continuity`) after the quantity tables, and appends one concentration column to every row of the node
+and link time-series blocks. The parser must take each continuity figure from its own table, and the extra column
+of the per-timestep body must not disturb the scan (the body is never read: the series come from the binary output).
 
-Class and the two properties each test turns on, both of which the old code can also
-exhibit: "a dataset is returned" (the old code raises on the extra column) and "the flow
-error equals the flow table's value" (the old code returns the last table's value).
-A second correct implementation: a parser that reads all columns and then drops the extras,
-or that tracks the table with a regex rather than a header scan, passes every assertion here.
+Class and the property each test turns on: "the flow error equals the flow table's value" (a parser that takes the
+last table's value returns another figure). A second correct implementation: a parser that tracks the table with a
+regex rather than a header scan passes every assertion here.
 """
 
 import numpy as np
 import pytest
 
 from hhemt.swmm_output_parser import (
-    _bulk_parse_tseries,
     parse_rpt_single_pass,
     return_swmm_system_outputs,
 )
@@ -87,38 +83,12 @@ def _rpt(n_extra=0, quality_tables=False, groundwater_table=False, runoff_quanti
     return "".join(parts)
 
 
-NODE_VARS = {"inflow_flow", "flooding", "depth", "head"}
-LINK_VARS = {"flow", "velocity", "link_depth", "capacity_setting"}
-
-
-def test_extra_pollutant_column_is_not_read():
-    ds_node, ds_link = _bulk_parse_tseries(_rpt(n_extra=1))
-    assert set(ds_node.data_vars) == NODE_VARS
-    assert set(ds_link.data_vars) == LINK_VARS
-    assert ds_node.sizes["date_time"] == 3 and ds_link.sizes["date_time"] == 3
-    assert not np.isnat(ds_node["date_time"].values).any()
-
-
-def test_dataset_with_extra_column_equals_dataset_without_it():
-    with_col = _bulk_parse_tseries(_rpt(n_extra=1))
-    without = _bulk_parse_tseries(_rpt(n_extra=0))
-    assert with_col[0].equals(without[0])
-    assert with_col[1].equals(without[1])
-
-
-@pytest.mark.parametrize("n_extra", [0, 1, 2])
-def test_any_number_of_extra_columns_is_ignored(n_extra):
-    ds_node, ds_link = _bulk_parse_tseries(_rpt(n_extra=n_extra))
-    assert float(ds_node["depth"].isel(node_id=0, date_time=0)) == pytest.approx(0.3)
-    assert float(ds_link["capacity_setting"].isel(link_id=0, date_time=0)) == pytest.approx(4.0)
-
-
 @pytest.mark.parametrize("quality_tables", [False, True])
 def test_flow_figures_come_from_the_flow_table(tmp_path, quality_tables):
     text = _rpt(n_extra=int(quality_tables), quality_tables=quality_tables)
     rpt = tmp_path / "hydraulics.rpt"
     rpt.write_text(text)
-    system_single = parse_rpt_single_pass(rpt)[3]
+    system_single = parse_rpt_single_pass(rpt)[1]
     system_scan = return_swmm_system_outputs(text.splitlines(keepends=True))
     for system in (system_single, system_scan):
         assert system["flow_continuity_error"] == pytest.approx(_FLOW)
@@ -130,7 +100,7 @@ def test_runoff_error_comes_from_the_quantity_table_not_quality_or_groundwater(t
     text = _rpt(quality_tables=True, groundwater_table=True)
     rpt = tmp_path / "hydraulics.rpt"
     rpt.write_text(text)
-    for system in (parse_rpt_single_pass(rpt)[3], return_swmm_system_outputs(text.splitlines(keepends=True))):
+    for system in (parse_rpt_single_pass(rpt)[1], return_swmm_system_outputs(text.splitlines(keepends=True))):
         assert system["runoff_continuity_error"] == pytest.approx(_RUNOFF_QUANTITY)
         assert system["flow_continuity_error"] == pytest.approx(_FLOW)
 
@@ -139,7 +109,7 @@ def test_report_without_quality_tables_keeps_its_values(tmp_path):
     text = _rpt()
     rpt = tmp_path / "hydraulics.rpt"
     rpt.write_text(text)
-    system = parse_rpt_single_pass(rpt)[3]
+    system = parse_rpt_single_pass(rpt)[1]
     assert system["runoff_continuity_error"] == pytest.approx(_RUNOFF_QUANTITY)
     assert system["flow_continuity_error"] == pytest.approx(_FLOW)
     assert system["system_flooding"] == pytest.approx(_FLOOD_FLOW)
@@ -149,6 +119,6 @@ def test_hydraulics_only_report_has_nan_runoff_error(tmp_path):
     text = _rpt(runoff_quantity=False)
     rpt = tmp_path / "hydraulics.rpt"
     rpt.write_text(text)
-    system = parse_rpt_single_pass(rpt)[3]
+    system = parse_rpt_single_pass(rpt)[1]
     assert np.isnan(system["runoff_continuity_error"])
     assert system["flow_continuity_error"] == pytest.approx(_FLOW)

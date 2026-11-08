@@ -185,7 +185,7 @@ def test_each_continuity_figure_comes_from_its_own_table_in_both_scans(case, tmp
     rpt = tmp_path / "hydraulics.rpt"
     rpt.write_text(text)
     scanned = return_swmm_system_outputs(text.splitlines(keepends=True))
-    single_pass = parse_rpt_single_pass(rpt)[3]
+    single_pass = parse_rpt_single_pass(rpt)[1]
 
     expect_runoff = RUNOFF_QUANTITY_ERR if case["runoff"] and not case["runoff_from_file"] else np.nan
     for system in (scanned, single_pass):

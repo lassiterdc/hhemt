@@ -33,7 +33,7 @@ from hhemt.config.hpc_system import resolve_additional_modules, resolve_gpu_targ
 from hhemt.config.report import REPORT_FORMAT_MARKER
 from hhemt.exceptions import ConfigurationError
 from hhemt.scenario import TRITONSWMM_scenario
-from hhemt.utils import current_datetime_string, open_store, write_datatree_zarr
+from hhemt.utils import current_datetime_string, open_store, write_datatree_zarr, zarr_store_has_index
 from hhemt.validation import assert_configs_visible_cross_node
 from hhemt.workflow import (
     SensitivityAnalysisWorkflowBuilder,
@@ -1788,6 +1788,44 @@ class TRITONSWMM_sensitivity_analysis:
         apply_producing_stamp(tree, _sha_vals, _semver_vals)
         return tree
 
+    def consolidate_sensitivity_timeseries(self, compression_level: int = 5) -> Path | None:
+        """Graft each member's ``analysis_timeseries.zarr`` under ``member_{id}/`` into the master's store.
+
+        The graft is the ``subtree_with_keys`` graft that ``build_sensitivity_datatree`` applies to summaries, and
+        the method applies the graft to the separate time-series stores of the members. A member with no store is
+        left out, because the consolidation of the member was skipped under ``allow_incomplete`` or the toggle of
+        the member was off. Returns None when no member has a store.
+        """
+        target = self.analysis_paths.sensitivity_timeseries_zarr
+        if target is None:
+            raise ValueError("sensitivity_timeseries_zarr path is not configured on AnalysisPaths.")
+        tree_dict: dict[str, xr.Dataset] = {
+            "/": xr.Dataset(
+                attrs={
+                    "Conventions": "CF-1.13",
+                    "title": "TRITON-SWMM sensitivity analysis consolidated time series",
+                    "analysis_id": str(self.experiment.cfg_analysis.analysis_id),
+                    "output_creation_date": current_datetime_string(),
+                }
+            )
+        }
+        for member_id, analysis in self.members.items():
+            source = analysis.analysis_paths.analysis_timeseries_zarr
+            if source is None or not Path(source).exists():
+                continue
+            member_tree = xr.open_datatree(source, engine="zarr", consolidated=zarr_store_has_index(source))
+            node_name = f"{self.member_prefix}{member_id}"
+            for path, node in member_tree.subtree_with_keys:
+                rel = path.lstrip("/")
+                if rel and node.has_data:
+                    tree_dict[f"{node_name}/{rel}"] = node.dataset
+            tree_dict[node_name] = xr.Dataset(attrs={"member_id": str(member_id)})
+        if len(tree_dict) == 1:
+            return None
+        tree = xr.DataTree.from_dict(tree_dict)
+        write_datatree_zarr(tree, target, compression_level=compression_level)
+        return target
+
     def consolidate_sensitivity_datatree(
         self,
         compression_level: int = 5,
@@ -1963,6 +2001,11 @@ class TRITONSWMM_sensitivity_analysis:
 
         _assert_store_index_current(fname_out, "consolidate_sensitivity_datatree")
         write_rocrate_sidecar(self.experiment.analysis_paths.analysis_dir, graph_json=_graph_json)
+
+        # The members' consolidated time series are not tree nodes (they live in each member's
+        # analysis_timeseries.zarr); the master gathers them into its own store by the same graft.
+        if getattr(self.experiment.cfg_analysis, "toggle_consolidate_timeseries", False):
+            self.consolidate_sensitivity_timeseries(compression_level=compression_level)
 
         # ARM REFRESH AT THE WRITE BOUNDARY -- the primary-arm twin of the
         # refresh in processing_analysis.consolidate_to_datatree, and required rather than

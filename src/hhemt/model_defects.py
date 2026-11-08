@@ -432,6 +432,35 @@ SHA_MAIN_QUALITY_SNAPSHOT_PIN = "bd18215972c348020d53b3a8a1a64ee6266cae28"
 #: are deliberately unregistered under the developer's ruling that no fix before the next public
 #: release needs a registry entry.
 SHA_MAIN_SWMM_PATH_REFUSAL_PIN = "bb13ea28603d50879f8d85cd041c17f440fbdb2b"
+
+#: ORNL UPSTREAM `triton-swmm` TIP, `faba2232`: the build the coupling-flux experiment compiles
+#: natively on Rivanna. It is the ORNL re-curation of the fork's coupled-run work, so the fork's
+#: fix shas are NOT its ancestors (rc 1, listed below) and the registry's content probes decide
+#: every verdict that ancestry cannot. Measured 2026-11-06 against FULL, non-shallow clones
+#: (`git rev-parse --is-shallow-repository` -> false in both): an ORNL clone
+#: (`origin` = code.ornl.gov/hydro/triton.git, `rev-list --count faba2232` -> 129) and the fork
+#: clone carrying an `ornl` remote. Each `git merge-base --is-ancestor X faba2232`:
+#:   * 3a832f7d -> rc 0    * 9db367dd -> rc 0    * 0cf5faff -> rc 0    * a38338b0 -> rc 0
+#:     (all four in BOTH clones)
+#:   * 5d2ad1e8, 5fadf167, 23b75781, cf357e4b, 681d809, d456518, 852f10c, 2ecb1cf, 1b797e6,
+#:     65e7f68, 320b3313, a146fb6, bb13ea28, bd18215, 031ea42b, c7b2fd1d -> rc 1 in the fork
+#:     clone (ORNL clone: not objects). The curated fixes are NEW trees, so rc 1 here is the
+#:     two-probe trap again, not evidence of presence.
+#: CONTENT probes, each with its must-be-nonzero control (the same signature at the fix commit,
+#: unit: occurrences, `grep -o ... | wc -l` over `git show {sha}:{path}`):
+#:   * traversal guard: `s->routeTo >= 0` in external/swmm/src/solver/snapshot.c -> 1 at
+#:     faba2232 (1 at 681d809/c7b2fd1d, 0 at 031ea42b); SNAPSHOT_VERSION 7 at faba2232.
+#:   * clean-start disposal: `swmm_snapshot_keep_previous` in src/swmm_triton.h -> 5 at faba2232
+#:     (5 at d456518 and a146fb6, 0 at 681d809 and 031ea42b).
+#:   * coupled list and rim: `coupled_node_rim(` in src/swmm_triton.h -> 2 at faba2232
+#:     (2 at 852f10c, 0 at d456518 and 031ea42b).
+#:   * US-unit lengths: `0.3048` in src/swmm_triton.h -> 2 at faba2232 (2 at 2ecb1cf, 0 at
+#:     852f10c and 031ea42b).
+#:   * ghost ring: `write_output_ghost_ring|read_output_ghost_ring` over src/output.h and
+#:     src/triton.h -> output.h 5, triton.h 1 at faba2232, and a38338b0 is an ancestor, so this
+#:     entry inherits a38338b0's verdict on a38338b0's basis, no stronger.
+#: It is an entry of every defect below as ABSENT; none is `also_present_in`.
+SHA_ORNL_COUPLING_DECLARATION_PIN = "faba223212408f04b7a3dbf6580adedf4a4e6b13"
 # the curated traversal fix, from 23b75781 (guard re-predication)
 SHA_CURATED_TRAVERSAL_GUARD_FIX = "681d809ad1449b11ce5e0c4e1162429b2f13d9c6"
 # the curated clean-start disposal, from cf357e4b (earlier-run disposal)
@@ -496,6 +525,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_MAIN_QUALITY_SNAPSHOT_PIN,
                 # 3a832f7d is an ANCESTOR of bb13ea28 -- measured rc 0 against this sha (2026-10-26).
                 SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
+                # 3a832f7d is an ANCESTOR of faba2232 -- measured rc 0 in a full ORNL clone (2026-11-06).
+                SHA_ORNL_COUPLING_DECLARATION_PIN,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME}),
@@ -531,6 +562,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_MAIN_QUALITY_SNAPSHOT_PIN,
                 # 9db367dd is an ANCESTOR of bb13ea28 -- measured rc 0 against this sha (2026-10-26).
                 SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
+                # 9db367dd is an ANCESTOR of faba2232 -- measured rc 0 in a full ORNL clone (2026-11-06).
+                SHA_ORNL_COUPLING_DECLARATION_PIN,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER}),
@@ -584,6 +617,9 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # bb13ea28 descends from a38338b0 (rc 0) and inherits the SAME independent-upstream verdict;
                 # is-ancestor 5d2ad1e8 bb13ea28 -> rc 1 and ls-tree src/ghost_ring.h -> 0 entries, the same trap.
                 SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
+                # faba2232 descends from a38338b0 (rc 0 in a full ORNL clone, 2026-11-06) and inherits the SAME
+                # independent-upstream verdict; `is-ancestor 5d2ad1e8 faba2232` -> rc 1, the same trap.
+                SHA_ORNL_COUPLING_DECLARATION_PIN,
             }
         ),
         also_present_in=frozenset(
@@ -647,6 +683,9 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # 681d809 is an ANCESTOR of bb13ea28 -- rc 0; snapshot.c is byte-identical to bd18215's
                 # (git diff -> empty).
                 SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
+                # faba2232 carries the guard by CONTENT (`s->routeTo >= 0` in snapshot.c -> 1, SNAPSHOT_VERSION 7);
+                # the fork fix 681d809 is not an ancestor (rc 1); see the SHA_ORNL_COUPLING_DECLARATION_PIN comment.
+                SHA_ORNL_COUPLING_DECLARATION_PIN,
                 # THE SEVEN NO-PAYLOAD SHAS. `external/swmm/src/solver/snapshot.c` does not exist
                 # at any of them (`git ls-tree` -> 0 entries each, against a control needle
                 # `src/triton.h` -> 1 entry each, so the zero is an absence and not a bad path).
@@ -752,6 +791,9 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # d456518 is an ANCESTOR of bb13ea28 -- rc 0; swmm_snapshot_keep_previous counts 5 in
                 # src/swmm_triton.h at bb13ea28.
                 SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
+                # faba2232 carries the disposal by CONTENT: swmm_snapshot_keep_previous counts 5 in
+                # src/swmm_triton.h and snapshot.c exists (1 entry); d456518 is not an ancestor (rc 1).
+                SHA_ORNL_COUPLING_DECLARATION_PIN,
                 # THE SEVEN NO-PAYLOAD SHAS: snapshot.c -> 0 entries at each.
                 SHA_PRE_COUPLED_RESUME,
                 SHA_COUPLED_RESUME_FIX,
@@ -793,6 +835,9 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_MAIN_QUALITY_SNAPSHOT_PIN,
                 # 852f10c is an ANCESTOR of bb13ea28 -- rc 0.
                 SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
+                # faba2232 carries the fix by CONTENT: coupled_node_rim( counts 2 in src/swmm_triton.h
+                # (as at 852f10c); 852f10c is not an ancestor of it (rc 1).
+                SHA_ORNL_COUPLING_DECLARATION_PIN,
             }
         ),
         also_present_in=_REGISTERED_BEFORE_COUPLED_FIXES,
@@ -817,6 +862,9 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_MAIN_QUALITY_SNAPSHOT_PIN,
                 # 2ecb1cf is an ANCESTOR of bb13ea28 -- rc 0.
                 SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
+                # faba2232 carries the fix by CONTENT: 0.3048 counts 2 in src/swmm_triton.h (as at 2ecb1cf);
+                # 2ecb1cf is not an ancestor of it (rc 1).
+                SHA_ORNL_COUPLING_DECLARATION_PIN,
             }
         ),
         also_present_in=_REGISTERED_BEFORE_COUPLED_FIXES,
@@ -844,6 +892,9 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_MAIN_QUALITY_SNAPSHOT_PIN,
                 # 852f10c is an ANCESTOR of bb13ea28 -- rc 0.
                 SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
+                # faba2232 carries the fix by CONTENT: coupled_node_rim( counts 2 in src/swmm_triton.h
+                # (as at 852f10c); 852f10c is not an ancestor of it (rc 1).
+                SHA_ORNL_COUPLING_DECLARATION_PIN,
             }
         ),
         also_present_in=_REGISTERED_BEFORE_COUPLED_FIXES,

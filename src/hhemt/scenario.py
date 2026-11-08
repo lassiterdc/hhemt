@@ -528,6 +528,10 @@ SWMM_QUALITY_SNAPSHOT_SHAS = frozenset(
     {
         "bd18215972c348020d53b3a8a1a64ee6266cae28",
         "bb13ea28603d50879f8d85cd041c17f440fbdb2b",
+        # ORNL triton-swmm head `faba2232`: its snapshot.c carries the same quality state,
+        # `git show faba223212408f04b7a3dbf6580adedf4a4e6b13:external/swmm/src/solver/snapshot.c | grep -c oldQual`
+        # -> 7.
+        "faba223212408f04b7a3dbf6580adedf4a4e6b13",
     }
 )
 

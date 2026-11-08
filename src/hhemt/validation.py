@@ -2160,6 +2160,92 @@ def _validate_container_config(
 # ============================================================================
 
 
+def _validate_coupling_exchange_flow(
+    cfg_system: system_config, cfg_analysis: analysis_config, result: ValidationResult
+):
+    """Refuse ``toggle_coupling_exchange_flow`` on a system whose coupled model is off.
+
+    The exchange flux is decoded from the side-file only TRITON-SWMM writes, so with the coupled
+    model off the toggle could never produce a variable; a silent no-op would let a run finish
+    without the series the analysis was configured to carry.
+    """
+    if cfg_analysis.toggle_coupling_exchange_flow and not cfg_system.toggle_tritonswmm_model:
+        result.add_error(
+            field="analysis.toggle_coupling_exchange_flow",
+            message="toggle_coupling_exchange_flow requires the coupled model: toggle_tritonswmm_model is False",
+            current_value=True,
+            fix_hint=(
+                "Set toggle_tritonswmm_model=True in the system config, or set toggle_coupling_exchange_flow=False"
+            ),
+        )
+
+
+def _validate_timeseries_keep(cfg_system: system_config, cfg_analysis: analysis_config, result: ValidationResult):
+    """Refuse an unknown set name, or a listed variable outside the domain of every enabled model family.
+
+    A name is admitted when ANY enabled family that writes the kind has it in its domain, because the fields are
+    shared by every family of a run; the prune itself only ever removes variables that are in the domain.
+    """
+    from hhemt.timeseries_selection import DOMAIN, FAMILIES_BY_KIND, SET_NAMES, keep_setting
+
+    enabled = {
+        "tritonswmm": cfg_system.toggle_tritonswmm_model,
+        "swmm_only": cfg_system.toggle_swmm_model,
+        "triton_only": cfg_system.toggle_triton_model,
+    }
+    for kind in FAMILIES_BY_KIND:
+        value = keep_setting(cfg_analysis, kind)
+        if (
+            value is None
+            or (isinstance(value, str) and not value.strip())
+            or (not isinstance(value, str) and not value)
+        ):
+            continue  # None, a blank string and an empty list all keep everything
+        if isinstance(value, str):
+            value = value.strip()
+        families = [f for f in FAMILIES_BY_KIND[kind] if enabled[f]]
+        domain = sorted({v for f in families for v in DOMAIN[(kind, f)]})
+        field = f"analysis.timeseries_keep_{kind}"
+        if isinstance(value, str):
+            if value not in SET_NAMES:
+                result.add_error(
+                    field=field,
+                    message=f"{value!r} is not a toolkit set; the sets are {SET_NAMES}, or list names from {domain}",
+                    current_value=value,
+                    fix_hint=f"Use one of {SET_NAMES} or a list drawn from {domain}",
+                )
+            continue
+        outside = [v for v in value if v not in domain]
+        if outside:
+            result.add_error(
+                field=field,
+                message=f"{outside} are outside the domain of every enabled model family for {kind}: {domain}",
+                current_value=list(value),
+                fix_hint=f"List only variables from {domain}",
+            )
+
+
+def _validate_clear_scenario_timeseries(cfg_analysis: analysis_config, result: ValidationResult):
+    """Refuse ``toggle_clear_scenario_timeseries_after_consolidation`` without the consolidation it clears after.
+
+    With ``toggle_consolidate_timeseries`` off there is no consolidated store to hold the copy, so clearing
+    would delete the only copy of the series.
+    """
+    if (
+        cfg_analysis.toggle_clear_scenario_timeseries_after_consolidation
+        and not cfg_analysis.toggle_consolidate_timeseries
+    ):
+        result.add_error(
+            field="analysis.toggle_clear_scenario_timeseries_after_consolidation",
+            message=(
+                "toggle_clear_scenario_timeseries_after_consolidation requires toggle_consolidate_timeseries: "
+                "without the consolidated store, clearing would delete the only copy of the time series"
+            ),
+            current_value=True,
+            fix_hint="Set toggle_consolidate_timeseries=True, or set the clearing toggle to False",
+        )
+
+
 def _validate_resume_interruption_schedule(cfg: analysis_config, result: ValidationResult) -> None:
     """R6: reject a multi-resume interruption schedule under
     ``multi_sim_run_method='1_job_many_srun_tasks'``.
@@ -2289,6 +2375,11 @@ def preflight_validate(
     # R6: a multi-resume interruption schedule is unsafe under
     # multi_sim_run_method='1_job_many_srun_tasks' (no job-end cgroup reap).
     _validate_resume_interruption_schedule(cfg_analysis, result)
+
+    # The exchange flux decodes a file only the coupled model writes.
+    _validate_coupling_exchange_flow(cfg_system, cfg_analysis, result)
+    _validate_clear_scenario_timeseries(cfg_analysis, result)
+    _validate_timeseries_keep(cfg_system, cfg_analysis, result)
 
     return result
 

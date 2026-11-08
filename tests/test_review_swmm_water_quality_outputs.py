@@ -182,6 +182,11 @@ _WATER_QUALITY_NAMES = (
 )
 
 
+#: Names in `_WATER_QUALITY_NAMES` that the approved shape moved into the flow inventory (read for every model, so in
+#: the base CF map); every other name here stays quality-only and must stay out of it.
+_FLOW_INVENTORY_NAMES = frozenset({"outfall_total_vol"})
+
+
 @pytest.mark.parametrize("name", _WATER_QUALITY_NAMES)
 def test_each_water_quality_variable_is_advertised_only_through_the_gated_union_and_described_once(name):
     """Property: every water-quality variable can be listed in a deposit's `variableMeasured` only on a
@@ -204,7 +209,15 @@ def test_each_water_quality_variable_is_advertised_only_through_the_gated_union_
     from hhemt import cf_conventions as cf
 
     assert name in cf._ADVERTISABLE_VARIABLES
-    assert name not in cf._CF_VARIABLE_MAP
+    if name in _FLOW_INVENTORY_NAMES:
+        # The approved shape moved `outfall_total_vol` out of the water-quality map into the flow inventory (the
+        # Outfall Loading Summary flow columns, read always): it IS in the base CF map and its descriptor lives in
+        # the base provenance table, never in the water-quality-only one.
+        assert name in cf._CF_VARIABLE_MAP
+        assert name in cf._QUANTITY_PROVENANCE
+        assert name not in cf._WQ_QUANTITY_PROVENANCE
+    else:
+        assert name not in cf._CF_VARIABLE_MAP
     tables = (cf._QUANTITY_PROVENANCE, cf._PERF_QUANTITY_PROVENANCE, cf._WQ_QUANTITY_PROVENANCE)
     assert sum(name in table for table in tables) == 1
     assert name in cf._DESCRIBED_VARIABLES

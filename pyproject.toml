@@ -266,7 +266,7 @@ markers = [
     "requires_snakemake_subprocess: deselected by Gate A. Measured NOT to spawn in 36 of the 107 tests this marker removes from Gate A; population under re-derivation. Rationale: incompatible with pytest-xdist nested parallelism, never wired.",
     "compile_tier: DERIVED at collection from the fixture closure (tests/conftest.py) for any test holding `tritonswmm_cpu_compiled`; hand-applied ONLY where a body compiles directly. Deselected by Gate A, required by Gate B.",
     "docs: compares a published page with the code it describes and runs no solver. tests/docs/conftest.py adds it to every test under tests/docs/.",
-    "shared_runs_root: DERIVED at collection (tests/conftest.py), never hand-applied. The test builds or reads a tree under the shared slug runs root: a fixture in its closure, or its own body, calls a `retrieve_*` test-case builder before any runs-root override is set. The laptop tier keeps these tests off the pool's per-test override directory.",
+    "shared_runs_root: DERIVED at collection (tests/conftest.py), hand-applied only where the derivation cannot see the fixture (tests/test_synth_coupling_flux.py fetches its compiled fixture with request.getfixturevalue). The test builds or reads a tree under the shared slug runs root: a fixture in its closure, or its own body, calls a `retrieve_*` test-case builder before any runs-root override is set. The laptop tier keeps these tests off the pool's per-test override directory.",
 ]
 # Dump every thread's traceback after this many seconds in ONE test, to the stderr fd
 # stashed at configure time (so it bypasses pytest's own capture). It does NOT kill:

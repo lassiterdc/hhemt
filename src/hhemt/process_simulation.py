@@ -171,6 +171,29 @@ _RPT_TRUNCATION_MARKER = (
 )
 
 
+def require_coupled_swmm_binary_output(rpt_path: Path) -> Path:
+    """The coupled run's binary SWMM output beside its report, refusing when it is not on disk.
+
+    The solver opens SWMM with a report and a binary output of the same stem (``hydraulics.rpt`` and
+    ``hydraulics.out``). Every coupled series is read from the binary file, so a missing one is an error naming the
+    file and the one setting that deletes it, ``remove_after_processing: raw_swmm_binaries``, which fires after the
+    summaries are verified; it is never a silent drop of the series. The check runs before any store is written.
+    """
+    out_path = Path(rpt_path).with_suffix(".out")
+    if not out_path.exists():
+        raise ProcessingError(
+            operation="_export_SWMM_outputs",
+            filepath=out_path,
+            reason=(
+                f"the coupled SWMM binary output {out_path.name} is not on disk, and every coupled series is read "
+                "from it. It is deleted by `remove_after_processing: raw_swmm_binaries`, which fires after the "
+                "summaries are verified; a reprocess of a scenario whose binary output was reclaimed cannot rebuild "
+                "its series and must re-simulate."
+            ),
+        )
+    return out_path
+
+
 def _deferred_log_writes(method):
     """Run `method` inside `self.log.deferred_writes()` so every LogField.set() and
     add_sim_processing_entry() it performs collapses into ONE read-modify-write at exit.
@@ -1359,13 +1382,15 @@ class TRITONSWMM_sim_post_processing:
             )
 
             f_inp = self.scen_paths.swmm_hydraulics_inp
-            swmm_timeseries_result_file = self.scen_paths.swmm_hydraulics_rpt
-            if swmm_timeseries_result_file is None:
+            if self.scen_paths.swmm_hydraulics_rpt is None:
                 raise FileNotFoundError(
                     "Cannot find SWMM output file from TRITON-SWMM coupled run in "
                     f"{self.scen_paths.swmm_hydraulics_rpt}. "
                     "Ensure the TRITON-SWMM simulation completed successfully."
                 )
+            # The coupled series are read from the binary output the solver writes beside the report (same stem,
+            # `.out`); the report supplies the summary tables only. Refused HERE, before any store is written.
+            swmm_timeseries_result_file = require_coupled_swmm_binary_output(self.scen_paths.swmm_hydraulics_rpt)
         else:  # model == "swmm" (standalone SWMM)
             f_out_nodes = self._validate_path(
                 self.scen_paths.output_swmm_only_node_time_series,
@@ -1392,6 +1417,7 @@ class TRITONSWMM_sim_post_processing:
         ds_nodes, ds_links = retrieve_SWMM_outputs_as_datasets(
             f_inp,
             swmm_timeseries_result_file,
+            family=model,
         )
         if model == "tritonswmm" and "pollutant" in ds_nodes.dims:
             # Identical text for every event, so it survives consolidation's drop_conflicts rule.
@@ -1401,6 +1427,8 @@ class TRITONSWMM_sim_post_processing:
             # S6 (links) as SWMM printed them, and the timeseries consolidation publishes them.
             ds_nodes = self._apply_quality_stats_rule(ds_nodes, model)
             ds_links = self._apply_quality_stats_rule(ds_links, model)
+        if model == "tritonswmm" and not nodes_already_written:
+            ds_nodes = self._attach_coupling_outputs(ds_nodes, f_inp)
         node_mode = "tritonswmm_swmm_node" if model == "tritonswmm" else "swmm_only_node"
         link_mode = "tritonswmm_swmm_link" if model == "tritonswmm" else "swmm_only_link"
         # WRITE NODES
@@ -1605,7 +1633,19 @@ class TRITONSWMM_sim_post_processing:
         link_ok = self.log.SWMM_link_timeseries_written and bool(self.log.SWMM_link_timeseries_written.get())
         return node_ok and link_ok
 
+    def _consolidated_timeseries_cleared(self, kind: Literal["node", "link"]) -> bool:
+        """Whether this scenario's ``kind`` time-series store was deleted after its slice was read back.
+
+        True only on the model log's own record (``consolidated_{kind}_timeseries_cleared``), written by the
+        consolidation after the read-back passed. A store that is merely absent reads False.
+        """
+        field = getattr(self.log, f"consolidated_{kind}_timeseries_cleared", None)
+        return bool(field is not None and field.get())
+
     def _swmm_link_outputs_processed(self, model: Literal["swmm", "tritonswmm"]) -> bool:
+        if model == "tritonswmm" and self._consolidated_timeseries_cleared("link"):
+            # Cleared on purpose, after its slice was verified in analysis_timeseries.zarr: processed, never re-derived.
+            return True
         if model == "tritonswmm":
             swmm_links = self._already_written(self.scen_paths.output_tritonswmm_link_time_series)
         else:
@@ -1616,6 +1656,8 @@ class TRITONSWMM_sim_post_processing:
         return swmm_links
 
     def _swmm_node_outputs_processed(self, model: Literal["swmm", "tritonswmm"]) -> bool:
+        if model == "tritonswmm" and self._consolidated_timeseries_cleared("node"):
+            return True
         if model == "tritonswmm":
             swmm_nodes = self._already_written(self.scen_paths.output_tritonswmm_node_time_series)
         else:
@@ -1691,7 +1733,13 @@ class TRITONSWMM_sim_post_processing:
             # once the FINAL allocation is done (this method is guarded against a
             # mid-multi-allocation invocation above) and grows unbounded in sim length if
             # retained. tritonswmm only — a triton-only tree has no swmm/ subtree.
-            if model_type == "tritonswmm":
+            # While the exchange flux is configured, the side-file is the only source of
+            # `coupling_exchange_flow` and is read when the SWMM node store is written; `write_timeseries_outputs`
+            # runs the TRITON export (which calls this method) BEFORE the SWMM export, so reclaiming here would
+            # delete it unread. The call that ends `_export_SWMM_outputs` reclaims it once the store exists.
+            if model_type == "tritonswmm" and not (
+                self._coupling_exchange_flow_on() and not self._swmm_node_outputs_processed("tritonswmm")
+            ):
                 self._reclaim_exchange_replay_sidefiles()
             # Per-model log bookkeeping: model logs carry both
             # raw_TRITON_outputs_cleared and raw_SWMM_outputs_cleared (for the
@@ -1711,17 +1759,104 @@ class TRITONSWMM_sim_post_processing:
         else:
             raise ValueError(f"Unknown model_type for _clear_raw_outputs: {model_type!r}")
 
+    def _coupling_exchange_flow_on(self) -> bool:
+        """Whether ``toggle_coupling_exchange_flow`` is on for this analysis.
+
+        Read through ``getattr`` with a False fallback, deliberately: ``_clear_raw_outputs`` is driven
+        directly by unit tests against a minimal ``_analysis`` stub that carries no ``cfg_analysis``, and a
+        strict read would fail every one of them on a toggle they never set. A real analysis always has the
+        field (it is a declared pydantic field, default False), so the fallback is reachable only from such
+        a stub. Not established: that no other caller passes an ``_analysis`` without ``cfg_analysis``.
+        """
+        cfg = getattr(self._analysis, "cfg_analysis", None)
+        return bool(getattr(cfg, "toggle_coupling_exchange_flow", False))
+
+    def _attach_coupling_outputs(self, ds_nodes: xr.Dataset, f_inp: Path) -> xr.Dataset:
+        """Add the coupling-node flag, and when configured the exchange flux, to the coupled node dataset.
+
+        ``is_coupling_node`` (int8 on ``node_id``) is always added: 1 where the node is a line of the
+        scenario's ``coupling_nodes.txt``, else 0. When ``toggle_coupling_exchange_flow`` is on, the
+        solver's exchange side-file is decoded and added as ``coupling_exchange_flow`` on
+        ``(date_time, node_id)`` (the mean over each report interval, NaN at uncoupled nodes) plus the
+        eight per-node statistics of ``coupling_exchange.STATISTIC_NAMES`` on ``node_id`` (NaN at
+        uncoupled nodes).
+
+        Raises
+        ------
+        ProcessingError
+            If a listed coupling node is missing from the SWMM output, or the flux is requested and the
+            side-file is absent. A store is never written with the flux variable silently missing:
+            ``_clear_raw_outputs`` reclaims the side-file once the node store is written, so a missing
+            file means the reclaim ran too early or the run did not couple.
+        """
+        from hhemt.coupling_exchange import exchange_statistics, read_exchange_sidefile, to_reporting_intervals
+        from hhemt.scenario import coupling_nodes_file_for
+        from hhemt.swmm_output_parser import RPT_DATETIME_FORMAT, _rpt_starting_date
+
+        nodes_file = coupling_nodes_file_for(f_inp)
+        names = [line.strip() for line in nodes_file.read_text().splitlines() if line.strip()]
+        node_ids = [str(n) for n in ds_nodes["node_id"].values]
+        missing = sorted(set(names) - set(node_ids))
+        if missing:
+            raise ProcessingError(
+                "attach coupling outputs",
+                nodes_file,
+                f"{len(missing)} listed coupling node(s) are absent from the SWMM node output: {missing[:5]}",
+            )
+        position = {n: i for i, n in enumerate(node_ids)}
+        slots = np.array([position[n] for n in names], dtype=int)
+        flag = np.zeros(len(node_ids), dtype="int8")
+        flag[slots] = 1
+        ds_nodes["is_coupling_node"] = ("node_id", flag)
+        if not self._coupling_exchange_flow_on():
+            return ds_nodes
+
+        sidefiles = sorted(self.scen_paths.out_tritonswmm.glob("**/swmm/*_exchange_replay.bin"))
+        if len(sidefiles) != 1:
+            raise ProcessingError(
+                "attach coupling exchange flow",
+                self.scen_paths.out_tritonswmm,
+                f"found {len(sidefiles)} exchange side-file(s) where exactly one is required; "
+                "_reclaim_exchange_replay_sidefiles deletes it, and it must not run before the node store is written",
+            )
+        rpt_file = self.scen_paths.swmm_hydraulics_rpt
+        with open(rpt_file, encoding="latin-1") as rpt:
+            head = "".join(line for _, line in zip(range(200), rpt, strict=False))
+        starting = _rpt_starting_date(head)
+        if starting is None:
+            raise ProcessingError("attach coupling exchange flow", rpt_file, "no Starting Date in the report header")
+        start = pd.to_datetime(starting, format=RPT_DATETIME_FORMAT)
+        report_times_s = (pd.to_datetime(ds_nodes["date_time"].values) - start).total_seconds().to_numpy()
+        series = read_exchange_sidefile(sidefiles[0], nodes_file)
+        intervals = to_reporting_intervals(series, report_times_s)
+        flow = np.full((len(report_times_s), len(node_ids)), np.nan)
+        flow[:, slots] = intervals.exchange_mean_cms
+        ds_nodes["coupling_exchange_flow"] = xr.DataArray(
+            flow,
+            dims=("date_time", "node_id"),
+            coords={"date_time": ds_nodes["date_time"], "node_id": ds_nodes["node_id"]},
+            attrs={"cell_methods": intervals.cell_methods},
+        )
+        for name, values in exchange_statistics(series).as_dict().items():
+            column = np.full(len(node_ids), np.nan)
+            column[slots] = values
+            ds_nodes[name] = ("node_id", column)
+        return ds_nodes
+
     def _reclaim_exchange_replay_sidefiles(self) -> None:
         """Reclaim TRITON's coupled-SWMM exchange-replay side-file(s) (bounded retention).
 
         ``out_tritonswmm/**/swmm/*_exchange_replay.bin`` is the persisted exchange history
-        that pinned TRITON 3a832f7d replays to resume a coupled sim. Its size grows with
+        that pinned TRITON builds replay to resume a coupled sim. Its size grows with
         sim length —
 
-            bytes = 8 + n_triton_steps × sizeof(value_t) × (1 + global_num_of_swmm_links)
+            bytes = header + n_triton_steps × sizeof(value_t) × (1 + global_num_of_swmm_links)
 
-        (the log call is per-TRITON-step, ``triton.h:2408``, NOT per print interval) — so at
-        the double-precision default (``sizeof(value_t)``=8) a fine-grid 100-node 1e6-step
+        with header = 8 bytes for the V1 magic 0x53574D4D (two int32: magic, num_nodes; written by
+        3a832f7d) and 12 bytes for the V2 magic 0x53574D32 (a third int32, the value width; written
+        by faba2232), and the log call is per-TRITON-step, ``triton.h:2408`` at 3a832f7d and
+        ``triton.h:2628`` at faba2232, NOT per print interval. At the double-precision default
+        (``sizeof(value_t)``=8) a fine-grid 100-node 1e6-step
         coupled sim writes ~808 MB PER SIM. Retained across every member in an ensemble
         and counted against the analysis-scope DU sentinels, that is unbounded permanent
         disk. The side-file is dead weight once the sim can no longer resume: after the FINAL
@@ -1730,7 +1865,9 @@ class TRITONSWMM_sim_post_processing:
         file from scratch — so unlinking here never breaks a subsequent resume or force-rerun.
         Called ONLY from the ``tritonswmm`` branch of ``_clear_raw_outputs``, which is already
         gated (a) on the ``multi_allocation_in_progress`` guard (final allocation complete)
-        and (b) on the ``clear_raw`` config electing tritonswmm cleanup. Size-mutating, so it
+        and (b) on the ``clear_raw`` config electing tritonswmm cleanup, and, while
+        ``toggle_coupling_exchange_flow`` is on, (c) on the SWMM node store having been written, because
+        ``_attach_coupling_outputs`` decodes this file. Size-mutating, so it
         routes through ``du_sentinels.delete_and_account`` (the unified deletion tool), which
         adjusts this scenario's own sentinel once — NOT ``# EXEMPT-DU``.
         """
@@ -1871,10 +2008,82 @@ class TRITONSWMM_sim_post_processing:
                     "model_type parameter is required for SWMM summary generation. Must be 'tritonswmm' or 'swmm'."
                 )
 
+        # The summaries are written; the time-series variables the keep-lists do not select can leave disk now.
+        self._prune_timeseries_stores(model_type, which)
+
         # Explicit garbage collection after summary generation
         gc.collect()
 
         return
+
+    # (model_type, kind) -> the ScenarioPaths attribute of that kind's per-scenario time-series store.
+    _TIMESERIES_STORE_ATTR: dict[tuple[str, str], str] = {
+        ("tritonswmm", "swmm_node"): "output_tritonswmm_node_time_series",
+        ("tritonswmm", "swmm_link"): "output_tritonswmm_link_time_series",
+        ("tritonswmm", "triton_gridded"): "output_tritonswmm_triton_timeseries",
+        ("swmm", "swmm_node"): "output_swmm_only_node_time_series",
+        ("swmm", "swmm_link"): "output_swmm_only_link_time_series",
+        ("triton", "triton_gridded"): "output_triton_only_timeseries",
+    }
+    _FAMILY_OF_MODEL = {"tritonswmm": "tritonswmm", "swmm": "swmm_only", "triton": "triton_only"}
+
+    def _prune_timeseries_stores(self, model_type: str, which: str) -> None:
+        """Delete the unkept time-series variables from this scenario's stores, once their summaries exist.
+
+        Applies the three ``timeseries_keep_*`` fields of the analysis config. Gridded stores are pruned when the
+        TRITON summary was just written (``which`` TRITON or both), SWMM node and link stores when the SWMM
+        summaries were (SWMM or both). Applies whether or not ``toggle_consolidate_timeseries`` is on. A store that
+        is absent (reclaimed, or cleared after consolidation) is skipped, and a store already pruned is a no-op.
+        """
+        from hhemt.timeseries_selection import keep_setting, prune_timeseries_store, resolve_keep
+
+        cfg = getattr(getattr(self, "_analysis", None), "cfg_analysis", None)
+        if cfg is None:
+            return
+        kinds = []
+        if which in ("TRITON", "both") and model_type in ("triton", "tritonswmm"):
+            kinds.append("triton_gridded")
+        if which in ("SWMM", "both") and model_type in ("tritonswmm", "swmm"):
+            kinds.extend(["swmm_node", "swmm_link"])
+        family = self._FAMILY_OF_MODEL[model_type]
+        for kind in kinds:
+            value = keep_setting(cfg, kind)
+            if (
+                value is None
+                or (isinstance(value, str) and not value.strip())
+                or (not isinstance(value, str) and not value)
+            ):
+                continue  # blank keeps everything
+            path = getattr(self.scen_paths, self._TIMESERIES_STORE_ATTR[(model_type, kind)])
+            if path is None or not Path(path).exists():
+                continue
+            prune_timeseries_store(
+                Path(path),
+                kind,
+                family,
+                resolve_keep(kind, family, value),
+                # Read with a default: a scenario-less stand-in has no folder, and a real scenario always does.
+                scope_dir=getattr(self.scen_paths, "sim_folder", None),
+            )
+
+    @staticmethod
+    def _refuse_summary_rebuild_from_pruned_store(path: Path) -> None:
+        """Refuse to (re)build a summary from a store whose variables were pruned.
+
+        A summary built from fewer series returns fewer statistics with no error (measured: ``depth`` and
+        ``inflow_flow`` alone give four summary variables where all four series give eight), so a rebuild after
+        the prune would lose the removed series' statistics silently.
+        """
+        from hhemt.timeseries_selection import pruned_variables
+
+        pruned = pruned_variables(Path(path))
+        if pruned:
+            raise ProcessingError(
+                "build a summary from a pruned time-series store",
+                Path(path),
+                f"the store was pruned of {list(pruned)} (timeseries_keep_* fields); a summary built from it would "
+                "silently lose those series' statistics. Re-run processing from the raw outputs to rebuild it.",
+            )
 
     @_deferred_log_writes
     def _export_TRITON_summary(
@@ -1939,6 +2148,8 @@ class TRITONSWMM_sim_post_processing:
                 f"Cannot create {model_type} TRITON summary: input timeseries not found at {timeseries_path}. "
                 f"Ensure timeseries processing completed successfully for {model_type} model."
             )
+
+        self._refuse_summary_rebuild_from_pruned_store(timeseries_path)
 
         start_time = time.time()
 
@@ -2110,6 +2321,17 @@ class TRITONSWMM_sim_post_processing:
         # Both checks (node and link) MUST sit below the already-written early-return, or
         # a re-fire on a post-processing-reclaimed scenario raises on an input the
         # function no longer needs.
+        if model_type == "tritonswmm" and (
+            self._consolidated_timeseries_cleared("node") or self._consolidated_timeseries_cleared("link")
+        ):
+            if not (node_timeseries_path.exists() and link_timeseries_path.exists()):
+                raise ProcessingError(
+                    "create the SWMM summaries",
+                    node_timeseries_path,
+                    "the scenario's time-series stores were deleted after consolidation "
+                    "(toggle_clear_scenario_timeseries_after_consolidation); the series is in analysis_timeseries.zarr "
+                    "and a summary cannot be rebuilt from it here",
+                )
         if node_timeseries_path is None or not node_timeseries_path.exists():
             raise FileNotFoundError(
                 f"Cannot create {model_type} SWMM node summary: input timeseries not found at {node_timeseries_path}. "
@@ -2120,6 +2342,9 @@ class TRITONSWMM_sim_post_processing:
                 f"Cannot create {model_type} SWMM link summary: input timeseries not found at {link_timeseries_path}. "
                 f"Ensure timeseries processing completed successfully for {model_type} model."
             )
+
+        for _store in (node_timeseries_path, link_timeseries_path):
+            self._refuse_summary_rebuild_from_pruned_store(_store)
 
         # Load full timeseries from the appropriate files
         ds_nodes_full = self._open(node_timeseries_path)
@@ -3702,6 +3927,9 @@ def summarize_swmm_simulation_results(ds, event_iloc, tstep_dimname="date_time")
     # `_max`/`_last` pair: the cross-simulation identity check compares every `_max` that has a
     # `_last` partner, so a generic pair would enter its compared set for every water-quality member.
     quality_series = [v for v in ("pollutant_conc", "link_pollutant_conc") if v in ds.data_vars]
+    # The exchange flux gets no generic `_max`/`_last` pair for the same reason, and its summary is the eight
+    # static statistics written beside it, which carry no time dimension and pass through unchanged.
+    ds = ds.drop_vars([v for v in ("coupling_exchange_flow",) if v in ds.data_vars])
     lst_time_variant_vars = []
     for var in ds.data_vars:
         if var not in quality_series and tstep_dimname in ds[var].coords:

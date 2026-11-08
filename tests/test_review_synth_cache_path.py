@@ -74,7 +74,9 @@ def test_a_worktree_name_over_the_digest_length_gets_the_digest_of_the_worktree_
     both still pass.
     """
     root = Path("/home/u/dev/hhemt/.claude/worktrees") / name
-    expected = "path-" + hashlib.sha256(str(root).encode("utf-8", "surrogateescape")).hexdigest()[:16]
+    # `checkout_slug` takes a canonical path, so the address is the digest of the resolved root: a host whose
+    # `/home` is a symlink resolves the fixed prefix below to another string.
+    expected = "path-" + hashlib.sha256(str(root.resolve()).encode("utf-8", "surrogateescape")).hexdigest()[:16]
     assert checkout_slug(root) == expected
     assert len(checkout_slug(root)) == 21 and _DIGEST_ADDRESS.match(checkout_slug(root))
 
@@ -177,3 +179,29 @@ def test_worktree_slug_follows_the_current_directory(tmp_path, monkeypatch):
     assert seen["worktree"] == "wt_a"
     assert _DIGEST_ADDRESS.match(seen["one"]) and _DIGEST_ADDRESS.match(seen["two"])
     assert seen["one"] != seen["two"]
+
+
+def test_a_symlinked_prefix_is_resolved_before_the_digest_is_taken(tmp_path):
+    """Property: the digest address of a worktree root is the digest of its RESOLVED spelling, so a root reached
+    through a symlinked prefix and the same root spelled directly share one address.
+
+    Class: NEW CAPABILITY - the plausible wrong implementation hashes the path as given; it is red under it.
+    Reachability: a cluster whose `/home` is a symlink (Rivanna), or any alias directory.
+    Both-states anchor: turns on equality with the digest of one named spelling and inequality with the other.
+    What kills it: dropping the `.resolve()` in `tier_address_for`'s fallback (measured on a copy).
+    Second correct implementation: resolving in `checkout_slug` before delegating; same address.
+    """
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    name = "n" * 30
+    root = alias / ".claude" / "worktrees" / name
+    direct = real / ".claude" / "worktrees" / name
+
+    def digest(path: Path) -> str:
+        return "path-" + hashlib.sha256(str(path).encode("utf-8", "surrogateescape")).hexdigest()[:16]
+
+    assert digest(root) != digest(direct), "control: the two spellings hash differently"
+    assert checkout_slug(root) == digest(direct)
+    assert checkout_slug(root) != digest(root)

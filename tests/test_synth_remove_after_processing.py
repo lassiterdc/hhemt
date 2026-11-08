@@ -210,6 +210,10 @@ def test_data_availability_check_is_registered_and_graceful_absent():
         # when the raw outputs are removed, so a cleared analysis discloses the reclaim.
         "raw_TRITON_outputs_cleared",
         "raw_SWMM_outputs_cleared",
+        # The consolidation's clearing of a scenario's own node and link time-series stores after their slices were
+        # read back from analysis_timeseries.zarr: disclosed so a cleared series reads as cleared, not missing.
+        "consolidated_node_timeseries_cleared",
+        "consolidated_link_timeseries_cleared",
     }
     # Assert on the CODE, not the source text: the docstring legitimately names
     # `remove_after_processing` in order to say the check must not read it, so a raw

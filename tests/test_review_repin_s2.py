@@ -34,11 +34,13 @@ import hhemt.scenario as scenario
 
 _REPO = Path(__file__).resolve().parent.parent
 
-#: The two builds whose snapshot carries node and link water-quality state (`oldQual` count 7 in
-#: `external/swmm/src/solver/snapshot.c`, which is byte-identical between them).
+#: The builds whose snapshot carries node and link water-quality state (`oldQual` count 7 in
+#: `external/swmm/src/solver/snapshot.c`; the file is byte-identical between the first two, and the ORNL head carries
+#: the same count).
 _BD18215 = "bd18215972c348020d53b3a8a1a64ee6266cae28"
 _BB13EA28 = "bb13ea28603d50879f8d85cd041c17f440fbdb2b"
-_CARRYING = (_BD18215, _BB13EA28)
+_FABA2232 = "faba223212408f04b7a3dbf6580adedf4a4e6b13"
+_CARRYING = (_BD18215, _BB13EA28, _FABA2232)
 #: The fork commit between them that bounds the flooding-debug path buffer. Its snapshot carries the state
 #: too, but it was never a pin, so the approved shape deliberately leaves it unlisted.
 _7A59D18 = "7a59d1875256a4dc5eedbf56c1160316e7a6b7ac"
@@ -152,7 +154,7 @@ def test_the_live_pin_guard_reports_no_finding_on_this_tree():
 
 
 # --------------------------------------------------------------------------- (b) the quality-state set
-@pytest.mark.parametrize("sha", _CARRYING, ids=["bd18215", "bb13ea28"])
+@pytest.mark.parametrize("sha", _CARRYING, ids=["bd18215", "bb13ea28", "faba2232"])
 def test_a_listed_build_is_recognised_in_every_spelling_the_resolver_normalises(sha):
     """Each listed build reads as carrying quality state when padded or upper-cased, and only then.
 
@@ -191,8 +193,8 @@ def test_no_build_outside_the_two_pins_reads_as_carrying_quality_state():
     sha the registry module declares other than the two carrying pins.
     Class: the registered shas (a closed census of the module's `SHA_*` constants, measured to include the
     curated pin `a146fb6`, whose `oldQual` count is 0) plus the commit the approved shape leaves unlisted
-    on purpose. The allowlist is the two pins the shape declares; a later pin that carries the fix is
-    added to `_CARRYING` here when it is added to the set.
+    on purpose. The allowlist is the carrying builds the set lists (the two pins the shape declares and the ORNL
+    head); a later pin that carries the fix is added to `_CARRYING` here when it is added to the set.
     Reachability: any recorded build outside the set reaches the replay arm; artifact: the set's own
     comment, which says an unlisted build forces replay and withholds statistics.
     Both-states anchor: the assertion reads the returned bool per sha, true or false whatever the set is

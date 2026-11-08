@@ -139,7 +139,8 @@ def test_a_file_that_vanishes_after_it_is_listed_counts_zero_and_siblings_still_
 
     def _scandir(path):
         iterator = real_scandir(path)
-        if Path(path) == root:
+        # pytest's own tmp_path removal lists a directory by file descriptor while this patch is still installed
+        if not isinstance(path, int) and Path(path) == root:
             names = sorted(iterator, key=lambda e: e.name != "gone")  # the vanishing entry is visited first
             iterator.close()
             (root / "gone").unlink()

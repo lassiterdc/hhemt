@@ -139,10 +139,10 @@ def test_a_file_or_a_missing_path_is_refused_by_the_option_check(tmp_path):
     a_file.write_text("x")
     file_result = _invoke("--bundle", str(a_file))
     assert file_result.exit_code == 2
-    assert "is a file" in _flat(file_result)
+    assert "is a file" in _flat_unboxed(file_result)
     missing_result = _invoke("--bundle", str(tmp_path / "nope"))
     assert missing_result.exit_code == 2
-    assert "does not exist" in _flat(missing_result)
+    assert "does not exist" in _flat_unboxed(missing_result)
 
 
 def _flat_unboxed(result):

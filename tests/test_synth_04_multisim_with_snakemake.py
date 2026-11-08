@@ -435,8 +435,7 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
             if link_delta > 1:
                 pytest.fail(_BC_TRUNCATION_KNOWN_BUG.replace("Node", "Link").format(delta=link_delta))
 
-            if set(ds_swmm_nodes.data_vars) != set(ds_tritonswmm_nodes.data_vars):
-                pytest.fail("Node time series data variables do not match")
+            tst_ut.assert_node_vars_consistent(ds_swmm_nodes, ds_tritonswmm_nodes, synth_multi_sim_analysis)
             swmm_link_vars = set(ds_swmm_links.data_vars)
             tritonswmm_link_vars = set(ds_tritonswmm_links.data_vars)
 

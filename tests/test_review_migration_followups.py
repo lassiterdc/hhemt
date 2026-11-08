@@ -415,7 +415,7 @@ def test_the_layout_is_28_with_exactly_one_module_per_number_and_a_ladder_that_e
     """
     from hhemt.version_migration.constants import LAYOUT_VERSION
 
-    assert LAYOUT_VERSION == 29
+    assert LAYOUT_VERSION == 30
     vdir = REPO / "src" / "hhemt" / "version_migration" / "versions"
     claims = {}
     for path in sorted(vdir.glob("V00*.py")):
@@ -430,7 +430,8 @@ def test_the_layout_is_28_with_exactly_one_module_per_number_and_a_ladder_that_e
     ladder = (REPO / "tests" / "test_version_migration_ladder.py").read_text()
     expected = re.search(r"EXPECTED_LADDER: list\[str\] = \[(.*?)\n\]", ladder, re.S).group(1)
     stems = re.findall(r'"(V\d{4}__[^"]+)"', expected)
-    assert stems[-3:-1] == ["V0027__consolidate_zarr_metadata", V0028_STEM], stems[-3:]
+    i = stems.index("V0027__consolidate_zarr_metadata")
+    assert stems[i : i + 2] == ["V0027__consolidate_zarr_metadata", V0028_STEM], stems[-4:]
     assert len(stems) == len(set(stems))
     leftovers = [
         p.relative_to(REPO).as_posix()
@@ -465,20 +466,25 @@ def test_the_layout_28_fixture_is_a_byte_copy_of_the_layout_27_fixture():
 
 
 @pytest.mark.parametrize("zip_name", ["multisim", "sensitivity"])
-def test_the_regenerated_golden_zips_are_stamped_29_carry_indexed_roots_and_hold_no_old_name(zip_name):
-    """Property: each golden zip carries `_version.json` files stamped 29, every root `zarr.json` of its zarr stores
-    carries a consolidated-metadata index, and no member path holds a unit-token variable name.
+def test_the_regenerated_golden_zips_are_stamped_30_carry_indexed_roots_and_hold_no_old_name(zip_name):
+    """Property: each golden zip carries `_version.json` files stamped at the current `LAYOUT_VERSION` (29 when this
+    test was last pinned, 30 since the SWMM run-level attributes became variables), every root `zarr.json` of its zarr
+    stores carries a consolidated-metadata index, and no member path holds a unit-token variable name.
 
     Class: the two zips, every `_version.json`, every store root and every member path.
     Why required: the generator rebuilds both zips, and a stamp left at 27 or a store written without an index
     would pass the stores' own readers and fail only the conformance test.
-    Kills it: a zip generated before `records.py` held 29; one generated with a generator that skips the index.
+    Kills it: a zip generated before `records.py` held 30; one generated with a generator that skips the index.
     Passes under: any generation with the same properties.
     """
     zf = zipfile.ZipFile(REPO / "tests" / "fixtures" / "goldens" / f"{zip_name}.zip")
     names = zf.namelist()
     stamps = [n for n in names if n.endswith("_version.json")]
-    assert stamps and all(json.loads(zf.read(n))["layout_version"] == 29 for n in stamps), stamps
+    from hhemt.version_migration.constants import LAYOUT_VERSION
+
+    # The goldens are written at the layout the toolkit now stamps (SPEC.md section 3): 29 at V0029, 30 at V0030.
+    assert LAYOUT_VERSION == 30
+    assert stamps and all(json.loads(zf.read(n))["layout_version"] == LAYOUT_VERSION for n in stamps), stamps
     roots = [n for n in names if re.search(r"\.zarr/zarr\.json$", n) and n.count(".zarr/") == 1]
     assert len(roots) >= 30, len(roots)
     unindexed = [n for n in roots if json.loads(zf.read(n)).get("consolidated_metadata") is None]

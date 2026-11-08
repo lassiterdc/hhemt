@@ -540,6 +540,11 @@ def emit_bundle(
     The HPC-baseline analysis_report.html is preserved under bundle_baseline/. The
     baseline zip is not carried.
 
+    Independent of any figure, the bundle also carries IN FULL ``analysis_timeseries.zarr`` and every per-scenario
+    time-series store that exists. The per-scenario stores are the ``ScenarioPaths`` fields named
+    ``output_*_timeseries`` and ``output_*_time_series``. ``bundle_manifest.json`` names every carried store under
+    ``carried_output_stores``.
+
     Every generated and every harvested text member of the archive has the
     producer's directories, interpreter, login name, and SLURM account replaced by
     the closed ``{hhemt_*}`` tokens of ``_placeholders`` as the member is written into the
@@ -560,7 +565,8 @@ def emit_bundle(
         ``omitted_output_zarrs`` in ``bundle_manifest.json``. ``combine`` refuses such a
         bundle, because ``combine`` refuses every ``metadata_only_stores`` entry, and the bundle's
         regeneration Snakefile refuses a plot rule that declared an omitted store in full.
-        The default is False, and the emit is unchanged.
+        The default is False, and the emit is unchanged. The time-series stores of the analysis follow the flag
+        too. Each ``.zarr`` among the stores is carried shallow and named in both keys.
     allow_stale_figures : bool
         A sensitivity analysis holding figures of members absent from the setup table is
         REFUSED by default, with ``ConfigurationError`` on field ``bundle_stale_figures``, before
@@ -693,6 +699,17 @@ def emit_bundle(
             omit_output_zarrs=omit_output_zarrs,
             unresolved_outside=declared_sources_unresolved_outside_tree,
         )
+        # THE TIME-SERIES STORES, carried because they exist and not because a figure declares them. Planned
+        # into the same `streamed` the harvest filled, so a store a figure also declares is planned once.
+        carried_output_stores, carried_shallow_stores = _plan_time_series_carriage(
+            analysis, analysis_dir, streamed, omit_output_zarrs=omit_output_zarrs
+        )
+        if omit_output_zarrs:
+            metadata_only_stores = sorted(set(metadata_only_stores) | set(carried_shallow_stores))
+        else:
+            # A figure's qualifier may have named a carried store shallow, but it is carried in full here, and the
+            # manifest must not call a full store metadata-only (`combine` refuses every name in that list).
+            metadata_only_stores = [store for store in metadata_only_stores if store not in set(carried_output_stores)]
         # The omitted set is the shallow `.zarr` stores of THIS harvest under the flag: every
         # harvested `.zarr` source is shallow under it, so the filter selects exactly those.
         omitted_output_zarrs = (
@@ -729,6 +746,7 @@ def emit_bundle(
             metadata_only_stores=metadata_only_stores,
             analysis_dir=analysis_dir,
             omitted_output_zarrs=omitted_output_zarrs,
+            carried_output_stores=carried_output_stores,
             stale_figures_included=stale_figures_included,
             declared_sources_unresolved_outside_tree=declared_sources_unresolved_outside_tree,
             zero_user_info=scanner.manifest_record(),
@@ -924,6 +942,138 @@ def _harvest_sources(
         if found:
             _warn_declared_sources_unresolved_outside_tree(found)
     return entries, sorted(set(declared_absent)), sorted(shallow_stores)
+
+
+#: The ``ScenarioPaths`` fields that name a per-scenario OUTPUT time-series store: ``output_`` prefix, then a name
+#: ending ``_timeseries`` or ``_time_series``. The prefix matters: ``weather_timeseries`` and ``hyg_timeseries`` end the
+#: same way and are INPUTS (the weather record and the hydrograph), which a bundle carries as declared inputs.
+_SCENARIO_STORE_PREFIX = "output_"
+_SCENARIO_STORE_SUFFIXES = ("_timeseries", "_time_series")
+
+
+def _scenario_time_series_fields() -> tuple[str, ...]:
+    """The names of the ``ScenarioPaths`` fields that hold a per-scenario time-series store, read from the class.
+
+    Derived from the dataclass rather than listed, so a time-series store a later chunk adds to ``ScenarioPaths``
+    under the same naming is carried without an edit here. Eight today (``output_tritonswmm_performance_timeseries``,
+    ``output_tritonswmm_triton_timeseries``, ``output_tritonswmm_link_time_series``,
+    ``output_tritonswmm_node_time_series``, ``output_triton_only_performance_timeseries``,
+    ``output_triton_only_timeseries``, ``output_swmm_only_link_time_series``, ``output_swmm_only_node_time_series``).
+    """
+    import dataclasses
+
+    from hhemt.paths import ScenarioPaths
+
+    return tuple(
+        field.name
+        for field in dataclasses.fields(ScenarioPaths)
+        if field.name.startswith(_SCENARIO_STORE_PREFIX) and field.name.endswith(_SCENARIO_STORE_SUFFIXES)
+    )
+
+
+def _iter_scenario_paths(analysis: Any):
+    """Yield the ``ScenarioPaths`` of every scenario of ``analysis`` whose simulation folder exists.
+
+    The folder is named from the event's slug first, and a scenario object is built only for a folder that is already
+    there, so an emit never creates a simulation folder or its disk-usage sentinel (the scenario constructor does both
+    for a new folder). The object is a ``TRITONSWMM_scenario`` whose ``_create_directories`` does nothing: that is the
+    one thing its constructor does that writes inside an EXISTING folder (it makes the scenario's empty working
+    directories when they are missing), and an emit must neither create anything in the tree it packs nor need write
+    access to it. The paths still come from the one place that defines them, ``scenario.py``. A sensitivity PRIMARY
+    yields nothing: its scenarios belong to its members (see ``_plan_time_series_carriage`` for what that leaves
+    uncarried). An object with no ``df_sims`` (the bare namespaces some tests pass) yields nothing.
+    """
+    cfg = getattr(analysis, "cfg_analysis", None)
+    if cfg is not None and getattr(cfg, "toggle_sensitivity_analysis", False):
+        return
+    df_sims = getattr(analysis, "df_sims", None)
+    if df_sims is None:
+        return
+    from hhemt.scenario import TRITONSWMM_scenario, compute_event_id_slug
+
+    class _PathsOnlyScenario(TRITONSWMM_scenario):
+        def _create_directories(self) -> None:
+            """Create nothing: the emit reads the tree it packs."""
+
+    simulations = Path(analysis.analysis_paths.simulation_directory)
+    for event_iloc in df_sims.index:
+        slug = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
+        if (simulations / slug).is_dir():
+            yield _PathsOnlyScenario(event_iloc, analysis).scen_paths
+
+
+def _store_rel(src: Path, analysis_dir: Path, resolved: Path, analysis_root: Path) -> Path:
+    """The archive-relative name of a carried store: its position under ``analysis_dir`` AS THE ANALYSIS NAMES IT.
+
+    Taken from the unresolved path, because a store whose directory is a symlink (``sims`` moved to another volume
+    and linked back) resolves OUTSIDE the analysis tree, where ``_source_rel`` would name it
+    ``external/{file name}`` and the same store name of two scenarios would then claim one archive name. A store
+    that is not lexically under ``analysis_dir`` takes the resolved spelling, as every harvested source does.
+    """
+    try:
+        return Path(os.path.abspath(src)).relative_to(Path(os.path.abspath(analysis_dir)))
+    except ValueError:
+        return _source_rel(resolved, analysis_root, name=src.name)
+
+
+def _plan_time_series_carriage(
+    analysis: Any,
+    analysis_dir: Path,
+    entries: dict[str, Path],
+    *,
+    omit_output_zarrs: bool = False,
+) -> tuple[list[str], list[str]]:
+    """PLAN the archive entries of every time-series store of the analysis into ``entries``, independent of any figure.
+
+    Carried: ``analysis_paths.analysis_timeseries_zarr`` and, for each scenario, every store named by
+    ``_scenario_time_series_fields``. A store that is None (a disabled family) or absent on disk (a cleared scenario
+    store) contributes nothing; when the scenario stores are cleared the consolidated store is the whole of the
+    carriage, which is what clearing means. Each entry is named at its analysis-relative path through
+    ``_plan_harvest_entry``, the planner the harvest uses, so a store a figure also declares, or two scenarios
+    reaching one file, is planned once and two different files under one name are refused.
+
+    Under ``omit_output_zarrs`` a ``.zarr`` store is planned SHALLOWLY (metadata documents only); a NetCDF file
+    cannot be shallow and is planned whole. Returns ``(carried_output_stores, shallow_stores)``: every carried
+    store and the shallow subset, as POSIX paths relative to the analysis directory, each sorted.
+
+    What this does NOT carry, stated because it is a gap and not a choice: on a sensitivity analysis
+    ``analysis_timeseries_zarr`` is unbound on the primary and ``_iter_scenario_paths`` yields nothing, so the
+    primary's ``sensitivity_timeseries_zarr`` and every member's ``analysis_timeseries.zarr`` and per-scenario stores
+    are not planned here.
+    """
+    candidates: list[Path] = []
+    consolidated = getattr(analysis.analysis_paths, "analysis_timeseries_zarr", None)
+    if consolidated is not None:
+        candidates.append(Path(consolidated))
+    fields = _scenario_time_series_fields()
+    for scen_paths in _iter_scenario_paths(analysis):
+        for name in fields:
+            store = getattr(scen_paths, name, None)
+            if store is not None:
+                candidates.append(Path(store))
+    analysis_root = analysis_dir.resolve()
+    metadata_names = _zarr_metadata_filenames() if omit_output_zarrs else frozenset()
+    carried: list[str] = []
+    shallow_stores: list[str] = []
+    seen: set[Path] = set()
+    for src in candidates:
+        resolved = src.resolve()
+        if resolved in seen or not src.exists():
+            continue
+        seen.add(resolved)
+        rel = _store_rel(src, analysis_dir, resolved, analysis_root)
+        carried.append(rel.as_posix())
+        if not src.is_dir():
+            _plan_harvest_entry(entries, rel.as_posix(), src)
+            continue
+        shallow = omit_output_zarrs and src.name.endswith(".zarr")
+        if shallow:
+            shallow_stores.append(rel.as_posix())
+        for member in sorted(src.rglob("*")):
+            if not member.is_file() or (shallow and member.name not in metadata_names):
+                continue
+            _plan_harvest_entry(entries, (rel / member.relative_to(src)).as_posix(), member)
+    return sorted(carried), sorted(shallow_stores)
 
 
 #: The label ``_warn_declared_sources_absent`` prints where a warning prints a source file.
@@ -2273,6 +2423,7 @@ def _write_bundle_manifest(
     metadata_only_stores: list[str] | None = None,
     analysis_dir: Path | None = None,
     omitted_output_zarrs: list[str] | None = None,
+    carried_output_stores: list[str] | None = None,
     stale_figures_included: list[str] | None = None,
     declared_sources_unresolved_outside_tree: list[str] | None = None,
     zero_user_info: dict[str, str] | None = None,
@@ -2369,6 +2520,13 @@ def _write_bundle_manifest(
         # refuse a plot rule that declared one in full. Absent (not empty) without the flag,
         # so a default manifest is byte-identical to what it was before this key existed.
         manifest["omitted_output_zarrs"] = omitted_output_zarrs
+    if carried_output_stores:
+        # The time-series stores the emit carried because they exist (`analysis_timeseries.zarr` and each scenario's
+        # time-series stores), independent of any figure, as analysis-relative paths. Under `--omit-output-zarrs` a
+        # `.zarr` among them is shallow and is also named in `omitted_output_zarrs`. Absent (not empty) when the
+        # analysis has none, so a manifest without time-series stores is byte-identical to what it was before this
+        # key existed. No BUNDLE_SCHEMA_VERSION bump: the key is additive and no consumer reads it.
+        manifest["carried_output_stores"] = carried_output_stores
     if stale_figures_included:
         # The analysis-relative paths of the stale figures (figures of members no longer in the
         # setup table) that `--allow-stale-figures` carried into this bundle. Absent (not

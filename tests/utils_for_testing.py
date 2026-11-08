@@ -603,6 +603,114 @@ def normalize_swmm_link_vars(link_vars: set[str]) -> set[str]:
     return link_vars
 
 
+def coupled_only_node_vars(*, exchange_flow_on: bool) -> set[str]:
+    """Node variables the coupled (TRITON-SWMM) node store carries and the SWMM-only store never does.
+
+    ``is_coupling_node`` is written for every coupled run. With ``toggle_coupling_exchange_flow`` on the coupled
+    store also carries ``coupling_exchange_flow`` and the eight ``STATISTIC_NAMES`` per-node statistics.
+    """
+    from hhemt.coupling_exchange import STATISTIC_NAMES
+
+    names = {"is_coupling_node"}
+    if exchange_flow_on:
+        names |= {"coupling_exchange_flow", *STATISTIC_NAMES}
+    return names
+
+
+def node_var_mismatch(swmm_vars: set[str], coupled_vars: set[str], *, exchange_flow_on: bool) -> str | None:
+    """Describe how the SWMM-only and coupled node variable sets violate the cross-model design, or return None.
+
+    The design is: every coupled-only variable is present in the coupled store and absent from the SWMM-only
+    store, and everything else is equal. Four ways to violate it are reported separately, each naming the
+    variables: a coupled-only name leaked into the SWMM-only store, a coupled-only name missing from the coupled
+    store (the always-on ``is_coupling_node`` flag included), and any remaining difference.
+    """
+    coupled_only = coupled_only_node_vars(exchange_flow_on=exchange_flow_on)
+    problems = []
+    leaked = sorted(set(swmm_vars) & coupled_only)
+    if leaked:
+        problems.append(f"coupled-only variables present in the SWMM-only store: {leaked}")
+    absent = sorted(coupled_only - set(coupled_vars))
+    if absent:
+        problems.append(f"coupled-only variables absent from the coupled store: {absent}")
+    shared_coupled = set(coupled_vars) - coupled_only
+    shared_swmm = set(swmm_vars) - coupled_only
+    if shared_swmm != shared_coupled:
+        problems.append(
+            f"remaining variables differ: only in SWMM-only {sorted(shared_swmm - shared_coupled)}, "
+            f"only in coupled {sorted(shared_coupled - shared_swmm)}"
+        )
+    return "; ".join(problems) or None
+
+
+def assert_node_vars_consistent(ds_swmm_nodes, ds_coupled_nodes, analysis) -> None:
+    """Fail, naming the variables, unless the two node stores satisfy ``node_var_mismatch``'s design."""
+    flux = bool(getattr(analysis.cfg_analysis, "toggle_coupling_exchange_flow", False))
+    mismatch = node_var_mismatch(
+        {str(v) for v in ds_swmm_nodes.data_vars}, {str(v) for v in ds_coupled_nodes.data_vars}, exchange_flow_on=flux
+    )
+    if mismatch:
+        pytest.fail(f"Node time series data variables do not match: {mismatch}")
+
+
+def inp_section_first_tokens(inp: Path, section: str) -> set[str]:
+    """The first token of every data line of one `[SECTION]` of an input file."""
+    names: set[str] = set()
+    active = False
+    for raw in inp.read_text(errors="replace").splitlines():
+        line = raw.split(";")[0].strip()
+        if line.startswith("["):
+            active = line.upper() == f"[{section}]"
+            continue
+        if active and line:
+            names.add(line.split()[0])
+    return names
+
+
+def nodes_with_a_nonzero_flow_inflow(inp: Path) -> set[str]:
+    """Nodes whose `[INFLOWS]` carry a FLOW entry that can be non-zero: a time series, or a non-zero baseline.
+
+    The synthetic model writes a FLOW entry at EVERY junction with an empty time series (`""`) and a zero baseline,
+    so the coupling layer can read its node list from `[INFLOWS]`; such an entry adds no inflow, so listing a node
+    there does not make it loaded. A line is loaded when its constituent is FLOW and its time series is named or
+    its baseline (the 7th field, default 0) is not zero. Not established: that a non-FLOW constituent line adds no
+    flow, which SWMM guarantees only for pollutant loads; those lines are not counted here.
+    """
+    loaded: set[str] = set()
+    active = False
+    for raw in inp.read_text(errors="replace").splitlines():
+        line = raw.split(";")[0].strip()
+        if line.startswith("["):
+            active = line.upper() == "[INFLOWS]"
+            continue
+        tokens = line.split()
+        if not (active and len(tokens) >= 2 and tokens[1].upper() == "FLOW"):
+            continue
+        series = tokens[2] if len(tokens) > 2 else '""'
+        baseline = float(tokens[6]) if len(tokens) > 6 else 0.0
+        if series not in ('""', "''") or baseline != 0.0:
+            loaded.add(tokens[0])
+    return loaded
+
+
+def quiet_coupled_nodes(inp: Path, coupled: list[str]) -> list[str]:
+    """Coupled nodes with no non-zero FLOW inflow, no DWF or RDII, and no subcatchment draining to them."""
+    loaded = nodes_with_a_nonzero_flow_inflow(inp) | inp_section_first_tokens(inp, "DWF")
+    loaded |= inp_section_first_tokens(inp, "RDII")
+    outlets: set[str] = set()
+    active = False
+    for raw in inp.read_text(errors="replace").splitlines():
+        line = raw.split(";")[0].strip()
+        if line.startswith("["):
+            active = line.upper() == "[SUBCATCHMENTS]"
+            continue
+        if active and line:
+            tokens = line.split()
+            if len(tokens) > 2:
+                outlets.add(tokens[2])
+    return [n for n in coupled if n not in loaded and n not in outlets]
+
+
 # ========== Phase 6d.2: New Assertion Helpers (2026-02-09) ==========
 
 

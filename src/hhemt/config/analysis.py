@@ -967,20 +967,98 @@ class analysis_config(cfgBaseModel):
     toggle_consolidate_timeseries: bool = Field(
         default=False,
         description=(
-            "When True, the per-scenario SWMM node and SWMM link TIMESERIES are consolidated into the "
-            "analysis/sensitivity DataTree under tritonswmm/swmm_node_timeseries and "
-            "tritonswmm/swmm_link_timeseries, concatenated along event_iloc. The node series holds "
-            "`wlevel(t)` and the link series holds `flow(t)`. Default False, summaries only. Enable to "
-            "unblock over-time clean-vs-resume difference figures. The TRITON gridded timeseries is NOT "
-            "consolidated. The timeseries is about 83x larger per scenario by payload, 6.6 MB against 0.08 "
-            "MB measured, would inflate a 28-scenario primary tree 7.9x, and is GB-scale per scenario on a "
-            "production fine grid. The timeseries is excluded on COST and not for lack of a consumer. The "
-            "clean-vs-resume over-time figure does read flood_depth from the per-scenario gridded store, "
-            "via a documented deployment-config reproduction script. The figure consumes a per-timestep "
-            "max over y and x, 144 values per scenario, and no field. Consolidating the reduction is the "
-            "cheap, grid-independent extension. Additive, config-schema-only change with no LAYOUT_VERSION "
-            "bump, because config/analysis.py is allowlisted and the tree-node add is "
-            "additive-read-compatible."
+            "When True, the per-scenario SWMM node and SWMM link TIMESERIES are consolidated into their own "
+            "store, analysis_timeseries.zarr beside the analysis DataTree. A sensitivity master writes "
+            "sensitivity_timeseries.zarr instead. The groups are tritonswmm/swmm_node_timeseries and "
+            "tritonswmm/swmm_link_timeseries. Each scenario is appended in turn along event_iloc, on an "
+            "elapsed_s axis of seconds since the start of that event. The node series holds `wlevel(t)` and the "
+            "link series holds `flow(t)`. Default False, summaries only. Enable to unblock over-time "
+            "clean-vs-resume difference figures. The TRITON gridded timeseries is NOT consolidated. The "
+            "gridded timeseries is about 83x larger per scenario by payload, 6.6 MB against 0.08 MB measured, "
+            "would inflate a 28-scenario primary tree 7.9x, and is GB-scale per scenario on a production fine "
+            "grid. The gridded timeseries is excluded on COST and not for lack of a consumer. The "
+            "clean-vs-resume over-time figure does read flood_depth from the per-scenario gridded store, via a "
+            "documented deployment-config reproduction script. The figure consumes a per-timestep max over y and "
+            "x, 144 values per scenario, and no field. Consolidating the reduction is the cheap, "
+            "grid-independent extension."
+        ),
+    )
+    toggle_coupling_exchange_flow: bool = Field(
+        default=False,
+        description=(
+            "When True, the coupled model's per-scenario SWMM node time-series store also carries "
+            "coupling_exchange_flow, the signed flow in m3/s that TRITON exchanges with SWMM at each coupling "
+            "node, averaged over each reporting interval. The sign is positive when water drains from the street "
+            "surface into the sewer and negative when the sewer surcharges onto the street. The store also "
+            "carries 8 per-node statistics from the step series of the solver. The statistics are the peak and the "
+            "volume in each direction, the net volume, the time of each peak, and the duration of "
+            "sewer-to-surface flow. The values are decoded from the exchange side-file of the solver, and the "
+            "side-file stays on disk until the node store is written. Applies only to a coupled system with "
+            "toggle_tritonswmm_model on, and preflight refuses True when the coupled model is off. The "
+            "coupling-node flag is_coupling_node needs no field, because the coupled model always writes the "
+            "flag. Default False. A store written with False carries neither the flux series nor the "
+            "statistics."
+        ),
+        json_schema_extra=field_meta(applies_when=[when("toggle_tritonswmm_model", True)]),
+    )
+    toggle_clear_scenario_timeseries_after_consolidation: bool = Field(
+        default=False,
+        description=(
+            "When True, a scenario's own SWMM node and link time-series stores are deleted as soon as the "
+            "slice of the scenario has been appended to analysis_timeseries.zarr, read back from the store, and "
+            "found equal, NaN-aware, to the data of the scenario. Peak disk use then stays near one copy of the "
+            "series, and the consolidated store holds the only copy. Requires toggle_consolidate_timeseries, and "
+            "preflight refuses True without the toggle. The deletion is recorded in the model log of the "
+            "scenario. A cleared store reads as processed and is never re-derived. Default False."
+        ),
+        json_schema_extra=field_meta(applies_when=[when("toggle_consolidate_timeseries", True)]),
+    )
+    timeseries_keep_swmm_node: str | list[str] | None = Field(
+        default=None,
+        description=(
+            "The SWMM node time-series variables to KEEP in the per-scenario store after the summary is "
+            "written. The store drops the rest, and the summary keeps every statistic. None or blank keeps "
+            "everything. A string names a toolkit set. The set 'all' holds every variable of the class, and the "
+            "set 'default' holds every variable except flooding for the coupled model, because flooding there "
+            "is the growth rate of stored volume above full volume and not water lost. For standalone SWMM the "
+            "set 'default' holds every variable. "
+            "A list names variables explicitly and may force in a variable that a set excludes. Variables with "
+            "no time dimension are static and always kept. They are the coupling-node flag, the per-node "
+            "statistics, and the run-level variables. The kept names are the variables that "
+            "analysis_timeseries.zarr and the bundle carry. Preflight refuses a name outside the domain of every "
+            "enabled model family. The field applies even when toggle_consolidate_timeseries is off. A pruned "
+            "variable is gone, and recovering the variable takes a re-run."
+        ),
+    )
+    timeseries_keep_swmm_link: str | list[str] | None = Field(
+        default=None,
+        description=(
+            "The SWMM link time-series variables to KEEP in the per-scenario store after the summary is "
+            "written. The store drops the rest, and the summary keeps every statistic. None or blank keeps "
+            "everything. A string names a toolkit set. The set 'all' holds every variable of the class, and the "
+            "set 'default' holds every variable. "
+            "A list names variables explicitly and may force in a variable that a set excludes. Variables with "
+            "no time dimension are static and always kept. They are the coupling-node flag, the per-node "
+            "statistics, and the run-level variables. The kept names are the variables that "
+            "analysis_timeseries.zarr and the bundle carry. Preflight refuses a name outside the domain of every "
+            "enabled model family. The field applies even when toggle_consolidate_timeseries is off. A pruned "
+            "variable is gone, and recovering the variable takes a re-run."
+        ),
+    )
+    timeseries_keep_triton_gridded: str | list[str] | None = Field(
+        default=None,
+        description=(
+            "The gridded TRITON surface time-series variables to KEEP in the per-scenario store after the "
+            "summary is written. The store drops the rest, and the summary keeps every statistic. None or blank "
+            "keeps everything. A string names a toolkit set. The set 'all' holds every variable of the class, "
+            "and the set 'default' holds every variable except max_flood_depth, unit_discharge_x, and "
+            "unit_discharge_y, and the summary keeps the peaks of the excluded variables. "
+            "A list names variables explicitly and may force in a variable that a set excludes. Variables with "
+            "no time dimension are static and always kept. They are the coupling-node flag, the per-node "
+            "statistics, and the run-level variables. The kept names are the variables that "
+            "analysis_timeseries.zarr and the bundle carry. Preflight refuses a name outside the domain of every "
+            "enabled model family. The field applies even when toggle_consolidate_timeseries is off. A pruned "
+            "variable is gone, and recovering the variable takes a re-run."
         ),
     )
     process_output_target_chunksize_mb: int = Field(

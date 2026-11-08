@@ -160,7 +160,9 @@ def compare_swmm_raw(base_out_tritonswmm: Path, test_out_tritonswmm: Path) -> di
     The pairing is base-vs-test, NOT clean-vs-resume: the same kernel serves the
     clean run's config-vs-config comparison and the clean-vs-resume comparison.
     Reuses retrieve_SWMM_outputs_as_datasets (parse; called exactly as process_simulation's _export_SWMM_outputs
-    passes ``(hydraulics.inp, hydraulics.rpt)``) + compare_variable_exact (whole-timeseries
+    passes ``(hydraulics.inp, hydraulics.out)``; the series are read from the binary output and the summary tables
+    from the ``hydraulics.rpt`` beside it, so a ``.rpt`` argument is refused, and the family is ``tritonswmm``)
+    + compare_variable_exact (whole-timeseries
     collapse -> one bit per output-type), plus a raw-bytes compare of the timestamp-free
     ``hydraulics.out`` binary (the ``.rpt`` text carries a run-date header, so its bytes are NOT
     b4b-comparable — parse it instead / skip its byte compare). Returns
@@ -177,8 +179,12 @@ def compare_swmm_raw(base_out_tritonswmm: Path, test_out_tritonswmm: Path) -> di
     rpt_test = test_out_tritonswmm / "swmm" / "hydraulics.rpt"
     res: dict[str, object] = {}
     try:
-        nodes_base, links_base = retrieve_SWMM_outputs_as_datasets(inp_base, rpt_base)
-        nodes_test, links_test = retrieve_SWMM_outputs_as_datasets(inp_test, rpt_test)
+        nodes_base, links_base = retrieve_SWMM_outputs_as_datasets(
+            inp_base, rpt_base.with_suffix(".out"), family="tritonswmm"
+        )
+        nodes_test, links_test = retrieve_SWMM_outputs_as_datasets(
+            inp_test, rpt_test.with_suffix(".out"), family="tritonswmm"
+        )
         res["swmm_nodes_b4b"] = _ds_all_identical(nodes_base, nodes_test)
         res["swmm_links_b4b"] = _ds_all_identical(links_base, links_test)
     except Exception as e:  # noqa: BLE001 — a parse failure is a disclosed per-config datum, not a crash

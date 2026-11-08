@@ -25,13 +25,14 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
-from .raw import NODE_OUTFALL, Dimensions, Network
+from .raw import NODE_JUNCTION, NODE_OUTFALL, Dimensions, Network
 
 # SPEC.md 5.2: extraction replaces the token with the extraction directory's path, in the text file types listed there.
 TOKEN = "@GOLDEN_ROOT@"
 # SPEC.md 3: the value at the commit that regenerates the golden (29 at the commit that adds V0029, after V0028 and the
-# consolidated-metadata index of V0027). A literal, because this module imports nothing from hhemt.
-LAYOUT_VERSION = 29
+# consolidated-metadata index of V0027; 30 at the commit that adds V0030). A literal, because this module imports
+# nothing from hhemt.
+LAYOUT_VERSION = 30
 CELL_SIZE_M = 10.0  # SPEC.md 2 (cell size); the config field target_dem_resolution is in the SPEC.md 5.1 table
 FIXED_TIME = "2000-01-01T00:00:00+00:00"
 MODELS = ("triton", "tritonswmm", "swmm")  # model_type values of the flag and log names
@@ -750,6 +751,14 @@ def write_event_records(
     # prepared inputs (SPEC.md 4.8): [CHOICE] minimal contents
     for name in ("hydro", "hydraulics", "full"):
         write_text(event_dir / "swmm" / f"{name}.inp", inp_text(network, dims, template=False))
+    if "tritonswmm" in arms:
+        # The coupled set scenario preparation writes beside hydraulics.inp, one name per line in node order
+        # (SPEC.md 4.8). Under the system's default ``all_junctions`` mode it is every junction, and the generator
+        # places each node in its own cell (``node_coordinates``), so none is dropped as a cell's duplicate.
+        write_text(
+            event_dir / "swmm" / "coupling_nodes.txt",
+            "".join(f"{n.id}\n" for n in network.nodes if n.type_code == NODE_JUNCTION),
+        )
     write_text(event_dir / "extbc" / "tseries.txt", "0.0 0.0\n")
     write_text(event_dir / "extbc" / "loc.extbc", "0.0 0.0\n")
     write_text(event_dir / "strmflow" / "tseries.hyg", "0.0 0.0\n")
