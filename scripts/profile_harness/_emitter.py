@@ -107,7 +107,7 @@ def emit(
     lines: list[str] = []
     # Frontmatter (substrate-output type)
     lines.append("---")
-    lines.append("knowledge_doc_type: substrate_code")
+    lines.append("knowledge_doc_type: generated_index")
     lines.append("auto_generated: true")
     lines.append("generated_by: scripts/profile_harness/profile_routine_tests.py")
     lines.append(f"env_fingerprint_sha: {fingerprint_sha}")
@@ -460,7 +460,7 @@ def _render_empty(env_fingerprint: dict[str, str]) -> str:
     """Render a minimal doc when no runs completed (e.g., all profiling disabled)."""
     return (
         "---\n"
-        "knowledge_doc_type: substrate_code\n"
+        "knowledge_doc_type: generated_index\n"
         "auto_generated: true\n"
         "generated_by: scripts/profile_harness/profile_routine_tests.py\n"
         "---\n\n"

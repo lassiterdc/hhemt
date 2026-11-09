@@ -7,13 +7,21 @@ in the Validation Plan.
 
 from __future__ import annotations
 
+import re
 import subprocess
+from pathlib import Path
 
 import pytest
 
-from scripts.profile_harness._emitter import _aggregate
+from scripts.profile_harness import _emitter
+from scripts.profile_harness._emitter import _aggregate, _render_empty, emit
 from scripts.profile_harness._snakemake_harvest import discover_analysis_dirs, normalize_rule
-from scripts.profile_harness.profile_routine_tests import _collect_corpus
+from scripts.profile_harness.profile_routine_tests import (
+    CorpusEntry,
+    RunArtifacts,
+    SnakemakeDiagnosticsRecord,
+    _collect_corpus,
+)
 
 
 @pytest.mark.parametrize(
@@ -90,3 +98,61 @@ def test_collect_corpus_parses_nodeids(monkeypatch):
     assert any(e.nodeid == "tests/test_a.py::test_two[a-1]" for e in collected)
     assert len(failed) == 1
     assert failed[0].nodeid == "tests/test_broken.py"
+
+
+def _front_matter_type(text: str) -> str:
+    """Return the knowledge_doc_type value from the leading front matter block."""
+    block = text.split("---\n", 2)[1]
+    found = re.findall(r"^knowledge_doc_type: (\S+)$", block, flags=re.MULTILINE)
+    assert len(found) == 1, found
+    return found[0]
+
+
+def _minimal_run() -> RunArtifacts:
+    return RunArtifacts(
+        corpus=[CorpusEntry(nodeid="tests/test_a.py::test_one", status="collected")],
+        import_times={},
+        conftest_import_times={},
+        collection_total_s=0.0,
+        per_test={},
+        fixtures=[],
+        snakemake_rules=[],
+        snakemake_diagnostics=SnakemakeDiagnosticsRecord(),
+        global_hot_functions=[],
+        pyspy_speedscope_path=None,
+        cprofile_pstats_path=None,
+    )
+
+
+def test_emitted_profile_report_is_typed_generated_index_on_both_render_paths(tmp_path):
+    # Normal render path: emit() with one completed run.
+    normal_out = tmp_path / "normal" / "report.md"
+    emit(
+        env_fingerprint={"a": "b"},
+        runs=[_minimal_run()],
+        top_n=5,
+        findings_top_k=3,
+        output_path=normal_out,
+    )
+    normal_text = normal_out.read_text()
+    # Empty render path: emit() with no runs, and the helper it delegates to.
+    empty_out = tmp_path / "empty" / "report.md"
+    emit(env_fingerprint={"a": "b"}, runs=[], top_n=5, findings_top_k=3, output_path=empty_out)
+    empty_text = empty_out.read_text()
+
+    # Must-fire control: the two paths really are different renderers.
+    assert "## Corpus Inventory" in normal_text
+    assert "No profile runs completed" in empty_text
+
+    for text in (normal_text, empty_text, _render_empty({"a": "b"})):
+        assert _front_matter_type(text) == "generated_index"
+        assert "substrate_code" not in text
+
+
+def test_emitter_source_carries_no_substrate_code_type_literal():
+    # Population claim: every knowledge_doc_type literal the module can emit,
+    # not only the two render paths exercised above.
+    source = Path(_emitter.__file__).read_text()
+    types = re.findall(r"knowledge_doc_type: (\w+)", source)
+    assert len(types) == 2, types  # must-fire control: the matcher sees both literals
+    assert set(types) == {"generated_index"}
