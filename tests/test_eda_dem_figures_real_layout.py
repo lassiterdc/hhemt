@@ -53,7 +53,7 @@ def _write_tree(root: Path) -> None:
         "member_dem_2_r1": (2.0, 4, 3, 30.0),
     }.items():
         for leaf, ds in member(res, n, seed, wall).items():
-            nodes[f"/{name}/tritonswmm/{leaf}"] = ds
+            nodes[f"/{name}/tritonswmm/{leaf}/summary"] = ds
     xr.DataTree.from_dict(nodes).to_zarr(root / "experiment_datatree.zarr", mode="w", consolidated=False)
 
 

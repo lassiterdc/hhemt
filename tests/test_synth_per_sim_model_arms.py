@@ -92,10 +92,10 @@ def test_model_type_none_reproduces_coupled_wins():
     """The legacy single-figure path must be byte-equivalent to the retired chain."""
     from hhemt.report_renderers._model_arms import resolve_arm_group
 
-    assert resolve_arm_group("peak_flood_depth", ["tritonswmm", "triton"]) == "/tritonswmm/triton"
-    assert resolve_arm_group("peak_flood_depth", ["triton"]) == "/triton_only/triton"
-    assert resolve_arm_group("conduit_flow", ["tritonswmm", "swmm"]) == "/tritonswmm/swmm_link"
-    assert resolve_arm_group("conduit_flow", ["swmm"]) == "/swmm_only/swmm_link"
+    assert resolve_arm_group("peak_flood_depth", ["tritonswmm", "triton"]) == "/tritonswmm/triton/summary"
+    assert resolve_arm_group("peak_flood_depth", ["triton"]) == "/triton_only/triton/summary"
+    assert resolve_arm_group("conduit_flow", ["tritonswmm", "swmm"]) == "/tritonswmm/swmm_link/summary"
+    assert resolve_arm_group("conduit_flow", ["swmm"]) == "/swmm_only/swmm_link/summary"
     assert resolve_arm_group("conduit_flow", ["triton"]) is None
 
 
@@ -104,8 +104,8 @@ def test_explicit_model_type_selects_that_arm_not_the_first():
     from hhemt.report_renderers._model_arms import resolve_arm_group
 
     enabled = ["tritonswmm", "swmm", "triton"]
-    assert resolve_arm_group("peak_flood_depth", enabled, model_type="triton") == "/triton_only/triton"
-    assert resolve_arm_group("conduit_flow", enabled, model_type="swmm") == "/swmm_only/swmm_link"
+    assert resolve_arm_group("peak_flood_depth", enabled, model_type="triton") == "/triton_only/triton/summary"
+    assert resolve_arm_group("conduit_flow", enabled, model_type="swmm") == "/swmm_only/swmm_link/summary"
 
 
 def test_matrix_groups_match_the_consolidation_write_side():

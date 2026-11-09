@@ -132,11 +132,40 @@ def _tier_of_group(path: str) -> str:
     return {"triton": "triton", "swmm_node": "node", "swmm_link": "link", "performance": "perf"}.get(last, "other")
 
 
+#: The standalone SWMM model's system series and their twelve reductions arrive at layout 30. A layout-26 tree holds
+#: none of them, so the walk back drops them from the golden and the comparison drops them from the expectation.
+_SYSTEM_PREFIX = "system_"
+#: The store of the six system series, which no layout before 30 holds.
+_SYSTEM_STORE = "SWMM_only_system_tseries.zarr"
+#: The branches of a layout-31 tree group that a layout-26 tree does not hold: the series branch, and the system group
+#: of the standalone family.
+_TREE_ADDITIONS = ("/timeseries", "/timeseries_legacy_calendar")
+
+
+def _flatten_to_layout_28(nodes: dict[str, xr.Dataset]) -> dict[str, xr.Dataset]:
+    """The groups of a layout-31 tree as layout 28 held them: each ``{group}/summary`` dataset at ``{group}``, no
+    series branch, and no group a layout before 30 lacked."""
+    flat: dict[str, xr.Dataset] = {}
+    for path, ds in nodes.items():
+        if path.endswith(_TREE_ADDITIONS) or path.endswith("/system") or "/system/" in path:
+            continue
+        if not path.endswith("/summary"):
+            flat.setdefault(path, ds)
+    for path, ds in nodes.items():
+        if path.endswith("/summary") and "/system/" not in path:
+            flat[path[: -len("/summary")]] = ds
+    return flat
+
+
+def _drop_system_variables(ds: xr.Dataset) -> xr.Dataset:
+    return ds.drop_vars([v for v in ds.data_vars if str(v).startswith(_SYSTEM_PREFIX)])
+
+
 def _backport(ds: xr.Dataset, tier: str) -> xr.Dataset:
     """Walk one layout-28 dataset back to what layout 27 stored: old names, no units, old axis and old keys."""
     rev = {"triton": TRITON, "node": NODE, "link": LINK}.get(tier, {})
     rev = {new: old for old, new in rev.items()}
-    ds = ds.copy(deep=True)
+    ds = _drop_system_variables(ds.copy(deep=True))
     if tier == "node" and "flow_balance_error" in ds:
         pct, vol = ds["flow_balance_error"], ds["flow_balance_error_volume"]
         merged = pct.where(pct.notnull(), vol)
@@ -188,11 +217,11 @@ def roundtrip(tmp_path_factory):
         if rel.count(".zarr") > 1:
             continue
         if store.name == "analysis_datatree.zarr":
-            nodes = _open_tree(store)
+            nodes = _flatten_to_layout_28(_open_tree(store))
             back = {p: _backport(ds, _tier_of_group(p)) if p != "/" else ds for p, ds in nodes.items()}
             shutil.rmtree(store)
             _write_tree(back, store)
-        elif "/processed/" in "/" + rel:
+        elif "/processed/" in "/" + rel and store.name != _SYSTEM_STORE:
             ds = _open_store(store)
             back = _backport(ds, _tier_of_store(store.name))
             shutil.rmtree(store)
@@ -223,6 +252,7 @@ DIFFS: list = []
 
 
 def _compare(golden: xr.Dataset, migrated: xr.Dataset, where: str, node_store: bool) -> None:
+    golden = _drop_system_variables(golden)
     g_vars, m_vars = set(golden.variables), set(migrated.variables)
     if node_store and "flow_balance_error" in g_vars:
         # D14 versus D17: the parser-written pair is one unsplit variable in a migrated store
@@ -273,7 +303,7 @@ def _compare(golden: xr.Dataset, migrated: xr.Dataset, where: str, node_store: b
 
 
 def _processed_stores(root: Path) -> list[Path]:
-    return sorted(p for p in root.rglob("processed/*.zarr") if p.name != "x")
+    return sorted(p for p in root.rglob("processed/*.zarr") if p.name not in ("x", _SYSTEM_STORE))
 
 
 def test_every_per_scenario_store_of_the_golden_is_recovered_from_its_layout_26_back_port(roundtrip):
@@ -320,7 +350,7 @@ def test_the_consolidated_tree_is_recovered_node_by_node_and_one_name_is_split_b
     """
     DIFFS.clear()
     golden, work = roundtrip
-    g_tree = _open_tree(golden / "synth_multi_sim" / "analysis_datatree.zarr")
+    g_tree = _flatten_to_layout_28(_open_tree(golden / "synth_multi_sim" / "analysis_datatree.zarr"))
     m_tree = _open_tree(work / "synth_multi_sim" / "analysis_datatree.zarr")
     assert set(g_tree) == set(m_tree), sorted(set(g_tree) ^ set(m_tree))
     leaves = [p for p in g_tree if _tier_of_group(p) != "other"]

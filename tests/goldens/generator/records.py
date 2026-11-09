@@ -30,9 +30,9 @@ from .raw import NODE_JUNCTION, NODE_OUTFALL, Dimensions, Network
 # SPEC.md 5.2: extraction replaces the token with the extraction directory's path, in the text file types listed there.
 TOKEN = "@GOLDEN_ROOT@"
 # SPEC.md 3: the value at the commit that regenerates the golden (29 at the commit that adds V0029, after V0028 and the
-# consolidated-metadata index of V0027; 30 at the commit that adds V0030). A literal, because this module imports
-# nothing from hhemt.
-LAYOUT_VERSION = 30
+# consolidated-metadata index of V0027; 30 at the commit that adds V0030; 31 at V0031, which moves each summary group
+# under a `summary` branch). A literal, because this module imports nothing from hhemt.
+LAYOUT_VERSION = 31
 CELL_SIZE_M = 10.0  # SPEC.md 2 (cell size); the config field target_dem_resolution is in the SPEC.md 5.1 table
 FIXED_TIME = "2000-01-01T00:00:00+00:00"
 MODELS = ("triton", "tritonswmm", "swmm")  # model_type values of the flag and log names

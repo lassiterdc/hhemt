@@ -415,7 +415,7 @@ def test_the_layout_is_28_with_exactly_one_module_per_number_and_a_ladder_that_e
     """
     from hhemt.version_migration.constants import LAYOUT_VERSION
 
-    assert LAYOUT_VERSION == 30
+    assert LAYOUT_VERSION == 31
     vdir = REPO / "src" / "hhemt" / "version_migration" / "versions"
     claims = {}
     for path in sorted(vdir.glob("V00*.py")):
@@ -483,7 +483,7 @@ def test_the_regenerated_golden_zips_are_stamped_30_carry_indexed_roots_and_hold
     from hhemt.version_migration.constants import LAYOUT_VERSION
 
     # The goldens are written at the layout the toolkit now stamps (SPEC.md section 3): 29 at V0029, 30 at V0030.
-    assert LAYOUT_VERSION == 30
+    assert LAYOUT_VERSION == 31
     assert stamps and all(json.loads(zf.read(n))["layout_version"] == LAYOUT_VERSION for n in stamps), stamps
     roots = [n for n in names if re.search(r"\.zarr/zarr\.json$", n) and n.count(".zarr/") == 1]
     assert len(roots) >= 30, len(roots)

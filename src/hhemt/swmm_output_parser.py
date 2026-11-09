@@ -33,7 +33,9 @@ from hhemt.constants import (
     LST_OUTFALL_SYSTEM_VARIABLES,
     LST_RUN_LEVEL_CONTINUITY_VARIABLES,
     ROUTING_STEP_FREQUENCY_VARIABLE,
+    RUNOFF_QUANTITY_CONTINUITY_TERMS,
     SWMM_STAT_RANK_LENGTH,
+    SWMM_SYSTEM_SERIES,
 )
 
 TDELTA_PATTERN = re.compile(r"^\s*(\d+)\s+(\d+):(\d+)")
@@ -58,6 +60,7 @@ _RE_NO_ROWS_SENTENCE = re.compile(r"^\s*No (?:nodes|conduits) were \w+\.")
 # Report sections that are a title, one rule line and then lines of text up to a blank line, not a dashed table.
 _TEXT_BLOCK_SECTION_TITLES = frozenset(
     {
+        "Runoff Quantity Continuity",
         "Flow Routing Continuity",
         "Highest Continuity Errors",
         "Time-Step Critical Elements",
@@ -452,7 +455,12 @@ def return_swmm_outputs(
     ds_link_flow_summary = convert_datavars_to_dtype(ds_link_flow_summary, lst_dtypes_to_try=[float, str])
 
     ds_node_run, ds_link_run = _run_level_datasets(
-        dict_section_lines, dict_system_results, outfall_system_max_flow, rpt_file, has_report=head_lines is not None
+        dict_section_lines,
+        dict_system_results,
+        outfall_system_max_flow,
+        rpt_file,
+        has_report=head_lines is not None,
+        family=family,
     )
     ds_nodes = xr.merge([ds_node_summaries, ds_node_tseries, ds_node_run], join="outer")
     ds_links = xr.merge([ds_link_flow_summary, ds_link_tseries, ds_link_run], join="outer")
@@ -1266,6 +1274,37 @@ def read_flow_routing_continuity(section_lines, filepath="<rpt>") -> dict[str, f
     }
 
 
+def read_runoff_quantity_continuity(section_lines, filepath="<rpt>") -> dict[str, float]:
+    """The Runoff Quantity Continuity rows the toolkit keeps, from their depth column.
+
+    Each row prints a ``hectare-m`` volume and then a ``mm`` depth; the second is read. A row the report does not
+    print is NaN, which is also the whole answer for a model that routes no runoff (its table prints one sentence
+    in place of the rows); a row with any other number of figures is refused.
+    """
+    from hhemt.exceptions import ProcessingError
+
+    found: dict[str, float] = {}
+    for line in section_lines:
+        match = _RE_CONTINUITY_ROW.match(line.rstrip("\r\n"))
+        if match is None:
+            continue
+        label = match.group("label").strip()
+        stem = RUNOFF_QUANTITY_CONTINUITY_TERMS.get(label)
+        if stem is None:
+            continue
+        values = match.group("vals").split()
+        if len(values) != 2:
+            raise ProcessingError(
+                operation="read_report_table",
+                filepath=Path(filepath),
+                reason=f"the Runoff Quantity Continuity row {label!r} has {len(values)} figure(s); 2 were expected.",
+            )
+        found[stem] = float(values[1])
+    return {
+        f"runoff_continuity_{stem}": found.get(stem, float("nan")) for stem in RUNOFF_QUANTITY_CONTINUITY_TERMS.values()
+    }
+
+
 def read_routing_time_step_summary(section_lines, filepath="<rpt>"):
     """The Routing Time Step Summary: ``(scalars, upper bounds, lower bounds, frequencies)``.
 
@@ -1341,12 +1380,15 @@ def read_ranked_list(section_lines, *, filepath="<rpt>", title="ranked list"):
     )
 
 
-def _run_level_datasets(dict_section_lines, dict_system_results, outfall_system_max_flow, filepath, *, has_report):
+def _run_level_datasets(
+    dict_section_lines, dict_system_results, outfall_system_max_flow, filepath, *, has_report, family="tritonswmm"
+):
     """The run-level and ranked variables as ``(node dataset, link dataset)``.
 
     The flow instability list names links and goes to the link dataset; every other variable goes to the node
     dataset. A run with no report yields two empty datasets. A table the report did not print yields NaN (or the
-    empty string for an id) for every variable it feeds.
+    empty string for an id) for every variable it feeds. The Runoff Quantity Continuity rows are read for the
+    standalone SWMM family alone (``family == "swmm"``), because the coupled hydraulics model routes no runoff.
     """
     if not has_report:
         return xr.Dataset(), xr.Dataset()
@@ -1354,6 +1396,11 @@ def _run_level_datasets(dict_section_lines, dict_system_results, outfall_system_
     node_vars: dict[str, Any] = {}
     for name in LST_RUN_LEVEL_CONTINUITY_VARIABLES:
         node_vars[name] = ((), float(dict_system_results.get(name, nan)))
+    if family == "swmm":
+        for name, value in read_runoff_quantity_continuity(
+            dict_section_lines.get("Runoff Quantity Continuity", []), filepath
+        ).items():
+            node_vars[name] = ((), value)
     for name, value in read_flow_routing_continuity(
         dict_section_lines.get("Flow Routing Continuity", []), filepath
     ).items():
@@ -1856,6 +1903,35 @@ _OUT_LINK_SERIES = (
 )
 
 
+def _require_cms_output(units, f_outfile, operation: str) -> None:
+    """Refuse a binary output whose flow unit is not CMS, naming the file and the operation that read it.
+
+    The FLOW unit, not the unit system: every series is stored as m3/s with no conversion, and SWMM writes them in
+    the model's own flow unit, so an SI model in LPS or MLD would pass a unit-system test and be read 1000 or 86.4
+    times too large. This is the standalone model's guard for outputs the preparation check never saw, such as a
+    reprocess of an existing analysis. It RAISES, never ``sys.exit``: SystemExit derives from BaseException, so no
+    ``except Exception`` in any caller catches it and the process dies with no traceback -- the un-diagnosable shape
+    that made an unrelated 123-scenario failure take a full session to attribute. ``ProcessingError`` is this
+    module's own family (CLI exit 5) and carries the file.
+    """
+    if units["flow"] == "CMS":
+        return
+    from hhemt.exceptions import ProcessingError
+
+    raise ProcessingError(
+        operation=operation,
+        filepath=Path(f_outfile),
+        reason=(
+            f"SWMM outputs are not in cubic meters per second (flow unit reported: "
+            f"{units['flow']!r}, unit system {units['system']!r}). The toolkit reads the "
+            "standalone model's flows as m3/s without conversion, so its [OPTIONS] "
+            "FLOW_UNITS must be CMS; an ABSENT FLOW_UNITS line defaults to CFS. Fix it "
+            "in the SWMM template named by system_config, not in the generated "
+            "per-scenario .inp, which inherits it."
+        ),
+    )
+
+
 def return_node_time_series_results_from_outfile(f_outfile, f_inp=None, return_quality=False, capacity_name="capacity"):
     """Read node and link time series from a SWMM ``.out`` file.
 
@@ -1882,31 +1958,7 @@ def return_node_time_series_results_from_outfile(f_outfile, f_inp=None, return_q
         d_links = out.links
         d_nodes = out.nodes
         units = out.units
-        # The FLOW unit, not the unit system: every series below is stored as m3/s with no
-        # conversion, and SWMM writes them in the model's own flow unit, so an SI model in
-        # LPS or MLD would pass a unit-system test and be read 1000 or 86.4 times too large.
-        # This is the standalone model's guard for outputs the preparation check never saw,
-        # such as a reprocess of an existing analysis.
-        if units["flow"] != "CMS":
-            # RAISE, never sys.exit. SystemExit derives from BaseException, so no
-            # `except Exception` in any caller catches it and the process dies with
-            # no traceback -- the un-diagnosable shape that made an unrelated
-            # 123-scenario failure take a full session to attribute. ProcessingError
-            # is this module's own family (CLI exit 5) and carries the file.
-            from hhemt.exceptions import ProcessingError
-
-            raise ProcessingError(
-                operation="return_node_time_series_results_from_outfile",
-                filepath=Path(f_outfile),
-                reason=(
-                    f"SWMM outputs are not in cubic meters per second (flow unit reported: "
-                    f"{units['flow']!r}, unit system {units['system']!r}). The toolkit reads the "
-                    "standalone model's flows as m3/s without conversion, so its [OPTIONS] "
-                    "FLOW_UNITS must be CMS; an ABSENT FLOW_UNITS line defaults to CFS. Fix it "
-                    "in the SWMM template named by system_config, not in the generated "
-                    "per-scenario .inp, which inherits it."
-                ),
-            )
+        _require_cms_output(units, f_outfile, "return_node_time_series_results_from_outfile")
         if not d_nodes or not d_links:
             from hhemt.exceptions import ProcessingError
 
@@ -1953,6 +2005,54 @@ def return_node_time_series_results_from_outfile(f_outfile, f_inp=None, return_q
     if return_quality:
         return ds_node_tseries, ds_link_tseries, pollutants, out_start
     return ds_node_tseries, ds_link_tseries
+
+
+def _out_system_series_values(out, attribute_name: str) -> np.ndarray:
+    """One system series over EVERY report period, read straight from ``swmm.toolkit.output``.
+
+    ``attribute_name`` is a member of ``swmm.toolkit.shared_enum.SystemAttribute`` (``"FLOOD_LOSSES"``). The read
+    passes the window ``(0, num_periods)`` itself, for the reason ``_out_series_values`` gives (the period rule of
+    E43): pyswmm 2.1.0 resolves a default end to the inclusive index ``num_periods - 1`` and its toolkit call is
+    END-EXCLUSIVE, which drops the final report period. A series of any other length raises.
+    """
+    from swmm.toolkit import output as swmm_output
+    from swmm.toolkit import shared_enum
+
+    from hhemt.exceptions import ProcessingError
+
+    n_periods = int(swmm_output.get_times(out.handle, shared_enum.Time.NUM_PERIODS))
+    attribute = getattr(shared_enum.SystemAttribute, attribute_name)
+    values = np.asarray(swmm_output.get_system_series(out.handle, attribute, 0, n_periods), dtype=float)
+    if len(values) != n_periods:
+        raise ProcessingError(
+            operation="read SWMM output series",
+            filepath=Path(getattr(out, "binfile", "") or "."),
+            reason=f"the system series {attribute_name!r} has {len(values)} values for {n_periods} report periods.",
+        )
+    return values
+
+
+def return_system_time_series_results_from_outfile(f_outfile) -> xr.Dataset:
+    """The six system series of a standalone SWMM ``.out`` as one dataset on ``date_time``.
+
+    The variables are ``system_flooding_rate`` (water lost to flooding, m3 s-1), ``system_outfall_flow`` (m3 s-1),
+    ``system_stored_volume`` (m3), ``system_lateral_inflow`` (m3 s-1), ``system_runoff`` (m3 s-1) and
+    ``system_rainfall`` (area-weighted mean intensity, mm h-1), read over every report period of the file. Only the
+    standalone SWMM family stores them: the coupled hydraulics model routes no runoff and holds flooded water as
+    ponded volume, so its system flooding is about zero. A binary output whose flow unit is not CMS is refused.
+    """
+    from pyswmm import Output
+
+    with Output(str(f_outfile)) as out:
+        _require_cms_output(out.units, f_outfile, "return_system_time_series_results_from_outfile")
+        times = _out_time_axis(out, f_outfile)
+        time_index = pd.DatetimeIndex(times)
+        time_order = np.argsort(time_index.values, kind="stable")
+        data_vars = {
+            name: (("date_time",), _out_system_series_values(out, attribute_name)[time_order])
+            for name, attribute_name in SWMM_SYSTEM_SERIES
+        }
+    return xr.Dataset(data_vars, coords={"date_time": time_index[time_order]})
 
 
 def _out_pollutant_series(out, kind, entity_index, first_attribute, idx_colname, pollutants):

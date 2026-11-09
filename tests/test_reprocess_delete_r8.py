@@ -121,12 +121,27 @@ def test_delete_processed_runner_no_sentinel_without_slurm(tmp_path, monkeypatch
 # ---------------------------------------------------------------------------
 
 
+def _write_tree(path: Path) -> None:
+    """A real consolidated tree at ``path``: a ``summary`` branch (rebuildable) and a ``timeseries`` branch (kept)."""
+    import xarray as xr
+
+    from hhemt.utils import write_datatree_zarr
+
+    leaf = xr.Dataset({"v": (("event_iloc",), [1.0])}, coords={"event_iloc": [0]})
+    write_datatree_zarr(
+        xr.DataTree.from_dict(
+            {"/": xr.Dataset(), "/tritonswmm/swmm_node/summary": leaf, "/tritonswmm/swmm_node/timeseries": leaf}
+        ),
+        path,
+    )
+
+
 def test_delete_reprocess_zarr_runner_removes_zarrs_preserves_report(tmp_path, slurm_env):
     from hhemt import delete_reprocess_zarr_runner as runner
 
     analysis_dir = tmp_path / "analysis"
     analysis_dir.mkdir()
-    (analysis_dir / "analysis_datatree.zarr").mkdir()
+    _write_tree(analysis_dir / "analysis_datatree.zarr")
     (analysis_dir / "sensitivity_datatree.zarr").mkdir()
     (analysis_dir / "analysis_report.html").write_text("<html/>")
     (analysis_dir / "plots").mkdir()
@@ -134,7 +149,9 @@ def test_delete_reprocess_zarr_runner_removes_zarrs_preserves_report(tmp_path, s
 
     rc = runner.main(["--analysis-dir", str(analysis_dir)])
     assert rc == 0
-    assert not (analysis_dir / "analysis_datatree.zarr").exists()
+    tree = analysis_dir / "analysis_datatree.zarr"
+    assert not (tree / "tritonswmm" / "swmm_node" / "summary").exists(), "summary branch deleted"
+    assert (tree / "tritonswmm" / "swmm_node" / "timeseries").exists(), "timeseries branch kept"
     assert not (analysis_dir / "sensitivity_datatree.zarr").exists()
     assert (analysis_dir / "analysis_report.html").exists(), "report must be preserved"
     assert (analysis_dir / "plots" / "fig.png").exists(), "plots must be preserved"
@@ -148,12 +165,13 @@ def test_delete_reprocess_zarr_runner_noop_on_absent_zarr(tmp_path, slurm_env):
 
     analysis_dir = tmp_path / "analysis"
     analysis_dir.mkdir()
-    # only one of the two canonical zarrs present
+    # only one of the canonical zarrs present, and it holds no stamp and no group: nothing to delete
     (analysis_dir / "analysis_datatree.zarr").mkdir()
 
     rc = runner.main(["--analysis-dir", str(analysis_dir)])
     assert rc == 0
-    assert not (analysis_dir / "analysis_datatree.zarr").exists()
+    assert (analysis_dir / "analysis_datatree.zarr").is_dir(), "a stamp-less, group-less tree is left alone"
+    assert not (analysis_dir / "experiment_datatree.zarr").exists(), "an absent tree is not created"
     flag = analysis_dir / "_status" / "_deleting_reprocess" / "reprocess_consolidation.flag"
     assert flag.exists()
 
@@ -168,7 +186,22 @@ def _seed_analysis(sub_dir: Path) -> None:
         (sub_dir / "sims" / eid / "processed").mkdir(parents=True)
         (sub_dir / "sims" / eid / "out_triton").mkdir(parents=True)
         (sub_dir / "sims" / eid / "out_triton" / "h.bin").write_text("raw")
-    (sub_dir / "analysis_datatree.zarr").mkdir()
+    # A real consolidated tree: a `summary` branch (rebuildable) and a `timeseries` branch (append-only).
+    import xarray as xr
+
+    from hhemt.utils import write_datatree_zarr
+
+    leaf = xr.Dataset({"v": (("event_iloc",), [1.0])}, coords={"event_iloc": [0]})
+    write_datatree_zarr(
+        xr.DataTree.from_dict(
+            {
+                "/": xr.Dataset(),
+                "/tritonswmm/swmm_node/summary": leaf,
+                "/tritonswmm/swmm_node/timeseries": leaf,
+            }
+        ),
+        sub_dir / "analysis_datatree.zarr",
+    )
 
 
 def test_analysis_reprocess_runner_deletes_processed_and_zarr(tmp_path, slurm_env):
@@ -182,7 +215,8 @@ def test_analysis_reprocess_runner_deletes_processed_and_zarr(tmp_path, slurm_en
     assert not (sub_dir / "sims" / "evt_1" / "processed").exists()
     assert not (sub_dir / "sims" / "evt_2" / "processed").exists()
     assert (sub_dir / "sims" / "evt_1" / "out_triton" / "h.bin").exists(), "raw preserved"
-    assert not (sub_dir / "analysis_datatree.zarr").exists()
+    assert not (sub_dir / "analysis_datatree.zarr" / "tritonswmm" / "swmm_node" / "summary").exists()
+    assert (sub_dir / "analysis_datatree.zarr" / "tritonswmm" / "swmm_node" / "timeseries").exists(), "series kept"
 
     flag = sub_dir / "_status" / "_deleting_reprocess" / "member_reprocess.flag"
     assert flag.exists()
@@ -192,7 +226,7 @@ def test_analysis_reprocess_runner_deletes_processed_and_zarr(tmp_path, slurm_en
 
 def test_analysis_reprocess_runner_preserves_processed_without_flag(tmp_path, slurm_env):
     """Without --delete-processed (start_with != 'process'), processed/ survives;
-    only the sub's consolidated zarr is removed."""
+    only the summary branches of the sub's consolidated zarr are removed; its timeseries branches are kept."""
     from hhemt import delete_member_reprocess_runner as runner
 
     sub_dir = tmp_path / "members" / "member_3"
@@ -201,7 +235,8 @@ def test_analysis_reprocess_runner_preserves_processed_without_flag(tmp_path, sl
     rc = runner.main(["--member-id", "3", "--analysis-dir", str(sub_dir)])
     assert rc == 0
     assert (sub_dir / "sims" / "evt_1" / "processed").exists(), "processed/ preserved"
-    assert not (sub_dir / "analysis_datatree.zarr").exists(), "sub zarr removed"
+    assert not (sub_dir / "analysis_datatree.zarr" / "tritonswmm" / "swmm_node" / "summary").exists(), "summary removed"
+    assert (sub_dir / "analysis_datatree.zarr" / "tritonswmm" / "swmm_node" / "timeseries").exists(), "series kept"
 
 
 def test_analysis_reprocess_runner_cleans_sentinel_on_exception(tmp_path, slurm_env):

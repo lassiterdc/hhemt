@@ -71,7 +71,7 @@ def _stub_bundle(root: Path, eid: str, *, resumes: int, shallow: bool = False, w
         "/": xr.Dataset(),
         "/member_0": xr.Dataset(attrs=_CPU),
         "/member_0/tritonswmm": xr.Dataset(),
-        "/member_0/tritonswmm/triton": xr.Dataset(
+        "/member_0/tritonswmm/triton/summary": xr.Dataset(
             {"max_flood_depth": ("event_iloc", np.asarray([wlevel, wlevel + 1.0]))},
             coords={"event_iloc": [0, 1]},
         ),

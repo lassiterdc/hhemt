@@ -5,7 +5,8 @@ surface. Each is large, and a downstream user rarely wants every variable. ``ana
 keep-field per kind (``timeseries_keep_swmm_node``, ``timeseries_keep_swmm_link``,
 ``timeseries_keep_triton_gridded``): ``None`` keeps everything, a string names a toolkit set (``"all"`` or
 ``"default"``), and a list names variables. This module holds the single table of names those fields select from,
-the two toolkit sets, ``resolve_keep``, and the prune.
+the two toolkit sets, ``resolve_keep``, and the prune. The standalone SWMM model also writes a store of six system
+series (the ``swmm_system`` kind); it has no keep-field, is small, and keeps everything.
 
 The domain is a CLOSED table, evaluated from the writers. Regenerate it with::
 
@@ -19,7 +20,8 @@ the two pollutant series a water-quality model adds.
 ``unit_discharge_y`` (their peaks live in the summary). SWMM node of the coupled family: every variable except
 ``flooding``, which in the coupled build is the growth rate of volume stored above a node's full volume and not water
 lost from the network. SWMM node of the standalone family, and SWMM link of every family: ``"default"`` equals
-``"all"``. The series ``volume``, ``lateral_inflow`` and ``link_volume`` are in ``"default"`` for every family.
+``"all"``. The series ``volume``, ``lateral_inflow`` and ``link_volume`` are in ``"default"`` for every family. The
+``swmm_system`` kind belongs to the standalone family alone, and its ``"default"`` equals ``"all"``.
 
 Variables WITHOUT the kind's time dimension are static (``is_coupling_node``, the per-node statistics, the run-level
 variables) and are outside the selection: never pruned, whatever a keep-list says. The property, not a list, defines
@@ -43,6 +45,7 @@ from typing import Literal
 import numpy as np
 import xarray as xr
 
+from hhemt.constants import LST_SWMM_SYSTEM_SERIES
 from hhemt.exceptions import ProcessingError
 from hhemt.utils import consolidate_zarr_store, write_netcdf, zarr_store_has_index
 
@@ -59,28 +62,35 @@ __all__ = [
     "resolve_keep",
 ]
 
-Kind = Literal["swmm_node", "swmm_link", "triton_gridded"]
+Kind = Literal["swmm_node", "swmm_link", "swmm_system", "triton_gridded"]
 Family = Literal["tritonswmm", "swmm_only", "triton_only"]
 
-KINDS: tuple[str, ...] = ("swmm_node", "swmm_link", "triton_gridded")
+KINDS: tuple[str, ...] = ("swmm_node", "swmm_link", "swmm_system", "triton_gridded")
 SET_NAMES: tuple[str, ...] = ("all", "default")
 
 #: The store attribute that records which variables a prune removed.
 PRUNED_ATTR = "timeseries_pruned_variables"
 
 #: The dimension whose presence makes a variable time-variant, per kind.
-TIME_DIM_BY_KIND: dict[str, str] = {"swmm_node": "date_time", "swmm_link": "date_time", "triton_gridded": "timestep"}
+TIME_DIM_BY_KIND: dict[str, str] = {
+    "swmm_node": "date_time",
+    "swmm_link": "date_time",
+    "swmm_system": "date_time",
+    "triton_gridded": "timestep",
+}
 
 #: The model families that write a store of each kind.
 FAMILIES_BY_KIND: dict[str, tuple[str, ...]] = {
     "swmm_node": ("tritonswmm", "swmm_only"),
     "swmm_link": ("tritonswmm", "swmm_only"),
+    "swmm_system": ("swmm_only",),
     "triton_gridded": ("tritonswmm", "triton_only"),
 }
 
 _NODE_COMMON = ("depth", "head", "inflow_flow", "flooding", "volume", "lateral_inflow", "pollutant_conc")
 _LINK_COMMON = ("flow", "velocity", "link_depth", "link_volume", "link_pollutant_conc")
 _GRIDDED = ("flood_depth", "max_flood_depth", "unit_discharge_x", "unit_discharge_y")
+_SYSTEM = tuple(LST_SWMM_SYSTEM_SERIES)
 
 #: (kind, family) -> every selectable variable, in a fixed order.
 DOMAIN: dict[tuple[str, str], tuple[str, ...]] = {
@@ -88,6 +98,7 @@ DOMAIN: dict[tuple[str, str], tuple[str, ...]] = {
     ("swmm_node", "swmm_only"): _NODE_COMMON,
     ("swmm_link", "tritonswmm"): (*_LINK_COMMON, "capacity_setting"),
     ("swmm_link", "swmm_only"): (*_LINK_COMMON, "capacity"),
+    ("swmm_system", "swmm_only"): _SYSTEM,
     ("triton_gridded", "tritonswmm"): _GRIDDED,
     ("triton_gridded", "triton_only"): _GRIDDED,
 }
@@ -114,7 +125,8 @@ def keep_setting(cfg, kind: str):
     """The keep-field of one kind read from an analysis config, or None when the config has no such field.
 
     The three fields are named literally here so that a search for a field name finds the reads. The None default
-    serves config stand-ins that do not carry the fields.
+    serves config stand-ins that do not carry the fields. The ``swmm_system`` kind has no field, so it always reads
+    None, which keeps all six series.
     """
     if kind == "swmm_node":
         return getattr(cfg, "timeseries_keep_swmm_node", None)
@@ -122,6 +134,8 @@ def keep_setting(cfg, kind: str):
         return getattr(cfg, "timeseries_keep_swmm_link", None)
     if kind == "triton_gridded":
         return getattr(cfg, "timeseries_keep_triton_gridded", None)
+    if kind == "swmm_system":
+        return None
     raise KeyError(f"unknown time-series kind {kind!r}; the kinds are {sorted(FAMILIES_BY_KIND)}")
 
 
@@ -141,7 +155,7 @@ def resolve_keep(kind: str, family: str, value: str | Sequence[str] | None) -> t
 
     Parameters
     ----------
-    kind : {"swmm_node", "swmm_link", "triton_gridded"}
+    kind : {"swmm_node", "swmm_link", "swmm_system", "triton_gridded"}
     family : {"tritonswmm", "swmm_only", "triton_only"}
     value : None, str or sequence of str
         ``None``, a blank string, an empty list and ``"all"`` give the whole domain (a blank keep-field

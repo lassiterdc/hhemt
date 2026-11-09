@@ -115,20 +115,65 @@ def _zarr_mtime_target(zarr):
     return zgroup if zgroup.exists() else zarr
 
 
+def _tree_signature(root):
+    """Every file under ``root`` with its size and nanosecond mtime: any rewrite, removal or addition changes it."""
+    return {
+        str(path.relative_to(root)): (path.stat().st_size, path.stat().st_mtime_ns)
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _stamp_master_current(mdt):
+    """Give the golden master the root stamp a finished consolidation writes last.
+
+    The golden predates the stamp; a root without the current stamp is read as an interrupted write and its summary
+    groups are rewritten, which is the recovery this test is not about.
+    """
+    import zarr
+
+    from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing as post
+
+    zarr.open_group(str(mdt), mode="r+").attrs["consolidation_version"] = post.CONSOLIDATION_VERSION
+
+
+def test_a_changed_tree_has_a_different_signature(tmp_path):
+    """Control for the preservation test: the signature reds a rewrite, a removal and an addition of any file."""
+    (tmp_path / "member_0" / "timeseries").mkdir(parents=True)
+    kept = tmp_path / "member_0" / "timeseries" / "c0"
+    kept.write_bytes(b"series")
+    before = _tree_signature(tmp_path)
+    assert _tree_signature(tmp_path) == before
+    kept.write_bytes(b"series!")
+    assert _tree_signature(tmp_path) != before, "a rewritten chunk must change the signature"
+    kept.unlink()
+    assert _tree_signature(tmp_path) != before, "a removed chunk must change the signature"
+    kept.write_bytes(b"series")
+    (tmp_path / "member_0" / "extra").write_bytes(b"x")
+    assert _tree_signature(tmp_path) != before, "an added file must change the signature"
+
+
 def test_sensitivity_reprocess_consolidate_default_preserves_zarr(golden_member):
     """Phase 2 FQ1 default (regenerate_existing=False): sensitivity master
-    reprocess(consolidate) PRESERVES the master datatree zarr (mtime unchanged —
-    no rebuild, no DU restamp) and re-fires the report."""
+    reprocess(consolidate) PRESERVES the master datatree zarr and re-fires the report.
+
+    The property is content preserved, not one directory's mtime: every file of the master, its summary branches and
+    its series branches, keeps its size and mtime. The master of a finished consolidation carries its root stamp, so
+    the stamp is written first (the golden predates it); a wrong implementation that rewrites the summary groups or
+    deletes the series branches changes some file and reds the equality."""
     member = golden_member
     mdt = resolve_experiment_tree(member.experiment.analysis_paths.analysis_dir)
     assert mdt.exists(), "fixture should have materialized sensitivity_datatree.zarr"
-    mtime_target = _zarr_mtime_target(mdt)
-    mtime0 = mtime_target.stat().st_mtime
+    _stamp_master_current(mdt)
+    signature0 = _tree_signature(mdt)
+    assert signature0, "control: the master must hold files, or the equality below is vacuous"
     result = member.reprocess(start_with="consolidate", execution_mode="local")
     assert result["success"], f"reprocess failed: {result.get('message')!r}"
-    assert mtime_target.stat().st_mtime == mtime0, (
-        "Default sensitivity reprocess(consolidate) must PRESERVE the master "
-        f"datatree zarr (mtime unchanged). target={mtime_target!r}."
+    signature1 = _tree_signature(mdt)
+    changed = sorted(k for k in set(signature0) | set(signature1) if signature0.get(k) != signature1.get(k))
+    assert not changed, (
+        "Default sensitivity reprocess(consolidate) must PRESERVE the master datatree zarr (every file unchanged). "
+        f"target={mdt!r}; {len(changed)} file(s) differ, first: {changed[:5]}"
     )
     # Report re-rendered against the preserved zarr.
     master_dir = member.experiment.analysis_paths.analysis_dir

@@ -50,7 +50,7 @@ def _bundle(root: Path, pin: str, arm_group: str, *, date: str | None, member_at
     for i, ma in enumerate(member_attrs):
         groups[f"/member_{i}"] = xr.Dataset(attrs=ma)
         groups[f"/member_{i}/{arm_group}"] = xr.Dataset()
-        groups[f"/member_{i}/{arm_group}/performance"] = xr.Dataset({"Total": ("Rank", np.asarray([10.0 + i]))})
+        groups[f"/member_{i}/{arm_group}/performance/summary"] = xr.Dataset({"Total": ("Rank", np.asarray([10.0 + i]))})
     xr.DataTree.from_dict(groups).to_zarr(root / "sensitivity_datatree.zarr", mode="w", consolidated=False)
     return root
 

@@ -162,18 +162,18 @@ def _snapshot(root: Path) -> dict[str, bytes]:
 
 def test_v0029_is_registered_and_takes_layout_28_to_29():
     """Property: the registry holds exactly one migration whose target is layout 29, the module starts at 28, and the
-    constant reads 30, the layout the next migration (V0030) reaches.
+    constant reads 31, the layout the latest migration (V0031) reaches.
 
     Class: the discovered migration modules, filtered to those with version_to 29.
 
     Why required: a migration the registry does not find never runs, and a constant that disagrees with the module
     leaves trees stamped at the wrong layout.
 
-    Kills it: a module file named outside the Flyway pattern, a version_from of 27, or a constant left at 29.
+    Kills it: a module file named outside the Flyway pattern, a version_from of 27, or a constant left at 29 or 30.
 
     Passes under: any module layout with the same two numbers and the same stem.
     """
-    assert LAYOUT_VERSION == 30
+    assert LAYOUT_VERSION == 31
     (module,) = [m for m in registry.discover_migrations() if m.version_to == 29]
     assert (module.version_from, module.version_to) == (28, 29)
     assert module.module_name.endswith("V0029__remove_unread_settings")

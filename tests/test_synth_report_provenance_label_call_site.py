@@ -27,7 +27,7 @@ import hhemt.report_renderers.per_sim_peak_flood_depth as pfd
 import hhemt.scenario as scenario_mod
 from hhemt.config.report import report_config
 
-_GROUP = "/triton_only/triton"
+_GROUP = "/triton_only/triton/summary"
 _COORDS = {"y": [3.0, 2.0, 1.0, 0.0], "x": [0.0, 1.0, 2.0, 3.0]}
 
 

@@ -275,3 +275,42 @@ def test_a_gridded_keep_list_prunes_the_triton_store_and_not_the_summary(request
         "unit_discharge_x",
         "unit_discharge_y",
     ]
+
+
+def test_the_gridded_series_is_consolidated_into_the_datatree_and_the_scenario_store_is_cleared(
+    request, tmp_path
+) -> None:
+    """Property: with consolidation and clearing on, after a real coupled run the consolidated tree holds
+    ``tritonswmm/triton/timeseries/flood_depth`` with one ``event_iloc`` per event and at least one finite value,
+    and no per-scenario gridded time-series store remains.
+
+    Class: NEW CAPABILITY. Plausible wrong implementations: a gridded mode left out of the consolidation (the group
+    is absent and the store survives), or a clearing that runs without the read-back (the store is gone and the
+    group holds NaN only). Reachability: ``consolidate_timeseries`` over the scenario a real coupled run wrote.
+    Both-states anchor: the group's finite values come from the solver's own output. Venue: Rivanna scratch only,
+    serialized against the worktree's build cache, never a laptop. NOT RUN in the round that wrote it: the build
+    seat's venue rule forbids a solver compile on the laptop. Killed by: those. A second correct implementation
+    consolidates through a region write; the group is identical.
+    """
+    _require_chunk()
+    proc = _process_one_scenario(
+        request,
+        tmp_path,
+        "coupling_flux_gridded",
+        flux=True,
+        clear_raw="none",
+        extra_analysis_configs={
+            "toggle_consolidate_timeseries": True,
+            "toggle_clear_scenario_timeseries_after_consolidation": True,
+        },
+    )
+    analysis = proc._analysis
+    proc.write_summary_outputs(which="both", model_type="tritonswmm")
+    analysis.process.consolidate_timeseries()
+    group = xr.open_zarr(
+        analysis.analysis_paths.analysis_datatree_zarr, group="tritonswmm/triton/timeseries", consolidated=False
+    )
+    assert "flood_depth" in group.data_vars
+    assert [int(v) for v in group["event_iloc"].values] == [int(i) for i in analysis.df_sims.index]
+    assert bool(np.isfinite(group["flood_depth"].values).any()), "the consolidated depth holds no solver value"
+    assert not Path(proc.scen_paths.output_tritonswmm_triton_timeseries).exists()

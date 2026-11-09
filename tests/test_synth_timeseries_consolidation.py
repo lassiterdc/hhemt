@@ -63,7 +63,7 @@ def test_parse_replay_t_none_on_unparseable_value():
 # ---------------------------------------------------------------------------
 # Opt-in timeseries consolidation: the toggle default (config only), then the golden rows
 # ---------------------------------------------------------------------------
-_TS_NODES = ("swmm_node_timeseries", "swmm_link_timeseries")
+_TS_NODES = ("swmm_node/timeseries", "swmm_link/timeseries")
 
 
 def test_default_is_off(synth_multi_sim_builder):
@@ -123,8 +123,8 @@ def _consolidate(analysis) -> None:
 
 
 def _store_group(analysis, group: str) -> xr.Dataset:
-    """Open one group of ``analysis_timeseries.zarr`` the way a reader of a finished store does."""
-    store = _require(analysis.analysis_paths, "analysis_timeseries_zarr")
+    """Open one ``timeseries`` group of ``analysis_datatree.zarr`` the way a reader of a finished store does."""
+    store = _require(analysis.analysis_paths, "analysis_datatree_zarr")
     assert store.exists(), f"{store} was not written"
     return xr.open_zarr(store, group=f"tritonswmm/{group}")
 
@@ -152,7 +152,14 @@ def _golden_ready(golden_extractor, *, extra_cfg: str = ""):
     """Golden analysis with the timeseries toggle on, optional extra config lines, and coupling lists written."""
     system_dir = golden_extractor("multisim")
     cfg = system_dir / "analysis_config.yaml"
-    cfg.write_text(cfg.read_text() + "toggle_consolidate_timeseries: true\n" + extra_cfg)
+    # An explicit false keeps the per-scenario stores that these rows read back; a row whose extra_cfg sets the
+    # key itself owns the value, and a second line would be a duplicate YAML key.
+    keep_copies = (
+        ""
+        if "toggle_clear_scenario_timeseries_after_consolidation" in extra_cfg
+        else "toggle_clear_scenario_timeseries_after_consolidation: false\n"
+    )
+    cfg.write_text(cfg.read_text() + "toggle_consolidate_timeseries: true\n" + keep_copies + extra_cfg)
     analysis = construct_golden_analysis(system_dir)
     listed = _write_coupling_lists(analysis)
     return analysis, listed
@@ -185,7 +192,7 @@ def test_toggle_on_consolidates_node_and_link_timeseries_into_their_own_store(go
         assert "date_time" not in node.dims, f"{node_name} kept the calendar axis: {dict(node.dims)}"
         assert "event_iloc" in node.dims, f"{node_name} missing event_iloc: {dict(node.dims)}"
         assert "event_start_datetime" in node.coords
-    flag = _store_group(a, "swmm_node_timeseries")["is_coupling_node"]
+    flag = _store_group(a, "swmm_node/timeseries")["is_coupling_node"]
     assert flag.dims[0] == "event_iloc" and flag.dtype == np.int8
     assert int(flag.isel(event_iloc=0).sum()) == len(listed)
 
@@ -214,18 +221,24 @@ def test_toggle_change_invalidates_an_already_consolidated_tree(golden_extractor
     tree_path = a_off.analysis_paths.analysis_datatree_zarr
     assert tree_path is not None and tree_path.exists()
     tsg_off = xr.open_datatree(tree_path, engine="zarr", consolidated=False)["tritonswmm"]
-    assert "swmm_node_timeseries" not in tsg_off, "toggle OFF should not consolidate timeseries"
-    assert not _require(a_off.analysis_paths, "analysis_timeseries_zarr").exists()
+    assert "timeseries" not in tsg_off["swmm_node"].children, "toggle OFF should not consolidate timeseries"
+    assert not (tree_path.parent / "analysis_timeseries.zarr").exists(), "no separate series store is ever written"
     mtime_after_pass1 = tree_path.stat().st_mtime
 
-    cfg.write_text(original + "toggle_consolidate_timeseries: true\n")
+    cfg.write_text(
+        original
+        + "toggle_consolidate_timeseries: true\n"
+        + "toggle_clear_scenario_timeseries_after_consolidation: false\n"
+    )
     a_on = construct_golden_analysis(system_dir)
     assert a_on.cfg_analysis.toggle_consolidate_timeseries is True
     assert tree_path.exists(), "the first tree must survive; otherwise this tests a fresh build, not staleness"
 
     _write_coupling_lists(a_on)
-    store = _require(a_on.analysis_paths, "analysis_timeseries_zarr")
-    assert not store.exists(), "the toggle-off pass must not have written the time-series store"
+    store = _require(a_on.analysis_paths, "analysis_datatree_zarr")
+    assert (
+        "timeseries" not in xr.open_datatree(store, engine="zarr", consolidated=False)["tritonswmm/swmm_node"].children
+    ), "the toggle-off pass must not have written the time-series branch"
 
     a_on.process.consolidate_to_datatree()
 
@@ -256,7 +269,7 @@ def _rewrite_store(path, edit) -> None:
     ds.to_zarr(path, mode="w")
 
 
-def _event_ilocs(analysis, group: str = "swmm_node_timeseries") -> list[int]:
+def _event_ilocs(analysis, group: str = "swmm_node/timeseries") -> list[int]:
     return [int(v) for v in _store_group(analysis, group)["event_iloc"].values]
 
 
@@ -297,6 +310,15 @@ def test_events_of_different_windows_share_one_elapsed_axis(golden_extractor, mo
     for kind in ("node", "link"):
         _rewrite_store(_scenario_store(a, 0, kind), truncate)
         _rewrite_store(_scenario_store(a, 1, kind), shift)
+    # The standalone family consolidates beside the coupled one, so its per-scenario stores sit on the same
+    # calendar as the declared window; a store left on its original dates would be refused as before the start.
+    for attr in (
+        "output_swmm_only_node_time_series",
+        "output_swmm_only_link_time_series",
+        "output_swmm_only_system_time_series",
+    ):
+        _rewrite_store(getattr(TRITONSWMM_scenario(0, a).scen_paths, attr), truncate)
+        _rewrite_store(getattr(TRITONSWMM_scenario(1, a).scen_paths, attr), shift)
     calendar = xr.concat(
         [
             xr.open_zarr(_scenario_store(a, i, "link"), consolidated=False).load().expand_dims(event_iloc=[i])
@@ -308,12 +330,16 @@ def test_events_of_different_windows_share_one_elapsed_axis(golden_extractor, mo
 
     _consolidate(a)
 
-    node = _store_group(a, "swmm_node_timeseries")
+    node = _store_group(a, "swmm_node/timeseries")
     assert node.sizes["elapsed_s"] == 12, "the axis must have the length of the longer event"
     assert int(node["elapsed_s"].values[0]) == 10, "the first sample sits at one reporting step, not at zero"
     depth = node["depth"]
     assert int(depth.isel(event_iloc=0).notnull().any("node_id").sum()) == 8
     assert bool(depth.isel(event_iloc=0, elapsed_s=slice(8, None)).isnull().all()), "the short event pads with NaN"
+    standalone = xr.open_zarr(a.analysis_paths.analysis_datatree_zarr, group="swmm_only/swmm_node/timeseries").sizes[
+        "elapsed_s"
+    ]
+    assert standalone == 12, "the standalone family places the same pair on the same axis"
     assert calendar.sizes["date_time"] == 20, "control: the calendar axis of the same pair has the union length"
 
 
@@ -340,7 +366,7 @@ def test_the_append_derives_a_missing_flag_and_refuses_a_missing_or_extra_variab
     message = str(err.value)
     assert "depth" in message and "event_iloc 2" in message
     assert _event_ilocs(a) == [0, 1], "the refused scenario must not have been written"
-    assert "is_coupling_node" in _store_group(a, "swmm_node_timeseries").data_vars
+    assert "is_coupling_node" in _store_group(a, "swmm_node/timeseries").data_vars
 
 
 def test_the_append_refuses_a_variable_the_store_lacks_before_writing(golden_extractor):
@@ -376,7 +402,7 @@ def test_static_report_variables_are_not_appended_and_do_not_have_to_match(golde
     assert "max_ponded_depth" in node0.data_vars, "the golden node store must carry the static variable the row needs"
     _rewrite_store(_scenario_store(a, 1, "node"), lambda ds: ds.drop_vars("max_ponded_depth"))
     _consolidate(a)
-    stored = _store_group(a, "swmm_node_timeseries")
+    stored = _store_group(a, "swmm_node/timeseries")
     assert "max_ponded_depth" not in stored.data_vars
     assert _event_ilocs(a) == [0, 1, 2]
     assert all("event_iloc" in stored[v].dims for v in stored.data_vars), "every variable must carry event_iloc"
@@ -463,7 +489,7 @@ def test_clearing_deletes_the_scenario_stores_records_it_and_reads_them_as_proce
         log = TRITONSWMM_scenario(i, a).get_log("tritonswmm")
         assert log.consolidated_node_timeseries_cleared.get() is True
         assert log.consolidated_link_timeseries_cleared.get() is True
-    stored = _store_group(a, "swmm_node_timeseries")
+    stored = _store_group(a, "swmm_node/timeseries")
     np.testing.assert_array_equal(
         stored["depth"].isel(event_iloc=0).values[:, : before[0].sizes["date_time"]],
         before[0]["depth"].transpose("node_id", "date_time").values,
@@ -495,8 +521,8 @@ def test_a_stored_event_with_no_verified_clearing_and_no_own_store_is_refused(go
 
 
 def test_the_store_is_not_a_root_tree_and_survives_the_consolidation_and_reprocess_deletes(golden_extractor):
-    """Property: ``analysis_timeseries.zarr`` is in neither ``ROOT_TREE_NAMES`` nor the consolidation delete's
-    analysis-level artifacts, so those deletes cannot remove it.
+    """Property: the series live in the ``timeseries`` branches of ``analysis_datatree.zarr``, so no separate series
+    store has a path attribute, and the one reprocess delete that touches the tree keeps those branches.
 
     Class: NEW CAPABILITY. Plausible wrong implementation: listing the store beside the datatree, after which a
     reprocess deletes the only copy of the series. Reachability: both names are module constants read by the
@@ -507,7 +533,7 @@ def test_the_store_is_not_a_root_tree_and_survives_the_consolidation_and_reproce
     from hhemt.paths import AnalysisPaths
     from hhemt.utils import ROOT_TREE_NAMES
 
-    assert "analysis_timeseries_zarr" in AnalysisPaths.__dataclass_fields__, "the store has no path attribute yet"
+    assert "analysis_timeseries_zarr" not in AnalysisPaths.__dataclass_fields__, "the separate store does not exist"
     assert "analysis_timeseries.zarr" not in set(ROOT_TREE_NAMES)
     flat = " ".join(str(x) for x in dcr._ANALYSIS_LEVEL_ARTIFACTS)
     assert "analysis_timeseries" not in flat
@@ -612,12 +638,12 @@ def test_a_stored_slice_that_fails_its_readback_is_rewritten_from_the_scenario_s
 
     a, _ = _golden_ready(golden_extractor)
     _consolidate(a)
-    store = a.analysis_paths.analysis_timeseries_zarr
-    group = zarr.open_group(store, path="tritonswmm/swmm_node_timeseries", mode="r+")
+    store = a.analysis_paths.analysis_datatree_zarr
+    group = zarr.open_group(store, path="tritonswmm/swmm_node/timeseries", mode="r+")
     group["depth"][1, ...] = 999.0
-    assert float(_store_group(a, "swmm_node_timeseries")["depth"].isel(event_iloc=1).max()) == 999.0
+    assert float(_store_group(a, "swmm_node/timeseries")["depth"].isel(event_iloc=1).max()) == 999.0
     _consolidate(a)
     assert _event_ilocs(a) == [0, 1, 2]
-    repaired = _store_group(a, "swmm_node_timeseries")["depth"].isel(event_iloc=1)
+    repaired = _store_group(a, "swmm_node/timeseries")["depth"].isel(event_iloc=1)
     own = xr.open_zarr(_scenario_store(a, 1, "node"), consolidated=False)["depth"].transpose("node_id", "date_time")
     np.testing.assert_array_equal(repaired.values[:, : own.sizes["date_time"]], own.values)

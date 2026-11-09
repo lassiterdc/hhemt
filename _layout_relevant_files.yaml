@@ -4835,3 +4835,219 @@ non_breaking_allowlist:
     layout_signature: 71190fd47cc5cbccb2ea1d16c8d50de6673132f8b0edf6a9b92527660141f25e
     justification: |-
       NON-BREAKING for the stored layout. The change reads the SWMM report's Starting Date line from the whole file instead of its first 200 lines, and words the error for a report without the line. It writes no variable, attribute, path or file that the stored layout holds, and no stored value changes.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 51ed983ff9c344520f9db70ffdd94a73526038b1dbdece1109bf7a2d7759bc3e
+    justification: |-
+      Non-breaking for the stored layout. The change retypes the existing config field toggle_clear_scenario_timeseries_after_consolidation from bool to bool | None and resolves an unset value in an after-validator to toggle_consolidate_timeseries. The field name, the values a written config carries (a resolved bool, never None) and every stored array are unchanged, and no stored value changes for an existing analysis, because an existing written config already carries an explicit bool.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: cc5de6e205a3392dd129438550f8532c2d8f5ffd406262d6e65c177855da798b
+    justification: |-
+      field description edited to meet the published-surface style gate; no on-disk change
+  - path: src/hhemt/log.py
+    layout_signature: 89e82c25f2cc2823b8f37fa5928e1e8fe1ab16ed6023c6e904df7039be7c38d4
+    justification: |-
+      additive gridded clearing fields: consolidated_triton_timeseries_cleared and three clearing_pending list fields
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 0f1945d185e20448d7449620272eb9b550ea54ce6f6a43591e3b6c31519b818c
+    justification: |-
+      gridded TRITON series: cleared-record reads and the summary-rebuild refusal
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 46ada81796b4b1091b7376624fa1c20f6822f4e56c398224f5caafdd6d5d6354
+    justification: |-
+      gridded TRITON series group tritonswmm/triton/timeseries and the pending-first clearing order
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 203e212368035e8de053d0247836780aceb5804c11e8ffbbd2c4e0e6eed8c22f
+    justification: |-
+      field description names the consolidated gridded series; no on-disk change
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 9fee6f59b0a5bb1a8524e864efac793a204bd2edaaf7b4c00cca4641e5ec6464
+    justification: |-
+      field description names the consolidated gridded series; no on-disk change
+  - path: src/hhemt/config/analysis.py
+    layout_signature: b4e0d961f4be223b4a96b81f3f34237413e2e0d315a890c038252c8dc9e9fc33
+    justification: |-
+      field description names the consolidated gridded series; no on-disk change
+  - path: src/hhemt/config/analysis.py
+    layout_signature: c9277c40d43be7db368d9e7e1f0a1a60b86f366b17c90960c019fd0524517dbd
+    justification: |-
+      field description names the consolidated gridded series; no on-disk change
+  - path: src/hhemt/config/analysis.py
+    layout_signature: a4f40068f98ff5a9cb8969ab819cf49634e5197b2cebdc2712b4300ce550bf14
+    justification: |-
+      edits for the sensitivity master holding both branches of each member; the unreleased layout 31 stays the one disposition and V0031 folds the separate sensitivity_timeseries.zarr, so no further bump
+  - path: src/hhemt/log.py
+    layout_signature: 04aaddeec782b4e77727c5911abf1690ffcd0e2278667ba44ad1676456d762f6
+    justification: |-
+      edits for the sensitivity master holding both branches of each member; the unreleased layout 31 stays the one disposition and V0031 folds the separate sensitivity_timeseries.zarr, so no further bump
+  - path: src/hhemt/paths.py
+    layout_signature: 0235b38f6e239915303a37652bd28f0c9f16ea243fcb2bc47525734d8ca9e1fc
+    justification: |-
+      edits for the sensitivity master holding both branches of each member; the unreleased layout 31 stays the one disposition and V0031 folds the separate sensitivity_timeseries.zarr, so no further bump
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: b6aefae0b53c8fea4b76d18cbda35a353bfa8215af747ab2e2a6f6199b254068
+    justification: |-
+      edits for the sensitivity master holding both branches of each member; the unreleased layout 31 stays the one disposition and V0031 folds the separate sensitivity_timeseries.zarr, so no further bump
+  - path: src/hhemt/version_migration/versions/V0031__datatree_summary_and_timeseries_branches.py
+    layout_signature: be9e1f255cafb21fad42ce98be814e97852140258d89edcbc136921fc17456e0
+    justification: |-
+      edits for the sensitivity master holding both branches of each member; the unreleased layout 31 stays the one disposition and V0031 folds the separate sensitivity_timeseries.zarr, so no further bump
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 81c51a1688af1913227010644ac5f28a752a478f9a0f160f7b086b6532d8b1e5
+    justification: |-
+      description edit to the unreleased layout 31; no on-disk change
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: c55d68d3c4306d3256c5d0ac7af9988d76e36cf3346414c704ecb3419aa4c501
+    justification: |-
+      the master moves each member tree before the next member's copy; unreleased layout 31, no on-disk change beyond the master edits above
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 571ea6fd61e92302a6c5ab68f89af250060163adba1b9ec7bd451cee04e24a21
+    justification: |-
+      docstring edit; unreleased layout 31, no on-disk change
+  - path: src/hhemt/log.py
+    layout_signature: c5de9e4f4f65eaaec48388c45f923182ab25a0cc7247383f1e43ab07b77cd546
+    justification: |-
+      merge of the gridded series and sensitivity master edits; additive fields and descriptions, no moved path
+  - path: src/hhemt/config/analysis.py
+    layout_signature: ce6955b82d70ec07d45f8fa43559a704e3338b9ce818d32a4abbb756ccbc18d1
+    justification: |-
+      merge of the gridded series and sensitivity master edits; additive fields and descriptions, no moved path
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 571ea6fd61e92302a6c5ab68f89af250060163adba1b9ec7bd451cee04e24a21
+    justification: |-
+      merge of the gridded series and sensitivity master edits; additive fields and descriptions, no moved path
+  - path: src/hhemt/paths.py
+    layout_signature: 0235b38f6e239915303a37652bd28f0c9f16ea243fcb2bc47525734d8ca9e1fc
+    justification: |-
+      merge of the gridded series and sensitivity master edits; additive fields and descriptions, no moved path
+  - path: src/hhemt/log.py
+    layout_signature: 09d34d5bd11b04c8e312d0875c74188944552d191b6bb890f1222396906b6e93
+    justification: |-
+      SWMM-only and TRITON-only models record the existing consolidated clearing fields in their own logs; comments only, no field added or changed
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 69dedd14e8c16e9fc56c025e9e89ec372f5c542a9d66cb9636b7d7d829d6bb23
+    justification: |-
+      cleared-record reads for every model family and the family-named summary-rebuild refusal; no on-disk layout change
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 44d8633ae0662947f81f0da280bd4382fba943adc5c19b4c1a0604b9e75224a6
+    justification: |-
+      SWMM-only node and link and TRITON-only gridded series groups swmm_only/swmm_node/timeseries, swmm_only/swmm_link/timeseries and triton_only/triton/timeseries, cleared per model log
+  - path: src/hhemt/config/analysis.py
+    layout_signature: a338f9c9c9c260124997f168508095978614595b9adbd3f7030f9f79cde78908
+    justification: |-
+      toggle_consolidate_timeseries description names every family's consolidated groups; no on-disk change
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 511cf26e0c3593a01771700d7f5a43649fc4824d15fec654f530721017358f0e
+    justification: |-
+      clearing switch description names all six stores of the three families; no on-disk change
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 16fd50a2780802c6cbdbde09e40768f8517966eb1e9df20ed31c8db002dff6c4
+    justification: |-
+      clearing switch description names all six stores in a sentence of its own (style gate refuses a parenthesis); no on-disk change
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 03dcbe8676fbeb9d5baa0540c63619280a5696d8bd25c30e51c481b23f7f7b1c
+    justification: |-
+      merge of the family parity and sensitivity master edits; descriptions and additive fields, no moved path
+  - path: src/hhemt/log.py
+    layout_signature: 758f01a2ad7ba3fc5a844d87c047e469c358ee755b3915204939c1c536bdb551
+    justification: |-
+      merge of the family parity and sensitivity master edits; descriptions and additive fields, no moved path
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 707fa041c892d403033f6ac67e3fbce7d22553ca8aa6f9c9d8dc88438f2b1edc
+    justification: |-
+      additive CF and provenance entries for the standalone SWMM system series, their reductions and the runoff continuity rows; no existing name changes
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 6c365eae33bb3f4096b030a00a144ad921793542bc7e96fa80433c46b19dc00f
+    justification: |-
+      field descriptions name the swmm_only/system group; no on-disk change
+  - path: src/hhemt/constants.py
+    layout_signature: debe09b882a1b96c5a43f3d847bf01fc4bbf698dd514ca4818dd31c5a2a7b51b
+    justification: |-
+      additive names for the standalone SWMM system series, their summary reductions and the runoff continuity rows
+  - path: src/hhemt/log.py
+    layout_signature: 298da4bba10ebb8889f96d0d800816bf3b02ae3a5b1f9c6506b874527641f1fc
+    justification: |-
+      additive system clearing fields: consolidated_system_timeseries_cleared and its clearing_pending list
+  - path: src/hhemt/paths.py
+    layout_signature: 35a1b650187b9ceae5cc1d6042080e178af0a7be296c0e03effd255c8f73da33
+    justification: |-
+      additive per-scenario path output_swmm_only_system_time_series
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 8197674802af4a9ef4ec1ab6e76e6654097bcf661d3fa3f1735b995a059fd0d6
+    justification: |-
+      standalone SWMM export writes SWMM_only_system_tseries and the twelve system reductions into the node summary store
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 7a3251f3dfc811816f4ccf1d735b4d48cff3d1d46b9d777d91a6e63ad9f1edfd
+    justification: |-
+      additive groups swmm_only/system/summary and swmm_only/system/timeseries and the stem-variable selection that gives each value one group
+  - path: src/hhemt/scenario.py
+    layout_signature: 9d27148eea5466cc41e3bc823aad42e9a571b796f76f90f9ad1ef3f1c8d8f8bb
+    justification: |-
+      additive per-scenario path SWMM_only_system_tseries
+  - path: src/hhemt/log.py
+    layout_signature: 9d27a84e4e145a4bd46285ed8a2bb2ed283c3e0750a04a3d0272361299f3877c
+    justification: |-
+      comment reworded; no on-disk change
+  - path: src/hhemt/log.py
+    layout_signature: 71b54fde39ad7d838fff719afb2d88ac56b5dde9eefd2bef331c18e7ae973627
+    justification: |-
+      per-scenario summary stores cleared, summary branch append-only; the additive consolidated_summaries_cleared model-log field defaults to None and rides the layout 31 bump, no existing key changes name or type
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 320af5e8c5389a1c28e09211cc3604de4433895b9606697dc6cf21adac794f5b
+    justification: |-
+      per-scenario summary stores cleared, summary branch append-only; the additive consolidated_summaries_cleared model-log field defaults to None and rides the layout 31 bump, no existing key changes name or type
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: f9e1e215903479d2cc7c006bd47cb665e08c35905e6f3ac34d60b1b495bd23b7
+    justification: |-
+      per-scenario summary stores cleared, summary branch append-only; the additive consolidated_summaries_cleared model-log field defaults to None and rides the layout 31 bump, no existing key changes name or type
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 9e8cf6100e2657a629afdd33773c2fefd500440679c9ad817fd7e9dccb833bbe
+    justification: |-
+      per-scenario summary stores cleared, summary branch append-only; the additive consolidated_summaries_cleared model-log field defaults to None and rides the layout 31 bump, no existing key changes name or type
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 9ce0aff66736fa1f723ed4696ae0bc67b0ca283bf2eb58251064a8c83f3e9e1c
+    justification: |-
+      per-scenario summary stores cleared, summary branch append-only; the additive consolidated_summaries_cleared model-log field defaults to None and rides the layout 31 bump, no existing key changes name or type
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 2d9d53d02502572b7c3b5115e52e11a36432aef3752f83b2854867e7ae096695
+    justification: |-
+      identifier string width floor 255, a partial re-process removes only the rewritten stems from the summary record and a stem returned by one joins the record; additive, no existing key changes name or type
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 78fe3fd1ad2aad3baf0f65ecbad1168f49deb195c74978bd88e720dc9381611f
+    justification: |-
+      identifier string width floor 255, a partial re-process removes only the rewritten stems from the summary record and a stem returned by one joins the record; additive, no existing key changes name or type
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: ee1286700429e673ee8845885688be08c1169ba84d66be166093d9dbf6391987
+    justification: |-
+      Group appends run inside the index-deferring block of the store write rule; the bytes written are unchanged
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 7a66e525c28688c2581079897f89b4345ebd728cd4d46789e89dfdb25d9fd0be
+    justification: |-
+      Group appends run inside the index-deferring block of the store write rule and the empty root is written through the append helper; the bytes written are unchanged
+  - path: src/hhemt/version_migration/versions/V0031__datatree_summary_and_timeseries_branches.py
+    layout_signature: 2d39771b065565f1d080a44d306639c1bdc6ab1071d8dba7ed7dec05aa3c45fc
+    justification: |-
+      The sensitivity series fold reads and writes through the store helpers of the store rule; the migrated bytes are unchanged
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 5087c8e646dfdd35ea3232ae1cacda618a9e29b09a2b2f1b261a8f2aeb619e8d
+    justification: |-
+      Comment and docstring wording only; no executable change and no on-disk path moves
+  - path: src/hhemt/constants.py
+    layout_signature: 41b6e42e98b3ca3f7204e26dc4074999da53f561c00910e99f5cf5887c5a8d88
+    justification: |-
+      Comment and docstring wording only; no executable change and no on-disk path moves
+  - path: src/hhemt/log.py
+    layout_signature: a07a7ecb80e96b6692c69477b639cd2acb9a0befe6c3744c16c7298dcaa55f4e
+    justification: |-
+      Comment and docstring wording only; no executable change and no on-disk path moves
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 6ffbde0c4d3c37b82f63a4571d2f6342f29956ca75f7b6e23a07a508525dfa9c
+    justification: |-
+      Comment and docstring wording only; no executable change and no on-disk path moves
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 5d87bd77d032667f7136a1b6e0967bc7a518d0f367072eab87a494bacf4c3535
+    justification: |-
+      Group appends run inside the index-deferring block of the store write rule, plus comment and docstring wording; the bytes written are unchanged and no on-disk path moves
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: d496dd6ae6bae4fb4c4e0e590dd2b2f24840b2a4dc06769de38b19457d8d9676
+    justification: |-
+      Group appends run inside the index-deferring block of the store write rule, plus comment and docstring wording; the bytes written are unchanged and no on-disk path moves

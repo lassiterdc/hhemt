@@ -149,7 +149,7 @@ def _build_member_tree(root, member_id, *, with_attrs):
         coords={"event_iloc": [0], "y": [0, 1], "x": [0, 1]},
     )
     node = _member_node_group(member_id)
-    nodes = {f"{node}/tritonswmm/triton": ds}
+    nodes = {f"{node}/tritonswmm/triton/summary": ds}
     if with_attrs:
         nodes[node] = xr.Dataset(attrs={"member_id": str(member_id)})
     xr.DataTree.from_dict(nodes).to_zarr(root / "sensitivity_datatree.zarr", consolidated=False)

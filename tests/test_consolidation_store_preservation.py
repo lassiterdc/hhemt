@@ -21,6 +21,7 @@ regression guard for a particular change.
 
 from __future__ import annotations
 
+import json
 import types
 from pathlib import Path
 
@@ -236,7 +237,15 @@ def _pin_clean_build(monkeypatch):
 
 def _gate_analysis(root: Path, ilocs, stamped_fingerprint):
     """A duck-typed analysis whose consolidated store is present and log-complete."""
-    store = _store(root / "analysis_datatree.zarr", "ORIGINAL")
+    # The reuse gate also reads the store's own root stamp (consolidation_version and the fingerprint, both current),
+    # so the stand-in carries one, as a store a finished consolidation wrote does.
+    stamp = {
+        "attributes": {
+            "consolidation_version": TRITONSWMM_analysis_post_processing.CONSOLIDATION_VERSION,
+            "consolidation_inputs_fingerprint": stamped_fingerprint,
+        }
+    }
+    store = _store(root / "analysis_datatree.zarr", json.dumps(stamp))
     log = types.SimpleNamespace(
         datatree_consolidation_complete=_LogField(True),
         consolidation_inputs_fingerprint=_LogField(stamped_fingerprint),

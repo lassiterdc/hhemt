@@ -1,9 +1,9 @@
 """Review of the bundle's time-series carriage: the real emit over a real analysis tree carries every store.
 
 The chunk's own tests (``tests/test_bundle_timeseries_carriage.py``) run the real emit over a bare namespace whose
-scenario enumeration is replaced by a stand-in, and populate one of the eight store fields. These tests run
+scenario enumeration is replaced by a stand-in, and populate one of the nine store fields. These tests run
 ``emit_bundle`` unchanged over the multi-sim golden analysis, a real ``TRITONSWMM_analysis`` whose three scenarios hold
-all eight stores each, so the enumeration, the planner, the manifest and the archive are exercised together on a tree
+all nine stores each, so the enumeration, the planner, the manifest and the archive are exercised together on a tree
     the
 chunk's author did not build. No solver is compiled or run; every write is under ``tmp_path``.
 
@@ -26,9 +26,9 @@ from hhemt.bundle import _emit
 from hhemt.version_migration.constants import BUNDLE_MANIFEST_FILENAME
 
 #: The glob that names the per-scenario time-series stores by the FILE NAME the scenario constructor gives them, not by
-#: the dataclass fields the emit reads: every one of the eight ends ``_tseries.zarr`` and no summary or input does.
+#: the dataclass fields the emit reads: every one of the nine ends ``_tseries.zarr`` and no summary or input does.
 STORE_GLOB = "*/processed/*_tseries.zarr"
-EXPECTED_STORES_PER_SCENARIO = 8
+EXPECTED_STORES_PER_SCENARIO = 9
 
 
 def _prepare_figure(analysis) -> Path:
@@ -45,7 +45,7 @@ def _on_disk_stores(analysis) -> dict[str, Path]:
     ad = Path(analysis.analysis_paths.analysis_dir).resolve()
     sims = Path(analysis.analysis_paths.simulation_directory).resolve()
     found = {p.relative_to(ad).as_posix(): p for p in sims.glob(STORE_GLOB) if p.is_dir()}
-    consolidated = ad / "analysis_timeseries.zarr"
+    consolidated = ad / "analysis_datatree.zarr"
     if consolidated.is_dir():
         found[consolidated.relative_to(ad).as_posix()] = consolidated
     return found
@@ -69,11 +69,12 @@ def test_real_emit_over_the_golden_carries_every_store_file_for_file(golden_mult
     archive holds exactly the files of each store, with every chunk file byte-identical to its source.
 
     Class: REGRESSION is not the claim here; NEW CAPABILITY - the plausible wrong implementation is a carriage that
-        iterates a subset of the eight store fields (for example the first two) or plans a store's directory but not its
+        iterates a subset of the nine store fields (for example the first two) or plans a store's directory but not its
         files. It is red under it: the chunk's own arms populate one field, so a subset passes them.
-    Reachability: the golden's three scenarios each hold all eight stores (``tritonswmm`` triton, performance, node,
-        link; ``triton`` only and its performance; ``swmm`` only node and link), so a subset implementation drops
-        stores that exist; artifact: the matcher ``*/processed/*_tseries.zarr`` over ``sims/`` returns 24 directories.
+    Reachability: the golden's three scenarios each hold all nine stores (``tritonswmm`` triton, performance, node,
+        link; ``triton`` only and its performance; ``swmm`` only node, link and system), so a subset implementation
+        drops stores that exist; artifact: the matcher ``*/processed/*_tseries.zarr`` over ``sims/`` returns 27
+        directories.
     Both-states anchor: the assertion compares the carried set with the set the FILE NAMES give, whatever the number of
         stores, and compares archive members with disk files, whatever their count.
     Invocation isolated: not isolatable from this tree - discrimination shown instead: restricting
@@ -115,7 +116,7 @@ def test_the_extracted_golden_stores_open_and_equal_their_sources(golden_multisi
         then fails to open or holds other values.
     Reachability: the emit rewrites every text member, and a zarr store's ``zarr.json`` or ``.zattrs`` is one; the
         golden stores carry real attributes, so the rewrite runs over real metadata; artifact: the store count below
-        is 24.
+        is 27.
     Both-states anchor: the assertion turns on value equality of the opened datasets, whatever the metadata bytes are.
     Invocation isolated: not isolatable from this tree - discrimination shown instead: a carriage that names every
         store but plans no files for the ``*_link_tseries.zarr`` stores turns this red (measured by the reviewer,

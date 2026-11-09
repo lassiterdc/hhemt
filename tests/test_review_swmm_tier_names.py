@@ -479,7 +479,8 @@ def _extract(kind: str, dest: Path) -> Path:
 def _tier_groups(root: Path, tier: str) -> list[tuple[str, xr.Dataset]]:
     out = []
     for tree in sorted([*root.rglob("analysis_datatree.zarr"), *root.rglob("sensitivity_datatree.zarr")]):
-        for group in sorted(p.parent.relative_to(tree).as_posix() for p in tree.rglob(f"{tier}/zarr.json")):
+        # Layout 31 stores a tier's statistics in its `summary` branch; the group holds no data variable itself.
+        for group in sorted(p.parent.relative_to(tree).as_posix() for p in tree.rglob(f"{tier}/summary/zarr.json")):
             out.append((f"{tree.name}:{group}", xr.open_zarr(tree, group=group, consolidated=False)))
     return out
 

@@ -12,7 +12,7 @@ in the primary plan.
 
 from __future__ import annotations
 
-LAYOUT_VERSION: int = 30
+LAYOUT_VERSION: int = 31
 MINIMUM_SUPPORTED_VERSION: int = 0
 
 #: Render-bundle manifest schema version. Stamped into bundle_manifest.json

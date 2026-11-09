@@ -9,10 +9,46 @@ without an import cycle. PATH-ONLY: MUST NOT instantiate ``TRITONSWMM_scenario``
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+#: Model-log field recording that a model's per-scenario summary stores were deleted after every slice of the
+#: scenario was read back from the ``summary`` branches of the consolidated tree. Its value is
+#: ``{"state": "pending" | "done", "stems": {stem: {group: [variable names]}}}``: ``pending`` is written before the
+#: stores are deleted and ``done`` after, so a state of either kind means the data is in the branch.
+SUMMARY_CLEARING_FIELD = "consolidated_summaries_cleared"
+SUMMARY_CLEARING_STATES = ("pending", "done")
+
+
+def parse_summary_clearing_record(value) -> dict | None:
+    """The clearing record when ``value`` is a well-formed one (a known state and a stems mapping), else None.
+
+    A record of any other shape reads as absent, so a hand-edited or truncated log never makes a scenario look
+    cleared. Both the log field and the raw JSON payload of a log file pass through here, so the two readers of
+    the record agree on what a record is.
+    """
+    if not isinstance(value, dict):
+        return None
+    if value.get("state") not in SUMMARY_CLEARING_STATES or not isinstance(value.get("stems"), dict):
+        return None
+    return value
+
+
+def summary_clearing_record(sim_folder: Path, model: str) -> dict | None:
+    """The summary-clearing record in ``{sim_folder}/log_{model}.json``, or None when there is none.
+
+    Path-only: the log is read with ``json`` and no scenario is built, which is what lets the completion
+    predicates below consult it. An absent, unreadable or malformed log reads as no record.
+    """
+    try:
+        payload = json.loads((Path(sim_folder) / f"log_{model}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return parse_summary_clearing_record(payload.get(SUMMARY_CLEARING_FIELD)) if isinstance(payload, dict) else None
+
 
 # ---------------------------------------------------------------------------
 # Report-target completeness predicate (report-target-predicate unification).
@@ -114,6 +150,10 @@ def scenario_summaries_present(analysis, event_id: str, enabled_models: list[str
     ``swmm/``, and ``out_swmm/`` as a side effect (scenario.py:63/65/82), so a
     generation-time read-only probe would create scenario subdirectories and
     pay the full constructor cost O(subs x events) on every ``analysis.run()``.
+    A model whose log records its per-scenario summary stores as cleared (``SUMMARY_CLEARING_FIELD``, state
+    ``pending`` or ``done``) counts as present: the record is written only after every slice of the scenario was read
+    back from the consolidated tree, so the data is there either way. The log is read with ``json`` and no scenario
+    is built.
     Paths are derived directly from ``ScenarioPaths``' naming convention
     (``sims/{event_id}/processed/{stem}.{out_type}``) using the pure
     ``compute_event_id_slug`` slug the caller already holds. The FULL canonical
@@ -126,6 +166,10 @@ def scenario_summaries_present(analysis, event_id: str, enabled_models: list[str
         stems = _SUMMARY_STEMS_BY_MODEL.get(model, ())
         if not stems:
             return False
+        # A model whose log records the stores as cleared has its summaries in the consolidated tree: the record
+        # is written only after every slice of the scenario was read back, so it counts as the summary being present.
+        if summary_clearing_record(analysis.analysis_paths.simulation_directory / event_id, model) is not None:
+            continue
         for stem in stems:
             candidate = processed / f"{stem}.{out_type}"
             if not summary_artifact_present(candidate, out_type):

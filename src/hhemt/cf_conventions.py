@@ -18,6 +18,7 @@ from hhemt.constants import (
     LST_COL_HEADERS_OUTFALL_LOADING_SUMMARY,
     LST_COL_HEADERS_PUMPING_SUMMARY,
     LST_COL_HEADERS_STORAGE_VOLUME_SUMMARY,
+    RUNOFF_QUANTITY_CONTINUITY_TERMS,
 )
 
 CF_CONVENTIONS_VERSION = "CF-1.13"
@@ -412,6 +413,27 @@ def _string_variable(long_name: str, comment: str) -> dict[str, str | None]:
     return {**_cf(long_name, None), "comment": comment}
 
 
+#: (stored name, quantity phrase, units) of the six system series the standalone SWMM model stores.
+_SWMM_SYSTEM_QUANTITIES: tuple[tuple[str, str, str], ...] = (
+    ("system_flooding_rate", "Rate of water lost to flooding from the whole system", "m3 s-1"),
+    ("system_outfall_flow", "Flow leaving the system through its outfalls", "m3 s-1"),
+    ("system_stored_volume", "Volume of water stored in the whole system", "m3"),
+    ("system_lateral_inflow", "Total lateral inflow to the system", "m3 s-1"),
+    ("system_runoff", "Runoff flow from all subcatchments", "m3 s-1"),
+    ("system_rainfall", "Area-weighted mean rainfall intensity over all subcatchments", "mm h-1"),
+)
+
+
+def _swmm_system_cf_entries() -> dict[str, dict[str, str | None]]:
+    """CF entries for the six system series and their `_max` and `_last` reductions."""
+    entries: dict[str, dict[str, str | None]] = {}
+    for name, phrase, units in _SWMM_SYSTEM_QUANTITIES:
+        entries[name] = _cf(f"{phrase} at each report step", units)
+        entries[f"{name}_last"] = _cf(f"{phrase} at the final report step", units)
+        entries[f"{name}_max"] = _cf(f"{phrase}, maximum over the report steps", units, cell_methods="time: maximum")
+    return entries
+
+
 def _swmm_inventory_cf_entries() -> dict[str, dict[str, str | None]]:
     """CF entries for the SWMM output inventory (the series, tables and run-level figures the parser emits)."""
     mx, mn, su, me = "time: maximum", "time: minimum", "time: sum", "time: mean"
@@ -619,6 +641,15 @@ def _swmm_inventory_cf_entries() -> dict[str, dict[str, str | None]]:
         entries[f"routing_continuity_{stem}"] = _cf(
             f"{label} of the flow routing balance over the run (Flow Routing Continuity)", "10^6 L"
         )
+    # The standalone SWMM model routes its own runoff, so its reports carry the Runoff Quantity Continuity rows
+    for label, stem in RUNOFF_QUANTITY_CONTINUITY_TERMS.items():
+        entries[f"runoff_continuity_{stem}"] = _cf(
+            f"{label} of the runoff quantity balance over the run, as a depth over the catchment area "
+            "(Runoff Quantity Continuity)",
+            "mm",
+        )
+    # System series of the binary output, and their reductions (the standalone SWMM model alone; D19)
+    entries.update(_swmm_system_cf_entries())
     # Ranked lists of at most five elements, on dimension swmm_stat_rank
     entries["flow_instability_link_id"] = _string_variable(
         "Identifier of the link at each rank of the highest flow instability indexes "
@@ -1830,6 +1861,17 @@ _QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
 _TIME_ORIGIN = "in minutes elapsed from the report start, clamped at 0, at one-minute resolution"
 
 
+#: The member of the binary output's SystemAttribute enumeration behind each system series, by stored name.
+_SWMM_SYSTEM_ATTRIBUTES: dict[str, str] = {
+    "system_flooding_rate": "SYS_FLOODING",
+    "system_outfall_flow": "SYS_OUTFLOW",
+    "system_stored_volume": "SYS_STORAGE",
+    "system_lateral_inflow": "SYS_INFLOW",
+    "system_runoff": "SYS_RUNOFF",
+    "system_rainfall": "SYS_RAINFALL",
+}
+
+
 def _swmm_inventory_provenance_entries() -> dict[str, dict[str, str]]:
     """Descriptors for the series, tables and run-level figures of the SWMM output inventory."""
     node, link, whole = "point (node)", "line (conduit)", "whole domain (scalar)"
@@ -2121,6 +2163,18 @@ def _swmm_inventory_provenance_entries() -> dict[str, dict[str, str]]:
             f"{label} (10^6 ltr column)",
             f"{label.lower()} term of the flow routing balance over the run, from the 10^6 L column",
         )
+    for label, stem in RUNOFF_QUANTITY_CONTINUITY_TERMS.items():
+        entries[f"runoff_continuity_{stem}"] = _swmm_printed(
+            whole,
+            "Runoff Quantity Continuity",
+            f"{label} (mm depth column)",
+            f"{label.lower()} term of the runoff quantity balance over the run, from the depth column; NaN when the "
+            "model routes no runoff",
+        )
+    for name, series_attribute in _SWMM_SYSTEM_ATTRIBUTES.items():
+        entries[name] = _swmm_series(whole, f"SWMM binary output {series_attribute} system timeseries", f"{name}(t)")
+        entries[f"{name}_last"] = _swmm_last(whole, name, f"{name}(t_max)")
+        entries[f"{name}_max"] = _swmm_max(whole, name, f"max_t {name}")
     return entries
 
 

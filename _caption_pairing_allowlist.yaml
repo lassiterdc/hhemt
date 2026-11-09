@@ -53,7 +53,17 @@
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
-    renderer_sha256: 151218d1ed4b1f759626b981214350a978a5f18a18052f5251007dcd18c6c977
+    renderer_sha256: 63683c495c12f0a6e9138ca58277ee9ab3e0cd66c81e0796b659f205b08f7a54
+    justification_2026_11_08_1d1_summary_branch_paths: >-
+      Re-read 2026-11-08 by the coordinator against this renderer's diff (git diff -- src/hhemt/report_renderers/sensitivity_benchmarking.py).
+      The diff holds five hunks: three are comments, docstrings and one diagnostic message that now name the
+      tritonswmm/performance/summary and triton_only/performance/summary node paths; one is the probe tuple in _find_perf_node,
+      which now reads the same performance dataset one level deeper, at the summary branch the datatree layout 31 gives every
+      group. The caption states the measured time, the slowest-rank wall-clock summed over restarts, the aggregation statistic and
+      the per-axis scaling; it names no store path and no node path (grep -c summary returns 0 on the caption), and the dataset
+      read, its dimension and its column are unchanged. Every clause of the caption is true of the changed renderer. This is a
+      PAIRING discharge on a re-read. Digest recorded at the changed renderer content, so this exemption expires on the next
+      change to the renderer.
     justification_2026_11_04_3c10_comments: >-
       Re-read 2026-11-04 against this renderer's diff (removal of the unread gpu_marker setting). The
       diff holds four hunks, all comment lines: the module note and two notes in _draw_panel that named the removed

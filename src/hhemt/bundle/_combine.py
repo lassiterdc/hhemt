@@ -825,14 +825,14 @@ _COMBINED_INTERCOMPARISON_FILENAME = "combined_intercomparison.json"
 #: Key-result variables compared clean-vs-resume cross-bundle (mirrors
 #: eda.cross_sim_identity.TRACKED_VARS): peak flood depth + peak conduit flow. Each var
 #: maps to a TUPLE of candidate child node-paths tried in order — the coupled tier
-#: (tritonswmm/*) first, the pure-TRITON tier (triton_only/triton) as fallback — because a
-#: pure-TRITON primary stores max_flood_depth under triton_only/triton, NOT tritonswmm/triton
+#: (tritonswmm/*/summary) first, the pure-TRITON tier (triton_only/triton/summary) as fallback — because a
+#: pure-TRITON primary stores max_flood_depth under triton_only/triton/summary, NOT tritonswmm/triton/summary
 #: (processing_analysis.py NODE_PATHS). max_flow is coupled-only (no SWMM link tier on a
 #: pure-TRITON primary), so its candidate tuple has the single coupled path and is simply
 #: absent — and correctly skipped — for a pure-TRITON primary.
 _INTERCOMPARISON_VARS: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("tritonswmm/triton", "triton_only/triton"), "max_flood_depth"),
-    (("tritonswmm/swmm_link",), "max_flow"),
+    (("tritonswmm/triton/summary", "triton_only/triton/summary"), "max_flood_depth"),
+    (("tritonswmm/swmm_link/summary",), "max_flow"),
 )
 
 
@@ -1055,8 +1055,8 @@ def _write_combined_intercomparison(
 #: exists rather than from an analysis-id suffix: the suffix is a naming convention of the analysis
 #: id that may change, while the group path is written by the consolidation itself.
 _PERFORMANCE_GROUP_BY_ARM: dict[str, str] = {
-    "tritonswmm": "tritonswmm/performance",
-    "triton": "triton_only/performance",
+    "tritonswmm": "tritonswmm/performance/summary",
+    "triton": "triton_only/performance/summary",
 }
 
 

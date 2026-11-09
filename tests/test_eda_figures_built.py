@@ -276,9 +276,9 @@ def _write_dem_tree(root: Path) -> None:
 
     tree = xr.DataTree.from_dict(
         {
-            "/member_dem_0p5_r1/tritonswmm/triton": grid(0.5, 16, 1),
-            "/member_dem_1_r1/tritonswmm/triton": grid(1.0, 8, 2),
-            "/member_dem_2_r1/tritonswmm/triton": grid(2.0, 4, 3),
+            "/member_dem_0p5_r1/tritonswmm/triton/summary": grid(0.5, 16, 1),
+            "/member_dem_1_r1/tritonswmm/triton/summary": grid(1.0, 8, 2),
+            "/member_dem_2_r1/tritonswmm/triton/summary": grid(2.0, 4, 3),
         }
     )
     tree.to_zarr(root / "experiment_datatree.zarr", mode="w", consolidated=False)

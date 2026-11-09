@@ -11,7 +11,9 @@ rendered the coupled arm and silently dropped the other two. A fallback chain
 can drop an arm without saying so; an enumerable table cannot.
 
 The group strings mirror `processing_analysis._MODE_TO_TREE_PATH`, which is the
-write side. The asymmetry is physical, not incidental: standalone SWMM produces
+write side: every one names a `summary` branch (`{family}/{kind}/summary`), because the
+consolidated tree keeps summary statistics and time series in two branches per group.
+The asymmetry is physical, not incidental: standalone SWMM produces
 no 2D depth field and standalone TRITON produces no conduits, so `peak_flood_depth`
 has no `swmm` arm and `conduit_flow` has no `triton` arm.
 """
@@ -21,12 +23,12 @@ from __future__ import annotations
 #: renderer_kind -> {model_type: leading-slash DataTree group path}.
 ARM_GROUPS: dict[str, dict[str, str]] = {
     "peak_flood_depth": {
-        "tritonswmm": "/tritonswmm/triton",
-        "triton": "/triton_only/triton",
+        "tritonswmm": "/tritonswmm/triton/summary",
+        "triton": "/triton_only/triton/summary",
     },
     "conduit_flow": {
-        "tritonswmm": "/tritonswmm/swmm_link",
-        "swmm": "/swmm_only/swmm_link",
+        "tritonswmm": "/tritonswmm/swmm_link/summary",
+        "swmm": "/swmm_only/swmm_link/summary",
     },
 }
 

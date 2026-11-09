@@ -332,7 +332,7 @@ def _config_diff_root(tmp_path: Path) -> Path:
             attrs={"member_id": mid, "run_mode": mode, "n_omp_threads": threads, "n_mpi_procs": 1, "n_gpus": 0}
         )
         depth = base + (0.0 if mode == "serial" else 0.01)
-        nodes[f"/member_{mid}/tritonswmm/triton"] = xr.Dataset(
+        nodes[f"/member_{mid}/tritonswmm/triton/summary"] = xr.Dataset(
             {"max_flood_depth": (("event_iloc", "y", "x"), depth)}, coords=coords
         )
     xr.DataTree.from_dict(nodes).to_zarr(root / "experiment_datatree.zarr", mode="w", consolidated=False)

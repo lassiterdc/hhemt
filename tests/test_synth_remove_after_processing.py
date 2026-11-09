@@ -211,9 +211,15 @@ def test_data_availability_check_is_registered_and_graceful_absent():
         "raw_TRITON_outputs_cleared",
         "raw_SWMM_outputs_cleared",
         # The consolidation's clearing of a scenario's own node and link time-series stores after their slices were
-        # read back from analysis_timeseries.zarr: disclosed so a cleared series reads as cleared, not missing.
+        # read back from the timeseries branch of analysis_datatree.zarr: disclosed so a cleared series reads as
+        # cleared, not missing.
         "consolidated_node_timeseries_cleared",
         "consolidated_link_timeseries_cleared",
+        # The same disclosure for the gridded TRITON store, whose slice is read back from the
+        # tritonswmm/triton/timeseries branch before the store is deleted.
+        "consolidated_triton_timeseries_cleared",
+        # The same disclosure for the SWMM-only system series store, read back from swmm_only/system/timeseries.
+        "consolidated_system_timeseries_cleared",
     }
     # Assert on the CODE, not the source text: the docstring legitimately names
     # `remove_after_processing` in order to say the check must not read it, so a raw

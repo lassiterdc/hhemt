@@ -33,7 +33,7 @@ from hhemt.config.hpc_system import resolve_additional_modules, resolve_gpu_targ
 from hhemt.config.report import REPORT_FORMAT_MARKER
 from hhemt.exceptions import ConfigurationError
 from hhemt.scenario import TRITONSWMM_scenario
-from hhemt.utils import current_datetime_string, open_store, write_datatree_zarr, zarr_store_has_index
+from hhemt.utils import current_datetime_string, open_store, zarr_store_has_index
 from hhemt.validation import assert_configs_visible_cross_node
 from hhemt.workflow import (
     SensitivityAnalysisWorkflowBuilder,
@@ -186,6 +186,371 @@ def _to_native_attr(value):
     if isinstance(value, np.bool_):
         return bool(value)
     return value
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# The sensitivity master's store: every member's `summary` AND `timeseries` branches, copied in and read back
+# ---------------------------------------------------------------------------------------------------------------------
+#
+# Problem. A member consolidates into its own ``analysis_datatree.zarr``; the master ``experiment_datatree.zarr`` then
+# holds the same summaries (and, since the series moved into the tree, the same series), so with clearing on every byte
+# of a member's series would exist twice. The master therefore copies each member's branches in, ONE MEMBER AT A TIME,
+# reads every copied group back equal, and only then removes the member's tree (clearing switch on), recording the
+# removal BEFORE it happens because the member tree is the only source the copy was verified against.
+
+#: Values of the member log field ``member_tree_moved_to_master``.
+MOVE_PENDING = "pending"
+MOVE_DONE = "done"
+
+
+def _member_move_state(analysis) -> str | None:
+    """The member's recorded tree-move state (``pending``, ``done``) or None when no move was ever recorded."""
+    field = getattr(getattr(analysis, "log", None), "member_tree_moved_to_master", None)
+    return None if field is None else field.get()
+
+
+def _member_clearing_on(analysis) -> bool:
+    """Whether the member's resolved clearing switch is on (the member tree is removed only under it)."""
+    return bool(getattr(analysis.cfg_analysis, "toggle_clear_scenario_timeseries_after_consolidation", False))
+
+
+def _member_needs_move(analysis) -> bool:
+    """Whether the master still owes this member's tree a move: a `pending` record, or a tree present under clearing."""
+    state = _member_move_state(analysis)
+    if state == MOVE_PENDING:
+        return True
+    if state == MOVE_DONE:
+        return False
+    tree = analysis.analysis_paths.analysis_datatree_zarr
+    return bool(tree is not None and Path(tree).exists() and _member_clearing_on(analysis))
+
+
+def _datasets_equal(a: xr.Dataset, b: xr.Dataset) -> bool:
+    """Whether two loaded Datasets hold the same variables, dims and values, NaN-aware (attributes are not compared)."""
+    if set(a.variables) != set(b.variables):
+        return False
+    for name in a.variables:
+        va, vb = a[name], b[name]
+        if set(va.dims) != set(vb.dims):
+            return False
+        if va.dims != vb.dims:
+            vb = vb.transpose(*va.dims)
+        if va.shape != vb.shape:
+            return False
+        x, y = np.asarray(va.values), np.asarray(vb.values)
+        same = np.array_equal(x, y, equal_nan=True) if x.dtype.kind in "fcMm" else np.array_equal(x, y)
+        if not same:
+            return False
+    return True
+
+
+def _open_stored_group(store, group: str) -> xr.Dataset:
+    """Open ``group`` of ``store`` unchunked, through the index only when the store carries one."""
+    return xr.open_zarr(
+        store, group=group, consolidated=zarr_store_has_index(store), chunks=None, decode_timedelta=True
+    )
+
+
+def _set_group_attrs(store, group: str, attrs: dict) -> None:
+    """Merge ``attrs`` into the group document of ``{store}/{group}`` in place, creating a plain group when absent.
+
+    The group's children are never touched, which is why this is not ``Dataset.to_zarr(mode="w")``: that replaces the
+    group and everything under it, including the ``timeseries`` branches the master keeps.
+    """
+    from hhemt.utils import _json_native
+
+    doc_path = Path(store) / group / "zarr.json"
+    if doc_path.is_file():
+        document = json.loads(doc_path.read_text(encoding="utf-8"))
+    else:
+        doc_path.parent.mkdir(parents=True, exist_ok=True)
+        document = {"attributes": {}, "zarr_format": 3, "node_type": "group"}
+    merged = dict(document.get("attributes") or {})
+    for name, value in attrs.items():
+        merged[name] = json.loads(json.dumps(value, default=_json_native))
+    document["attributes"] = merged
+    partial = doc_path.with_name("zarr.json.partial")
+    partial.write_text(json.dumps(document), encoding="utf-8")
+    os.replace(partial, doc_path)
+
+
+def _write_group_verified(
+    store, group: str, ds: xr.Dataset, compression_level: int, *, member_id: str, process, whole: bool
+) -> None:
+    """Write ``ds`` as the member's ``summary`` ``group`` of ``store`` and read it back equal, or raise.
+
+    Must run inside ``deferred_consolidation(store)``. ``process`` is the member's analysis post-processing, which
+    owns the group write (``whole`` replaces that group only, otherwise events recorded cleared are kept as they
+    stand and the rest are verified, rewritten or appended). The read-back compares VALUES read from disk; a
+    mismatch raises ``ProcessingError`` naming the member and the group, and the caller has not yet removed anything.
+    """
+    from hhemt.exceptions import ProcessingError
+
+    loaded = ds.load().drop_encoding()
+    process._write_summary_group(Path(store), group, loaded, compression_level=compression_level, whole=whole)
+    if not _datasets_equal(loaded, _open_stored_group(store, group).load()):
+        raise ProcessingError(
+            "read back a group copied into the sensitivity master",
+            str(store),
+            f"member {member_id}: {group} does not read back equal to the data it was written from; the member's "
+            "own tree was kept",
+        )
+
+
+def _copy_series_group(
+    src_store, src_group: str, dst_store, dst_group: str, compression_level: int, *, member_id: str
+) -> None:
+    """Copy one member ``timeseries`` group into the master one ``event_iloc`` slice at a time, reading each back.
+
+    Memory stays at one event's slice, which is what bounds a gridded group. An event already in the master and
+    equal to the member's slice is left alone (``verified``); one present but unequal is rewritten in place from the
+    member's tree, which is still the source here; a new one is appended along ``event_iloc``. A slice that does not
+    read back equal raises ``ProcessingError`` naming the member and the group.
+    """
+    from hhemt.exceptions import ProcessingError
+    from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing as _post
+    from hhemt.utils import append_zarr, deferred_consolidation
+
+    src = xr.open_zarr(
+        src_store, group=src_group, consolidated=zarr_store_has_index(src_store), chunks=None, decode_timedelta=True
+    )
+    for position, event_iloc in enumerate(int(v) for v in src["event_iloc"].values):
+        piece = src.isel(event_iloc=[position]).load().drop_encoding()
+        state = _post._timeseries_group_state(dst_store, dst_group)
+        with deferred_consolidation(dst_store):
+            if state is not None and event_iloc in state[1]:
+                if _post._stored_slice_equals(dst_store, dst_group, piece, event_iloc):
+                    continue
+                at = state[1].index(event_iloc)
+                append_zarr(
+                    piece.drop_vars([c for c in piece.coords if "event_iloc" not in piece[c].dims]),
+                    dst_store,
+                    group=dst_group,
+                    consolidate=False,
+                    mode="r+",
+                    region={"event_iloc": slice(at, at + 1)},
+                )
+            elif state is not None:
+                missing = sorted(set(state[0]) - set(piece.data_vars))
+                extra = sorted(set(piece.data_vars) - set(state[0]))
+                if missing or extra:
+                    raise ProcessingError(
+                        "append a member's series slice to the sensitivity master",
+                        str(dst_store),
+                        f"member {member_id} event_iloc {event_iloc} differs from {dst_group} in its variables: "
+                        f"missing {missing}, not in the master {extra}; nothing was written",
+                    )
+                append_zarr(piece, dst_store, group=dst_group, consolidate=False, mode="a", append_dim="event_iloc")
+            else:
+                append_zarr(piece, dst_store, group=dst_group, consolidate=False, mode="a")
+        if not _post._stored_slice_equals(dst_store, dst_group, piece, event_iloc):
+            raise ProcessingError(
+                "read back a series slice copied into the sensitivity master",
+                str(dst_store),
+                f"member {member_id}: the slice of event_iloc {event_iloc} in {dst_group} does not equal the member's "
+                "slice; the member's own tree was kept",
+            )
+
+
+def _member_tree_series_groups(tree_path) -> list[str]:
+    """The ``timeseries`` groups of a member tree that hold data, as member-tree-relative paths, sorted."""
+    tree = xr.open_datatree(tree_path, engine="zarr", consolidated=zarr_store_has_index(tree_path))
+    return sorted(
+        path.lstrip("/")
+        for path, node in tree.subtree_with_keys
+        if node.has_data and path.lstrip("/").rsplit("/", 1)[-1] == "timeseries"
+    )
+
+
+def _recorded_move_groups(analysis, member_id: str) -> list[str]:
+    """The member-tree-relative groups the member log says the master copied, or raise when none were recorded."""
+    from hhemt.exceptions import ProcessingError
+
+    field = getattr(analysis.log, "member_tree_moved_groups", None)
+    raw = None if field is None else field.get()
+    if not raw:
+        raise ProcessingError(
+            "read a member's recorded tree move",
+            None,
+            f"member {member_id} records member_tree_moved_to_master but not which groups the master copied",
+        )
+    return [str(g) for g in json.loads(raw)]
+
+
+def _first_scenario_paths(analysis):
+    """Per-scenario paths of the member's first event, which say which summary modes the member produces."""
+    return TRITONSWMM_scenario(analysis.df_sims.index[0], analysis).scen_paths
+
+
+def _rebuild_member_summaries(master, member_id: str, analysis) -> dict[str, xr.Dataset]:
+    """The member's ``summary`` groups rebuilt from its per-scenario summary stores, for a member whose tree has moved.
+
+    This is the member's own summary assembly (``_retrieve_combined_output`` per mode, then the CF attributes) run
+    against the master as its target instead of the member's removed tree. Deliberately NOT a call to the member's
+    ``consolidate_to_datatree``: that would recreate the member's tree and then fail appending series whose
+    per-scenario stores were cleared, and the master's member-ensure loop swallows that failure and drops the member
+    from the master. A per-scenario store that is gone raises ``ProcessingError`` naming the member, because the
+    master's copy is then the only one.
+    """
+    from hhemt.cf_conventions import apply_cf_attributes
+    from hhemt.exceptions import ProcessingError
+
+    process = analysis.process
+    scen_paths = _first_scenario_paths(analysis)
+    nodes: dict[str, xr.Dataset] = {}
+    for mode, tree_path in process._MODE_TO_TREE_PATH.items():
+        if getattr(scen_paths, process._MODE_CONFIG[mode][0]) is None:
+            continue
+        try:
+            ds = process._retrieve_combined_output(mode)
+        except FileNotFoundError as exc:
+            raise ProcessingError(
+                "rebuild a member's summary branches in the sensitivity master",
+                None,
+                f"member {member_id} has no tree (it moved into the master) and a per-scenario summary store is "
+                f"missing, so the master's copy is the only one and cannot be rebuilt: {exc}",
+            ) from exc
+        apply_cf_attributes(ds, mode)
+        nodes[f"{tree_path}"] = ds
+    return nodes
+
+
+def _moved_member_summary_nodes(master, member_id: str, analysis) -> tuple[dict[str, xr.Dataset], str]:
+    """The summary nodes of a member whose tree moved: read from the master, or rebuilt when stale or missing there."""
+    store = master.analysis_paths.sensitivity_datatree_zarr
+    node_name = f"{master.member_prefix}{member_id}"
+    recorded = [g for g in _recorded_move_groups(analysis, member_id) if g.endswith("/summary")]
+    current = analysis.process._consolidation_inputs_fingerprint()
+    stamped = analysis.log.consolidation_inputs_fingerprint.get()
+    present = (
+        store is not None
+        and Path(store).is_dir()
+        and all((Path(store) / node_name / g / "zarr.json").is_file() for g in recorded)
+    )
+    if present and stamped == current:
+        return {g: _open_stored_group(store, f"{node_name}/{g}").load() for g in recorded}, "master"
+    return _rebuild_member_summaries(master, member_id, analysis), "rebuilt"
+
+
+def _member_summary_nodes(master, member_id: str, analysis) -> tuple[dict[str, xr.Dataset], str] | None:
+    """A member's ``summary`` nodes and where they came from (``member_tree``, ``master`` or ``rebuilt``), or None.
+
+    None means the member is not consolidated and is left out of the master, as before. A member whose tree is gone
+    with no recorded move raises instead of being left out when its clearing switch is on, because its series are
+    then gone from the per-scenario stores too and nothing can rebuild them.
+    """
+    from hhemt.exceptions import ProcessingError
+
+    tree_path = analysis.analysis_paths.analysis_datatree_zarr
+    state = _member_move_state(analysis)
+    tree_absent = tree_path is not None and not Path(tree_path).exists()
+    if state is None and tree_absent:
+        log = getattr(analysis, "log", None)
+        complete = getattr(getattr(log, "datatree_consolidation_complete", None), "get", lambda: None)()
+        if complete is True and getattr(analysis, "cfg_analysis", None) is not None and _member_clearing_on(analysis):
+            raise ProcessingError(
+                "graft a member into the sensitivity master",
+                str(tree_path),
+                f"member {member_id} has no tree, its log marks the consolidation complete, and it records no move "
+                "into the master: absence is not a move, and with clearing on its series are gone from the "
+                "per-scenario stores, so nothing can rebuild them",
+            )
+        return None
+    if state is None:
+        try:
+            sub_tree = analysis.process.open_datatree()
+        except ValueError:
+            return None
+        if tree_path is not None:
+            # A tree that lost a metadata document its own index lists is damage, and zarr reads its missing chunks
+            # as fill values, so a copy of it would pass its own read-back. With no record of a verified move it is
+            # refused.
+            from hhemt.version_migration.context import _source_manifest_complete
+
+            complete, why = _source_manifest_complete(Path(tree_path))
+            if not complete:
+                raise ProcessingError(
+                    "graft a member into the sensitivity master",
+                    str(tree_path),
+                    f"member {member_id}: {why}; it is not used as a copy source and nothing was copied from it",
+                )
+        # Refuse a member tree written at layout 30 (a summary directly at `{family}/{kind}`) rather than
+        # graft it under paths the readers no longer look at.
+        analysis.process.assert_summary_branch_layout(sub_tree, tree_path)
+        nodes: dict[str, xr.Dataset] = {}
+        for path, node in sub_tree.subtree_with_keys:
+            rel = path.lstrip("/")
+            if node.has_data and rel and rel.rsplit("/", 1)[-1] == "summary":
+                nodes[rel] = node.dataset
+        return nodes, "member_tree"
+    return _moved_member_summary_nodes(master, member_id, analysis)
+
+
+def _build_master_tree(master) -> tuple["xr.DataTree", dict]:
+    """The master's in-memory tree (root, ``parameters``, member nodes, ``summary`` nodes) and each member's source.
+
+    The ``timeseries`` branches are not nodes of this tree: they are copied into the master's store one event at a
+    time (``_copy_series_group``). The second value maps member id to ``(summary nodes, source)``.
+    """
+    tree_dict: dict[str, xr.Dataset] = {}
+
+    tree_dict["/"] = xr.Dataset(
+        attrs={
+            "Conventions": "CF-1.13",
+            "title": "TRITON-SWMM sensitivity analysis results",
+            "analysis_id": str(master.experiment.cfg_analysis.analysis_id),
+            "output_creation_date": current_datetime_string(),
+        }
+    )
+
+    # `from_dataframe` stamps nothing, so each numeric column's unit is stamped from the analysis_config
+    # field it names (an `analysis.{field}` or `hpc.{alias}` overlay column resolves to its field first).
+    tree_dict["parameters"] = stamp_parameter_units(xr.Dataset.from_dataframe(master.df_setup), _parameter_column_field)
+
+    sources: dict = {}
+    for member_id, analysis in master.members.items():
+        node_name = f"{master.member_prefix}{member_id}"
+        # Refresh the member's in-memory log from disk before reading its
+        # consolidation state: open_datatree() gates on the in-memory
+        # datatree_consolidation_complete flag, which a run (often in another
+        # process) sets on disk but not in this long-lived sub object.
+        # The sensitivity aggregators are compute-on-read and do not refresh these
+        # sub logs as a side effect (a refresh was a log write race), so refresh explicitly here
+        # at the cross-analysis read site (read-only observer; safe).
+        analysis._refresh_log()
+        found = _member_summary_nodes(master, member_id, analysis)
+        if found is None:
+            continue
+        nodes, source = found
+        sources[member_id] = (nodes, source)
+        for rel, ds in nodes.items():
+            tree_dict[f"{node_name}/{rel}"] = ds
+
+        setup_row = master.df_setup.loc[member_id]
+        attrs = {k: _to_native_attr(v) for k, v in setup_row.to_dict().items()}
+        attrs["member_id"] = str(member_id)
+        tree_dict[node_name] = xr.Dataset(attrs=attrs)
+
+    tree = xr.DataTree.from_dict(tree_dict)
+    apply_global_attributes(tree, analysis_id=str(master.experiment.cfg_analysis.analysis_id))
+
+    # The per-event hhemt_producing_sha/version coordinates ride
+    # up automatically via the verbatim node.dataset graft above (no new
+    # transmission code). Re-derive the PRIMARY-level scalar fast-path here by
+    # scanning the grafted sub-nodes for primary-wide uniformity (uniform across
+    # ALL members' events -> scalar; else absent + divergent breadcrumb).
+    from hhemt.cf_conventions import apply_producing_stamp
+
+    _sha_vals: list[str] = []
+    _semver_vals: list[str] = []
+    for _key, _ds in tree_dict.items():
+        _coords = getattr(_ds, "coords", {})
+        if "hhemt_producing_sha" in _coords:
+            _sha_vals.extend(str(v) for v in _ds["hhemt_producing_sha"].values.tolist())
+        if "hhemt_producing_version" in _coords:
+            _semver_vals.extend(str(v) for v in _ds["hhemt_producing_version"].values.tolist())
+    apply_producing_stamp(tree, _sha_vals, _semver_vals)
+    return tree, sources
 
 
 def _unlink_dprocess_flags_for_regenerate(targets: list[str], status_dir: Path) -> None:
@@ -1715,116 +2080,15 @@ class TRITONSWMM_sensitivity_analysis:
     def build_sensitivity_datatree(self) -> "xr.DataTree":
         """Assemble the primary sensitivity DataTree lazily from member trees.
 
-        Each ``analysis_datatree.zarr`` holds the consolidated DataTree of a member and is
-        opened lazily and grafted under a ``member_{member_id}/`` subtree. Sensitivity
-        parameters for each member are attached as ``.attrs`` on the
-        ``member_{member_id}`` node. A parameter-summary Dataset is written at the root
-        under ``parameters`` for tabular queries.
+        Each ``analysis_datatree.zarr`` holds the consolidated DataTree of a member. The tree is opened lazily and
+        the ``summary`` branches of the tree are grafted under a ``member_{member_id}/`` subtree. A member whose tree
+        has moved into this master contributes the ``summary`` groups already in the master, or groups rebuilt from
+        the per-scenario summary stores of the member. Sensitivity parameters for each member are attached as
+        ``.attrs`` on the ``member_{member_id}`` node. A parameter-summary Dataset is written at the root under
+        ``parameters`` for tabular queries. The ``timeseries`` branches of the members are not nodes of this
+        in-memory tree. The store of the master gets them by ``_copy_series_group``, one event at a time.
         """
-        tree_dict: dict[str, xr.Dataset] = {}
-
-        tree_dict["/"] = xr.Dataset(
-            attrs={
-                "Conventions": "CF-1.13",
-                "title": "TRITON-SWMM sensitivity analysis results",
-                "analysis_id": str(self.experiment.cfg_analysis.analysis_id),
-                "output_creation_date": current_datetime_string(),
-            }
-        )
-
-        # `from_dataframe` stamps nothing, so each numeric column's unit is stamped from the analysis_config
-        # field it names (an `analysis.{field}` or `hpc.{alias}` overlay column resolves to its field first).
-        tree_dict["parameters"] = stamp_parameter_units(
-            xr.Dataset.from_dataframe(self.df_setup), _parameter_column_field
-        )
-
-        for member_id, analysis in self.members.items():
-            node_name = f"{self.member_prefix}{member_id}"
-            # Refresh the member's in-memory log from disk before reading its
-            # consolidation state: open_datatree() gates on the in-memory
-            # datatree_consolidation_complete flag, which a run (often in another
-            # process) sets on disk but not in this long-lived sub object.
-            # Previously the sensitivity aggregators' _update_log() refreshed these
-            # sub logs as a side effect; that call was dropped when those rollups
-            # became compute-on-read (to remove a log write race), so refresh explicitly here
-            # at the cross-analysis read site (read-only observer; safe).
-            analysis._refresh_log()
-            try:
-                sub_tree = analysis.process.open_datatree()
-            except ValueError:
-                continue
-
-            for path, node in sub_tree.subtree_with_keys:
-                if not node.has_data:
-                    continue
-                rel = path.lstrip("/")
-                if not rel:
-                    continue
-                tree_dict[f"{node_name}/{rel}"] = node.dataset
-
-            setup_row = self.df_setup.loc[member_id]
-            attrs = {k: _to_native_attr(v) for k, v in setup_row.to_dict().items()}
-            attrs["member_id"] = str(member_id)
-            tree_dict[node_name] = xr.Dataset(attrs=attrs)
-
-        tree = xr.DataTree.from_dict(tree_dict)
-        apply_global_attributes(tree, analysis_id=str(self.experiment.cfg_analysis.analysis_id))
-
-        # The per-event hhemt_producing_sha/version coordinates ride
-        # up automatically via the verbatim node.dataset graft above (no new
-        # transmission code). Re-derive the PRIMARY-level scalar fast-path here by
-        # scanning the grafted sub-nodes for primary-wide uniformity (uniform across
-        # ALL members' events -> scalar; else absent + divergent breadcrumb).
-        from hhemt.cf_conventions import apply_producing_stamp
-
-        _sha_vals: list[str] = []
-        _semver_vals: list[str] = []
-        for _key, _ds in tree_dict.items():
-            _coords = getattr(_ds, "coords", {})
-            if "hhemt_producing_sha" in _coords:
-                _sha_vals.extend(str(v) for v in _ds["hhemt_producing_sha"].values.tolist())
-            if "hhemt_producing_version" in _coords:
-                _semver_vals.extend(str(v) for v in _ds["hhemt_producing_version"].values.tolist())
-        apply_producing_stamp(tree, _sha_vals, _semver_vals)
-        return tree
-
-    def consolidate_sensitivity_timeseries(self, compression_level: int = 5) -> Path | None:
-        """Graft each member's ``analysis_timeseries.zarr`` under ``member_{id}/`` into the master's store.
-
-        The graft is the ``subtree_with_keys`` graft that ``build_sensitivity_datatree`` applies to summaries, and
-        the method applies the graft to the separate time-series stores of the members. A member with no store is
-        left out, because the consolidation of the member was skipped under ``allow_incomplete`` or the toggle of
-        the member was off. Returns None when no member has a store.
-        """
-        target = self.analysis_paths.sensitivity_timeseries_zarr
-        if target is None:
-            raise ValueError("sensitivity_timeseries_zarr path is not configured on AnalysisPaths.")
-        tree_dict: dict[str, xr.Dataset] = {
-            "/": xr.Dataset(
-                attrs={
-                    "Conventions": "CF-1.13",
-                    "title": "TRITON-SWMM sensitivity analysis consolidated time series",
-                    "analysis_id": str(self.experiment.cfg_analysis.analysis_id),
-                    "output_creation_date": current_datetime_string(),
-                }
-            )
-        }
-        for member_id, analysis in self.members.items():
-            source = analysis.analysis_paths.analysis_timeseries_zarr
-            if source is None or not Path(source).exists():
-                continue
-            member_tree = xr.open_datatree(source, engine="zarr", consolidated=zarr_store_has_index(source))
-            node_name = f"{self.member_prefix}{member_id}"
-            for path, node in member_tree.subtree_with_keys:
-                rel = path.lstrip("/")
-                if rel and node.has_data:
-                    tree_dict[f"{node_name}/{rel}"] = node.dataset
-            tree_dict[node_name] = xr.Dataset(attrs={"member_id": str(member_id)})
-        if len(tree_dict) == 1:
-            return None
-        tree = xr.DataTree.from_dict(tree_dict)
-        write_datatree_zarr(tree, target, compression_level=compression_level)
-        return target
+        return _build_master_tree(self)[0]
 
     def consolidate_sensitivity_datatree(
         self,
@@ -1900,16 +2164,37 @@ class TRITONSWMM_sensitivity_analysis:
         )
         _build_why = store_build_mismatch(fname_out, _stamped_build)
         _build_mismatch = _build_why is not None
-        if fname_out.exists() and _log_complete and (_subs_stale or _build_mismatch):
-            # NO PRE-DELETE. write_datatree_zarr routes through
-            # utils._publish_store_crash_safe, whose contract is that fname_out is either
-            # ABSENT or a COMPLETE store: it writes to {final}.tmp, renames final to
-            # .aside, os.replace()s tmp over final, then drops .aside. Deleting final here
-            # made that rename preserve nothing, so a failure between this branch and the
-            # write at the end of this method left NO store at all. Falling through to the
-            # rebuild is the whole action; the store is replaced atomically there.
+        # Fourth and fifth reuse inputs. The master's summary groups are written in place and the root stamp last,
+        # and the reprocess delete removes the stamp first, so a store whose root carries no current stamp is one a
+        # write or a delete was interrupted in. And a member whose tree the master still owes a move (a `pending`
+        # record, or a tree present under clearing) is work an early return would never resume.
+        from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing as _post
+        from hhemt.utils import zarr_root_attrs
+
+        _stamp_current = (
+            fname_out.exists()
+            and zarr_root_attrs(fname_out).get("consolidation_version") == _post.CONSOLIDATION_VERSION
+        )
+        _owes_move = any(_member_needs_move(_a) for _a in self.members.values())
+        if (
+            fname_out.exists()
+            and _log_complete
+            and ((_subs_stale or _build_mismatch) or not _stamp_current or _owes_move)
+        ):
+            # NO PRE-DELETE, and for a stronger reason than before: this store holds the members' `timeseries`
+            # branches, which with the clearing switch on exist nowhere else, so nothing here may remove or replace
+            # the store as a whole. Falling through to the rebuild is the whole action; the summary groups are
+            # rewritten one by one in place (`_write_master_in_place`).
             if verbose:
-                _why = _build_why if _build_mismatch else "at least one member's consolidation inputs changed"
+                _why = (
+                    _build_why
+                    if _build_mismatch
+                    else "at least one member's consolidation inputs changed"
+                    if _subs_stale
+                    else "its root carries no current stamp"
+                    if not _stamp_current
+                    else "a member's tree is still to be moved into it"
+                )
                 print(f"Sensitivity DataTree zarr present at {fname_out} but {_why} — rebuilding.")
         elif fname_out.exists() and _log_complete:
             if verbose:
@@ -1939,6 +2224,13 @@ class TRITONSWMM_sensitivity_analysis:
             # process may have completed the member since this long-lived instance
             # last read its log, and consolidate_to_datatree decides from the log.
             analysis._refresh_log()
+            # A member whose tree the master has moved (or is moving) into itself is NOT consolidated again: its
+            # per-scenario series stores were cleared, so a rebuild would recreate the tree and then fail appending
+            # them, and the except below would swallow that and drop the member from the master. The master reads
+            # such a member's summaries from itself, or rebuilds them from its per-scenario summary stores
+            # (`_moved_member_summary_nodes`).
+            if _member_move_state(analysis) is not None:
+                continue
             # Then delegate unconditionally. consolidate_to_datatree decides both
             # whether the member's tree is complete and whether it is stale, and it
             # returns early without rewriting a healthy, current tree, so calling it
@@ -1962,7 +2254,7 @@ class TRITONSWMM_sensitivity_analysis:
                 )
                 continue
 
-        tree = self.build_sensitivity_datatree()
+        tree, sources = _build_master_tree(self)
         from hhemt.cf_conventions import apply_provenance_core
         from hhemt.metadata import write_rocrate_sidecar
         from hhemt.provenance import emit_provenance
@@ -1996,16 +2288,23 @@ class TRITONSWMM_sensitivity_analysis:
 
         _stamp_triton_provenance(tree, self.experiment)
         _stamp_coupled_resume_evidence(tree, self.experiment)
-        write_datatree_zarr(tree, fname_out, compression_level=compression_level)
+        # The root stamp is written LAST by `_write_master_in_place`, so it is set on the in-memory root here.
+        tree.attrs["consolidation_version"] = _post.CONSOLIDATION_VERSION
+        copied: dict[str, list[str]] = {}
+        # Each member's tree moves as soon as that member's copy is read back (`after_member`), BEFORE the next
+        # member's copy begins, so at most one member tree is held beside the master's copy of it.
+        self._write_master_in_place(
+            tree,
+            sources,
+            fname_out,
+            compression_level=compression_level,
+            copied=copied,
+            after_member=lambda member_id: self._move_member_tree(member_id, sources, copied, verbose=verbose),
+        )
         from hhemt.processing_analysis import _assert_store_index_current
 
         _assert_store_index_current(fname_out, "consolidate_sensitivity_datatree")
         write_rocrate_sidecar(self.experiment.analysis_paths.analysis_dir, graph_json=_graph_json)
-
-        # The members' consolidated time series are not tree nodes (they live in each member's
-        # analysis_timeseries.zarr); the master gathers them into its own store by the same graft.
-        if getattr(self.experiment.cfg_analysis, "toggle_consolidate_timeseries", False):
-            self.consolidate_sensitivity_timeseries(compression_level=compression_level)
 
         # ARM REFRESH AT THE WRITE BOUNDARY -- the primary-arm twin of the
         # refresh in processing_analysis.consolidate_to_datatree, and required rather than
@@ -2040,10 +2339,165 @@ class TRITONSWMM_sensitivity_analysis:
             self.experiment.log.consolidation_build_stamp.set(str(_stamp.get("hhemt_sha") or ""))
             _write_consolidate_manifest(self.experiment.analysis_paths.analysis_dir, _stamp)
 
+        # A member the per-member hook did not reach (none today) still gets its owed move; a done member is skipped.
+        self._move_member_trees(sources, copied, verbose=verbose)
+
         if verbose:
             print(f"Wrote sensitivity DataTree zarr to {fname_out}")
         self._write_primary_du_sentinel()
         return fname_out
+
+    def _write_master_in_place(
+        self,
+        tree: "xr.DataTree",
+        sources: dict,
+        store: Path,
+        *,
+        compression_level: int = 5,
+        copied: dict | None = None,
+        after_member=None,
+    ) -> dict[str, list[str]]:
+        """Write the master's ``parameters``, member nodes, ``summary`` groups and ``timeseries`` copies IN PLACE.
+
+        The store is never replaced as a whole: it holds the members' ``timeseries`` branches, which are append-only
+        and which, with a member's tree removed, are the only copy. Each step runs inside its own
+        ``deferred_consolidation`` block, so the index is rebuilt at the end of every member and a kill inside a block
+        leaves a store with no index and no current stamp, which the next call reads as incomplete. Order: (1) the root
+        stamp is removed and the ``parameters`` dataset is written; (2) per member, each ``summary`` group from a
+        member tree or a rebuild is written and read back equal, each of the member tree's ``timeseries`` groups is
+        copied one event at a time and read back, the member node's attributes are set, the block ends (index
+        rebuilt), and ``after_member(member_id)`` is called, which is where the member's tree is removed, BEFORE the
+        next member's copy begins; (3) the root attributes, stamp included, are written last. A member whose
+        summaries came from the master itself is not rewritten. Returns, per member id whose tree was the source, the
+        member-tree-relative groups copied (also filled into ``copied`` when given, as each member completes, so the
+        hook can read it).
+        """
+        from hhemt.utils import (
+            CONSOLIDATION_STAMP_ATTRS,
+            append_zarr,
+            deferred_consolidation,
+            return_dic_zarr_encodings,
+            update_zarr_root_attrs,
+        )
+
+        store = Path(store)
+        if not (store / "zarr.json").is_file():
+            append_zarr(xr.Dataset(), store, group=None, mode="w")
+        copied = {} if copied is None else copied
+        with deferred_consolidation(store):
+            update_zarr_root_attrs(store, remove=CONSOLIDATION_STAMP_ATTRS)
+            parameters = tree["parameters"].to_dataset()
+            append_zarr(
+                parameters,
+                store,
+                group="parameters",
+                consolidate=False,
+                mode="w",
+                encoding=return_dic_zarr_encodings(parameters, compression_level),
+            )
+        for member_id, (nodes, source) in sources.items():
+            node_name = f"{self.member_prefix}{member_id}"
+            analysis = self.members[member_id]
+            with deferred_consolidation(store):
+                if source in ("member_tree", "rebuilt"):
+                    for rel, ds in nodes.items():
+                        _write_group_verified(
+                            store,
+                            f"{node_name}/{rel}",
+                            ds,
+                            compression_level,
+                            member_id=member_id,
+                            process=analysis.process,
+                            whole=source == "member_tree",
+                        )
+                if source == "member_tree":
+                    member_tree = Path(analysis.analysis_paths.analysis_datatree_zarr)
+                    series = _member_tree_series_groups(member_tree)
+                    for rel in series:
+                        _copy_series_group(
+                            member_tree, rel, store, f"{node_name}/{rel}", compression_level, member_id=member_id
+                        )
+                    copied[member_id] = sorted([*nodes, *series])
+                _set_group_attrs(store, node_name, dict(tree[node_name].attrs))
+                if source == "rebuilt":
+                    # The rebuilt groups answer the member's current inputs, so the member's stamp now matches them
+                    # and the staleness test of the next call converges.
+                    analysis.log.consolidation_inputs_fingerprint.set(
+                        analysis.process._consolidation_inputs_fingerprint()
+                    )
+            if after_member is not None:
+                after_member(member_id)
+        with deferred_consolidation(store):
+            update_zarr_root_attrs(store, dict(tree.attrs))
+        return copied
+
+    def _assert_member_complete_in_master(self, member_id: str, analysis) -> None:
+        """Refuse unless the master holds every group the member's log lists, with its metadata consolidated.
+
+        The check a resume runs when it finds a move ``pending`` and cannot compare against the member's tree
+        (it may be half-deleted, or gone). Raises ``ProcessingError`` naming the member and the first absent group.
+        """
+        from hhemt.exceptions import ProcessingError
+
+        store = self.analysis_paths.sensitivity_datatree_zarr
+        node_name = f"{self.member_prefix}{member_id}"
+        if store is None or not zarr_store_has_index(store):
+            raise ProcessingError(
+                "confirm a member's groups in the sensitivity master",
+                None if store is None else str(store),
+                f"member {member_id}: the master's metadata is not consolidated, so its groups cannot be confirmed",
+            )
+        for group in _recorded_move_groups(analysis, member_id):
+            doc = Path(store) / node_name / group / "zarr.json"
+            if not doc.is_file() or not _open_stored_group(store, f"{node_name}/{group}").data_vars:
+                raise ProcessingError(
+                    "confirm a member's groups in the sensitivity master",
+                    str(store),
+                    f"member {member_id}: {node_name}/{group} is missing or empty in the master, and the member's "
+                    "own tree cannot be used to rebuild it; the move is not completed",
+                )
+
+    def _move_member_trees(
+        self,
+        sources: dict,
+        copied: dict,
+        *,
+        verbose: bool = False,
+    ) -> None:
+        """Apply ``_move_member_tree`` to every member; a member already ``done`` is skipped."""
+        for member_id in self.members:
+            self._move_member_tree(member_id, sources, copied, verbose=verbose)
+
+    def _move_member_tree(self, member_id: str, sources: dict, copied: dict, *, verbose: bool = False) -> None:
+        """Remove one member's ``analysis_datatree.zarr`` once the master holds a read-back-equal copy (clearing on).
+
+        Order, recorded BEFORE it happens because the tree is the only source the copy was verified
+        against: (1) the copy and its read-back passed (``_write_master_in_place``); (2) the groups copied and
+        ``member_tree_moved_to_master: pending`` are written to the member's log; (3) the tree is deleted; (4) the
+        state is set to ``done``. A member found ``pending`` is NEVER compared against its tree, which a kill may have
+        left half-deleted: the master's groups are confirmed instead, the rest of the tree is deleted (a missing path
+        is not an error) and the state is set to ``done``. A member with a tree, no record and clearing off keeps its
+        tree: the master then holds a second copy by the user's choice.
+        """
+        from hhemt.du_sentinels import delete_and_account
+
+        analysis = self.members[member_id]
+        tree = analysis.analysis_paths.analysis_datatree_zarr
+        state = _member_move_state(analysis)
+        if state == MOVE_DONE:
+            return
+        if state is None:
+            if not (_member_clearing_on(analysis) and sources.get(member_id, (None, None))[1] == "member_tree"):
+                return
+            analysis.log.member_tree_moved_groups.set(json.dumps(copied[member_id]))
+            analysis.log.member_tree_moved_to_master.set(MOVE_PENDING)
+        else:
+            self._assert_member_complete_in_master(member_id, analysis)
+        if tree is not None and Path(tree).exists():
+            if verbose:
+                print(f"[sensitivity-consolidate] moving {tree} into the master", flush=True)
+            delete_and_account([tree], scope_dir=analysis.analysis_paths.analysis_dir, scope="member")
+        analysis.log.member_tree_moved_to_master.set(MOVE_DONE)
 
     def _write_primary_du_sentinel(self) -> None:
         """Write the primary analysis-scope ``_du.json`` DU sentinel.
@@ -2838,6 +3292,21 @@ class TRITONSWMM_sensitivity_analysis:
                 yaml.safe_dump(target.system.cfg_system.model_dump(mode="json"), fh, sort_keys=False)
             tmp_yaml.rename(yaml_path)
 
+    def _master_states_clearing_explicitly(self) -> bool:
+        """Whether the master's own YAML sets ``toggle_clear_scenario_timeseries_after_consolidation`` to a value.
+
+        The loaded config cannot say: its after-validator has already replaced an unset value with the consolidation
+        toggle. The user's YAML can, so it is read here. A YAML that cannot be read or parsed answers True, which keeps
+        the master's resolved value for the members, as before this check existed.
+        """
+        try:
+            raw = yaml.safe_load(Path(self.experiment.analysis_config_yaml).read_text(encoding="utf-8")) or {}
+        except (OSError, TypeError, ValueError, yaml.YAMLError):
+            return True
+        if not isinstance(raw, dict):
+            return True
+        return raw.get("toggle_clear_scenario_timeseries_after_consolidation") is not None
+
     def _create_members(self):
         member_id_to_system: dict = {}
         for target in self.unique_system_targets:
@@ -2865,9 +3334,17 @@ class TRITONSWMM_sensitivity_analysis:
                         field="sensitivity_analysis.unknown_column",
                         message=f"Column `{k}` is not a recognized analysis-config field.",
                     )
+            # A member inherits the master's RESOLVED clearing value, so an unset master value (resolved to the
+            # master's own consolidation toggle) would be copied into a member whose swept cell turns consolidation
+            # off, and preflight would refuse the pair. Leave the field unset when the master did not state it, so the
+            # member's own after-validator resolves it against the member's own consolidation value; an explicit
+            # master value, or a swept clearing cell, is carried as written.
+            base_cfg = self.experiment.cfg_analysis.model_dump()
+            if not self._master_states_clearing_explicitly():
+                base_cfg["toggle_clear_scenario_timeseries_after_consolidation"] = None
             cfg_snstvty_analysis = analysis_config.model_validate(
                 {
-                    **self.experiment.cfg_analysis.model_dump(),
+                    **base_cfg,
                     **overlay_cells,
                 }
             )

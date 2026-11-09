@@ -25,7 +25,7 @@ Special line-drawing rules per the user-locked Phase 6 iter-2 spec:
 - All non-hybrid lines: dashed, thin.
 
 DataTree-aware read pattern: ``performance.Total`` lives at
-``/member_{id}/tritonswmm/performance`` in the master ``sensitivity_datatree.zarr``,
+``/member_{id}/tritonswmm/performance/summary`` in the master ``sensitivity_datatree.zarr``,
 dimensioned by ``event_iloc``. SWMM-only members fall back to per-scenario
 ``.rpt`` parsing via :func:`hhemt.swmm_output_parser.parse_total_elapsed`.
 
@@ -686,7 +686,7 @@ def render(
             f"tree node paths={_nodes}; per-member performance data_vars={_perf_vars}. "
             "For a member carrying a TRITON arm, exactly one of these is true: the "
             "member set is empty, the consolidated tree is absent, no member resolves "
-            "a tritonswmm/performance or triton_only/performance node (its entry above "
+            "a tritonswmm/performance/summary or triton_only/performance/summary node (its entry above "
             "is an empty list), or that node carries no such column (its entry is "
             f"non-empty and lacks {dependent_var.split('.', 1)[1]!r}). A swmm-only "
             "member has a FIFTH path this enumeration does not cover: its .rpt file is "
@@ -2041,7 +2041,7 @@ def _collect_rows(experiment: TRITONSWMM_analysis, dependent_var: str) -> tuple[
 
 def _find_perf_node(tree: xr.DataTree, member_id: str) -> xr.Dataset | None:
     """Locate the per-member_id performance node, preferring tritonswmm over triton-only."""
-    for model_subpath in ("tritonswmm/performance", "triton_only/performance"):
+    for model_subpath in ("tritonswmm/performance/summary", "triton_only/performance/summary"):
         path = f"/member_{member_id}/{model_subpath}"
         try:
             return tree[path].ds
@@ -2056,8 +2056,8 @@ def _resolve_model_arm(analysis) -> str | None:
     Phase 6 change (2). Under the sibling-master architecture each sensitivity
     master enables exactly one TRITON arm, so the figure is single-arm and the
     encoding is constant per figure (self-labeling). ``"coupled"`` == the
-    TRITON-SWMM arm (``tritonswmm/performance``); ``"uncoupled"`` == the
-    pure-TRITON arm (``triton_only/performance``). Returns ``None`` for a
+    TRITON-SWMM arm (``tritonswmm/performance/summary``); ``"uncoupled"`` == the
+    pure-TRITON arm (``triton_only/performance/summary``). Returns ``None`` for a
     non-TRITON master (e.g. swmm-only) so the pre-change filled/dashed default is
     preserved byte-identically. The tritonswmm-first precedence mirrors
     ``_find_perf_node``'s probe order, so config-truth agrees with the plotted

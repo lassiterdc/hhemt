@@ -967,20 +967,25 @@ class analysis_config(cfgBaseModel):
     toggle_consolidate_timeseries: bool = Field(
         default=False,
         description=(
-            "When True, the per-scenario SWMM node and SWMM link TIMESERIES are consolidated into their own "
-            "store, analysis_timeseries.zarr beside the analysis DataTree. A sensitivity master writes "
-            "sensitivity_timeseries.zarr instead. The groups are tritonswmm/swmm_node_timeseries and "
-            "tritonswmm/swmm_link_timeseries. Each scenario is appended in turn along event_iloc, on an "
+            "When True, the per-scenario SWMM node and SWMM link TIMESERIES are consolidated into the "
+            "`timeseries` branch of their group inside analysis_datatree.zarr, beside the `summary` branch of "
+            "the same group. A sensitivity master holds each member's series in the `timeseries` branches of "
+            "experiment_datatree.zarr. Every model family that writes series is consolidated. The node and link "
+            "groups are tritonswmm/swmm_node/timeseries and tritonswmm/swmm_link/timeseries for the coupled model, "
+            "and swmm_only/swmm_node/timeseries and swmm_only/swmm_link/timeseries for the SWMM-only model. The "
+            "SWMM-only model also writes swmm_only/system/timeseries with 6 system series of flood and "
+            "water-balance quantities, and swmm_only/system/summary with the maximum and final value of each "
+            "series. Each scenario is appended in "
+            "turn along event_iloc, on an "
             "elapsed_s axis of seconds since the start of that event. The node series holds `wlevel(t)` and the "
             "link series holds `flow(t)`. Default False, summaries only. Enable to unblock over-time "
-            "clean-vs-resume difference figures. The TRITON gridded timeseries is NOT consolidated. The "
-            "gridded timeseries is about 83x larger per scenario by payload, 6.6 MB against 0.08 MB measured, "
-            "would inflate a 28-scenario primary tree 7.9x, and is GB-scale per scenario on a production fine "
-            "grid. The gridded timeseries is excluded on COST and not for lack of a consumer. The "
-            "clean-vs-resume over-time figure does read flood_depth from the per-scenario gridded store, via a "
-            "documented deployment-config reproduction script. The figure consumes a per-timestep max over y and "
-            "x, 144 values per scenario, and no field. Consolidating the reduction is the cheap, "
-            "grid-independent extension."
+            "clean-vs-resume difference figures. The gridded TRITON store is also consolidated, "
+            "into tritonswmm/triton/timeseries for the coupled model and triton_only/triton/timeseries for the "
+            "TRITON-only model. Each gridded group has a separate elapsed_s axis at the TRITON reporting "
+            "step, chunks of about 32 MB, a streamed write, and a read-back that compares the stored slice with "
+            "the source block by block. The variables kept are the ones the timeseries_keep_triton_gridded field "
+            "selects. The per-scenario series stores of every family are cleared under one switch, "
+            "toggle_clear_scenario_timeseries_after_consolidation, once the scenario slice has passed the read-back."
         ),
     )
     toggle_coupling_exchange_flow: bool = Field(
@@ -1001,15 +1006,27 @@ class analysis_config(cfgBaseModel):
         ),
         json_schema_extra=field_meta(applies_when=[when("toggle_tritonswmm_model", True)]),
     )
-    toggle_clear_scenario_timeseries_after_consolidation: bool = Field(
-        default=False,
+    toggle_clear_scenario_timeseries_after_consolidation: bool | None = Field(
+        default=None,
         description=(
-            "When True, a scenario's own SWMM node and link time-series stores are deleted as soon as the "
-            "slice of the scenario has been appended to analysis_timeseries.zarr, read back from the store, and "
+            "When True, a scenario's own time-series stores are deleted as soon as the "
+            "slice of the scenario has been appended to the `timeseries` branch of analysis_datatree.zarr, read back "
+            "from the store, and "
             "found equal, NaN-aware, to the data of the scenario. Peak disk use then stays near one copy of the "
-            "series, and the consolidated store holds the only copy. Requires toggle_consolidate_timeseries, and "
+            "series, and the consolidated store holds the only copy. The stores are the SWMM node and link stores "
+            "of the coupled and SWMM-only models, the system series store of the SWMM-only model, and the gridded "
+            "TRITON store of the coupled and TRITON-only models. The per-scenario summary stores of every model are "
+            "cleared too, after each slice of the scenario has been read back from the `summary` branches of "
+            "analysis_datatree.zarr, and the branches then hold the only copy of the summaries and only ever "
+            "gain events. A cleared summary is read from the branch and is never re-derived, and a forced "
+            "re-process of a cleared scenario needs the raw output of the scenario. "
+            "Requires toggle_consolidate_timeseries, and "
             "preflight refuses True without the toggle. The deletion is recorded in the model log of the "
-            "scenario. A cleared store reads as processed and is never re-derived. Default False."
+            "scenario. A cleared store reads as processed and is never re-derived. Left unset, the field "
+            "takes the value of toggle_consolidate_timeseries, so the field is True when consolidation is on and the "
+            "per-scenario copies are cleared, and False when consolidation is off. An explicit False keeps the "
+            "per-scenario copies after consolidation. A written cfg_analysis.yaml carries the resolved "
+            "value, never None. Default unset."
         ),
         json_schema_extra=field_meta(applies_when=[when("toggle_consolidate_timeseries", True)]),
     )
@@ -1025,7 +1042,8 @@ class analysis_config(cfgBaseModel):
             "A list names variables explicitly and may force in a variable that a set excludes. Variables with "
             "no time dimension are static and always kept. They are the coupling-node flag, the per-node "
             "statistics, and the run-level variables. The kept names are the variables that "
-            "analysis_timeseries.zarr and the bundle carry. Preflight refuses a name outside the domain of every "
+            "the `timeseries` branches of analysis_datatree.zarr and the bundle carry. Preflight refuses a name "
+            "outside the domain of every "
             "enabled model family. The field applies even when toggle_consolidate_timeseries is off. A pruned "
             "variable is gone, and recovering the variable takes a re-run."
         ),
@@ -1040,7 +1058,8 @@ class analysis_config(cfgBaseModel):
             "A list names variables explicitly and may force in a variable that a set excludes. Variables with "
             "no time dimension are static and always kept. They are the coupling-node flag, the per-node "
             "statistics, and the run-level variables. The kept names are the variables that "
-            "analysis_timeseries.zarr and the bundle carry. Preflight refuses a name outside the domain of every "
+            "the `timeseries` branches of analysis_datatree.zarr and the bundle carry. Preflight refuses a name "
+            "outside the domain of every "
             "enabled model family. The field applies even when toggle_consolidate_timeseries is off. A pruned "
             "variable is gone, and recovering the variable takes a re-run."
         ),
@@ -1056,7 +1075,8 @@ class analysis_config(cfgBaseModel):
             "A list names variables explicitly and may force in a variable that a set excludes. Variables with "
             "no time dimension are static and always kept. They are the coupling-node flag, the per-node "
             "statistics, and the run-level variables. The kept names are the variables that "
-            "analysis_timeseries.zarr and the bundle carry. Preflight refuses a name outside the domain of every "
+            "the `timeseries` branches of analysis_datatree.zarr and the bundle carry. Preflight refuses a name "
+            "outside the domain of every "
             "enabled model family. The field applies even when toggle_consolidate_timeseries is off. A pruned "
             "variable is gone, and recovering the variable takes a re-run."
         ),
@@ -1668,6 +1688,22 @@ class analysis_config(cfgBaseModel):
                     "force_rerun.event_iloc requires toggle_sensitivity_analysis=False; "
                     "sensitivity-toggled analyses must use force_rerun.sa_id instead"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _resolve_clear_scenario_timeseries(self):
+        """Resolve an unset clearing toggle to the consolidation toggle, so every reader sees a bool.
+
+        Once the consolidated store holds the verified slice the per-scenario copies are redundant, so an
+        analysis that turns consolidation on and says nothing about clearing clears them. Resolving here
+        rather than at each reader means ``processing_analysis`` and ``validation`` need no ``None`` arm,
+        and a written ``cfg_analysis.yaml`` carries the resolved value. Resolving to ``False`` when
+        consolidation is off keeps ``validation._validate_clear_scenario_timeseries`` quiet for an
+        analysis that mentions neither key. An explicit ``True`` without consolidation is not touched
+        here and stays refused by that check.
+        """
+        if self.toggle_clear_scenario_timeseries_after_consolidation is None:
+            self.toggle_clear_scenario_timeseries_after_consolidation = bool(self.toggle_consolidate_timeseries)
         return self
 
     # Fraction of the declared process SLURM allocation used as the append/argmax

@@ -142,6 +142,11 @@ def _report_emitted_names() -> set[str]:
         "LST_OUTFALL_SYSTEM_VARIABLES",
         "LST_RANKED_LINK_VARIABLES",
         "LST_RANKED_NODE_VARIABLES",
+        # The standalone SWMM model's additions: the Runoff Quantity Continuity rows, the six system series of
+        # the binary output and their twelve reductions.
+        "LST_RUNOFF_CONTINUITY_VARIABLES",
+        "LST_SWMM_SYSTEM_SERIES",
+        "LST_SWMM_SYSTEM_SUMMARY_VARIABLES",
     ):
         names |= set(getattr(k, attr))
     names.add(k.ROUTING_STEP_FREQUENCY_VARIABLE)
@@ -262,6 +267,74 @@ def test_no_phantom_swmm_keys_in_cf_variable_map() -> None:
         f"Each is published as a variableMeasured claim about the deposited zarr. "
         f"Ground new keys against list(ds.data_vars) of a real summary zarr."
     )
+
+
+def test_the_swmm_only_additions_state_their_units():
+    """Property: the six system series carry the units D19 states (rainfall `mm h-1`, the four flow series
+    `m3 s-1`, stored volume `m3`), each `_max` and `_last` reduction carries its series' unit, each
+    `runoff_continuity_{term}` row is in `mm` and the runoff continuity error is in `percent`.
+
+    Class: NEW CAPABILITY. Plausible wrong implementations: the rainfall intensity labelled with a flow unit, the
+    stored volume labelled `m3 s-1`, a reduction left without the unit of its series, or a depth row labelled with a
+    volume unit (the report prints both columns). Reachability: the table the stores are stamped from. Both-states
+    anchor: the same table already states `percent` for the error and `m3 s-1` for `lateral_inflow`. Must-fire
+    control: a name no table covers (`system_unlisted_series`) receives no unit, so the equality below is not
+    satisfied by a default. Killed by: any of those. Passes under a second correct implementation that spells the
+    rainfall unit `mm/h` if it changes the expectation in the same commit.
+    """
+    from hhemt.constants import (
+        LST_RUNOFF_CONTINUITY_VARIABLES,
+        LST_SWMM_SYSTEM_SERIES,
+        LST_SWMM_SYSTEM_SUMMARY_VARIABLES,
+    )
+
+    want = {
+        "system_rainfall": "mm h-1",
+        "system_flooding_rate": "m3 s-1",
+        "system_outfall_flow": "m3 s-1",
+        "system_lateral_inflow": "m3 s-1",
+        "system_runoff": "m3 s-1",
+        "system_stored_volume": "m3",
+    }
+    assert set(want) == set(LST_SWMM_SYSTEM_SERIES)
+    for name, unit in want.items():
+        assert _CF_VARIABLE_MAP[name]["units"] == unit, name
+        for reduction in ("max", "last"):
+            assert _CF_VARIABLE_MAP[f"{name}_{reduction}"]["units"] == unit, (name, reduction)
+    assert set(LST_SWMM_SYSTEM_SUMMARY_VARIABLES) == {f"{n}_{r}" for n in want for r in ("max", "last")}
+    assert len(LST_RUNOFF_CONTINUITY_VARIABLES) == 5
+    for name in LST_RUNOFF_CONTINUITY_VARIABLES:
+        assert _CF_VARIABLE_MAP[name]["units"] == "mm", name
+    assert _CF_VARIABLE_MAP["runoff_continuity_error"]["units"] == "percent"
+    # control: an uncovered name is stamped with no unit
+    ds = xr.Dataset({"system_unlisted_series": (("date_time",), np.zeros(2))})
+    apply_cf_attributes(ds, mode="swmm_only_system")
+    assert "units" not in ds["system_unlisted_series"].attrs
+
+
+def test_every_swmm_only_addition_has_a_provenance_descriptor():
+    """Property: each system series, each of its twelve reductions and each Runoff Quantity Continuity row has a
+    computed-quantity provenance descriptor naming the SWMM source, and the descriptors of a series and of its
+    `_max` reduction differ in their operation.
+
+    Class: NEW CAPABILITY. Plausible wrong implementation: a CF entry without a descriptor, which the crate then
+    publishes with a static label and no operation. Reachability: `quantity_provenance` is the one lookup. Both-states
+    anchor: `volume` and `volume_max` already have descriptors that differ in the same way. Must-fire control: an
+    unlisted name returns None. Killed by: a missing descriptor, or one descriptor copied to all three names.
+    Passes under a second correct implementation that words the operation differently.
+    """
+    from hhemt.constants import (
+        LST_RUNOFF_CONTINUITY_VARIABLES,
+        LST_SWMM_SYSTEM_SERIES,
+        LST_SWMM_SYSTEM_SUMMARY_VARIABLES,
+    )
+
+    for name in (*LST_SWMM_SYSTEM_SERIES, *LST_SWMM_SYSTEM_SUMMARY_VARIABLES, *LST_RUNOFF_CONTINUITY_VARIABLES):
+        assert quantity_provenance(name) is not None, name
+    for name in LST_SWMM_SYSTEM_SERIES:
+        assert quantity_provenance(name)["operation"] != quantity_provenance(f"{name}_max")["operation"], name
+        assert quantity_provenance(f"{name}_max")["operation"] != quantity_provenance(f"{name}_last")["operation"]
+    assert quantity_provenance("system_unlisted_series") is None
 
 
 def test_no_time_unit_in_any_table_is_spelled_so_that_xarray_decodes_it():
@@ -434,15 +507,24 @@ def _inventory_names() -> set[str]:
         | set(k.LST_COL_HEADERS_LINK_FLOW_SUMMARY)
     )
     reductions = {f"{s}_{suffix}" for s in _NEW_SERIES for suffix in ("last", "max")}
-    return (registry - old) | set(_NEW_SERIES) | reductions
+    # The standalone SWMM model's additions are a separate set with their own tests.
+    d19 = (
+        set(k.LST_RUNOFF_CONTINUITY_VARIABLES)
+        | set(k.LST_SWMM_SYSTEM_SERIES)
+        | set(k.LST_SWMM_SYSTEM_SUMMARY_VARIABLES)
+    )
+    return (registry - old - d19) | set(_NEW_SERIES) | reductions
 
 
 def test_every_inventory_name_has_a_cf_entry_a_provenance_entry_and_no_unit_token():
     """Property: each of the 79 inventory names is described three ways and none embeds a unit.
 
     Class: all 79 names the report tables, run-level figures and binary-output series add (counted by the
-    registries, not by this test's author). Why: `variableMeasured` and the metadata report page publish the map and
-    the provenance table whole, and a name that carries a unit token fails the stored-variable naming rule.
+    registries, not by this test's author). The 23 names of the standalone SWMM model's additions are left out
+    of this count and held to the same three rules by `test_the_swmm_only_additions_state_their_units` and
+    `test_every_swmm_only_addition_has_a_provenance_descriptor`. Why: `variableMeasured` and the metadata report page
+    publish the map and the provenance table whole, and a name that carries a unit token fails the stored-variable
+    naming rule.
     What kills it: a name added to one table and not the other, or named `..._percent` / `min_...`. Second correct
     implementation: building the 79 names from the parser's actual output instead of the registries passes. Control:
     the pattern matches a name that SHOULD be refused, so a pattern that matched nothing would fail here.

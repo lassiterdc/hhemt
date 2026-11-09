@@ -64,7 +64,7 @@ def _store_mode(rel: str) -> str:
     """The CF mode the toolkit writes the store at ``rel`` under; only the performance modes differ from the base."""
     if "perf_tseries" in rel:
         return "tritonswmm_performance_tseries"
-    if "perf_summary" in rel or rel.endswith("/performance"):
+    if "perf_summary" in rel or rel.endswith(("/performance", "/performance/summary")):
         return "tritonswmm_performance"
     return "tritonswmm_swmm_node"
 
@@ -100,6 +100,10 @@ def test_the_walk_reaches_every_tier_of_the_golden(golden):
     assert n_numeric > 150, f"{kind}: the walk saw only {n_numeric} numeric variables"
     for needle in ("/tritonswmm/swmm_node", "/tritonswmm/swmm_link", "/tritonswmm/triton", "perf_tseries"):
         assert any(needle in label for label in labels), f"{kind}: no store or group matching {needle!r}"
+    if kind == "multisim":
+        # The standalone SWMM model's system series store is walked like every other store, so its units and
+        # the unit-free names of its variables are checked below.
+        assert any(label.endswith("SWMM_only_system_tseries.zarr") for label in labels), labels
     if kind == "sensitivity":
         assert any(label.endswith("/parameters") for label in labels)
 

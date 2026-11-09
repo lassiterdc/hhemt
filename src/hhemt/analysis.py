@@ -539,12 +539,10 @@ class TRITONSWMM_analysis:
         # renderer that reads the root group would then raise AssertionError.
         if not cfg_analysis.toggle_sensitivity_analysis:
             analysis_paths_kwargs["analysis_datatree_zarr"] = analysis_dir / "analysis_datatree.zarr"
-            analysis_paths_kwargs["analysis_timeseries_zarr"] = analysis_dir / "analysis_timeseries.zarr"
 
         # Sensitivity-level DataTree zarr: the experiment root store that aggregates the members.
         if cfg_analysis.toggle_sensitivity_analysis:
             analysis_paths_kwargs["sensitivity_datatree_zarr"] = analysis_dir / "experiment_datatree.zarr"
-            analysis_paths_kwargs["sensitivity_timeseries_zarr"] = analysis_dir / "sensitivity_timeseries.zarr"
 
         self.analysis_paths = AnalysisPaths(**analysis_paths_kwargs)
         # Running identity: this process runs the hhemt commit the config names, or it
@@ -5289,8 +5287,8 @@ class TRITONSWMM_analysis:
             plots_dir = analysis_dir / "plots"
             # ONE accounting call for the report shell + every ELIGIBLE plot
             # artifact. The tool measures what it deletes and adjusts this scope's sentinel
-            # once. On the regenerate arms analysis_datatree.zarr is deleted through the
-            # same tool BEFORE this call, and the two decrements cannot overlap: the tool
+            # once. On the regenerate arms the summary branches of analysis_datatree.zarr are deleted
+            # through the same tool BEFORE this call, and the two decrements cannot overlap: the tool
             # counts a path only when it deletes it, and each path is deleted exactly once.
             #
             # The plots half comes from the ONE selector, utils.select_regenerable_figures,
@@ -5328,7 +5326,11 @@ class TRITONSWMM_analysis:
                 if not dry_run and not skip_destructive_delete:
                     _zarr = self.analysis_paths.analysis_datatree_zarr
                     if _zarr is not None and _zarr.exists():
-                        du_sentinels.delete_and_account([_zarr], scope_dir=analysis_dir, scope="analysis")
+                        # The `summary` branches only, stamp first: the `timeseries` branches are append-only
+                        # and, with the clearing switch on, the only copy of the series.
+                        from hhemt.delete_reprocess_zarr_runner import delete_summary_branches
+
+                        delete_summary_branches(_zarr, analysis_dir)
             _delete_report_and_plot_artifacts()
         elif start_with == "consolidate":
             if regenerate_existing:
@@ -5337,7 +5339,11 @@ class TRITONSWMM_analysis:
                 if not dry_run and not skip_destructive_delete:
                     _zarr = self.analysis_paths.analysis_datatree_zarr
                     if _zarr is not None and _zarr.exists():
-                        du_sentinels.delete_and_account([_zarr], scope_dir=analysis_dir, scope="analysis")
+                        # The `summary` branches only, stamp first: the `timeseries` branches are append-only
+                        # and, with the clearing switch on, the only copy of the series.
+                        from hhemt.delete_reprocess_zarr_runner import delete_summary_branches
+
+                        delete_summary_branches(_zarr, analysis_dir)
             # regenerate_existing=False: leave consolidate flag AND zarr intact
             # (the flag IS the completion signal); only report+plots re-fire.
             _delete_report_and_plot_artifacts()
@@ -5876,6 +5882,12 @@ class TRITONSWMM_analysis:
                 ) from exc
         self._validate_force_rerun_targets(resolved)
         spec = self._build_force_rerun_spec(resolved)
+        if spec.stage == "process":
+            # Before any flag or log is touched: a forced re-process of a scenario whose summary stores were cleared
+            # rebuilds them from the raw output, and refusing afterwards would leave its flag deleted for nothing.
+            self._assert_reprocess_rebuild_sources_present(
+                self._cleared_summary_pairs_for_force(spec), field="override_force_rerun"
+            )
         # `dry_run` reaches the render-stage FIGURE deletion inside this helper, which is the
         # one member of the pre-delete family that removes rendered content nothing on a
         # dry-run path regenerates. The FLAG deletion is deliberately NOT gated: at a
@@ -6047,10 +6059,15 @@ class TRITONSWMM_analysis:
             TRITONSWMM_scenario,
             compute_event_id_slug,
         )
-        from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL
+        from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL, parse_summary_clearing_record
         from hhemt.workflow import ResolvedForceRerunSpec
 
         def _summary_absent(scen, model_type: str) -> bool:
+            # A model whose log records its summary stores as cleared holds its summaries in the consolidated tree,
+            # so their absence from the scenario is not a divergence and the flag must stay.
+            record_field = getattr(scen.get_log(model_type), "consolidated_summaries_cleared", None)
+            if parse_summary_clearing_record(None if record_field is None else record_field.get()) is not None:
+                return False
             for attr in _SUMMARY_ATTRS_BY_MODEL.get(model_type, ()):
                 p = getattr(scen.scen_paths, attr, None)
                 if p is None:
@@ -6123,7 +6140,42 @@ class TRITONSWMM_analysis:
             )
         return reconciled
 
-    def _assert_reprocess_rebuild_sources_present(self, reconciled: set[tuple[str, str]]) -> None:
+    def _cleared_summary_pairs_for_force(self, spec: "ResolvedForceRerunSpec") -> set[tuple[str, str]]:
+        """The (event_id, model_type) pairs ``spec`` names whose model log records the summary stores as cleared.
+
+        Read path-only from ``sims/{event_id}/log_{model}.json``. A sensitivity primary owns no scenario of its own,
+        so under ``all`` and under a member-scoped spec the pairs come from the members' ``sims`` directories
+        (``members/member_{id}/sims``) and carry the member in the event label, ``member_{id}/{event_id}``.
+        """
+        from hhemt.scenario import compute_event_id_slug
+        from hhemt.summary_paths import summary_clearing_record
+
+        wanted = set(spec.tokens)
+        pairs: set[tuple[str, str]] = set()
+        members_dir = Path(self.analysis_paths.analysis_dir) / "members"
+        if spec.scope == "member" or (spec.scope == "all" and members_dir.is_dir()):
+            for member_dir in sorted(p for p in members_dir.glob("member_*") if p.is_dir()):
+                if spec.scope == "member" and member_dir.name.removeprefix("member_") not in wanted:
+                    continue
+                for sim in sorted(p for p in (member_dir / "sims").glob("*") if p.is_dir()):
+                    for model_type in spec.models:
+                        if summary_clearing_record(sim, model_type) is not None:
+                            pairs.add((f"{member_dir.name}/{sim.name}", model_type))
+        if spec.scope not in ("all", "event"):
+            return pairs
+        sims = Path(self.analysis_paths.simulation_directory)
+        for event_iloc in range(len(self.df_sims)):
+            evt = compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(event_iloc))
+            if spec.scope == "event" and evt not in wanted:
+                continue
+            for model_type in spec.models:
+                if summary_clearing_record(sims / evt, model_type) is not None:
+                    pairs.add((evt, model_type))
+        return pairs
+
+    def _assert_reprocess_rebuild_sources_present(
+        self, reconciled: set[tuple[str, str]], *, field: str = "start_with"
+    ) -> None:
         """Fail fast — for each (event_id, model_type) the process-path
         self-heal just reconciled (summary absent → flag+log cleared so the rule
         re-emits), verify the RAW rebuild source the summary aggregation actually
@@ -6134,7 +6186,11 @@ class TRITONSWMM_analysis:
         non-empty); for swmm the swmm_full_out_file. If a consumed source is gone,
         the re-emitted process rule would re-fail deep inside a SLURM job with an
         opaque FileNotFoundError; raise a clear login-node ConfigurationError
-        instead. No-op when `reconciled` is empty (the healthy-analysis case)."""
+        instead. No-op when `reconciled` is empty (the healthy-analysis case).
+
+        The pairs are also those a forced process-stage re-run names whose model log records the summary stores as
+        cleared (`_cleared_summary_pairs_for_force`): such a scenario holds its only summary in the consolidated tree,
+        and rebuilding the per-scenario store needs the same raw source."""
         if not reconciled:
             return
         from hhemt.exceptions import ConfigurationError
@@ -6174,6 +6230,16 @@ class TRITONSWMM_analysis:
             return False
 
         missing_sources: list[str] = []
+        for member_event, model_type in sorted(p for p in reconciled if "/" in p[0]):
+            member, evt = member_event.split("/", 1)
+            sim = Path(self.analysis_paths.analysis_dir) / "members" / member / "sims" / evt
+            raw = sim / ("out_swmm" if model_type == "swmm" else f"out_{model_type}")
+            if model_type == "swmm":
+                present = (raw / "full.out").exists()
+            else:
+                present = (raw / "performance").is_dir() and any((raw / "performance").iterdir())
+            if not present:
+                missing_sources.append(f"{model_type}@{member_event}")
         for event_iloc in range(len(self.df_sims)):
             scen = TRITONSWMM_scenario(event_iloc, self)
             evt = compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(event_iloc))
@@ -6184,7 +6250,7 @@ class TRITONSWMM_analysis:
                     missing_sources.append(f"{model_type}@evt-{evt}")
         if missing_sources:
             raise ConfigurationError(
-                field="start_with",
+                field=field,
                 message=(
                     "reprocess(start_with='process') cannot rebuild missing summaries "
                     f"for {sorted(missing_sources)} — the raw simulation output "

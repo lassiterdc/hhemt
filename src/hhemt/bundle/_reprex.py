@@ -435,8 +435,15 @@ def _emit_amendments(
 #: Where the emit carries the producer's ``analysis.test()`` summaries (``bundle/_emit.py::_copy_reference_outputs``).
 REFERENCE_OUTPUTS_DIRNAME = "reference_outputs"
 
-#: The shape of a stored summary under both ``reference_outputs/`` and a reproducer's ``{analysis_dir}/_test/``.
+#: The per-scenario form of a stored summary under both ``reference_outputs/`` and a reproducer's
+#: ``{analysis_dir}/_test/``. A bundle emitted before the summaries moved into the consolidated tree carries this form.
 _REFERENCE_STORE_GLOB = "group_*/sims/*/processed/*_summary.*"
+
+#: The consolidated-tree form: each ``group_i`` holds this tree and the tree holds only its ``summary`` groups.
+_REFERENCE_TREE_GLOB = "group_*/analysis_datatree.zarr"
+
+#: Where a ``summary`` group sits inside a consolidated tree (``{family}/{kind}/summary``).
+_SUMMARY_GROUP_GLOB = "*/*/summary"
 
 
 @dataclass(frozen=True)
@@ -496,14 +503,17 @@ class ReferenceComparison:
             raise ProcessingError("compare re-run outputs with the bundle's reference outputs", None, self.summary())
 
 
-def _open_reference_store(path: Path):
-    """The store at ``path`` as a fully loaded Dataset: a zarr store through its index when it has one, else NetCDF."""
+def _open_reference_store(path: Path, group: str | None = None):
+    """The store at ``path`` as a fully loaded Dataset: a zarr store through its index when it has one, else NetCDF.
+
+    ``group`` opens one group of a zarr store, which is how a ``summary`` group of a consolidated tree is read.
+    """
     import xarray as xr
 
     from hhemt.utils import open_store
 
     if path.is_dir():
-        with open_store(path, kind="dataset", chunks=None) as ds:
+        with open_store(path, kind="dataset", group=group, chunks=None) as ds:
             return ds.load()
     with xr.open_dataset(path, engine="h5netcdf") as ds:
         return ds.load()
@@ -545,9 +555,12 @@ def compare_reference_outputs(
 ) -> ReferenceComparison:
     """Compare a reproducer's ``analysis.test()`` summaries with the producer's, carried in the bundle.
 
-    Each ``reference_outputs/group_i/sims/{event_id}/processed/*_summary.*`` store of ``bundle_root`` is compared,
-    variable by variable and coordinate by coordinate, with the store at the same path under ``{analysis_dir}/_test/``
-    (the reproducer's own ``test()`` output), NaN-aware.
+    Each ``summary`` group of ``reference_outputs/group_i/analysis_datatree.zarr`` of ``bundle_root`` is compared,
+    variable by variable and coordinate by coordinate, with the same group of the tree at the same path under
+    ``{analysis_dir}/_test/`` (the reproducer's own ``test()`` output), NaN-aware. A bundle emitted before the
+    summaries lived in the consolidated tree carries ``reference_outputs/group_i/sims/{event_id}/processed/*_summary.*``
+    stores instead, and each of those is compared with the store at the same path under ``_test/``. Which form a
+    bundle holds is decided by which subtree is present, and a bundle holding both is compared in both.
 
     Tolerance. The default is EXACT (``rtol = atol = 0``), because the emit carries these stores "for per-arch
     within-family EXACT equality" (``_copy_reference_outputs``): the producer's ``test()`` and a reproducer's on the
@@ -560,45 +573,73 @@ def compare_reference_outputs(
     that the re-run lacks; a variable or coordinate whose values or shape differ. What does not: a store or variable
     only the re-run has (reported in ``extra_stores`` and ``extra_variables``).
 
-    Raises ``ProcessingError`` when the bundle carries no ``reference_outputs/`` (it was emitted with no producer
-    ``test()``), because an absent reference cannot support a claim of reproduction.
+    Raises ``ProcessingError`` when the bundle carries neither form (it was emitted with no producer ``test()``),
+    because an absent reference cannot support a claim of reproduction.
     """
     bundle_root, analysis_dir = Path(bundle_root), Path(analysis_dir)
     ref_root = bundle_root / REFERENCE_OUTPUTS_DIRNAME
-    reference = sorted(ref_root.glob(_REFERENCE_STORE_GLOB)) if ref_root.is_dir() else []
-    if not reference:
+    per_scenario = sorted(ref_root.glob(_REFERENCE_STORE_GLOB)) if ref_root.is_dir() else []
+    carried_trees = sorted(ref_root.glob(_REFERENCE_TREE_GLOB)) if ref_root.is_dir() else []
+    if not per_scenario and not carried_trees:
         raise ProcessingError(
             "compare re-run outputs with the bundle's reference outputs",
             ref_root,
-            "the bundle carries no reference_outputs/ summary stores (it was emitted with no producer "
+            "the bundle carries no reference_outputs/ summaries (it was emitted with no producer "
             "analysis.test()), so there is nothing to compare the re-run with",
         )
     test_root = analysis_dir / "_test"
     verdicts: list[ReferenceStoreVerdict] = []
-    for ref_path in reference:
+    for ref_path in per_scenario:
         rel = ref_path.relative_to(ref_root).as_posix()
         rerun_path = test_root / rel
         if not rerun_path.exists():
             verdicts.append(ReferenceStoreVerdict(rel, "missing_in_rerun"))
             continue
-        ref_ds, new_ds = _open_reference_store(ref_path), _open_reference_store(rerun_path)
-        differing: dict[str, str] = {}
-        for name in sorted(ref_ds.variables, key=str):
-            if name not in new_ds.variables:
-                differing[str(name)] = "is absent from the re-run"
+        verdicts.append(_reference_verdict(rel, ref_path, rerun_path, None, rtol, atol))
+    for ref_tree in carried_trees:
+        tree_rel = ref_tree.relative_to(ref_root).as_posix()
+        rerun_tree = test_root / tree_rel
+        for summary in sorted(ref_tree.glob(_SUMMARY_GROUP_GLOB)):
+            group = summary.relative_to(ref_tree).as_posix()
+            rel = f"{tree_rel}/{group}"
+            if not (rerun_tree / group / "zarr.json").is_file():
+                verdicts.append(ReferenceStoreVerdict(rel, "missing_in_rerun"))
                 continue
-            same, reason = _values_equal(ref_ds[name].values, new_ds[name].values, rtol, atol)
-            if not same:
-                differing[str(name)] = reason
-        extra = tuple(sorted(str(n) for n in new_ds.variables if n not in ref_ds.variables))
-        verdicts.append(
-            ReferenceStoreVerdict(rel, "differs" if differing else "equal", variables=differing, extra_variables=extra)
-        )
+            verdicts.append(_reference_verdict(rel, ref_tree, rerun_tree, group, rtol, atol))
     carried = {v.store for v in verdicts}
-    extra_stores = tuple(
-        sorted(p.relative_to(test_root).as_posix() for p in test_root.glob(_REFERENCE_STORE_GLOB))
-        if test_root.is_dir()
-        else ()
-    )
-    extra_stores = tuple(s for s in extra_stores if s not in carried)
+    available: list[str] = []
+    if test_root.is_dir():
+        if per_scenario:
+            available += [p.relative_to(test_root).as_posix() for p in test_root.glob(_REFERENCE_STORE_GLOB)]
+        for ref_tree in carried_trees:
+            tree_rel = ref_tree.relative_to(ref_root).as_posix()
+            rerun_tree = test_root / tree_rel
+            available += [
+                f"{tree_rel}/{p.relative_to(rerun_tree).as_posix()}"
+                for p in rerun_tree.glob(_SUMMARY_GROUP_GLOB)
+                if (p / "zarr.json").is_file()
+            ]
+    extra_stores = tuple(s for s in sorted(available) if s not in carried)
     return ReferenceComparison(tuple(verdicts), extra_stores, rtol, atol)
+
+
+def _reference_verdict(
+    rel: str, ref_path: Path, rerun_path: Path, group: str | None, rtol: float, atol: float
+) -> ReferenceStoreVerdict:
+    """The verdict on one reference store, or on one ``group`` of the consolidated tree at ``ref_path``.
+
+    ``rel`` names the store in the verdict. A variable of the reference is compared with the same-named variable of the
+    re-run, values and coordinates alike, NaN-aware, and a variable only the re-run holds is reported as extra.
+    """
+    ref_ds = _open_reference_store(ref_path, group)
+    new_ds = _open_reference_store(rerun_path, group)
+    differing: dict[str, str] = {}
+    for name in sorted(ref_ds.variables, key=str):
+        if name not in new_ds.variables:
+            differing[str(name)] = "is absent from the re-run"
+            continue
+        same, reason = _values_equal(ref_ds[name].values, new_ds[name].values, rtol, atol)
+        if not same:
+            differing[str(name)] = reason
+    extra = tuple(sorted(str(n) for n in new_ds.variables if n not in ref_ds.variables))
+    return ReferenceStoreVerdict(rel, "differs" if differing else "equal", variables=differing, extra_variables=extra)

@@ -182,7 +182,13 @@ def _golden(golden_extractor, *, extra: str = ""):
 
     system_dir = golden_extractor("multisim")
     cfg = system_dir / "analysis_config.yaml"
-    cfg.write_text(cfg.read_text() + "toggle_consolidate_timeseries: true\n" + extra)
+    # An explicit false keeps the per-scenario stores these rows read back; a row whose extra sets the key owns it.
+    keep_copies = (
+        ""
+        if "toggle_clear_scenario_timeseries_after_consolidation" in extra
+        else "toggle_clear_scenario_timeseries_after_consolidation: false\n"
+    )
+    cfg.write_text(cfg.read_text() + "toggle_consolidate_timeseries: true\n" + keep_copies + extra)
     analysis = construct_golden_analysis(system_dir)
     for event_iloc in analysis.df_sims.index:
         scen = TRITONSWMM_scenario(event_iloc, analysis)
@@ -408,7 +414,7 @@ def test_a_keep_list_changed_after_the_consolidated_store_exists_is_refused_and_
     """Property: consolidating, then pruning the scenario stores with a narrower keep-list and consolidating again,
     raises `ProcessingError` and leaves every stored variable and value as it was.
 
-    Input class: the keep-list changed after `analysis_timeseries.zarr` holds the full variable set. Plausible
+    Input class: the keep-list changed after the `timeseries` branches hold the full variable set. Plausible
     wrong implementations: a silent pass that leaves the store holding variables the new list drops while the
     fingerprint says the tree matches, or a rewrite that deletes arrays from the only consolidated copy.
     Must-fire control: the stored `flooding` series is present and equal before and after the refused pass.
@@ -419,8 +425,8 @@ def test_a_keep_list_changed_after_the_consolidated_store_exists_is_refused_and_
 
     a = _golden(golden_extractor, extra="")
     a.process.consolidate_timeseries()
-    store = a.analysis_paths.analysis_timeseries_zarr
-    group = "tritonswmm/swmm_node_timeseries"
+    store = a.analysis_paths.analysis_datatree_zarr
+    group = "tritonswmm/swmm_node/timeseries"
     before = xr.open_zarr(store, group=group, consolidated=False).load()
     a.cfg_analysis.timeseries_keep_swmm_node = ["depth"]
     for i in a.df_sims.index:

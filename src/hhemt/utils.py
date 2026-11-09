@@ -2239,6 +2239,12 @@ def deferred_consolidation(store) -> Iterator[None]:
     store on each consolidating write).
     """
     key = Path(store).resolve()
+    if key in _DEFERRED_STORES:
+        # NESTED block on a store an outer block already holds open: the outer block owns the one index rebuild.
+        # Rebuilding here would hand the outer block's remaining appends a store whose index is current and then
+        # stale, and would discard the store from the open set so those appends were refused.
+        yield
+        return
     invalidate_consolidated_index(store)
     _DEFERRED_STORES.add(key)
     try:
@@ -2248,6 +2254,74 @@ def deferred_consolidation(store) -> Iterator[None]:
     # A block that wrote nothing into a store that did not exist has no store to index.
     if (Path(store) / "zarr.json").is_file():
         consolidate_zarr_store(store)
+
+
+#: The root attributes of an analysis tree that stamp its summary build as complete. A consolidation removes them
+#: before it writes and writes them last, and the reprocess delete removes them before it deletes a summary branch,
+#: so a store that carries them was not interrupted in either.
+CONSOLIDATION_STAMP_ATTRS: tuple[str, ...] = ("consolidation_version", "consolidation_inputs_fingerprint")
+
+
+def _json_native(value: Any) -> Any:
+    """``value`` as a JSON-serialisable object (numpy scalars and arrays become Python ones)."""
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    return str(value)
+
+
+def zarr_root_attrs(store) -> dict[str, Any]:
+    """The attributes of the root group of the zarr store at ``store``, read from its root document alone.
+
+    The root ``zarr.json`` (format 3) or ``.zattrs`` (format 2) is read directly and never through the consolidated
+    index, which can be stale or absent. A store with no root document returns an empty dict.
+    """
+    root = Path(store)
+    doc = root / "zarr.json"
+    if doc.is_file():
+        try:
+            return dict(json.loads(doc.read_text(encoding="utf-8")).get("attributes") or {})
+        except (OSError, ValueError):
+            return {}
+    v2_doc = root / ".zattrs"
+    if v2_doc.is_file():
+        try:
+            return dict(json.loads(v2_doc.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            return {}
+    return {}
+
+
+def update_zarr_root_attrs(store, attrs: dict[str, Any] | None = None, *, remove: tuple[str, ...] = ()) -> None:
+    """Set ``attrs`` on, and remove the names in ``remove`` from, the root group of a format 3 zarr store in place.
+
+    The root document is rewritten through a temporary sibling and ``os.replace``, so an interruption leaves either
+    the old document or the new one. Nothing else in the document changes, and no group or array is touched, which is
+    what lets a consolidation stamp the tree last (or unstamp it first) without rewriting a data group. The
+    consolidated index is NOT updated here: call it inside ``deferred_consolidation(store)``, whose exit rebuilds it
+    once. A store with no root document is left alone when only removing, and refused when setting, because a root
+    group must exist before it can carry attributes.
+    """
+    root_doc = Path(store) / "zarr.json"
+    if not root_doc.is_file():
+        if attrs:
+            from hhemt.exceptions import ProcessingError
+
+            raise ProcessingError(
+                operation="update_zarr_root_attrs",
+                filepath=str(store),
+                reason="the store has no root zarr.json to carry the attributes",
+            )
+        return
+    document = json.loads(root_doc.read_text(encoding="utf-8"))
+    current = dict(document.get("attributes") or {})
+    for name in remove:
+        current.pop(name, None)
+    for name, value in (attrs or {}).items():
+        current[name] = json.loads(json.dumps(value, default=_json_native))
+    document["attributes"] = current
+    partial = root_doc.with_name("zarr.json.partial")
+    partial.write_text(json.dumps(document), encoding="utf-8")
+    os.replace(partial, root_doc)
 
 
 def append_zarr(

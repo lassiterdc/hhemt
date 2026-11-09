@@ -26,11 +26,11 @@ def _sub_nodes(member_id: str, attrs: dict, wlevel: np.ndarray, flow: np.ndarray
     mirroring the as-built sensitivity_datatree.zarr shape read by _config_diff._load_subs."""
     return {
         member_id: xr.Dataset(attrs=attrs),
-        f"{member_id}/tritonswmm/triton": xr.Dataset(
+        f"{member_id}/tritonswmm/triton/summary": xr.Dataset(
             {"max_flood_depth": (("event_iloc", "y", "x"), wlevel)},
             coords={"event_iloc": [0], "y": [0, 1], "x": [0, 1]},
         ),
-        f"{member_id}/tritonswmm/swmm_link": xr.Dataset(
+        f"{member_id}/tritonswmm/swmm_link/summary": xr.Dataset(
             {"max_flow": (("event_iloc", "link_id"), flow)},
             coords={"event_iloc": [0], "link_id": ["L0", "L1"]},
         ),
@@ -133,7 +133,7 @@ def _sub_nodes_triton_only(member_id: str, attrs: dict, wlevel: np.ndarray) -> d
     _INTERCOMPARISON_VARS."""
     return {
         member_id: xr.Dataset(attrs=attrs),
-        f"{member_id}/triton_only/triton": xr.Dataset(
+        f"{member_id}/triton_only/triton/summary": xr.Dataset(
             {"max_flood_depth": (("event_iloc", "y", "x"), wlevel)},
             coords={"event_iloc": [0], "y": [0, 1], "x": [0, 1]},
         ),

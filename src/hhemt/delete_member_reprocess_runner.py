@@ -1,8 +1,11 @@
 """Per-member PROCESSED+zarr scoped deletion runner for the SLURM-offloaded
 reprocess delete (R8, D-scope Option C). Invoked by ``delete_member_reprocess_*``
 rules in ``Snakefile.reprocess_delete``. Deletes the sub's ``sims/*/processed/``
-dirs (only when ``--delete-processed``) + the sub's ``analysis_datatree.zarr``,
-PRESERVING the sibling raw ``out_*`` binaries and never touching report/plots/_status.
+dirs (only when ``--delete-processed``) + the ``summary`` branches of the sub's ``analysis_datatree.zarr``,
+PRESERVING the tree's ``timeseries`` branches (append-only; with the clearing switch on they are the only copy of
+the series), the sibling raw ``out_*`` binaries, and never touching report/plots/_status.
+A member whose tree was moved into the sensitivity master (``member_tree_moved_to_master`` recorded) has no tree of
+its own, so there is nothing to delete here and the master is never touched by this runner.
 Mirrors ``delete_member_runner``'s per-sub granularity but reprocess-scoped."""
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ import os
 import sys
 from pathlib import Path
 
+from hhemt.delete_reprocess_zarr_runner import delete_summary_branches
 from hhemt.du_sentinels import delete_and_account
 from hhemt.status_flags import write_status_flag
 
@@ -73,10 +77,15 @@ def main(argv: list[str] | None = None) -> int:
         # runner only receives --analysis-dir and reconstructing AnalysisPaths
         # in-subprocess is heavier than this scoped deleter warrants — KEEP IN
         # SYNC if the consolidated-zarr filename ever becomes config-driven.
+        #
+        # Only the `summary` branches go, never the tree: deleting the whole tree removes the `timeseries` branches
+        # too, which are the only copy of the member's series once its per-scenario stores are cleared, and the
+        # master's own reprocess delete keeps them for the same reason. An ABSENT tree is a member the master
+        # already moved into itself, and is not an error: the runner then exits 0 having deleted nothing.
         sub_zarr = sub_dir / "analysis_datatree.zarr"
         if sub_zarr.exists():
-            print(f"[delete-member-reprocess] removing {sub_zarr}", flush=True)
-            delete_and_account([sub_zarr], scope_dir=sub_dir, scope="member")
+            print(f"[delete-member-reprocess] removing the summary branches of {sub_zarr}", flush=True)
+            delete_summary_branches(sub_zarr, sub_dir, scope="member")
         flag_path = sub_dir / "_status" / "_deleting_reprocess" / "member_reprocess.flag"
         write_status_flag(flag_path, rule_name=f"delete_member_reprocess_{args.member_id}", member_id=args.member_id)
         return 0

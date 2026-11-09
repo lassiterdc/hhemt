@@ -59,7 +59,7 @@ def _bundle(
         "/": xr.Dataset(attrs=attrs),
         "/member_0": xr.Dataset(attrs=_CPU),
         f"/member_0/{arm_group}": xr.Dataset(),
-        f"/member_0/{arm_group}/performance": xr.Dataset({"Total": ("Rank", np.asarray([10.0]))}),
+        f"/member_0/{arm_group}/performance/summary": xr.Dataset({"Total": ("Rank", np.asarray([10.0]))}),
     }
     xr.DataTree.from_dict(groups).to_zarr(root / store, mode="w", consolidated=False)
     return root

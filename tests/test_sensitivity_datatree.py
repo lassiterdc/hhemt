@@ -13,6 +13,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing
+
 
 class _FakeProcess:
     def __init__(self, tree: xr.DataTree):
@@ -20,6 +22,9 @@ class _FakeProcess:
 
     def open_datatree(self) -> xr.DataTree:
         return self._tree
+
+    # The member's real layout check, so the stand-in refuses a layout-30 tree exactly as a member does.
+    assert_summary_branch_layout = staticmethod(TRITONSWMM_analysis_post_processing.assert_summary_branch_layout)
 
 
 def _leaf_ds() -> xr.Dataset:
@@ -37,7 +42,7 @@ def _build_fake_sub_tree() -> xr.DataTree:
     return xr.DataTree.from_dict(
         {
             "/": xr.Dataset(attrs={"analysis_id": "sub"}),
-            "tritonswmm/triton": _leaf_ds(),
+            "tritonswmm/triton/summary": _leaf_ds(),
         }
     )
 
@@ -56,8 +61,16 @@ def test_build_sensitivity_datatree_structure(tmp_path):
     # site makes on each sub (added by the log-write-race-fix compute-on-read change);
     # the stub provides a no-op so the structural test does not depend on a real log.
     analyses = {
-        "0": SimpleNamespace(process=_FakeProcess(_build_fake_sub_tree()), _refresh_log=lambda: None),
-        "1": SimpleNamespace(process=_FakeProcess(_build_fake_sub_tree()), _refresh_log=lambda: None),
+        "0": SimpleNamespace(
+            process=_FakeProcess(_build_fake_sub_tree()),
+            _refresh_log=lambda: None,
+            analysis_paths=SimpleNamespace(analysis_datatree_zarr=None),
+        ),
+        "1": SimpleNamespace(
+            process=_FakeProcess(_build_fake_sub_tree()),
+            _refresh_log=lambda: None,
+            analysis_paths=SimpleNamespace(analysis_datatree_zarr=None),
+        ),
     }
 
     master = SimpleNamespace(
@@ -75,7 +88,7 @@ def test_build_sensitivity_datatree_structure(tmp_path):
     assert "parameters" in tree
     assert "member_0" in tree
     assert "member_1" in tree
-    assert tree["member_0/tritonswmm/triton"].dataset["max_flood_depth"].shape == (1, 2, 2)
+    assert tree["member_0/tritonswmm/triton/summary"].dataset["max_flood_depth"].shape == (1, 2, 2)
     assert tree["member_0"].attrs["run_mode"] == "gpu"
     assert tree["member_1"].attrs["n_mpi_procs"] == 2
     df = tree["parameters"].dataset.to_dataframe()

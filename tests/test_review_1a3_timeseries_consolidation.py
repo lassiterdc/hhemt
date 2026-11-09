@@ -14,13 +14,28 @@ import shutil
 from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 import pytest
 import xarray as xr
 
 from tests.fixtures.golden_trees import construct_golden_analysis
 
-_NODE = "swmm_node_timeseries"
-_LINK = "swmm_link_timeseries"
+_NODE = "swmm_node/timeseries"
+_LINK = "swmm_link/timeseries"
+
+_PP = __import__("hhemt.processing_analysis", fromlist=["x"]).TRITONSWMM_analysis_post_processing
+
+
+class _Writer:
+    """The member's own group writer, borrowed from the real post-processing, for a member that reports no clearing."""
+
+    _MODE_TO_TREE_PATH = _PP._MODE_TO_TREE_PATH
+    _mode_of_group = _PP._mode_of_group
+    _prepare_summary_group = staticmethod(_PP._prepare_summary_group)
+    _write_summary_group = _PP._write_summary_group
+
+    def _summary_records(self, mode):
+        return {}
 
 
 def _ready(golden_extractor, *, clear: bool):
@@ -29,7 +44,7 @@ def _ready(golden_extractor, *, clear: bool):
 
     system_dir = golden_extractor("multisim")
     cfg = system_dir / "analysis_config.yaml"
-    extra = "toggle_clear_scenario_timeseries_after_consolidation: true\n" if clear else ""
+    extra = "toggle_clear_scenario_timeseries_after_consolidation: " + ("true" if clear else "false") + "\n"
     cfg.write_text(cfg.read_text() + "toggle_consolidate_timeseries: true\n" + extra)
     analysis = construct_golden_analysis(system_dir)
     for event_iloc in analysis.df_sims.index:
@@ -55,9 +70,7 @@ def _rewrite(path, edit) -> None:
 
 
 def _group(analysis, name: str) -> xr.Dataset:
-    return xr.open_zarr(
-        analysis.analysis_paths.analysis_timeseries_zarr, group=f"tritonswmm/{name}", consolidated=False
-    )
+    return xr.open_zarr(analysis.analysis_paths.analysis_datatree_zarr, group=f"tritonswmm/{name}", consolidated=False)
 
 
 def _events(analysis, name: str = _NODE) -> list[int]:
@@ -159,7 +172,7 @@ def test_a_rerun_detects_damage_that_differs_only_in_nan_ness(golden_extractor):
     depth = _group(a, _NODE)["depth"]
     assert bool(depth.isel(event_iloc=0, elapsed_s=slice(8, None)).isnull().all()), "event 0 must be padded"
     assert float(depth.isel(event_iloc=1, elapsed_s=2, node_id=1)) == 0.0
-    arr = zarr.open_group(a.analysis_paths.analysis_timeseries_zarr, path=f"tritonswmm/{_NODE}", mode="r+")["depth"]
+    arr = zarr.open_group(a.analysis_paths.analysis_datatree_zarr, path=f"tritonswmm/{_NODE}", mode="r+")["depth"]
     dims = list(depth.dims)
     pad_index = [0] * len(dims)
     pad_index[dims.index("elapsed_s")] = 10
@@ -200,7 +213,7 @@ def test_an_interrupted_clearing_pass_resumes_to_the_same_end_state(golden_extra
     with pytest.raises(Exception) as err:
         a.process.consolidate_timeseries()
     assert type(err.value).__name__ == "ProcessingError"
-    store = a.analysis_paths.analysis_timeseries_zarr
+    store = a.analysis_paths.analysis_datatree_zarr
     assert not zarr_store_has_index(store), "the interrupted block must leave the store unindexed, not stale"
     assert _events(a) == [0, 1, 2]
     for event_iloc in (0, 1):
@@ -230,7 +243,10 @@ def test_a_reprocess_that_deletes_the_summary_tree_rebuilds_it_from_cleared_scen
     a.process.consolidate_to_datatree()
     tree = a.analysis_paths.analysis_datatree_zarr
     before = _group(a, _NODE)["depth"].load()
-    shutil.rmtree(tree)
+    # What a reprocess does to the tree: the stamp and the summary branches go, the series branches stay.
+    from hhemt.delete_reprocess_zarr_runner import delete_summary_branches
+
+    delete_summary_branches(tree, tree.parent)
     a.process.consolidate_to_datatree()
     assert tree.exists()
     xr.testing.assert_identical(_group(a, _NODE)["depth"].load(), before)
@@ -258,25 +274,23 @@ def _stub_proc(*, node_cleared: bool, link_cleared: bool):
 
 
 @pytest.mark.parametrize("node_cleared, link_cleared", [(False, False), (True, False), (False, True), (True, True)])
-def test_the_node_and_link_predicates_read_their_own_cleared_record_and_only_for_the_coupled_model(
-    node_cleared, link_cleared
-):
-    """Property: with both stores absent, `_swmm_node_outputs_processed("tritonswmm")` is True exactly when the node
-    cleared record is True, the link predicate exactly when the link record is True, and the SWMM-only model reads
-    neither record.
+def test_the_node_and_link_predicates_read_their_own_cleared_record_for_every_model(node_cleared, link_cleared):
+    """Property: with both stores absent, `_swmm_node_outputs_processed(model)` is True exactly when the node cleared
+    record of the model's own log is True and the link predicate exactly when the link record is True, for the coupled
+    model and the SWMM-only model alike (the SWMM-only consolidation records its clearing in the
+    SWMM-only model's log).
 
     Input class: the 2 x 2 of cleared records with no store on disk. Plausible wrong implementations: one predicate
-    reading the other's record, a single shared record, or the SWMM-only predicate honouring a record only the
-    coupled consolidation writes (a SWMM-only scenario would then read as processed with nothing on disk).
+    reading the other's record, a single shared record, or a predicate that honours the record for the coupled model
+    only (a SWMM-only scenario whose store was cleared would then be re-derived from raw outputs that no longer exist).
     Must-fire control: the (False, False) row reads False for both, so a predicate that always answers True fails.
-    Killed by: swapping the two record names, or dropping the model test. Passes under a second correct
+    Killed by: swapping the two record names, or reinstating a model test. Passes under a second correct
     implementation that reads one combined record only if it is set for both stores together.
     """
     proc = _stub_proc(node_cleared=node_cleared, link_cleared=link_cleared)
-    assert proc._swmm_node_outputs_processed("tritonswmm") is node_cleared
-    assert proc._swmm_link_outputs_processed("tritonswmm") is link_cleared
-    assert proc._swmm_node_outputs_processed("swmm") is False
-    assert proc._swmm_link_outputs_processed("swmm") is False
+    for model in ("tritonswmm", "swmm"):
+        assert proc._swmm_node_outputs_processed(model) is node_cleared, model
+        assert proc._swmm_link_outputs_processed(model) is link_cleared, model
 
 
 def test_the_elapsed_axis_is_sized_from_the_event_windows_not_from_the_stored_series(golden_extractor, monkeypatch):
@@ -309,64 +323,73 @@ def test_the_elapsed_axis_is_sized_from_the_event_windows_not_from_the_stored_se
     assert bool(node["depth"].isel(elapsed_s=slice(12, None)).isnull().all())
 
 
-def test_the_sensitivity_master_grafts_each_members_store_and_skips_a_member_without_one(golden_extractor, tmp_path):
-    """Property: `consolidate_sensitivity_timeseries` writes `sensitivity_timeseries.zarr` holding each member's node
-    and link groups under `member_{id}/tritonswmm/...` with the member's values, leaves a member with no store out,
-    and returns None when no member has one.
+def test_the_sensitivity_master_copies_each_members_series_and_skips_a_member_without_a_tree(
+    golden_extractor, tmp_path
+):
+    """Property: the master's in-place write puts each member's node and link `timeseries` groups under
+    `member_{id}/tritonswmm/...` of `experiment_datatree.zarr` with the member's values, leaves a member whose tree is
+    absent out, and creates no `sensitivity_timeseries.zarr`.
 
-    Input class: two members whose store is a real consolidated store (copied from a golden consolidation), one
-    member with no store, then a master where none has. The method is called on a stand-in carrying only what it
-    reads. Plausible wrong implementations: grafting the root only, prefixing the wrong member name, writing the
-    target when nothing was grafted, or raising on a member whose consolidation was skipped.
-    Killed by: any of those. Passes under a second correct implementation that links the member stores without
-    copying, provided the master opens with the same group paths.
+    Input class: two members whose tree is a real consolidated tree (copied from a golden consolidation), one member
+    with no tree. The master's build and write run on a stand-in carrying only what they read. Plausible wrong
+    implementations: copying the root only, prefixing the wrong member name, creating a node for the absent member,
+    or raising on a member whose consolidation was skipped.
+    Killed by: any of those. Passes under a second correct implementation that copies whole groups instead of one
+    event at a time, provided the master opens with the same group paths.
     """
-    from hhemt.sensitivity_analysis import TRITONSWMM_sensitivity_analysis as sens
+    from hhemt import sensitivity_analysis as sa
 
     a = _ready(golden_extractor, clear=False)
     a.process.consolidate_timeseries()
-    source = a.analysis_paths.analysis_timeseries_zarr
+    source = a.analysis_paths.analysis_datatree_zarr
     for member in ("0", "1"):
         shutil.copytree(source, tmp_path / f"m{member}.zarr")
+    store = tmp_path / "experiment_datatree.zarr"
 
-    def master(paths):
-        """A stand-in master holding only what the graft reads, with one member per entry of `paths`."""
+    def member(path):
+        """A stand-in member: its tree path and the process it opens the tree through."""
         return SimpleNamespace(
-            analysis_paths=SimpleNamespace(sensitivity_timeseries_zarr=tmp_path / "sensitivity_timeseries.zarr"),
-            experiment=SimpleNamespace(cfg_analysis=SimpleNamespace(analysis_id="exp")),
-            member_prefix="member_",
-            members={
-                mid: SimpleNamespace(analysis_paths=SimpleNamespace(analysis_timeseries_zarr=p))
-                for mid, p in paths.items()
-            },
+            _refresh_log=lambda: None,
+            analysis_paths=SimpleNamespace(analysis_datatree_zarr=path),
+            process=SimpleNamespace(
+                open_datatree=lambda: xr.open_datatree(path, engine="zarr", consolidated=True),
+                assert_summary_branch_layout=lambda tree, src: None,
+                _write_summary_group=_Writer()._write_summary_group,
+            ),
         )
 
-    out = sens.consolidate_sensitivity_timeseries(
-        master({"0": tmp_path / "m0.zarr", "1": tmp_path / "m1.zarr", "2": tmp_path / "absent.zarr"})
+    master = SimpleNamespace(
+        experiment=SimpleNamespace(cfg_analysis=SimpleNamespace(analysis_id="exp")),
+        member_prefix="member_",
+        df_setup=pd.DataFrame({"run_mode": ["cpu"] * 3}, index=pd.Index(["0", "1", "2"], name="member_id")),
+        members={
+            "0": member(tmp_path / "m0.zarr"),
+            "1": member(tmp_path / "m1.zarr"),
+            "2": member(tmp_path / "absent.zarr"),
+        },
     )
-    assert out == tmp_path / "sensitivity_timeseries.zarr"
-    tree = xr.open_datatree(out, engine="zarr", consolidated=False)
-    assert {"member_0", "member_1"} <= set(tree.children) and "member_2" not in tree.children
-    for member in ("member_0", "member_1"):
-        grafted = tree[f"{member}/tritonswmm/{_NODE}"].to_dataset()
+    tree, sources = sa._build_master_tree(master)
+    sa.TRITONSWMM_sensitivity_analysis._write_master_in_place(master, tree, sources, store)
+    out = xr.open_datatree(store, engine="zarr", consolidated=True)
+    assert {"member_0", "member_1"} <= set(out.children) and "member_2" not in out.children
+    for name in ("member_0", "member_1"):
+        grafted = out[f"{name}/tritonswmm/{_NODE}"].to_dataset()
         xr.testing.assert_equal(grafted["depth"].load(), _group(a, _NODE)["depth"].load())
-        assert f"tritonswmm/{_LINK}" in {p.lstrip("/") for p, _ in tree[member].subtree_with_keys}
-
-    empty = master({"0": tmp_path / "gone0.zarr"})
-    empty.analysis_paths.sensitivity_timeseries_zarr = tmp_path / "none.zarr"
-    assert sens.consolidate_sensitivity_timeseries(empty) is None
-    assert not (tmp_path / "none.zarr").exists()
+        assert f"tritonswmm/{_LINK}" in {p.lstrip("/") for p, _ in out[name].subtree_with_keys}
+    assert not (tmp_path / "sensitivity_timeseries.zarr").exists()
 
 
-def test_the_sensitivity_datatree_consolidation_calls_the_time_series_graft_only_when_the_toggle_is_on():
-    """Property: `consolidate_sensitivity_datatree` contains a call to `consolidate_sensitivity_timeseries` that sits
-    under an `if` whose test reads `toggle_consolidate_timeseries`.
+def test_the_sensitivity_datatree_consolidation_writes_the_series_through_the_in_place_master_write():
+    """Property: `consolidate_sensitivity_datatree` contains a call to `_write_master_in_place` and none to a
+    separate `consolidate_sensitivity_timeseries`, and no `if` in it gates that write on
+    `toggle_consolidate_timeseries`.
 
-    Input class: the master's one write path. The graft is correct in isolation and unreachable if the call is
-    missing, which no other test observes; an ungated call would write an empty-or-absent store for every master.
+    Input class: the master's one write path. The in-place write is correct in isolation and unreachable if the call
+    is missing, which no other test observes; the series are copied whenever a member tree holds a `timeseries`
+    group, so a toggle gate would drop the series of a member consolidated under a different toggle.
     This is a structural pin on the function's syntax tree.
-    Killed by: deleting the call, or hoisting it out of the `if`. Passes under a second correct implementation that
-    moves the gated call into a helper only if this test is pointed at that helper.
+    Killed by: deleting the call, adding a separate series call, or hoisting the write under a toggle test. Passes under
+    a second correct implementation that moves the write into a helper only if this test is pointed at that helper.
     """
     import ast
     import inspect
@@ -375,15 +398,15 @@ def test_the_sensitivity_datatree_consolidation_calls_the_time_series_graft_only
     from hhemt.sensitivity_analysis import TRITONSWMM_sensitivity_analysis as sens
 
     tree = ast.parse(textwrap.dedent(inspect.getsource(sens.consolidate_sensitivity_datatree)))
-    gated = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.If) and "toggle_consolidate_timeseries" in ast.unparse(node.test):
-            gated += [
-                n
-                for stmt in node.body
-                for n in ast.walk(stmt)
-                if isinstance(n, ast.Call)
-                and isinstance(n.func, ast.Attribute)
-                and n.func.attr == "consolidate_sensitivity_timeseries"
-            ]
-    assert len(gated) == 1
+    calls = [n.func.attr for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)]
+    assert calls.count("_write_master_in_place") == 1
+    assert "consolidate_sensitivity_timeseries" not in calls
+    gated = [
+        n
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If) and "toggle_consolidate_timeseries" in ast.unparse(node.test)
+        for stmt in node.body
+        for n in ast.walk(stmt)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "_write_master_in_place"
+    ]
+    assert gated == []

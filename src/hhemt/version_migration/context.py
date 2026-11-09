@@ -56,6 +56,7 @@ OpKind = Literal[
     "netcdf_rewrite",
     "zarr_attrs_to_scalar_variables",
     "netcdf_attrs_to_scalar_variables",
+    "datatree_branch_layout",
     "record_applied",
 ]
 
@@ -1195,6 +1196,37 @@ class MigrationContext:
                 temporary.unlink()  # EXEMPT-DU: transient-intermediate
             raise
 
+    # ---- Analysis tree: a `summary` and a `timeseries` branch per group (layout 31) ----
+
+    def datatree_branch_layout(self, store: Path, *, series_source: Path | None = None, master: bool = False) -> None:
+        """Plan the layout-31 restructure of one consolidated tree.
+
+        ``store`` is an ``analysis_datatree.zarr`` (``master=False``) or the root tree of a sensitivity master
+        (``master=True``, whose groups sit under ``member_*`` nodes). Every ``{family}/{kind}`` group that holds
+        arrays moves to ``{family}/{kind}/summary`` by three atomic renames and one group-document write, each
+        state recognisable on a re-run, and the consolidated index is rebuilt once at the end of EVERY run. For an
+        analysis tree, with ``series_source`` the layout-30 ``analysis_timeseries.zarr`` beside it, each group of
+        that store is copied into the ``timeseries`` branch of its group, read back equal, and only then is the
+        source removed, after the target root records ``migrated_from_analysis_timeseries: done``. A version-1
+        calendar-axis group ``tritonswmm/swmm_{kind}_timeseries`` is deleted when a version-2 copy exists and is
+        otherwise kept as ``{kind}/timeseries_legacy_calendar``. See ``V0031`` for the full contract.
+        """
+        self.plan.append(
+            PlannedOp(
+                "datatree_branch_layout",
+                {
+                    "store": str(store),
+                    "series_source": None if series_source is None else str(series_source),
+                    "master": master,
+                },
+            )
+        )
+
+    def _apply_datatree_branch_layout(self, store: str, series_source: str | None, master: bool) -> None:
+        _migrate_datatree_branches(
+            Path(store), series_source=None if series_source is None else Path(series_source), master=master
+        )
+
     # ---- Cross-cutting ----
 
     def record_applied(self, migration_id: str) -> None:
@@ -1305,3 +1337,211 @@ def _rewrite_zarr_group(root: Path, gdir: Path, spec: dict[str, Any]) -> None:
 
             _edit_json_file(gmeta, _gedit)
     os.utime(gdir, (dir_stat.st_atime, dir_stat.st_mtime))
+
+
+# ---- Helpers of the layout-31 tree restructure ----
+
+#: The families and kinds of a consolidated tree's summary groups (``processing_analysis._MODE_TO_TREE_PATH``).
+_TREE_FAMILIES = ("tritonswmm", "triton_only", "swmm_only")
+_TREE_KINDS = ("triton", "swmm_node", "swmm_link", "performance")
+#: Suffix of the sibling a group is renamed to while it moves to ``{kind}/summary``.
+_MOVING_SUFFIX = "__v30_moving"
+#: Layout-30 series group in ``analysis_timeseries.zarr`` -> its layout-31 group in ``analysis_datatree.zarr``.
+_SERIES_GROUP_MAP = {
+    "tritonswmm/swmm_node_timeseries": "tritonswmm/swmm_node/timeseries",
+    "tritonswmm/swmm_link_timeseries": "tritonswmm/swmm_link/timeseries",
+}
+#: Root attribute of the target tree recording that the series copy was read back equal (written BEFORE the source
+#: is deleted, so a re-run that finds it removes what is left of a half-deleted source without comparing it).
+SERIES_MIGRATED_ATTR = "migrated_from_analysis_timeseries"
+LEGACY_CALENDAR_REASON_ATTR = "timeseries_legacy_calendar_reason"
+
+
+def _is_group_dir(path: Path) -> bool:
+    return (path / "zarr.json").is_file() or (path / ".zgroup").is_file()
+
+
+def _write_plain_group(directory: Path, *, v2: bool = False) -> None:
+    """Write the group document of an empty group in ``directory`` (atomically), creating the directory."""
+    directory.mkdir(parents=True, exist_ok=True)
+    if v2:
+        name, body = ".zgroup", {"zarr_format": 2}
+    else:
+        name, body = "zarr.json", {"attributes": {}, "zarr_format": 3, "node_type": "group"}
+    target = directory / name
+    partial = directory / f"{name}.partial"
+    partial.write_text(json.dumps(body, indent=2), encoding="utf-8")
+    os.replace(partial, target)
+
+
+def _move_summary_group(family_dir: Path, kind: str) -> None:
+    """Move ``{family}/{kind}`` to ``{family}/{kind}/summary``: three renames and one group write, resumable.
+
+    State by what exists: ``{kind}/summary`` present and no moving directory: done. ``{kind}__v30_moving`` present:
+    resume at step (2) or (3), whichever is not yet done, never reading the moving directory as data. Only
+    ``{kind}`` holding arrays: start at (1). Step (2) counts as done only when ``{kind}/zarr.json`` (or ``.zgroup``)
+    exists, never from the directory alone, because a kill between ``mkdir`` and the document write leaves a
+    directory that is not yet a group.
+    """
+    kind_dir = family_dir / kind
+    moving = family_dir / f"{kind}{_MOVING_SUFFIX}"
+    if not moving.exists():
+        if (kind_dir / "summary").is_dir() or not kind_dir.is_dir() or not _array_dirs(kind_dir):
+            return
+        os.rename(kind_dir, moving)  # step (1)
+    v2 = (moving / ".zgroup").is_file() and not (moving / "zarr.json").is_file()
+    if not _is_group_dir(kind_dir):  # step (2)
+        _write_plain_group(kind_dir, v2=v2)
+    if not (kind_dir / "summary").exists():  # step (3)
+        os.rename(moving, kind_dir / "summary")
+    else:
+        raise ValueError(
+            f"{kind_dir} holds both {kind}/summary and {moving.name}; a half-moved group is never overwritten, "
+            "so one of the two is damage that this migration cannot choose between"
+        )
+
+
+def _group_roots(store: Path, *, master: bool) -> list[Path]:
+    """The directories whose ``{family}/{kind}`` children are summary groups: the store root, or each member node."""
+    if not master:
+        return [store]
+    return sorted(
+        p for p in store.iterdir() if p.is_dir() and p.name.startswith(("member_", "sa_")) and _is_group_dir(p)
+    )
+
+
+def _read_group_equal(a: Any, b: Any) -> bool:
+    """Whether two loaded Datasets hold the same variables, coordinates, dims and values, NaN-aware."""
+    import numpy as np
+
+    if set(a.variables) != set(b.variables):
+        return False
+    for name in a.variables:
+        va, vb = a[name], b[name]
+        if va.dims != vb.dims or va.shape != vb.shape:
+            return False
+        x, y = np.asarray(va.values), np.asarray(vb.values)
+        same = np.array_equal(x, y, equal_nan=True) if x.dtype.kind in "fc" else np.array_equal(x, y)
+        if not same:
+            return False
+    return True
+
+
+def _source_manifest_complete(source: Path) -> tuple[bool, str]:
+    """Whether every group and array the source's own root index lists exists on disk with its metadata document.
+
+    Chunk presence cannot prove completeness (zarr does not write a chunk equal to the fill value), so the check is of
+    the metadata documents against the index the source was consolidated with. A source with no index cannot be
+    checked and is reported incomplete.
+    """
+    doc = source / "zarr.json"
+    if not doc.is_file():
+        return False, f"{source.name} has no root zarr.json"
+    consolidated = json.loads(doc.read_text(encoding="utf-8")).get("consolidated_metadata")
+    if not consolidated:
+        return False, f"{source.name} carries no consolidated index to check its completeness against"
+    missing = [
+        path
+        for path in sorted(consolidated.get("metadata", {}))
+        if not (source / path / "zarr.json").is_file() and not (source / path / ".zarray").is_file()
+    ]
+    if missing:
+        return False, f"{source.name} is missing the metadata document of {len(missing)} node(s), first {missing[0]!r}"
+    return True, ""
+
+
+def _copy_series_into_tree(store: Path, source: Path) -> None:
+    """Copy each group of ``analysis_timeseries.zarr`` into ``store``, verify it, record it, drop the source."""
+    import shutil
+
+    from hhemt.utils import append_zarr, deferred_consolidation, open_store, update_zarr_root_attrs, zarr_root_attrs
+
+    if zarr_root_attrs(store).get(SERIES_MIGRATED_ATTR) == "done":
+        if source.exists():
+            # EXEMPT-DU: migration-primitive
+            shutil.rmtree(source)
+        return
+    complete, why = _source_manifest_complete(source)
+    if not complete:
+        raise ValueError(
+            f"{why}; it is not used as a copy source, because zarr reads a missing chunk as fill values and a copy "
+            "of it would pass its own read-back. Restore the store or re-run the consolidation that wrote it."
+        )
+    copied: list[str] = []
+    with deferred_consolidation(store):
+        for src_group, dst_group in _SERIES_GROUP_MAP.items():
+            if not _is_group_dir(source / src_group):
+                continue
+            wanted = open_store(source, kind="zarr", group=src_group, chunks=None, decode_timedelta=False).load()
+            existing = None
+            if _is_group_dir(store / dst_group):
+                existing = open_store(store, kind="zarr", group=dst_group, chunks=None, decode_timedelta=False).load()
+            if existing is None or not _read_group_equal(wanted, existing):
+                append_zarr(wanted, store, group=dst_group, consolidate=False, mode="w")
+            stored = open_store(store, kind="zarr", group=dst_group, chunks=None, decode_timedelta=False).load()
+            if not _read_group_equal(wanted, stored):
+                raise ValueError(
+                    f"the copy of {src_group} in {store.name} at {dst_group} does not read back equal to its source; "
+                    f"{source.name} was kept"
+                )
+            copied.append(dst_group)
+        update_zarr_root_attrs(store, {SERIES_MIGRATED_ATTR: "done"})
+    # EXEMPT-DU: migration-primitive
+    shutil.rmtree(source)
+
+
+def _move_legacy_calendar_groups(store: Path) -> None:
+    """Delete a version-1 ``tritonswmm/swmm_{kind}_timeseries`` group when a version-2 copy exists, else keep it as
+    ``{kind}/timeseries_legacy_calendar`` with a root attribute saying why. Runs AFTER the summary move, which made
+    ``tritonswmm/{kind}`` a plain group, so one directory rename is admissible."""
+    import shutil
+
+    from hhemt.utils import update_zarr_root_attrs
+
+    for src_group, dst_group in _SERIES_GROUP_MAP.items():
+        legacy = store / src_group
+        if not legacy.is_dir():
+            continue
+        if _is_group_dir(store / dst_group):
+            # EXEMPT-DU: migration-primitive
+            shutil.rmtree(legacy)
+            continue
+        target = store / dst_group.rsplit("/", 1)[0] / "timeseries_legacy_calendar"
+        if target.exists():
+            continue
+        parent = target.parent
+        if not _is_group_dir(parent):
+            _write_plain_group(parent)
+        os.rename(legacy, target)
+        update_zarr_root_attrs(
+            store,
+            {
+                LEGACY_CALENDAR_REASON_ATTR: (
+                    "timeseries_legacy_calendar groups hold a version-1 consolidated series on a calendar date_time "
+                    "axis; no version-2 series (elapsed_s axis) exists to replace them, so they are kept unchanged"
+                )
+            },
+        )
+
+
+def _migrate_datatree_branches(store: Path, *, series_source: Path | None, master: bool) -> None:
+    """The body of ``MigrationContext.datatree_branch_layout``; see its docstring and ``V0031``."""
+    from hhemt.utils import deferred_consolidation
+
+    store_exists = store.is_dir() and _is_group_dir(store)
+    if not store_exists and not (series_source is not None and series_source.exists()):
+        return
+    with deferred_consolidation(store):
+        if store_exists:
+            for root in _group_roots(store, master=master):
+                for family in _TREE_FAMILIES:
+                    family_dir = root / family
+                    if not family_dir.is_dir():
+                        continue
+                    for kind in _TREE_KINDS:
+                        _move_summary_group(family_dir, kind)
+        if not master and series_source is not None and (series_source.exists() or store_exists):
+            if series_source.exists():
+                _copy_series_into_tree(store, series_source)
+        if not master and store_exists:
+            _move_legacy_calendar_groups(store)

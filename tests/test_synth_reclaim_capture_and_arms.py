@@ -212,8 +212,8 @@ def test_peak_flood_depth_arm_groups_carry_both_arms_when_both_enabled():
 
     enabled = ["tritonswmm", "triton", "swmm"]
     assert groups_for("peak_flood_depth", enabled) == [
-        "/tritonswmm/triton",
-        "/triton_only/triton",
+        "/tritonswmm/triton/summary",
+        "/triton_only/triton/summary",
     ]
 
 
@@ -223,8 +223,8 @@ def test_conduit_flow_arm_groups_carry_both_arms_when_both_enabled():
 
     enabled = ["tritonswmm", "triton", "swmm"]
     assert groups_for("conduit_flow", enabled) == [
-        "/tritonswmm/swmm_link",
-        "/swmm_only/swmm_link",
+        "/tritonswmm/swmm_link/summary",
+        "/swmm_only/swmm_link/summary",
     ]
 
 

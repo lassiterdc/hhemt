@@ -103,6 +103,7 @@ EXPECTED_LADDER: list[str] = [
     "V0028__flood_depth_and_unit_discharge_names",
     "V0029__remove_unread_settings",
     "V0030__swmm_run_attributes_to_variables",
+    "V0031__datatree_summary_and_timeseries_branches",
 ]
 
 

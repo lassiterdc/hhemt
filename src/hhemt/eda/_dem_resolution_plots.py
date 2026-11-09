@@ -393,8 +393,8 @@ def build_dem_resolution_cost_error_figure(root: Path, *, cfg_system=None) -> go
     for node_name in dt.children:
         if not node_name.startswith("member_dem_"):
             continue
-        tri = dt[f"/{node_name}/tritonswmm/triton"].ds
-        perf = dt[f"/{node_name}/tritonswmm/performance"].ds
+        tri = dt[f"/{node_name}/tritonswmm/triton/summary"].ds
+        perf = dt[f"/{node_name}/tritonswmm/performance/summary"].ds
         total_s = float(np.asarray(perf["Total"].values).ravel()[0])
         recs.append(
             {
@@ -640,8 +640,8 @@ def build_dem_resolution_diff_maps_figure(root: Path, *, cfg_system=None) -> go.
         res = _res_m(node_name)
         if res in recs:
             continue  # dedup replicates -> one panel per resolution
-        tri = dt[f"/{node_name}/tritonswmm/triton"]
-        lnk = dt[f"/{node_name}/tritonswmm/swmm_link"]
+        tri = dt[f"/{node_name}/tritonswmm/triton/summary"]
+        lnk = dt[f"/{node_name}/tritonswmm/swmm_link/summary"]
         recs[res] = {
             "res_m": res,
             "wlevel": tri["max_flood_depth"].isel(event_iloc=0),  # (y, x) DataArray w/ coords
@@ -1169,7 +1169,7 @@ def build_dem_resolution_error_ecdf_figure(
         res = _res_m(node_name)
         if any(r["res_m"] == res for r in recs):
             continue
-        tri = dt[f"/{node_name}/tritonswmm/triton"].ds
+        tri = dt[f"/{node_name}/tritonswmm/triton/summary"].ds
         recs.append({"res_m": res, "wlevel": tri["max_flood_depth"].isel(event_iloc=0)})
     recs.sort(key=lambda r: r["res_m"])  # finest first (vs-finest enumeration)
     fine_da = recs[0]["wlevel"]
@@ -1402,8 +1402,8 @@ def build_dem_resolution_coupling_table_figure(root: Path, *, cfg_system=None) -
         if res in recs:
             continue
         node_by_res[res] = node_name
-        tri = dt[f"/{node_name}/tritonswmm/triton"]
-        lnk = dt[f"/{node_name}/tritonswmm/swmm_link"]
+        tri = dt[f"/{node_name}/tritonswmm/triton/summary"]
+        lnk = dt[f"/{node_name}/tritonswmm/swmm_link/summary"]
         recs[res] = {
             "wlevel": tri["max_flood_depth"].isel(event_iloc=0),
             "flow": lnk["max_flow"].isel(event_iloc=0),

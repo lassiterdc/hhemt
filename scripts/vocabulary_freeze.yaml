@@ -200,6 +200,15 @@ frozen:
       - '"timestep_min"'
       - '"time_hr"'
 
+  src/hhemt/version_migration/versions/V0031__datatree_summary_and_timeseries_branches.py:
+    reason: >-
+      Folds an existing `sensitivity_timeseries.zarr` into the master, and that store names a
+      member's node `member_{id}` or, in trees written before the rename, `sa_{id}`. The folding
+      code reads both prefixes from the historical store, so sweeping the old one would make a
+      genuine old tree plan nothing, with the checker green.
+    tokens:
+      - 'startswith(("member_", "sa_"))'
+
 # Fixture trees. A vN fixture is a RECORD of what a vN tree looked like, so renaming
 # a directory inside one makes the vN-1 -> vN golden pair assert a shape that never
 # existed. Checked as directory existence rather than substring.

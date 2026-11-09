@@ -2411,8 +2411,22 @@ def check_eda_calc_ran(analysis: TRITONSWMM_analysis) -> CheckResult:
 _RECLAIM_LOG_FIELDS: dict[str, str] = {
     "full_TRITON_timeseries_cleared": "TRITON timeseries",
     "full_SWMM_timeseries_cleared": "SWMM node/link timeseries",
-    "consolidated_node_timeseries_cleared": "SWMM node timeseries (cleared; copy in analysis_timeseries.zarr)",
-    "consolidated_link_timeseries_cleared": "SWMM link timeseries (cleared; copy in analysis_timeseries.zarr)",
+    "consolidated_node_timeseries_cleared": (
+        "SWMM node timeseries (cleared; copy in the tritonswmm/swmm_node/timeseries or "
+        "swmm_only/swmm_node/timeseries branch of analysis_datatree.zarr)"
+    ),
+    "consolidated_link_timeseries_cleared": (
+        "SWMM link timeseries (cleared; copy in the tritonswmm/swmm_link/timeseries or "
+        "swmm_only/swmm_link/timeseries branch of analysis_datatree.zarr)"
+    ),
+    "consolidated_triton_timeseries_cleared": (
+        "TRITON gridded timeseries (cleared; copy in the tritonswmm/triton/timeseries or "
+        "triton_only/triton/timeseries branch of analysis_datatree.zarr)"
+    ),
+    "consolidated_system_timeseries_cleared": (
+        "SWMM-only system timeseries (cleared; copy in the swmm_only/system/timeseries "
+        "branch of analysis_datatree.zarr)"
+    ),
     "raw_SWMM_binaries_reclaimed": "coupled raw SWMM .out binaries",
     "coupled_rpt_truncated": "coupled SWMM report body (truncated in place)",
     "hydro_out_reclaimed": "SWMM hydrology output (hydro.out)",
@@ -2422,6 +2436,13 @@ _RECLAIM_LOG_FIELDS: dict[str, str] = {
     "raw_TRITON_outputs_cleared": "raw TRITON outputs cleared",
     "raw_SWMM_outputs_cleared": "raw SWMM outputs cleared",
 }
+
+
+#: The disclosure label of a scenario whose model log records its per-scenario summary stores as cleared. It is not a
+#: key of `_RECLAIM_LOG_FIELDS`: that table maps boolean fields, and the record is a mapping with a state.
+_SUMMARY_CLEARING_LABEL = (
+    "per-scenario summary stores (cleared; copy in the summary branches of analysis_datatree.zarr)"
+)
 
 
 #: Minutes of slack allowed before a per-cell time-of-maximum counts as post-forcing.
@@ -2524,7 +2545,21 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
             scen = sims_dir / evt
             wx = scen / "sim_weather.nc"
             summaries = sorted((scen / "processed").glob("*TRITON_summary.zarr"))
-            if not wx.exists() or not summaries:
+            # A scenario whose TRITON summary store was cleared has it in the consolidated tree: it is read through
+            # the same reader the consolidation uses, one scenario at a time.
+            cleared_mode = None
+            if not summaries:
+                from hhemt.summary_paths import summary_clearing_record
+
+                for _model, _mode, _stem in (
+                    ("tritonswmm", "tritonswmm_triton", "TRITONSWMM_TRITON_summary"),
+                    ("triton", "triton_only", "TRITON_only_summary"),
+                ):
+                    _record = summary_clearing_record(scen, _model)
+                    if _record is not None and _stem in _record["stems"]:
+                        cleared_mode = _mode
+                        break
+            if not wx.exists() or (not summaries and cleared_mode is None):
                 indeterminate += 1
                 continue
             try:
@@ -2534,7 +2569,10 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
                 if forced_end_min is None:
                     indeterminate += 1
                     continue
-                zarr = open_store(summaries[0], kind="zarr")
+                if cleared_mode is None:
+                    zarr = open_store(summaries[0], kind="zarr")
+                else:
+                    zarr = sub.process._retrieve_combined_output(cleared_mode, event_ilocs=[i])
                 tmx = zarr["time_of_max_flood_depth"].isel(event_iloc=0).values.astype(float)
                 mx = zarr["max_flood_depth"].isel(event_iloc=0).values.astype(float)
             except Exception:
@@ -2601,12 +2639,13 @@ def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
     import json
 
     from hhemt.scenario import compute_event_id_slug
-    from hhemt.summary_paths import scenario_summaries_present
+    from hhemt.summary_paths import SUMMARY_CLEARING_FIELD, parse_summary_clearing_record, scenario_summaries_present
 
     details: list[dict] = []
     examined = 0
     indeterminate = 0
     reclaimed_counts: dict[str, int] = {label: 0 for label in _RECLAIM_LOG_FIELDS.values()}
+    reclaimed_counts[_SUMMARY_CLEARING_LABEL] = 0
 
     for member_id, sub in _iter_members_or_self(analysis):
         try:
@@ -2629,6 +2668,8 @@ def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
                     indeterminate += 1
                     continue
                 classes = [label for field, label in _RECLAIM_LOG_FIELDS.items() if payload.get(field) is True]
+                if parse_summary_clearing_record(payload.get(SUMMARY_CLEARING_FIELD)) is not None:
+                    classes.append(_SUMMARY_CLEARING_LABEL)
                 if not classes:
                     continue
                 for label in classes:

@@ -29,7 +29,7 @@ _DEM = xr.DataArray(np.array([[10.0, 50.0, 75.0]]), dims=("y", "x"), coords={"y"
 _DEPTH = xr.DataArray(
     np.ones((1, 1, 3)), dims=("event_iloc", "y", "x"), coords={"event_iloc": [0], "y": [0.0], "x": [0.0, 1.0, 2.0]}
 )
-_GROUP = "/triton_only/triton"
+_GROUP = "/triton_only/triton/summary"
 
 
 class _Tree:

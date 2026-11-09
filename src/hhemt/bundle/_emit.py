@@ -540,9 +540,10 @@ def emit_bundle(
     The HPC-baseline analysis_report.html is preserved under bundle_baseline/. The
     baseline zip is not carried.
 
-    Independent of any figure, the bundle also carries IN FULL ``analysis_timeseries.zarr`` and every per-scenario
-    time-series store that exists. The per-scenario stores are the ``ScenarioPaths`` fields named
-    ``output_*_timeseries`` and ``output_*_time_series``. ``bundle_manifest.json`` names every carried store under
+    Independent of any figure, the bundle also carries IN FULL ``analysis_datatree.zarr``, whose ``timeseries``
+    branches hold the consolidated series, and every per-scenario time-series store that exists.
+    The per-scenario stores are the ``ScenarioPaths`` fields named ``output_*_timeseries`` and
+    ``output_*_time_series``. ``bundle_manifest.json`` names every carried store under
     ``carried_output_stores``.
 
     Every generated and every harvested text member of the archive has the
@@ -955,10 +956,11 @@ def _scenario_time_series_fields() -> tuple[str, ...]:
     """The names of the ``ScenarioPaths`` fields that hold a per-scenario time-series store, read from the class.
 
     Derived from the dataclass rather than listed, so a time-series store a later chunk adds to ``ScenarioPaths``
-    under the same naming is carried without an edit here. Eight today (``output_tritonswmm_performance_timeseries``,
+    under the same naming is carried without an edit here. Nine today (``output_tritonswmm_performance_timeseries``,
     ``output_tritonswmm_triton_timeseries``, ``output_tritonswmm_link_time_series``,
     ``output_tritonswmm_node_time_series``, ``output_triton_only_performance_timeseries``,
-    ``output_triton_only_timeseries``, ``output_swmm_only_link_time_series``, ``output_swmm_only_node_time_series``).
+    ``output_triton_only_timeseries``, ``output_swmm_only_link_time_series``, ``output_swmm_only_node_time_series``,
+    ``output_swmm_only_system_time_series``).
     """
     import dataclasses
 
@@ -1025,7 +1027,8 @@ def _plan_time_series_carriage(
 ) -> tuple[list[str], list[str]]:
     """PLAN the archive entries of every time-series store of the analysis into ``entries``, independent of any figure.
 
-    Carried: ``analysis_paths.analysis_timeseries_zarr`` and, for each scenario, every store named by
+    Carried: ``analysis_paths.analysis_datatree_zarr``, whose ``timeseries`` branches hold the consolidated series,
+    and, for each scenario, every store named by
     ``_scenario_time_series_fields``. A store that is None (a disabled family) or absent on disk (a cleared scenario
     store) contributes nothing; when the scenario stores are cleared the consolidated store is the whole of the
     carriage, which is what clearing means. Each entry is named at its analysis-relative path through
@@ -1037,12 +1040,12 @@ def _plan_time_series_carriage(
     store and the shallow subset, as POSIX paths relative to the analysis directory, each sorted.
 
     What this does NOT carry, stated because it is a gap and not a choice: on a sensitivity analysis
-    ``analysis_timeseries_zarr`` is unbound on the primary and ``_iter_scenario_paths`` yields nothing, so the
-    primary's ``sensitivity_timeseries_zarr`` and every member's ``analysis_timeseries.zarr`` and per-scenario stores
+    ``analysis_datatree_zarr`` is unbound on the primary and ``_iter_scenario_paths`` yields nothing, so the
+    primary's ``experiment_datatree.zarr`` and every member's ``analysis_datatree.zarr`` and per-scenario stores
     are not planned here.
     """
     candidates: list[Path] = []
-    consolidated = getattr(analysis.analysis_paths, "analysis_timeseries_zarr", None)
+    consolidated = getattr(analysis.analysis_paths, "analysis_datatree_zarr", None)
     if consolidated is not None:
         candidates.append(Path(consolidated))
     fields = _scenario_time_series_fields()
@@ -1162,16 +1165,54 @@ def _copy_bundle_baseline(analysis_dir: Path, staging: Path) -> None:
         shutil.copy2(src, baseline / src.name)
 
 
+#: The consolidated tree a ``test()`` group holds, whose ``summary`` branches are the reference when it is present.
+_REFERENCE_TREE_NAME = "analysis_datatree.zarr"
+
+
+def _copy_summary_branches(tree: Path, dest_tree: Path) -> None:
+    """Copy every ``summary`` group of the consolidated tree ``tree`` into ``dest_tree``, chunk files included.
+
+    A zarr version 3 store opens only through the group documents of every directory above a group, so each ancestor
+    document is written beside the copied groups. The root document carries no attributes and no consolidated index,
+    and an intermediate document carries no consolidated index either: the index lists the ``timeseries`` groups
+    this copy leaves out, and a reader that followed it would look for them.
+    """
+    dest_tree.mkdir(parents=True, exist_ok=True)
+    for summary in sorted(tree.glob("*/*/summary")):
+        if not (summary / "zarr.json").is_file():
+            continue
+        rel = summary.relative_to(tree)
+        for depth in range(len(rel.parts)):
+            source_doc = tree.joinpath(*rel.parts[:depth], "zarr.json")
+            target_doc = dest_tree.joinpath(*rel.parts[:depth], "zarr.json")
+            if target_doc.exists():
+                continue
+            document = json.loads(source_doc.read_text(encoding="utf-8"))
+            document.pop("consolidated_metadata", None)
+            if depth == 0:
+                document["attributes"] = {}
+            target_doc.parent.mkdir(parents=True, exist_ok=True)
+            target_doc.write_text(json.dumps(document), encoding="utf-8")
+        # copyfile for the reason given in ``_copy_reference_outputs``.
+        shutil.copytree(summary, dest_tree / rel, dirs_exist_ok=True, copy_function=shutil.copyfile)
+
+
 def _copy_reference_outputs(analysis: TRITONSWMM_analysis, staging: Path) -> None:
-    """Carry the producer's test()-shaped per-scenario physics summaries into
+    """Carry the producer's test()-shaped physics summaries into
     ``reference_outputs/`` so a reproducer's ``analysis.test()`` output can be checked
     for per-arch within-family EXACT equality.
 
-    Sourced from ``{analysis_dir}/_test/group_*/sims/{event_id}/processed/*_summary.*``
-    — the SAME ``n_reporting_timesteps`` truncation the reproducer's test() applies, so
-    the two are apples-to-apples (a FULL-matrix reference would not be: test() truncates
-    the synth event to 13 of 181 weather frames, and the tracked vars are peaks). Physics
-    ``*_summary.*`` only (never the timing perf-timeseries or raw ``*_tseries.*``).
+    Sourced from ``{analysis_dir}/_test/group_*`` — the SAME ``n_reporting_timesteps`` truncation the reproducer's
+    test() applies, so the two are apples-to-apples (a FULL-matrix reference would not be: test() truncates
+    the synth event to 13 of 181 weather frames, and the tracked vars are peaks). Physics summaries only (never the
+    timing perf-timeseries or raw ``*_tseries.*``).
+
+    A group whose consolidated ``analysis_datatree.zarr`` is present is carried as that tree's ``summary`` groups
+    under ``reference_outputs/group_i/analysis_datatree.zarr``, because ``test()`` consolidates under the user's
+    clearing switch and with the switch on the per-scenario summary stores no longer exist. A group with no such
+    tree (one whose ``test()`` ran before the tree held summaries) is carried as its per-scenario
+    ``sims/{event_id}/processed/*_summary.*`` stores. A group is never carried in both forms, which would store
+    the same values twice.
 
     CONDITIONAL on ``{analysis_dir}/_test/`` existing: a bundle emitted without a prior
     producer test() carries no ``reference_outputs/`` and stays byte-identical to a bundle
@@ -1185,18 +1226,23 @@ def _copy_reference_outputs(analysis: TRITONSWMM_analysis, staging: Path) -> Non
         return
     out_type = analysis.cfg_analysis.target_processed_output_type
     ref_root = staging / "reference_outputs"
-    for processed in sorted(test_root.glob("group_*/sims/*/processed")):
-        rel = processed.relative_to(test_root)  # group_i/sims/{event_id}/processed
-        for summ in sorted(processed.glob(f"*_summary.{out_type}")):
-            dest = ref_root / rel / summ.name
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            # copyfile, not copy2: the bundle zip stamps every entry with a fixed date and
-            # mode, so the mtime and mode copy2 would carry are overwritten, and each
-            # copystat is extra metadata calls per file on the small-file create path.
-            if summ.is_dir():
-                shutil.copytree(summ, dest, dirs_exist_ok=True, copy_function=shutil.copyfile)
-            else:
-                shutil.copyfile(summ, dest)
+    for group_dir in sorted(test_root.glob("group_*")):
+        tree = group_dir / _REFERENCE_TREE_NAME
+        if tree.is_dir():
+            _copy_summary_branches(tree, ref_root / group_dir.name / _REFERENCE_TREE_NAME)
+            continue
+        for processed in sorted(group_dir.glob("sims/*/processed")):
+            rel = processed.relative_to(test_root)  # group_i/sims/{event_id}/processed
+            for summ in sorted(processed.glob(f"*_summary.{out_type}")):
+                dest = ref_root / rel / summ.name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                # copyfile, not copy2: the bundle zip stamps every entry with a fixed date and
+                # mode, so the mtime and mode copy2 would carry are overwritten, and each
+                # copystat is extra metadata calls per file on the small-file create path.
+                if summ.is_dir():
+                    shutil.copytree(summ, dest, dirs_exist_ok=True, copy_function=shutil.copyfile)
+                else:
+                    shutil.copyfile(summ, dest)
 
 
 #: The two config files every deposit that carries configs writes, as ``(cfg attribute,
@@ -2521,7 +2567,7 @@ def _write_bundle_manifest(
         # so a default manifest is byte-identical to what it was before this key existed.
         manifest["omitted_output_zarrs"] = omitted_output_zarrs
     if carried_output_stores:
-        # The time-series stores the emit carried because they exist (`analysis_timeseries.zarr` and each scenario's
+        # The time-series stores the emit carried because they exist (`analysis_datatree.zarr` and each scenario's
         # time-series stores), independent of any figure, as analysis-relative paths. Under `--omit-output-zarrs` a
         # `.zarr` among them is shallow and is also named in `omitted_output_zarrs`. Absent (not empty) when the
         # analysis has none, so a manifest without time-series stores is byte-identical to what it was before this

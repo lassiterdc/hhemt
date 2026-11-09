@@ -1,6 +1,6 @@
 """The reproducible bundle carries every time-series store, independent of any figure.
 
-``emit_bundle`` plans ``analysis_timeseries.zarr`` and each scenario's time-series stores (the ``output_*_timeseries``
+``emit_bundle`` plans ``analysis_datatree.zarr`` and each scenario's time-series stores (the ``output_*_timeseries``
 and ``output_*_time_series`` fields of ``ScenarioPaths``) into the archive in full, names them under
 ``carried_output_stores`` in ``bundle_manifest.json``, and under ``omit_output_zarrs`` carries each ``.zarr`` among them
 shallow and names it in ``omitted_output_zarrs`` and ``metadata_only_stores`` as well.
@@ -27,7 +27,7 @@ from hhemt.bundle import _emit
 from hhemt.version_migration.constants import BUNDLE_MANIFEST_FILENAME
 from tests.test_publish_deposit_paths import _world
 
-CONSOLIDATED = "analysis_timeseries.zarr"
+CONSOLIDATED = "analysis_datatree.zarr"
 SCENARIOS = ("event_id.0", "event_id.1")
 TRITON_STORE = "TRITONSWMM_TRITON_tseries.zarr"
 
@@ -78,10 +78,10 @@ class _Tree:
         self.sources: dict[str, xr.Dataset] = {}
         paths = self.world.analysis.analysis_paths
         paths.simulation_directory = self.sims
-        paths.analysis_timeseries_zarr = None
+        paths.analysis_datatree_zarr = None
         self.scen_paths: list[SimpleNamespace] = []
         if with_stores:
-            paths.analysis_timeseries_zarr = self.ad / CONSOLIDATED
+            paths.analysis_datatree_zarr = self.ad / CONSOLIDATED
             self.sources[CONSOLIDATED] = _write_consolidated(self.ad / CONSOLIDATED)
         for i, event in enumerate(SCENARIOS):
             store = self.sims / event / "processed" / TRITON_STORE
@@ -278,6 +278,65 @@ def test_a_figure_that_declared_a_carried_store_shallow_does_not_leave_it_listed
     assert _chunk_files(_members(bare_out), f"{CONSOLIDATED}/coupling_exchange_flow") == []
 
 
+def _write_branches(path: Path) -> None:
+    """``analysis_datatree.zarr`` as layout 31 writes it: a ``summary`` and a ``timeseries`` branch per group, the
+    gridded ``flood_depth`` and the node and link series chunked so each variable has real chunk files."""
+    rng = np.random.default_rng(5)
+    grid = xr.Dataset(
+        {"flood_depth": (("event_iloc", "elapsed_s", "y", "x"), rng.random((2, 6, 4, 4)).astype("float32"))},
+        coords={"event_iloc": [0, 1], "elapsed_s": np.arange(6) * 10, "y": np.arange(4.0), "x": np.arange(4.0)},
+    ).chunk({"event_iloc": 1, "elapsed_s": 3, "y": -1, "x": -1})
+    node = xr.Dataset(
+        {"depth": (("event_iloc", "elapsed_s", "node_id"), rng.random((2, 6, 4)))},
+        coords={"event_iloc": [0, 1], "elapsed_s": np.arange(6) * 10, "node_id": list("abcd")},
+    ).chunk({"event_iloc": 1, "elapsed_s": 3})
+    link = xr.Dataset(
+        {"flow": (("event_iloc", "elapsed_s", "link_id"), rng.random((2, 6, 3)))},
+        coords={"event_iloc": [0, 1], "elapsed_s": np.arange(6) * 10, "link_id": list("xyz")},
+    ).chunk({"event_iloc": 1, "elapsed_s": 3})
+    summary = xr.Dataset({"max_depth": (("event_iloc", "node_id"), rng.random((2, 4)))}, coords={"event_iloc": [0, 1]})
+    tree = xr.DataTree.from_dict(
+        {
+            "/tritonswmm/triton/timeseries": grid,
+            "/tritonswmm/swmm_node/timeseries": node,
+            "/tritonswmm/swmm_link/timeseries": link,
+            "/tritonswmm/swmm_node/summary": summary.chunk({"event_iloc": 1}),
+        }
+    )
+    tree.to_zarr(path, mode="w", consolidated=False, zarr_format=3)
+
+
+def test_the_zip_carries_the_series_branches_of_the_datatree_with_no_figure_declaring_it(tmp_path, monkeypatch):
+    """Property: with no figure naming ``analysis_datatree.zarr``, the zip carries chunk files under the gridded,
+    node and link ``timeseries`` branches and lists the store under ``carried_output_stores``; under
+    ``omit_output_zarrs`` the same three directories hold zero chunk files.
+
+    Class: NEW CAPABILITY, pinning carriage that `_plan_time_series_carriage` already provides at the run head (it
+    is green on the pre-change tree, so it is not a REGRESSION row). Plausible wrong implementation: carrying the
+    tree only when a figure declares it, or only its summary groups.
+    Reachability: the real ``emit_bundle`` over a layout-31 tree written by the
+    DataTree writer, with an empty figure sidecar. Must-fire control: the omit run's chunk count is zero while the
+    default run's is not. Killed by: the declared-only carriage. Passes under a second correct implementation that
+    harvests the tree member by member.
+    """
+    tree = _Tree(tmp_path, with_stores=False)
+    tree.world.analysis.analysis_paths.analysis_datatree_zarr = tree.ad / CONSOLIDATED
+    _write_branches(tree.ad / CONSOLIDATED)
+    tree.figure()
+    branches = [
+        f"{CONSOLIDATED}/tritonswmm/triton/timeseries/flood_depth",
+        f"{CONSOLIDATED}/tritonswmm/swmm_node/timeseries/depth",
+        f"{CONSOLIDATED}/tritonswmm/swmm_link/timeseries/flow",
+    ]
+    full = tree.emit(monkeypatch, "full.zip")
+    for branch in branches:
+        assert _chunk_files(_members(full), branch), branch
+    assert CONSOLIDATED in _manifest(full)["carried_output_stores"]
+    shallow = tree.emit(monkeypatch, "shallow.zip", omit_output_zarrs=True)
+    for branch in branches:
+        assert _chunk_files(_members(shallow), branch) == [], branch
+
+
 def test_when_the_scenario_stores_are_cleared_only_the_consolidated_store_ships(tmp_path, monkeypatch):
     tree = _Tree(tmp_path, scenario_stores=False)
     tree.figure()
@@ -287,7 +346,7 @@ def test_when_the_scenario_stores_are_cleared_only_the_consolidated_store_ships(
     assert _chunk_files(_members(out), f"{CONSOLIDATED}/coupling_exchange_flow")
 
 
-def test_the_store_set_is_the_eight_output_fields_and_excludes_the_inputs_that_end_the_same_way():
+def test_the_store_set_is_the_nine_output_fields_and_excludes_the_inputs_that_end_the_same_way():
     from hhemt.paths import ScenarioPaths
 
     fields = _emit._scenario_time_series_fields()
@@ -300,6 +359,7 @@ def test_the_store_set_is_the_eight_output_fields_and_excludes_the_inputs_that_e
         "output_triton_only_timeseries",
         "output_swmm_only_link_time_series",
         "output_swmm_only_node_time_series",
+        "output_swmm_only_system_time_series",
     )
     suffix_only = [
         f.name for f in dataclasses.fields(ScenarioPaths) if f.name.endswith(("_timeseries", "_time_series"))
@@ -353,6 +413,8 @@ def test_enumeration_over_a_real_analysis_creates_no_file_and_no_folder(golden_m
     assert stores, "control: the golden's scenarios name time-series stores"
     entries: dict[str, Path] = {}
     carried, _shallow = _emit._plan_time_series_carriage(analysis, root, entries)
+    # The consolidated tree holds the consolidated series in its `timeseries` branches, so the emit carries it too.
+    stores.append(analysis.analysis_paths.analysis_datatree_zarr)
     expected = sorted({Path(s).resolve().relative_to(root.resolve()).as_posix() for s in stores if Path(s).exists()})
     assert carried == expected
     assert _files() == files_before

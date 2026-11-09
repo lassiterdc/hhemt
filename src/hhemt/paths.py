@@ -59,17 +59,15 @@ class AnalysisPaths(MainDataClass):
     # Hierarchical DataTree zarr — aggregates all enabled modes into one store.
     analysis_datatree_zarr: Path | None = None
 
-    # Sensitivity-level hierarchical DataTree zarr (aggregates member trees).
+    # Sensitivity-level hierarchical DataTree zarr (aggregates member trees). It holds each member's `summary` AND
+    # `timeseries` branches under `member_{id}/{family}/{kind}/`, so a sensitivity master has no separate series
+    # store either.
     sensitivity_datatree_zarr: Path | None = None
 
-    # Consolidated per-scenario SWMM node/link time series, appended one scenario at a time on the elapsed_s axis.
-    # Beside analysis_datatree.zarr, never inside it: a reprocess deletes the datatree outright, and with
-    # toggle_clear_scenario_timeseries_after_consolidation on this store holds the only copy of the series.
-    # Bound on the regular arm only, like analysis_datatree_zarr.
-    analysis_timeseries_zarr: Path | None = None
-
-    # The sensitivity master's counterpart, grafted from each member's analysis_timeseries.zarr.
-    sensitivity_timeseries_zarr: Path | None = None
+    # The consolidated per-scenario time series live INSIDE analysis_datatree.zarr, in the `timeseries` branch of each
+    # group (`{family}/{kind}/timeseries`), appended one scenario at a time on the elapsed_s axis. There is no
+    # separate analysis-level time-series store: the reprocess delete keeps every `timeseries` branch, and with
+    # toggle_clear_scenario_timeseries_after_consolidation on those branches hold the only copy of the series.
 
     bash_script_path: Path | None = None
 
@@ -139,3 +137,6 @@ class ScenarioPaths(MainDataClass):
     output_swmm_only_link_summary: Path | None = None
     output_swmm_only_node_time_series: Path | None = None
     output_swmm_only_node_summary: Path | None = None
+    # The six system series of the standalone SWMM binary output (flood and water-balance quantities, D19). The coupled
+    # model has no such store, so there is no coupled counterpart of this path.
+    output_swmm_only_system_time_series: Path | None = None

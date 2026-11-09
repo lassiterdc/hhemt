@@ -175,7 +175,10 @@ def test_surviving_consolidation_surface_is_present():
     assert set(_DELETED_ANALYSIS_PATH_FIELDS) <= scenario_fields
     proc_cls = TRITONSWMM_analysis_post_processing
     assert set(proc_cls._MODE_TO_TREE_PATH) == set(proc_cls._MODE_CONFIG)
-    assert len(proc_cls._MODE_CONFIG) == 8
+    assert len(proc_cls._MODE_CONFIG) == 9
+    assert "swmm_only_system" in proc_cls._MODE_CONFIG, (
+        "the standalone family's system summary is one of the nine modes"
+    )
     for mode, value in proc_cls._MODE_CONFIG.items():
         assert value[0] in scenario_fields, mode
     assert importlib.util.find_spec("hhemt.processing_analysis") is not None

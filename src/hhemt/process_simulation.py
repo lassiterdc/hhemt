@@ -33,7 +33,12 @@ from hhemt.exceptions import ProcessingError
 from hhemt.log import TRITONSWMM_model_log
 from hhemt.run_simulation import TRITONSWMM_run
 from hhemt.subprocess_utils import run_subprocess_with_tee
-from hhemt.swmm_output_parser import pollutant_time_of_max_conc, retrieve_SWMM_outputs_as_datasets
+from hhemt.summary_paths import parse_summary_clearing_record
+from hhemt.swmm_output_parser import (
+    pollutant_time_of_max_conc,
+    retrieve_SWMM_outputs_as_datasets,
+    return_system_time_series_results_from_outfile,
+)
 from hhemt.utils import (
     _publish_flag_crash_safe,
     chapter_flag_for,
@@ -1406,8 +1411,18 @@ class TRITONSWMM_sim_post_processing:
 
         nodes_already_written = self._swmm_node_outputs_processed(model)
         links_already_written = self._swmm_link_outputs_processed(model)
+        # The standalone SWMM model also stores its six system series (flood and water-balance quantities, D19). The
+        # coupled model writes no such store, so for it the system arm counts as written.
+        f_out_system = (
+            self._validate_path(
+                self.scen_paths.output_swmm_only_system_time_series, "output_swmm_only_system_time_series"
+            )
+            if model == "swmm"
+            else None
+        )
+        system_already_written = model != "swmm" or self._swmm_system_outputs_processed()
 
-        if nodes_already_written and links_already_written:
+        if nodes_already_written and links_already_written and system_already_written:
             if verbose:
                 print(f"{f_out_nodes.name} and {f_out_links.name} already written. Not overwriting.")
             if self._should_clear_raw_for_model(resolved_clear_raw, model):
@@ -1453,6 +1468,17 @@ class TRITONSWMM_sim_post_processing:
                 True,
                 notes="links are written after nodes so time elapsed reflecs writing both link AND node time series",
             )
+        # WRITE SYSTEM SERIES (standalone SWMM only)
+        if f_out_system is not None:
+            if system_already_written:
+                if verbose:
+                    print(f"{f_out_system.name} already written. Not overwriting.")
+            else:
+                ds_system = return_system_time_series_results_from_outfile(swmm_timeseries_result_file)
+                elapsed_s = time.time() - start_time
+                self._write_output(ds_system, f_out_system, comp_level, verbose, mode="swmm_only_system")
+                self.log.add_sim_processing_entry(f_out_system, get_file_size_MiB(f_out_system), elapsed_s, True)
+                del ds_system
         # Mark timeseries as written (set both node and link flags)
         if self.log.SWMM_node_timeseries_written is not None:
             self.log.SWMM_node_timeseries_written.set(True)
@@ -1604,7 +1630,14 @@ class TRITONSWMM_sim_post_processing:
 
     @property
     def TRITON_outputs_processed(self) -> bool:
-        """Check if TRITON outputs processed for current model log."""
+        """Check if TRITON outputs processed for current model log.
+
+        A gridded series store deleted after its slice was read back from its family's ``triton/timeseries`` branch
+        counts as processed, for the coupled model and the TRITON-only model alike (the log read is the model's
+        own): the deletion is the consolidation's doing, not a missing output.
+        """
+        if self._consolidated_timeseries_cleared("triton"):
+            return True
         if self.log.TRITON_timeseries_written is not None:
             return bool(self.log.TRITON_timeseries_written.get())
         return False
@@ -1633,18 +1666,21 @@ class TRITONSWMM_sim_post_processing:
         link_ok = self.log.SWMM_link_timeseries_written and bool(self.log.SWMM_link_timeseries_written.get())
         return node_ok and link_ok
 
-    def _consolidated_timeseries_cleared(self, kind: Literal["node", "link"]) -> bool:
+    def _consolidated_timeseries_cleared(self, kind: Literal["node", "link", "triton", "system"]) -> bool:
         """Whether this scenario's ``kind`` time-series store was deleted after its slice was read back.
 
         True only on the model log's own record (``consolidated_{kind}_timeseries_cleared``), written by the
-        consolidation after the read-back passed. A store that is merely absent reads False.
+        consolidation after the read-back passed. A store that is merely absent reads False. The log is the one
+        of the model this object processes, so the record is read for the coupled, the SWMM-only and the
+        TRITON-only family alike.
         """
         field = getattr(self.log, f"consolidated_{kind}_timeseries_cleared", None)
         return bool(field is not None and field.get())
 
     def _swmm_link_outputs_processed(self, model: Literal["swmm", "tritonswmm"]) -> bool:
-        if model == "tritonswmm" and self._consolidated_timeseries_cleared("link"):
-            # Cleared on purpose, after its slice was verified in analysis_timeseries.zarr: processed, never re-derived.
+        if self._consolidated_timeseries_cleared("link"):
+            # Cleared on purpose, after its slice was verified in the `timeseries` branch of analysis_datatree.zarr:
+            # processed, never re-derived. Read for every family: the log is the model's own.
             return True
         if model == "tritonswmm":
             swmm_links = self._already_written(self.scen_paths.output_tritonswmm_link_time_series)
@@ -1655,8 +1691,18 @@ class TRITONSWMM_sim_post_processing:
             self.log.SWMM_link_timeseries_written.set(swmm_links)
         return swmm_links
 
+    def _swmm_system_outputs_processed(self) -> bool:
+        """Whether the standalone SWMM model's system series store is written, or was cleared after consolidation.
+
+        A store deleted after its slice was read back from ``swmm_only/system/timeseries`` counts as processed, as the
+        node and link stores do; the log read is the standalone model's own.
+        """
+        if self._consolidated_timeseries_cleared("system"):
+            return True
+        return self._already_written(self.scen_paths.output_swmm_only_system_time_series)
+
     def _swmm_node_outputs_processed(self, model: Literal["swmm", "tritonswmm"]) -> bool:
-        if model == "tritonswmm" and self._consolidated_timeseries_cleared("node"):
+        if self._consolidated_timeseries_cleared("node"):
             return True
         if model == "tritonswmm":
             swmm_nodes = self._already_written(self.scen_paths.output_tritonswmm_node_time_series)
@@ -2006,6 +2052,25 @@ class TRITONSWMM_sim_post_processing:
                     "model_type parameter is required for SWMM summary generation. Must be 'tritonswmm' or 'swmm'."
                 )
 
+        # A per-scenario summary store was just (re)written, so the record that the model's summary stores were cleared
+        # no longer describes the stems whose store is back: the next consolidation reads the new store, rewrites that
+        # event's slice from it and clears it again. Only those stems leave the record. A partial call (one half of the
+        # model) keeps the record naming the stems it did not rewrite, because their slices are still the only copy
+        # and a record cleared whole would leave them unreadable and the scenario unconsolidatable.
+        record_field = getattr(self.log, "consolidated_summaries_cleared", None)
+        record = None if record_field is None else parse_summary_clearing_record(record_field.get())
+        if record is not None:
+            rewritten = {
+                stem
+                for stem in record["stems"]
+                if (path := self._analysis.process._stem_path(scen, stem)) is not None and path.exists()
+            }
+            remaining = {stem: groups for stem, groups in record["stems"].items() if stem not in rewritten}
+            if not remaining:
+                record_field.clear()
+            elif rewritten:
+                record_field.set({"state": record["state"], "stems": remaining})
+
         # The summaries are written; the time-series variables the keep-lists do not select can leave disk now.
         self._prune_timeseries_stores(model_type, which)
 
@@ -2141,6 +2206,17 @@ class TRITONSWMM_sim_post_processing:
         # write_timeseries_outputs does not recreate the timeseries on a re-fire (its own
         # _already_written gate reads the LOG), so the re-fire path always
         # arrives here with the timeseries absent.
+        if self._consolidated_timeseries_cleared("triton"):
+            if timeseries_path is None or not timeseries_path.exists():
+                family = "tritonswmm" if model_type == "tritonswmm" else "triton_only"
+                raise ProcessingError(
+                    "create the TRITON summary",
+                    timeseries_path,
+                    "the scenario's gridded TRITON series store was deleted after consolidation "
+                    "(toggle_clear_scenario_timeseries_after_consolidation); the series is in the "
+                    f"`{family}/triton/timeseries` branch of analysis_datatree.zarr and a summary cannot be "
+                    "rebuilt from it here",
+                )
         if timeseries_path is None or not timeseries_path.exists():
             raise FileNotFoundError(
                 f"Cannot create {model_type} TRITON summary: input timeseries not found at {timeseries_path}. "
@@ -2319,15 +2395,23 @@ class TRITONSWMM_sim_post_processing:
         # Both checks (node and link) MUST sit below the already-written early-return, or
         # a re-fire on a post-processing-reclaimed scenario raises on an input the
         # function no longer needs.
-        if model_type == "tritonswmm" and (
-            self._consolidated_timeseries_cleared("node") or self._consolidated_timeseries_cleared("link")
+        system_timeseries_path = self.scen_paths.output_swmm_only_system_time_series if model_type == "swmm" else None
+        if (
+            self._consolidated_timeseries_cleared("node")
+            or self._consolidated_timeseries_cleared("link")
+            or (system_timeseries_path is not None and self._consolidated_timeseries_cleared("system"))
         ):
-            if not (node_timeseries_path.exists() and link_timeseries_path.exists()):
+            if not (
+                node_timeseries_path.exists()
+                and link_timeseries_path.exists()
+                and (system_timeseries_path is None or system_timeseries_path.exists())
+            ):
                 raise ProcessingError(
                     "create the SWMM summaries",
                     node_timeseries_path,
                     "the scenario's time-series stores were deleted after consolidation "
-                    "(toggle_clear_scenario_timeseries_after_consolidation); the series is in analysis_timeseries.zarr "
+                    "(toggle_clear_scenario_timeseries_after_consolidation); the series is in the `timeseries` branch "
+                    "of analysis_datatree.zarr "
                     "and a summary cannot be rebuilt from it here",
                 )
         if node_timeseries_path is None or not node_timeseries_path.exists():
@@ -2339,6 +2423,12 @@ class TRITONSWMM_sim_post_processing:
             raise FileNotFoundError(
                 f"Cannot create {model_type} SWMM link summary: input timeseries not found at {link_timeseries_path}. "
                 f"Ensure timeseries processing completed successfully for {model_type} model."
+            )
+
+        if system_timeseries_path is not None and not nodes_already_written and not system_timeseries_path.exists():
+            raise FileNotFoundError(
+                f"Cannot create {model_type} SWMM system summary: input timeseries not found at "
+                f"{system_timeseries_path}. Ensure timeseries processing completed successfully for {model_type} model."
             )
 
         for _store in (node_timeseries_path, link_timeseries_path):
@@ -2354,6 +2444,16 @@ class TRITONSWMM_sim_post_processing:
         if not nodes_already_written:
             ds_nodes_summary = summarize_swmm_simulation_results(ds_nodes_full, self._scenario.event_iloc)
             ds_nodes_summary = self._apply_quality_stats_rule(ds_nodes_summary, model_type)
+            if system_timeseries_path is not None:
+                # The twelve `_max` and `_last` reductions of the six system series ride in the node summary store, so
+                # the stem is read back and cleared once. The consolidation hands them to `swmm_only/system/summary`
+                # and keeps them out of `swmm_only/swmm_node/summary` (D19, the source rule).
+                ds_system_summary = summarize_swmm_simulation_results(
+                    self._open(system_timeseries_path), self._scenario.event_iloc
+                )
+                ds_nodes_summary = ds_nodes_summary.assign(
+                    {name: ds_system_summary[name] for name in ds_system_summary}
+                )
 
             elapsed_s = time.time() - start_time
             self._write_output(ds_nodes_summary, f_out_nodes, comp_level, verbose, mode=node_mode)

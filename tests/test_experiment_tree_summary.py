@@ -263,10 +263,10 @@ def _two_event_tree(root: Path) -> None:
     )
     nodes = {
         "/member_a": xr.Dataset(attrs={"member_id": "a", "run_mode": "serial"}),
-        "/member_a/tritonswmm/triton": wl,
-        "/member_a/tritonswmm/swmm_link": fl,
+        "/member_a/tritonswmm/triton/summary": wl,
+        "/member_a/tritonswmm/swmm_link/summary": fl,
         "/member_b": xr.Dataset(attrs={"member_id": "b", "run_mode": "mpi"}),
-        "/member_b/triton_only/triton": wl,
+        "/member_b/triton_only/triton/summary": wl,
     }
     _write(root / EXPERIMENT_TREE_NAME, nodes)
     (root / "scenario_status.csv").write_text("member_id,n_resumes\na,3\nb,0\n")

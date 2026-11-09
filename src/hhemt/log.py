@@ -726,7 +726,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     Processing log for a single model type (triton, tritonswmm, or swmm).
 
     Each model type has its own log file, which eliminates race conditions between
-    concurrently processed models. The class declares 25 log fields, in four groups:
+    concurrently processed models. The class declares 26 log fields, in four groups:
 
     - Declared on every model type's log (not Optional): simulation_completed,
       sim_run_time_minutes, n_resumes, force_rerun_pending, consecutive_terminal_failures,
@@ -743,6 +743,12 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
       SWMM_node_summary_written, SWMM_link_summary_written, raw_SWMM_outputs_cleared,
       full_SWMM_timeseries_cleared, raw_SWMM_binaries_reclaimed, coupled_rpt_truncated,
       hydro_out_reclaimed.
+    - Optional, created by the analysis-level time-series consolidation and not by scenario.get_log:
+      consolidated_node_timeseries_cleared, consolidated_link_timeseries_cleared,
+      consolidated_triton_timeseries_cleared, consolidated_system_timeseries_cleared, the four matching
+      ``*_clearing_pending`` lists and the ``consolidated_summaries_cleared`` record. Each series field lands in
+      the log of the model whose series store was consolidated: tritonswmm (node, link, triton), swmm (node, link,
+      system) and triton (triton). The summary record lands in the log of the model that wrote the summary stores.
     - Optional, with NO model applicability assigned: prep_inputs_reclaimed,
       hydrographs_reclaimed, standalone_rpt_reclaimed. Nothing in src/ writes them and
       scenario.get_log does not initialise them; the one reader,
@@ -832,11 +838,42 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     raw_SWMM_outputs_cleared: LogField[bool] | None = None
     full_SWMM_timeseries_cleared: LogField[bool] | None = None
     # The scenario's node / link time-series store was deleted after its slice was read back from
-    # analysis_timeseries.zarr (toggle_clear_scenario_timeseries_after_consolidation). Additive and defaulted None, so
+    # the `timeseries` branch of analysis_datatree.zarr (toggle_clear_scenario_timeseries_after_consolidation).
+    # Each model records its own clearing in its own log. The coupled model's log covers the
+    # `tritonswmm/swmm_node/timeseries` and `tritonswmm/swmm_link/timeseries` groups, and the standalone SWMM
+    # model's log covers the `swmm_only/swmm_node/timeseries` and `swmm_only/swmm_link/timeseries` groups
+    # . Additive and defaulted None, so
     # every pre-existing log_{model}.json deserialises unchanged. Distinct from full_SWMM_timeseries_cleared, which the
     # remove_after_processing reclaim writes: that one does not imply a consolidated copy exists, this one does.
     consolidated_node_timeseries_cleared: LogField[bool] | None = None
     consolidated_link_timeseries_cleared: LogField[bool] | None = None
+    # The same record for the gridded TRITON store (`TRITONSWMM_TRITON_tseries`), whose slice is read back from the
+    # `tritonswmm/triton/timeseries` branch before the store is deleted. The TRITON-only model
+    # keeps it in its own log and reads its slice back from `triton_only/triton/timeseries`.
+    consolidated_triton_timeseries_cleared: LogField[bool] | None = None
+    # The same record for the standalone SWMM model's system series store (`SWMM_only_system_tseries`), whose slice is
+    # read back from `swmm_only/system/timeseries` before the store is deleted. It lands in the
+    # standalone SWMM model's log only: the coupled model writes no system store.
+    consolidated_system_timeseries_cleared: LogField[bool] | None = None
+    # The `pending` state of each clearing above: the data-variable names the scenario's slice was verified
+    # against, written BEFORE the store is deleted and cleared (set to None) once the `*_cleared` bool above is True.
+    # A bool cannot carry the names, and the resume needs them because it can no longer read them from the source:
+    # a kill during the delete leaves a partly deleted store whose variable set is unknowable, and a missing variable
+    # in the `timeseries` group would otherwise pass for a complete slice. None = no clearing in flight; an existing
+    # `*_cleared` True with no pending record reads as `done`, so no log written before this field changes meaning.
+    consolidated_node_timeseries_clearing_pending: LogField[list] | None = None
+    consolidated_link_timeseries_clearing_pending: LogField[list] | None = None
+    consolidated_triton_timeseries_clearing_pending: LogField[list] | None = None
+    consolidated_system_timeseries_clearing_pending: LogField[list] | None = None
+    # The model's per-scenario summary stores were deleted after every `summary` slice of the scenario was read back
+    # from analysis_datatree.zarr (toggle_clear_scenario_timeseries_after_consolidation). One record per model log,
+    # because the model owns the stems: {"state": "pending" | "done", "stems": {stem: {group: [variable names]}}}.
+    # `pending` is written BEFORE the stores are deleted and `done` after, so either state means the data is in the
+    # branch and the stores are never a read-back source again; the variable names are what a resume checks the
+    # branch against, because a half-deleted store can no longer say what it held. Absent (None) means the stores
+    # were never cleared, and a rebuilt per-scenario summary resets it to None. Additive and defaulted None, so every
+    # pre-existing log_{model}.json deserialises unchanged.
+    consolidated_summaries_cleared: LogField[dict] | None = None
     # Post-processing reclaim (analysis_config.remove_after_processing) of
     # out_tritonswmm/swmm/*.out -- the coupled-SWMM binary outputs, NEVER the .rpt, which
     # is a live completion predicate. Distinct from raw_SWMM_outputs_cleared, which records
@@ -879,6 +916,8 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         "full_SWMM_timeseries_cleared",
         "consolidated_node_timeseries_cleared",
         "consolidated_link_timeseries_cleared",
+        "consolidated_triton_timeseries_cleared",
+        "consolidated_system_timeseries_cleared",
         "raw_SWMM_binaries_reclaimed",
         "coupled_rpt_truncated",
         "hydro_out_reclaimed",
@@ -902,8 +941,17 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
 
     # resume_reporting_tsteps is LogField[list[int]] — a list-typed LogField, so it
     # gets its own validator group rather than the scalar-int coercion above.
+    _validate_dict_fields = field_validator(
+        "consolidated_summaries_cleared",
+        mode="before",
+    )(_create_logfield_validator(dict))
+
     _validate_list_fields = field_validator(
         "resume_reporting_tsteps",
+        "consolidated_node_timeseries_clearing_pending",
+        "consolidated_link_timeseries_clearing_pending",
+        "consolidated_triton_timeseries_clearing_pending",
+        "consolidated_system_timeseries_clearing_pending",
         mode="before",
     )(_create_logfield_validator(list))
 
@@ -924,6 +972,8 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         "full_SWMM_timeseries_cleared",
         "consolidated_node_timeseries_cleared",
         "consolidated_link_timeseries_cleared",
+        "consolidated_triton_timeseries_cleared",
+        "consolidated_system_timeseries_cleared",
         "raw_SWMM_binaries_reclaimed",
         "coupled_rpt_truncated",
         "hydro_out_reclaimed",
@@ -945,8 +995,17 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         when_used="json",
     )(lambda self, v: v.get() if v is not None else None)
 
+    _serialize_dict_fields = field_serializer(
+        "consolidated_summaries_cleared",
+        when_used="json",
+    )(lambda self, v: v.get() if v is not None else None)
+
     _serialize_list_fields = field_serializer(
         "resume_reporting_tsteps",
+        "consolidated_node_timeseries_clearing_pending",
+        "consolidated_link_timeseries_clearing_pending",
+        "consolidated_triton_timeseries_clearing_pending",
+        "consolidated_system_timeseries_clearing_pending",
         when_used="json",
     )(lambda self, v: v.get() if v is not None else None)
 
@@ -1179,6 +1238,16 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     consolidation_build_stamp: LogField[str] = Field(default_factory=LogField)
     # Sensitivity-level DataTree consolidation (the master tree over all members)
     sensitivity_datatree_consolidation_complete: LogField[bool] = Field(default_factory=LogField)
+    # A sensitivity MEMBER's own analysis_datatree.zarr is removed by the master once the master holds a
+    # read-back-equal copy of every group (clearing switch on). The removal is recorded BEFORE it happens:
+    # `pending` is written after the copy passed its read-back and before the delete, `done` after the delete.
+    # A resume finding `pending` never reads the (possibly half-deleted) member tree as a verification source;
+    # it checks the master's groups and finishes the delete. Absent means no move was ever recorded, so an
+    # absent member tree is damage, not a move.
+    member_tree_moved_to_master: LogField[str] = Field(default_factory=LogField)
+    # The member-tree-relative group paths the master copied (a JSON list), written together with `pending`, so a
+    # resume that no longer has the member tree can check the master for exactly those groups.
+    member_tree_moved_groups: LogField[str] = Field(default_factory=LogField)
     # Track which backends are available at analysis creation time
     cpu_backend_available: LogField[bool] = Field(default_factory=LogField)
     gpu_backend_available: LogField[bool] = Field(default_factory=LogField)
@@ -1229,6 +1298,8 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "orchestrator_slurm_jobid",
         "consolidation_inputs_fingerprint",
         "consolidation_build_stamp",
+        "member_tree_moved_to_master",
+        "member_tree_moved_groups",
         mode="before",
     )(_create_logfield_validator(str))
 
@@ -1246,6 +1317,8 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "consolidation_version",
         "consolidation_inputs_fingerprint",
         "consolidation_build_stamp",
+        "member_tree_moved_to_master",
+        "member_tree_moved_groups",
         "sensitivity_datatree_consolidation_complete",
         "cpu_backend_available",
         "gpu_backend_available",

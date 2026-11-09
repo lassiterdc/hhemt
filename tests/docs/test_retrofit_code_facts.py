@@ -386,12 +386,12 @@ def check_node_page(
     page_text: str, tree_paths: set[str], timeseries_paths: set[str], timeseries_default: bool
 ) -> list[str]:
     problems = []
-    body = block_from(page_text, "The groups of an analysis tree are written")
+    body = block_from(page_text, "Every group of an analysis tree is written")
     table = {m for m in re.findall(r"^\| `([\w/]+)` \|", body, re.M)}
     if table != tree_paths:
         problems.append(f"node table {sorted(table)} differs from the code {sorted(tree_paths)}")
     sentence = next(ln for ln in body.splitlines() if "toggle_consolidate_timeseries" in ln)
-    ts = set(re.findall(r"`(tritonswmm/\w+_timeseries)`", " ".join(body.split())))
+    ts = set(re.findall(r"`(tritonswmm/\w+/timeseries)`", " ".join(body.split())))
     if ts != timeseries_paths:
         problems.append(f"timeseries nodes {sorted(ts)} differ from the code {sorted(timeseries_paths)}")
     m = re.search(r"defaults to `(true|false)`", sentence)
@@ -412,8 +412,9 @@ def node_facts() -> tuple[set[str], set[str], bool]:
     from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing as pp
 
     field = analysis_config.model_fields["toggle_consolidate_timeseries"]
-    ts = set(re.findall(r"tritonswmm/\w+_timeseries", field.description or ""))
-    return set(pp._MODE_TO_TREE_PATH.values()), ts, bool(field.default)
+    ts = set(re.findall(r"tritonswmm/\w+/timeseries", field.description or ""))
+    # The page names each group once; its two branches are described in the prose beside the table.
+    return {p.removesuffix("/summary") for p in pp._MODE_TO_TREE_PATH.values()}, ts, bool(field.default)
 
 
 def test_node_table_matches_the_tree_modes(pages):

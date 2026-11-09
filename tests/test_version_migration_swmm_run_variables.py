@@ -261,7 +261,7 @@ def test_the_layout_version_is_30_and_the_v30_fixture_is_a_byte_copy_of_v29():
 
     from hhemt.version_migration.constants import LAYOUT_VERSION
 
-    assert LAYOUT_VERSION == 30
+    assert LAYOUT_VERSION == 31
     cmp = filecmp.dircmp(FIXTURE_ROOT / "v29", FIXTURE_ROOT / "v30")
 
     def walk(c: filecmp.dircmp) -> list[str]:

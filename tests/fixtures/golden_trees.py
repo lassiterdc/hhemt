@@ -114,8 +114,59 @@ def extract_golden(kind: str, dest: Path) -> Path:
             if _is_text_member(name):
                 data = data.decode("utf-8").replace(GOLDEN_ROOT_TOKEN, root).encode("utf-8")
             target.write_bytes(data)
+    add_swmm_only_system_stores(dest)
     set_times_in_dependency_order(dest)
     return dest
+
+
+def add_swmm_only_system_stores(root: Path) -> None:
+    """Give every SWMM-only scenario of an extracted golden the system series store and summary reductions of D19.
+
+    The committed golden predates the system series: its SWMM-only scenarios hold node and link stores and a node
+    summary store with no ``system_*`` variable. Since chunk 1d.6 a processed SWMM-only scenario also holds
+    ``SWMM_only_system_tseries.zarr`` (six series on the node store's own ``date_time`` axis) and the twelve ``_max``
+    and ``_last`` reductions of those series in ``SWMM_only_node_summary.zarr``, and the consolidation refuses a
+    scenario without them. This adds exactly those two things, with values that differ by event and by series, and
+    changes nothing else; it stands in for the generator emitting them. A scenario that holds no SWMM-only node store
+    (the sensitivity golden, which runs the coupled model alone) is left alone.
+    """
+    import numpy as np
+    import xarray as xr
+
+    from hhemt.constants import LST_SWMM_SYSTEM_SERIES
+    from hhemt.utils import write_zarr
+
+    # The units are written here as literals, not read from the toolkit's CF table, so the units test that stamps the
+    # table onto this golden still compares the table with an independent statement.
+    units = {
+        "system_flooding_rate": "m3 s-1",
+        "system_outfall_flow": "m3 s-1",
+        "system_stored_volume": "m3",
+        "system_lateral_inflow": "m3 s-1",
+        "system_runoff": "m3 s-1",
+        "system_rainfall": "mm h-1",
+    }
+    assert set(units) == set(LST_SWMM_SYSTEM_SERIES)
+
+    for node_store in sorted(root.rglob("SWMM_only_node_tseries.zarr")):
+        processed = node_store.parent
+        summary_store = processed / "SWMM_only_node_summary.zarr"
+        system_store = processed / "SWMM_only_system_tseries.zarr"
+        if system_store.exists() or not summary_store.exists():
+            continue
+        times = xr.open_zarr(node_store, consolidated=False)["date_time"].values
+        event_iloc = xr.open_zarr(summary_store, consolidated=False)["event_iloc"].values
+        base = float(event_iloc[0]) + 1.0
+        series = {
+            name: (("date_time",), base * (k + 1) * np.linspace(0.0, 1.0, len(times)), {"units": units[name]})
+            for k, name in enumerate(LST_SWMM_SYSTEM_SERIES)
+        }
+        write_zarr(xr.Dataset(series, coords={"date_time": times}), system_store, 5)
+        reductions = {}
+        for name, (_dims, values, attrs) in series.items():
+            reductions[f"{name}_max"] = (("event_iloc",), np.array([values.max()]), attrs)
+            reductions[f"{name}_last"] = (("event_iloc",), np.array([values[-1]]), attrs)
+        xr.Dataset(reductions, coords={"event_iloc": event_iloc}).to_zarr(summary_store, mode="a")
 
 
 def set_times_in_dependency_order(root: Path) -> None:

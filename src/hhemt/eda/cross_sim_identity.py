@@ -19,7 +19,10 @@ boundary raised 24 false FAIL tuples on the Iteration-5 campaign (0 intra-family
 
 Reads the per-sub FLAT summaries via ``sub.process._retrieve_combined_output(mode)``
 — NOT the consolidated ``analysis_datatree.zarr`` (consolidation CF-stamps,
-dual-indexes, and recompresses, all byte-perturbing). "Byte-for-byte" is
+dual-indexes, and recompresses, all byte-perturbing). A scenario whose per-scenario
+summaries were cleared after a verified copy is read through the same call, which returns
+that scenario's slice of the ``summary`` branch, whose decoded values were read back equal
+to the deleted stores. "Byte-for-byte" is
 operationalized as exact equality of the DECODED value arrays, not stored bytes.
 """
 
@@ -27,6 +30,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -38,7 +42,8 @@ from hhemt.cf_conventions import apply_cf_attributes
 from hhemt.eda._result import EdaResult
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import emit_data_artifact_with_sources
-from hhemt.utils import open_store, write_zarr
+from hhemt.summary_paths import _SUMMARY_STEMS_BY_MODEL, summary_clearing_record
+from hhemt.utils import EXPERIMENT_TREE_NAME, open_store, write_zarr
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
@@ -360,7 +365,46 @@ def _summary_paths(analysis: TRITONSWMM_analysis) -> list[Path]:
     ``_MODE_CONFIG``'s values, which is the surface that made the derivation untestable.
     """
     root = Path(analysis.analysis_paths.analysis_dir)
-    return sorted(dict.fromkeys(p for p in root.glob(_SUMMARY_GLOB) if p.is_file() or p.suffix == ".zarr"))
+    paths = [p for p in root.glob(_SUMMARY_GLOB) if p.is_file() or p.suffix == ".zarr"]
+    # An event whose per-scenario summaries were cleared after a verified copy has them only in the ``summary`` branches
+    # of the consolidated tree, so that tree is its provenance source. A scenario whose summaries are all present
+    # declares its per-scenario stores alone.
+    if _cleared_stems(root):
+        paths.append(_cleared_summary_tree(analysis, root))
+    return sorted(dict.fromkeys(paths))
+
+
+def _cleared_stems(member_root: Path) -> dict[str, dict[str, dict[str, list[str]]]]:
+    """Per simulation folder under ``member_root`` that records a summary clearing, what the record holds.
+
+    ``{event_id: {stem: {group: [variable names]}}}`` across every model's log of the folder. Path-only: each log is
+    read with ``json`` and no scenario is built, which is the contract the other readers of the record keep.
+    """
+    sims = Path(member_root) / "sims"
+    found: dict[str, dict[str, dict[str, list[str]]]] = {}
+    if not sims.is_dir():
+        return found
+    for sim in sorted(p for p in sims.iterdir() if p.is_dir()):
+        for model in _SUMMARY_STEMS_BY_MODEL:
+            record = summary_clearing_record(sim, model)
+            if record is not None:
+                found.setdefault(sim.name, {}).update(record["stems"])
+    return found
+
+
+def _cleared_summary_tree(analysis: TRITONSWMM_analysis, root: Path) -> Path:
+    """The consolidated tree that holds a cleared event's summaries: the analysis's own, else its master's.
+
+    A sensitivity member whose tree was moved into the master's has them under the master's experiment tree, two
+    directories above the member directory. When neither exists the analysis's own path is returned, so the declared
+    source still names where the summaries belong and the harvest reports it absent.
+    """
+    own = getattr(analysis.analysis_paths, "analysis_datatree_zarr", None)
+    own = Path(own) if own is not None else root / "analysis_datatree.zarr"
+    if own.exists():
+        return own
+    master = root.parent.parent / EXPERIMENT_TREE_NAME
+    return master if master.exists() else own
 
 
 def config_identity_from_node_attrs(attrs: dict) -> str:
@@ -1133,6 +1177,12 @@ def compare_arms(
     READS THE FLAT PER-SCENARIO SUMMARIES, NEVER THE CONSOLIDATED TREE — consolidation
     CF-stamps, dual-indexes and recompresses, all byte-perturbing, so a comparison that read
     the consolidated store would test the consolidation pipeline rather than the solver.
+    The one exception is a scenario whose per-scenario summaries were cleared after a verified
+    copy (its model log records ``consolidated_summaries_cleared``): the tree's ``summary``
+    branch then holds the only copy, and its decoded values were read back equal to the
+    deleted stores before they were deleted, so the comparison reads that slice. Where EITHER
+    side of a pair is cleared both sides are read from their trees, so that both pass through
+    the same decode. A slice absent from a tree is a ``NOT-EVALUATED`` row for that event.
 
     ``require_pin_identity=True`` is `G3`: a reference whose stamp is ABSENT, or differs from
     the arm under test, yields ``NOT_EVALUATED``. Pass ``False`` ONLY for the `A1`-versus-`A4`
@@ -1225,15 +1275,37 @@ def compare_arms(
         # member-directory naming asymmetry cannot leak into the artifact pairing.
         arm_rel = {p.relative_to(arm_member): p for p in arm_member.glob(summary_glob)}
         ref_rel = {p.relative_to(ref_member): p for p in ref_member.glob(summary_glob)}
-        shared_rel = sorted(set(arm_rel) & set(ref_rel), key=str)
-        if not shared_rel:
+        # A scenario whose per-scenario summaries were cleared after a verified copy holds them in the ``summary``
+        # branches of the member's consolidated tree. Where EITHER side is cleared the pair is read from the two
+        # trees, so both sides pass through the same decode and the same dtypes, and the flat store of a side that
+        # still has one is not compared against a slice of the other.
+        arm_cleared, ref_cleared = _cleared_stems(arm_member), _cleared_stems(ref_member)
+        tree_pairs = _cleared_pairs(arm_rel, ref_rel, arm_cleared, ref_cleared)
+        flat_paired = {(slug, stem) for slug, stem in tree_pairs}
+        shared_rel = sorted((rel for rel in set(arm_rel) & set(ref_rel) if _flat_key(rel) not in flat_paired), key=str)
+        items: list[tuple[Path, Callable[[], xr.Dataset], Callable[[], xr.Dataset]]] = [
+            (rel, (lambda p=ref_rel[rel]: _open_summary(p)), (lambda p=arm_rel[rel]: _open_summary(p)))
+            for rel in shared_rel
+        ]
+        for slug, stem in sorted(tree_pairs):
+            groups = ref_cleared.get(slug, {}).get(stem) or arm_cleared.get(slug, {}).get(stem) or {}
+            groups_ref = ref_cleared.get(slug, {}).get(stem) or groups
+            groups_arm = arm_cleared.get(slug, {}).get(stem) or groups
+            items.append(
+                (
+                    Path("sims") / slug / "processed" / stem,
+                    (lambda m=ref_member, g=groups_ref, e=slug: _cleared_slice(m, e, g)),
+                    (lambda m=arm_member, g=groups_arm, e=slug: _cleared_slice(m, e, g)),
+                )
+            )
+        if not items:
             details.append({"member": suffix, "detail": "no shared summary artifact", "verdict": NOT_EVALUATED})
             continue
         member_compared = 0
-        for rel in shared_rel:
+        for rel, load_ref, load_arm in items:
             try:
-                ds_ref = _open_summary(ref_rel[rel])
-                ds_arm = _open_summary(arm_rel[rel])
+                ds_ref = load_ref()
+                ds_arm = load_arm()
             except (FileNotFoundError, OSError, ValueError) as exc:
                 details.append(
                     {"member": suffix, "artifact": str(rel), "detail": f"unreadable: {exc}", "verdict": NOT_EVALUATED}
@@ -1366,3 +1438,78 @@ def _open_summary(path: Path) -> xr.Dataset:
     if path.suffix == ".zarr" or path.is_dir():
         return open_store(path, kind="zarr")
     return xr.open_dataset(path)
+
+
+def _flat_key(rel: Path) -> tuple[str, str] | None:
+    """``(event_id, stem)`` of a per-scenario summary path ``sims/{event_id}/processed/{stem}.{ext}``, else None."""
+    parts = rel.parts
+    if len(parts) == 4 and parts[0] == "sims" and parts[2] == "processed":
+        return parts[1], Path(parts[3]).stem
+    return None
+
+
+def _cleared_pairs(
+    arm_rel: dict[Path, Path],
+    ref_rel: dict[Path, Path],
+    arm_cleared: dict[str, dict[str, dict[str, list[str]]]],
+    ref_cleared: dict[str, dict[str, dict[str, list[str]]]],
+) -> set[tuple[str, str]]:
+    """The ``(event_id, stem)`` pairs that exist on both sides and are cleared on at least one.
+
+    A side has a pair when its per-scenario store is there or its clearing record names the stem.
+    """
+
+    def _held(rel_map: dict[Path, Path], cleared: dict[str, dict[str, dict[str, list[str]]]]) -> set[tuple[str, str]]:
+        held = {key for key in map(_flat_key, rel_map) if key is not None}
+        held.update((slug, stem) for slug, stems in cleared.items() for stem in stems)
+        return held
+
+    on_both = _held(arm_rel, arm_cleared) & _held(ref_rel, ref_cleared)
+    cleared_somewhere = {
+        (slug, stem) for cleared in (arm_cleared, ref_cleared) for slug, st in cleared.items() for stem in st
+    }
+    return on_both & cleared_somewhere
+
+
+def _cleared_tree_location(member_dir: Path) -> tuple[Path, str]:
+    """The store holding a member's ``summary`` branches and the group prefix inside it.
+
+    The member's own tree with no prefix, and when that tree is gone (a sensitivity member whose tree moved into the
+    master) the master's experiment tree, two directories above the member directory, under the member directory's
+    own name.
+    """
+    own = member_dir / "analysis_datatree.zarr"
+    if own.is_dir():
+        return own, ""
+    master = member_dir.parent.parent / EXPERIMENT_TREE_NAME
+    if master.is_dir():
+        return master, f"{member_dir.name}/"
+    raise FileNotFoundError(f"no consolidated tree holds the summaries of {member_dir}: neither {own} nor {master}")
+
+
+def _cleared_slice(member_dir: Path, event_id: str, groups: dict[str, list[str]]) -> xr.Dataset:
+    """One cleared event's summary of one stem, rebuilt from the ``summary`` groups its record names.
+
+    ``groups`` maps each group the stem fed to the variables the group received. Each group is read at the event's
+    own slice, restricted to those variables, and the pieces are merged, so the result has the variables and the
+    dimensions the stem's per-scenario store had, without the event dimension. Raises ``FileNotFoundError`` naming
+    the group when the tree, the group, the event or a recorded variable is absent, because the slice is then the only
+    copy and nothing stands in for it.
+    """
+    store, prefix = _cleared_tree_location(member_dir)
+    pieces: list[xr.Dataset] = []
+    for group, names in sorted(groups.items()):
+        full = f"{prefix}{group}"
+        if not (store / full / "zarr.json").is_file():
+            raise FileNotFoundError(f"{full} is absent from {store}")
+        stored = open_store(store, kind="zarr", group=full, chunks=None, decode_timedelta=False)
+        ids = [str(v) for v in stored["event_id"].values] if "event_id" in stored.coords else []
+        if event_id not in ids:
+            raise FileNotFoundError(f"{full} of {store} holds no slice for event {event_id}")
+        missing = sorted(set(names) - set(stored.data_vars))
+        if missing:
+            raise FileNotFoundError(f"{full} of {store} lacks the recorded variables {missing} for event {event_id}")
+        pieces.append(stored.isel(event_iloc=ids.index(event_id), drop=True)[list(names)].load())
+    if not pieces:
+        raise FileNotFoundError(f"the clearing record of event {event_id} names no summary group")
+    return xr.merge(pieces)

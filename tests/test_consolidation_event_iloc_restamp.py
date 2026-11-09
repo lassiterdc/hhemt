@@ -61,6 +61,8 @@ def _post_processor(tmp_path, monkeypatch, *, attr, timeseries):
     analysis = Mock()
     analysis.df_sims = pd.DataFrame(index=pd.RangeIndex(len(_STALE)))
     analysis.cfg_analysis.target_processed_output_type = "zarr"
+    # The loader reads each event's clearing record from ``sims/{event_id}``; no scenario here has written one.
+    analysis.analysis_paths.simulation_directory = tmp_path / "sims"
     analysis._retrieve_weather_indexer_using_integer_index = lambda ei: {"event_index": ei}
     return pa.TRITONSWMM_analysis_post_processing(analysis)
 

@@ -436,6 +436,42 @@ _EXCUSES: tuple[_Excuse, ...] = (
             "tests/test_workflow_single_job_wait.py::TestSubmitWorkflowIntegration::test_submit_workflow_default_no_wait",
         ),
     ),
+    # The `.run()` of these rows is the stand-in master of tests/test_sensitivity_store_no_redundancy.py: it builds
+    # the master tree and moves the member trees in place, and starts no workflow, so no solver build is involved.
+    _Excuse(
+        _STUBBED,
+        "tests/test_sensitivity_store_no_redundancy.py",
+        "Build the tree, write it in place with each member's tree moved before the next member's copy begins.",
+        (
+            "tests/test_sensitivity_store_no_redundancy.py::test_the_master_holds_member_summaries_and_series_equal_to_each_members_and_no_separate_series_store",
+            "tests/test_sensitivity_store_no_redundancy.py::test_a_member_tree_is_removed_only_after_its_verified_copy_and_a_failed_read_back_keeps_it",
+            "tests/test_sensitivity_store_no_redundancy.py::test_no_series_variable_is_stored_in_two_stores_under_clearing_and_the_walk_finds_the_trees_without_it",
+            "tests/test_sensitivity_store_no_redundancy.py::test_a_summary_rebuild_without_member_trees_rewrites_the_summaries_and_leaves_the_series_byte_identical",
+            "tests/test_sensitivity_store_no_redundancy.py::test_a_master_consolidation_interrupted_after_one_members_move_completes_without_copying_that_member_again",
+            "tests/test_sensitivity_store_no_redundancy.py::test_a_kill_after_the_tree_delete_and_before_done_resumes_to_done_with_an_equal_master",
+            "tests/test_sensitivity_store_no_redundancy.py::test_a_half_deleted_member_tree_with_the_record_pending_leaves_the_master_byte_identical_and_finishes",
+            "tests/test_sensitivity_store_no_redundancy.py::test_the_member_reprocess_delete_with_the_tree_moved_exits_zero_and_touches_no_master",
+            "tests/test_sensitivity_store_no_redundancy.py::test_the_masters_reprocess_delete_keeps_every_member_timeseries_branch_and_the_parameters",
+        ),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_review_1d5_sensitivity_master.py",
+        "from tests.test_sensitivity_store_no_redundancy import _Master, _Member",
+        (
+            "tests/test_review_1d5_sensitivity_master.py::test_with_clearing_on_a_member_tree_is_gone_before_the_next_member_copy_begins",
+            "tests/test_review_1d5_sensitivity_master.py::test_the_observer_sees_every_tree_when_clearing_is_off_and_sees_none_held_when_driven_member_by_member",
+        ),
+    ),
+    _Excuse(
+        _STUBBED,
+        "tests/test_summary_store_clearing.py",
+        "from tests.test_sensitivity_store_no_redundancy import _Master",
+        (
+            "tests/test_summary_store_clearing.py::test_the_master_holds_the_members_summaries_after_clearing_and_the_member_keeps_nothing",
+            "tests/test_summary_store_clearing.py::test_the_master_keeps_cleared_member_slices_on_a_rebuild_and_the_branch_read_follows_the_moved_member",
+        ),
+    ),
 )
 
 

@@ -424,14 +424,14 @@ class TestFindPerfNode:
 
     def test_triton_only_performance_node_is_found(self):
         """Pre-fix: returns None (looked in triton/performance)."""
-        tree = self._tree("triton_only/performance")
+        tree = self._tree("triton_only/performance/summary")
         node = _find_perf_node(tree, "serial_0_r1")
         assert node is not None
         assert "Total" in node.data_vars
 
     def test_coupled_tritonswmm_performance_still_found(self):
         """Regression: the coupled path is unchanged."""
-        tree = self._tree("tritonswmm/performance")
+        tree = self._tree("tritonswmm/performance/summary")
         node = _find_perf_node(tree, "serial_0_r1")
         assert node is not None
         assert "Total" in node.data_vars
@@ -605,7 +605,9 @@ def _stub_analysis(tmp_path, *, write_csv=True, ledger_value=900.0, perf_total=2
         {"Total": ("event_iloc", [perf_total])},
         coords={"event_iloc": [0]},
     )
-    xr.DataTree.from_dict({"/member_serial_6_r1/tritonswmm/performance": ds}).to_zarr(tree_path, consolidated=False)
+    xr.DataTree.from_dict({"/member_serial_6_r1/tritonswmm/performance/summary": ds}).to_zarr(
+        tree_path, consolidated=False
+    )
     if write_csv:
         pd.DataFrame(
             {
@@ -690,7 +692,9 @@ def test_collect_rows_reads_simulation_from_datatree_like_every_other_column(tmp
         {"Total": ("event_iloc", [200.0]), "Simulation": ("event_iloc", [150.0])},
         coords={"event_iloc": [0]},
     )
-    xr.DataTree.from_dict({"/member_serial_6_r1/tritonswmm/performance": ds}).to_zarr(tree_path, consolidated=False)
+    xr.DataTree.from_dict({"/member_serial_6_r1/tritonswmm/performance/summary": ds}).to_zarr(
+        tree_path, consolidated=False
+    )
     pd.DataFrame({"sa_id": ["serial_6_r1"], "event_iloc": [0], "wall_clock_ledger_s": [900.0]}).to_csv(
         tmp_path / "scenario_status.csv", index=False
     )

@@ -19,16 +19,22 @@ from hhemt.cf_conventions import (
     apply_cf_attributes,
     apply_global_attributes,
 )
+from hhemt.constants import LST_SWMM_SYSTEM_SUMMARY_VARIABLES
 from hhemt.exceptions import ProcessingError
 from hhemt.member_identity import resolve_member_id_column
 from hhemt.scenario import TRITONSWMM_scenario
+from hhemt.summary_paths import SUMMARY_CLEARING_FIELD, parse_summary_clearing_record, summary_clearing_record
 from hhemt.utils import (
+    CONSOLIDATION_STAMP_ATTRS,
+    EXPERIMENT_TREE_NAME,
     append_zarr,
     current_datetime_string,
     deferred_consolidation,
     get_file_size_MiB,
     open_store,
-    write_datatree_zarr,
+    return_dic_zarr_encodings,
+    update_zarr_root_attrs,
+    zarr_root_attrs,
     zarr_store_has_index,
 )
 
@@ -180,87 +186,134 @@ class TRITONSWMM_analysis_post_processing:
             "output_swmm_only_link_summary",
             "link_id",
         ),
+        # The standalone SWMM system summary shares the node summary's stem and selects the twelve system reductions
+        # from it (`_STEM_VARIABLE_SELECTION`); it has no spatial dimension.
+        "swmm_only_system": (
+            "output_swmm_only_node_summary",
+            None,
+        ),
     }
 
-    _MODE_TO_TREE_PATH = {
-        "tritonswmm_triton": "tritonswmm/triton",
-        "tritonswmm_swmm_node": "tritonswmm/swmm_node",
-        "tritonswmm_swmm_link": "tritonswmm/swmm_link",
-        "tritonswmm_performance": "tritonswmm/performance",
-        "triton_only": "triton_only/triton",
-        "triton_only_performance": "triton_only/performance",
-        "swmm_only_node": "swmm_only/swmm_node",
-        "swmm_only_link": "swmm_only/swmm_link",
+    # Mode -> (how the mode picks variables from its per-scenario stem, the variable names). A stem that feeds two
+    # groups (the standalone SWMM node summary store holds the system reductions beside the node variables, D19) is
+    # split so that each variable lands in exactly one group: ``"include"`` keeps only the named variables and
+    # ``"exclude"`` drops them. A mode absent here passes every variable of its stem through.
+    _STEM_VARIABLE_SELECTION = {
+        "swmm_only_system": ("include", tuple(LST_SWMM_SYSTEM_SUMMARY_VARIABLES)),
+        "swmm_only_node": ("exclude", tuple(LST_SWMM_SYSTEM_SUMMARY_VARIABLES)),
     }
+
+    # Every group of the consolidated tree is `{family}/{kind}` and holds TWO branches, `summary` (one
+    # statistic per event and entity, REBUILDABLE from the per-scenario summary stores and rewritten per group
+    # in place) and `timeseries` (APPEND-ONLY, one scenario at a time). The summary modes write the first.
+    _MODE_TO_TREE_PATH = {
+        "tritonswmm_triton": "tritonswmm/triton/summary",
+        "tritonswmm_swmm_node": "tritonswmm/swmm_node/summary",
+        "tritonswmm_swmm_link": "tritonswmm/swmm_link/summary",
+        "tritonswmm_performance": "tritonswmm/performance/summary",
+        "triton_only": "triton_only/triton/summary",
+        "triton_only_performance": "triton_only/performance/summary",
+        "swmm_only_node": "swmm_only/swmm_node/summary",
+        "swmm_only_link": "swmm_only/swmm_link/summary",
+        "swmm_only_system": "swmm_only/system/summary",
+    }
+
+    # Mode -> the per-scenario summary stem the mode reads. Two modes can read one stem (the standalone SWMM node
+    # store holds the system reductions beside the node variables), and a stem's record in the model log names every
+    # `summary` group it fed and the variables each group received.
+    _MODE_STEM = {
+        "tritonswmm_triton": "TRITONSWMM_TRITON_summary",
+        "tritonswmm_swmm_node": "TRITONSWMM_SWMM_node_summary",
+        "tritonswmm_swmm_link": "TRITONSWMM_SWMM_link_summary",
+        "tritonswmm_performance": "TRITONSWMM_perf_summary",
+        "triton_only": "TRITON_only_summary",
+        "triton_only_performance": "TRITON_only_perf_summary",
+        "swmm_only_node": "SWMM_only_node_summary",
+        "swmm_only_system": "SWMM_only_node_summary",
+        "swmm_only_link": "SWMM_only_link_summary",
+    }
+
+    # The coupled node summary mode keeps the coupling-node flag in its `timeseries` group alone once its summary
+    # branch is append-only, so a variable is never stored in two groups of one tree.
+    _COUPLING_FLAG = "is_coupling_node"
 
     # Per-scenario TIMESERIES modes (opt-in via analysis_config.toggle_consolidate_timeseries).
-    # Maps mode -> the scenario-path attr for the per-scenario timeseries zarr. SWMM node
-    # (wlevel(t)) + SWMM link (flow(t)) ONLY. The TRITON gridded (timestep, y, x) series
-    # is deliberately excluded, and the exclusion is load-bearing rather than incidental:
-    # measured on synth_cc_clean (2026-07-21), the gridded store is 6.610 MB/scenario of
-    # PAYLOAD against 0.079 MB for the SWMM node+link pair — an 83x ratio. (Measured as
-    # on-disk blocks instead, the ratio is ~24x, inflated toward parity because the SWMM
-    # stores are 62 tiny chunk files padded to 4 KiB blocks. Payload is the metric that
-    # governs consolidated-tree size, render-bundle size, and transfer time, so 24x is the
-    # wrong figure to size against.)
-    # Consequence: adding the gridded series takes the 28-scenario master tree from 27 MB
-    # to ~212 MB (7.9x) on the SMALLEST grid the toolkit runs, and is single-GB-scale per
-    # scenario on a Norfolk fine grid (a 1.1 m DEM's full TRITON timeseries measured
-    # ~12 GB resident).
-    #
-    # CORRECTION (2026-07-21) — an earlier version of this comment said the gridded series
-    # "is NOT needed for the clean-vs-resume over-time figure." That was WRONG and is the
-    # kind of error that survives by being repeated. That figure plots the resumed-minus-
-    # clean difference against time for a clean/resumed pair of the same event, and its
-    # water-level panel reads flood_depth from THIS store. SWMM node head is NOT a substitute
-    # — different quantity, different solver — and the residuals under investigation are
-    # TRITON-side (14 of 15 pairs on max_flood_depth). The exclusion stands on COST alone, not
-    # on absence of a consumer. No renderer in this package draws that figure: it is drawn
-    # outside the toolkit by reading the per-scenario stores directly, which means a render
-    # bundle cannot reproduce it — a BUNDLE-FIDELITY limitation, not evidence the data is
-    # unnecessary.
-    #
-    # What the consumer actually needs is a REDUCTION -- max over (y, x) per timestep --
-    # not the field (6.6 MB/scenario). On the synth model that is 144 float32/scenario, a
-    # ~11,500x amplification between what is stored and what is used, and it is why
-    # consolidating the FIELD is still the wrong answer even though a consumer exists.
-    #
-    # CORRECTION (2026-08-16): an earlier version of this comment said the reduction costs
-    # "the same 144 values" on a Norfolk scenario as on a synth one. That conflates
-    # grid-independence with CONSTANCY and only the first is true. The reduction collapses
-    # y and x, so it does not scale with ncells; but its LENGTH is len(ds[tstep_dimname]),
-    # i.e. event duration / reporting interval. A Norfolk observed event at 2-minute
-    # reporting over 72 h is ~2,160 values, and the 3,798-member synthetic ensemble has
-    # HETEROGENEOUS event durations.
-    #
-    # That has a consequence for WHERE the reduction may land, and it is the reason it is
-    # not landed here yet: it MUST NOT become a variable in the per-model SUMMARY Dataset.
-    # process_simulation.summarize_triton_simulation_results builds ds_summary on
-    # cell_dims = ("y", "x") and _retrieve_combined_output concatenates those summaries
-    # along event_iloc; a timestep-dimensioned variable makes that concat RAGGED across
-    # events, which either NaN-pads to the duration union (silently enormous on a
-    # 3,798-event ensemble) or fails on a coordinate mismatch. It would also change the
-    # schema of an artifact inside _SUMMARY_STEMS_BY_MODEL -- the required preserve set that
-    # summary_paths.scenario_summaries_present keys on. The correct shape is a SEPARATE small per-scenario
-    # artifact with its own tree node and its own toggle, plus a CONSOLIDATION_VERSION bump
-    # per the fingerprint maintenance contract below.
-    #
-    # The zero-I/O claim itself is VERIFIED and stands: _streaming_argmax_with_companions
-    # materializes each (chunk_timesteps, ny, nx) block as a concrete numpy array
-    # (`primary_chunk = ...values`), and three of its four call sites already pass
-    # primary_var="flood_depth", so np.nanmax(primary_chunk, axis=(1, 2)) is a same-loop
-    # addition against an array already in memory. Note the existing tritonswmm/triton
-    # summary node is the ORTHOGONAL reduction (max over TIME per cell, dims (y, x)); the
-    # two are not derivable from each other.
+    # Maps mode -> the scenario-path attr for the per-scenario series store: the SWMM node and link stores and the
+    # gridded TRITON store (`timestep`, `y`, `x`) of EVERY model family that writes series: the coupled model,
+    # the SWMM-only model (node and link) and the TRITON-only model (gridded). Each lands in its own `timeseries`
+    # group of analysis_datatree.zarr on that group's own `elapsed_s` axis. The gridded store is the large
+    # one -- about 1 GB uncompressed per scenario per kept variable on a Norfolk grid -- which is why its slice is
+    # written and read back in blocks and why the keep-list prune (`timeseries_keep_triton_gridded`) runs
+    # before it is consolidated.
     _TIMESERIES_MODE_CONFIG = {
         "tritonswmm_swmm_node_ts": "output_tritonswmm_node_time_series",
         "tritonswmm_swmm_link_ts": "output_tritonswmm_link_time_series",
+        "tritonswmm_triton_ts": "output_tritonswmm_triton_timeseries",
+        "swmm_only_swmm_node_ts": "output_swmm_only_node_time_series",
+        "swmm_only_swmm_link_ts": "output_swmm_only_link_time_series",
+        "swmm_only_system_ts": "output_swmm_only_system_time_series",
+        "triton_only_triton_ts": "output_triton_only_timeseries",
     }
 
     _TIMESERIES_MODE_TO_TREE_PATH = {
-        "tritonswmm_swmm_node_ts": "tritonswmm/swmm_node_timeseries",
-        "tritonswmm_swmm_link_ts": "tritonswmm/swmm_link_timeseries",
+        "tritonswmm_swmm_node_ts": "tritonswmm/swmm_node/timeseries",
+        "tritonswmm_swmm_link_ts": "tritonswmm/swmm_link/timeseries",
+        "tritonswmm_triton_ts": "tritonswmm/triton/timeseries",
+        "swmm_only_swmm_node_ts": "swmm_only/swmm_node/timeseries",
+        "swmm_only_swmm_link_ts": "swmm_only/swmm_link/timeseries",
+        "swmm_only_system_ts": "swmm_only/system/timeseries",
+        "triton_only_triton_ts": "triton_only/triton/timeseries",
     }
+
+    # Mode -> the model whose per-scenario log records that mode's clearing. A model has one log of its own
+    # (`log_{model}.json`), so the cleared and pending fields of the three tables below are read from, and written
+    # to, the log of the model that wrote the store: the coupled model's log for the coupled modes, the standalone
+    # SWMM model's for the SWMM-only modes, the standalone TRITON model's for the TRITON-only mode.
+    _TIMESERIES_MODE_MODEL = {
+        "tritonswmm_swmm_node_ts": "tritonswmm",
+        "tritonswmm_swmm_link_ts": "tritonswmm",
+        "tritonswmm_triton_ts": "tritonswmm",
+        "swmm_only_swmm_node_ts": "swmm",
+        "swmm_only_swmm_link_ts": "swmm",
+        "swmm_only_system_ts": "swmm",
+        "triton_only_triton_ts": "triton",
+    }
+
+    # Mode -> (the log bool that records the store's clearing as done, the log list that records it as pending).
+    _TIMESERIES_CLEARED_FIELDS = {
+        "tritonswmm_swmm_node_ts": (
+            "consolidated_node_timeseries_cleared",
+            "consolidated_node_timeseries_clearing_pending",
+        ),
+        "tritonswmm_swmm_link_ts": (
+            "consolidated_link_timeseries_cleared",
+            "consolidated_link_timeseries_clearing_pending",
+        ),
+        "tritonswmm_triton_ts": (
+            "consolidated_triton_timeseries_cleared",
+            "consolidated_triton_timeseries_clearing_pending",
+        ),
+        "swmm_only_swmm_node_ts": (
+            "consolidated_node_timeseries_cleared",
+            "consolidated_node_timeseries_clearing_pending",
+        ),
+        "swmm_only_swmm_link_ts": (
+            "consolidated_link_timeseries_cleared",
+            "consolidated_link_timeseries_clearing_pending",
+        ),
+        "swmm_only_system_ts": (
+            "consolidated_system_timeseries_cleared",
+            "consolidated_system_timeseries_clearing_pending",
+        ),
+        "triton_only_triton_ts": (
+            "consolidated_triton_timeseries_cleared",
+            "consolidated_triton_timeseries_clearing_pending",
+        ),
+    }
+
+    # Bytes one write chunk of a series group, and one read-back block, is sized to. 32 MB is the developer-
+    # facing chunk the shape fixes; a Norfolk gridded step is 537 x 551 float32 = 1.18 MB, so the block is 27 steps.
+    _TIMESERIES_BLOCK_BYTES = 32_000_000
 
     def __init__(self, analysis: "TRITONSWMM_analysis") -> None:
         self._analysis = analysis
@@ -268,7 +321,10 @@ class TRITONSWMM_analysis_post_processing:
     # 2: the SWMM node/link time series left the datatree for analysis_timeseries.zarr (elapsed_s axis), the
     # coupling-node flag is always present in a coupled node store, and the flux and clearing toggles join the
     # fingerprint. Every tree consolidated at version 1 rebuilds once.
-    CONSOLIDATION_VERSION = 2
+    # 3: every group holds a `summary` and a `timeseries` branch inside analysis_datatree.zarr, and
+    # analysis_timeseries.zarr does not exist. Every tree consolidated at version 2 rebuilds its summary branches once
+    # and its series branches not at all.
+    CONSOLIDATION_VERSION = 3
 
     def _consolidation_inputs_fingerprint(self) -> str:
         """Hash of every input that determines the SHAPE of the consolidated tree.
@@ -324,7 +380,7 @@ class TRITONSWMM_analysis_post_processing:
     def _timeseries_keep_for_fingerprint(self) -> dict[str, list[str]]:
         """The RESOLVED keep-lists, per kind and enabled family, sorted so a reordered list does not rebuild.
 
-        The keep-lists gate which variables land in ``analysis_timeseries.zarr``, so what they RESOLVE to (not the
+        The keep-lists gate which variables land in the ``timeseries`` branches, so what they RESOLVE to (not the
         raw field text: ``None`` and ``"all"`` are one selection) joins the fingerprint.
         """
         from hhemt.timeseries_selection import FAMILIES_BY_KIND, keep_setting, resolve_keep
@@ -399,21 +455,30 @@ class TRITONSWMM_analysis_post_processing:
         )
         _build_why = store_build_mismatch(fname_out, _stamped_build)
         _build_mismatch = _build_why is not None
-        if fname_out.exists() and _log_complete and _inputs_match and not _build_mismatch:
+        # Fourth reuse input: the STORE's own root stamp. The summary branches are written in place and the root
+        # attributes last (``_write_summary_branches``), and the reprocess delete removes them first, so a store
+        # whose root carries no stamp, or another build's, is one a write or a delete was interrupted in. It is
+        # read as incomplete however the log reads, and every summary group is then rewritten.
+        _root_attrs = zarr_root_attrs(fname_out) if fname_out.exists() else {}
+        _stamp_match = (
+            _root_attrs.get("consolidation_version") == self.CONSOLIDATION_VERSION
+            and _root_attrs.get("consolidation_inputs_fingerprint") == _inputs_fingerprint
+        )
+        if fname_out.exists() and _log_complete and _inputs_match and not _build_mismatch and not _stamp_match:
+            if verbose:
+                print(f"DataTree zarr present at {fname_out} but its root carries no current stamp — rewriting groups.")
+        if fname_out.exists() and _log_complete and _inputs_match and not _build_mismatch and _stamp_match:
             if verbose:
                 print(f"DataTree zarr already present at {fname_out} and log complete. Not overwriting.")
             return fname_out
         if fname_out.exists() and _log_complete and (not _inputs_match or _build_mismatch):
-            # NO PRE-DELETE, for two reasons. First, write_datatree_zarr publishes through
-            # utils._publish_store_crash_safe, which leaves fname_out either ABSENT or a
-            # COMPLETE store by renaming the old store aside before replacing it; deleting
-            # it here would leave that rename nothing to preserve, so a failure before the
-            # write would leave NO store at all. Second, a reason this tier owns:
-            # _retrieve_combined_output below raises FileNotFoundError when a summary is
-            # absent, and when this method is called from the master's member-ensure loop
-            # that exception is swallowed by allow_incomplete=True and the member is skipped
-            # -- so a pre-delete here would destroy the member's store AND drop it from the
-            # master tree in one pass, silently.
+            # NO PRE-DELETE, and for a stronger reason than before: this store holds the `timeseries` branches,
+            # which with the clearing switch on exist nowhere else, so nothing here may remove or replace the
+            # store as a whole. The summary groups are rewritten one by one in place (_write_summary_branches).
+            # A reason this tier also owns: _retrieve_combined_output below raises FileNotFoundError when a
+            # summary is absent, and when this method is called from the master's member-ensure loop that
+            # exception is swallowed by allow_incomplete=True and the member is skipped -- so a pre-delete here
+            # would destroy the member's store AND drop it from the master tree in one pass, silently.
             if verbose:
                 _why = (
                     _build_why
@@ -437,16 +502,19 @@ class TRITONSWMM_analysis_post_processing:
             if getattr(first_scen.scen_paths, scen_path_attr) is None:
                 continue
             ds = self._retrieve_combined_output(mode)
+            if mode in self._STEM_VARIABLE_SELECTION and not ds.data_vars:
+                # A mode that selects variables from a shared stem has nothing to write when no scenario's stem holds
+                # them (a stem written before the system reductions existed); an empty group would only mislead.
+                continue
             apply_cf_attributes(ds, mode)
             tree_dict[tree_path] = ds
 
-        # Per-scenario time series (opt-in, default OFF) are NOT tree nodes: they are appended one scenario at a time
-        # to analysis_timeseries.zarr, beside the tree. Deleting or rebuilding this tree (a reprocess deletes it
-        # outright) therefore never touches the series, which with the clearing toggle on exist nowhere else. A
-        # missing per-scenario store raises FileNotFoundError here exactly as the summary path does, which the
-        # master's member-ensure loop already tolerates under allow_incomplete=True.
-        if getattr(self._analysis.cfg_analysis, "toggle_consolidate_timeseries", False):
-            self.consolidate_timeseries(verbose=verbose)
+        # Per-scenario time series (opt-in, default OFF) are NOT built into this in-memory tree: they are appended
+        # one scenario at a time to the `timeseries` branches of the same store, inside the write block of
+        # `_write_summary_branches` below. Rebuilding the summaries therefore never touches a series, which with
+        # the clearing toggle on exists nowhere else. A missing per-scenario store raises FileNotFoundError there
+        # exactly as the summary path does, which the master's member-ensure loop already tolerates under
+        # allow_incomplete=True.
 
         tree_dict["/"] = xr.Dataset(
             attrs={
@@ -492,7 +560,7 @@ class TRITONSWMM_analysis_post_processing:
         _stamp_triton_provenance(tree, self._analysis)
         _stamp_coupled_resume_evidence(tree, self._analysis, df_status=df_status)
 
-        write_datatree_zarr(tree, fname_out, compression_level=compression_level)
+        self._write_summary_branches(tree, fname_out, compression_level=compression_level, verbose=verbose)
         _assert_store_index_current(fname_out, "consolidate_to_datatree")
 
         from hhemt.metadata import write_rocrate_sidecar
@@ -581,6 +649,638 @@ class TRITONSWMM_analysis_post_processing:
             print(f"Wrote DataTree zarr to {fname_out} in {elapsed_s:.1f}s")
         return fname_out
 
+    def _write_summary_branches(
+        self,
+        tree: "xr.DataTree",
+        store: Path,
+        *,
+        compression_level: int = 5,
+        verbose: bool = False,
+    ) -> None:
+        """Write the ``summary`` groups of ``tree`` into ``store`` IN PLACE, then the series, the clearing, the root.
+
+        The store is never replaced as a whole (``write_datatree_zarr``'s publish through a rename-aside is not
+        used for it), because it also holds the ``timeseries`` branches, which are append-only and which with the
+        clearing switch on are the only copy of the series. One ``deferred_consolidation`` block covers the whole
+        write, so the zarr index is rebuilt once at the end, and a kill inside it leaves a store with no index
+        that the next consolidation reads as incomplete. Order inside the block: (1) the root stamp is removed, so
+        an interrupted write is recognisable; (2) each summary group is written by ``_write_summary_group``, which
+        rewrites the group whole while every scenario still holds its own summary store and otherwise plans each
+        event; (3) a ``summary`` group of a mode the analysis no longer produces is removed unless a scenario's
+        record names it; (4) the ``timeseries`` branches are appended when the toggle is on; (5) with the clearing
+        switch on, each scenario's per-scenario summary stores are deleted once every slice reads back; (6) the root
+        attributes, stamp included, are written last. A scenario recorded as cleared that has left the analysis
+        refuses before anything is written, because its slice is the only copy and a whole-group rewrite would drop it.
+        """
+        from hhemt.du_sentinels import delete_and_account
+
+        at_layout_30 = self._groups_holding_layout_30_arrays(Path(store))
+        if at_layout_30:
+            from hhemt.version_migration.constants import LAYOUT_VERSION
+
+            raise ProcessingError(
+                "write the summary branches of the consolidated tree",
+                str(store),
+                f"{at_layout_30[0]} holds a summary directly at its layout-30 path (and {len(at_layout_30) - 1} other "
+                f"group(s) like it); layout {LAYOUT_VERSION} stores it at {{family}}/{{kind}}/summary. Writing a "
+                "`summary` group inside it would leave a hybrid tree, so migrate the tree (hhemt migrate) first.",
+            )
+        self._assert_no_cleared_event_dropped(Path(store), tree)
+        written: set[str] = set()
+        clear = bool(
+            getattr(self._analysis.cfg_analysis, "toggle_clear_scenario_timeseries_after_consolidation", False)
+        )
+        with deferred_consolidation(store):
+            update_zarr_root_attrs(store, remove=CONSOLIDATION_STAMP_ATTRS)
+            for path, node in tree.subtree_with_keys:
+                if not node.has_data:
+                    continue
+                group = path.lstrip("/")
+                self._write_summary_group(Path(store), group, node.dataset, compression_level=compression_level)
+                written.add(group)
+            for stale in sorted(set(self._MODE_TO_TREE_PATH.values()) - written):
+                stale_dir = Path(store) / stale
+                if stale_dir.exists() and not self._group_named_by_a_record(stale):
+                    delete_and_account(
+                        [stale_dir], scope_dir=self._analysis.analysis_paths.analysis_dir, scope="analysis"
+                    )
+            if getattr(self._analysis.cfg_analysis, "toggle_consolidate_timeseries", False):
+                self.consolidate_timeseries(verbose=verbose)
+            if clear:
+                self._clear_summary_stores(Path(store), drop_flag=self._exclude_coupling_flag())
+            update_zarr_root_attrs(store, dict(tree.attrs))
+
+    # ------------------------------------------------------------------------------------------------
+    # The `summary` branches: group writes, the per-scenario clearing record, and the branch read
+    # ------------------------------------------------------------------------------------------------
+
+    @staticmethod
+    def _mode_model(mode: str) -> str:
+        """The model whose per-scenario log records ``mode``'s summary stem: the model that wrote the store."""
+        if mode.startswith("tritonswmm"):
+            return "tritonswmm"
+        if mode.startswith("triton"):
+            return "triton"
+        return "swmm"
+
+    def _mode_of_group(self, group: str) -> str | None:
+        """The summary mode whose tree path ends ``group`` (a master's member prefix is ignored), or None."""
+        for mode, tree_path in self._MODE_TO_TREE_PATH.items():
+            if group == tree_path or group.endswith("/" + tree_path):
+                return mode
+        return None
+
+    def _event_sim_folder(self, event_iloc: int) -> Path:
+        """``sims/{event_id}`` of the event, built from the slug alone so no scenario is constructed."""
+        return Path(self._analysis.analysis_paths.simulation_directory) / self._event_slug(int(event_iloc))
+
+    def _summary_records(self, mode: str) -> dict[int, list[str]]:
+        """Each event whose model log records ``mode``'s group as cleared, with the variable names the group received.
+
+        Read straight from ``sims/{event_id}/log_{model}.json``, so it is cheap and builds no scenario. An event
+        whose record does not name this mode's stem and group is not in the result, which is what keeps the two
+        groups fed by one stem apart.
+        """
+        model = self._mode_model(mode)
+        stem = self._MODE_STEM[mode]
+        group = self._MODE_TO_TREE_PATH[mode]
+        found: dict[int, list[str]] = {}
+        for event_iloc in self._analysis.df_sims.index:
+            record = summary_clearing_record(self._event_sim_folder(event_iloc), model)
+            names = None if record is None else record["stems"].get(stem, {}).get(group)
+            if names is not None:
+                found[int(event_iloc)] = [str(n) for n in names]
+        return found
+
+    def _group_named_by_a_record(self, group: str) -> bool:
+        """Whether any scenario's record names ``group``."""
+        mode = self._mode_of_group(group)
+        return mode is not None and bool(self._summary_records(mode))
+
+    def _exclude_coupling_flag(self) -> bool:
+        """Whether the coupled node summary leaves out the coupling-node flag.
+
+        True when the clearing switch is on, and also when any scenario already records the node summary group as
+        cleared: the group is then append-only, and turning the switch off later must not bring the flag into it as
+        a new array beside the copy the node ``timeseries`` group already holds. With neither, nothing changes.
+        """
+        if bool(getattr(self._analysis.cfg_analysis, "toggle_clear_scenario_timeseries_after_consolidation", False)):
+            return True
+        return bool(self._summary_records("tritonswmm_swmm_node"))
+
+    def _summary_tree_location(self) -> tuple[Path, str]:
+        """The store holding this analysis's ``summary`` branches and the group prefix inside it.
+
+        The analysis's own tree and no prefix, except for a sensitivity member whose log records its tree as moved
+        (``pending`` or ``done``): its groups are then under ``{analysis_id}/`` of the master's
+        ``experiment_datatree.zarr``, two directories above the member directory.
+        """
+        analysis = self._analysis
+        analysis._refresh_log()
+        moved = getattr(analysis.log, "member_tree_moved_to_master", None)
+        if moved is not None and moved.get() in ("pending", "done"):
+            member_dir = Path(analysis.analysis_paths.analysis_dir)
+            return member_dir.parent.parent / EXPERIMENT_TREE_NAME, f"{analysis.cfg_analysis.analysis_id}/"
+        store = analysis.analysis_paths.analysis_datatree_zarr
+        if store is None:
+            raise ValueError("analysis_datatree_zarr path is not configured on AnalysisPaths.")
+        return Path(store), ""
+
+    @staticmethod
+    def _arrays_equal(a: np.ndarray, b: np.ndarray) -> bool:
+        """Whether two arrays hold the same values, a missing value (NaN or NaT) matching a missing value."""
+        if a.shape != b.shape:
+            return False
+        if a.dtype.kind in "fc" and b.dtype.kind in "fc":
+            return bool(np.array_equal(a, b, equal_nan=True))
+        if a.dtype.kind in "mM" and b.dtype.kind in "mM":
+            gone_a, gone_b = np.isnat(a), np.isnat(b)
+            return bool(np.array_equal(gone_a, gone_b) and np.array_equal(a[~gone_a], b[~gone_b]))
+        return bool(np.array_equal(a, b))
+
+    #: Smallest character width stored for a string coordinate along ``event_iloc``. The two per-event findings are
+    #: sentences that grow with the variables they name, so they get far more room than an identifier or a stamp.
+    _EVENT_STRING_WIDTH = {VARIABLE_SET_COORD: 2048, "perf_column_set_across_allocations": 2048}
+    _EVENT_STRING_WIDTH_DEFAULT = 255
+
+    @staticmethod
+    def _prepare_summary_group(ds: xr.Dataset, compression_level: int) -> tuple[xr.Dataset, dict]:
+        """``ds`` and the encoding that store a ``summary`` group one event per chunk, ready for ``to_zarr``.
+
+        Chunk length 1 along ``event_iloc`` for every array that carries it, so an append or a region write of one
+        event rewrites no chunk file that holds another event. A string coordinate along ``event_iloc`` is stored
+        fixed-width at no less than ``_EVENT_STRING_WIDTH`` characters and compressed, because a fixed-width array
+        keeps the width of the events present when it was created and a later event with a longer value would be cut
+        short (a variable-length string is not used, since dask cannot size it when a reader opens the tree with
+        automatic chunks).
+        """
+        prepared = ds.chunk({d: (1 if d == "event_iloc" else ds.sizes[d]) for d in ds.dims})
+        encoding = return_dic_zarr_encodings(prepared, compression_level)
+        import zarr
+
+        compressor = zarr.codecs.BloscCodec(
+            cname="zstd",
+            clevel=compression_level,
+            shuffle=zarr.codecs.BloscShuffle.shuffle,  # type: ignore
+        )
+        for name in prepared.coords:
+            coord = prepared[name]
+            if coord.dtype.kind == "U" and "event_iloc" in coord.dims:
+                floor = TRITONSWMM_analysis_post_processing._EVENT_STRING_WIDTH.get(
+                    str(name), TRITONSWMM_analysis_post_processing._EVENT_STRING_WIDTH_DEFAULT
+                )
+                width = max(int(coord.dtype.itemsize // 4), floor)
+                encoding[name] = {"dtype": f"<U{width}", "compressors": compressor}
+        for name, var in prepared.variables.items():
+            if "event_iloc" in var.dims:
+                shape = tuple(1 if d == "event_iloc" else n for d, n in zip(var.dims, var.shape, strict=True))
+                encoding.setdefault(name, {})["chunks"] = shape
+        return prepared, encoding
+
+    @staticmethod
+    def _fit_strings(store: Path, group: str, piece: xr.Dataset) -> xr.Dataset:
+        """``piece`` with each string coordinate widened to the stored array's width, refused when it needs more."""
+        import zarr
+
+        root = zarr.open_group(store, mode="r")
+        fitted = {}
+        for name in piece.coords:
+            coord = piece[name]
+            if coord.dtype.kind != "U" or "event_iloc" not in coord.dims or f"{group}/{name}" not in root:
+                continue
+            width = int(root[f"{group}/{name}"].dtype.itemsize // 4)
+            longest = int(coord.dtype.itemsize // 4)
+            if longest > width:
+                raise ProcessingError(
+                    "append a scenario to a summary group",
+                    store,
+                    f"the value of coordinate {name} in {group} needs {longest} characters and the stored array holds "
+                    f"{width}; nothing was written",
+                )
+            fitted[name] = (coord.dims, coord.values.astype(f"<U{width}"))
+        return piece.assign_coords(fitted)
+
+    def _write_summary_group(
+        self,
+        store: Path,
+        group: str,
+        ds: xr.Dataset,
+        *,
+        compression_level: int = 5,
+        whole: bool = False,
+    ) -> None:
+        """Write one ``summary`` group, whole while every event still has its own store and per event otherwise.
+
+        Whole means ``to_zarr(group=..., mode="w")``, which replaces that group only and recomputes the
+        variable-set record over every event. Once any event records its summary stores as cleared, the group is
+        the only copy of that event and is never replaced: each event is kept, verified, rewritten in place or
+        appended (``_write_summary_group_by_event``). ``whole`` forces the whole write for a caller whose source
+        still holds every event, such as a sensitivity master copying a member tree that has not been removed.
+        """
+        mode = self._mode_of_group(group)
+        cleared = {} if whole or mode is None else self._summary_records(mode)
+        if not cleared:
+            prepared, encoding = self._prepare_summary_group(ds, compression_level)
+            with deferred_consolidation(store):
+                append_zarr(prepared, store, group=group, consolidate=False, mode="w", encoding=encoding)
+            return
+        self._write_summary_group_by_event(store, group, ds, cleared, compression_level)
+
+    def _group_event_ids(self, store: Path, group: str) -> list[str]:
+        """The ``event_id`` values of the stored group, or an empty list when it does not exist or has none."""
+        if self._timeseries_group_state(store, group) is None:
+            return []
+        stored = xr.open_zarr(store, group=group, consolidated=zarr_store_has_index(store), chunks=None)
+        return [str(v) for v in stored["event_id"].values] if "event_id" in stored.coords else []
+
+    def _assert_no_cleared_event_dropped(self, store: Path, tree: "xr.DataTree") -> None:
+        """Refuse, before anything is written, a stored ``summary`` event that is no longer part of the analysis.
+
+        A scenario recorded as cleared is refused by name, because its slice is the only copy and a group rewrite
+        would drop it. Any other stored event that has left the analysis is refused too when its group is
+        append-only, because an append-only group has no way to drop a row.
+        """
+        if not Path(store).is_dir():
+            return
+        current = {self._event_slug(ei) for ei in self._analysis.df_sims.index}
+        for path, node in tree.subtree_with_keys:
+            group = path.lstrip("/")
+            mode = self._mode_of_group(group)
+            if not node.has_data or mode is None:
+                continue
+            stale = [ident for ident in self._group_event_ids(store, group) if ident not in current]
+            if not stale:
+                continue
+            model, stem = self._mode_model(mode), self._MODE_STEM[mode]
+            sim_dir = Path(self._analysis.analysis_paths.simulation_directory)
+            for ident in stale:
+                record = summary_clearing_record(sim_dir / ident, model)
+                if record is not None and group in record["stems"].get(stem, {}):
+                    raise ProcessingError(
+                        "consolidate the summary branches",
+                        store,
+                        f"scenario {ident} is recorded as cleared in {group} but is no longer part of the analysis; "
+                        "its slice there is the only copy and a cleared scenario cannot be dropped from a group. "
+                        "Nothing was written.",
+                    )
+            if self._summary_records(mode):
+                raise ProcessingError(
+                    "consolidate the summary branches",
+                    store,
+                    f"{group} is append-only because scenarios were cleared from it, and it holds "
+                    f"{', '.join(stale)}, which {'is' if len(stale) == 1 else 'are'} no longer part of the analysis; "
+                    "an append-only group cannot drop an event. Nothing was written.",
+                )
+
+    def _ensure_group_variables(self, store: Path, group: str, piece: xr.Dataset, compression_level: int) -> None:
+        """Create in ``group`` every variable of ``piece`` the group lacks, NaN over the events it already holds.
+
+        Appending an event that carries a variable the group does not hold would raise on the mismatched
+        ``event_iloc`` sizes (measured), so the new array is created first at the group's current length.
+        """
+        state = self._timeseries_group_state(store, group)
+        if state is None:
+            return
+        missing = [v for v in piece.data_vars if v not in state[0]]
+        if not missing:
+            return
+        n_events = len(state[1])
+        arrays = {}
+        for name in missing:
+            da = piece[name]
+            shape = tuple(n_events if d == "event_iloc" else da.sizes[d] for d in da.dims)
+            if da.dtype.kind in "mM":
+                fill = np.full(shape, np.datetime64("NaT"), dtype=da.dtype)
+            else:
+                fill = np.full(shape, np.nan, dtype=da.dtype if da.dtype.kind == "f" else "float64")
+            arrays[name] = (da.dims, fill)
+        grown = xr.Dataset(arrays)
+        encoding = return_dic_zarr_encodings(grown, compression_level)
+        for name, da in grown.data_vars.items():
+            shape = tuple(1 if d == "event_iloc" else n for d, n in zip(da.dims, da.shape, strict=True))
+            encoding.setdefault(name, {})["chunks"] = shape
+        with deferred_consolidation(store):
+            append_zarr(grown, store, group=group, consolidate=False, mode="a", encoding=encoding)
+
+    def _summary_piece(self, ds: xr.Dataset, event_iloc: int) -> xr.Dataset:
+        """One event of the combined ``summary`` Dataset, loaded and stripped of the encodings it was read with."""
+        piece = ds.sel(event_iloc=[int(event_iloc)]).load()
+        for variable in piece.variables.values():
+            variable.encoding = {}
+        return piece
+
+    def _write_summary_group_by_event(
+        self,
+        store: Path,
+        group: str,
+        ds: xr.Dataset,
+        cleared: dict[int, list[str]],
+        compression_level: int,
+    ) -> None:
+        """Plan and perform the write of an append-only ``summary`` group, one event at a time.
+
+        An event recorded cleared is ``kept`` as it stands (and must be there with every recorded variable, else
+        the write refuses naming it). Any other event is ``verified`` when its stored slice already equals the
+        combined Dataset's, ``rewrite`` in place when it differs, and ``append`` when it is new; a variable the
+        event carries and the group lacks is created first, NaN over the events already stored, and a variable
+        the event lacks is NaN at it, exactly as the whole-group join fills. Every written slice is read back.
+        """
+        slug_of = self._event_slug
+        state = self._timeseries_group_state(store, group)
+        for event_iloc in sorted(cleared):
+            held = state is not None and event_iloc in state[1]
+            missing = (
+                sorted(set(cleared[event_iloc]) - set(state[0])) if state is not None else list(cleared[event_iloc])
+            )
+            if not held or missing:
+                raise ProcessingError(
+                    "keep a cleared scenario's summary slice",
+                    store,
+                    f"scenario {slug_of(event_iloc)} (event_iloc {event_iloc}) records its summary stores as cleared, "
+                    f"but {group} does not hold its slice with every recorded variable (missing {missing}, event "
+                    f"present: {held}); re-running the simulation is the only remedy. Nothing was written for it.",
+                )
+        for event_iloc in (int(v) for v in ds["event_iloc"].values):
+            if event_iloc in cleared:
+                continue
+            piece = self._summary_piece(ds, event_iloc)
+            state = self._timeseries_group_state(store, group)
+            present = state is not None and event_iloc in state[1]
+            if present and self._stored_slice_equals(store, group, piece, event_iloc):
+                continue
+            self._ensure_group_variables(store, group, piece, compression_level)
+            prepared = self._fit_strings(store, group, piece)
+            with deferred_consolidation(store):
+                if present:
+                    position = self._timeseries_group_state(store, group)[1].index(event_iloc)
+                    append_zarr(
+                        prepared.drop_vars([c for c in prepared.coords if "event_iloc" not in prepared[c].dims]),
+                        store,
+                        group=group,
+                        consolidate=False,
+                        mode="r+",
+                        region={"event_iloc": slice(position, position + 1)},
+                    )
+                else:
+                    append_zarr(prepared, store, group=group, consolidate=False, mode="a", append_dim="event_iloc")
+            if not self._stored_slice_equals(store, group, piece, event_iloc):
+                raise ProcessingError(
+                    "read back a summary slice",
+                    store,
+                    f"the slice of scenario {slug_of(event_iloc)} (event_iloc {event_iloc}) in {group} does not equal "
+                    "the data it was written from; its own summary stores were kept",
+                )
+
+    def _event_summary_dataset(self, mode: str, event_iloc: int, *, drop_flag: bool) -> xr.Dataset:
+        """One scenario's own summary store for ``mode``, opened lazily, after its completeness checks.
+
+        Raises ``FileNotFoundError`` when the store is absent, or present without a successful processing-log record
+        (a write that did not return may have left a fill-filled partial), so every handler that already catches
+        that type for a missing summary keeps catching it.
+        """
+        scen = TRITONSWMM_scenario(event_iloc, self._analysis)
+        summary_file = getattr(scen.scen_paths, self._MODE_CONFIG[mode][0])
+        if summary_file is None:
+            raise ValueError(
+                f"Summary file path is None for mode '{mode}' and event_iloc={event_iloc}. "
+                f"Check that the appropriate model types are enabled in system config."
+            )
+        if not summary_file.exists():
+            raise FileNotFoundError(
+                f"Summary file not found: {summary_file}. "
+                f"Run timeseries processing with summary creation before consolidating."
+            )
+        # COMPLETENESS, not just existence. A kill inside write_zarr leaves a store that exists, opens and returns
+        # fill for the chunks that never landed (measured: zarr writes the declared shape before the chunk bytes and
+        # an absent chunk reads as fill_value). The per-model processing-log record is the only signal that attests
+        # RETURN rather than PRESENCE, because add_sim_processing_entry runs after write_zarr returns. The error type
+        # is FileNotFoundError on purpose: four enclosing handlers (eda.cross_sim_identity, eda.compute_sensitivity,
+        # and the sensitivity consolidation) catch exactly (FileNotFoundError, ValueError) and skip with a warning,
+        # and a distinct type would turn that skip into an abort.
+        entry = scen.get_log(self._mode_model(mode)).processing_log.outputs.get(summary_file.name)
+        if entry is None or not entry.success:
+            raise FileNotFoundError(
+                f"Summary store present but incomplete: {summary_file}. "
+                "It carries no successful processing-log record, so its write did "
+                "not return and it may be a fill-filled partial. Re-run timeseries "
+                "processing for this scenario."
+            )
+        open_kwargs = {"chunks": "auto", "engine": self._open_engine(), "decode_timedelta": False}
+        if open_kwargs["engine"] == "zarr":
+            open_kwargs["consolidated"] = zarr_store_has_index(summary_file)
+        ds = self._select_stem_variables(mode, xr.open_dataset(summary_file, **open_kwargs))
+        if drop_flag and mode == "tritonswmm_swmm_node" and self._COUPLING_FLAG in ds.data_vars:
+            ds = ds.drop_vars(self._COUPLING_FLAG)
+        return ds
+
+    def _read_cleared_summary(self, mode: str, event_iloc: int, names: list[str]) -> xr.Dataset:
+        """A cleared event's slice of ``mode``'s ``summary`` group, restricted to the variables the record names.
+
+        The slice carries the event's own coordinates (its position, its identifier and its producing stamps) and is
+        loaded, so the Dataset does not stay tied to a store that a later append resizes. Its values are the ones the
+        read-back proved equal to the deleted per-scenario store's. Raises ``FileNotFoundError`` naming the scenario
+        and the group when the tree, the group, the event or a recorded variable is absent: the slice is then the
+        only copy and the caller must not substitute anything for it.
+        """
+        store, prefix = self._summary_tree_location()
+        group = prefix + self._MODE_TO_TREE_PATH[mode]
+        slug = self._event_slug(event_iloc)
+        if not Path(store).is_dir():
+            raise FileNotFoundError(
+                f"Scenario {slug} (event_iloc {event_iloc}) records its {mode} summary store as cleared, and the tree "
+                f"that holds its only copy is absent: {store} (analysis {self._analysis.cfg_analysis.analysis_id})."
+            )
+        state = self._timeseries_group_state(store, group)
+        missing = sorted(set(names) - set(state[0])) if state is not None else list(names)
+        if state is None or event_iloc not in state[1] or missing:
+            raise FileNotFoundError(
+                f"Scenario {slug} (event_iloc {event_iloc}) records its {mode} summary store as cleared, but {group} "
+                f"of {store} does not hold its slice (variables missing {missing}, group present: {state is not None})."
+            )
+        stored = xr.open_zarr(
+            store, group=group, consolidated=zarr_store_has_index(store), chunks=None, decode_timedelta=False
+        )
+        positions = [int(v) for v in stored["event_iloc"].values]
+        piece = stored.isel(event_iloc=[positions.index(event_iloc)])[list(names)].load()
+        # The identifier is assigned for every event after the join, as it is for an event read from its own store.
+        piece = piece.drop_vars("event_id") if "event_id" in piece.coords else piece
+        return piece
+
+    def _summary_slice_matches(self, store: Path, group: str, own: xr.Dataset, event_iloc: int) -> bool:
+        """Whether the stored slice of ``event_iloc`` equals the scenario's own summary, nothing else standing in it.
+
+        Every variable of ``own`` must read back equal to the stored one (a missing value matching a missing
+        value), and every other data variable of the group must be entirely missing at the event, which is what the
+        join leaves where the scenario lacks a variable another scenario has.
+        """
+        state = self._timeseries_group_state(store, group)
+        if state is None or event_iloc not in state[1]:
+            return False
+        stored = xr.open_zarr(
+            store, group=group, consolidated=zarr_store_has_index(store), chunks=None, decode_timedelta=False
+        )
+        read = stored.isel(event_iloc=[state[1].index(event_iloc)]).load()
+        labels = set(own.coords) | {"event_id", VARIABLE_SET_COORD, "hhemt_producing_sha", "hhemt_producing_version"}
+        for name in read.data_vars:
+            if name not in own.data_vars:
+                if name in labels:
+                    continue
+                if not bool(read[name].isnull().all()):
+                    return False
+                continue
+            want, got = own[name].load(), read[name]
+            if set(want.dims) != set(got.dims):
+                return False
+            want = want.transpose(*got.dims)
+            if not self._arrays_equal(np.asarray(got.values), np.asarray(want.values)):
+                return False
+        return all(name in read.data_vars for name in own.data_vars)
+
+    def _clear_summary_stores(self, store: Path, *, drop_flag: bool) -> None:
+        """Delete each scenario's per-scenario summary stores once every slice of the scenario reads back.
+
+        Per scenario and per model whose summary stores the analysis defines: a model whose log already records the
+        clearing as ``pending`` is finished from the group and never compared against its half-deleted stores; a
+        model with no record has each mode's slice read back from the store (a slice that does not match keeps the
+        stores and raises naming the scenario), then the record is written as ``pending`` with each stem's groups and
+        variable names, the stores are deleted through the deletion tool, and the record is set to ``done``. Peak disk
+        use therefore ends near one copy of the summaries.
+        """
+        from hhemt.du_sentinels import delete_and_account
+
+        first = TRITONSWMM_scenario(self._analysis.df_sims.index[0], self._analysis)
+        by_model: dict[str, list[str]] = {}
+        for mode in self._MODE_TO_TREE_PATH:
+            if getattr(first.scen_paths, self._MODE_CONFIG[mode][0]) is not None:
+                by_model.setdefault(self._mode_model(mode), []).append(mode)
+        for event_iloc in (int(i) for i in self._analysis.df_sims.index):
+            scen = TRITONSWMM_scenario(event_iloc, self._analysis)
+            for model, modes in by_model.items():
+                log = scen.get_log(model)
+                existing = getattr(log, SUMMARY_CLEARING_FIELD, None)
+                record = parse_summary_clearing_record(None if existing is None else existing.get())
+                if record is not None and record["state"] == "pending":
+                    self._finish_pending_summary_clearing(scen, log, model, record, event_iloc, store)
+                    record = parse_summary_clearing_record(getattr(log, SUMMARY_CLEARING_FIELD).get())
+                # A partial re-process leaves a record that names only some of the model's stems; a stem it does not
+                # name whose store is back is read back and cleared like any other, and joins the record.
+                held = {} if record is None else record["stems"]
+                modes = [m for m in modes if self._MODE_STEM[m] not in held]
+                if not modes:
+                    continue
+                stems: dict[str, dict[str, list[str]]] = {}
+                for mode in modes:
+                    own = self._event_summary_dataset(mode, event_iloc, drop_flag=drop_flag)
+                    group = self._MODE_TO_TREE_PATH[mode]
+                    if not self._summary_slice_matches(store, group, own, event_iloc):
+                        raise ProcessingError(
+                            "read back the consolidated summaries",
+                            store,
+                            f"the slice of scenario {self._event_slug(event_iloc)} (event_iloc {event_iloc}) in "
+                            f"{group} does not equal the data it was written from; its own summary stores were kept",
+                        )
+                    stems.setdefault(self._MODE_STEM[mode], {})[group] = sorted(own.data_vars)
+                self._log_field(log, SUMMARY_CLEARING_FIELD).set({"state": "pending", "stems": {**held, **stems}})
+                paths = [self._stem_path(scen, stem) for stem in stems]
+                delete_and_account(
+                    [p for p in paths if p is not None and p.exists()],
+                    scope_dir=scen.scen_paths.sim_folder,
+                    scope="scenario",
+                )
+                self._log_field(log, SUMMARY_CLEARING_FIELD).set({"state": "done", "stems": {**held, **stems}})
+
+    def _stem_path(self, scen: TRITONSWMM_scenario, stem: str) -> Path | None:
+        """The scenario's path of the per-scenario summary store named ``stem``."""
+        for mode, mode_stem in self._MODE_STEM.items():
+            if mode_stem == stem:
+                return getattr(scen.scen_paths, self._MODE_CONFIG[mode][0])
+        return None
+
+    def _finish_pending_summary_clearing(
+        self,
+        scen: TRITONSWMM_scenario,
+        log,
+        model: str,
+        record: dict,
+        event_iloc: int,
+        store: Path,
+    ) -> None:
+        """Finish a summary clearing recorded as pending, from the branch and never from the stores.
+
+        A pending record means the slices were already read back equal, so whatever is left of the stores (a zarr
+        directory with some chunk files removed still exists) is neither compared nor rewritten from: a comparison
+        against a partly deleted store fails, and the failure would be answered by overwriting a verified slice with
+        a truncated one. Each recorded group is confirmed to hold the event with every recorded variable, the rest of
+        the stores is deleted, and the record is set to ``done``. A group missing the event or a variable refuses
+        naming the scenario and the group, since the deleted store was then the only copy.
+        """
+        from hhemt.du_sentinels import delete_and_account
+
+        for groups in record["stems"].values():
+            for group, names in groups.items():
+                state = self._timeseries_group_state(store, group)
+                missing = sorted(set(names) - set(state[0])) if state is not None else list(names)
+                if state is None or event_iloc not in state[1] or missing:
+                    raise ProcessingError(
+                        "finish a recorded clearing of summary stores",
+                        store,
+                        f"scenario {self._event_slug(event_iloc)} (event_iloc {event_iloc}) records its {model} "
+                        f"summary stores as being cleared, but {group} does not hold its slice with every recorded "
+                        f"variable (missing {missing}, event present: {state is not None and event_iloc in state[1]}); "
+                        "nothing was deleted or marked done",
+                    )
+        paths = [self._stem_path(scen, stem) for stem in record["stems"]]
+        delete_and_account(
+            [p for p in paths if p is not None and p.exists()], scope_dir=scen.scen_paths.sim_folder, scope="scenario"
+        )
+        self._log_field(log, SUMMARY_CLEARING_FIELD).set({"state": "done", "stems": record["stems"]})
+
+    @staticmethod
+    def _groups_holding_layout_30_arrays(store: Path) -> list[str]:
+        """Each ``{family}/{kind}`` group of ``store`` that holds data arrays directly (the layout-30 shape), sorted."""
+        import json
+
+        found: list[str] = []
+        for family in ("tritonswmm", "triton_only", "swmm_only"):
+            for kind in ("triton", "swmm_node", "swmm_link", "performance"):
+                group = Path(store) / family / kind
+                if not group.is_dir():
+                    continue
+                for child in group.iterdir():
+                    doc = child / "zarr.json"
+                    if not (child.is_dir() and doc.is_file()):
+                        continue
+                    try:
+                        is_array = json.loads(doc.read_text()).get("node_type") == "array"
+                    except (OSError, ValueError):
+                        continue
+                    if is_array:
+                        found.append(f"{family}/{kind}")
+                        break
+        return sorted(found)
+
+    @staticmethod
+    def assert_summary_branch_layout(tree: "xr.DataTree", source: Path | str) -> None:
+        """Raise ``ProcessingError`` when ``tree`` holds a summary at a layout-30 path, naming the layout version.
+
+        Layout 30 stored each summary directly at ``{family}/{kind}``; layout 31 stores it at
+        ``{family}/{kind}/summary``. A tree with a data-bearing ``{family}/{kind}`` node and no ``summary`` child
+        was written by a toolkit older than layout 31 and must be migrated, not grafted.
+        """
+        from hhemt.version_migration.constants import LAYOUT_VERSION
+
+        for family in ("tritonswmm", "triton_only", "swmm_only"):
+            if family not in tree.children:
+                continue
+            for kind, node in tree[family].children.items():
+                if node.has_data and "summary" not in node.children:
+                    raise ProcessingError(
+                        "read a member's consolidated tree",
+                        str(source),
+                        f"{family}/{kind} holds a summary at its layout-30 path; layout {LAYOUT_VERSION} stores it "
+                        f"at {family}/{kind}/summary. Migrate the tree (hhemt migrate) before grafting it.",
+                    )
+
     def open_datatree(self) -> "xr.DataTree":
         """Open the consolidated hierarchical DataTree zarr lazily.
 
@@ -613,7 +1313,7 @@ class TRITONSWMM_analysis_post_processing:
         return open_store(path, chunks="auto")
 
     # ------------------------------------------------------------------------------------------------
-    # Consolidated per-scenario time series: analysis_timeseries.zarr
+    # Consolidated per-scenario time series: the `timeseries` branches of analysis_datatree.zarr
     # ------------------------------------------------------------------------------------------------
 
     def _timeseries_axis(self) -> tuple[dict[int, "pd.Timestamp"], float, np.ndarray]:
@@ -636,7 +1336,7 @@ class TRITONSWMM_analysis_post_processing:
         if n_steps < 1:
             raise ProcessingError(
                 "consolidate timeseries",
-                self._analysis.analysis_paths.analysis_timeseries_zarr,
+                self._analysis.analysis_paths.analysis_datatree_zarr,
                 f"the longest event window ({longest_s} s) is shorter than one reporting step ({step} s)",
             )
         values = step * np.arange(1, n_steps + 1)
@@ -666,26 +1366,31 @@ class TRITONSWMM_analysis_post_processing:
     ) -> xr.Dataset:
         """One scenario's contribution to the consolidated store: time-variant variables and the flag, on ``elapsed_s``.
 
-        The appended Dataset holds the per-scenario store's variables that carry ``date_time`` and, for the node
-        store, ``is_coupling_node``, and no other variable: the static report variables reach the analysis level
-        through the summary tree, so a scenario written before a static variable existed does not differ from a
-        later one. Every data variable gets ``event_iloc`` (``expand_dims``), the flag included, because a variable
+        The appended Dataset holds the per-scenario store's variables that carry ``date_time`` and, for the COUPLED
+        node store, ``is_coupling_node``, and no other variable: the static report variables reach the analysis
+        level through the summary tree, so a scenario written before a static variable existed does not differ from
+        a later one. Every data variable gets ``event_iloc`` (``expand_dims``), the flag included, because a variable
         without it is silently overwritten by each append (a per-node 0 then 10 reads back as 10 for both events).
-        A node store lacking the flag (written by a toolkit older than the coupling outputs) gets it derived from
-        the scenario's own ``coupling_nodes.txt``.
+        A coupled node store lacking the flag (written by a toolkit older than the coupling outputs) gets it
+        derived from the scenario's own ``coupling_nodes.txt``. The SWMM-only node store has no coupling and
+        therefore no flag: nothing is kept for it beyond the time-variant variables and nothing is derived.
         """
+        if ts_mode.endswith("_triton_ts"):
+            return self._gridded_timeseries_slice(scen, ts_mode, event_iloc, start, step, axis)
         path = getattr(scen.scen_paths, self._TIMESERIES_MODE_CONFIG[ts_mode])
         is_node = ts_mode.endswith("_node_ts")
+        is_system = ts_mode.endswith("_system_ts")
+        coupled = ts_mode.startswith("tritonswmm")
         open_kwargs = {"chunks": "auto", "engine": self._open_engine(), "decode_timedelta": False}
         if open_kwargs["engine"] == "zarr":
             open_kwargs["consolidated"] = zarr_store_has_index(path)
         full = xr.open_dataset(path, **open_kwargs)
         keep = [v for v in full.data_vars if "date_time" in full[v].dims]
-        if is_node and "is_coupling_node" in full.data_vars:
+        if is_node and coupled and "is_coupling_node" in full.data_vars:
             keep.append("is_coupling_node")
         ds = full[keep].load()
         slug = self._event_slug(event_iloc)
-        if is_node and "is_coupling_node" not in ds.data_vars:
+        if is_node and coupled and "is_coupling_node" not in ds.data_vars:
             from hhemt.scenario import coupling_nodes_file_for
 
             nodes_file = coupling_nodes_file_for(scen.scen_paths.swmm_hydraulics_inp)
@@ -710,7 +1415,78 @@ class TRITONSWMM_analysis_post_processing:
             )
         ds = ds.assign_coords(elapsed_s=("date_time", axis[index - 1])).swap_dims(date_time="elapsed_s")
         ds = ds.drop_vars("date_time").reindex(elapsed_s=axis)
-        apply_cf_attributes(ds, "tritonswmm_swmm_node" if is_node else "tritonswmm_swmm_link")
+        cf_family = "tritonswmm_swmm" if coupled else "swmm_only"
+        if is_system:
+            apply_cf_attributes(ds, "swmm_only_system")
+        else:
+            apply_cf_attributes(ds, f"{cf_family}_node" if is_node else f"{cf_family}_link")
+        ds = ds.expand_dims(event_iloc=[int(event_iloc)])
+        return ds.assign_coords(
+            event_id=("event_iloc", [slug]),
+            event_start_datetime=("event_iloc", np.array([start.to_datetime64()], dtype="datetime64[ns]")),
+        )
+
+    @staticmethod
+    def _gridded_axis(axis: np.ndarray) -> np.ndarray:
+        """The ``elapsed_s`` axis of the gridded group: the shared axis with the instant 0 put in front.
+
+        Rather than ``axis`` itself, because TRITON may print its initial state at ``timestep`` 0 and may not (open
+        item O14, which the first real run closes): an axis that starts at one step would refuse a store that
+        starts at 0, and an axis fixed from the first store written would refuse the next one if the two differ. The
+        0 row is NaN for a store that has no initial state, which is a missing value and not a made-up one.
+        """
+        return np.concatenate([np.zeros(1, dtype=axis.dtype), axis])
+
+    def _gridded_timeseries_slice(
+        self,
+        scen: TRITONSWMM_scenario,
+        ts_mode: str,
+        event_iloc: int,
+        start: "pd.Timestamp",
+        step: float,
+        axis: np.ndarray,
+    ) -> xr.Dataset:
+        """One scenario's gridded contribution to its family's ``triton/timeseries`` group, LAZY and chunked by block.
+
+        The coupled model writes ``tritonswmm/triton/timeseries`` and the TRITON-only model writes
+        ``triton_only/triton/timeseries``; the two stores have the same shape and take the same path here.
+
+        Every variable carrying ``timestep`` is kept (the keep-list prune has already left the store holding only
+        the selected ones), ``timestep`` in minutes becomes integer ``elapsed_s`` seconds at the TRITON reporting
+        step, and the event is NaN-padded to the group's axis. The Dataset is never loaded: its chunks are
+        ``(event_iloc 1, elapsed_s k, every spatial dim whole)`` with ``k`` sized so one chunk is about
+        ``_TIMESERIES_BLOCK_BYTES``, so the write and the read-back hold a few blocks and not the 1 GB slice.
+        The source encodings are dropped: a source chunk shape that differs from ``k`` would make ``to_zarr`` raise
+        on a chunk overlap, and an append may not restate the encoding of a variable the group already holds.
+        """
+        path = getattr(scen.scen_paths, self._TIMESERIES_MODE_CONFIG[ts_mode])
+        open_kwargs = {"chunks": {}, "engine": self._open_engine(), "decode_timedelta": False}
+        if open_kwargs["engine"] == "zarr":
+            open_kwargs["consolidated"] = zarr_store_has_index(path)
+        full = xr.open_dataset(path, **open_kwargs)
+        ds = full[[v for v in full.data_vars if "timestep" in full[v].dims]]
+        slug = self._event_slug(event_iloc)
+        grid_axis = self._gridded_axis(axis)
+        seconds = np.asarray(ds["timestep"].values, dtype="float64") * 60.0
+        index = np.rint(seconds / step).astype("int64")
+        if not np.allclose(seconds, index * step, atol=1e-6) or index.min() < 0 or index.max() > len(grid_axis) - 1:
+            raise ProcessingError(
+                "place a scenario's gridded series on the shared elapsed_s axis",
+                path,
+                f"scenario {slug} (event_iloc {event_iloc}) has timestep times that are not whole multiples of the "
+                f"{step} s reporting step, or that run past the longest event ({len(grid_axis) - 1} steps after "
+                f"the initial instant); first/last elapsed seconds {seconds.min()}/{seconds.max()}",
+            )
+        bytes_per_step = max(
+            da.dtype.itemsize * int(np.prod([n for d, n in da.sizes.items() if d != "timestep"]))
+            for da in ds.data_vars.values()
+        )
+        block = int(max(1, min(len(grid_axis), round(self._TIMESERIES_BLOCK_BYTES / bytes_per_step))))
+        ds = ds.assign_coords(elapsed_s=("timestep", grid_axis[index])).swap_dims(timestep="elapsed_s")
+        ds = ds.drop_vars("timestep").reindex(elapsed_s=grid_axis)
+        ds = ds.chunk({d: (block if d == "elapsed_s" else -1) for d in ds.dims})
+        for variable in ds.variables.values():
+            variable.encoding = {}
         ds = ds.expand_dims(event_iloc=[int(event_iloc)])
         return ds.assign_coords(
             event_id=("event_iloc", [slug]),
@@ -726,7 +1502,9 @@ class TRITONSWMM_analysis_post_processing:
     def _stored_slice_equals(store: Path, group: str, expected: xr.Dataset, event_iloc: int) -> bool:
         """Read the event's slice back from the store and compare it NaN-aware with ``expected``, every data variable.
 
-        The comparison is of VALUES read from disk. Shape metadata and chunk presence do not qualify: an append
+        The comparison is of VALUES read from disk, BLOCK BY BLOCK along ``elapsed_s`` (blocks of about
+        ``_TIMESERIES_BLOCK_BYTES``), so a gridded slice of about 1 GB is compared with a few blocks resident and
+        never as a whole; a SWMM slice is one block. Shape metadata and chunk presence do not qualify: an append
         persists the new shape before its chunks, and chunk presence is inexact where empty chunks are not written.
         """
         stored = xr.open_zarr(store, group=group, consolidated=zarr_store_has_index(store), chunks=None)
@@ -734,19 +1512,30 @@ class TRITONSWMM_analysis_post_processing:
         if event_iloc not in positions:
             return False
         read = stored.isel(event_iloc=[positions.index(event_iloc)])
-        if sorted(read.data_vars) != sorted(expected.data_vars):
+        # A coordinate that a gridded group stores without the coordinates attribute reads back as a data variable.
+        if (set(expected.data_vars) - set(read.data_vars)) or (
+            set(read.data_vars) - set(expected.data_vars) - set(expected.coords)
+        ):
             return False
+        block_bytes = TRITONSWMM_analysis_post_processing._TIMESERIES_BLOCK_BYTES
         for name in expected.data_vars:
             want = expected[name]
             got = read[name]
             if got.dims != want.dims:
                 want = want.transpose(*got.dims)
-            a, b = np.asarray(got.values), np.asarray(want.values)
-            if a.shape != b.shape:
+            if got.shape != want.shape:
                 return False
-            same = np.array_equal(a, b, equal_nan=True) if a.dtype.kind == "f" else np.array_equal(a, b)
-            if not same:
-                return False
+            if "elapsed_s" in got.dims:
+                n = got.sizes["elapsed_s"]
+                per_step = got.dtype.itemsize * max(1, got.size // max(1, n))
+                width = max(1, block_bytes // per_step)
+                blocks = [{"elapsed_s": slice(i, min(i + width, n))} for i in range(0, n, width)]
+            else:
+                blocks = [{}]
+            for block in blocks:
+                a, b = np.asarray(got.isel(block).values), np.asarray(want.isel(block).values)
+                if not TRITONSWMM_analysis_post_processing._arrays_equal(a, b):
+                    return False
         return True
 
     def _plan_timeseries_write(
@@ -763,13 +1552,15 @@ class TRITONSWMM_analysis_post_processing:
         """Decide how this scenario's slice gets into ``group``; the caller performs the write.
 
         Returns ``(action, dataset, position)``. ``"verified"``: the slice is already in the store and passed its
-        read-back, nothing to write. ``"rewrite"``: the event is in the store without a passing read-back, so it is
+        read-back, nothing to write; the dataset is returned (None only when the scenario's own store is gone and
+        its clearing is recorded) because the clearing record names its variables.
+        ``"rewrite"``: the event is in the store without a passing read-back, so it is
         rewritten in place at ``position`` from the scenario's own store (refused when that store was already
         cleared). ``"append"``: the group exists and gains the event along ``event_iloc``. ``"create"``: the group
         does not exist yet. An unconditional re-append would duplicate the event (measured ``[0, 1, 1]``). The writes
         themselves stay in the caller, inside its ``deferred_consolidation`` block.
         """
-        store = self._analysis.analysis_paths.analysis_timeseries_zarr
+        store = self._analysis.analysis_paths.analysis_datatree_zarr
         path = getattr(scen.scen_paths, self._TIMESERIES_MODE_CONFIG[ts_mode])
         state = self._timeseries_group_state(store, group)
         present = state is not None and event_iloc in state[1]
@@ -790,7 +1581,7 @@ class TRITONSWMM_analysis_post_processing:
         ds = self._timeseries_slice(scen, ts_mode, event_iloc, start, step, axis)
         if present:
             if self._stored_slice_equals(store, group, ds, event_iloc):
-                return "verified", None, None
+                return "verified", ds, None
             return "rewrite", ds, state[1].index(event_iloc)
         if state is not None:
             missing = sorted(set(state[0]) - set(ds.data_vars))
@@ -806,18 +1597,26 @@ class TRITONSWMM_analysis_post_processing:
         return "create", ds, None
 
     def consolidate_timeseries(self, verbose: bool = False) -> Path:
-        """Append each scenario's SWMM node and link time series to ``analysis_timeseries.zarr``, one at a time.
+        """Append each scenario's SWMM node, SWMM link and gridded TRITON series to the ``timeseries`` branches.
 
+        Every model family that writes series is consolidated the same way: the coupled model's three stores,
+        the SWMM-only model's node and link stores and the TRITON-only model's gridded store, each into its own
+        ``{family}/{kind}/timeseries`` group, the family decided by which per-scenario paths the analysis defines.
         Written through ``append_zarr(..., append_dim="event_iloc")`` inside ``deferred_consolidation(store)``, so
         the store's index is rebuilt once, at the end. With ``toggle_clear_scenario_timeseries_after_consolidation``
-        on, a scenario's own node and link stores are deleted as soon as both of its slices have been read back from
-        the store and found equal, so peak disk use stays near one copy of the series. The store is NOT a member of
-        ``ROOT_TREE_NAMES`` and not an analysis-level artifact of the consolidation delete: neither the reprocess
-        delete nor the consolidation delete removes it, because with clearing on it holds the only copy.
+        on, a scenario's own series stores of one MODEL are deleted as soon as every one of that model's slices has
+        been read back from the store and found equal, so peak disk use stays near one copy of the series and a
+        failing read-back keeps the stores of its own model (and every model processed after it) while the stores
+        already verified stay cleared. A clearing is recorded in the model's own log as pending BEFORE the delete
+        and as done after it, and a scenario found with a pending record is finished from the store's slice
+        rather than re-verified against its half-deleted source. The ``timeseries`` branches are APPEND-ONLY: no
+        consolidation rebuild (``_write_summary_branches`` rewrites ``summary`` groups only) and no reprocess
+        delete (``delete_reprocess_zarr_runner`` keeps every ``timeseries`` branch) removes or rewrites one,
+        because with clearing on it holds the only copy.
         """
-        store = self._analysis.analysis_paths.analysis_timeseries_zarr
+        store = self._analysis.analysis_paths.analysis_datatree_zarr
         if store is None:
-            raise ValueError("analysis_timeseries_zarr path is not configured on AnalysisPaths.")
+            raise ValueError("analysis_datatree_zarr path is not configured on AnalysisPaths.")
         clear = bool(
             getattr(self._analysis.cfg_analysis, "toggle_clear_scenario_timeseries_after_consolidation", False)
         )
@@ -829,68 +1628,128 @@ class TRITONSWMM_analysis_post_processing:
         ]
         if not modes:
             return store
+        by_model: dict[str, list[tuple[str, str]]] = {}
+        for ts_mode, group in modes:
+            by_model.setdefault(self._TIMESERIES_MODE_MODEL[ts_mode], []).append((ts_mode, group))
         starts, step, axis = self._timeseries_axis()
         with deferred_consolidation(store):
             for event_iloc in self._analysis.df_sims.index:
                 event_iloc = int(event_iloc)
                 scen = TRITONSWMM_scenario(event_iloc, self._analysis)
-                log = scen.get_log("tritonswmm")
-                verified = {}
-                for ts_mode, group in modes:
-                    flag_name = (
-                        "consolidated_node_timeseries_cleared"
-                        if ts_mode.endswith("_node_ts")
-                        else "consolidated_link_timeseries_cleared"
-                    )
-                    cleared_field = getattr(log, flag_name, None)
-                    cleared_already = bool(cleared_field is not None and cleared_field.get())
-                    action, ds, position = self._plan_timeseries_write(
-                        scen, ts_mode, group, event_iloc, starts[event_iloc], step, axis, cleared_already
-                    )
-                    if action == "rewrite":
-                        append_zarr(
-                            ds.drop_vars([c for c in ds.coords if "event_iloc" not in ds[c].dims]),
-                            store,
-                            group=group,
-                            consolidate=False,
-                            mode="r+",
-                            region={"event_iloc": slice(position, position + 1)},
+                for model_type, model_modes in by_model.items():
+                    log = scen.get_log(model_type)
+                    verified: dict[str, list[str]] = {}
+                    for ts_mode, group in model_modes:
+                        cleared_name, pending_name = self._TIMESERIES_CLEARED_FIELDS[ts_mode]
+                        cleared_field = getattr(log, cleared_name, None)
+                        cleared_already = bool(cleared_field is not None and cleared_field.get())
+                        pending_field = getattr(log, pending_name, None)
+                        pending = list(pending_field.get() or []) if pending_field is not None else []
+                        if pending and not cleared_already:
+                            self._finish_pending_clearing(scen, log, ts_mode, group, event_iloc, pending)
+                            continue
+                        if pending:
+                            pending_field.clear()
+                        action, ds, position = self._plan_timeseries_write(
+                            scen, ts_mode, group, event_iloc, starts[event_iloc], step, axis, cleared_already
                         )
-                    elif action == "append":
-                        append_zarr(ds, store, group=group, consolidate=False, mode="a", append_dim="event_iloc")
-                    elif action == "create":
-                        append_zarr(ds, store, group=group, consolidate=False, mode="a")
-                    ok = action == "verified" or self._stored_slice_equals(store, group, ds, event_iloc)
-                    if not ok:
-                        raise ProcessingError(
-                            "read back the consolidated time series",
-                            store,
-                            f"the slice of scenario {self._event_slug(event_iloc)} (event_iloc {event_iloc}) in "
-                            f"{group} does not equal the data it was written from; its own store was kept",
-                        )
-                    verified[ts_mode] = flag_name
-                if clear:
-                    self._clear_scenario_timeseries(scen, log, verified)
+                        if action == "rewrite":
+                            append_zarr(
+                                ds.drop_vars([c for c in ds.coords if "event_iloc" not in ds[c].dims]),
+                                store,
+                                group=group,
+                                consolidate=False,
+                                mode="r+",
+                                region={"event_iloc": slice(position, position + 1)},
+                            )
+                        elif action == "append":
+                            append_zarr(ds, store, group=group, consolidate=False, mode="a", append_dim="event_iloc")
+                        elif action == "create":
+                            append_zarr(ds, store, group=group, consolidate=False, mode="a")
+                        ok = action == "verified" or self._stored_slice_equals(store, group, ds, event_iloc)
+                        if not ok:
+                            raise ProcessingError(
+                                "read back the consolidated time series",
+                                store,
+                                f"the slice of scenario {self._event_slug(event_iloc)} (event_iloc {event_iloc}) in "
+                                f"{group} does not equal the data it was written from; its own store was kept",
+                            )
+                        if ds is not None:
+                            verified[ts_mode] = sorted(ds.data_vars)
+                    if clear and verified:
+                        self._clear_scenario_timeseries(scen, log, verified)
         return store
 
-    def _clear_scenario_timeseries(self, scen: TRITONSWMM_scenario, log, verified: dict[str, str]) -> None:
-        """Delete the scenario's node and link time-series stores and record each deletion in its model log.
-
-        Only called once every slice of the scenario has passed its read-back. The deletion goes through the
-        deletion tool so the scenario's disk-use sentinel is adjusted once.
-        """
-        from hhemt.du_sentinels import delete_and_account
+    @staticmethod
+    def _log_field(log, name: str):
+        """The model log's LogField ``name``, created empty (and bound to the log) when the log lacks it."""
         from hhemt.log import LogField
 
+        if getattr(log, name) is None:
+            setattr(log, name, LogField())
+            log.model_post_init(None)
+        return getattr(log, name)
+
+    def _clear_scenario_timeseries(self, scen: TRITONSWMM_scenario, log, verified: dict[str, list[str]]) -> None:
+        """Delete the scenario's series stores, recording the clearing as pending first and done last.
+
+        Only called once every slice of the scenario has passed its read-back. ``verified`` maps each mode to the
+        data-variable names its slice was verified with. The pending record carries those names, because after a
+        kill part-way through the delete the source can no longer say which variables its slice held. The deletion
+        goes through the deletion tool so the scenario's disk-use sentinel is adjusted once.
+        """
+        from hhemt.du_sentinels import delete_and_account
+
+        for ts_mode, names in verified.items():
+            self._log_field(log, self._TIMESERIES_CLEARED_FIELDS[ts_mode][1]).set(list(names))
         paths = [getattr(scen.scen_paths, self._TIMESERIES_MODE_CONFIG[m]) for m in verified]
         delete_and_account(
             [p for p in paths if p is not None and p.exists()], scope_dir=scen.scen_paths.sim_folder, scope="scenario"
         )
-        for flag_name in verified.values():
-            if getattr(log, flag_name) is None:
-                setattr(log, flag_name, LogField())
-                log.model_post_init(None)
-            getattr(log, flag_name).set(True)
+        for ts_mode in verified:
+            cleared_name, pending_name = self._TIMESERIES_CLEARED_FIELDS[ts_mode]
+            self._log_field(log, cleared_name).set(True)
+            getattr(log, pending_name).clear()
+
+    def _finish_pending_clearing(
+        self,
+        scen: TRITONSWMM_scenario,
+        log,
+        ts_mode: str,
+        group: str,
+        event_iloc: int,
+        names: list[str],
+    ) -> None:
+        """Finish a clearing the log records as pending, from the store's slice and never from the source.
+
+        The pending record means this slice was already read back equal, so the source (whatever is left of it, and
+        a zarr directory with some chunk files removed still exists) is neither compared nor rewritten from: a
+        comparison against a partly deleted source fails, and the failure would be answered by overwriting a
+        verified slice with a truncated one. The slice is confirmed present in its group with every recorded
+        variable, the rest of the source is deleted (an absent path is not an error), and the clearing is recorded
+        done. A group missing the event or a recorded variable refuses naming the scenario, since then the deleted
+        source was the only copy.
+        """
+        from hhemt.du_sentinels import delete_and_account
+
+        store = self._analysis.analysis_paths.analysis_datatree_zarr
+        state = self._timeseries_group_state(store, group)
+        missing = sorted(set(names) - set(state[0])) if state is not None else list(names)
+        if state is None or event_iloc not in state[1] or missing:
+            raise ProcessingError(
+                "finish a recorded clearing of a time-series store",
+                store,
+                f"scenario {self._event_slug(event_iloc)} (event_iloc {event_iloc}) records its {ts_mode} store as "
+                f"being cleared, but {group} does not hold its slice with every recorded variable "
+                f"(missing {missing}, event present: {state is not None and event_iloc in state[1]}); nothing was "
+                "deleted or marked done",
+            )
+        path = getattr(scen.scen_paths, self._TIMESERIES_MODE_CONFIG[ts_mode])
+        if path is not None and path.exists():
+            delete_and_account([path], scope_dir=scen.scen_paths.sim_folder, scope="scenario")
+        cleared_name, pending_name = self._TIMESERIES_CLEARED_FIELDS[ts_mode]
+        self._log_field(log, cleared_name).set(True)
+        getattr(log, pending_name).clear()
 
     def _retrieve_combined_timeseries(self, ts_mode: str) -> xr.Dataset:
         """Load per-scenario TIMESERIES zarrs and concatenate them along event_iloc.
@@ -932,99 +1791,54 @@ class TRITONSWMM_analysis_post_processing:
         ]
         return ds_ts.assign_coords(event_id=("event_iloc", event_ids))
 
-    def _retrieve_combined_output(self, mode: str) -> xr.Dataset:
+    def _select_stem_variables(self, mode: str, ds: xr.Dataset) -> xr.Dataset:
+        """The part of one scenario's summary stem that ``mode`` consolidates (``_STEM_VARIABLE_SELECTION``).
+
+        A mode with no entry keeps every variable. ``"include"`` keeps the listed names the stem holds, and
+        ``"exclude"`` drops them, so two modes reading one stem never both carry a variable.
+        """
+        selection = self._STEM_VARIABLE_SELECTION.get(mode)
+        if selection is None:
+            return ds
+        how, names = selection
+        if how == "include":
+            # Subsetting by name keeps only the coordinates the chosen variables use, so a node coordinate of the
+            # stem does not travel into a group that has no node dimension.
+            return ds[[v for v in names if v in ds.data_vars]]
+        return ds.drop_vars([v for v in names if v in ds.data_vars])
+
+    def _retrieve_combined_output(self, mode: str, *, event_ilocs: "list[int] | None" = None) -> xr.Dataset:
         """
         Load pre-created summary files for each scenario and concatenate them.
+
+        A scenario whose model log records its summary stores as cleared contributes its slice of the
+        ``summary`` group instead (``_read_cleared_summary``), restricted to the variables the record names, so the
+        result is the same Dataset whether or not the stores were cleared.
 
         Parameters
         ----------
         mode : str
-            One of the eight keys in _MODE_CONFIG:
+            One of the nine keys in _MODE_CONFIG:
             "tritonswmm_triton", "tritonswmm_swmm_node", "tritonswmm_swmm_link",
             "tritonswmm_performance", "triton_only", "triton_only_performance",
-            "swmm_only_node", "swmm_only_link". An unknown mode raises ``ValueError``
+            "swmm_only_node", "swmm_only_link", "swmm_only_system". An unknown mode raises ``ValueError``
             listing the valid keys.
+        event_ilocs : list of int, optional
+            Read only these scenarios, in this order. Default: every scenario of the analysis.
         """
         if mode not in self._MODE_CONFIG:
             raise ValueError(f"Unknown mode: {mode}. Valid modes: {list(self._MODE_CONFIG.keys())}")
 
-        scen_path_attr = self._MODE_CONFIG[mode][0]
+        events = [int(i) for i in (self._analysis.df_sims.index if event_ilocs is None else event_ilocs)]
+        cleared = self._summary_records(mode)
+        drop_flag = mode == "tritonswmm_swmm_node" and self._exclude_coupling_flag()
 
         lst_ds = []
-        for event_iloc in self._analysis.df_sims.index:
-            scen = TRITONSWMM_scenario(event_iloc, self._analysis)
-
-            summary_file = getattr(scen.scen_paths, scen_path_attr)
-
-            if summary_file is None:
-                raise ValueError(
-                    f"Summary file path is None for mode '{mode}' and event_iloc={event_iloc}. "
-                    f"Check that the appropriate model types are enabled in system config."
-                )
-
-            if not summary_file.exists():
-                raise FileNotFoundError(
-                    f"Summary file not found: {summary_file}. "
-                    f"Run timeseries processing with summary creation before consolidating."
-                )
-            # COMPLETENESS, not just existence. A kill inside write_zarr leaves a
-            # store that .exists() and OPENS and returns fill for the chunks that
-            # never landed -- measured; zarr writes the declared shape before the
-            # chunk bytes, and an absent chunk reads as fill_value rather than
-            # raising. The per-model processing-log record is the only signal in the
-            # tree that attests RETURN rather than PRESENCE: add_sim_processing_entry
-            # runs after write_zarr returns, so a killed write leaves no record. The
-            # upstream d_process flag does NOT close this -- it gates on the summary
-            # files EXISTING, which a fill-filled partial satisfies.
-            #
-            # THIS CLOSES AN ASYMMETRY RATHER THAN INVENTING A MECHANISM. The
-            # CONSOLIDATED tier already has the write-then-flag interlock: the reuse gate
-            # in consolidate_to_datatree is a CONJUNCTION of exists() and
-            # datatree_consolidation_complete, and that method sets the flag only after
-            # write_datatree_zarr returns, so a kill between them re-consolidates. The per-scenario tier had
-            # the same signal available and was not consulting it.
-            #
-            # FileNotFoundError, NOT a distinct type, and the type is load-bearing.
-            # Six live call sites across three modules reach this method, and FOUR
-            # enclosing handlers catch exactly (FileNotFoundError, ValueError):
-            # eda.cross_sim_identity's _enabled_modes and check_cross_sim_identity,
-            # eda.compute_sensitivity's _compare_pair, and sensitivity_analysis's
-            # consolidate_sensitivity_datatree. A distinct type would turn that last
-            # one's deliberate skip-with-warning into a master abort AND strip both EDA calc
-            # members of the skip arms that let a family comparison proceed over the
-            # remaining subs. Making that abort deliberate is a FIVE-spec change --
-            # this one plus four handler widenings -- and the EDA skip semantics belong
-            # to their own authors.
-            if mode.startswith("tritonswmm"):
-                _model_type = "tritonswmm"
-            elif mode.startswith("triton"):
-                _model_type = "triton"
-            else:
-                _model_type = "swmm"
-            _entry = scen.get_log(_model_type).processing_log.outputs.get(summary_file.name)
-            if _entry is None or not _entry.success:
-                raise FileNotFoundError(
-                    f"Summary store present but incomplete: {summary_file}. "
-                    "It carries no successful processing-log record, so its write did "
-                    "not return and it may be a fill-filled partial. Re-run timeseries "
-                    "processing for this scenario."
-                )
-            # Defense-in-depth backstop. With the positive completion marker
-            # gating the upstream generator emit (the d_process flag is
-            # written only after all enabled-model summaries land), this raise is
-            # unreachable on the happy path. Kept because the bare .exists() here is
-            # acceptable AS A BACKSTOP once a positive DAG-enforced marker gates
-            # upstream — it converts any residual out-of-band divergence into a clear
-            # named error rather than a cryptic xr.open_dataset failure.
-
-            open_kwargs = {
-                "chunks": "auto",
-                "engine": self._open_engine(),
-                "decode_timedelta": False,
-            }
-            if open_kwargs["engine"] == "zarr":
-                open_kwargs["consolidated"] = zarr_store_has_index(summary_file)
-            ds = xr.open_dataset(summary_file, **open_kwargs)
+        for event_iloc in events:
+            if event_iloc in cleared:
+                lst_ds.append(self._read_cleared_summary(mode, event_iloc, cleared[event_iloc]))
+                continue
+            ds = self._event_summary_dataset(mode, event_iloc, drop_flag=drop_flag)
             # event_iloc is POSITIONAL. A summary not reprocessed after an add/remove
             # still carries the position it was stamped with, so concat on the embedded
             # value duplicates a coordinate (measured [0, 2, 2]). Re-stamp from the
@@ -1090,7 +1904,7 @@ class TRITONSWMM_analysis_post_processing:
         # consequence of a false positive is one extra coordinate string rather than a
         # failure -- an asymmetry that is only available because this records instead of
         # raising.
-        _labels = [str(ei) for ei in self._analysis.df_sims.index]
+        _labels = [str(ei) for ei in events]
         _findings = describe_member_variable_sets(_labels, [set(d.data_vars) for d in lst_ds], mode=mode)
         lst_ds = [
             d.assign_coords({VARIABLE_SET_COORD: ("event_iloc", [f])}) for d, f in zip(lst_ds, _findings, strict=True)
@@ -1101,8 +1915,7 @@ class TRITONSWMM_analysis_post_processing:
         from hhemt.scenario import compute_event_id_slug
 
         event_ids = [
-            compute_event_id_slug(self._analysis._retrieve_weather_indexer_using_integer_index(ei))
-            for ei in self._analysis.df_sims.index
+            compute_event_id_slug(self._analysis._retrieve_weather_indexer_using_integer_index(ei)) for ei in events
         ]
         ds_combined_outputs = ds_combined_outputs.assign_coords(event_id=("event_iloc", event_ids))
         return ds_combined_outputs

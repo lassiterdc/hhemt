@@ -1128,6 +1128,9 @@ class TRITONSWMM_scenario:
             output_swmm_only_node_summary=(
                 processed_output_folder / f"SWMM_only_node_summary.{out_type}" if cfg_sys.toggle_swmm_model else None
             ),
+            output_swmm_only_system_time_series=(
+                processed_output_folder / f"SWMM_only_system_tseries.{out_type}" if cfg_sys.toggle_swmm_model else None
+            ),
         )
         self._create_directories()
         if self.scen_paths.scenario_prep_log.exists():

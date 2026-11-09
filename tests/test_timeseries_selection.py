@@ -75,6 +75,41 @@ def test_default_is_family_conditional():
         assert "flood_depth" in default("triton_gridded", family)
 
 
+def test_the_swmm_system_kind_belongs_to_the_standalone_family_and_its_default_equals_all():
+    """Property: ``resolve_keep("swmm_system", "swmm_only", "default")`` equals the whole domain that ``"all"``,
+    ``None`` and a blank string give, the domain is the six system series in the order the writer stores them, and
+    no keep-field exists for the kind (its setting reads ``None`` from any config).
+
+    Class: NEW CAPABILITY. Plausible wrong implementations: a ``"default"`` that drops a series (the pruned system
+    summary would then lose statistics silently), the kind offered to the coupled family, or a keep-field read from a
+    config that does not carry one. Reachability: ``resolve_keep``, ``DOMAIN`` and ``keep_setting`` are the module's
+    one table and its two readers. Both-states anchor: the other kinds of the same table are checked by the tests
+    above. Must-fire control: the coupled family has no ``swmm_system`` domain, so the pair is refused naming the
+    families by kind. Killed by: those. Passes under a second correct implementation that stores the kind's domain
+    explicitly, if it keeps the order.
+    """
+    sel = _sel()
+    whole = sel.resolve_keep("swmm_system", "swmm_only", "all")
+    assert sel.resolve_keep("swmm_system", "swmm_only", "default") == whole
+    assert sel.resolve_keep("swmm_system", "swmm_only", None) == whole
+    assert sel.resolve_keep("swmm_system", "swmm_only", "  ") == whole
+    assert whole == (
+        "system_flooding_rate",
+        "system_outfall_flow",
+        "system_stored_volume",
+        "system_lateral_inflow",
+        "system_runoff",
+        "system_rainfall",
+    )
+    assert sel.FAMILIES_BY_KIND["swmm_system"] == ("swmm_only",)
+    assert sel.TIME_DIM_BY_KIND["swmm_system"] == "date_time"
+    assert sel.keep_setting(SimpleNamespace(), "swmm_system") is None
+    for family in ("tritonswmm", "triton_only"):
+        assert ("swmm_system", family) not in sel.DOMAIN
+        with pytest.raises(ValueError, match="swmm_system"):
+            sel.resolve_keep("swmm_system", family, "default")
+
+
 def test_the_series_the_inventory_added_are_in_default_for_both_families():
     """Property: ``volume`` and ``lateral_inflow`` (node) and ``link_volume`` (link) are in ``"default"`` and in
     ``"all"`` for both SWMM families; the capacity series is named per family.
@@ -475,7 +510,13 @@ def _golden(golden_extractor, *, extra: str = ""):
     assert "timeseries_keep_swmm_node" in analysis_config.model_fields, "the keep fields do not exist"
     system_dir = golden_extractor("multisim")
     cfg = system_dir / "analysis_config.yaml"
-    cfg.write_text(cfg.read_text() + "toggle_consolidate_timeseries: true\n" + extra)
+    # An explicit false keeps the per-scenario stores these rows read back; a row whose extra sets the key owns it.
+    keep_copies = (
+        ""
+        if "toggle_clear_scenario_timeseries_after_consolidation" in extra
+        else "toggle_clear_scenario_timeseries_after_consolidation: false\n"
+    )
+    cfg.write_text(cfg.read_text() + "toggle_consolidate_timeseries: true\n" + keep_copies + extra)
     analysis = construct_golden_analysis(system_dir)
     from hhemt.scenario import TRITONSWMM_scenario, coupling_nodes_file_for
 
@@ -579,10 +620,10 @@ def test_consolidating_pruned_scenarios_stores_exactly_the_kept_variables_and_cl
     )
     _prune_all(a, None)
     a.process.consolidate_timeseries()
-    stored = xr.open_zarr(a.analysis_paths.analysis_timeseries_zarr, group="tritonswmm/swmm_node_timeseries")
+    stored = xr.open_zarr(a.analysis_paths.analysis_datatree_zarr, group="tritonswmm/swmm_node/timeseries")
     assert set(stored.data_vars) == {"depth", "flooding", "is_coupling_node"}
     assert not any(_node_store(a, i).exists() for i in a.df_sims.index)
-    link = xr.open_zarr(a.analysis_paths.analysis_timeseries_zarr, group="tritonswmm/swmm_link_timeseries")
+    link = xr.open_zarr(a.analysis_paths.analysis_datatree_zarr, group="tritonswmm/swmm_link/timeseries")
     assert "flow" in link.data_vars, "the link field is None, so every link series is kept"
 
 
@@ -603,7 +644,7 @@ def test_a_scenario_pruned_differently_is_refused_by_the_append_guard_naming_the
         a.process.consolidate_timeseries()
     assert type(err.value).__name__ == "ProcessingError" and "flooding" in str(err.value)
     stored = xr.open_zarr(
-        a.analysis_paths.analysis_timeseries_zarr, group="tritonswmm/swmm_node_timeseries", consolidated=False
+        a.analysis_paths.analysis_datatree_zarr, group="tritonswmm/swmm_node/timeseries", consolidated=False
     )
     assert [int(v) for v in stored["event_iloc"].values] == [0, 1]
 

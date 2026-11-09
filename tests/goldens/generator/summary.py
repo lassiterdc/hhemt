@@ -646,7 +646,7 @@ def write_event_processed(
 # --------------------------------------------------------------------------------------
 
 # Per arm, the ``(leaf name, source summary store)`` pairs: ``analysis_leaves`` joins each into the group
-# ``/{ARM_GROUP}/{leaf}``, and together they are the group set of the baseline inventory in SPEC.md section 8.
+# ``/{ARM_GROUP}/{leaf}/summary``, and together they are the group set of the baseline inventory in SPEC.md section 8.
 _LEAVES = {
     "tritonswmm": (
         ("triton", "TRITONSWMM_TRITON_summary"),
@@ -689,7 +689,7 @@ def analysis_leaves(
             joined = xr.concat(parts, dim="event_iloc")
             ids = np.array([eid for eid, _ in event_dirs])
             joined = joined.assign_coords(event_id=("event_iloc", ids))
-            leaves[f"{prefix}/{ARM_GROUP[arm]}/{leaf}"] = joined
+            leaves[f"{prefix}/{ARM_GROUP[arm]}/{leaf}/summary"] = joined
     return leaves
 
 

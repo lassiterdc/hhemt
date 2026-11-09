@@ -183,6 +183,35 @@ FLOW_ROUTING_CONTINUITY_TERMS: dict[str, str] = {
     "Final Stored Volume": "final_stored_volume",
 }
 LST_ROUTING_CONTINUITY_VARIABLES = [f"routing_continuity_{stem}" for stem in FLOW_ROUTING_CONTINUITY_TERMS.values()]
+#: Runoff Quantity Continuity row label -> the stem of the variable that holds the row's depth column (`mm` in an SI
+#: report, which is the only kind the toolkit accepts). Continuity Error (%) is `runoff_continuity_error`, so it is not
+#: here. The standalone SWMM model alone routes its own runoff, so only its reports carry these.
+RUNOFF_QUANTITY_CONTINUITY_TERMS: dict[str, str] = {
+    "Total Precipitation": "total_precipitation",
+    "Evaporation Loss": "evaporation_loss",
+    "Infiltration Loss": "infiltration_loss",
+    "Surface Runoff": "surface_runoff",
+    "Final Storage": "final_storage",
+}
+LST_RUNOFF_CONTINUITY_VARIABLES = [f"runoff_continuity_{stem}" for stem in RUNOFF_QUANTITY_CONTINUITY_TERMS.values()]
+#: The six system series of SWMM's binary output that the standalone SWMM model stores, as (stored name, member of
+#: `swmm.toolkit.shared_enum.SystemAttribute`). The pyswmm names are `FLOOD_LOSSES`, `OUTFALL_FLOWS`, `VOLUME_STORED`,
+#: `TOTAL_LATERAL_INFLOW`, `RUNOFF_FLOW` and `RAINFALL`. The coupled model routes no runoff and holds flooded water as
+#: ponded volume, so its system flooding is about zero and it stores none of these.
+SWMM_SYSTEM_SERIES: tuple[tuple[str, str], ...] = (
+    ("system_flooding_rate", "FLOOD_LOSSES"),
+    ("system_outfall_flow", "OUTFALL_FLOWS"),
+    ("system_stored_volume", "VOLUME_STORED"),
+    ("system_lateral_inflow", "TOTAL_LATERAL_INFLOW"),
+    ("system_runoff", "RUNOFF_FLOW"),
+    ("system_rainfall", "RAINFALL"),
+)
+LST_SWMM_SYSTEM_SERIES = [name for name, _attribute in SWMM_SYSTEM_SERIES]
+#: The twelve reductions of the six system series, written into the per-scenario SWMM-only node summary store and
+#: consolidated into the `swmm_only/system/summary` group alone (the D19 source rule).
+LST_SWMM_SYSTEM_SUMMARY_VARIABLES = [
+    f"{name}_{reduction}" for name in LST_SWMM_SYSTEM_SERIES for reduction in ("max", "last")
+]
 #: Routing Time Step Summary scalars in print order: minimum, average and maximum step, percent of time in steady
 #: state, average iterations per step, percent of steps not converging.
 LST_COL_HEADERS_ROUTING_TIME_STEP_SUMMARY = [

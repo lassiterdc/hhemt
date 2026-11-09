@@ -436,12 +436,12 @@ def _load_subs_from_tree(dt: xr.DataTree, root: Path, *, event_iloc: int) -> dic
             continue
         node = dt[g]
         # Model-aware node resolution: coupled primaries store max_flood_depth under
-        # tritonswmm/triton; a pure-TRITON primary stores it under triton_only/triton
+        # tritonswmm/triton/summary; a pure-TRITON primary stores it under triton_only/triton/summary
         # (processing_analysis.py NODE_PATHS). The SWMM link (flow) tier is coupled-only —
         # absent for pure-TRITON, so it loads as None and the flow panel/columns are dropped
         # downstream (F10: rest of the figure + tables still render).
         tri = None
-        for _tri_path in (g + "/tritonswmm/triton", g + "/triton_only/triton"):
+        for _tri_path in (g + "/tritonswmm/triton/summary", g + "/triton_only/triton/summary"):
             try:
                 tri = dt[_tri_path]
                 break
@@ -450,7 +450,7 @@ def _load_subs_from_tree(dt: xr.DataTree, root: Path, *, event_iloc: int) -> dic
         if tri is None:
             continue  # sub carries no TRITON node at all — nothing to compare
         try:
-            lnk = dt[g + "/tritonswmm/swmm_link"]
+            lnk = dt[g + "/tritonswmm/swmm_link/summary"]
         except KeyError:
             lnk = None  # pure-TRITON: no coupled SWMM link tier
         member_id = member_id_from_mapping(node.attrs, g[len("/member_") :])
