@@ -344,7 +344,7 @@ def test_a_pointer_to_another_tree_with_the_same_form_and_date_is_rewritten(tmp_
     moved = experiment.parent / "relocated" / experiment.name
     moved.parent.mkdir()
     shutil.move(str(experiment), str(moved))
-    system._analysis.analysis_paths.sensitivity_datatree_zarr = moved
+    system._analysis.analysis_paths.analysis_dir = moved.parent
     _build(system)
     after = _group_attrs(store, "exp")[TREE_RELPATH_ATTR]
     assert after != before and (store.parent / after).resolve() == moved.resolve()
@@ -407,7 +407,7 @@ def test_the_skip_conjuncts_wrong_implementations_control(tmp_path, monkeypatch,
         moved = experiment.parent / "relocated" / experiment.name
         moved.parent.mkdir()
         shutil.move(str(experiment), str(moved))
-        system._analysis.analysis_paths.sensitivity_datatree_zarr = moved
+        system._analysis.analysis_paths.analysis_dir = moved.parent
     else:
         with deferred_consolidation(store):
             update_zarr_root_attrs(store / "exp", {TREE_FORM_ATTR: COPY_FORM})

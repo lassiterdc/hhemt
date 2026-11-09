@@ -210,9 +210,15 @@ def _stub(analysis_id: str, *, clear: bool, tree_path: Path | None = None, maste
 
     return SimpleNamespace(
         cfg_analysis=SimpleNamespace(
-            analysis_id=analysis_id, toggle_clear_scenario_timeseries_after_consolidation=clear
+            analysis_id=analysis_id,
+            toggle_clear_scenario_timeseries_after_consolidation=clear,
+            toggle_sensitivity_analysis=master_tree is not None,
         ),
-        analysis_paths=SimpleNamespace(analysis_datatree_zarr=tree_path, sensitivity_datatree_zarr=master_tree),
+        analysis_paths=SimpleNamespace(
+            analysis_datatree_zarr=tree_path,
+            sensitivity_datatree_zarr=master_tree,
+            analysis_dir=master_tree.parent if master_tree is not None else None,
+        ),
         process=SimpleNamespace(open_datatree=open_datatree),
         log=SimpleNamespace(member_tree_moved_to_master=_Field(moved)),
         _refresh_log=lambda: None,

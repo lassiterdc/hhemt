@@ -617,15 +617,33 @@ def coupled_only_node_vars(*, exchange_flow_on: bool) -> set[str]:
     return names
 
 
+def swmm_only_node_vars() -> set[str]:
+    """Node variables the SWMM-only node store carries and the coupled one never does.
+
+    The five Runoff Quantity Continuity rows (``runoff_continuity_{stem}``): only the standalone SWMM model routes
+    its own runoff, so only its report prints them, and the coupled hydraulics model routes none (D19, shape row 36).
+    Read from ``hhemt.constants.LST_RUNOFF_CONTINUITY_VARIABLES`` so the set follows the source. Not in this set: the
+    six system series live in the separate ``swmm_only/system`` store, and their twelve ``_max`` / ``_last``
+    reductions ride in the node SUMMARY store, which this comparison is never given (its callers pass the two node
+    time-series stores).
+    """
+    from hhemt.constants import LST_RUNOFF_CONTINUITY_VARIABLES
+
+    return set(LST_RUNOFF_CONTINUITY_VARIABLES)
+
+
 def node_var_mismatch(swmm_vars: set[str], coupled_vars: set[str], *, exchange_flow_on: bool) -> str | None:
     """Describe how the SWMM-only and coupled node variable sets violate the cross-model design, or return None.
 
     The design is: every coupled-only variable is present in the coupled store and absent from the SWMM-only
-    store, and everything else is equal. Four ways to violate it are reported separately, each naming the
+    store; the SWMM-only-only variables (``swmm_only_node_vars``) may appear in the SWMM-only store and never in the
+    coupled one; and everything else is equal. Five ways to violate it are reported separately, each naming the
     variables: a coupled-only name leaked into the SWMM-only store, a coupled-only name missing from the coupled
-    store (the always-on ``is_coupling_node`` flag included), and any remaining difference.
+    store (the always-on ``is_coupling_node`` flag included), a SWMM-only-only name present in the coupled store,
+    and any remaining difference.
     """
     coupled_only = coupled_only_node_vars(exchange_flow_on=exchange_flow_on)
+    swmm_only = swmm_only_node_vars()
     problems = []
     leaked = sorted(set(swmm_vars) & coupled_only)
     if leaked:
@@ -633,8 +651,11 @@ def node_var_mismatch(swmm_vars: set[str], coupled_vars: set[str], *, exchange_f
     absent = sorted(coupled_only - set(coupled_vars))
     if absent:
         problems.append(f"coupled-only variables absent from the coupled store: {absent}")
-    shared_coupled = set(coupled_vars) - coupled_only
-    shared_swmm = set(swmm_vars) - coupled_only
+    inverse_leak = sorted(set(coupled_vars) & swmm_only)
+    if inverse_leak:
+        problems.append(f"SWMM-only-only variables present in the coupled store: {inverse_leak}")
+    shared_coupled = set(coupled_vars) - coupled_only - swmm_only
+    shared_swmm = set(swmm_vars) - coupled_only - swmm_only
     if shared_swmm != shared_coupled:
         problems.append(
             f"remaining variables differ: only in SWMM-only {sorted(shared_swmm - shared_coupled)}, "

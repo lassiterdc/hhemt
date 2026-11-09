@@ -5,13 +5,16 @@ The synthetic tests ``test_swmm_cross_model_consistency`` (test_synth_01) and
 (TRITON-SWMM) one. The coupled store carries ``is_coupling_node`` always and, with
 ``toggle_coupling_exchange_flow``, ``coupling_exchange_flow`` plus eight statistics, so plain set equality is
 wrong by design. ``tests.utils_for_testing.node_var_mismatch`` states the design: every coupled-only name is in
-the coupled store and absent from the SWMM-only store, and everything else is equal. Each test docstring gives
+the coupled store and absent from the SWMM-only store, the SWMM-only-only names (the five Runoff Quantity
+Continuity rows, which only the standalone model routes runoff to print) may appear in the SWMM-only store and
+never in the coupled one, and everything else is equal. Each test docstring gives
 Property, Class (REGRESSION for the first: red on plain set equality; NEW CAPABILITY for the rest), Why, and
 What kills it.
 """
 
 from __future__ import annotations
 
+from hhemt.constants import LST_RUNOFF_CONTINUITY_VARIABLES, RUNOFF_QUANTITY_CONTINUITY_TERMS
 from hhemt.coupling_exchange import STATISTIC_NAMES
 from tests.utils_for_testing import coupled_only_node_vars, node_var_mismatch
 
@@ -82,3 +85,114 @@ def test_with_the_flux_on_the_flux_and_its_eight_statistics_are_coupled_only():
     missing_one = BASE | (names - {STATISTIC_NAMES[0]})
     msg = node_var_mismatch(BASE, missing_one, exchange_flow_on=True)
     assert msg is not None and STATISTIC_NAMES[0] in msg
+
+
+RUNOFF = {
+    "runoff_continuity_total_precipitation",
+    "runoff_continuity_evaporation_loss",
+    "runoff_continuity_infiltration_loss",
+    "runoff_continuity_surface_runoff",
+    "runoff_continuity_final_storage",
+}
+
+
+def test_the_swmm_only_only_set_is_the_five_runoff_continuity_rows_pinned_to_the_source():
+    """Property: the SWMM-only-only node variables are exactly the five `runoff_continuity_*` row stems.
+
+    Class: NEW CAPABILITY. Why required: chunk 1d.6 (D19) deliberately adds them to the SWMM-only node store and the
+    coupled model routes no runoff, so the cross-model comparison must expect them. The set is read from the source
+    constants and compared with the five names the Rivanna failure reported, so a sixth row added to the source,
+    or a rename, turns this red instead of being absorbed. What kills it: a hand-typed copy that drifts from
+    `RUNOFF_QUANTITY_CONTINUITY_TERMS`. Second correct implementation: a literal five-name set (as `RUNOFF` here).
+    """
+    from tests.utils_for_testing import swmm_only_node_vars
+
+    names = swmm_only_node_vars()
+    assert names == RUNOFF
+    assert names == set(LST_RUNOFF_CONTINUITY_VARIABLES)
+    assert names == {f"runoff_continuity_{stem}" for stem in RUNOFF_QUANTITY_CONTINUITY_TERMS.values()}
+    assert len(names) == 5
+    assert names.isdisjoint(coupled_only_node_vars(exchange_flow_on=True))
+
+
+def test_the_swmm_only_only_names_are_admitted_in_the_swmm_only_store():
+    """Property: SWMM-only {base, five runoff rows} versus coupled {base, flag} is consistent, flux off and on.
+
+    Class: REGRESSION. This is the failure on the 2770a5b8 Rivanna run of `test_swmm_cross_model_consistency` and
+    `test_snakemake_workflow_end_to_end`: `only in SWMM-only [five runoff_continuity names], only in coupled []`.
+    Why required: the source is right (D19, shape row 36) and the helper's design was stale. What kills it: the
+    pre-repair helper, whose `remaining variables differ` arm reports exactly these five. Second correct
+    implementation: dropping `swmm_only_node_vars` from the SWMM-only set before comparing.
+    """
+    assert node_var_mismatch(BASE | RUNOFF, BASE | {"is_coupling_node"}, exchange_flow_on=False) is None
+    flux = coupled_only_node_vars(exchange_flow_on=True)
+    assert node_var_mismatch(BASE | RUNOFF, BASE | flux, exchange_flow_on=True) is None
+    # Admitted, not required: a SWMM-only store that carries none of them is still consistent.
+    assert node_var_mismatch(BASE, BASE | {"is_coupling_node"}, exchange_flow_on=False) is None
+
+
+def test_the_exact_variable_sets_of_the_rivanna_failure_now_pass():
+    """Property: the two variable sets behind the reported `node_var_mismatch` return None.
+
+    Class: REGRESSION. The failure text names five SWMM-only names and an empty coupled-only remainder, so the
+    stores were {shared, five} and {shared, is_coupling_node}; `shared` here stands for every variable the stores
+    have in common (the helper reads no value of it). Why required: it is the observed pair, not a constructed one.
+    What kills it: any narrowing of the admitted set below the five.
+    """
+    shared = {
+        "depth",
+        "inflow_flow",
+        "flooding_rate",
+        "routing_continuity_wet_weather_inflow",
+        "runoff_continuity_error",
+    }
+    assert node_var_mismatch(shared | RUNOFF, shared | {"is_coupling_node"}, exchange_flow_on=False) is None
+
+
+def test_a_name_outside_the_admitted_set_in_only_the_swmm_only_store_is_still_reported():
+    """Property: one extra name beside the five is reported, and a sixth `runoff_continuity_` name is not admitted.
+
+    Class: NEW CAPABILITY (must-fire control: the admitted set is exactly five, not a prefix). Plausible wrong
+    implementation: admitting every name that starts with `runoff_continuity_`, which would absorb a renamed or
+    added row. What kills it: that prefix rule. Second correct implementation: exact-set membership as here.
+    """
+    msg = node_var_mismatch(BASE | RUNOFF | {"extra"}, BASE | {"is_coupling_node"}, exchange_flow_on=False)
+    assert msg is not None and "only in SWMM-only ['extra']" in msg
+    msg = node_var_mismatch(
+        BASE | RUNOFF | {"runoff_continuity_sixth_row"}, BASE | {"is_coupling_node"}, exchange_flow_on=False
+    )
+    assert msg is not None and "only in SWMM-only ['runoff_continuity_sixth_row']" in msg
+    # The same names are not excused in the coupled direction by the SWMM-only admission.
+    msg = node_var_mismatch(BASE, BASE | {"is_coupling_node", "extra"}, exchange_flow_on=False)
+    assert msg is not None and "only in coupled ['extra']" in msg
+
+
+def test_a_swmm_only_only_name_in_the_coupled_store_is_reported():
+    """Property: a `runoff_continuity_*` name in the coupled store is reported by name, whichever side else carries it.
+
+    Class: NEW CAPABILITY (the inverse of the leaked coupled-only class). Plausible wrong implementation: dropping
+    the five from BOTH sides before the equality, which would let the coupled model silently grow them. Why
+    required: the coupled model routes no runoff and must not store them. What kills it: that two-sided drop.
+    Second correct implementation: asserting the intersection of the coupled store with the set is empty.
+    """
+    one = "runoff_continuity_surface_runoff"
+    for swmm in (BASE | RUNOFF, BASE):
+        msg = node_var_mismatch(swmm, BASE | {"is_coupling_node", one}, exchange_flow_on=False)
+        assert msg is not None and "SWMM-only-only variables present in the coupled store" in msg and one in msg
+    msg = node_var_mismatch(BASE | RUNOFF, BASE | {"is_coupling_node"} | RUNOFF, exchange_flow_on=False)
+    assert msg is not None and all(name in msg for name in RUNOFF)
+
+
+def test_the_existing_violation_classes_are_unchanged_beside_the_admitted_set():
+    """Property: the three prior classes still fire when the SWMM-only store also carries the admitted five.
+
+    Class: REGRESSION guard. Why required: the admission must not mask a leak, a missing flag or a plain
+    difference. What kills it: an admission implemented by skipping the comparison when any of the five is present.
+    """
+    swmm = BASE | RUNOFF
+    leaked = node_var_mismatch(swmm | {"is_coupling_node"}, BASE | {"is_coupling_node"}, exchange_flow_on=False)
+    assert leaked is not None and "present in the SWMM-only store" in leaked
+    absent = node_var_mismatch(swmm, BASE, exchange_flow_on=False)
+    assert absent is not None and "absent from the coupled store" in absent
+    other = node_var_mismatch(swmm, BASE | {"is_coupling_node", "extra"}, exchange_flow_on=False)
+    assert other is not None and "only in coupled ['extra']" in other

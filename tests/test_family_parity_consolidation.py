@@ -428,7 +428,8 @@ def test_the_swmm_only_and_coupled_variable_sets_differ_exactly_by_the_coupled_o
     """Property: the SWMM-only and coupled node ``summary`` and ``timeseries`` variable sets differ exactly by the
     coupled-only set (``is_coupling_node``, ``coupling_exchange_flow``, the exchange statistics), and the link sets
     differ only by the capacity name (``capacity`` against ``capacity_setting``, with ``_max`` and ``_last``); the
-    SWMM-only family has no variable the coupled family lacks.
+    SWMM-only family has no variable the coupled family lacks except the five run-level ``runoff_continuity_*`` rows,
+    which only the node ``summary`` group may carry (``swmm_only_node_vars()``: the coupled model routes no runoff).
 
     Class: NEW CAPABILITY. Plausible wrong implementation: a SWMM-only reader that drifts from the coupled one (one
     reader serves both families, so a variable added to one family's store alone is the realistic defect).
@@ -439,6 +440,8 @@ def test_the_swmm_only_and_coupled_variable_sets_differ_exactly_by_the_coupled_o
     Killed by: a reader drift in either direction. Passes under a second correct implementation with other
     coupled-only variables, provided they are in the stated set.
     """
+    from tests.utils_for_testing import swmm_only_node_vars
+
     a = _ready(golden_extractor, families=("tritonswmm", "swmm", "triton"), clear=False)
     a.process.consolidate_to_datatree()
     gap = _gap(a)
@@ -447,7 +450,8 @@ def test_the_swmm_only_and_coupled_variable_sets_differ_exactly_by_the_coupled_o
         if key.endswith("coupled only"):
             assert names <= _COUPLED_ONLY, (key, names)
         else:
-            assert names == set(), (key, names)
+            allowed = swmm_only_node_vars() if key == "swmm_node/summary: swmm_only only" else set()
+            assert names <= allowed, (key, names)
     assert gap["swmm_link/summary: coupled only"] == set() and gap["swmm_link/timeseries: coupled only"] == set()
 
 

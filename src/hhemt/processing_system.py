@@ -11,7 +11,13 @@ from typing import TYPE_CHECKING
 import xarray as xr
 
 from hhemt.exceptions import ProcessingError
-from hhemt.utils import append_zarr, current_datetime_string, deferred_consolidation, open_store
+from hhemt.utils import (
+    append_zarr,
+    current_datetime_string,
+    deferred_consolidation,
+    open_store,
+    resolve_experiment_tree,
+)
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
@@ -104,15 +110,17 @@ class TRITONSWMM_system_post_processing:
         A sensitivity master is bound to its experiment tree and every other analysis to its own consolidated tree.
         """
         paths = analysis.analysis_paths
-        master_tree = getattr(paths, "sensitivity_datatree_zarr", None)
-        if master_tree is not None:
-            if not Path(master_tree).is_dir():
+        if analysis.cfg_analysis.toggle_sensitivity_analysis:
+            # Resolved by existence, never through the write-path field: a master that still carries a
+            # retired root-store name is bound to that store.
+            master_tree = resolve_experiment_tree(paths.analysis_dir, arm=True)
+            if not master_tree.is_dir():
                 return None
             try:
                 attrs = open_store(master_tree, kind="dataset", chunks=None).attrs
             except Exception:
                 return None
-            return Path(master_tree), attrs.get("output_creation_date")
+            return master_tree, attrs.get("output_creation_date")
         try:
             tree = analysis.process.open_datatree()
         except ValueError:
