@@ -5051,3 +5051,7 @@ non_breaking_allowlist:
     layout_signature: d496dd6ae6bae4fb4c4e0e590dd2b2f24840b2a4dc06769de38b19457d8d9676
     justification: |-
       Group appends run inside the index-deferring block of the store write rule, plus comment and docstring wording; the bytes written are unchanged and no on-disk path moves
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 73e7831a796ad47bca25ddd8eaca7a9e52ad603fd9d55168bf17359840ddd34f
+    justification: |-
+      the default of the post-processing reclaim policy changes from reclaiming nothing to reclaiming the redundant intermediate classes; no stored output path, group or variable changes name

@@ -84,6 +84,16 @@ RemoveValue = (
         ]
     ]
 )
+#: The reclaim policy a config gets when it names none: every class whose content the processed output also
+#: holds. "timeseries" is excluded because the consolidation step copies those stores before clearing them,
+#: and "hydro_out" because electing it with "hydrographs" makes a re-prep hard-fail.
+_DEFAULT_REMOVE_AFTER_PROCESSING: list[str] = [
+    "raw_swmm_binaries",
+    "coupled_rpt",
+    "prep_inputs",
+    "hydrographs",
+    "standalone_rpt",
+]
 # Deliberately NOT a widening of ClearRawValue: that alias types `clear_raw` and every
 # `override_clear_raw` parameter, so adding an artifact-class member to it would make that
 # member a legal `clear_raw` value, where it means nothing. Different axis --
@@ -1379,7 +1389,7 @@ class analysis_config(cfgBaseModel):
     # fallback reclaim_unconsolidated_scenarios for events with no per-scenario
     # consolidation flag, gated there on scenario_summaries_present.
     remove_after_processing: RemoveValue = Field(
-        "none",
+        _DEFAULT_REMOVE_AFTER_PROCESSING,
         description=(
             "Post-processing reclaim policy. Fires ONLY after the per-model summary outputs are verified "
             'present AND openable on disk. "none" reclaims no artifact. "all" reclaims every artifact '
@@ -1404,9 +1414,14 @@ class analysis_config(cfgBaseModel):
             'clear_raw == "none", because the only consumer of the class, '
             "eda.raw_byte_identity.compare_swmm_raw, also needs the raw H/QX/QY/MH set that clear_raw "
             "governs. Every reclaim is recorded per scenario in the per-model log and surfaced by "
-            'analysis_validation.check_data_availability. Defaults to "none", so existing yamls load '
-            "cleanly with the strict-safe default of no reclaim. Reclaiming makes REPROCESSING the "
-            "affected scenarios impossible without re-running the simulations."
+            "analysis_validation.check_data_availability. The default reclaims every class except "
+            '"timeseries" and "hydro_out", so a run with nothing configured leaves no raw or intermediate '
+            'copy of data that the processed output holds. "timeseries" is left out because its stores are '
+            "cleared only after a verified copy into the consolidated tree, by "
+            "toggle_clear_scenario_timeseries_after_consolidation, and electing the class here would delete "
+            'them before that copy. "hydro_out" is left out because electing it together with '
+            '"hydrographs" makes a re-prep hard-fail. Set "none" to keep every artifact. Reclaiming makes '
+            "REPROCESSING the affected scenarios impossible without re-running the simulations."
         ),
     )
     clear_raw: ClearRawValue = Field(
