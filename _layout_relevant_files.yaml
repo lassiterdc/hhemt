@@ -5055,3 +5055,7 @@ non_breaking_allowlist:
     layout_signature: 73e7831a796ad47bca25ddd8eaca7a9e52ad603fd9d55168bf17359840ddd34f
     justification: |-
       the default of the post-processing reclaim policy changes from reclaiming nothing to reclaiming the redundant intermediate classes; no stored output path, group or variable changes name
+  - path: src/hhemt/config/analysis.py
+    layout_signature: ee6929352f99524246fd3f112696e2be04ff957793da7a5788aff506cf71d659
+    justification: |-
+      the default of the post-processing reclaim policy changes from reclaiming nothing to reclaiming the redundant intermediate classes; no stored output path, group or variable changes name
