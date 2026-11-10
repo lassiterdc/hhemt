@@ -825,7 +825,11 @@ class TRITONSWMM_sim_post_processing:
         log_field,
         mode: str,
     ):
-        if self._already_written(fname_out):
+        # A series store deleted after its slice was read back from the `performance/timeseries` branch counts as
+        # written, as the other cleared series stores do. Deliberately NOT the processing record alone: a forced
+        # re-run clears that record, and the raw performance files that `clear_raw` removes are then parsed again
+        # (or the parse fails) for a store whose slice the tree already holds.
+        if self._consolidated_timeseries_cleared("performance") or self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             # PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
@@ -1195,7 +1199,11 @@ class TRITONSWMM_sim_post_processing:
             self.scen_paths.output_tritonswmm_triton_timeseries,
             "output_tritonswmm_triton_timeseries",
         )
-        if self._already_written(fname_out):
+        # A cleared store has had its `.done` flag and its `.chapters` removed with it, so the chapter writer's own
+        # "already carries its unified completion flag" return no longer protects it: re-entering the writer would
+        # rebuild a store from whatever raw files survived the per-chapter clear and publish it truncated. The
+        # cleared record, read first, is what keeps a resume out of the writer.
+        if self._consolidated_timeseries_cleared("triton") or self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             # PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
@@ -1271,7 +1279,11 @@ class TRITONSWMM_sim_post_processing:
             "output_triton_only_timeseries",
         )
 
-        if self._already_written(fname_out):
+        # A cleared store has had its `.done` flag and its `.chapters` removed with it, so the chapter writer's own
+        # "already carries its unified completion flag" return no longer protects it: re-entering the writer would
+        # rebuild a store from whatever raw files survived the per-chapter clear and publish it truncated. The
+        # cleared record, read first, is what keeps a resume out of the writer.
+        if self._consolidated_timeseries_cleared("triton") or self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             # PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
@@ -1666,13 +1678,15 @@ class TRITONSWMM_sim_post_processing:
         link_ok = self.log.SWMM_link_timeseries_written and bool(self.log.SWMM_link_timeseries_written.get())
         return node_ok and link_ok
 
-    def _consolidated_timeseries_cleared(self, kind: Literal["node", "link", "triton", "system"]) -> bool:
+    def _consolidated_timeseries_cleared(
+        self, kind: Literal["node", "link", "triton", "system", "performance"]
+    ) -> bool:
         """Whether this scenario's ``kind`` time-series store was deleted after its slice was read back.
 
         True only on the model log's own record (``consolidated_{kind}_timeseries_cleared``), written by the
         consolidation after the read-back passed. A store that is merely absent reads False. The log is the one
         of the model this object processes, so the record is read for the coupled, the SWMM-only and the
-        TRITON-only family alike.
+        TRITON-only family alike. ``performance`` is the per-rank performance series of either TRITON model.
         """
         field = getattr(self.log, f"consolidated_{kind}_timeseries_cleared", None)
         return bool(field is not None and field.get())
@@ -2536,24 +2550,19 @@ class TRITONSWMM_sim_post_processing:
         return tuple(policy)
 
     @staticmethod
-    def _reclaim_attrs(
+    def _timeseries_drop_names(
         model_type: Literal["tritonswmm", "triton", "swmm"],
         *,
-        policy,
         which: Literal["TRITON", "SWMM", "both"] = "both",
     ) -> tuple[str, ...]:
-        """ScenarioPaths attr names the reclaim would remove for this model + policy.
+        """ScenarioPaths attr names of the per-scenario time-series stores the ``timeseries`` class names.
 
-        NAME-level and STATIC on purpose. The falsifying disjointness guard in
-        tests/test_synth_remove_after_processing.py asserts a property of the NAME SETS
-        -- that the drop set never intersects summary_paths._SUMMARY_STEMS_BY_MODEL's
-        pairing -- and must run without a fixture, because a guard that needs a compiled
-        synth model is a guard that gets skipped. Resolving these names to concrete Paths
-        needs self.scen_paths and is _reclaim_paths' job.
+        This is the NAME set of the class, independent of whether the process runner applies it. It exists
+        separately from ``_reclaim_attrs`` because that method applies D24 (b) and returns nothing for the class
+        under either value of the consolidation toggle, which would make the disjointness guard in
+        tests/test_synth_remove_after_processing.py pass against an empty set. The guard reads this set instead.
         """
         cls = TRITONSWMM_sim_post_processing
-        if "timeseries" not in cls._reclaim_classes(policy):
-            return ()
         attrs = cls._TIMESERIES_ATTRS_BY_MODEL.get(model_type, ())
         if which == "TRITON":
             attrs = tuple(a for a in attrs if not cls._attr_is_swmm_side(a))
@@ -2561,11 +2570,43 @@ class TRITONSWMM_sim_post_processing:
             attrs = tuple(a for a in attrs if cls._attr_is_swmm_side(a))
         return attrs
 
+    @staticmethod
+    def _reclaim_attrs(
+        model_type: Literal["tritonswmm", "triton", "swmm"],
+        *,
+        policy,
+        consolidation_on: bool,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+    ) -> tuple[str, ...]:
+        """ScenarioPaths attr names the PROCESS RUNNER's reclaim would remove for this model + policy.
+
+        NAME-level and STATIC on purpose, so the falsifying disjointness guard in
+        tests/test_synth_remove_after_processing.py runs without a fixture. For that reason
+        ``consolidation_on`` is an ARGUMENT and is never read from a scenario or a config here: the caller
+        resolves ``cfg_analysis.toggle_consolidate_timeseries`` and passes it.
+
+        D24 (b): the ``timeseries`` class is not applied by the process runner under either value.
+        With consolidation on it is DISCHARGED by the consolidation's verified clearing, which deletes the
+        per-scenario series only after the read-back, so a runner that deleted them first would leave the
+        consolidation nothing to copy. With consolidation off the per-scenario series ARE the processed
+        output and exist nowhere else, so the class is a no-op with a logged reason. The set returned is
+        therefore empty for the ``timeseries`` class either way, and the argument is what a caller states
+        about which of the two arms it is on; the name set itself is ``_timeseries_drop_names``.
+        Resolving these names to concrete Paths needs self.scen_paths and is _reclaim_paths' job.
+        """
+        cls = TRITONSWMM_sim_post_processing
+        if "timeseries" not in cls._reclaim_classes(policy):
+            return ()
+        # Both arms of D24 (b) apply nothing; `consolidation_on` selects only which reason the caller logs.
+        _ = consolidation_on
+        return ()
+
     def _reclaim_paths(
         self,
         model_type: Literal["tritonswmm", "triton", "swmm"],
         *,
         policy,
+        consolidation_on: bool,
         which: Literal["TRITON", "SWMM", "both"] = "both",
     ) -> list[tuple[str, Path]]:
         """Resolve the drop set to ``(artifact_class, path)`` pairs for this scenario.
@@ -2575,7 +2616,7 @@ class TRITONSWMM_sim_post_processing:
         removed. Classes: ``timeseries_triton``, ``timeseries_swmm``, ``raw_swmm_binaries``.
         """
         out: list[tuple[str, Path]] = []
-        for attr in self._reclaim_attrs(model_type, policy=policy, which=which):
+        for attr in self._reclaim_attrs(model_type, policy=policy, consolidation_on=consolidation_on, which=which):
             p = getattr(self.scen_paths, attr, None)
             if p is None:
                 continue
@@ -2620,6 +2661,24 @@ class TRITONSWMM_sim_post_processing:
         except Exception:
             return False
         return True
+
+    @staticmethod
+    def _hydrology_capture_consolidated(scen) -> bool:
+        """True iff the scenario's log records its per-node inflow capture as consolidated into the tree.
+
+        The second way the ``hydrographs`` reclaim's capture gate is satisfied. Once the analysis consolidation
+        has read every slice of ``processed/hydrology_inflow_summary.zarr`` back from the ``swmm_node_hydro``
+        groups and cleared the store, the capture is gone and ``_capture_landed`` is False, yet the data the
+        hydrographs would be rebuilt from is in the tree (``pending`` or ``done`` both mean it was read back
+        equal). Without this arm a scenario reaching the reclaim AFTER its clearing would decline forever and keep
+        ``tseries.hyg`` and ``loc.txt`` that the tree can regenerate. The record names the stem it covers, so a
+        record of the report capture alone does not satisfy it.
+        """
+        from hhemt.summary_paths import parse_summary_clearing_record
+
+        field = getattr(scen.log, "consolidated_hydrology_cleared", None)
+        record = parse_summary_clearing_record(None if field is None else field.get())
+        return record is not None and "hydrology_inflow_summary" in record["stems"]
 
     @staticmethod
     def _declared_nonzero_subcatchments(inp_path) -> int | None:
@@ -2788,6 +2847,35 @@ class TRITONSWMM_sim_post_processing:
         if not classes:
             return
 
+        # D24 (b): the `timeseries` class is never applied here. Resolved from the persisted config (the
+        # runner is a subprocess) and passed down as an argument, so the static helpers never read it.
+        consolidation_on = bool(getattr(self._analysis.cfg_analysis, "toggle_consolidate_timeseries", False))
+        _clearing = getattr(self._analysis.cfg_analysis, "toggle_clear_scenario_timeseries_after_consolidation", None)
+        clearing_on = consolidation_on if _clearing is None else bool(_clearing)
+        if "timeseries" in classes:
+            if consolidation_on and not clearing_on:
+                print(
+                    f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: 'timeseries' is elected "
+                    "but toggle_clear_scenario_timeseries_after_consolidation is off -- declining that class. The "
+                    "per-scenario series stay in the per-scenario store because clearing is off; the consolidated "
+                    "tree holds a copy.",
+                    flush=True,
+                )
+            elif consolidation_on:
+                print(
+                    f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: 'timeseries' discharged "
+                    "by consolidation -- the per-scenario series are deleted by the consolidation's verified "
+                    "clearing after the read-back, not by this step.",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: 'timeseries' is elected "
+                    "but toggle_consolidate_timeseries is off -- declining that class. With no consolidated "
+                    "copy the per-scenario series are the processed output and exist nowhere else.",
+                    flush=True,
+                )
+
         # The raw_swmm_binaries class no-ops when clear_raw == "none", and the decline is
         # LOGGED rather than silent. Its only reader, eda.raw_byte_identity.compare_swmm_raw,
         # needs out_tritonswmm/swmm/hydraulics.out ALONGSIDE the raw H/QX/QY/MH set that
@@ -2819,7 +2907,9 @@ class TRITONSWMM_sim_post_processing:
 
         effective_policy = list(classes)
         removed: set[str] = set()
-        for klass, path in self._reclaim_paths(model_type, policy=effective_policy, which=which):
+        for klass, path in self._reclaim_paths(
+            model_type, policy=effective_policy, consolidation_on=consolidation_on, which=which
+        ):
             if not path.exists():
                 continue
             self._remove_reclaimed(path, self.scen_paths.sim_folder, verbose)
@@ -2925,7 +3015,7 @@ def reclaim_scenario_scoped_classes(scen, classes, *, verbose: bool = False) -> 
     # T1 -- CAPTURE-GATED, and the gate is the whole safety property.
     if "hydrographs" in classes:
         _cap = Path(scen.scen_paths.sim_folder) / "processed" / "hydrology_inflow_summary.zarr"
-        if _P._capture_landed(_cap):
+        if _P._capture_landed(_cap) or _P._hydrology_capture_consolidated(scen):
             for _p in (scen.scen_paths.hyg_timeseries, scen.scen_paths.hyg_locs):
                 if _p is not None and Path(_p).exists():
                     _P._remove_reclaimed(Path(_p), scenario_dir, verbose)
@@ -2933,8 +3023,8 @@ def reclaim_scenario_scoped_classes(scen, classes, *, verbose: bool = False) -> 
         elif verbose:
             print(
                 f"[reclaim] scenario {scen.event_iloc}: 'hydrographs' elected but "
-                f"the capture at {_cap} is absent or unopenable -- declining. Re-run "
-                "processing after the capture lands.",
+                f"the capture at {_cap} is absent or unopenable and the log records no consolidation of it -- "
+                "declining. Re-run processing after the capture lands.",
                 flush=True,
             )
 

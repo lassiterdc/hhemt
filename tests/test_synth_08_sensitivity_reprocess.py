@@ -73,7 +73,7 @@ sys.meta_path.insert(0, _ClearDirty())
 
 
 @pytest.fixture
-def golden_member(golden_sensitivity_analysis, monkeypatch, tmp_path):
+def golden_member(golden_sensitivity_analysis_keeping_scenarios, monkeypatch, tmp_path):
     """The sensitivity golden as the ``sensitivity`` facade the old tests got from the completed-session clone.
 
     Three things a golden does not provide for a reprocess: the Snakefile (SPEC section 9 does not carry it), which a
@@ -93,8 +93,8 @@ def golden_member(golden_sensitivity_analysis, monkeypatch, tmp_path):
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join(filter(None, [str(shim_dir), os.environ.get("PYTHONPATH", "")])))
     monkeypatch.setenv("PATH", os.pathsep.join([str(Path(sys.executable).parent), os.environ.get("PATH", "")]))
     monkeypatch.setenv("HHEMT_DECLARE_STALE_BUILD", "1")
-    dry_run_plan(golden_sensitivity_analysis)
-    return golden_sensitivity_analysis.sensitivity
+    dry_run_plan(golden_sensitivity_analysis_keeping_scenarios)
+    return golden_sensitivity_analysis_keeping_scenarios.sensitivity
 
 
 def _fake_ps_run(ps_alive):

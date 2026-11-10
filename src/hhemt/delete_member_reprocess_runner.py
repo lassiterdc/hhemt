@@ -21,6 +21,7 @@ from pathlib import Path
 from hhemt.delete_reprocess_zarr_runner import delete_summary_branches
 from hhemt.du_sentinels import delete_and_account
 from hhemt.status_flags import write_status_flag
+from hhemt.swmm_runoff_modeling import processed_outputs_to_delete
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,15 @@ def _write_submission_sentinel(sentinel_path: Path, *, rule_token: str, slurm_jo
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     sub_dir = args.analysis_dir.resolve()
+    # A member whose whole directory was removed after the master copied its tree (D24 (e)) is not an error, and
+    # nothing here may re-create it: the submission sentinel and the completion flag below each mkdir under
+    # ``sub_dir``. The master's own reprocess delete covers the member's summary branches.
+    if not sub_dir.is_dir():
+        print(
+            f"[delete-member-reprocess] member directory {sub_dir} is absent (removed member); nothing to delete",
+            flush=True,
+        )
+        return 0
     _sentinel: Path | None = None
     _slurm_jobid = os.environ.get("SLURM_JOB_ID")
     if _slurm_jobid:
@@ -69,8 +79,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.delete_processed:
             for processed_dir in sorted(sub_dir.glob("sims/*/processed")):
                 if processed_dir.is_dir():
-                    print(f"[delete-member-reprocess] removing {processed_dir}", flush=True)
-                    delete_and_account([processed_dir], scope_dir=processed_dir.parent, scope="scenario")
+                    # The per-node inflow capture stays: the scenario's preparation wrote it and nothing else
+                    # rebuilds it.
+                    doomed = processed_outputs_to_delete(processed_dir.parent)
+                    print(
+                        f"[delete-member-reprocess] removing {len(doomed)} item(s) under {processed_dir}",
+                        flush=True,
+                    )
+                    if doomed:
+                        delete_and_account(doomed, scope_dir=processed_dir.parent, scope="scenario")
         # "analysis_datatree.zarr" is the canonical consolidated-zarr default
         # (analysis.py:160 sets analysis_paths.analysis_datatree_zarr to
         # analysis_dir / "analysis_datatree.zarr"). Hardcoded here because the

@@ -869,11 +869,17 @@ def test_pydantic_config_field_names_are_snakemake_wildcard_safe():
 
 
 def test_clear_raw_defaults_to_none(tmp_path: Path):
-    """Loading an analysis_config without `clear_raw` defaults to 'none' (delete nothing)."""
+    """Loading an analysis_config without `clear_raw` takes the default 'all' (D24 (a)).
+
+    The node keeps its historical name so the chunk gate's credit follows it; the default it pins is no longer
+    'none'. Must-fire control: an explicit 'none' loads as 'none'.
+    """
     cfg = _minimal_analysis_config_dict(tmp_path)
     del cfg["clear_raw"]
     loaded = analysis_config.model_validate(cfg)
-    assert loaded.clear_raw == "none"
+    assert loaded.clear_raw == "all"
+    cfg["clear_raw"] = "none"
+    assert analysis_config.model_validate(cfg).clear_raw == "none"
 
 
 def test_force_rerun_defaults_to_none(tmp_path: Path):

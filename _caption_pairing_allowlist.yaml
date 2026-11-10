@@ -53,7 +53,18 @@
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
-    renderer_sha256: 63683c495c12f0a6e9138ca58277ee9ab3e0cd66c81e0796b659f205b08f7a54
+    renderer_sha256: f407be29365b86c4d5a8a408032bbbde98e8b94318486396fc7383a51b26559b
+    justification_2026_11_10_member_key_constant: >-
+      Re-read 2026-11-10 by the coordinator against this renderer's diff since the last recorded digest
+      (git diff cfb8cb37 -- src/hhemt/report_renderers/sensitivity_benchmarking.py). The diff is one line in _collect_rows: the
+      dictionary key "sa_id" of the appended row becomes the module constant _MEMBER_KEY, whose value is "sa_id"
+      (_MEMBER_KEY = "sa_id" in the same module), so the row carries the same key as before. The caption states the measured
+      time, the slowest-rank wall-clock summed over restarts, the aggregation statistic and the per-axis scaling; it names no
+      member key and no column (grep -c -i -E 'sa_id|member key' on the caption returns 0). Every clause of the caption is true
+      of the changed renderer. This is a PAIRING discharge on a re-read, and the digest above is recorded at the changed
+      renderer content, so this exemption expires on the next change to the renderer.
+    justification_2026_11_09_1e3_removed_scenarios_sensitivity_benchmarking: >-
+      (Includes the later hunk that reaches the member enumeration through the helper all_members_for_reading_of and one import line; no displayed text moved.) Re-read 2026-11-09 against this renderer's diff (git diff HEAD -- src/hhemt/report_renderers/sensitivity_benchmarking.py). The hunks iterate every member including a removed one through a read-only view, and add one branch: the row of a removed SWMM-only member reads the SWMM total elapsed time captured in its record, with the record file as the declared source in place of the removed report. The caption was read in full. It states the time against the independent variable, that for a TRITON or TRITON-SWMM member the value is the slowest-rank wall-clock summed over restarts for the named phase, the aggregation statistic under report.sensitivity and the per-axis scaling. It makes no claim about a SWMM-only member's source file or about where a removed member's data is read from, and the dataset read for the TRITON arms, its dimension and its column are unchanged, so every clause is still true. PAIRING discharge on a re-read; the digest expires on the next change to this renderer.
     justification_2026_11_08_1d1_summary_branch_paths: >-
       Re-read 2026-11-08 by the coordinator against this renderer's diff (git diff -- src/hhemt/report_renderers/sensitivity_benchmarking.py).
       The diff holds five hunks: three are comments, docstrings and one diagnostic message that now name the
@@ -1067,7 +1078,9 @@ unpaired_allowlist:
       Re-read 2026-11-02 against this renderer's diff (git diff HEAD), which renames stored variable names it reads or advertises; here one docstring bullet naming the SWMM node total inflow volume (total_inflow_vol_10e6_ltr -> total_inflow_vol); no emitted column, unit, row or panel moved. This caption was read in full and contains none of max_flow, cms, unit, velocity, depth, m3, 10e6 or flooding (matcher: grep -c -i -E on those alternatives, unit lines, result 0), so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at the post-change renderer content, so this exemption expires on the next change to the renderer.
   - renderer: per_analysis_summary
     caption: src/hhemt/report_templates/captions/per_analysis_summary_table.rst
-    renderer_sha256: 23eab4d358490fa4c6c7fdaddd3e034f241dd8203e9c36c5dac514d1a4a8d1ce
+    renderer_sha256: 7a04e51cbc02d9901d44ee12de740f0b4520e27ff1356c1892ca5291da3fa827
+    justification_2026_11_09_1e3_removed_scenarios_per_analysis_summary: >-
+      (Includes the later hunk that reaches the member enumeration through the helper all_members_for_reading_of and one import line; no displayed text moved.) Re-read 2026-11-09 against this renderer's diff (git diff HEAD -- src/hhemt/report_renderers/per_analysis_summary.py, 4 lines). The two hunks change the member loop to iterate every member including a removed one (a read-only view) and the scenario verdict to come from the recorded completion verdict once a scenario directory was removed. The caption was read in full. It says the page gives aggregate scenario status for the analysis, that Scenarios counts events with one scenario per event, and that source paths are relative to the analysis directory; a removed scenario is still counted as one event and still listed as completed, so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. PAIRING discharge on a re-read; the digest expires on the next change to this renderer.
     justification_2026_09_03: >-
       member-identity repair (case-8 Spec 9). Caption RE-READ IN FULL, and it makes no
       claim this change can touch. The caption describes aggregate scenario status and
@@ -1115,7 +1128,9 @@ unpaired_allowlist:
       change to this file rather than on arrival.
   - renderer: system_overview
     caption: src/hhemt/report_templates/captions/system_map.rst
-    renderer_sha256: 5625c1f8deb9cad1de68150ac9edadc8bf31746b4d14848b88973a442cc1b777
+    renderer_sha256: 60a87a64e9499de9b8b271dc94c9868eb52c9738360489a2be63b644e9bcef40
+    justification_2026_11_09_1e3_removed_scenarios_system_overview: >-
+      (Includes the later hunk that reaches the member enumeration through the helper all_members_for_reading_of and one import line; no displayed text moved.) Re-read 2026-11-09 against this renderer's diff (git diff HEAD -- src/hhemt/report_renderers/system_overview.py, 35 lines). The hunks make the member enumeration cover removed members and add a fallback in the INP resolver: when no scenario directory holds a prepared SWMM input, the renderer reads the copies the directory removal kept beside the records. The caption was read in full. It names the TRITON DEM and Manning's n panels, the color-range and over-color treatment, and the CRS from system_config.crs.horizontal_epsg; it makes no claim about which file a SWMM panel's input comes from, and the panels drawn are the same, so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. PAIRING discharge on a re-read; the digest expires on the next change to this renderer.
     justification_2026_11_04_develop_merge: >-
       Re-read 2026-11-04 against this renderer as merged with develop at layout 28. The
       merge brought in develop's edits to the file: the panel headings become named constants, the

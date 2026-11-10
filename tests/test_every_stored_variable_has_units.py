@@ -452,7 +452,10 @@ def test_the_timestep_coordinate_and_every_time_of_max_variable_read_back_as_flo
         if "timestep" in ds.coords:
             seen_coord += 1
             assert ds["timestep"].dtype == np.float64, (label, ds["timestep"].dtype)
-            assert ds["timestep"].attrs.get("units") == "min", label
+            # The per-node inflow capture counts HOURS since its first output period (its readers multiply by 3600),
+            # so its coordinate is stamped `h`; every other store counts minutes. Both spellings read back as a float.
+            expected_unit = "h" if str(label).endswith("hydrology_inflow_summary.zarr") else "min"
+            assert ds["timestep"].attrs.get("units") == expected_unit, label
         for name, da in ds.data_vars.items():
             if str(name).startswith("time_of_max_"):
                 seen_var += 1

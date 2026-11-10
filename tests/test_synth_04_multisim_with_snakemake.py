@@ -3,6 +3,7 @@
 import pytest
 
 import tests.utils_for_testing as tst_ut
+from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV, retrieve_synth_TRITON_SWMM_test_case
 
 pytestmark = [
     pytest.mark.requires_snakemake_subprocess,
@@ -1120,3 +1121,119 @@ def test_errors_and_warnings_declares_exactly_validation_report(synth_multi_sim_
         "errors_and_warnings must declare EXACTLY validation_report.json under the "
         f"Option D Class-Y resolution (no validate_analysis() whole-tree read); got {declared}"
     )
+
+
+def test_generated_snakefile_plans_no_rule_for_a_removed_event(synth_multi_sim_analysis):
+    """Compile tier (Rivanna). Property: with one event's record ``done`` the production Snakefile leaves it out of
+    ``SIM_IDS`` and keeps it in ``REPORT_EVENT_IDS``; with the record ``pending`` the same (and nothing is deleted at
+    generation); with the record ``superseded`` it is back in ``SIM_IDS``. Class: NEW CAPABILITY.
+    Wrong implementation: filter on directory presence. Control: with no record every event is in both lists.
+    """
+    import ast
+
+    from hhemt.scenario import compute_event_id_slug
+    from hhemt.scenario_records import write_scenario_record
+
+    analysis = synth_multi_sim_analysis
+    analysis_dir = analysis.analysis_paths.analysis_dir
+    events = [
+        compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(i))
+        for i in range(len(analysis.df_sims))
+    ]
+
+    def lists():
+        text = analysis._workflow_builder.generate_snakefile_content(
+            process_system_level_inputs=True, compile_TRITON_SWMM=True, prepare_scenarios=True, process_timeseries=True
+        )
+        found = {}
+        for line in text.splitlines():
+            for name in ("SIM_IDS", "REPORT_EVENT_IDS"):
+                if line.startswith(f"{name} = "):
+                    found[name] = ast.literal_eval(line.split(" = ", 1)[1])
+        return found
+
+    assert lists() == {"SIM_IDS": events, "REPORT_EVENT_IDS": events}  # control
+    sims_before = sorted(p.name for p in (analysis_dir / "sims").iterdir())
+    for state, in_sim in (("done", False), ("pending", False), ("superseded", True)):
+        write_scenario_record(analysis_dir, events[0], {"state": state})
+        got = lists()
+        assert (events[0] in got["SIM_IDS"]) is in_sim
+        assert got["REPORT_EVENT_IDS"] == events
+    assert sorted(p.name for p in (analysis_dir / "sims").iterdir()) == sims_before
+
+
+@pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_completed_default_run_leaves_no_scenario_directory_and_replans_nothing(synth_multi_sim_new_defaults_analysis):
+    """Compile tier (Rivanna; NOT run on the laptop). Property: after a completed run with the package defaults for
+    consolidation, clearing, ``clear_raw`` and ``remove_after_processing``, no child remains under ``sims/``, and a
+    second invocation's dry run plans zero jobs and creates no directory under ``sims/``. The fixture undoes the
+    synthetic factory's pinned old values and leaves the clearing switch unset (it resolves to the consolidation
+    toggle). Must-fire control, owed to the same Rivanna run: the pinned fixture (``synth_multi_sim_analysis``) with
+    ``clear_raw: none`` leaves one directory per event.
+    """
+    analysis = synth_multi_sim_new_defaults_analysis
+    sims = analysis.analysis_paths.simulation_directory
+    result = analysis.run(mode="local", which="both", from_scratch=True, verbose=False)
+    assert result.get("success"), result.get("message", "")
+    assert [p for p in sims.iterdir()] == [], "a completed default run must leave no scenario directory"
+    dry = analysis.submit_workflow(mode="local", dry_run=True, verbose=False)
+    assert dry.get("success")
+    assert "Nothing to be done" in (dry.get("message", "") + str(dry.get("stdout", "")))
+    assert [p for p in sims.iterdir()] == []
+
+
+@pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_export_scenario_status_is_read_only_against_a_removed_analysis(synth_multi_sim_new_defaults_analysis):
+    """Compile tier (Rivanna; NOT run on the laptop). Property: ``export_scenario_status.main`` run against an analysis
+    whose scenarios were removed by a completed run with the package defaults returns one row per event and model with
+    ``run_completed`` as captured, and creates no path under ``sims/`` (a before/after walk). Class: NEW CAPABILITY.
+    The analysis is run first, so its scenario directories are removed before the walk.
+    """
+    from unittest import mock
+
+    from hhemt import export_scenario_status as ess
+
+    analysis = synth_multi_sim_new_defaults_analysis
+    sims = analysis.analysis_paths.simulation_directory
+    result = analysis.run(mode="local", which="both", from_scratch=True, verbose=False)
+    assert result.get("success"), result.get("message", "")
+    assert [p for p in sims.iterdir()] == [], "precondition: the completed default run removed every scenario"
+    before = sorted(str(p) for p in sims.rglob("*"))
+    argv = [
+        "export_scenario_status",
+        "--analysis-config",
+        str(analysis.analysis_config_yaml),
+        "--system-config",
+        str(analysis._system.system_config_yaml),
+    ]
+    with mock.patch("sys.argv", argv):
+        ess.main()
+    assert sorted(str(p) for p in sims.rglob("*")) == before
+    csv = analysis.analysis_paths.analysis_dir / "scenario_status.csv"
+    assert csv.exists() and len(csv.read_text().splitlines()) > 1
+
+
+@pytest.fixture
+def synth_multi_sim_new_defaults_analysis(tmp_path, monkeypatch):
+    """The synthetic multi-sim analysis built with the package defaults for consolidation, ``clear_raw`` and
+    ``remove_after_processing`` instead of the factory's pinned old values.
+
+    The shared synthetic factory pins ``toggle_consolidate_timeseries: False``, ``clear_raw: "none"`` and
+    ``remove_after_processing: "none"`` so that tests reading per-scenario stores keep their meaning; a row that
+    asserts what a run with nothing configured leaves behind must undo the pin. The clearing switch is left unset, so
+    it resolves to the consolidation toggle. The tree is built under ``tmp_path`` so the wipe cannot touch the shared
+    synthetic cache."""
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
+    case = retrieve_synth_TRITON_SWMM_test_case(
+        analysis_name="synth_multi_sim",
+        n_events=3,
+        start_from_scratch=True,
+        additional_analysis_configs={
+            "toggle_consolidate_timeseries": True,
+            "clear_raw": "all",
+            "remove_after_processing": "all",
+        },
+    )
+    return case.analysis

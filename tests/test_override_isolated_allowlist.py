@@ -61,6 +61,8 @@ OVERRIDE_ISOLATED_NODE_IDS: tuple[str, ...] = (
     "tests/test_sensitivity_submit_stamps_master.py::test_direct_sensitivity_submit_stamps_the_master",
     "tests/test_synth_02_multisim.py::test_concurrently_process_scenario_timeseries",
     "tests/test_synth_02_multisim.py::test_isolated_fixture_does_not_perturb_session_tree",
+    "tests/test_synth_04_multisim_with_snakemake.py::test_completed_default_run_leaves_no_scenario_directory_and_replans_nothing",
+    "tests/test_synth_04_multisim_with_snakemake.py::test_export_scenario_status_is_read_only_against_a_removed_analysis",
     "tests/test_synth_04_multisim_with_snakemake.py::test_snakemake_workflow_concurrency_and_process_monitoring",
     "tests/test_synth_04_multisim_with_snakemake.py::test_snakemake_workflow_dry_run",
     "tests/test_synth_04_multisim_with_snakemake.py::test_snakemake_workflow_end_to_end",

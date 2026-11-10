@@ -464,6 +464,9 @@ def _build_synthetic_post_processing(*, fname_out, raw_dir, batch_timesteps, ny,
     # MagicMock tolerates the post-write log-field accesses (add_sim_processing_entry,
     # TRITON_timeseries_written.set(...)) without modelling each one.
     inst.log = MagicMock()
+    # The writer skips a store its log records as cleared; a MagicMock field would answer "cleared" for every kind,
+    # so the record is absent here, as it is for a scenario whose store was never cleared.
+    inst.log.consolidated_triton_timeseries_cleared = None
     return inst
 
 

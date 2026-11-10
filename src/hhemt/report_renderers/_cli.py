@@ -18,6 +18,7 @@ import importlib
 from pathlib import Path
 
 from hhemt.analysis import TRITONSWMM_analysis
+from hhemt.scenario_records import all_members_for_reading_of
 from hhemt.system import TRITONSWMM_system
 
 
@@ -102,7 +103,7 @@ def main() -> None:
                 f"--member-id={args.member_id} requires the analysis to be a sensitivity master, "
                 f"but toggle_sensitivity_analysis is False on {args.analysis_config}."
             )
-        analyses = analysis.sensitivity.members
+        analyses = all_members_for_reading_of(analysis.sensitivity)
         if args.member_id not in analyses:
             raise ValueError(
                 f"--member-id={args.member_id!r} not found in master's members; available: {sorted(analyses.keys())}"

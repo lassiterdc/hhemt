@@ -356,15 +356,16 @@ def test_a_reprocess_delete_killed_part_way_is_followed_by_a_full_summary_rewrit
     assert _series_hashes(store) == series
 
 
-def test_consolidation_version_3_rebuilds_a_tree_stamped_2_once_and_a_tree_stamped_3_not_at_all(
+def test_consolidation_version_4_rebuilds_a_tree_stamped_3_once_and_a_tree_stamped_4_not_at_all(
     consolidated, monkeypatch
 ):
-    """Property: CONSOLIDATION_VERSION is 3; a tree whose root stamp reads 2 rewrites its summaries once and its series
-    not at all, and a tree stamped 3 with matching inputs is not rewritten.
+    """Property: CONSOLIDATION_VERSION is 4; a tree whose root stamp reads 3 rewrites its summaries once and its series
+    not at all, and a tree stamped 4 with matching inputs is not rewritten.
     Class: NEW CAPABILITY. Plausible wrong implementation: a gate that never reads the root stamp, or one that
         rewrites every call. The unchanged-tree arm is the control for the second.
-    Why required: version 3 is the signal that every layout-2 tree rebuilds its summaries.
-    Killed by: leaving the version at 2; a gate that rebuilds always.
+    Why required: version 4 is the signal that every tree consolidated before the hydrology groups rebuilds its
+        summaries.
+    Killed by: leaving the version at 3; a gate that rebuilds always.
     Passes under a second correct implementation: a gate that compares the stamp through the log field instead of
         the root attribute, provided a stale root stamp still forces the rewrite.
     Not established: the red-on-the-pre-change-tree output was not captured this round; the in-test control is the
@@ -373,7 +374,7 @@ def test_consolidation_version_3_rebuilds_a_tree_stamped_2_once_and_a_tree_stamp
     from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing as pp
     from hhemt.utils import deferred_consolidation, update_zarr_root_attrs
 
-    assert pp.CONSOLIDATION_VERSION == 3
+    assert pp.CONSOLIDATION_VERSION == 4
     store = _tree_path(consolidated)
     series = _series_hashes(store)
     rebuilt = []
@@ -382,9 +383,9 @@ def test_consolidation_version_3_rebuilds_a_tree_stamped_2_once_and_a_tree_stamp
         pp, "_write_summary_branches", lambda self, *a, **k: (rebuilt.append(1), real(self, *a, **k))[1]
     )
     consolidated.process.consolidate_to_datatree()
-    assert rebuilt == [], "control: a tree stamped 3 with matching inputs is not rebuilt"
+    assert rebuilt == [], "control: a tree stamped 4 with matching inputs is not rebuilt"
     with deferred_consolidation(store):
-        update_zarr_root_attrs(store, {"consolidation_version": 2})
+        update_zarr_root_attrs(store, {"consolidation_version": 3})
     consolidated.process.consolidate_to_datatree()
     assert rebuilt == [1]
     assert _series_hashes(store) == series

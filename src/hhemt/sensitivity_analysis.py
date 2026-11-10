@@ -51,6 +51,7 @@ _RETIRED_ID_COLUMNS = frozenset({"sa_id", "sa-id", "sa id"})
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
     from .orchestration import RunOverrides
+    from .scenario_records import RecordedMemberView
     from .system import TRITONSWMM_system
 
 
@@ -317,6 +318,10 @@ def _copy_series_group(
     for position, event_iloc in enumerate(int(v) for v in src["event_iloc"].values):
         piece = src.isel(event_iloc=[position]).load().drop_encoding()
         state = _post._timeseries_group_state(dst_store, dst_group)
+        # String coordinates take the master group's stored width (a narrower older group refuses, saying rebuild).
+        piece = _post._widen_event_strings(piece, dst_group)
+        if state is not None:
+            piece = _post._fit_strings(dst_store, dst_group, piece)
         with deferred_consolidation(dst_store):
             if state is not None and event_iloc in state[1]:
                 if _post._stored_slice_equals(dst_store, dst_group, piece, event_iloc):
@@ -781,6 +786,10 @@ class TRITONSWMM_sensitivity_analysis:
             # the per-sub overlay application in _create_members can resolve them.
         ]
         self.df_setup = df_setup_full.loc[:, analysis_cols]
+        # A member whose whole directory was removed after the master's verified copy (record `done`, D24 (e)) is
+        # never constructed again: `members` holds the ACTIVE members only and `recorded_members` the read-only
+        # views of the removed ones, so no writer that iterates `members` can re-create a removed directory.
+        self.recorded_members: dict = {}
         self.members = self._create_members()
 
         # Initialize workflow builder for sensitivity analysis
@@ -1096,6 +1105,10 @@ class TRITONSWMM_sensitivity_analysis:
         )
         for member_id in member_id_tokens:
             analysis = self.members.get(member_id)
+            if analysis is None and member_id in self.recorded_members:
+                self._refuse_force_on_recorded_members(
+                    ResolvedForceRerunSpec(scope="member", tokens=(member_id,), stage="simulate", models=())
+                )
             if analysis is None:
                 # _validate_force_rerun_targets already filtered unknown
                 # member_ids; reaching here means the members dict is
@@ -1196,6 +1209,26 @@ class TRITONSWMM_sensitivity_analysis:
             },
             mode=execution_mode,
         )
+        if start_with == "process" and self.recorded_members:
+            # D24 (h): a member's scenarios are scenarios. A removed member has no raw output to re-process, so a
+            # process-stage reprocess naming it (or, with no member list, any removed member) refuses at the entry,
+            # before a claim is taken or anything is deleted.
+            named = sorted(
+                self.recorded_members
+                if member_ids is None
+                else {str(m) for m in member_ids} & set(self.recorded_members)
+            )
+            if named:
+                from hhemt.exceptions import ConfigurationError
+
+                raise ConfigurationError(
+                    field="start_with",
+                    message=(
+                        f"cannot re-process removed member(s) {named!r}: their directories were removed after the "
+                        "master held a verified copy, so no raw output exists. Re-run from scratch in a new "
+                        "analysis, or turn one of the clearing, clear_raw or remove_after_processing switches off."
+                    ),
+                )
         # Lazy-stamp _version.json at LAYOUT_VERSION, the same stamp_new_target call
         # the non-sensitivity entry points in analysis.py make. Idempotent.
         from hhemt.version_migration import LAYOUT_VERSION
@@ -2243,6 +2276,7 @@ class TRITONSWMM_sensitivity_analysis:
                 analysis.process.consolidate_to_datatree(
                     compression_level=compression_level,
                     verbose=verbose,
+                    df_status=analysis._df_status_for_consolidation(),
                 )
             except (FileNotFoundError, ValueError) as exc:
                 if not allow_incomplete:
@@ -2341,6 +2375,11 @@ class TRITONSWMM_sensitivity_analysis:
 
         # A member the per-member hook did not reach (none today) still gets its owed move; a done member is skipped.
         self._move_member_trees(sources, copied, verbose=verbose)
+        # Under the default switches a member whose tree the master now holds, and whose every scenario is removed, has
+        # its whole directory removed, its records and config YAML moved to the master first (D24 (e)). Done here and
+        # not inside `_move_member_trees`, which is a per-member tree move that stand-in harnesses borrow.
+        for member_id in list(self.members):
+            self._remove_member_directory(member_id)
 
         if verbose:
             print(f"Wrote sensitivity DataTree zarr to {fname_out}")
@@ -3316,8 +3355,15 @@ class TRITONSWMM_sensitivity_analysis:
         from hhemt.config.analysis import analysis_config
 
         dic_sensitivity_analyses = dict()
+        from hhemt.scenario_records import member_is_recorded
+
         for idx, row in self.df_setup.iterrows():
             member_id = str(idx)
+            if member_is_recorded(self.members_dir.parent, member_id):
+                self.recorded_members[member_id] = self._build_recorded_member_view(
+                    member_id, member_id_to_system[member_id]
+                )
+                continue
             overlay_cells: dict = {}
             for k, v in row.items():
                 if pd.isna(v):
@@ -3411,6 +3457,169 @@ class TRITONSWMM_sensitivity_analysis:
             )
             dic_sensitivity_analyses[member_id] = anlsys
         return dic_sensitivity_analyses
+
+    def _build_recorded_member_view(self, member_id: str, system) -> "RecordedMemberView":
+        """The read-only view of a removed member, built from its moved config YAML and the master's records.
+
+        No ``TRITONSWMM_analysis`` is constructed (its constructor would re-create the member directory and
+        rewrite its log). The member's events table is projected from the weather file its moved config names, with
+        the same pure projection the analysis constructor uses.
+        """
+        from hhemt.config.analysis import analysis_config
+        from hhemt.scenario import compute_event_id_slug
+        from hhemt.scenario_records import RecordedMemberView, member_records_dir
+
+        master_dir = self.experiment.analysis_paths.analysis_dir
+        analysis_id = f"{self.member_prefix}{member_id}"
+        yaml_path = member_records_dir(master_dir, member_id) / f"{analysis_id}.yaml"
+        cfg = analysis_config.model_validate(yaml.safe_load(yaml_path.read_text(encoding="utf-8")))
+        df_sims = anlysis.TRITONSWMM_analysis._project_events_table(
+            pd.read_csv(cfg.weather_events_to_simulate),
+            cfg.weather_event_indices,
+            cfg.weather_event_label_column,
+        )
+        cfg_sys = system.cfg_system
+        enabled = [
+            m
+            for m, on in (
+                ("triton", cfg_sys.toggle_triton_model),
+                ("tritonswmm", cfg_sys.toggle_tritonswmm_model),
+                ("swmm", cfg_sys.toggle_swmm_model),
+            )
+            if on
+        ]
+
+        def _indexer(event_iloc):
+            return df_sims.loc[event_iloc, cfg.weather_event_indices].to_dict()
+
+        def _df_status() -> pd.DataFrame:
+            from hhemt.scenario_records import df_status_rows_from_record
+
+            records = member_records_dir(master_dir, member_id) / "scenario_records"
+            rows: list[dict] = []
+            for event_iloc in df_sims.index:
+                evt = compute_event_id_slug(_indexer(event_iloc))
+                try:
+                    record = json.loads((records / f"{evt}.json").read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    record = {}
+                rows.extend(
+                    df_status_rows_from_record(
+                        record, df_sims.loc[event_iloc].to_dict(), event_iloc, enabled, str(records.parent / evt)
+                    )
+                )
+            return pd.DataFrame(rows)
+
+        def _sim_run(event_iloc):
+            from hhemt.scenario_records import recorded_member_sim_run
+
+            return recorded_member_sim_run(
+                master_dir, member_id, analysis_id, compute_event_id_slug(_indexer(int(event_iloc)))
+            )
+
+        return RecordedMemberView(
+            member_id,
+            analysis_id,
+            master_dir,
+            sim_run_reader=_sim_run,
+            sim_run_processing_reader=_sim_run,
+            df_sims=df_sims,
+            cfg_analysis=cfg,
+            cfg_hpc_system=getattr(self.experiment, "cfg_hpc_system", None),
+            enabled_models=enabled,
+            weather_indexer=_indexer,
+            df_status_builder=_df_status,
+        )
+
+    def _refuse_force_on_recorded_members(self, spec) -> None:
+        """Refuse a force that names a recorded (removed) member, at resolution, with ``ConfigurationError`` (D24 (e)).
+
+        Scope ``member`` naming a recorded member refuses at any stage; scope ``all`` over a master with recorded
+        members refuses at the run and process stages and acts on the active members only at consolidate and render;
+        scope ``event`` plans the active members only (a removed member has no rule to plan) and is not refused. The
+        message names the members and states the remedy (a new analysis), where the landed resolvers raised
+        ``RuntimeError("... is not in the members dict")`` for a member absent from ``members``.
+        """
+        if not self.recorded_members:
+            return
+        if spec.scope == "member":
+            named = sorted(str(t) for t in spec.tokens if str(t) in self.recorded_members)
+        elif spec.scope == "all" and spec.stage in ("simulate", "process"):
+            named = sorted(self.recorded_members)
+        else:
+            return
+        if named:
+            raise ConfigurationError(
+                field="override_force_rerun",
+                message=(
+                    f"cannot force member(s) {named!r}: their directories were removed after the master held a "
+                    "verified copy of their trees, and a removed member is never constructed again. Run a new "
+                    "analysis, or turn one of the clearing, clear_raw or remove_after_processing switches off."
+                ),
+            )
+
+    def all_members_for_reading(self) -> dict:
+        """The active members followed by the read-only views of the removed members, keyed by member id.
+
+        A reader that must enumerate every member iterates this. The readers are the per-analysis summary, the
+        validation summary check, the benchmarking renderer, the system overview, the report CLI, and the
+        whole-experiment targets and counts of the experiment workflow. A site that acts on members that will run
+        keeps iterating ``self.members``.
+        """
+        from hhemt.scenario_records import all_members_for_reading
+
+        return all_members_for_reading(self.members, self.recorded_members)
+
+    def _remove_member_directory(self, member_id: str) -> bool:
+        """Remove ``members/member_{id}/`` whole once the master holds its tree and every scenario is removed.
+
+        Order (D22 applied to the member): (1) the member's scenario records, analysis log and config YAML are
+        copied to the master's ``_status/member_records/member_{id}/`` and a marker record is written ``pending``;
+        (2) the directory is deleted through ``delete_and_account``; (3) the marker is set ``done``. A marker found
+        ``pending`` is a resume: the directory is not read, only deleted further. Returns True when the directory is
+        gone and the marker is ``done`` on return. Preconditions, all read path-only: the member's tree move is
+        ``done`` (the master's copy was verified), the three removal switches are on for the member, and every one of
+        its scenarios has a ``done`` record.
+        """
+        from hhemt.du_sentinels import delete_and_account
+        from hhemt.scenario import compute_event_id_slug
+        from hhemt.scenario_records import (
+            move_member_records,
+            read_member_record,
+            record_state,
+            removal_switches_on,
+            write_member_record,
+        )
+
+        analysis = self.members[member_id]
+        master_dir = self.experiment.analysis_paths.analysis_dir
+        member_dir = analysis.analysis_paths.analysis_dir
+        marker = read_member_record(master_dir, member_id)
+        if marker is None or marker["state"] != "pending":
+            if _member_move_state(analysis) != MOVE_DONE:
+                return False
+            if not removal_switches_on(analysis.cfg_analysis, analysis._get_enabled_model_types()):
+                return False
+            for i in range(len(analysis.df_sims)):
+                evt = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(i))
+                if record_state(member_dir, evt) != "done":
+                    return False
+            analysis_id = analysis.cfg_analysis.analysis_id
+            move_member_records(
+                member_dir,
+                master_dir,
+                member_id,
+                analysis_id=analysis_id,
+                yaml_name=f"{analysis_id}.yaml",
+                analysis_log=getattr(analysis.log, "logfile", None),
+            )
+        delete_and_account([member_dir], scope_dir=master_dir, scope="analysis")
+        marker = read_member_record(master_dir, member_id)
+        marker["state"] = "done"
+        write_member_record(master_dir, member_id, marker)
+        self.recorded_members[member_id] = self._build_recorded_member_view(member_id, analysis._system)
+        del self.members[member_id]
+        return True
 
     def _compute_member_id_fingerprint_payload(self, analysis: "anlysis.TRITONSWMM_analysis") -> dict[str, object]:
         """Compute the deterministic fingerprint payload for one member.
@@ -3689,7 +3898,7 @@ class TRITONSWMM_sensitivity_analysis:
         """
         status_frames = []
 
-        for member_id, analysis in self.members.items():
+        for member_id, analysis in self.all_members_for_reading().items():
             assert analysis.cfg_analysis.is_experiment_member, (
                 "is_experiment_member attribute not true in member.cfg_analysis.is_experiment_member"
             )

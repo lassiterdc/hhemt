@@ -21,6 +21,7 @@ from hhemt.log import (
 )
 from hhemt.paths import ScenarioPaths
 from hhemt.scenario_inputs import ScenarioInputGenerator
+from hhemt.scenario_records import ScenarioRemovedError
 from hhemt.subprocess_utils import run_subprocess_with_tee
 from hhemt.swmm_full_model import SWMMFullModelBuilder
 from hhemt.swmm_runoff_modeling import SWMMRunoffModeler, refuse_non_cms_flow_units, refuse_us_flow_units
@@ -1001,10 +1002,18 @@ class TRITONSWMM_scenario:
         # Captured BEFORE the first mkdir below -- True exactly once per scenario
         # lifetime; `_create_directories` seeds the DU sentinel only when this is True.
         self._created_now = not sim_folder.exists()
+        # A recorded event (analysis-level record pending or done, D24 (e)) had its directory removed after its
+        # results were verified into the tree. Its handle keeps `scen_paths` (path arithmetic) and creates no
+        # directory, so a loop over df_sims (the self-heal, the validation checks, the timeseries axis)
+        # re-creates nothing; every directory-reading or -writing member raises ScenarioRemovedError.
+        from hhemt.scenario_records import event_is_removed
+
+        self._removed = event_is_removed(analysis.analysis_paths.analysis_dir, self.sim_id_str)
         processed_output_folder = sim_folder / "processed"
-        processed_output_folder.mkdir(parents=True, exist_ok=True)
         swmm_folder = sim_folder / "swmm"
-        swmm_folder.mkdir(parents=True, exist_ok=True)
+        if not self._removed:
+            processed_output_folder.mkdir(parents=True, exist_ok=True)
+            swmm_folder.mkdir(parents=True, exist_ok=True)
         self.backend = analysis.backend
 
         # Model toggles from system config
@@ -1018,7 +1027,7 @@ class TRITONSWMM_scenario:
         out_triton = sim_folder / "out_triton" if cfg_sys.toggle_triton_model else None
         out_tritonswmm = sim_folder / "out_tritonswmm" if cfg_sys.toggle_tritonswmm_model else None
         out_swmm = sim_folder / "out_swmm" if cfg_sys.toggle_swmm_model else None
-        if out_swmm:
+        if out_swmm and not self._removed:
             out_swmm.mkdir(parents=True, exist_ok=True)
 
         self.scen_paths = ScenarioPaths(
@@ -1132,6 +1141,16 @@ class TRITONSWMM_scenario:
                 processed_output_folder / f"SWMM_only_system_tseries.{out_type}" if cfg_sys.toggle_swmm_model else None
             ),
         )
+        if self._removed:
+            from hhemt.scenario_records import _RemovedScenarioHandle
+
+            self.run = TRITONSWMM_run(self)
+            guard = _RemovedScenarioHandle(self.event_id)
+            self.log = guard
+            self._input_generator = guard
+            self._runoff_modeler = guard
+            self._full_model_builder = guard
+            return
         self._create_directories()
         if self.scen_paths.scenario_prep_log.exists():
             self.log = TRITONSWMM_scenario_log.from_json(self.scen_paths.scenario_prep_log)
@@ -1162,6 +1181,10 @@ class TRITONSWMM_scenario:
         Returns:
             Model-specific log with only relevant fields initialized
         """
+        if getattr(self, "_removed", False):
+            raise ScenarioRemovedError(
+                self.event_id, "get_log reads the removed directory; use scenario_records.record_for"
+            )
         log_file = self.scen_paths.sim_folder / f"log_{model_type}.json"
 
         # ONE name resolution: open the document; absent -> defaults.
@@ -1227,6 +1250,10 @@ class TRITONSWMM_scenario:
         """Return the scenario-level DU sentinel value, or None if absent."""
         from hhemt.du_sentinels import read_du_sentinel
 
+        if getattr(self, "_removed", False):
+            from hhemt.scenario_records import record_field
+
+            return record_field(self._analysis, self.event_id, "du_bytes_before_removal")
         payload = read_du_sentinel(self.scen_paths.sim_folder / "_status" / "_du.json")
         if payload is None or "disk_utilization_bytes" not in payload:
             return None
@@ -1276,6 +1303,8 @@ class TRITONSWMM_scenario:
         return datetime.min if astype == "dt" else ""
 
     def _create_directories(self):
+        if getattr(self, "_removed", False):
+            raise ScenarioRemovedError(self.event_id, "_create_directories")
         """Create all required directories for the scenario."""
         self.scen_paths.dir_weather_datfiles.mkdir(parents=True, exist_ok=True)
         self.scen_paths.extbc_tseries.parent.mkdir(parents=True, exist_ok=True)

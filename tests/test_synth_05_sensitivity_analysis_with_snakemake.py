@@ -23,13 +23,45 @@ _TOOLCHAIN_ABSENT_REASON = (
 )
 
 
+# Rows that build a sensitivity configuration, expect a ``ConfigurationError`` while the configuration is built, and
+# compile and run nothing. They need no toolchain, so the gate below does not skip them. Exactly these names are
+# exempt; any other row of this module that is not a golden row still skips without the toolchain.
+_NO_TOOLCHAIN_ROWS = frozenset(
+    {
+        "test_system_overlay_mutual_exclusion_with_system_config_yaml",
+        "test_system_overlay_validator_re_fire_invalid_value",
+        "test_gpu_hardware_override_column_raises_migration_error",
+        "test_unknown_column_rejected_with_nearest_match_hint",
+        "test_bare_name_analysis_config_column_is_refused_naming_the_prefixed_form",
+    }
+)
+
+
+@pytest.fixture
+def _toolkit_identity_not_dirty(monkeypatch):
+    """Let the analysis constructor see the running toolkit identity with ``dirty`` cleared; the sha is unchanged.
+
+    The constructor refuses a checkout with modified tracked files before it reaches the error these rows assert, so
+    on a working tree under edit each row would fail on that refusal. The refusal is about which toolkit runs, not
+    about the configuration under test, and ``golden_extractor`` neutralises it the same way."""
+    import dataclasses
+
+    import hhemt.analysis as analysis_module
+
+    real = analysis_module.running_identity
+    monkeypatch.setattr(analysis_module, "running_identity", lambda: dataclasses.replace(real(), dirty=False))
+
+
 @pytest.fixture(autouse=True)
 def _compile_toolchain_gate(request):
     """Skip a test that needs the compile toolchain when it is absent (the module-level ``skipif`` this replaces).
 
     The rows that run on the committed golden need no toolchain (they compile and run no solver), so they are
-    exempt: a module-level skip would silently drop them on any machine without cmake and mpic++."""
-    if "golden_sensitivity_analysis" in request.fixturenames:
+    exempt: a module-level skip would silently drop them on any machine without cmake and mpic++. The rows named in
+    ``_NO_TOOLCHAIN_ROWS`` are exempt for the same reason."""
+    if {"golden_sensitivity_analysis", "golden_sensitivity_analysis_keeping_scenarios"} & set(request.fixturenames):
+        return
+    if request.node.name in _NO_TOOLCHAIN_ROWS:
         return
     if tst_ut.compile_toolchain_unavailable() and not tst_ut.require_compile_tier():
         pytest.skip(_TOOLCHAIN_ABSENT_REASON)
@@ -88,7 +120,7 @@ def golden_reprocess_env(monkeypatch, tmp_path):
 
 
 @pytest.fixture
-def golden_planned(golden_sensitivity_analysis, golden_reprocess_env):
+def golden_planned(golden_sensitivity_analysis_keeping_scenarios, golden_reprocess_env):
     """The sensitivity golden with the Snakefile a golden does not carry (tests/goldens/SPEC.md section 9), written by
     a dry run.
 
@@ -96,8 +128,8 @@ def golden_planned(golden_sensitivity_analysis, golden_reprocess_env):
     ``test_reprocess_process_self_heals_deleted_summary`` runs without it."""
     from tests.fixtures.golden_trees import dry_run_plan
 
-    dry_run_plan(golden_sensitivity_analysis)
-    return golden_sensitivity_analysis
+    dry_run_plan(golden_sensitivity_analysis_keeping_scenarios)
+    return golden_sensitivity_analysis_keeping_scenarios
 
 
 def test_snakemake_sensitivity_workflow_generation_and_write(
@@ -404,7 +436,9 @@ def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
 # Property: reprocess(start_with="process") self-heals a summary deleted under a surviving
 # d_process flag at the default regenerate_existing=False, leaves healthy flag mtimes untouched,
 # and emits zero process_member_* rules on the second pass.
-def test_reprocess_process_self_heals_deleted_summary(golden_sensitivity_analysis, golden_reprocess_env):
+def test_reprocess_process_self_heals_deleted_summary(
+    golden_sensitivity_analysis_keeping_scenarios, golden_reprocess_env
+):
     """Regression: a deleted summary under a surviving completion flag must be rebuilt by a default reprocess.
 
     The divergence state is: a per-scenario summary output was deleted, but its
@@ -451,7 +485,7 @@ def test_reprocess_process_self_heals_deleted_summary(golden_sensitivity_analysi
     # hhemt.summary_paths, shared with the production self-heal's predicate).
     from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL
 
-    analysis = golden_sensitivity_analysis
+    analysis = golden_sensitivity_analysis_keeping_scenarios
 
     # ── Arrange: the committed golden is already a completed sensitivity analysis with the raw layer, so the real
     # summary zarrs exist on disk and need no workflow run. ─────────────────────────────────────────────────────────
@@ -842,19 +876,19 @@ import tests.fixtures.test_case_catalog as _cases  # noqa: E402
 from hhemt.exceptions import ConfigurationError  # noqa: E402
 
 
-def test_system_overlay_mutual_exclusion_with_system_config_yaml():
+def test_system_overlay_mutual_exclusion_with_system_config_yaml(_toolkit_identity_not_dirty):
     """A row with both system_config_yaml and system.* columns raises ConfigurationError."""
     with pytest.raises(ConfigurationError, match="mutually exclusive"):
         _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_mutex_violation(start_from_scratch=True)
 
 
-def test_system_overlay_validator_re_fire_invalid_value():
+def test_system_overlay_validator_re_fire_invalid_value(_toolkit_identity_not_dirty):
     """An invalid system.* overlay value raises ConfigurationError via Pydantic."""
     with pytest.raises(ConfigurationError, match="SystemConfig validation"):
         _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_invalid_overlay(start_from_scratch=True)
 
 
-def test_gpu_hardware_override_column_raises_migration_error():
+def test_gpu_hardware_override_column_raises_migration_error(_toolkit_identity_not_dirty):
     """Legacy `gpu_hardware_override` column is rejected as unknown.
 
     The prior migration target `system.gpu_hardware` is itself retired
@@ -868,7 +902,7 @@ def test_gpu_hardware_override_column_raises_migration_error():
     assert "gpu_hardware_override" in str(excinfo.value)
 
 
-def test_unknown_column_rejected_with_nearest_match_hint():
+def test_unknown_column_rejected_with_nearest_match_hint(_toolkit_identity_not_dirty):
     """An unknown column (a typo) raises ConfigurationError."""
     with pytest.raises(ConfigurationError, match="Unknown sensitivity-CSV columns"):
         _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_typo_in_prefixed_column(
@@ -924,7 +958,9 @@ def test_df_setup_with_system_overlays_carries_prefixed_system_columns(
 # ============================================================================
 
 
-def test_bare_name_analysis_config_column_is_refused_naming_the_prefixed_form(monkeypatch, tmp_path):
+def test_bare_name_analysis_config_column_is_refused_naming_the_prefixed_form(
+    monkeypatch, tmp_path, _toolkit_identity_not_dirty
+):
     """A bare-name analysis-config column raises ConfigurationError naming `analysis.{name}`."""
     # This is a start_from_scratch=True retrieve on a slug of its own; the runs_root
     # override redirects the analysis tree to tmp_path so the construction (which is all

@@ -55,6 +55,9 @@ class _CountingAnalysis:
         self.df_status_reads = 0
         self.analysis_paths = _PermissiveConfig(
             analysis_dir=analysis_dir,
+            # A real path under the analysis directory: the validation derives a recorded member's scenario
+            # directory from the name of this one, which a MagicMock cannot supply.
+            simulation_directory=analysis_dir / "sims",
             analysis_datatree_zarr=analysis_dir / "analysis_datatree.zarr",
             sensitivity_datatree_zarr=None,
         )

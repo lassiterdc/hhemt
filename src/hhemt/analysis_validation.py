@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from hhemt.member_identity import resolve_member_id_column
+from hhemt.scenario_records import all_members_for_reading_of
 from hhemt.utils import open_store
 
 if TYPE_CHECKING:
@@ -211,9 +212,86 @@ def _iter_members_or_self(analysis: TRITONSWMM_analysis):
     sensitivity_on = getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
     sens = getattr(analysis, "sensitivity", None)
     if sensitivity_on and sens is not None:
-        yield from sens.members.items()
+        # Every member, removed ones included (read-only views): a removed member's scenarios are listed from its
+        # moved records instead of silently dropping out of the check.
+        yield from all_members_for_reading_of(sens).items()
     else:
         yield None, analysis
+
+
+def _sims_dir_of(analysis: TRITONSWMM_analysis, sub) -> Path:
+    """The ``sims`` directory of a member or of the analysis itself; for a recorded (removed) member, its absent path.
+
+    A recorded member's view provides no ``analysis_paths`` on purpose, so the path is computed from the master's
+    ``members/{analysis_id}/sims`` naming. Every per-scenario reader below then finds the files absent and takes its
+    existing "not determinable" arm instead of raising ``MemberRemovedError``.
+    """
+    if getattr(sub, "is_recorded_member", False):
+        analysis_dir = Path(analysis.analysis_paths.analysis_dir)
+        sims_name = Path(analysis.analysis_paths.simulation_directory).relative_to(analysis_dir)
+        return analysis_dir / "members" / sub.analysis_id / sims_name
+    return Path(sub.analysis_paths.simulation_directory)
+
+
+def _model_log_payload(analysis: TRITONSWMM_analysis, member_id, sub, event_id: str, model: str) -> dict | None:
+    """The ``log_{model}.json`` payload of one scenario, read through the record resolver (path-only).
+
+    Active member or plain analysis: the live log, or its analysis-level record once the directory was removed.
+    Recorded member: the model log inside the master's moved scenario record.
+    """
+    import json
+
+    if getattr(sub, "is_recorded_member", False):
+        from hhemt.scenario_records import member_records_dir
+
+        rec = (
+            member_records_dir(analysis.analysis_paths.analysis_dir, member_id)
+            / "scenario_records"
+            / f"{event_id}.json"
+        )
+        try:
+            payload = json.loads(rec.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        logs = payload.get("model_logs") or {} if isinstance(payload, dict) else {}
+        return logs.get(model) if isinstance(logs.get(model), dict) else None
+    from hhemt.scenario_records import record_for
+
+    return record_for(sub, event_id, model)
+
+
+def surviving_directories_with_reasons(analysis: TRITONSWMM_analysis) -> dict[str, str]:
+    """Every scenario directory still on disk, keyed ``[member_{id}/]event_id``, with the reason it survives.
+
+    Reasons: ``not completed`` (a failed or incomplete scenario keeps its directory for diagnosis and resume),
+    ``removal switches off`` (completed, no record, the three-switch conjunction is not met), ``removal pending``
+    (record ``pending``: the next consolidate finishes it). Recorded members survive nowhere and are not listed.
+    """
+    from hhemt.scenario import compute_event_id_slug
+    from hhemt.scenario_records import read_scenario_record, removal_switches_on
+
+    out: dict[str, str] = {}
+    for member_id, sub in _iter_members_or_self(analysis):
+        if getattr(sub, "is_recorded_member", False):
+            continue
+        sims = _sims_dir_of(analysis, sub)
+        enabled = sub._get_enabled_model_types()
+        on = removal_switches_on(sub.cfg_analysis, enabled)
+        for event_iloc in sub.df_sims.index:
+            evt = compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(event_iloc))
+            if not (sims / evt).is_dir():
+                continue
+            rec = read_scenario_record(sub.analysis_paths.analysis_dir, evt)
+            if rec is not None and rec["state"] == "pending":
+                reason = "removal pending"
+            else:
+                done = all(
+                    bool((_model_log_payload(analysis, member_id, sub, evt, m) or {}).get("simulation_completed"))
+                    for m in enabled
+                )
+                reason = "not completed" if not done else ("removal switches off" if not on else "removal not yet run")
+            out[evt if member_id is None else f"member_{member_id}/{evt}"] = reason
+    return out
 
 
 def _detail_rows_for_failed_scenarios(analysis: TRITONSWMM_analysis, failed_paths: list[str]) -> list[dict]:
@@ -311,12 +389,22 @@ def check_timeseries_processed(
             enabled = [m for m in enabled if m in ("tritonswmm", "triton")]
         elif which == "SWMM":
             enabled = [m for m in enabled if m in ("tritonswmm", "swmm")]
-        sim_dir = sub.analysis_paths.simulation_directory
+        recorded_member = getattr(sub, "is_recorded_member", False)
+        if recorded_member:
+            from hhemt.scenario_records import recorded_member_event_done
+
+            sim_dir = _sims_dir_of(analysis, sub)
+        else:
+            sim_dir = sub.analysis_paths.simulation_directory
         for event_iloc in sub.df_sims.index:
             total += 1
             ev = sub._retrieve_weather_indexer_using_integer_index(event_iloc)
             event_id = compute_event_id_slug(ev)
-            if not scenario_summaries_present(sub, event_id, enabled):
+            if recorded_member:
+                present = recorded_member_event_done(analysis.analysis_paths.analysis_dir, member_id, event_id)
+            else:
+                present = scenario_summaries_present(sub, event_id, enabled)
+            if not present:
                 row = {
                     "scenario": event_id,
                     "scenario_dir": str(sim_dir / event_id),
@@ -348,7 +436,14 @@ def check_analysis_summaries_created(analysis: TRITONSWMM_analysis) -> CheckResu
         sens_zarr = analysis.analysis_paths.sensitivity_datatree_zarr
         if sens_zarr is None or not sens_zarr.exists():
             missing.append({"detail": f"Sensitivity DataTree zarr missing at {sens_zarr}"})
-        for member_id, sub in analysis.sensitivity.members.items():
+        for member_id, sub in all_members_for_reading_of(analysis.sensitivity).items():
+            if getattr(sub, "is_recorded_member", False):
+                # A removed member's tree is in the master by design: test its group there. The view provides no
+                # `analysis_paths` on purpose, so a site reading it unadapted fails loudly instead of reporting a
+                # false miss.
+                if sens_zarr is None or not (Path(sens_zarr) / f"member_{member_id}").exists():
+                    missing.append({"detail": f"member_{member_id}: group missing in the experiment tree"})
+                continue
             _check_one(sub, label_prefix=f"member_{member_id}: ")
     else:
         _check_one(analysis)
@@ -1336,7 +1431,7 @@ def check_known_solver_defects(analysis: TRITONSWMM_analysis, *, df_status=None)
     verdicts = {d.defect_id: resolve(d, sha) for d in entries}
     scenarios = []
     for member_id, sub in _iter_members_or_self(analysis):
-        sim_dir = sub.analysis_paths.simulation_directory
+        sim_dir = _sims_dir_of(analysis, sub)
         for event_iloc in sub.df_sims.index:
             event_id = compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(event_iloc))
             scenarios.append((member_id, event_id, sim_dir / event_id / "swmm" / "hydraulics.inp"))
@@ -2427,6 +2522,10 @@ _RECLAIM_LOG_FIELDS: dict[str, str] = {
         "SWMM-only system timeseries (cleared; copy in the swmm_only/system/timeseries "
         "branch of analysis_datatree.zarr)"
     ),
+    "consolidated_performance_timeseries_cleared": (
+        "performance timeseries (cleared; copy in the tritonswmm/performance/timeseries or "
+        "triton_only/performance/timeseries branch of analysis_datatree.zarr)"
+    ),
     "raw_SWMM_binaries_reclaimed": "coupled raw SWMM .out binaries",
     "coupled_rpt_truncated": "coupled SWMM report body (truncated in place)",
     "hydro_out_reclaimed": "SWMM hydrology output (hydro.out)",
@@ -2539,7 +2638,12 @@ def check_forcing_tail_influence(analysis) -> CheckResult:
     # master's `sims/` is empty (scenarios live under `members/member_N/sims/`), so even
     # without the raise this check examined zero scenarios on every sensitivity run.
     for member_id, sub in _iter_members_or_self(analysis):
-        sims_dir = Path(sub.analysis_paths.simulation_directory)
+        sims_dir = _sims_dir_of(analysis, sub)
+        if getattr(sub, "is_recorded_member", False):
+            # A removed member's weather files and stores are gone: every scenario is indeterminate here, and the
+            # branch below reads `sub.process`, which the view does not provide.
+            indeterminate += int(sub.n_scenarios)
+            continue
         for i in range(int(sub.n_scenarios)):
             evt = compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(i))
             scen = sims_dir / evt
@@ -2636,7 +2740,6 @@ def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
        names the examined and indeterminate counts so a vacuous pass is legible in the
        artifact itself.
     """
-    import json
 
     from hhemt.scenario import compute_event_id_slug
     from hhemt.summary_paths import SUMMARY_CLEARING_FIELD, parse_summary_clearing_record, scenario_summaries_present
@@ -2650,7 +2753,7 @@ def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
     for member_id, sub in _iter_members_or_self(analysis):
         try:
             enabled = sub._get_enabled_model_types()
-            sim_dir = Path(sub.analysis_paths.simulation_directory)
+            sim_dir = _sims_dir_of(analysis, sub)
         except Exception:  # noqa: BLE001 -- a sub we cannot address is indeterminate, not failed
             continue
         for event_iloc in sub.df_sims.index:
@@ -2658,13 +2761,8 @@ def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
             event_id = compute_event_id_slug(ev)
             for model in enabled:
                 examined += 1
-                logf = sim_dir / event_id / f"log_{model}.json"
-                if not logf.exists():
-                    indeterminate += 1
-                    continue
-                try:
-                    payload = json.loads(logf.read_text())
-                except (OSError, ValueError):
+                payload = _model_log_payload(analysis, member_id, sub, event_id, model)
+                if payload is None:
                     indeterminate += 1
                     continue
                 classes = [label for field, label in _RECLAIM_LOG_FIELDS.items() if payload.get(field) is True]
@@ -2694,9 +2792,14 @@ def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
         headline = "No per-scenario artifacts were reclaimed"
     else:
         headline = "Reclaimed after processing: " + "; ".join(reclaimed_bits)
+    _surviving = surviving_directories_with_reasons(analysis)
+    _by_reason: dict[str, int] = {}
+    for _reason in _surviving.values():
+        _by_reason[_reason] = _by_reason.get(_reason, 0) + 1
+    _surviving_text = "; ".join(f"{n} {r}" for r, n in sorted(_by_reason.items())) if _by_reason else "none"
     summary = (
         f"{headline}. Examined {_count(examined, '(model, scenario) pair')}; "
-        f"{indeterminate} indeterminate (no readable model log)."
+        f"{indeterminate} indeterminate (no readable model log). Surviving scenario directories: {_surviving_text}."
     )
     if not passed:
         summary = (
@@ -2780,7 +2883,9 @@ def check_log_recoveries(analysis: TRITONSWMM_analysis) -> CheckResult:
     for member_id, sub in _iter_members_or_self(analysis):
         try:
             enabled = sub._get_enabled_model_types()
-            sim_dir = Path(sub.analysis_paths.simulation_directory)
+            if getattr(sub, "is_recorded_member", False):
+                continue  # a removed member has no analysis log or system log of its own: the master's carry them
+            sim_dir = _sims_dir_of(analysis, sub)
             analysis_log = Path(sub.analysis_paths.f_log)
             system_log = Path(sub._system.log.logfile)
         except Exception:  # noqa: BLE001 -- a sub we cannot address is indeterminate, not failed
@@ -2851,7 +2956,7 @@ def check_inflow_node_reduction(analysis: TRITONSWMM_analysis) -> CheckResult:
     examined = measured = n_cells = n_dropped = 0
     for member_id, sub in _iter_members_or_self(analysis):
         try:
-            sim_dir = Path(sub.analysis_paths.simulation_directory)
+            sim_dir = _sims_dir_of(analysis, sub)
             event_ilocs = list(sub.df_sims.index)
         except Exception:  # noqa: BLE001 -- a sub we cannot address is not measured, not failed
             continue

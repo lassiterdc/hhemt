@@ -178,6 +178,13 @@ def generate_reprocess_snakefile(
         enabled_models=enabled_models,
         all_event_ids=all_event_ids,
     )
+    # REPORT_EVENT_IDS keeps every event with its summaries present, removed events included (the predicate reads
+    # the analysis-level record, D23(d)); SIM_IDS drops the removed ones so no per-event rule is planned for them
+    # (D24 (g)). A pending record reads as removed and nothing is deleted at generation.
+    from hhemt.scenario_records import event_ids_for_plan
+
+    report_event_ids = list(available_event_ids)
+    available_event_ids = event_ids_for_plan(builder.analysis_paths.analysis_dir, report_event_ids)
 
     # Resource blocks (mirror source-side shapes; reprocess uses the same
     # processing/consolidation partitions because the work is identical).
@@ -252,7 +259,7 @@ def generate_reprocess_snakefile(
     if renderer_active("system_overview", _disabled):
         _plot_items.append(f'"plots/system_overview{_ext["system_overview"]}"')
     if renderer_active("per_sim", _disabled):
-        _plot_items.append(f'expand("{_ep_per_sim}", event_id=SIM_IDS)')
+        _plot_items.append(f'expand("{_ep_per_sim}", event_id=REPORT_EVENT_IDS)')
     if renderer_active("per_analysis_summary", _disabled):
         _plot_items.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
     if renderer_active("scenario_status_appendix", _disabled):
@@ -305,13 +312,14 @@ except Exception:
 # Config dict consumed by report_templates/workflow_description.rst.j2
 config["analysis_id"] = {analysis_id_str!r}
 config["toolkit_version"] = _toolkit_version
-config["n_sims"] = {len(available_event_ids)}
+config["n_sims"] = {len(report_event_ids)}
 config["is_sensitivity"] = False
 config["report"] = {{"generated_at": _dt.now().isoformat(timespec="seconds")}}
 
 report: "report/workflow_description.rst"
 
 SIM_IDS = {available_event_ids!r}
+REPORT_EVENT_IDS = {report_event_ids!r}
 ILOC_BY_EVENT_ID = {iloc_by_event_id!r}
 {LABEL_GLOBALS_BLOCK}
 

@@ -57,6 +57,7 @@ from hhemt.exceptions import ProcessingError
 from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
 from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
+from hhemt.scenario_records import all_members_for_reading_of
 from hhemt.swmm_output_parser import parse_total_elapsed
 from hhemt.utils import EXPERIMENT_TREE_NAME, open_store
 
@@ -668,8 +669,12 @@ def render(
         from hhemt.utils import resolve_experiment_tree
 
         _dt_path = resolve_experiment_tree(analysis.analysis_paths.analysis_dir)
-        _members = list(sensitivity.members.keys())
-        _swmm_only = [_m for _m, _a in sensitivity.members.items() if _a._get_enabled_model_types() == ["swmm"]]
+        _members = list(all_members_for_reading_of(sensitivity).keys())
+        _swmm_only = [
+            _m
+            for _m, _a in all_members_for_reading_of(sensitivity).items()
+            if _a._get_enabled_model_types() == ["swmm"]
+        ]
         _nodes: list[str] = []
         _perf_vars: dict[str, list[str]] = {}
         if _dt_path is not None and _dt_path.exists():
@@ -838,7 +843,7 @@ def render(
         _hw_values = set()
         _sens = getattr(analysis, "sensitivity", None)
         if _sens is not None:
-            for _sub in _sens.members.values():
+            for _sub in all_members_for_reading_of(_sens).values():
                 _hw = resolve_gpu_target(_sub.cfg_hpc_system, _sub.cfg_analysis.hpc_ensemble_partition)[0]
                 if _hw:
                     _hw_values.add(_hw)
@@ -1767,7 +1772,7 @@ def _wall_label(sensitivity) -> str:
     therefore titles its time axis for that measure; every other sweep plots the wall-clock
     time of the TRITON or TRITON-SWMM run.
     """
-    models = [member._get_enabled_model_types() for member in sensitivity.members.values()]
+    models = [member._get_enabled_model_types() for member in all_members_for_reading_of(sensitivity).values()]
     if models and all(m == ["swmm"] for m in models):
         return "SWMM elapsed time"
     return "Wall-clock time"
@@ -1968,7 +1973,7 @@ def _collect_rows(experiment: TRITONSWMM_analysis, dependent_var: str) -> tuple[
         tree = open_store(str(datatree_path))
         source_paths.append(datatree_path)
 
-    for member_id, analysis in sensitivity.members.items():
+    for member_id, analysis in all_members_for_reading_of(sensitivity).items():
         node_ds = _find_perf_node(tree, member_id) if tree is not None else None
         if node_ds is not None and col in node_ds.data_vars:
             _emitted_for_member = False
@@ -2029,6 +2034,15 @@ def _collect_rows(experiment: TRITONSWMM_analysis, dependent_var: str) -> tuple[
             for event_iloc in analysis.df_sims.index:
                 proc = analysis._retrieve_sim_run_processing_object(int(event_iloc))
                 rpt = proc.scen_paths.swmm_full_rpt_file
+                if getattr(proc, "is_recorded", False):
+                    # A removed SWMM-only member: the row reads the `Total elapsed time` captured at removal, and
+                    # the declared source is the record file in place of the removed full.rpt.
+                    value = proc.captured.get("swmm_total_elapsed")
+                    if value is None:
+                        continue
+                    rows.append({_MEMBER_KEY: member_id, "event_iloc": int(event_iloc), "value": value})
+                    source_paths.append(proc.record_path)
+                    continue
                 if not rpt or not rpt.exists():
                     continue
                 value = parse_total_elapsed(rpt)
@@ -2067,7 +2081,7 @@ def _resolve_model_arm(analysis) -> str | None:
     if sens is None:
         return None
     enabled: set[str] = set()
-    for sub in sens.members.values():
+    for sub in all_members_for_reading_of(sens).values():
         enabled.update(sub._get_enabled_model_types())
     if "tritonswmm" in enabled:
         return "coupled"

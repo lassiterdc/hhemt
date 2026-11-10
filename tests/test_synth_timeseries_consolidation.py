@@ -5,7 +5,7 @@ Three kinds of test:
     pipeline run. A replay marker is the line TRITON prints (``SWMM exchange history replayed to t=``) when a resumed
     coupled run replays SWMM's exchange history; its ``t`` is the simulation time, in seconds, at which the resumed
     run was positioned. One model log can hold several markers, and the LAST is the final resume boundary.
-  * Config only: ``test_default_is_off`` reads the toggle from ``synth_multi_sim_builder``, a configured analysis
+  * Config only: ``test_default_is_on`` reads the toggle from ``synth_multi_sim_builder``, a configured analysis
     that was not run (its docstring in ``tests/conftest.py`` says "no compile, no scenario prep").
   * Golden: the two consolidation tests extract the committed multi-sim golden (``tests/fixtures/golden_trees.py``),
     which already carries the per-scenario SWMM node and link timeseries stores, set ``toggle_consolidate_timeseries``
@@ -66,19 +66,23 @@ def test_parse_replay_t_none_on_unparseable_value():
 _TS_NODES = ("swmm_node/timeseries", "swmm_link/timeseries")
 
 
-def test_default_is_off(synth_multi_sim_builder):
-    """The toggle must default False so a consolidation that does not opt in stays byte-compatible with trees built
-    before the option existed.
+def test_default_is_on(synth_multi_sim_builder):
+    """The toggle's field default is True (D24 (a)): with nothing configured the consolidated store keeps the series.
 
-    This is asserted on the CONFIG rather than by a second consolidation: the workflow's consolidate step runs as a
-    separate process that loads the persisted ``analysis_config.yaml``, so an in-memory flip to False in this process
-    would not reach it and such a test would pass for the wrong reason. Established here: the default, and (by the
-    toggle-OFF pass of ``test_toggle_change_invalidates_an_already_consolidated_tree``) that ``swmm_node_timeseries``
-    is absent after a consolidation with the toggle false. Not established: byte-compatibility with older trees, which
-    no test here compares, and the absence of the link timeseries node under the toggle OFF, which that pass does not
-    check.
+    This is asserted on the field default, not on the built analysis, and that is deliberate: the synthetic config
+    factory (``tests/fixtures/test_case_builder.py``) pins ``toggle_consolidate_timeseries: False`` into every
+    synthetic config so that tests reading per-scenario stores keep their meaning, so the built analysis carries the
+    factory's value and says nothing about the default. The behaviour of a run with nothing configured is covered by
+    ``tests/test_defaults_clear_everything.py`` (no solver) and by the Rivanna nothing-configured row of the
+    definition of done (item 17). Must-fire control: an explicit False is False, so the True read is the field
+    default and not a constant. ``synth_multi_sim_builder`` is kept as the fixture so the node stays in the
+    Rivanna-tier file it was credited in.
     """
-    assert synth_multi_sim_builder.cfg_analysis.toggle_consolidate_timeseries is False
+    from hhemt.config.analysis import analysis_config
+
+    assert analysis_config.model_fields["toggle_consolidate_timeseries"].default is True
+    off = synth_multi_sim_builder.cfg_analysis.model_copy(update={"toggle_consolidate_timeseries": False})
+    assert off.toggle_consolidate_timeseries is False
 
 
 def _golden_with_timeseries_toggle(golden_extractor, *, on: bool):
@@ -343,53 +347,31 @@ def test_events_of_different_windows_share_one_elapsed_axis(golden_extractor, mo
     assert calendar.sizes["date_time"] == 20, "control: the calendar axis of the same pair has the union length"
 
 
-def test_the_append_derives_a_missing_flag_and_refuses_a_missing_or_extra_variable_before_writing(
-    golden_extractor,
-):
-    """Property: a scenario lacking ``is_coupling_node`` gets it derived from its ``coupling_nodes.txt`` and the store
-    opens; a scenario lacking ``depth``, or carrying a time-variant variable the store lacks, raises
-    ``ProcessingError`` naming the variable and the scenario before any write, leaving the store as it was.
+def test_the_append_derives_a_missing_flag_from_the_scenarios_coupling_list(golden_extractor):
+    """Property: a scenario whose node store lacks ``is_coupling_node`` gets it derived from its
+    ``coupling_nodes.txt``, for every event, and the store opens with the three events.
 
-    Class: NEW CAPABILITY. Plausible wrong implementation: appending a Dataset whose variables differ from the
-    store's. Measured: ``to_zarr`` returns without error, one variable is left at length 2 and another at length 1,
-    and ``xr.open_zarr`` then raises ``ValueError``, so one older scenario would make every earlier event unreadable.
-    Reachability: events 0 and 1 are appended, then event 2 is edited (golden stores carry no flag, so the first two
-    already exercise the derivation). Both-states anchor: asserts the stored event list and the open.
-    Killed by: skipping the guard. A second correct implementation compares variable sets after the append and rolls
-    back; the "nothing was written" assertion would then need a different probe.
+    Class: NEW CAPABILITY. Plausible wrong implementation: appending the store as opened, which leaves the flag out of
+    the first event's slice and makes every later event differ from the group (or fills it with NaN, which reads as
+    "not a coupling node" nowhere and as "unknown" everywhere). Reachability: the golden's node stores carry no flag
+    (they predate it), so all three events exercise the derivation through the real ``consolidate_timeseries``.
+    Both-states anchor: asserts the stored flag against the listed nodes, which a store carrying the flag itself would
+    also satisfy. Killed by: skipping the derivation. A second correct implementation derives the flag once per
+    analysis and copies it; the values asserted are the same.
     """
-    a, _ = _golden_ready(golden_extractor)
-    _rewrite_store(_scenario_store(a, 2, "node"), lambda ds: ds.drop_vars("depth"))
-    with pytest.raises(Exception) as err:
-        _consolidate(a)
-    assert type(err.value).__name__ == "ProcessingError"
-    message = str(err.value)
-    assert "depth" in message and "event_iloc 2" in message
-    assert _event_ilocs(a) == [0, 1], "the refused scenario must not have been written"
-    assert "is_coupling_node" in _store_group(a, "swmm_node/timeseries").data_vars
-
-
-def test_the_append_refuses_a_variable_the_store_lacks_before_writing(golden_extractor):
-    """Property: a scenario carrying a time-variant variable the store lacks raises ``ProcessingError`` naming the
-    variable and the scenario before any write, and the store keeps the events appended before it.
-
-    Class: NEW CAPABILITY. Plausible wrong implementation: appending anyway (see the sibling row for the measured
-    consequence). Reachability: event 2's node store gets one extra time-variant variable. Both-states anchor: asserts
-    the exception type, the name and the event list. Killed by: skipping the guard. A second correct implementation
-    names the variable in a warning and drops it; the property here is the refusal.
-    """
-    b, _ = _golden_ready(golden_extractor)
-    _rewrite_store(_scenario_store(b, 2, "node"), lambda ds: ds.assign(extra_series=ds["depth"] * 2))
-    with pytest.raises(Exception) as err2:
-        _consolidate(b)
-    assert type(err2.value).__name__ == "ProcessingError" and "extra_series" in str(err2.value)
-    assert _event_ilocs(b) == [0, 1]
+    a, listed = _golden_ready(golden_extractor)
+    _consolidate(a)
+    assert _event_ilocs(a) == [0, 1, 2]
+    flag = _store_group(a, "swmm_node/timeseries")["is_coupling_node"].load()
+    assert not bool(flag.isnull().any()), "the flag is derived, never NaN-filled"
+    for event_iloc in (0, 1, 2):
+        row = flag.sel(event_iloc=event_iloc)
+        assert {str(n) for n in row["node_id"].values[row.values.astype(bool)]} == set(listed), event_iloc
 
 
 def test_static_report_variables_are_not_appended_and_do_not_have_to_match(golden_extractor):
     """Property: a node store holding a static variable (``max_ponded_depth``) appends without it, and a second scenario
-    lacking that static variable appends without raising; a second scenario lacking the time-variant ``depth`` still
-    raises.
+    lacking that static variable appends without raising.
 
     Class: NEW CAPABILITY. Plausible wrong implementation: appending every variable, so each variable a later chunk
     adds makes an older scenario fail the variable-set guard.
@@ -406,21 +388,6 @@ def test_static_report_variables_are_not_appended_and_do_not_have_to_match(golde
     assert "max_ponded_depth" not in stored.data_vars
     assert _event_ilocs(a) == [0, 1, 2]
     assert all("event_iloc" in stored[v].dims for v in stored.data_vars), "every variable must carry event_iloc"
-
-
-def test_a_scenario_lacking_a_time_variant_variable_still_raises(golden_extractor):
-    """Property: the must-fire control of the static-variable row: a second scenario lacking the time-variant
-    ``depth`` raises ``ProcessingError`` naming it.
-
-    Class: NEW CAPABILITY. Plausible wrong implementation: a guard that tolerates every missing variable once static
-    ones are tolerated. Reachability: event 1's node store loses ``depth``. Both-states anchor: asserts the type and
-    the name. Killed by: that guard. A second correct implementation raises a subclass.
-    """
-    c, _ = _golden_ready(golden_extractor)
-    _rewrite_store(_scenario_store(c, 1, "node"), lambda ds: ds.drop_vars("depth"))
-    with pytest.raises(Exception) as err:
-        _consolidate(c)
-    assert type(err.value).__name__ == "ProcessingError" and "depth" in str(err.value)
 
 
 def test_a_second_pass_appends_nothing_and_a_failed_readback_keeps_the_stores(golden_extractor, monkeypatch):

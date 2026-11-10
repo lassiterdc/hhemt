@@ -50,6 +50,7 @@ from hhemt.report_plot_ids import (
     plot_output_template as _plot_output_template,
 )
 from hhemt.report_renderers._figure_emission import format_sources_rst
+from hhemt.scenario_records import MemberRemovedError, all_members_for_reading_of
 from hhemt.sif.identity import resolve_sif
 
 # SLURM-liveness primitives live in the leaf module so wait_for_sentinel_runner
@@ -3696,10 +3697,19 @@ rule consolidate_scenario:
         _emit_report_artifacts(self.analysis_paths.analysis_dir)
 
         n_sims = len(self.analysis.df_sims)
-        event_ids = [
+        all_event_ids = [
             compute_event_id_slug(self.analysis._retrieve_weather_indexer_using_integer_index(i)) for i in range(n_sims)
         ]
-        iloc_by_event_id = {event_ids[i]: i for i in range(n_sims)}
+        iloc_by_event_id = {all_event_ids[i]: i for i in range(n_sims)}
+        # SIM_IDS holds the events that still have a per-event chain to plan: a removed event (analysis-level
+        # record pending or done) is out, so no per-event rule, flag or _du.json of it is planned (D24 (g)). It is
+        # read from the records only; generation performs no filesystem act. REPORT_EVENT_IDS keeps every event
+        # because the per-event report pages read the tree and the records, and a render-floor force that deletes
+        # every page must plan them all again.
+        from hhemt.scenario_records import event_ids_for_plan, report_event_ids
+
+        event_ids = event_ids_for_plan(self.analysis_paths.analysis_dir, all_event_ids)
+        report_ids = report_event_ids(all_event_ids)
         hpc_time_min = self.cfg_analysis.hpc_time_min_per_sim or 30
 
         mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
@@ -3872,7 +3882,7 @@ rule consolidate_scenario:
             # cannot drift out of lockstep -- which is what would otherwise
             # produce the "marked for report but does not exist"
             # WorkflowError.
-            _plot_items.append(f'expand("{_ep_per_sim}", event_id=SIM_IDS)')
+            _plot_items.append(f'expand("{_ep_per_sim}", event_id=REPORT_EVENT_IDS)')
         if renderer_active("per_analysis_summary", _disabled):
             _plot_items.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
         if renderer_active("scenario_status_appendix", _disabled):
@@ -3918,6 +3928,7 @@ config["report"] = {{"generated_at": _dt.now().isoformat(timespec="seconds")}}
 report: "report/workflow_description.rst"
 
 SIM_IDS = {event_ids!r}
+REPORT_EVENT_IDS = {report_ids!r}
 ILOC_BY_EVENT_ID = {iloc_by_event_id!r}
 {LABEL_GLOBALS_BLOCK}
 
@@ -9471,13 +9482,20 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         member_event_pairs_member: list[str] = []
         member_event_pairs_evt: list[str] = []
         try:
-            for member_id, sub in self.sensitivity_analysis.members.items():
+            # Every member, removed ones included (read-only views): the per-member per-event pages of a removed
+            # member read the master tree and the records.
+            for member_id, sub in all_members_for_reading_of(self.sensitivity_analysis).items():
                 if include_sub is not None and not include_sub(member_id, sub):
                     continue
                 for event_iloc in sub.df_sims.index:
                     ev = sub._retrieve_weather_indexer_using_integer_index(event_iloc)
                     member_event_pairs_member.append(str(member_id))
                     member_event_pairs_evt.append(compute_event_id_slug(ev))
+        except MemberRemovedError:
+            # A gap in a removed member's view must be LOUD at generation. The generic handler below keeps its
+            # landed purpose (a member that cannot materialize its event ids), but a view gap caught there turns
+            # every member's pages into a warning and a silent zero.
+            raise
         except Exception as exc:
             logger.warning(
                 "Per-sim panel enumeration failed for the %s (%s: %s). Per-member "
@@ -9632,11 +9650,13 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
 
         log_dir_str = str(self.experiment.analysis_paths.analysis_log_directory)
         experiment_id = str(self.experiment.cfg_analysis.analysis_id)
-        n_analyses = len(self.sensitivity_analysis.members)
+        n_analyses = len(all_members_for_reading_of(self.sensitivity_analysis))
         # Total scenarios across all members. When counting fails the front page omits the
         # count: a member count published as a scenario count would be a different number.
         try:
-            total_n_sims = sum(len(sub.df_sims) for sub in self.sensitivity_analysis.members.values())
+            total_n_sims = sum(
+                len(sub.df_sims) for sub in all_members_for_reading_of(self.sensitivity_analysis).values()
+            )
         except Exception as exc:
             logger.warning(
                 "Scenario count enumeration failed for the sensitivity master (%s: %s); "
@@ -10185,6 +10205,11 @@ onerror:
         # already used the builder, so a builder-only edit produced a production
         # Snakefile naming the OLD flag and a reprocess Snakefile naming the NEW one.
 
+        # The consolidation resources come from the last ACTIVE member's config (the value the leaked loop variable
+        # held), else the experiment's own: a master whose every member was removed has no active member, and the
+        # loop variable is then unbound.
+        _active_members = list(self.sensitivity_analysis.members.values())
+        _consolidation_cfg = _active_members[-1].cfg_analysis if _active_members else self.experiment.cfg_analysis
         snakefile_content += f'''rule experiment_consolidation:
     input: {", ".join([f'"{flag}"' for flag in analysis_flags])}
     output: "{consolidate_experiment_flag()}"
@@ -10194,8 +10219,8 @@ onerror:
 {
             self._base_builder._build_resource_block(
                 partition=self.experiment.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-                runtime_min=analysis.cfg_analysis.hpc_runtime_min_for_analysis_output_consolidation,
-                mem_mb=analysis.cfg_analysis.hpc_mem_allocation_for_analysis_output_consolidation_mb,
+                runtime_min=_consolidation_cfg.hpc_runtime_min_for_analysis_output_consolidation,
+                mem_mb=_consolidation_cfg.hpc_mem_allocation_for_analysis_output_consolidation_mb,
                 nodes=1,
                 tasks=1,
                 cpus_per_task=1,
@@ -10380,9 +10405,11 @@ rule render_report:
 
         log_dir_str = str(self.experiment.analysis_paths.analysis_log_directory)
         experiment_id = str(self.experiment.cfg_analysis.analysis_id)
-        n_analyses = len(self.sensitivity_analysis.members)
+        n_analyses = len(all_members_for_reading_of(self.sensitivity_analysis))
         try:
-            total_n_sims = sum(len(sub.df_sims) for sub in self.sensitivity_analysis.members.values())
+            total_n_sims = sum(
+                len(sub.df_sims) for sub in all_members_for_reading_of(self.sensitivity_analysis).values()
+            )
         except Exception as exc:
             logger.warning(
                 "Scenario count enumeration failed for the reprocess master (%s: %s); "
@@ -10424,6 +10451,10 @@ rule render_report:
             had_conditional_process_emit mixed-state path. The start_with
             disjunct is INERT on the default consolidate/render paths (which have
             no self-heal — it is guarded on start_with == 'process')."""
+            if getattr(sub, "is_recorded_member", False):
+                # A removed member's summaries are in the master tree: reportable on the consolidate and render
+                # paths, refused on the process path (its raw output no longer exists).
+                return start_with != "process"
             if _analysis_summaries_complete(sub, enabled_models):
                 return True
             if start_with == "process":
@@ -11042,7 +11073,7 @@ INDEPENDENT_VARS = {independent_vars!r}
             )
 
         iloc_by_event_id_by_member: dict[str, dict[str, int]] = {}
-        for member_id, sub in self.sensitivity_analysis.members.items():
+        for member_id, sub in all_members_for_reading_of(self.sensitivity_analysis).items():
             iloc_by_event_id_by_member[str(member_id)] = {}
             for event_iloc in sub.df_sims.index:
                 ev = sub._retrieve_weather_indexer_using_integer_index(event_iloc)

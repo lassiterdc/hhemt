@@ -726,6 +726,11 @@ class retrieve_synth_TRITON_SWMM_test_case:
             # test_data/norfolk_coastal_flooding/template_analysis_config.yaml.
             "clear_raw": "none",
             "force_rerun": "none",
+            # The package defaults clear everything and keep only the consolidated series (D24 (a)); the
+            # synthetic tier's tests read per-scenario stores and raw outputs after a run, so the OLD values are
+            # written explicitly here once. The new defaults are covered by tests/test_defaults_clear_everything.py.
+            "toggle_consolidate_timeseries": False,
+            "remove_after_processing": "none",
         }
         if kwargs["sensitivity_csv"] is not None:
             analysis_cfg["sensitivity_analysis"] = str(kwargs["sensitivity_csv"])

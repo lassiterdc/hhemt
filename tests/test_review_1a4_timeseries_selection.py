@@ -411,18 +411,21 @@ def test_a_netcdf_prune_keeps_dtype_attributes_and_time_axis_of_what_it_keeps(tm
 def test_a_keep_list_changed_after_the_consolidated_store_exists_is_refused_and_leaves_the_store_unchanged(
     golden_extractor,
 ):
-    """Property: consolidating, then pruning the scenario stores with a narrower keep-list and consolidating again,
-    raises `ProcessingError` and leaves every stored variable and value as it was.
+    """Property: consolidating, then pruning the scenario stores with a narrower keep-list and consolidating
+    again, does NOT refuse: it succeeds, keeps the group's variable set, leaves the kept variable's values as they
+    were and records the dropped variable as NaN at every event.
 
-    Input class: the keep-list changed after the `timeseries` branches hold the full variable set. Plausible
-    wrong implementations: a silent pass that leaves the store holding variables the new list drops while the
-    fingerprint says the tree matches, or a rewrite that deletes arrays from the only consolidated copy.
-    Must-fire control: the stored `flooding` series is present and equal before and after the refused pass.
-    Killed by: skipping the variable-set comparison of the read-back, or repairing by deleting store arrays. Passes
-    under a second correct implementation that raises a subclass of `ProcessingError`.
+    The node keeps its historical name so the chunk gate's credit follows it; the landed refusal it pinned
+    (`ProcessingError`) is replaced by the outer join, under which a variable set that differs
+    from the group's is joined rather than refused. Same inputs as before. Input class: the keep-list changed after
+    the `timeseries` branches hold the full variable set. Plausible wrong implementations: the landed refusal, or a
+    rewrite that deletes arrays from the group. Must-fire control: `flooding` holds values before the narrower pass
+    and the group still lists all three events. Note: the keep-lists join the consolidation fingerprint, so the second
+    pass re-reads every event from its pruned source; the dropped variable's earlier values are therefore NaN, not
+    preserved, which is the consequence of the user's own narrowing and not of the join.
+    Killed by: restoring the refusal, or deleting the `flooding` array. Passes under a second correct
+    implementation that records the difference in another coordinate name only if that name is changed here.
     """
-    from hhemt.exceptions import ProcessingError
-
     a = _golden(golden_extractor, extra="")
     a.process.consolidate_timeseries()
     store = a.analysis_paths.analysis_datatree_zarr
@@ -431,10 +434,20 @@ def test_a_keep_list_changed_after_the_consolidated_store_exists_is_refused_and_
     a.cfg_analysis.timeseries_keep_swmm_node = ["depth"]
     for i in a.df_sims.index:
         a._retrieve_sim_run_processing_object(i).write_summary_outputs(which="SWMM", model_type="tritonswmm")
-    with pytest.raises(ProcessingError):
-        a.process.consolidate_timeseries()
-    xr.testing.assert_identical(xr.open_zarr(store, group=group, consolidated=False).load(), before)
-    assert "flooding" in before.data_vars
+    a.process.consolidate_timeseries()
+    after = xr.open_zarr(store, group=group, consolidated=False).load()
+    assert "flooding" in before.data_vars and "flooding" in after.data_vars, "the group keeps the variable"
+    assert [int(v) for v in after["event_iloc"].values] == [int(v) for v in before["event_iloc"].values]
+    # `depth`, which the narrower list still keeps, is unchanged at every stored event: the append neither
+    # rewrote nor reordered a variable it kept.
+    np.testing.assert_array_equal(after["depth"].values, before["depth"].values)
+    # The dropped variable is NaN at every event (each event's source no longer carries it) and the record of each
+    # event says so, which is what separates "not kept for this event" from "was NaN".
+    assert bool(before["flooding"].notnull().all()), "control: the variable held values before the narrower pass"
+    assert bool(after["flooding"].isnull().all())
+    for i in after["event_iloc"].values:
+        assert "flooding" in str(after["variable_set_across_members"].sel(event_iloc=i).values)
+        assert "LACKS" in str(after["variable_set_across_members"].sel(event_iloc=i).values)
 
 
 def test_the_prune_wiring_reads_each_kind_from_its_own_field(golden_extractor):

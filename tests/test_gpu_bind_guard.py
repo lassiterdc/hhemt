@@ -206,7 +206,10 @@ def test_df_status_pre_guard_classification_path(tmp_path):
 
     from hhemt.analysis import TRITONSWMM_analysis
 
-    src = inspect.getsource(TRITONSWMM_analysis.df_status.fget)
+    # The per-event row building lives in `_df_status_rows_for_event`, which `df_status` calls; the pin covers both.
+    src = inspect.getsource(TRITONSWMM_analysis.df_status.fget) + inspect.getsource(
+        TRITONSWMM_analysis._df_status_rows_for_event
+    )
     assert "analysis_id=self.cfg_analysis.analysis_id" in src
     assert "self.analysis_id" not in src
 

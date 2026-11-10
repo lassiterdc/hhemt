@@ -1737,6 +1737,8 @@ class TRITONSWMM_analysis:
             return self.sensitivity.scenarios_not_created
         scens_not_created = []
         for event_iloc in self.df_sims.index:
+            if self._event_is_removed(event_iloc):
+                continue  # a removed scenario was created, run, processed and cleared by precondition (D24 (e))
             scen = TRITONSWMM_scenario(event_iloc, self)
             scen.log.refresh()
             if scen.log.scenario_creation_complete.get() is not True:
@@ -1757,6 +1759,8 @@ class TRITONSWMM_analysis:
             return self.sensitivity.scenarios_not_run
         scens_not_run = []
         for event_iloc in self.df_sims.index:
+            if self._event_is_removed(event_iloc):
+                continue  # a removed scenario was created, run, processed and cleared by precondition (D24 (e))
             scen = TRITONSWMM_scenario(event_iloc, self)
             # Check if all enabled models completed for this scenario
             enabled_models = scen.run.model_types_enabled
@@ -1789,6 +1793,8 @@ class TRITONSWMM_analysis:
 
         results: dict[str, str] = {}
         for event_iloc in self.df_sims.index:
+            if self._event_is_removed(event_iloc):
+                continue  # a removed scenario was created, run, processed and cleared by precondition (D24 (e))
             scen = TRITONSWMM_scenario(event_iloc, self)
             enabled_models = scen.run.model_types_enabled
             for model_type in enabled_models:
@@ -1814,6 +1820,8 @@ class TRITONSWMM_analysis:
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_scenarios_created
         for event_iloc in self.df_sims.index:
+            if self._event_is_removed(event_iloc):
+                continue  # a removed scenario was created, run, processed and cleared by precondition (D24 (e))
             scen = TRITONSWMM_scenario(event_iloc, self)
             scen.log.refresh()
             if not bool(scen.log.scenario_creation_complete.get()):
@@ -1825,6 +1833,8 @@ class TRITONSWMM_analysis:
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_sims_run
         for event_iloc in self.df_sims.index:
+            if self._event_is_removed(event_iloc):
+                continue  # a removed scenario was created, run, processed and cleared by precondition (D24 (e))
             scen = TRITONSWMM_scenario(event_iloc, self)
             if not all(scen.model_run_completed(m) for m in scen.run.model_types_enabled):
                 return False
@@ -1842,6 +1852,8 @@ class TRITONSWMM_analysis:
             return self.sensitivity.TRITONSWMM_performance_time_series_not_processed
         scens_not_processed = []
         for event_iloc in self.df_sims.index:
+            if self._event_is_removed(event_iloc):
+                continue  # a removed scenario was created, run, processed and cleared by precondition (D24 (e))
             scen = TRITONSWMM_scenario(event_iloc, self)
             # Read the per-model-type logs. Each model type of a scenario has its own
             # log file, so concurrent model runs of one scenario never write the same
@@ -1873,6 +1885,8 @@ class TRITONSWMM_analysis:
             return self.sensitivity.TRITON_time_series_not_processed
         scens_not_processed = []
         for event_iloc in self.df_sims.index:
+            if self._event_is_removed(event_iloc):
+                continue  # a removed scenario was created, run, processed and cleared by precondition (D24 (e))
             scen = TRITONSWMM_scenario(event_iloc, self)
             triton_ok = True
             if self._system.cfg_system.toggle_tritonswmm_model:
@@ -1891,6 +1905,8 @@ class TRITONSWMM_analysis:
             return self.sensitivity.SWMM_time_series_not_processed
         scens_not_processed = []
         for event_iloc in self.df_sims.index:
+            if self._event_is_removed(event_iloc):
+                continue  # a removed scenario was created, run, processed and cleared by precondition (D24 (e))
             scen = TRITONSWMM_scenario(event_iloc, self)
             swmm_ok = True
             if self._system.cfg_system.toggle_tritonswmm_model:
@@ -1919,6 +1935,8 @@ class TRITONSWMM_analysis:
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_raw_TRITON_outputs_cleared
         for event_iloc in self.df_sims.index:
+            if self._event_is_removed(event_iloc):
+                continue  # a removed scenario was created, run, processed and cleared by precondition (D24 (e))
             scen = TRITONSWMM_scenario(event_iloc, self)
             for model_type in scen.run.model_types_enabled:
                 if model_type in ("triton", "tritonswmm"):
@@ -1933,6 +1951,8 @@ class TRITONSWMM_analysis:
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_raw_SWMM_outputs_cleared
         for event_iloc in self.df_sims.index:
+            if self._event_is_removed(event_iloc):
+                continue  # a removed scenario was created, run, processed and cleared by precondition (D24 (e))
             scen = TRITONSWMM_scenario(event_iloc, self)
             for model_type in scen.run.model_types_enabled:
                 if model_type in ("swmm", "tritonswmm"):
@@ -2473,8 +2493,37 @@ class TRITONSWMM_analysis:
         self.process.consolidate_to_datatree(
             verbose=verbose,
             compression_level=compression_level,
+            df_status=self._df_status_for_consolidation(),
         )
         return
+
+    def _df_status_for_consolidation(self):
+        """The live ``df_status`` table the consolidation captures into a removed scenario's record, else None.
+
+        The status rows a record holds come from the live table, not a minimal reconstruction (D24 (f)). A
+        regular analysis joins the parsed Snakefile's allocations, which a tree that never wrote one (or whose
+        Snakefile no longer parses) cannot give; that one failure, ``FileNotFoundError``, falls back to None with a
+        warning and the record then carries the minimal rows. Any other error propagates.
+        """
+        try:
+            return self.df_status
+        except FileNotFoundError as exc:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "df_status unavailable for the removal record (%s); removed scenarios keep minimal status rows", exc
+            )
+            return None
+
+    def _event_is_removed(self, event_iloc) -> bool:
+        """True iff the event's analysis-level record is ``pending`` or ``done`` (directory removed). Path-only."""
+        from hhemt.scenario import compute_event_id_slug
+        from hhemt.scenario_records import event_is_removed
+
+        return event_is_removed(
+            self.analysis_paths.analysis_dir,
+            compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(event_iloc)),
+        )
 
     def _retrieve_sim_runs(self, event_iloc):
         scen = TRITONSWMM_scenario(event_iloc, self)
@@ -4155,6 +4204,8 @@ class TRITONSWMM_analysis:
         pending: list[str] = []
         for analysis in analyses:
             for event_iloc in analysis.df_sims.index:
+                if analysis._event_is_removed(event_iloc):
+                    continue  # a removed scenario was created, run, processed and cleared by precondition (D24 (e))
                 scen = TRITONSWMM_scenario(event_iloc, analysis)
                 unfinished = [m for m in scen.run.model_types_enabled if not scen.model_run_completed(m)]
                 if not unfinished:
@@ -5004,6 +5055,10 @@ class TRITONSWMM_analysis:
         # d_process_path.exists()`) re-emits the process rule and
         # _already_written, which reads that log rather than the file, lets it
         # write. No-op when every enabled summary is present (healthy analysis).
+        if start_with == "process":
+            _removed_events = self._removed_event_ids()
+            if _removed_events:
+                self._refuse_process_stage_of_removed(_removed_events, field="start_with")
         if start_with == "process" and not dry_run:
             _reconciled = self._reconcile_stale_process_flags_against_summaries()
             self._assert_reprocess_rebuild_sources_present(_reconciled)
@@ -5374,10 +5429,16 @@ class TRITONSWMM_analysis:
         outputs held (one motivating case: zarrs suspected of carrying a bugged
         simulation-duration calculation). Reuses ``_invalidate_processing_log_for_force_rerun`` for
         the log half.
+
+        Everything under each scenario's ``processed/`` is deleted except the per-node inflow capture of the SWMM
+        hydrology model. The capture is written when the scenario is prepared, and the hydrology output it can be
+        rebuilt from is removed by the default reclaim, so the rebuild keeps it and the hydrology consolidation
+        still has its source.
         """
         if not (start_with == "process" and regenerate_existing):
             return
         from hhemt.scenario import TRITONSWMM_scenario
+        from hhemt.swmm_runoff_modeling import processed_outputs_to_delete
         from hhemt.workflow import ResolvedForceRerunSpec
 
         # 1) Clear per-scenario per-model processing_log.outputs so the runner's
@@ -5402,14 +5463,17 @@ class TRITONSWMM_analysis:
         #    The raw out_triton/out_tritonswmm/out_swmm binaries are SIBLINGS under
         #    sim_folder (same constructor, as ``ScenarioPaths.out_triton`` etc.), NOT under processed/, so deleting
         #    processed/ preserves the rebuild source. Single-dir deletion is
-        #    drift-proof (no ScenarioPaths attr-name maintenance — the prior
-        #    16-attr tuple had wrong names) and is exactly the granularity the
-        #    SLURM-offloaded delete workflow uses.
+        #    drift-proof (no ScenarioPaths attr-name maintenance) and is the granularity
+        #    the SLURM-offloaded delete workflow uses. ONE child is kept: the per-node
+        #    inflow capture of the SWMM hydrology model. It is written when the scenario is
+        #    prepared, and the SWMM hydrology output it can be rebuilt from is removed by the
+        #    default reclaim, so deleting it here would leave the hydrology consolidation
+        #    with no source.
         for event_iloc in range(len(self.df_sims)):
             scen = TRITONSWMM_scenario(event_iloc, self)
-            processed_dir = scen.scen_paths.sim_folder / "processed"
-            if processed_dir.exists():
-                du_sentinels.delete_and_account([processed_dir], scope_dir=scen.scen_paths.sim_folder, scope="scenario")
+            doomed = processed_outputs_to_delete(scen.scen_paths.sim_folder)
+            if doomed:
+                du_sentinels.delete_and_account(doomed, scope_dir=scen.scen_paths.sim_folder, scope="scenario")
         # The consolidated zarr is deleted by _invalidate_downstream_flags'
         # regenerate_existing=True process-arm — no duplicate deletion here.
 
@@ -5882,6 +5946,16 @@ class TRITONSWMM_analysis:
                 ) from exc
         self._validate_force_rerun_targets(resolved)
         spec = self._build_force_rerun_spec(resolved)
+        # Removed scenarios (analysis-level record pending or done, D24 (e)) have no raw output to re-process:
+        # a process-stage force naming one refuses, and a run-stage force re-opens it from scratch.
+        _sens = getattr(self, "sensitivity", None)
+        if _sens is not None and hasattr(_sens, "_refuse_force_on_recorded_members"):
+            _sens._refuse_force_on_recorded_members(spec)
+        _removed_in_scope = self._removed_events_in_force_scope(spec)
+        if _removed_in_scope and spec.stage == "process":
+            self._refuse_process_stage_of_removed(_removed_in_scope, field="override_force_rerun")
+        if _removed_in_scope and spec.stage == "simulate":
+            self._supersede_removed_events(_removed_in_scope, dry_run=dry_run)
         if spec.stage == "process":
             # Before any flag or log is touched: a forced re-process of a scenario whose summary stores were cleared
             # rebuilds them from the raw output, and refusing afterwards would leave its flag deleted for nothing.
@@ -5931,6 +6005,63 @@ class TRITONSWMM_analysis:
             # call: the guard lives at the destructive site, per this method's own
             # comment on the layer above.
             self._delete_chapter_sets_for_force_rerun(spec, dry_run=dry_run)
+
+    def _removed_event_ids(self) -> list[str]:
+        """Event ids of this analysis whose analysis-level record is ``pending`` or ``done`` (D24 (e)). Path-only."""
+        from hhemt.scenario import compute_event_id_slug
+        from hhemt.scenario_records import event_is_removed
+
+        out = []
+        for i in range(len(self.df_sims)):
+            evt = compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(i))
+            if event_is_removed(self.analysis_paths.analysis_dir, evt):
+                out.append(evt)
+        return out
+
+    def _removed_events_in_force_scope(self, spec) -> list[str]:
+        """The removed events a resolved force spec names: scope ``all`` every one, ``event`` its tokens."""
+        if spec.scope == "none":
+            return []
+        removed = self._removed_event_ids()
+        if spec.scope == "all":
+            return removed
+        if spec.scope == "event":
+            return [e for e in removed if e in set(spec.tokens)]
+        return []
+
+    def _refuse_process_stage_of_removed(self, event_ids: list[str], *, field: str) -> None:
+        """Refuse a process-stage reprocess or force of removed scenarios: no raw output exists (D24 (h))."""
+        from .exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            field=field,
+            message=(
+                f"cannot re-process removed scenario(s) {sorted(event_ids)!r}: their directories were removed after "
+                "the results were verified into the analysis tree, so no raw output exists. Re-run those events from "
+                "scratch (a run-stage override_force_rerun), or use a new analysis with one of the clearing, "
+                "clear_raw or remove_after_processing switches off."
+            ),
+        )
+
+    def _supersede_removed_events(self, event_ids: list[str], *, dry_run: bool) -> None:
+        """Re-open removed events for a run-stage force: delete their flags FIRST, then set the record ``superseded``.
+
+        A kill between the two leaves the record ``done`` and a force to re-issue; the opposite order would leave
+        ``superseded`` with every flag present and no directory, which plans nothing (D24 (g)). A dry run changes
+        nothing, since the supersede is not reproduced by the planner's preview.
+        """
+        from hhemt.scenario_records import supersede_scenario_record
+
+        if dry_run:
+            return
+        status_dir = self.analysis_paths.analysis_dir / "_status"
+        for evt in event_ids:
+            for prefix in ("b_prepare_", "c_run_", "d_process_", "f_consolidate_scenario_"):
+                for flag in status_dir.glob(f"{prefix}*evt-{evt}_complete.flag*"):
+                    flag.unlink(missing_ok=True)  # EXEMPT-DU: status-flag
+        self._clear_consolidate_completion_signals(status_dir)
+        for evt in event_ids:
+            supersede_scenario_record(self.analysis_paths.analysis_dir, evt)
 
     def _clear_consolidate_completion_signals(self, status_dir: Path) -> None:
         """Clear BOTH analysis-level consolidate completion signals, together.
@@ -6091,9 +6222,16 @@ class TRITONSWMM_analysis:
 
         reconciled: set[tuple[str, str]] = set()
         reconciled_event_ids: set[str] = set()
+        from hhemt.scenario_records import event_is_removed
+
         for event_iloc in range(len(self.df_sims)):
-            scen = TRITONSWMM_scenario(event_iloc, self)
             evt = compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(event_iloc))
+            # A removed scenario (analysis-level record pending or done, D24 (e)) has its summaries in the tree
+            # and no directory: reading its summary paths would report every model divergent and delete the flags
+            # of a scenario that must plan nothing. Skipped before the handle is built.
+            if event_is_removed(self.analysis_paths.analysis_dir, evt):
+                continue
+            scen = TRITONSWMM_scenario(event_iloc, self)
             for model_type in scen.run.model_types_enabled:
                 # Flag name shape MUST match the generator gate's token shape
                 # (constants.process_timeseries_flag_per_member for members; the non-member flag for
@@ -6587,10 +6725,27 @@ class TRITONSWMM_analysis:
             return null_row
 
         proc = self._retrieve_sim_run_processing_object(event_iloc)
-        if model_type == "tritonswmm":
-            ds = proc.TRITONSWMM_performance_summary
-        else:  # triton
-            ds = proc.TRITON_only_performance_summary
+        store = (
+            proc.scen_paths.output_tritonswmm_performance_summary
+            if model_type == "tritonswmm"
+            else proc.scen_paths.output_triton_only_performance_summary
+        )
+        ds = None
+        if not Path(store).exists():
+            # A kept scenario directory whose per-scenario summary stores were cleared after the verified copy into
+            # the consolidated tree: the row is read from the tree through the clearing record, exactly as a removed
+            # scenario's is read from its analysis-level record. A store absent WITHOUT a record is a genuine fault
+            # and falls through to the opening reader, which raises naming the path.
+            from hhemt.summary_paths import summary_clearing_record
+
+            if summary_clearing_record(Path(proc.scen_paths.sim_folder), model_type) is not None:
+                mode = "tritonswmm_performance" if model_type == "tritonswmm" else "triton_only_performance"
+                ds = self.process._retrieve_combined_output(mode, event_ilocs=[int(event_iloc)])
+        if ds is None:
+            if model_type == "tritonswmm":
+                ds = proc.TRITONSWMM_performance_summary
+            else:  # triton
+                ds = proc.TRITON_only_performance_summary
         return {**_perf_row_from_dataset(ds), **_column_set_cell(ds)}
 
     @staticmethod
@@ -6739,197 +6894,7 @@ class TRITONSWMM_analysis:
 
         rows: list[dict] = []
         for event_iloc in self.df_sims.index:
-            scen = TRITONSWMM_scenario(event_iloc, self)
-            scen.log.refresh()
-            scenario_setup = scen.log.scenario_creation_complete.get() is True
-            scenario_dir = str(scen.log.logfile.parent)
-            scenario_du = scen.disk_utilization_bytes
-
-            weather_row = self.df_sims.loc[event_iloc].to_dict()
-
-            for model_type in enabled_models:
-                row = dict(weather_row)
-                row["event_iloc"] = event_iloc
-                row["model_type"] = model_type
-                row["scenario_setup"] = scenario_setup
-                row["run_completed"] = scen.model_run_completed(model_type)
-                row["n_resumes"] = scen.get_log(model_type).n_resumes.get() or 0
-                # Surface the realized per-attempt resume reporting-steps as a first-class
-                # df_status column → scenario_status.csv → data-tree, so the experiment that
-                # compares a resumed sim bit-for-bit against a clean one at the same timestep
-                # is answerable from the data. Legacy logs -> [] (coalesced).
-                row["resume_reporting_tsteps"] = scen.get_log(model_type).resume_reporting_tsteps.get() or []
-                # Durable per-attempt wall total (None -> fall back to the perf-summary
-                # total; a resumed sim's perf total under-counts, see run_simulation_runner ledger).
-                from hhemt.run_simulation import model_logfile_for, read_walltime_ledger_total_s
-
-                row["wall_clock_ledger_s"] = read_walltime_ledger_total_s(
-                    model_logfile_for(self, event_iloc, model_type)
-                )
-                # SLURM queue time from the SAME append-only ledger. Three columns,
-                # because one number cannot answer both questions the report asks. The
-                # efficiency table has one ROW PER SLURM JOB and a resumed sim occupies
-                # several, so the per-jobid map lets each row show ITS OWN wait while the
-                # total answers "how long did this sim wait, end to end". Coverage is
-                # carried because a bare total cannot distinguish "summed 5 of 5" from
-                # "summed 2 of 5" -- a tree that resumed across the toolkit version that began
-                # recording queue time is exactly that case, and it must read as partial rather
-                # than complete. None (not 0.0) under 1_job_many_srun_tasks and on trees
-                # written before that version.
-                import json as _json_q
-
-                from hhemt.run_simulation import read_queue_ledger_seconds
-
-                _q_total, _q_cov, _q_by_jobid = read_queue_ledger_seconds(
-                    model_logfile_for(self, event_iloc, model_type)
-                )
-                row["queue_seconds_total"] = _q_total
-                row["queue_seconds_coverage"] = _q_cov
-                row["queue_seconds_by_jobid"] = _json_q.dumps(_q_by_jobid) if _q_by_jobid else ""
-                # Resume labelling. The efficiency table has one row per SLURM job STEP and a
-                # resumed sim's attempts ARE those steps (measured: 28 sims x n_resumes 3 ->
-                # 18 allocations x 4 steps + 10 x 5 = the 122 sim rows), so the step id is the
-                # attempt discriminator and the allocation id is not. Emitted as a JSON map
-                # keyed `{jobid}.{step}` so the renderer joins it against the CSV's own
-                # `JobID` column with no ordering assumption. Empty dict -> "" so a tree
-                # written before this ledger existed carries an absent value rather than a
-                # misleading `{}`.
-                from hhemt.run_simulation import read_attempt_index_by_jobstep
-
-                _attempts = read_attempt_index_by_jobstep(model_logfile_for(self, event_iloc, model_type))
-                row["attempt_by_jobstep"] = _json_q.dumps(_attempts) if _attempts else ""
-                row["scenario_directory"] = scenario_dir
-                row["disk_utilization_bytes"] = scenario_du
-
-                # Provide model-specific expected resources to downstream validators.
-                if model_type == "swmm":
-                    row["run_mode"] = "serial" if self.cfg_analysis.n_omp_threads == 1 else "openmp"
-                    row["n_mpi_procs"] = 1
-                    row["n_omp_threads"] = self.cfg_analysis.n_omp_threads or 1
-                    row["n_gpus"] = 0
-                    row["backend_used"] = "cpu"
-                else:
-                    row["run_mode"] = self.cfg_analysis.run_mode
-                    row["n_mpi_procs"] = self.cfg_analysis.n_mpi_procs or 1
-                    row["n_omp_threads"] = self.cfg_analysis.n_omp_threads or 1
-                    row["n_gpus"] = (self.cfg_analysis.n_gpus or 0) if self.cfg_analysis.run_mode == "gpu" else 0
-                    row["backend_used"] = scen.log.triton_backend_used.get()
-
-                # Populated UNCONDITIONALLY: n_nodes is a CONFIG property, and gating the
-                # column on $SLURM_JOB_ID meant the same test saw a different df_status
-                # inside an allocation than outside one -- a silently different system
-                # under test.
-                # No consumer depends on the column's absence; every other n_nodes read
-                # in the tree goes to cfg_analysis or a zarr attr, not this column.
-                row["n_nodes"] = 1 if model_type == "swmm" else self.cfg_analysis.n_nodes or 1
-
-                # Actual resources (model-dependent availability)
-                if model_type == "tritonswmm":
-                    log_out_path = (scen.scen_paths.out_tritonswmm or scen.scen_paths.sim_folder) / "log.out"
-                    log_data = parse_triton_log_file(log_out_path)
-                    row["actual_nTasks"] = log_data["nTasks"]
-                    row["actual_omp_threads"] = log_data["omp_threads_per_task"]
-                    row["actual_gpus"] = log_data["gpus_per_task"]
-                    row["actual_total_gpus"] = log_data["total_gpus"]
-                    row["actual_gpu_backend"] = log_data["gpu_backend"]
-                    row["actual_build_type"] = log_data["build_type"]
-                    # OBSERVED device identity, distinct from the REQUESTED hardware the
-                    # partition selector implies. None on a log predating the emission.
-                    row["actual_cpu"] = log_data["cpu"]
-                    row["actual_gpu"] = log_data["gpu"]
-                    # MEASURED GPU binding (hhemt.gpu_bind_guard artifact), never TRITON's header:
-                    # actual_total_gpus above is TRITON's MPI size restated (output.h "assuming 1
-                    # GPU per task"), so it cannot see a short or shared step.
-                    from hhemt.gpu_bind_guard import classify_from_signature, read_gpu_bind_artifact
-
-                    _gb = read_gpu_bind_artifact(scen.scen_paths.sim_folder, model_type)
-                    if _gb is not None:
-                        row["actual_distinct_gpus"] = _gb.get("distinct_devices")
-                        row["gpu_binding_verdict"] = _gb.get("verdict")
-                    elif row["run_mode"] == "gpu" and (row["n_gpus"] or 0) >= 2:
-                        # Pre-guard row: retroactive classifier on the SLURM short-step signature.
-                        # Applicable only when the RECORDED launch form (the runner log's Command:
-                        # line, beside the model log) is the per_task form (--gpus-per-task=1);
-                        # the older single:1 form has a different signature and classifies None.
-                        from hhemt.gpu_bind_guard import find_runner_command_line
-
-                        _model_log = model_logfile_for(self, event_iloc, model_type)
-                        _cmd_line = find_runner_command_line(
-                            _model_log.parent,
-                            model_type=model_type,
-                            analysis_id=self.cfg_analysis.analysis_id,
-                            event_id=scen.event_id,
-                        )
-                        _per_task = bool(_cmd_line) and "--gpus-per-task=1" in _cmd_line
-                        row["actual_distinct_gpus"] = None
-                        row["gpu_binding_verdict"] = classify_from_signature(
-                            _model_log, launch_form_is_per_task=_per_task
-                        )
-                    else:
-                        row["actual_distinct_gpus"] = None
-                        row["gpu_binding_verdict"] = None
-                elif model_type == "triton":
-                    log_out_path = (scen.scen_paths.out_triton or scen.scen_paths.sim_folder) / "log.out"
-                    log_data = parse_triton_log_file(log_out_path)
-                    row["actual_nTasks"] = log_data["nTasks"]
-                    row["actual_omp_threads"] = log_data["omp_threads_per_task"]
-                    row["actual_gpus"] = log_data["gpus_per_task"]
-                    row["actual_total_gpus"] = log_data["total_gpus"]
-                    row["actual_gpu_backend"] = log_data["gpu_backend"]
-                    row["actual_build_type"] = log_data["build_type"]
-                    row["actual_cpu"] = log_data["cpu"]
-                    row["actual_gpu"] = log_data["gpu"]
-                    # MEASURED GPU binding (hhemt.gpu_bind_guard artifact), never TRITON's header:
-                    # actual_total_gpus above is TRITON's MPI size restated (output.h "assuming 1
-                    # GPU per task"), so it cannot see a short or shared step.
-                    from hhemt.gpu_bind_guard import classify_from_signature, read_gpu_bind_artifact
-
-                    _gb = read_gpu_bind_artifact(scen.scen_paths.sim_folder, model_type)
-                    if _gb is not None:
-                        row["actual_distinct_gpus"] = _gb.get("distinct_devices")
-                        row["gpu_binding_verdict"] = _gb.get("verdict")
-                    elif row["run_mode"] == "gpu" and (row["n_gpus"] or 0) >= 2:
-                        # Pre-guard row: retroactive classifier on the SLURM short-step signature.
-                        # Applicable only when the RECORDED launch form (the runner log's Command:
-                        # line, beside the model log) is the per_task form (--gpus-per-task=1);
-                        # the older single:1 form has a different signature and classifies None.
-                        from hhemt.gpu_bind_guard import find_runner_command_line
-
-                        _model_log = model_logfile_for(self, event_iloc, model_type)
-                        _cmd_line = find_runner_command_line(
-                            _model_log.parent,
-                            model_type=model_type,
-                            analysis_id=self.cfg_analysis.analysis_id,
-                            event_id=scen.event_id,
-                        )
-                        _per_task = bool(_cmd_line) and "--gpus-per-task=1" in _cmd_line
-                        row["actual_distinct_gpus"] = None
-                        row["gpu_binding_verdict"] = classify_from_signature(
-                            _model_log, launch_form_is_per_task=_per_task
-                        )
-                    else:
-                        row["actual_distinct_gpus"] = None
-                        row["gpu_binding_verdict"] = None
-                else:  # swmm
-                    swmm_report_data = retrieve_swmm_performance_stats_from_rpt(scen.scen_paths.swmm_full_rpt_file)
-                    row["actual_nTasks"] = 1
-                    row["actual_omp_threads"] = swmm_report_data.get("actual_omp_threads")
-                    row["actual_gpus"] = None
-                    row["actual_total_gpus"] = None
-                    row["actual_gpu_backend"] = "none"
-                    row["actual_distinct_gpus"] = None
-                    row["gpu_binding_verdict"] = None
-                    row["actual_build_type"] = "SWMM"
-                    # SWMM writes no TRITON RUN INFO block, so device identity is not
-                    # observed here. None says "not measured"; it does not say "no GPU"
-                    # (actual_gpu_backend already carries that).
-                    row["actual_cpu"] = None
-                    row["actual_gpu"] = None
-
-                # Performance breakdown from processed summary dataset
-                row.update(self._get_performance_summary_row(event_iloc, model_type))
-
-                rows.append(row)
+            rows.extend(self._df_status_rows_for_event(event_iloc, enabled_models))
 
         df_status = pd.DataFrame(rows)
         if self.cfg_analysis.is_experiment_member:
@@ -6957,6 +6922,215 @@ class TRITONSWMM_analysis:
                         "no run_* rule in Snakefile — model not run"
                     )
             return self._reorder_df_status_columns(df_status_joined)
+
+    def _df_status_rows_for_event(self, event_iloc, enabled_models) -> list[dict]:
+        """The ``df_status`` rows of one event, one per enabled model.
+
+        A removed scenario (analysis-level record pending or done, D24 (e)) answers from its record: the rows
+        captured before the directory was removed (``captured["df_status_rows"]``), else a minimal row built from the
+        recorded completion verdict and disk-use bytes, so ``scenario_status.csv`` never carries a blank row. A live
+        scenario is read from its directory as before.
+        """
+        from hhemt.scenario import compute_event_id_slug
+        from hhemt.scenario_records import event_is_removed, read_scenario_record
+
+        evt = compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(event_iloc))
+        if event_is_removed(self.analysis_paths.analysis_dir, evt):
+            from hhemt.scenario_records import df_status_rows_from_record
+
+            record = read_scenario_record(self.analysis_paths.analysis_dir, evt) or {}
+            return df_status_rows_from_record(
+                record,
+                self.df_sims.loc[event_iloc].to_dict(),
+                event_iloc,
+                enabled_models,
+                str(self.analysis_paths.simulation_directory / evt),
+            )
+        rows: list[dict] = []
+        scen = TRITONSWMM_scenario(event_iloc, self)
+        scen.log.refresh()
+        scenario_setup = scen.log.scenario_creation_complete.get() is True
+        scenario_dir = str(scen.log.logfile.parent)
+        scenario_du = scen.disk_utilization_bytes
+
+        weather_row = self.df_sims.loc[event_iloc].to_dict()
+
+        for model_type in enabled_models:
+            row = dict(weather_row)
+            row["event_iloc"] = event_iloc
+            row["model_type"] = model_type
+            row["scenario_setup"] = scenario_setup
+            row["run_completed"] = scen.model_run_completed(model_type)
+            row["n_resumes"] = scen.get_log(model_type).n_resumes.get() or 0
+            # Surface the realized per-attempt resume reporting-steps as a first-class
+            # df_status column → scenario_status.csv → data-tree, so the experiment that
+            # compares a resumed sim bit-for-bit against a clean one at the same timestep
+            # is answerable from the data. A log without the field gives an empty list.
+            row["resume_reporting_tsteps"] = scen.get_log(model_type).resume_reporting_tsteps.get() or []
+            # Durable per-attempt wall total (None -> fall back to the perf-summary
+            # total; a resumed sim's perf total under-counts, see run_simulation_runner ledger).
+            from hhemt.run_simulation import model_logfile_for, read_walltime_ledger_total_s
+
+            row["wall_clock_ledger_s"] = read_walltime_ledger_total_s(model_logfile_for(self, event_iloc, model_type))
+            # SLURM queue time from the SAME append-only ledger. Three columns,
+            # because one number cannot answer both questions the report asks. The
+            # efficiency table has one ROW PER SLURM JOB and a resumed sim occupies
+            # several, so the per-jobid map lets each row show ITS OWN wait while the
+            # total answers "how long did this sim wait, end to end". Coverage is
+            # carried because a bare total cannot distinguish "summed 5 of 5" from
+            # "summed 2 of 5" -- a tree that resumed across the toolkit version that began
+            # recording queue time is exactly that case, and it must read as partial rather
+            # than complete. None (not 0.0) under 1_job_many_srun_tasks and on trees
+            # written before that version.
+            import json as _json_q
+
+            from hhemt.run_simulation import read_queue_ledger_seconds
+
+            _q_total, _q_cov, _q_by_jobid = read_queue_ledger_seconds(model_logfile_for(self, event_iloc, model_type))
+            row["queue_seconds_total"] = _q_total
+            row["queue_seconds_coverage"] = _q_cov
+            row["queue_seconds_by_jobid"] = _json_q.dumps(_q_by_jobid) if _q_by_jobid else ""
+            # Resume labelling. The efficiency table has one row per SLURM job STEP and a
+            # resumed sim's attempts ARE those steps (measured: 28 sims x n_resumes 3 ->
+            # 18 allocations x 4 steps + 10 x 5 = the 122 sim rows), so the step id is the
+            # attempt discriminator and the allocation id is not. Emitted as a JSON map
+            # keyed `{jobid}.{step}` so the renderer joins it against the CSV's own
+            # `JobID` column with no ordering assumption. Empty dict -> "" so a tree
+            # written before this ledger existed carries an absent value rather than a
+            # misleading `{}`.
+            from hhemt.run_simulation import read_attempt_index_by_jobstep
+
+            _attempts = read_attempt_index_by_jobstep(model_logfile_for(self, event_iloc, model_type))
+            row["attempt_by_jobstep"] = _json_q.dumps(_attempts) if _attempts else ""
+            row["scenario_directory"] = scenario_dir
+            row["disk_utilization_bytes"] = scenario_du
+
+            # Provide model-specific expected resources to downstream validators.
+            if model_type == "swmm":
+                row["run_mode"] = "serial" if self.cfg_analysis.n_omp_threads == 1 else "openmp"
+                row["n_mpi_procs"] = 1
+                row["n_omp_threads"] = self.cfg_analysis.n_omp_threads or 1
+                row["n_gpus"] = 0
+                row["backend_used"] = "cpu"
+            else:
+                row["run_mode"] = self.cfg_analysis.run_mode
+                row["n_mpi_procs"] = self.cfg_analysis.n_mpi_procs or 1
+                row["n_omp_threads"] = self.cfg_analysis.n_omp_threads or 1
+                row["n_gpus"] = (self.cfg_analysis.n_gpus or 0) if self.cfg_analysis.run_mode == "gpu" else 0
+                row["backend_used"] = scen.log.triton_backend_used.get()
+
+            # Populated UNCONDITIONALLY: n_nodes is a CONFIG property, and gating the
+            # column on $SLURM_JOB_ID meant the same test saw a different df_status
+            # inside an allocation than outside one -- a silently different system
+            # under test.
+            # No consumer depends on the column's absence; every other n_nodes read
+            # in the tree goes to cfg_analysis or a zarr attr, not this column.
+            row["n_nodes"] = 1 if model_type == "swmm" else self.cfg_analysis.n_nodes or 1
+
+            # Actual resources (model-dependent availability)
+            if model_type == "tritonswmm":
+                log_out_path = (scen.scen_paths.out_tritonswmm or scen.scen_paths.sim_folder) / "log.out"
+                log_data = parse_triton_log_file(log_out_path)
+                row["actual_nTasks"] = log_data["nTasks"]
+                row["actual_omp_threads"] = log_data["omp_threads_per_task"]
+                row["actual_gpus"] = log_data["gpus_per_task"]
+                row["actual_total_gpus"] = log_data["total_gpus"]
+                row["actual_gpu_backend"] = log_data["gpu_backend"]
+                row["actual_build_type"] = log_data["build_type"]
+                # OBSERVED device identity, distinct from the REQUESTED hardware the
+                # partition selector implies. None on a log predating the emission.
+                row["actual_cpu"] = log_data["cpu"]
+                row["actual_gpu"] = log_data["gpu"]
+                # MEASURED GPU binding (hhemt.gpu_bind_guard artifact), never TRITON's header:
+                # actual_total_gpus above is TRITON's MPI size restated (output.h "assuming 1
+                # GPU per task"), so it cannot see a short or shared step.
+                from hhemt.gpu_bind_guard import classify_from_signature, read_gpu_bind_artifact
+
+                _gb = read_gpu_bind_artifact(scen.scen_paths.sim_folder, model_type)
+                if _gb is not None:
+                    row["actual_distinct_gpus"] = _gb.get("distinct_devices")
+                    row["gpu_binding_verdict"] = _gb.get("verdict")
+                elif row["run_mode"] == "gpu" and (row["n_gpus"] or 0) >= 2:
+                    # Pre-guard row: retroactive classifier on the SLURM short-step signature.
+                    # Applicable only when the RECORDED launch form (the runner log's Command:
+                    # line, beside the model log) is the per_task form (--gpus-per-task=1);
+                    # the older single:1 form has a different signature and classifies None.
+                    from hhemt.gpu_bind_guard import find_runner_command_line
+
+                    _model_log = model_logfile_for(self, event_iloc, model_type)
+                    _cmd_line = find_runner_command_line(
+                        _model_log.parent,
+                        model_type=model_type,
+                        analysis_id=self.cfg_analysis.analysis_id,
+                        event_id=scen.event_id,
+                    )
+                    _per_task = bool(_cmd_line) and "--gpus-per-task=1" in _cmd_line
+                    row["actual_distinct_gpus"] = None
+                    row["gpu_binding_verdict"] = classify_from_signature(_model_log, launch_form_is_per_task=_per_task)
+                else:
+                    row["actual_distinct_gpus"] = None
+                    row["gpu_binding_verdict"] = None
+            elif model_type == "triton":
+                log_out_path = (scen.scen_paths.out_triton or scen.scen_paths.sim_folder) / "log.out"
+                log_data = parse_triton_log_file(log_out_path)
+                row["actual_nTasks"] = log_data["nTasks"]
+                row["actual_omp_threads"] = log_data["omp_threads_per_task"]
+                row["actual_gpus"] = log_data["gpus_per_task"]
+                row["actual_total_gpus"] = log_data["total_gpus"]
+                row["actual_gpu_backend"] = log_data["gpu_backend"]
+                row["actual_build_type"] = log_data["build_type"]
+                row["actual_cpu"] = log_data["cpu"]
+                row["actual_gpu"] = log_data["gpu"]
+                # MEASURED GPU binding (hhemt.gpu_bind_guard artifact), never TRITON's header:
+                # actual_total_gpus above is TRITON's MPI size restated (output.h "assuming 1
+                # GPU per task"), so it cannot see a short or shared step.
+                from hhemt.gpu_bind_guard import classify_from_signature, read_gpu_bind_artifact
+
+                _gb = read_gpu_bind_artifact(scen.scen_paths.sim_folder, model_type)
+                if _gb is not None:
+                    row["actual_distinct_gpus"] = _gb.get("distinct_devices")
+                    row["gpu_binding_verdict"] = _gb.get("verdict")
+                elif row["run_mode"] == "gpu" and (row["n_gpus"] or 0) >= 2:
+                    # Pre-guard row: retroactive classifier on the SLURM short-step signature.
+                    # Applicable only when the RECORDED launch form (the runner log's Command:
+                    # line, beside the model log) is the per_task form (--gpus-per-task=1);
+                    # the older single:1 form has a different signature and classifies None.
+                    from hhemt.gpu_bind_guard import find_runner_command_line
+
+                    _model_log = model_logfile_for(self, event_iloc, model_type)
+                    _cmd_line = find_runner_command_line(
+                        _model_log.parent,
+                        model_type=model_type,
+                        analysis_id=self.cfg_analysis.analysis_id,
+                        event_id=scen.event_id,
+                    )
+                    _per_task = bool(_cmd_line) and "--gpus-per-task=1" in _cmd_line
+                    row["actual_distinct_gpus"] = None
+                    row["gpu_binding_verdict"] = classify_from_signature(_model_log, launch_form_is_per_task=_per_task)
+                else:
+                    row["actual_distinct_gpus"] = None
+                    row["gpu_binding_verdict"] = None
+            else:  # swmm
+                swmm_report_data = retrieve_swmm_performance_stats_from_rpt(scen.scen_paths.swmm_full_rpt_file)
+                row["actual_nTasks"] = 1
+                row["actual_omp_threads"] = swmm_report_data.get("actual_omp_threads")
+                row["actual_gpus"] = None
+                row["actual_total_gpus"] = None
+                row["actual_gpu_backend"] = "none"
+                row["actual_distinct_gpus"] = None
+                row["gpu_binding_verdict"] = None
+                row["actual_build_type"] = "SWMM"
+                # SWMM writes no TRITON RUN INFO block, so device identity is not
+                # observed here. None says "not measured"; it does not say "no GPU"
+                # (actual_gpu_backend already carries that).
+                row["actual_cpu"] = None
+                row["actual_gpu"] = None
+
+            # Performance breakdown from processed summary dataset
+            row.update(self._get_performance_summary_row(event_iloc, model_type))
+
+            rows.append(row)
+        return rows
 
     def _selective_cancel(
         self,

@@ -58,17 +58,24 @@ class _FakeScenario:
         return self._row[model_type] is None
 
 
-def _member(name, table):
-    return SimpleNamespace(name=name, table=table, df_sims=SimpleNamespace(index=list(table)))
+def _member(name, table, removed=frozenset()):
+    """A member stand-in. It answers `_event_is_removed` from ITS OWN removed set, as a member's records dir does."""
+    return SimpleNamespace(
+        name=name,
+        table=table,
+        df_sims=SimpleNamespace(index=list(table)),
+        _event_is_removed=lambda event_iloc: event_iloc in removed,
+    )
 
 
-def _stand_in(*, sensitivity, tables):
+def _stand_in(*, sensitivity, tables, removed=None):
     """An object carrying TRITONSWMM_analysis's plain methods, with its state stubbed."""
     methods = {
         k: v for k, v in TRITONSWMM_analysis.__dict__.items() if inspect.isfunction(v) and not k.startswith("__")
     }
     obj = type("_StandIn", (), methods)()
-    members = {name: _member(name, table) for name, table in tables.items()}
+    removed = removed or {}
+    members = {name: _member(name, table, frozenset(removed.get(name, ()))) for name, table in tables.items()}
     incomplete = [
         f"/sims/{name}/evt-{e}"
         for name, table in tables.items()
@@ -92,6 +99,13 @@ def _stand_in(*, sensitivity, tables):
     obj.n_scenarios = n_scenarios
     obj.n_sims = n_scenarios * len(_MODELS)
     obj._get_enabled_model_types = lambda: list(_MODELS)
+    # The split skips scenarios whose directory was removed after a verified copy. A regular analysis answers from
+    # its own record; a sensitivity master answers True for EVERY event, which is wrong for a member's scenario on
+    # purpose: a split that asks the master instead of the member skips them all.
+    if sensitivity:
+        obj._event_is_removed = lambda _event_iloc: True
+    else:
+        obj._event_is_removed = lambda event_iloc: event_iloc in removed.get("base", ())
     obj._all_scenarios_created = True
     obj._scenarios_not_created = []
     obj._all_sims_run = not incomplete
@@ -154,3 +168,23 @@ def test_differently_positioned_all_complete_reports_zero_of_each():
     status = TRITONSWMM_analysis.get_workflow_status(_stand_in(sensitivity=False, tables={"base": complete}))
 
     assert (status.simulations_failed, status.simulations_pending) == (0, 0)
+
+
+def test_a_removed_scenario_is_skipped_by_asking_the_analysis_that_owns_it():
+    """Property: the split asks each ANALYSIS whether a scenario was removed, so a removed member's scenario is
+    skipped (not counted pending or failed) and the other member's is counted; a regular analysis skips its own.
+
+    Class: removed scenarios in a sensitivity master. Plausible wrong implementation: asking the master
+    (`self._event_is_removed`), whose record directory holds no member's records. Must-fire control: the stand-in
+    master answers True for every event, so that call skips all scenarios and the counts read (0, 0); and the
+    unremoved scenario of the second member is counted (failed 1).
+    """
+    tables = {"m0": {0: {"triton": "no_log", "swmm": "no_log"}}, "m1": {0: {"triton": "no_log", "swmm": "timeout"}}}
+    status = TRITONSWMM_analysis.get_workflow_status(_stand_in(sensitivity=True, tables=tables, removed={"m0": {0}}))
+    assert (status.simulations_failed, status.simulations_pending) == (1, 0)
+
+    regular = {0: {"triton": "no_log", "swmm": "no_log"}, 1: {"triton": "no_log", "swmm": "no_log"}}
+    status = TRITONSWMM_analysis.get_workflow_status(
+        _stand_in(sensitivity=False, tables={"base": regular}, removed={"base": {0}})
+    )
+    assert (status.simulations_failed, status.simulations_pending) == (0, 1)

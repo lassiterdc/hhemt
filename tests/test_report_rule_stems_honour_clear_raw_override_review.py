@@ -81,6 +81,12 @@ def _sensitivity_analysis(analysis_dir: Path, *, clear_raw: str) -> SimpleNamesp
         _get_enabled_model_types=lambda: ["tritonswmm"],
         _validate_force_rerun_targets=lambda _spec: None,
         _build_force_rerun_spec=lambda _spec: ResolvedForceRerunSpec(scope="all", tokens=(), stage="render", models=()),
+        # The scope check reads the removed-event ids; this stand-in has none, and the REAL scope method is
+        # bound so the stand-in still reaches the production arm.
+        _removed_event_ids=lambda: [],
+    )
+    analysis._removed_events_in_force_scope = functools.partial(
+        TRITONSWMM_analysis._removed_events_in_force_scope, analysis
     )
     builder_state = SimpleNamespace(analysis_paths=analysis.analysis_paths, analysis=analysis)
     analysis._workflow_builder = SimpleNamespace(

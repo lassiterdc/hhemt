@@ -662,6 +662,13 @@ class TRITONSWMM_run:
         first-run correctness for paths where the simulation has just emitted
         its log but the log-field has not yet been written.
         """
+        # A removed scenario (analysis-level record pending or done, D24 (e)) has no directory to read: its
+        # verdict is the one captured at removal. The run gate's raw solver files are gone by design.
+        if getattr(self._scenario, "_removed", False):
+            from hhemt.scenario_records import recorded_run_completed
+
+            return bool(recorded_run_completed(self._analysis, self._scenario.event_id, model_type))
+
         # Primary: read post-processing-aware log field.
         #
         # ONLY a POSITIVE (True) record is authoritative. A False/None record means
