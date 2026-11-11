@@ -3882,6 +3882,11 @@ class TRITONSWMM_analysis:
                 "analysis_dir": str(sub_dir),  # keeps all artifacts under _test/
                 "experiment_cfg_yaml": str(self.analysis_config_yaml),
                 "weather_timeseries": str(short_weather),  # short weather survives the YAML reload
+                # The declared event windows belong to the FULL-length weather. The sliced weather has its own short
+                # axis, so the windows are unset and each event's window is that axis's exact endpoints; an inherited
+                # window would never equal the short axis and the scenario weather writer would refuse every event.
+                # The two window column-name fields are read only with the csv and stay as they are.
+                "weather_event_windows_csv": None,
                 "TRITON_reporting_timestep_s": reporting_timestep_s,
                 "report": scoped_report,
             }
