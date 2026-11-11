@@ -6616,6 +6616,22 @@ class TRITONSWMM_analysis:
     def _swmm_only_link_analysis_summary_created(self):
         return bool(self.log.swmm_only_link_analysis_summary_created.get())
 
+    def _status_scenario_directory(self, event_iloc) -> str:
+        """The scenario directory a status row names, without touching a removed scenario's log.
+
+        A removed scenario (record pending or done) answers with the path its captured status rows carry,
+        ``{simulation_directory}/{event_id}``: its log is gone and the scenario object cannot be built without
+        re-creating its directories. A live scenario is read through its log as before.
+        """
+        from hhemt.scenario import compute_event_id_slug
+
+        evt = compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(event_iloc))
+        if self._event_is_removed(event_iloc):
+            return str(self.analysis_paths.simulation_directory / evt)
+        scen = TRITONSWMM_scenario(event_iloc, self)
+        scen.log.refresh()
+        return str(scen.log.logfile.parent)
+
     @property
     def _df_snakemake_allocations(self) -> pd.DataFrame:
         enabled_models_untyped = self._get_enabled_model_types()
@@ -6642,9 +6658,7 @@ class TRITONSWMM_analysis:
                     continue
                 alloc = member_allocations[member_id]
                 for event_iloc in analysis.df_sims.index:
-                    scen = TRITONSWMM_scenario(event_iloc, analysis)
-                    scen.log.refresh()
-                    scenario_dir = str(scen.log.logfile.parent)
+                    scenario_dir = analysis._status_scenario_directory(event_iloc)
                     for model_type in enabled_models:
                         row = {
                             "event_iloc": event_iloc,
@@ -6659,9 +6673,7 @@ class TRITONSWMM_analysis:
         model_allocations, parse_error = self._retrieve_snakemake_allocations()
         rows = []
         for event_iloc in self.df_sims.index:
-            scen = TRITONSWMM_scenario(event_iloc, self)
-            scen.log.refresh()
-            scenario_dir = str(scen.log.logfile.parent)
+            scenario_dir = self._status_scenario_directory(event_iloc)
 
             for model_type in enabled_models:
                 row = {

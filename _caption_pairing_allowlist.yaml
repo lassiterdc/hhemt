@@ -1570,7 +1570,9 @@ unpaired_allowlist:
       so there is no caption edit to make. Digest recorded at the post-change renderer content.
   - renderer: per_sim_event_page
     caption: src/hhemt/report_templates/captions/per_sim_event_page.rst
-    renderer_sha256: 29db65491930268e76e3eec33430e3d197cce0acf5b53a3e047d8a1a31856ef7
+    renderer_sha256: 2ee0c70a1f2f046a0d0c7301e2dd2b2e2fe89a60a2ac08f708e0ea3b97029937
+    justification_2026_11_10_chunk_1e10: >-
+      Re-read 2026-11-10 (chunk 1e.10) against this renderer's diff. The diff replaces the page's run-object read of the geometry .inp with `event_hydraulics_inp` (live scenario unchanged; a removed scenario answers from the .inp kept beside the removal records). The caption (read in full) describes the depth, water-surface, conduit-flow and Flood Drivers panels and names no source of the geometry file. No clause is falsified, weakened or left ambiguous, so there is no caption edit to make. Digest recorded at the post-change renderer content.
     justification: >-
       Chunk 3e.2 round 2, re-read against this renderer's diff (4 hunks, `git diff -U0 HEAD --
       src/hhemt/report_renderers/per_sim_event_page.py`). The diff changes four strings the page
@@ -1583,7 +1585,9 @@ unpaired_allowlist:
       renderer.
   - renderer: per_sim_conduit_flow
     caption: src/hhemt/report_templates/captions/per_sim_conduit_flow.rst
-    renderer_sha256: b294f29079310aad7258b9f3e72114605fb5235b7221fe9f7906717b3d53695e
+    renderer_sha256: b3dbe7ea36acbb260ff8c10bcf428e5d81f8ddd5a0cbfd49d1011e818b2c1057
+    justification_2026_11_10_chunk_1e10: >-
+      Re-read 2026-11-10 (chunk 1e.10) against this renderer's diff. The diff adds `event_hydraulics_inp`, which answers the conduit geometry file for a removed scenario from the .inp kept beside the removal records and for a live scenario exactly as before, and drops the two run-object constructions that raised for a removed scenario. The caption (read in full) describes the max/full-flow and peak-flow panels, colormaps and bounds, the watershed overlay and the Flood Drivers panel; it names no source of the geometry file, and every analysis shares one network, so what the figure shows is unchanged. No clause is falsified, weakened or left ambiguous, so there is no caption edit to make. Digest recorded at the post-change renderer content.
     justification_2026_11_02_develop_merge: >-
       Re-read 2026-11-02 against this renderer's diff on top of the merged origin/develop (the SWMM link
       maximum flow it reads is named max_flow, not max_flow_cms, in
