@@ -3558,7 +3558,7 @@ class TRITONSWMM_sensitivity_analysis:
                 ),
             )
 
-    def all_members_for_reading(self) -> dict:
+    def _all_members_for_reading(self) -> dict:
         """The active members followed by the read-only views of the removed members, keyed by member id.
 
         A reader that must enumerate every member iterates this. The readers are the per-analysis summary, the
@@ -3898,7 +3898,7 @@ class TRITONSWMM_sensitivity_analysis:
         """
         status_frames = []
 
-        for member_id, analysis in self.all_members_for_reading().items():
+        for member_id, analysis in self._all_members_for_reading().items():
             assert analysis.cfg_analysis.is_experiment_member, (
                 "is_experiment_member attribute not true in member.cfg_analysis.is_experiment_member"
             )

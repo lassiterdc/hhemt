@@ -723,12 +723,12 @@ def all_members_for_reading(active: dict, recorded: dict) -> dict:
 
 
 def all_members_for_reading_of(sensitivity) -> dict:
-    """``sensitivity.all_members_for_reading()`` when the object offers it, else its plain ``members`` mapping.
+    """``sensitivity._all_members_for_reading()`` when the object offers it, else its plain ``members`` mapping.
 
     Every real sensitivity analysis offers the method; the fallback serves duck-typed stand-ins that carry only
     ``members`` (nothing is removed there, so the active mapping IS every member).
     """
-    method = getattr(sensitivity, "all_members_for_reading", None)
+    method = getattr(sensitivity, "_all_members_for_reading", None)
     return method() if method is not None else sensitivity.members
 
 

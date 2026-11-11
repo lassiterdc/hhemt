@@ -241,7 +241,8 @@ def test_hydrology_variant_local_runoff_invariant(synth_all_models_analysis_cach
     """
     import pandas as pd
     from pyswmm import Output
-    from swmm.toolkit.shared_enum import NodeAttribute
+    from swmm.toolkit import output as swmm_output
+    from swmm.toolkit.shared_enum import NodeAttribute, Time
 
     from hhemt.scenario import return_df_of_nodes_grouped_by_DEM_gridcell
     from hhemt.swmm_output_parser import return_swmm_system_outputs
@@ -275,9 +276,18 @@ def test_hydrology_variant_local_runoff_invariant(synth_all_models_analysis_cach
 
     # Summed TOTAL_INFLOW per non-outfall node, from the same .out
     # write_hydrograph_files consumes.
+    # Read over the window (0, NUM_PERIODS) through the toolkit, and not Output.node_series: pyswmm 2.1.0 drops
+    # the final report period from that accessor's default window, which would make the sum depend on the
+    # installed pyswmm version.
     with Output(hydro_out) as out:
+        n_periods = int(swmm_output.get_times(out.handle, Time.NUM_PERIODS))
         inflow_sum = {
-            key: float(pd.Series(out.node_series(key, NodeAttribute.TOTAL_INFLOW)).sum()) for key in non_outfall
+            key: float(
+                pd.Series(
+                    swmm_output.get_node_series(out.handle, out.nodes[key], NodeAttribute.TOTAL_INFLOW, 0, n_periods)
+                ).sum()
+            )
+            for key in non_outfall
         }
 
     # write_hydrograph_files' second filter (`if d_inflow.sum() > 0`): only

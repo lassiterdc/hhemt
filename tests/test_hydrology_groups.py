@@ -163,7 +163,16 @@ def test_the_capture_covers_the_full_node_population_zeros_included(monkeypatch)
             """The constructed series of ``key``, keyed by report time, as ``pyswmm.Output.node_series`` returns it."""
             return dict(zip(times, values[key], strict=True))
 
+    # The reader takes each series and the time axis from the SWMM parser's window readers, so those two are
+    # stood in for with the constructed series, and the double lists the node positions the reader looks up.
+    import hhemt.swmm_output_parser as sop
+
+    FakeOutput.nodes = {k: i for i, k in enumerate(values)}
     monkeypatch.setattr(srm, "Output", FakeOutput)
+    monkeypatch.setattr(
+        sop, "_out_series_values", lambda out, kind, ident, index, attribute: np.asarray(values[ident], dtype=float)
+    )
+    monkeypatch.setattr(sop, "_out_time_axis", lambda out, f_outfile: list(times))
     df = pd.DataFrame(
         {
             "node_key": ["a", "b", "c", "d", "e", "out"],

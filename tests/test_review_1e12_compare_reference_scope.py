@@ -87,7 +87,7 @@ def test_an_unchanged_rerun_passes_and_lists_only_stamps_and_timers(tmp_path):
     """
     result = _run(tmp_path)
     assert result.passed
-    names = sorted((s.rsplit("/", 2)[-2], v) for s, v, _r in result.exclusions)
+    names = sorted((s.rsplit("/", 2)[-2], v) for s, v, _r in result.excluded)
     assert names.count(("performance", "Total")) == 1 and names.count(("performance", "Compute_min")) == 1
     assert len([n for n in names if n[1].startswith("hhemt_producing_")]) == 2 * len(RESULT_GROUPS)
     assert len(names) == 2 * len(RESULT_GROUPS) + 2
@@ -137,7 +137,7 @@ def test_a_changed_timer_alone_passes_including_a_zero_valued_one(tmp_path):
     listed."""
     result = _run(tmp_path, perf=_perf(total=99.0, zero=0.5))
     assert result.passed
-    assert {"Total", "Compute_min"} <= {v for _s, v, _r in result.exclusions}
+    assert {"Total", "Compute_min"} <= {v for _s, v, _r in result.excluded}
 
 
 def test_a_name_that_only_looks_like_a_stamp_or_a_timer_is_compared(tmp_path):
@@ -169,7 +169,7 @@ def test_a_missing_performance_store_or_a_missing_timer_fails(tmp_path):
     assert not missing_store.passed
     no_timer = _run(tmp_path / "t", perf=_perf().drop_vars("Total"))
     assert not no_timer.passed and "Total" in no_timer.summary()
-    assert all(v != "Total" for _s, v, _r in no_timer.exclusions)
+    assert all(v != "Total" for _s, v, _r in no_timer.excluded)
 
 
 def test_the_verdict_type_keeps_its_positional_construction(tmp_path):
@@ -180,4 +180,4 @@ def test_the_verdict_type_keeps_its_positional_construction(tmp_path):
     verdict = ReferenceStoreVerdict("s", "missing_in_rerun")
     assert verdict.excluded == () and verdict.variables == {}
     comparison = ReferenceComparison((verdict,), (), 0.0, 0.0)
-    assert comparison.exclusions == () and "not compared" not in comparison.summary() and not comparison.passed
+    assert comparison.excluded == () and "not compared" not in comparison.summary() and not comparison.passed

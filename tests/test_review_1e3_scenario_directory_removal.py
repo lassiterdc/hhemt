@@ -182,7 +182,7 @@ def test_master_snakefile_generation_survives_a_master_with_no_active_member(gol
 
     Kills: leaking a per-member loop variable into whole-experiment output. Control: the reprocess master generator
     already serves the same master (asserted below). Second correct implementation: sizing the experiment
-    consolidation rule from ``self.experiment.cfg_analysis`` or from ``all_members_for_reading()``.
+    consolidation rule from ``self.experiment.cfg_analysis`` or from ``_all_members_for_reading()``.
     """
     master = _removed_sensitivity_master(golden_extractor)
     builder = master.sensitivity._workflow_builder

@@ -1,9 +1,12 @@
 """Synthetic-model multi-sim + Snakemake tier. Mirror of test_PC_04 using synth fixtures."""
 
+from pathlib import Path
+
 import pytest
 
 import tests.utils_for_testing as tst_ut
 from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV, retrieve_synth_TRITON_SWMM_test_case
+from tests.utils_dry_run_plan import job_names_from_log, stats_total
 
 pytestmark = [
     pytest.mark.requires_snakemake_subprocess,
@@ -1174,12 +1177,19 @@ def test_completed_default_run_leaves_no_scenario_directory_and_replans_nothing(
     """
     analysis = synth_multi_sim_new_defaults_analysis
     sims = analysis.analysis_paths.simulation_directory
-    result = analysis.run(mode="local", which="both", from_scratch=True, verbose=False)
-    assert result.get("success"), result.get("message", "")
+    result = analysis.run(execution_mode="local", from_scratch=True, verbose=False)
+    assert result.success, result.message
     assert [p for p in sims.iterdir()] == [], "a completed default run must leave no scenario directory"
     dry = analysis.submit_workflow(mode="local", dry_run=True, verbose=False)
-    assert dry.get("success")
-    assert "Nothing to be done" in (dry.get("message", "") + str(dry.get("stdout", "")))
+    assert dry["success"], dry["message"]
+    # The plan is read from the dry run's own log. An empty job set alone is also what an empty or foreign-format log
+    # parses to, so the log must additionally be recognised as a Snakemake plan: it says nothing is left to do, or its
+    # job-statistics table totals zero.
+    log_lines = Path(dry["snakemake_logfile"]).read_text().splitlines()
+    assert job_names_from_log(log_lines) == frozenset(), "a completed default run must replan no job"
+    assert any("Nothing to be done" in line for line in log_lines) or stats_total(log_lines) == 0, (
+        "the dry-run log is not a recognised Snakemake plan"
+    )
     assert [p for p in sims.iterdir()] == []
 
 
@@ -1197,8 +1207,8 @@ def test_export_scenario_status_is_read_only_against_a_removed_analysis(synth_mu
 
     analysis = synth_multi_sim_new_defaults_analysis
     sims = analysis.analysis_paths.simulation_directory
-    result = analysis.run(mode="local", which="both", from_scratch=True, verbose=False)
-    assert result.get("success"), result.get("message", "")
+    result = analysis.run(execution_mode="local", from_scratch=True, verbose=False)
+    assert result.success, result.message
     assert [p for p in sims.iterdir()] == [], "precondition: the completed default run removed every scenario"
     before = sorted(str(p) for p in sims.rglob("*"))
     argv = [

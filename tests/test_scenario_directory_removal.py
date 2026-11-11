@@ -469,7 +469,7 @@ _ADAPTED_NAMES = frozenset({"analysis_paths", "process", "_system"})
 def _view_attribute_census() -> dict[str, set[str]]:
     """Attribute names read on the member variable of every class-(2) loop, followed through calls to a fixed point.
 
-    Class-(2) loops iterate ``all_members_for_reading()`` or ``_iter_members_or_self(...)``. A member passed whole to a
+    Class-(2) loops iterate ``_all_members_for_reading()`` or ``_iter_members_or_self(...)``. A member passed whole to a
     same-module function contributes the names that function reads on the matching parameter.
     """
     import ast
@@ -578,7 +578,7 @@ def _fake_master(tmp_path: Path, *, with_view: bool = True):
         sim_run_reader=lambda i: sr.recorded_member_sim_run(master, "3", "member_3", "event_index.0"),
         sim_run_processing_reader=lambda i: sr.recorded_member_sim_run(master, "3", "member_3", "event_index.0"),
     )
-    sens = SimpleNamespace(members={}, recorded_members={"3": view}, all_members_for_reading=lambda: {"3": view})
+    sens = SimpleNamespace(members={}, recorded_members={"3": view}, _all_members_for_reading=lambda: {"3": view})
     analysis = SimpleNamespace(
         cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=True),
         sensitivity=sens,
@@ -634,7 +634,7 @@ def test_a_view_without_a_provided_name_fails_the_dynamic_arm(tmp_path):
     gap = _Gap(
         "3", "member_3", view.master_dir, df_sims=view.df_sims, cfg_analysis=view.cfg_analysis, enabled_models=["swmm"]
     )
-    analysis.sensitivity.all_members_for_reading = lambda: {"3": gap}
+    analysis.sensitivity._all_members_for_reading = lambda: {"3": gap}
     with pytest.raises(MemberRemovedError):
         av.check_scenarios_setup(analysis)
 
@@ -750,7 +750,7 @@ def _two_member_master(tmp_path: Path):
     sens = analysis.sensitivity
     sens.members = members
     sens.recorded_members = recorded
-    sens.all_members_for_reading = lambda: all_members_for_reading(members, recorded)
+    sens._all_members_for_reading = lambda: all_members_for_reading(members, recorded)
     sens.df_setup = pd.DataFrame({"x": [1, 2]}, index=["3", "4"])
     return analysis, removed, active
 
@@ -762,7 +762,7 @@ def test_renderer_sites_run_against_a_removed_member_and_read_both_members(tmp_p
 
     Class: NEW CAPABILITY. Must-fire control: the active-only count would be 1 row (member 4 has no readable report in
     this fixture, so the removed member's row is the discriminator); a row set without sa_id '3' is the failure.
-    Kills: iterating ``members`` instead of ``all_members_for_reading()`` at the benchmarking loop.
+    Kills: iterating ``members`` instead of ``_all_members_for_reading()`` at the benchmarking loop.
     """
     from hhemt.report_renderers import per_analysis_summary as pas
     from hhemt.report_renderers import sensitivity_benchmarking as sb
@@ -793,7 +793,7 @@ def test_workflow_class_two_sites_run_against_a_removed_member(tmp_path):
     gap = RecordedMemberView(
         "5", "member_5", Path("/m"), df_sims=removed.df_sims, cfg_analysis=SimpleNamespace(), enabled_models=["swmm"]
     )
-    analysis.sensitivity.all_members_for_reading = lambda: {"5": gap}
+    analysis.sensitivity._all_members_for_reading = lambda: {"5": gap}
     with pytest.raises(MemberRemovedError):
         B._enumerate_member_event_pairs(fake_self, context_label="test")
 

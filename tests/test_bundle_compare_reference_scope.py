@@ -67,7 +67,7 @@ def test_identical_trees_pass_with_no_exclusion_beyond_the_rules_and_a_changed_v
 def test_a_changed_build_stamp_alone_passes_and_the_exclusion_is_listed(tmp_path):
     result = _compare(tmp_path, _triton(sha="aaa"), _triton(sha="bbb"))
     assert result.passed
-    names = {(v) for _s, v, _r in result.exclusions}
+    names = {(v) for _s, v, _r in result.excluded}
     assert {"hhemt_producing_sha", "hhemt_producing_version"} <= names
     assert "not compared" in result.summary() and "hhemt_producing_sha" in result.summary()
     # control: the same stamp change with a changed scientific variable still fails
@@ -77,7 +77,7 @@ def test_a_changed_build_stamp_alone_passes_and_the_exclusion_is_listed(tmp_path
 def test_a_changed_timer_alone_passes_and_is_listed_but_a_changed_deterministic_variable_fails(tmp_path):
     result = _compare(tmp_path / "t", _triton(), _triton(), _perf(10.0), _perf(11.0))
     assert result.passed
-    assert any(v == "Total" for _s, v, _r in result.exclusions)
+    assert any(v == "Total" for _s, v, _r in result.excluded)
     failing = _compare(tmp_path / "d", _triton(), _triton(), _perf(n_ranks=4), _perf(n_ranks=8))
     assert not failing.passed
     assert "n_ranks" in failing.summary()
@@ -103,10 +103,10 @@ def test_a_missing_store_or_variable_fails_even_when_it_would_have_been_excluded
     )
     missing_var = compare_reference_outputs(bundle, analysis)
     assert not missing_var.passed and "Total" in missing_var.summary() and "absent" in missing_var.summary()
-    assert all(v != "Total" for _s, v, _r in missing_var.exclusions)
+    assert all(v != "Total" for _s, v, _r in missing_var.excluded)
 
 
-@pytest.mark.parametrize("flag", ["exclusions"])
-def test_the_result_type_exposes_its_exclusions(tmp_path, flag):
+@pytest.mark.parametrize("flag", ["excluded"])
+def test_the_result_type_exposes_its_excluded_variables(tmp_path, flag):
     result = _compare(tmp_path, _triton(), _triton())
     assert isinstance(getattr(result, flag), tuple)

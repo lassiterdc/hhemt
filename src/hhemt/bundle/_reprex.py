@@ -479,7 +479,7 @@ class ReferenceComparison:
     atol: float
 
     @property
-    def exclusions(self) -> tuple[tuple[str, str, str], ...]:
+    def excluded(self) -> tuple[tuple[str, str, str], ...]:
         """``(store, variable, reason)`` for every variable the comparison left out, so a report says what it did not
         compare. An exclusion applies only to a variable present in BOTH stores: a missing store or variable is a
         failure whatever the rule, and a changed scientific variable is never excluded."""
@@ -500,7 +500,7 @@ class ReferenceComparison:
                 for name, reason in sorted(verdict.variables.items()):
                     lines.append(f"{verdict.store}: variable {name!r} {reason}")
         equal = sum(v.status == "equal" for v in self.verdicts)
-        for store, name, reason in self.exclusions:
+        for store, name, reason in self.excluded:
             lines.append(f"not compared: {store}: variable {name!r} ({reason})")
         lines.append(
             f"{equal} of {len(self.verdicts)} reference stores equal (rtol={self.rtol}, atol={self.atol}); "

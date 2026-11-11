@@ -747,6 +747,7 @@ class _FakeOutput:
     def __init__(self, units, series):
         self.units = {"system": "SI", "flow": units}
         self._series = series
+        self.nodes = {"J1": 0}
 
     def __enter__(self):
         return self
@@ -777,7 +778,16 @@ def test_hydrographs_and_the_node_capture_are_converted_to_cms(tmp_path, monkeyp
     (tmp_path / "hydro.out").write_text("")
     t0 = pd.Timestamp("2020-01-01")
     series = {t0 + pd.Timedelta(hours=h): raw for h in range(3)}
+    import hhemt.swmm_output_parser as sop
+
     monkeypatch.setattr(srm, "Output", lambda path: _FakeOutput(units, series))
+    # The reader takes the series and the time axis from the parser's window readers; stand in for both.
+    monkeypatch.setattr(
+        sop,
+        "_out_series_values",
+        lambda out, kind, ident, index, attribute: np.array(list(series.values()), dtype=float),
+    )
+    monkeypatch.setattr(sop, "_out_time_axis", lambda out, f_outfile: list(series))
     field = lambda: SimpleNamespace(get=lambda: False, set=lambda v: None)  # noqa: E731
     scenario = SimpleNamespace(
         scen_paths=SimpleNamespace(

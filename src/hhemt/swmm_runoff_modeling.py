@@ -582,12 +582,21 @@ def read_hydrology_node_inflow(hydro_outfile, df_node_locs, lst_outfalls) -> Hyd
     :func:`hydrograph_frame` still applies to the gridcell sums and no longer applies to the capture. Module
     level, taking the DEM-gridcell table as an argument, so it runs on an older scenario's ``hydro.out`` (the
     consolidation rebuilds a missing capture with it) and in a test that supplies its own node table.
+
+    Every series is read over the window ``(0, NUM_PERIODS)`` through the SWMM parser's ``_out_series_values`` and
+    the time axis through its ``_out_time_axis``, and not through ``Output.node_series``, because pyswmm 2.1.0
+    resolves that accessor's default end to the inclusive index ``num_periods - 1`` and hands it to the toolkit's
+    end-exclusive reader, so the final report period is dropped (pyswmm 2.0.1 reads the same file whole). The
+    capture, ``tseries.hyg`` and the rebuild therefore hold every report period under either version.
     """
+    from .swmm_output_parser import _out_series_values, _out_time_axis
+
     inflow_by_node: dict = {}
     gridcell_of_node: dict = {}
     times_hr = None
     with Output(str(hydro_outfile)) as out:
         flow_units = out.units["flow"]
+        node_index = out.nodes
         # TRITON applies every hydrograph as m3/s, so each series is converted ONCE, where it is read, before
         # either consumer: tseries.hyg and the per-node capture then both carry m3/s. A CMS model's factor is 1
         # and its values are not touched.
@@ -596,12 +605,12 @@ def read_hydrology_node_inflow(hydro_outfile, df_node_locs, lst_outfalls) -> Hyd
             for key in list(group.node_key):  # node ids that fall within a single gridcell
                 if key in lst_outfalls:
                     continue
-                d_inflow = pd.Series(out.node_series(key, NodeAttribute.TOTAL_INFLOW))
+                d_inflow = pd.Series(_out_series_values(out, "node", key, node_index[key], NodeAttribute.TOTAL_INFLOW))
                 if to_cms != 1.0:
                     d_inflow = d_inflow * to_cms
                 if times_hr is None:  # first column of the hydrograph file: time in hours
                     # .dt.seconds wraps on a >= 24 h gap; use total_seconds().
-                    tseries = pd.Series(d_inflow.index).diff().dt.total_seconds() / 60 / 60
+                    tseries = pd.Series(_out_time_axis(out, hydro_outfile)).diff().dt.total_seconds() / 60 / 60
                     tseries.iloc[0] = 0
                     times_hr = tseries.cumsum().values
                 # PER-NODE capture, taken here rather than downstream, and the position is load-bearing: the

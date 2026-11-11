@@ -114,7 +114,8 @@ def test_the_extracted_capture_agrees_with_the_golden_hydro_out_on_nodes_and_rep
     """
     import xarray as xr
     from pyswmm import Output
-    from swmm.toolkit.shared_enum import NodeAttribute
+    from swmm.toolkit import output as swmm_output
+    from swmm.toolkit.shared_enum import NodeAttribute, Time
 
     root = extract_golden(kind, tmp_path / kind)
     scenarios = _golden_scenarios(root)
@@ -124,7 +125,19 @@ def test_the_extracted_capture_agrees_with_the_golden_hydro_out_on_nodes_and_rep
         nodes = sorted(capture["node_id"].values.tolist())
         assert nodes and nodes == sorted(_hydro_inp_nodes(sim / "swmm" / "hydro.inp"))
         with Output(str(sim / "swmm" / "hydro.out")) as out:
-            series = {n: pd.Series(out.node_series(n, NodeAttribute.TOTAL_INFLOW)) for n in nodes}
+            # The reference reads the toolkit's output reader over the window (0, NUM_PERIODS), and not
+            # Output.node_series: pyswmm 2.1.0 resolves that accessor's default end one period short, so a
+            # reference built on it would hold 11 steps for a file of 12 and disagree with a correct capture.
+            n_periods = int(swmm_output.get_times(out.handle, Time.NUM_PERIODS))
+            times = list(out.times)
+            assert len(times) == n_periods, sim
+            series = {
+                n: pd.Series(
+                    swmm_output.get_node_series(out.handle, out.nodes[n], NodeAttribute.TOTAL_INFLOW, 0, n_periods),
+                    index=times,
+                )
+                for n in nodes
+            }
         first = series[nodes[0]]
         assert len(first) > 0
         hours = (first.index - first.index[0]).total_seconds().to_numpy() / 3600.0
