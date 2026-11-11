@@ -33,6 +33,10 @@ def _minimal_system_config_dict(tmp_path: Path) -> dict:
     # below validates it absent). Not established: whether any importer of this
     # helper relies on the directory existing, so the mkdir stays.
     system_dir.mkdir(parents=True, exist_ok=True)
+    # A shapefile input is a set of files: the emit and the ingest refuse a .shp with no .shx or .dbf beside it, so the
+    # stand-in carries the two a read needs (content is never opened here).
+    _touch(tmp_path / "inputs" / "watershed.shx")
+    _touch(tmp_path / "inputs" / "watershed.dbf")
     return {
         "system_directory": str(system_dir),
         "watershed_gis_polygon": str(_touch(tmp_path / "inputs" / "watershed.shp")),

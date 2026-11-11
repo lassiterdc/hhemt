@@ -979,6 +979,7 @@ class TRITON_SWMM_experiment:
             PathPolicy.BUNDLE_RELATIVE_LIST,
         }
         missing: list[tuple[str, str]] = []
+        unreadable_shapefiles: list[str] = []
         for cfg_path, cfg_model in (
             (system_config_path, system_config),
             (analysis_config_path, analysis_config),
@@ -995,6 +996,24 @@ class TRITON_SWMM_experiment:
                         continue
                     if not Path(v).exists():
                         missing.append((name, str(v)))
+                    else:
+                        from hhemt.bundle._emit import shapefile_missing_required_sidecars
+
+                        lacking = shapefile_missing_required_sidecars(Path(v))
+                        if lacking:
+                            unreadable_shapefiles.append(f"{name}: {v} (no {' or '.join(lacking)} beside it)")
+
+        if unreadable_shapefiles:
+            raise ProcessingError(
+                operation="doi_ingest_inputs",
+                filepath=None,
+                reason=(
+                    "the reconstituted experiment declares a shapefile whose reader sidecars are not in the "
+                    "bundle, so it cannot be read. The deposit was made without them; obtain a bundle that carries "
+                    "the .shx and .dbf beside each .shp, or place them next to the file.\n  "
+                    + "\n  ".join(unreadable_shapefiles)
+                ),
+            )
 
         # Outcome 2 (fetchable): an absent input with an input_deposit block carrying a
         # contentUrl is fetched + sha256-verified here, BEFORE the fail-closed enumeration.

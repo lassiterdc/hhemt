@@ -934,6 +934,8 @@ def _harvest_sources(
                     _plan_harvest_entry(entries, (rel / member.relative_to(src)).as_posix(), member)
             else:
                 _plan_harvest_entry(entries, rel.as_posix(), src)
+                for sidecar in shapefile_sidecars(src):
+                    _plan_harvest_entry(entries, rel.with_suffix(sidecar.suffix).as_posix(), sidecar)
     if declared_absent:
         _warn_declared_sources_absent(sorted(set(declared_absent)))
     if unresolved_outside is not None:
@@ -1714,6 +1716,59 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+#: Reader sidecars a shapefile needs or uses, matched case-insensitively. ``.shx`` and ``.dbf`` are required for a
+#: read; ``.prj`` and ``.cpg`` carry the CRS and the text encoding. Spatial-index files (``.sbn``, ``.sbx``,
+#: ``.qix``) are not carried because nothing reads them, and ``.shp.xml`` (and any other ``.xml``) is never carried
+#: because ArcGIS metadata can hold author and contact fields.
+SHAPEFILE_REQUIRED_SIDECARS = (".shx", ".dbf")
+SHAPEFILE_OPTIONAL_SIDECARS = (".prj", ".cpg")
+
+
+def _sidecar_of(shp: Path, extension: str) -> Path | None:
+    """The sidecar of ``shp`` with ``extension`` (any letter case), or None. Same stem, same directory."""
+    parent = Path(shp).parent
+    if not parent.is_dir():
+        return None
+    wanted = Path(shp).stem.lower() + extension
+    for candidate in sorted(parent.iterdir()):
+        if candidate.is_file() and candidate.name.lower() == wanted:
+            return candidate
+    return None
+
+
+def shapefile_missing_required_sidecars(shp: Path) -> list[str]:
+    """The required sidecar extensions (``.shx``, ``.dbf``) ``shp`` lacks; empty for a non-shapefile path."""
+    if Path(shp).suffix.lower() != ".shp":
+        return []
+    return [e for e in SHAPEFILE_REQUIRED_SIDECARS if _sidecar_of(shp, e) is None]
+
+
+def shapefile_sidecars(path: Path) -> list[Path]:
+    """The sidecar files an input ``.shp`` must be carried with, beside it under the same stem.
+
+    The ONE helper every site that turns an input path into an archive member goes through, so a site cannot
+    carry a ``.shp`` alone. A path that is not a ``.shp`` has none. A ``.shp`` missing its ``.shx`` or ``.dbf`` is a
+    producer error and raises ``ConfigurationError`` naming the file: a bundle carrying it could not be read.
+    """
+    from hhemt.exceptions import ConfigurationError
+
+    path = Path(path)
+    if path.suffix.lower() != ".shp":
+        return []
+    missing = shapefile_missing_required_sidecars(path)
+    if missing:
+        raise ConfigurationError(
+            field="declared_input",
+            message=(
+                f"shapefile {path} has no {' or '.join(missing)} beside it, so it cannot be read; "
+                "the bundle would carry an unreadable input"
+            ),
+            fix_hint="Restore the missing sidecar files next to the .shp, then emit again.",
+        )
+    found = [_sidecar_of(path, e) for e in (*SHAPEFILE_REQUIRED_SIDECARS, *SHAPEFILE_OPTIONAL_SIDECARS)]
+    return [f for f in found if f is not None]
+
+
 @dataclass(frozen=True)
 class _PlannedInput:
     """One declared input the emit will carry: where it is, and where it lands in the bundle."""
@@ -1804,6 +1859,9 @@ def _plan_declared_inputs(
                                 "and point the cfg field at that file, or carry it in-bundle."
                             ),
                         )
+                    # BY REFERENCE a ``.shp`` is one file: the block pins the ``.shp`` and nothing else, so its
+                    # sidecars are not carried and the consumer must supply them beside it. Behaviour kept; the
+                    # ingest gate refuses a declared ``.shp`` that lacks its ``.shx`` or ``.dbf``.
                     block = {
                         "relpath": rel,
                         "sha256": _sha256_file(src),
@@ -1821,6 +1879,10 @@ def _plan_declared_inputs(
                     continue
 
                 planned.append(_PlannedInput(src=src, rel=rel, is_dir=src.is_dir()))
+                for sidecar in shapefile_sidecars(src):
+                    planned.append(
+                        _PlannedInput(src=sidecar, rel=str(Path(rel).with_suffix(sidecar.suffix)), is_dir=False)
+                    )
 
     return planned, deposits
 
