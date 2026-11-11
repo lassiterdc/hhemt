@@ -341,6 +341,20 @@ _CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = {
     "total_inflow_volume": _cf(
         "Total inflow volume to the node captured from the hydrology model's output", "m3", cell_methods="time: sum"
     ),
+    # The `swmm_node_hydro/summary` group: the node reductions of the inflow series and the run-level sum
+    "inflow_max": _cf(
+        "Maximum inflow to the node over the hydrology model's report steps",
+        "m3 s-1",
+        cell_methods="time: maximum",
+    ),
+    "time_of_inflow_max": _cf(
+        "Time of the maximum inflow to the node, from the start of the event; NaN for a node with no inflow", "min"
+    ),
+    "system_total_inflow_volume": _cf(
+        "Total inflow volume of every node of the hydrology model over the run, from the hydrology model's output",
+        "m3",
+        cell_methods="time: sum",
+    ),
     # Compute-sensitivity EDA store (`eda/{plot_id}.zarr`)
     "max_abs_depth_diff": _cf(
         "Maximum absolute difference in peak flood depth between two runs, over the wetted footprint", "m"
@@ -1196,8 +1210,8 @@ _CF_VARIABLE_OVERRIDES_BY_MODE: dict[str, dict[str, dict[str, str | None]]] = {
     "tritonswmm_performance": {**_CF_PERFORMANCE_SUMMARY_VARIABLES, **_CF_PERFORMANCE_RANK_AXIS_VARIABLES},
     "triton_only_performance": {**_CF_PERFORMANCE_SUMMARY_VARIABLES, **_CF_PERFORMANCE_RANK_AXIS_VARIABLES},
     # The `_tseries` modes are write-path-only: they are passed by
-    # `_export_performance_tseries` and are NOT `_MODE_CONFIG` keys, because the per-rank
-    # series is never consolidated.
+    # `_export_performance_tseries` and are NOT `_MODE_CONFIG` keys, because `_MODE_CONFIG` names the
+    # summary stores; the per-rank series is consolidated through `_TIMESERIES_MODE_CONFIG` instead.
     "tritonswmm_performance_tseries": _CF_PERFORMANCE_VARIABLES,
     "triton_only_performance_tseries": _CF_PERFORMANCE_VARIABLES,
     # In the coupled build every node can pond, so `flooding` is the growth rate of the volume stored at the
@@ -1829,6 +1843,29 @@ _QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
         "operation_expr": "∫ Q_in dt",
         "reduced_coordinate": "timestep (integrated)",
     },
+    "inflow_max": {
+        "spatial_representation": "point (node)",
+        "source_variables": "inflow",
+        "operation": "maximum of inflow over the event's own report steps (the NaN padding of the group's shared "
+        "time axis is not a report step)",
+        "operation_expr": "max_t Q_in(t)",
+        "reduced_coordinate": "elapsed_s (maximum)",
+    },
+    "time_of_inflow_max": {
+        "spatial_representation": "point (node)",
+        "source_variables": "inflow",
+        "operation": "elapsed time from the event start of the first report step at which inflow is at its "
+        "maximum, in minutes; NaN for a node whose inflow is 0 at every step",
+        "operation_expr": "argmax_t Q_in(t)",
+        "reduced_coordinate": "elapsed_s (argmax)",
+    },
+    "system_total_inflow_volume": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": "total_inflow_volume",
+        "operation": "sum over every node of the trapezoidal time integral of inflow over the captured report steps",
+        "operation_expr": "sum_n ∫ Q_in,n dt",
+        "reduced_coordinate": "node_id, timestep (summed, integrated)",
+    },
     # Compute-sensitivity EDA store: comparisons of the peak flood depth of two runs
     "max_abs_depth_diff": {
         "spatial_representation": "whole domain (scalar)",
@@ -2396,8 +2433,9 @@ _PERF_QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
 #:
 #: THE `*_performance_tseries` MODES ARE DELIBERATELY ABSENT, and their absence is a
 #: correctness property rather than an omission. Those modes name the PER-RANK series,
-#: which is never reduced and never consolidated (`_CF_VARIABLE_OVERRIDES_BY_MODE`'s own
-#: comment says so), so every `operation` above -- each of which names a sum and a maximum
+#: which is never reduced (`_CF_VARIABLE_OVERRIDES_BY_MODE`'s own
+#: comment says so; it is consolidated unreduced, through `_TIMESERIES_MODE_CONFIG`), so every
+#: `operation` above -- each of which names a sum and a maximum
 #: -- is false of that artifact. Supplying tseries descriptors would additionally make the
 #: mode-blind resolution below AMBIGUOUS: the same thirteen names would carry two
 #: conflicting operations with nothing in the call to choose between them. A tseries
@@ -2934,8 +2972,9 @@ def apply_cf_attributes(ds: xr.Dataset, mode: str) -> xr.Dataset:
         Dataset to annotate. Attrs are mutated in place; the same dataset is returned.
     mode
         A processing_analysis `_MODE_CONFIG` key, or one of the write-path-only
-        `*_performance_tseries` modes, which name an artifact that is never consolidated and
-        therefore has no `_MODE_CONFIG` entry. Selects the mode-specific override when
+        `*_performance_tseries` modes, which name an artifact that is consolidated through
+        `_TIMESERIES_MODE_CONFIG` and not `_MODE_CONFIG`, and therefore has no `_MODE_CONFIG` entry. Selects the
+        mode-specific override when
         present (e.g., SWMM link's `long_name` names a conduit where TRITON's names a grid
         cell, and the performance summary carries a reduction the per-rank series must not).
         The SWMM link overrides of `max_velocity` equal the base entry since the TRITON tier

@@ -25,7 +25,12 @@ from pathlib import Path
 
 import pytest
 
-__all__ = ["golden_extractor", "golden_multisim_analysis", "golden_sensitivity_analysis"]
+__all__ = [
+    "golden_extractor",
+    "golden_multisim_analysis",
+    "golden_sensitivity_analysis",
+    "golden_sensitivity_analysis_keeping_scenarios",
+]
 
 GOLDEN_DIR = Path(__file__).resolve().parent / "goldens"
 GOLDEN_ROOT_TOKEN = "@GOLDEN_ROOT@"
@@ -115,6 +120,7 @@ def extract_golden(kind: str, dest: Path) -> Path:
                 data = data.decode("utf-8").replace(GOLDEN_ROOT_TOKEN, root).encode("utf-8")
             target.write_bytes(data)
     add_swmm_only_system_stores(dest)
+    add_hydrology_captures(dest)
     set_times_in_dependency_order(dest)
     return dest
 
@@ -167,6 +173,65 @@ def add_swmm_only_system_stores(root: Path) -> None:
             reductions[f"{name}_max"] = (("event_iloc",), np.array([values.max()]), attrs)
             reductions[f"{name}_last"] = (("event_iloc",), np.array([values[-1]]), attrs)
         xr.Dataset(reductions, coords={"event_iloc": event_iloc}).to_zarr(summary_store, mode="a")
+
+
+def _hydro_inp_nodes(hydro_inp: Path) -> dict[str, tuple[float, float]]:
+    """The non-outfall nodes of a ``hydro.inp`` with their coordinates, in ``[JUNCTIONS]`` order."""
+    sections: dict[str, list[list[str]]] = {}
+    current = None
+    for line in hydro_inp.read_text().splitlines():
+        if line.startswith("["):
+            current = line.strip()
+            sections[current] = []
+        elif current is not None and line.strip() and not line.lstrip().startswith(";"):
+            sections[current].append(line.split())
+    coords = {row[0]: (float(row[1]), float(row[2])) for row in sections.get("[COORDINATES]", []) if len(row) >= 3}
+    return {row[0]: coords[row[0]] for row in sections.get("[JUNCTIONS]", []) if row and row[0] in coords}
+
+
+HYDROLOGY_CAPTURE_STEPS = 12  # the golden hydro.inp's 120 s window at its 10 s report step
+HYDROLOGY_CAPTURE_STEP_S = 10
+
+
+def add_hydrology_captures(root: Path) -> None:
+    """Give every scenario of an extracted golden the per-node inflow capture its preparation step writes.
+
+    The committed golden carries each scenario's ``swmm/hydro.inp`` and ``hydro.out`` but not
+    ``processed/hydrology_inflow_summary.zarr``, and the per-scenario reclaim of the default policy removes
+    ``hydro.out``; with neither store left the hydrology consolidation refuses the scenario, as it must. This writes
+    the capture (``inflow`` on ``node_id`` and ``timestep``, built by the toolkit's own
+    ``node_inflow_capture_dataset``) for each scenario whose hydrology model declares nodes: one value per node and
+    report step, deterministic, differing by node and by event (the event is the scenario's position among the
+    sorted scenario directories of its analysis). A scenario that already holds a capture is left alone, and a golden
+    with no ``hydro.inp`` is untouched.
+    """
+    import numpy as np
+
+    from hhemt.cf_conventions import apply_cf_attributes
+    from hhemt.swmm_runoff_modeling import HydrologyNodeInflow, node_inflow_capture_dataset
+    from hhemt.utils import write_zarr
+
+    for sims in sorted(p for p in root.rglob("sims") if p.is_dir()):
+        for event_iloc, scenario_dir in enumerate(sorted(p for p in sims.iterdir() if p.is_dir())):
+            hydro_inp = scenario_dir / "swmm" / "hydro.inp"
+            capture = scenario_dir / "processed" / "hydrology_inflow_summary.zarr"
+            if not hydro_inp.exists() or capture.exists():
+                continue
+            nodes = _hydro_inp_nodes(hydro_inp)
+            if not nodes:
+                continue
+            ramp = np.arange(1, HYDROLOGY_CAPTURE_STEPS + 1, dtype="float64") / HYDROLOGY_CAPTURE_STEPS
+            flows = {n: 0.01 * (k + 1) * (event_iloc + 1) * ramp for k, n in enumerate(nodes)}
+            node_inflow = HydrologyNodeInflow(
+                flows,
+                dict(nodes),
+                np.arange(HYDROLOGY_CAPTURE_STEPS) * HYDROLOGY_CAPTURE_STEP_S / 3600.0,
+                "CMS",
+            )
+            ds = node_inflow_capture_dataset(node_inflow, event_iloc)
+            apply_cf_attributes(ds, "hydrology_inflow_summary")
+            capture.parent.mkdir(parents=True, exist_ok=True)
+            write_zarr(ds, capture, chunks=None, encoding={})
 
 
 def set_times_in_dependency_order(root: Path) -> None:
@@ -279,3 +344,17 @@ def golden_sensitivity_analysis(golden_extractor):
     """The sensitivity golden (4 members, each a ``members/member_{member_id}/`` directory per SPEC section 3; 1 event;
     one model arm, the coupled ``tritonswmm``, SPEC section 1) extracted into ``tmp_path``; the analysis."""
     return construct_golden_analysis(golden_extractor("sensitivity"))
+
+
+@pytest.fixture
+def golden_sensitivity_analysis_keeping_scenarios(golden_extractor):
+    """The sensitivity golden with the clearing switch off, so every scenario keeps its summaries and its directory.
+
+    With the package defaults a consolidation clears each scenario's summary stores and removes its directory, and a
+    process-stage reprocess of such a scenario is refused because no raw output remains. A test that deletes a summary
+    and expects the process stage to rebuild it, or that re-processes a member, is about the keep-for-reprocessing
+    state, so it names that state here instead of relying on the golden's silence."""
+    system_dir = golden_extractor("sensitivity")
+    cfg = system_dir / "analysis_config.yaml"
+    cfg.write_text(cfg.read_text() + "toggle_clear_scenario_timeseries_after_consolidation: false\n")
+    return construct_golden_analysis(system_dir)

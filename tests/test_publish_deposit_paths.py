@@ -117,6 +117,9 @@ def _every_path_field_absolute(tmp_path: Path) -> SimpleNamespace:
     """
     base = tmp_path / "w"
     sd, ad, out = base / "system", base / "analysis", base / "outside"
+    # A shapefile input is a set of files: the emit and the ingest refuse a .shp with no .shx or .dbf beside it.
+    _put(sd / "gis" / "ws.shx")
+    _put(sd / "gis" / "ws.dbf")
     world = _world(
         tmp_path,
         system_over={

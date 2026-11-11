@@ -150,7 +150,7 @@ def _analysis_with(tmp_path, out_type, kind):
         elif kind == "file":
             target.write_bytes(b"CDF")
     return SimpleNamespace(
-        analysis_paths=SimpleNamespace(simulation_directory=tmp_path / "sims"),
+        analysis_paths=SimpleNamespace(simulation_directory=tmp_path / "sims", analysis_dir=tmp_path),
         cfg_analysis=SimpleNamespace(target_processed_output_type=out_type),
     )
 

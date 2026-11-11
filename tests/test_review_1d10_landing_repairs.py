@@ -107,12 +107,25 @@ def test_a_master_root_with_no_store_has_no_pointer_target(tmp_path):
     assert _pointer_target(_master(root)) is None
 
 
+def _golden_with_member_trees_kept(golden_extractor):
+    """The sensitivity golden with the clearing switch off, so each member keeps its own tree and `_pointer_target`
+    has a tree to open for it."""
+    from tests.fixtures.golden_trees import construct_golden_analysis
+
+    system_dir = golden_extractor("sensitivity")
+    cfg = system_dir / "analysis_config.yaml"
+    cfg.write_text(cfg.read_text() + "toggle_clear_scenario_timeseries_after_consolidation: false\n")
+    return construct_golden_analysis(system_dir)
+
+
 def test_the_pointer_predicate_follows_the_write_fields_binding_over_every_analysis_of_a_real_sensitivity_golden(
-    golden_sensitivity_analysis,
+    golden_extractor,
 ):
     """Property: over the master and the four members of the real sensitivity golden, the analyses `_pointer_target`
     treats as a master are exactly those whose `analysis_paths.sensitivity_datatree_zarr` is bound; the master's target
     is its experiment store and each member's is its own `analysis_datatree.zarr`.
+    The clearing switch is off here (the golden names neither toggle, and the default is on, which moves each member's
+        tree into the master and leaves a member with no tree of its own to point to); the next test covers that state.
     Class: held green. The previous implementation keyed on the field itself, so both versions agree on this input; the
         named mutations red it.
     Reachability: `analysis.py` binds the field exactly when `toggle_sensitivity_analysis` is set and
@@ -129,7 +142,7 @@ def test_the_pointer_predicate_follows_the_write_fields_binding_over_every_analy
     Not established: this row alone does not separate a predicate that is always true, because a member's own root
         also resolves to its own store; the `_pointer_target` tests of `test_system_tree_pointer.py` carry that mutant.
     """
-    master = golden_sensitivity_analysis
+    master = _golden_with_member_trees_kept(golden_extractor)
     sensitivity = master.sensitivity
     sensitivity.consolidate_sensitivity_datatree()
     post = TRITONSWMM_system_post_processing(SimpleNamespace(_analysis=master))
@@ -148,3 +161,38 @@ def test_the_pointer_predicate_follows_the_write_fields_binding_over_every_analy
         target = post._pointer_target(member)
         assert target is not None
         assert target[0] == member.analysis_paths.analysis_datatree_zarr
+
+
+def test_the_system_tree_skips_a_member_whose_tree_moved_into_the_master_and_never_asks_for_its_pointer(
+    golden_sensitivity_analysis, monkeypatch
+):
+    """Property: with the clearing switch at its default (on), `consolidate_system_datatree` over the sensitivity
+    golden never calls `_pointer_target` for a member whose tree moved into the master, writes no group for it, and
+    writes the master's pointer.
+
+    Class: NEW CAPABILITY of the default. Reachability: the real `consolidate_sensitivity_datatree` (moves the four
+    member trees) then the real `consolidate_system_datatree`. Plausible wrong implementation: the member check
+    placed after the pointer lookup, which opens a tree that is gone (`FileNotFoundError`). Must-fire control: the
+    master IS asked for its pointer and the member trees are absent on disk, so the skip is what separates them.
+    """
+    master = golden_sensitivity_analysis
+    master.sensitivity.consolidate_sensitivity_datatree()
+    master._system._analysis = master
+    post = TRITONSWMM_system_post_processing(master._system)
+    members = [a for a in post._analyses() if a is not master]
+    assert len(members) == 4
+    assert all(not Path(m.analysis_paths.analysis_datatree_zarr).exists() for m in members), "control: trees moved"
+    asked = []
+    real = post._pointer_target
+
+    def spy(analysis):
+        asked.append(analysis)
+        return real(analysis)
+
+    monkeypatch.setattr(post, "_pointer_target", spy)
+    system_zarr = post.consolidate_system_datatree()
+    assert master in asked, "control: the master was asked for its pointer"
+    assert not [a for a in asked if a in members], "a moved member must never be asked for its pointer"
+    groups = sorted(p.name for p in Path(system_zarr).iterdir() if p.is_dir() and not p.name.startswith("."))
+    assert str(master.cfg_analysis.analysis_id) in groups
+    assert not [m for m in members if str(m.cfg_analysis.analysis_id) in groups]

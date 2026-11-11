@@ -65,9 +65,9 @@ ClearRawValue = Literal["all", "none"] | list[Literal["tritonswmm", "triton", "s
 #
 #   T0 (regenerable by template-fill, no solver): prep_inputs
 #   T1 (regenerable by re-running the CHEAP SWMM hydrology solver): hydrographs,
-#      hydro_out -- BUT ONLY while the other of the pair survives; electing BOTH
-#      makes a re-prep hard-fail at hydrograph_outputs_gate and recovery requires
-#      clearing hydro_swmm_sim_completed and re-simulating hydrology by hand.
+#      hydro_out -- electing BOTH is safe because hydrograph_outputs_gate rebuilds the
+#      hydrographs from the per-node capture or the consolidated swmm_node_hydro slice
+#      (D24 (c)); only with none of the three rebuild sources present does a re-prep raise.
 #   T2 (regenerable only by re-running an EXPENSIVE solver): timeseries,
 #      raw_swmm_binaries, coupled_rpt, standalone_rpt
 RemoveValue = (
@@ -84,16 +84,6 @@ RemoveValue = (
         ]
     ]
 )
-#: The reclaim policy a config gets when it names none: every class whose content the processed output also
-#: holds. "timeseries" is excluded because the consolidation step copies those stores before clearing them,
-#: and "hydro_out" because electing it with "hydrographs" makes a re-prep hard-fail.
-_DEFAULT_REMOVE_AFTER_PROCESSING: list[str] = [
-    "raw_swmm_binaries",
-    "coupled_rpt",
-    "prep_inputs",
-    "hydrographs",
-    "standalone_rpt",
-]
 # Deliberately NOT a widening of ClearRawValue: that alias types `clear_raw` and every
 # `override_clear_raw` parameter, so adding an artifact-class member to it would make that
 # member a legal `clear_raw` value, where it means nothing. Different axis --
@@ -975,27 +965,24 @@ class analysis_config(cfgBaseModel):
         ),
     )
     toggle_consolidate_timeseries: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "When True, the per-scenario SWMM node and SWMM link TIMESERIES are consolidated into the "
-            "`timeseries` branch of their group inside analysis_datatree.zarr, beside the `summary` branch of "
-            "the same group. A sensitivity master holds each member's series in the `timeseries` branches of "
-            "experiment_datatree.zarr. Every model family that writes series is consolidated. The node and link "
-            "groups are tritonswmm/swmm_node/timeseries and tritonswmm/swmm_link/timeseries for the coupled model, "
-            "and swmm_only/swmm_node/timeseries and swmm_only/swmm_link/timeseries for the SWMM-only model. The "
-            "SWMM-only model also writes swmm_only/system/timeseries with 6 system series of flood and "
-            "water-balance quantities, and swmm_only/system/summary with the maximum and final value of each "
-            "series. Each scenario is appended in "
-            "turn along event_iloc, on an "
-            "elapsed_s axis of seconds since the start of that event. The node series holds `wlevel(t)` and the "
-            "link series holds `flow(t)`. Default False, summaries only. Enable to unblock over-time "
-            "clean-vs-resume difference figures. The gridded TRITON store is also consolidated, "
-            "into tritonswmm/triton/timeseries for the coupled model and triton_only/triton/timeseries for the "
-            "TRITON-only model. Each gridded group has a separate elapsed_s axis at the TRITON reporting "
-            "step, chunks of about 32 MB, a streamed write, and a read-back that compares the stored slice with "
-            "the source block by block. The variables kept are the ones the timeseries_keep_triton_gridded field "
-            "selects. The per-scenario series stores of every family are cleared under one switch, "
-            "toggle_clear_scenario_timeseries_after_consolidation, once the scenario slice has passed the read-back."
+            "When True, the per-scenario time series of every model family that writes them are consolidated into "
+            "the `timeseries` branch of their group inside analysis_datatree.zarr, beside the `summary` branch of "
+            "the same group. A sensitivity master holds the series of each member in the `timeseries` branches of "
+            "experiment_datatree.zarr. The coupled model writes the groups tritonswmm/swmm_node/timeseries, "
+            "tritonswmm/swmm_link/timeseries, and tritonswmm/triton/timeseries. The SWMM-only model writes "
+            "swmm_only/swmm_node/timeseries, swmm_only/swmm_link/timeseries, and swmm_only/system/timeseries. The "
+            "maximum and final value of each system series go to swmm_only/system/summary. The TRITON-only model "
+            "writes triton_only/triton/timeseries. Each scenario is appended in turn along event_iloc, on an "
+            "elapsed_s axis of seconds since the start of the event. The node series holds `wlevel(t)` and the "
+            "link series holds `flow(t)`. Each gridded group has a separate elapsed_s axis at the TRITON "
+            "reporting step, chunks of about 32 MB, a streamed write, and a read-back that compares the stored "
+            "slice with the source block by block. The timeseries_keep_triton_gridded field selects the gridded "
+            "variables kept. Defaults to True, so a run with no key set keeps the series in the consolidated "
+            "store, the durable processed product. Set False to keep summaries only. The per-scenario series "
+            "stores are cleared under the switch toggle_clear_scenario_timeseries_after_consolidation once the "
+            "slice of the scenario has passed the read-back."
         ),
     )
     toggle_coupling_exchange_flow: bool = Field(
@@ -1019,24 +1006,22 @@ class analysis_config(cfgBaseModel):
     toggle_clear_scenario_timeseries_after_consolidation: bool | None = Field(
         default=None,
         description=(
-            "When True, a scenario's own time-series stores are deleted as soon as the "
-            "slice of the scenario has been appended to the `timeseries` branch of analysis_datatree.zarr, read back "
-            "from the store, and "
-            "found equal, NaN-aware, to the data of the scenario. Peak disk use then stays near one copy of the "
-            "series, and the consolidated store holds the only copy. The stores are the SWMM node and link stores "
-            "of the coupled and SWMM-only models, the system series store of the SWMM-only model, and the gridded "
-            "TRITON store of the coupled and TRITON-only models. The per-scenario summary stores of every model are "
-            "cleared too, after each slice of the scenario has been read back from the `summary` branches of "
-            "analysis_datatree.zarr, and the branches then hold the only copy of the summaries and only ever "
-            "gain events. A cleared summary is read from the branch and is never re-derived, and a forced "
-            "re-process of a cleared scenario needs the raw output of the scenario. "
-            "Requires toggle_consolidate_timeseries, and "
-            "preflight refuses True without the toggle. The deletion is recorded in the model log of the "
-            "scenario. A cleared store reads as processed and is never re-derived. Left unset, the field "
-            "takes the value of toggle_consolidate_timeseries, so the field is True when consolidation is on and the "
-            "per-scenario copies are cleared, and False when consolidation is off. An explicit False keeps the "
-            "per-scenario copies after consolidation. A written cfg_analysis.yaml carries the resolved "
-            "value, never None. Default unset."
+            "When True, the per-scenario series stores of every model are deleted once the slice of the scenario "
+            "has been appended to the `timeseries` branch of analysis_datatree.zarr, read back from the store, "
+            "and found equal to the source data, NaN-aware. The stores are the SWMM node and link stores of the "
+            "coupled and SWMM-only models, the system series store of the SWMM-only model, and the gridded TRITON "
+            "store of the coupled and TRITON-only models. The per-scenario summary stores of every model are "
+            "cleared after each slice of the scenario has been read back from the `summary` branches of "
+            "analysis_datatree.zarr. The consolidated tree then holds the only copy, and the `summary` branches "
+            "only gain events. A cleared store reads as processed and is never re-derived, and a forced "
+            "re-process of a cleared scenario needs the raw output of the scenario. The deletion is recorded in "
+            "the model log of the scenario. Requires toggle_consolidate_timeseries, and preflight refuses True "
+            "without the toggle. Left unset, the field takes the value of toggle_consolidate_timeseries, so a run "
+            "with no key set clears the per-scenario copies after the verified read-back, and with consolidation "
+            "off the stores stay. An explicit False keeps the per-scenario copies. A written cfg_analysis.yaml "
+            "carries the resolved value and never None. The scenario and member directories are also removed "
+            "after a verified copy into the consolidated tree when clear_raw and remove_after_processing are at "
+            "their clearing settings."
         ),
         json_schema_extra=field_meta(applies_when=[when("toggle_consolidate_timeseries", True)]),
     )
@@ -1389,49 +1374,47 @@ class analysis_config(cfgBaseModel):
     # fallback reclaim_unconsolidated_scenarios for events with no per-scenario
     # consolidation flag, gated there on scenario_summaries_present.
     remove_after_processing: RemoveValue = Field(
-        _DEFAULT_REMOVE_AFTER_PROCESSING,
+        "all",
         description=(
-            "Post-processing reclaim policy. Fires ONLY after the per-model summary outputs are verified "
-            'present AND openable on disk. "none" reclaims no artifact. "all" reclaims every artifact '
-            'class. A list selects classes. "timeseries" drops the per-scenario *_tseries zarr/nc set, '
-            "the paired complement of summary_paths._SUMMARY_STEMS_BY_MODEL, and neither a renderer nor a "
-            'default consolidation path reads the set. "raw_swmm_binaries" drops '
-            "out_tritonswmm/swmm/*.out, covering hydraulics.out plus the per-node *.out set, and NEVER "
-            "*.rpt, a live completion predicate via run_simulation._coupled_swmm_report_finalized. "
-            '"coupled_rpt" TRUNCATES out_tritonswmm/swmm/hydraulics.rpt in place to the header, the '
-            "continuity table, the summary table, and the trailer. The class truncates and NEVER deletes, "
-            "because the file is a live completion predicate via "
-            'run_simulation._coupled_swmm_report_finalized. "hydro_out" drops the SWMM hydrology output '
-            "swmm/hydro.out, the file that write_hydrograph_files reads, and is safe only because "
-            'write_hydrograph_files carries an already-written gate. "prep_inputs" drops the weather '
-            ".dat directory, the external-boundary timeseries directory, and the weather timeseries file, "
-            'all regenerable by re-running scenario preparation with no solver. "hydrographs" drops the '
-            "hydrograph timeseries and locations files ONLY once processed/hydrology_inflow_summary.zarr "
-            'is present and openable, and otherwise declines. "standalone_rpt" TRUNCATES the standalone '
-            "full.rpt in place and never deletes the file, and deletes the hydrology .rpt only once a "
-            "processed/hydrology_rpt_summary.zarr capture carrying every subcatchment that the hydrology "
-            'model declares has been written. "raw_swmm_binaries" no-ops with a logged reason when '
-            'clear_raw == "none", because the only consumer of the class, '
-            "eda.raw_byte_identity.compare_swmm_raw, also needs the raw H/QX/QY/MH set that clear_raw "
-            "governs. Every reclaim is recorded per scenario in the per-model log and surfaced by "
-            "analysis_validation.check_data_availability. The default reclaims every class except "
-            '"timeseries" and "hydro_out", so a run with nothing configured leaves no raw or intermediate '
-            'copy of data that the processed output holds. "timeseries" is left out because its stores are '
-            "cleared only after a verified copy into the consolidated tree, by "
-            "toggle_clear_scenario_timeseries_after_consolidation, and electing the class here would delete "
-            'them before that copy. "hydro_out" is left out because electing it together with '
-            '"hydrographs" makes a re-prep hard-fail. Set "none" to keep every artifact. Reclaiming makes '
-            "REPROCESSING the affected scenarios impossible without re-running the simulations."
+            "Post-processing reclaim policy. The reclaim fires only after the per-model summary outputs are "
+            "verified present and openable on disk. The value none reclaims no artifact, all reclaims every "
+            "artifact class, and a list selects classes. The class timeseries names the per-scenario *_tseries "
+            "zarr or nc set, and the process runner never applies the class. With toggle_consolidate_timeseries "
+            "and the clearing switch on, the consolidation deletes the per-scenario series after the read-back "
+            "and the runner logs the discharge. With the clearing switch off, the series stay in the per-scenario "
+            "store and the runner logs that. With consolidation off, the series are the processed output and the "
+            "class is skipped with a logged reason. The class raw_swmm_binaries drops out_tritonswmm/swmm/*.out "
+            "and never the *.rpt files, because they are live completion predicates. The class is skipped with a "
+            "logged reason when clear_raw is none, because eda.raw_byte_identity.compare_swmm_raw needs the raw "
+            "binaries that clear_raw governs. The class coupled_rpt truncates out_tritonswmm/swmm/hydraulics.rpt "
+            "in place to the header, the continuity table, the summary table, and the trailer, and never deletes "
+            "the file. The class hydro_out drops swmm/hydro.out, read by write_hydrograph_files, and is safe "
+            "because the hydrographs are rebuilt from the inflow capture or the consolidated tree. The class "
+            "prep_inputs drops the weather .dat directory, the external-boundary directory, and the weather "
+            "timeseries file, all regenerable by re-running scenario preparation without a solver. The class "
+            "hydrographs drops the hydrograph timeseries and locations files only once "
+            "processed/hydrology_inflow_summary.zarr is present and openable, and otherwise declines. The class "
+            "standalone_rpt truncates the standalone full.rpt in place, and deletes the hydrology .rpt only after "
+            "processed/hydrology_rpt_summary.zarr, carrying every subcatchment the hydrology model declares, has "
+            "been written. Every reclaim is recorded per scenario in the per-model log and surfaced by "
+            "analysis_validation.check_data_availability. Defaults to all, so a run with no key set leaves no raw "
+            "or intermediate copy of data held by the consolidated store. When the clearing switch "
+            "toggle_clear_scenario_timeseries_after_consolidation resolves True, clear_raw covers every enabled "
+            "model, and this field elects every class, the directories that each scenario and each member holds "
+            "are also removed after a verified copy into the consolidated store. Setting any one of the switches to a "
+            "keeping value retains the directories for reprocessing. Set none to keep every artifact. Reclaiming "
+            "makes reprocessing the affected scenarios impossible without re-running the simulations."
         ),
     )
     clear_raw: ClearRawValue = Field(
-        "none",
+        "all",
         description=(
-            'Post-processing cleanup policy. "all" deletes all raw outputs for every enabled model type. '
-            '"none" deletes no output. A list of model type strings, a subset of "tritonswmm", '
-            '"triton", and "swmm", deletes raw outputs only for the listed model types. Defaults to '
-            '"none", so yamls written before this field was introduced load cleanly with the strict-safe '
-            "default of no deletion."
+            "Post-processing cleanup policy. The value all deletes the raw outputs of every enabled model type, "
+            "none deletes no output, and a list of model types drawn from tritonswmm, triton, and swmm deletes "
+            "the raw outputs of the listed types only. Defaults to all, so a run with no key set deletes the raw "
+            "outputs of every enabled model after processing. With the clearing switch and "
+            "remove_after_processing at their defaults, the scenario directory is also removed. Set none to keep "
+            "the raw outputs for reprocessing."
         ),
     )
     # `validate_default=True`, because pydantic does not validate a default and this field's

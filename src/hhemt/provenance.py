@@ -907,8 +907,17 @@ def _iter_run_units(analysis):
 
 def _output_ids(analysis, member_id, event_id, model_type) -> list[str]:
     """Per-output @ids for one run unit, derived from the per-model processing_log."""
-    from hhemt.scenario import TRITONSWMM_scenario
+    from hhemt.scenario import TRITONSWMM_scenario, compute_event_id_slug
+    from hhemt.scenario_records import event_is_removed, record_for
 
+    slug = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(int(event_id)))
+    if event_is_removed(analysis.analysis_paths.analysis_dir, slug):
+        # A removed scenario (D24 (e)) has no directory and its handle refuses to read one: the output names come
+        # from the processing log the record carried out of the directory, so re-stamping provenance and the
+        # resume of a pending removal read the same ids the directory held.
+        payload = record_for(analysis, slug, model_type) or {}
+        recorded = ((payload.get("processing_log") or {}).get("outputs")) or {}
+        return [f"sims/{slug}/processed/{name}" for name in sorted(recorded)]
     scen = TRITONSWMM_scenario(int(event_id), analysis)
     mlog = scen.get_log(model_type)
     outs = getattr(mlog.processing_log, "outputs", {}) or {}

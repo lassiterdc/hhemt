@@ -18,6 +18,7 @@ from pathlib import Path
 
 from hhemt.du_sentinels import delete_and_account
 from hhemt.status_flags import write_status_flag
+from hhemt.swmm_runoff_modeling import processed_outputs_to_delete
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +59,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         processed_dir = analysis_dir / "sims" / args.event_id / "processed"
         if processed_dir.exists():
-            print(f"[delete-processed] removing {processed_dir}", flush=True)
-            delete_and_account([processed_dir], scope_dir=processed_dir.parent, scope="scenario")
+            # The per-node inflow capture stays: the scenario's preparation wrote it and nothing else rebuilds it.
+            doomed = processed_outputs_to_delete(processed_dir.parent)
+            print(f"[delete-processed] removing {len(doomed)} item(s) under {processed_dir}", flush=True)
+            if doomed:
+                delete_and_account(doomed, scope_dir=processed_dir.parent, scope="scenario")
         else:
             logger.warning("sims/%s/processed absent; recording sentinel anyway (idempotent).", args.event_id)
         flag_path = analysis_dir / "_status" / "_deleting_reprocess" / f"processed_evt-{args.event_id}.flag"

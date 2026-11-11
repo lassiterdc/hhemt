@@ -314,3 +314,79 @@ def test_the_gridded_series_is_consolidated_into_the_datatree_and_the_scenario_s
     assert [int(v) for v in group["event_iloc"].values] == [int(i) for i in analysis.df_sims.index]
     assert bool(np.isfinite(group["flood_depth"].values).any()), "the consolidated depth holds no solver value"
     assert not Path(proc.scen_paths.output_tritonswmm_triton_timeseries).exists()
+
+
+def test_the_hydrology_groups_land_in_the_datatree_and_the_per_scenario_hydrology_stores_are_cleared(
+    request, tmp_path
+) -> None:
+    """Property: with consolidation and clearing on, after a real coupled run the consolidated tree holds
+    ``tritonswmm/swmm_node_hydro/timeseries/inflow`` with one ``event_iloc`` per event, the two ``summary`` groups
+    of the hydrology results, and no per-scenario hydrology store remains.
+
+    Class: NEW CAPABILITY. Plausible wrong implementations: a hydrology group written under the wrong family, a
+    capture written only for the nodes with positive inflow (the node axis then differs from the model's), and a
+    clearing that runs without the read-back. Reachability: ``consolidate_hydrology`` over the scenario a real
+    coupled run prepared, the hydrology model's own ``hydro.out`` read by the real writer. Both-states anchor: the
+    group's values come from the solver-free SWMM hydrology run of the same preparation, and
+    ``system_total_inflow_volume`` equals the sum of ``total_inflow_volume`` over the nodes. Venue: Rivanna scratch
+    only, serialized against the worktree's build cache, never a laptop. NOT RUN in the round that wrote it: the
+    build seat's venue rule forbids a solver compile on the laptop. The consolidation is called with the two toggles
+    set explicitly, because their defaults are not the state under test. Killed by: those. A second correct
+    implementation consolidates through a region write; the groups are identical.
+    """
+    _require_chunk()
+    proc = _process_one_scenario(
+        request,
+        tmp_path,
+        "coupling_flux_hydrology",
+        flux=True,
+        clear_raw="none",
+        extra_analysis_configs={
+            "toggle_consolidate_timeseries": True,
+            "toggle_clear_scenario_timeseries_after_consolidation": True,
+        },
+    )
+    analysis = proc._analysis
+    store = analysis.analysis_paths.analysis_datatree_zarr
+    capture = Path(proc.scen_paths.sim_folder) / "processed" / "hydrology_inflow_summary.zarr"
+    assert capture.exists(), "the preparation step writes the per-node capture"
+    analysis.process.consolidate_hydrology()
+    series = xr.open_zarr(store, group="tritonswmm/swmm_node_hydro/timeseries", consolidated=False)
+    assert "inflow" in series.data_vars
+    assert [int(v) for v in series["event_iloc"].values] == [int(i) for i in analysis.df_sims.index]
+    assert bool(np.isfinite(series["inflow"].values).any())
+    summary = xr.open_zarr(store, group="tritonswmm/swmm_node_hydro/summary", consolidated=False)
+    total = float(summary["total_inflow_volume"].sum())
+    assert float(summary["system_total_inflow_volume"].values[0]) == pytest.approx(total)
+    assert not capture.exists(), "the capture is cleared once its slices read back"
+    assert not (capture.parent / "hydrology_rpt_summary.zarr").exists()
+
+
+def test_with_consolidation_off_the_hydrology_capture_is_kept_and_no_hydrology_group_is_written(
+    request, tmp_path
+) -> None:
+    """Property (control of the arm above): the same coupled run with consolidation explicitly off keeps the
+    per-scenario hydrology capture and writes no hydrology group.
+
+    Class: NEW CAPABILITY. Plausible wrong implementation: a hydrology consolidation that runs whatever the toggle
+    says. Reachability: the real ``consolidate_to_datatree`` over the scenario a real coupled run wrote. Both-states
+    anchor: the summary groups of the solver's output are in the tree. Venue: Rivanna scratch only, never a laptop;
+    NOT RUN in the round that wrote it. Killed by: that. A second correct implementation gates inside
+    ``consolidate_hydrology``; the tree is the same.
+    """
+    _require_chunk()
+    proc = _process_one_scenario(
+        request,
+        tmp_path,
+        "coupling_flux_hydrology_off",
+        flux=True,
+        clear_raw="none",
+        extra_analysis_configs={"toggle_consolidate_timeseries": False},
+    )
+    analysis = proc._analysis
+    proc.write_summary_outputs(which="both", model_type="tritonswmm")
+    analysis.process.consolidate_to_datatree()
+    store = Path(analysis.analysis_paths.analysis_datatree_zarr)
+    assert (store / "tritonswmm" / "swmm_node" / "summary").is_dir(), "control: the summaries are consolidated"
+    assert not (store / "tritonswmm" / "swmm_node_hydro").exists()
+    assert (Path(proc.scen_paths.sim_folder) / "processed" / "hydrology_inflow_summary.zarr").exists()

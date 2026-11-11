@@ -26,12 +26,30 @@ from hhemt.figure_panels import (
     WATERSHED_LEGEND_LABEL,
     watershed_legend_marker,
 )
-from hhemt.report_renderers.system_overview import _draw_static_subplot_label
+from hhemt.report_renderers.system_overview import _draw_static_subplot_label, _resolve_inp_sources
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
     from hhemt.config.report import report_config
     from hhemt.config.static_plots import StaticPlotBaseConfig
+
+
+def event_hydraulics_inp(analysis, event_iloc) -> Path:
+    """The hydraulics (else combined) ``.inp`` that carries an event's conduit geometry.
+
+    A live scenario answers from its own scenario paths, as before. A removed scenario (record pending or done) has
+    no directory and no log, and building its processing object would re-create directories, so it answers with
+    the prepared ``.inp`` the removal kept beside the records (``_resolve_inp_sources``); every scenario of an
+    analysis shares one network, so the geometry is the same.
+    """
+    from hhemt.scenario import compute_event_id_slug
+    from hhemt.scenario_records import event_is_removed
+
+    evt = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
+    if event_is_removed(analysis.analysis_paths.analysis_dir, evt):
+        return Path(_resolve_inp_sources(analysis)[1])
+    proc = analysis._retrieve_sim_run_processing_object(event_iloc)
+    return Path(getattr(proc.scen_paths, "swmm_hydraulics_inp", None) or proc.scen_paths.swmm_full_inp)
 
 
 def render(
@@ -114,8 +132,6 @@ def render(
         plt.rcParams["font.family"] = static_cfg.font_family
         plt.rcParams["font.size"] = static_cfg.font_sizes[FontTarget.axis_label]
 
-    proc = analysis._retrieve_sim_run_processing_object(event_iloc)
-
     # Read from the consolidated analysis DataTree. The link group carries
     # `max_over_full_flow`, `max_flow`, and `link_id` for every event_iloc.
     link_summary_path = analysis.analysis_paths.analysis_datatree_zarr
@@ -147,7 +163,7 @@ def render(
     # [CONDUITS] + [COORDINATES] sections); the prior version of this code read
     # `swmm_hydro_inp` which is the hydrology-only variant (no [CONDUITS]) and
     # produced a blank figure (iter-2 user feedback 2026-04-27).
-    inp_path = Path(getattr(proc.scen_paths, "swmm_hydraulics_inp", None) or proc.scen_paths.swmm_full_inp)
+    inp_path = event_hydraulics_inp(analysis, event_iloc)
     model = swmmio.Model(str(inp_path))
     coords_df = model.inp.coordinates
     conduits_df = model.inp.conduits
@@ -641,8 +657,6 @@ def _build_conduit_flow_figure(
     cfg = report_cfg.per_sim.conduit_flow
     map_cfg = report_cfg.per_sim.map
 
-    proc = analysis._retrieve_sim_run_processing_object(event_iloc)
-
     # Model-type dispatch removed: `link_group` is now a REQUIRED keyword
     # parameter, mirroring `_build_peak_flood_depth_figure`'s long-standing
     # `triton_group`. The caller resolves the arm from the _model_arms matrix,
@@ -677,7 +691,7 @@ def _build_conduit_flow_figure(
     peak_flow_attrs = dict(peak_flow_da.attrs)
     peak_flow_name = peak_flow_da.name
 
-    inp_path = Path(getattr(proc.scen_paths, "swmm_hydraulics_inp", None) or proc.scen_paths.swmm_full_inp)
+    inp_path = event_hydraulics_inp(analysis, event_iloc)
     model = swmmio.Model(str(inp_path))
     coords_df = model.inp.coordinates
     conduits_df = model.inp.conduits

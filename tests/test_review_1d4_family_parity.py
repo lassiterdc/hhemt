@@ -134,6 +134,8 @@ def test_every_series_mode_names_one_family_one_kind_and_one_clearing_record_con
         assert mode.startswith(f"{tree_family}_"), (mode, tree_family)
         if "_triton_" in f"_{mode}" and mode.endswith("_triton_ts"):
             kind, expected_group_kind = "triton", "triton"
+        elif mode.endswith("_performance_ts"):
+            kind, expected_group_kind = "performance", "performance"
         elif mode.endswith("_swmm_node_ts"):
             kind, expected_group_kind = "node", "swmm_node"
         elif mode.endswith("_system_ts"):
@@ -148,30 +150,33 @@ def test_every_series_mode_names_one_family_one_kind_and_one_clearing_record_con
     assert families_seen == {"tritonswmm", "swmm_only", "triton_only"}
 
 
-def test_every_non_performance_series_store_of_the_scenario_paths_has_a_consolidation_mode():
+def test_every_series_store_of_the_scenario_paths_has_a_consolidation_mode():
     """Property: the set of per-scenario series stores the scenario paths declare (``output_*_timeseries`` or
-    ``output_*_time_series``, performance excluded) equals the set of stores the mode table consolidates.
+    ``output_*_time_series``, the per-rank performance series included since D26) equals the set of stores the mode
+    table consolidates.
 
     Input class: the dataclass fields of ``ScenarioPaths``, read from the class, so a store a later change adds is
     covered without an edit here (D18 names this domain: "the series stores of ``ScenarioPaths``"; the per-rank
-    performance series is the stated exception, never consolidated). Reachability: the fields are read from the real
-    class; a store with no mode is written by the run and never consolidated or cleared, which is the defect D18 was
-    raised for. Both-states anchor: set equality holds for the coupled rows before the chunk and for all six after it.
-    Must-fire control: the derived domain names at least one store of each of the three families. Killed by: dropping
-    any one of the three new rows from the mode table. Passes under a second correct implementation that adds the
-    performance stores' consolidation, if it also removes them from this exception (a decision, not this test's).
+    performance series is consolidated since D26, so it is no exception). Reachability: the fields are read from the
+    real class; a store with no mode is written by the run and never consolidated or cleared, which is the defect
+    D18 was raised for. Both-states anchor: set equality holds for the coupled rows before the chunk and for all
+    eight after it. Must-fire control: the derived domain names at least one store of each of the three families.
+    Killed by: dropping any one of the eight rows from the mode table. Passes under a second correct implementation
+    that derives the table from the dataclass fields.
     """
     from hhemt.paths import ScenarioPaths
 
     domain = {
         f.name
         for f in dataclasses.fields(ScenarioPaths)
-        if f.name.startswith("output_")
-        and f.name.endswith(("_timeseries", "_time_series"))
-        and "performance" not in f.name
+        if f.name.startswith("output_") and f.name.endswith(("_timeseries", "_time_series"))
     }
     assert {name for name in domain if name.startswith(tuple(_ATTR_FAMILY))} == domain
     assert {p for p in _ATTR_FAMILY if any(n.startswith(p) for n in domain)} == set(_ATTR_FAMILY), domain
+    assert {n for n in domain if "performance" in n} == {
+        "output_tritonswmm_performance_timeseries",
+        "output_triton_only_performance_timeseries",
+    }, "control: the performance stores are in the derived domain"
     assert domain == set(_post_processing()._TIMESERIES_MODE_CONFIG.values())
 
 

@@ -5059,3 +5059,131 @@ non_breaking_allowlist:
     layout_signature: ee6929352f99524246fd3f112696e2be04ff957793da7a5788aff506cf71d659
     justification: |-
       the default of the post-processing reclaim policy changes from reclaiming nothing to reclaiming the redundant intermediate classes; no stored output path, group or variable changes name
+  - path: src/hhemt/log.py
+    layout_signature: cc259a85d78167cd06ee94062485db46f9322d908e9001f23aa04f44e3f0b094
+    justification: |-
+      Additive: two Optional model-log fields (the cleared record and the pending list of the performance series), defaulted None, so every existing log_{model}.json deserialises unchanged; no group, variable or path of an existing tree moves
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 7faa0b83ce5372952eefba536a55d5c444db3acb0c9639db15f1617eac638676
+    justification: |-
+      The processed-state checks of the performance series and of the gridded TRITON store read the new cleared record before the processing record, so a cleared store is never re-entered; the bytes written and every on-disk path are unchanged
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 448929b499c63bcbe504541b0d49ef8bb9d5257c6b04f8c07b835b4a44f69b5d
+    justification: |-
+      Additive: the performance series groups (tritonswmm/performance/timeseries and triton_only/performance/timeseries) join an existing tree by append, a series group takes a new or missing variable by an outer join, and a cleared store takes its done flag, chapters and publish leftovers with it; no group of an existing tree moves and an existing tree reads unchanged
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 3b30a2b65ab5b3783ff34981c78eb685d973a4fad08413ee7bbc21afc8317931
+    justification: |-
+      Additive: a series group stored before the variable-set record existed gets the record array on its first heterogeneous append, blank over earlier events; no group of an existing tree moves
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 70ee58cbf41ac10da7176ce851df2c4b8c84a69d40233cf0d43d68794f0f500c
+    justification: |-
+      the SWMM hydrology results become groups of the consolidated tree (swmm_node_hydro series and summary, swmm_subcatchment_hydro summary) and CONSOLIDATION_VERSION rises to 4; additive, no existing group, variable or key moves, and an existing tree reads unchanged
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 9f4829ccc56199f29089719f4d276ba3aa4a7c128617753f92c22e550b38037b
+    justification: |-
+      the SWMM hydrology results become groups of the consolidated tree (swmm_node_hydro series and summary, swmm_subcatchment_hydro summary) and CONSOLIDATION_VERSION rises to 4; additive, no existing group, variable or key moves, and an existing tree reads unchanged
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 214cf148307a1bf397191cb36ab91dd1183982dbe9f4666dcb3527e8ed1779c4
+    justification: |-
+      the SWMM hydrology results become groups of the consolidated tree (swmm_node_hydro series and summary, swmm_subcatchment_hydro summary) and CONSOLIDATION_VERSION rises to 4; additive, no existing group, variable or key moves, and an existing tree reads unchanged
+  - path: src/hhemt/log.py
+    layout_signature: 42783e52316ed65aee3a5b709db551465403439d2787bb6e185b1e94758da7f1
+    justification: |-
+      the additive consolidated_hydrology_cleared scenario-log field defaults to None, so every pre-existing scenario log deserialises unchanged; no existing key changes name or type
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 5ed57d0f16f7aa55a1fbbd120e04664a6c823945a7ff3e1a408fd06c8e08cbe0
+    justification: |-
+      the SWMM hydrology results become groups of the consolidated tree and CONSOLIDATION_VERSION rises to 4; additive, no existing group, variable or key moves; comment wording about the performance series is corrected
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: b3baa77725e5deeba6fcec840f2c1e556c31e9823aead9e243fdd5104f6df882
+    justification: |-
+      comment wording about the performance series corrected; no executable change
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 9427be504d2214e916e0eb94f66a62cee6fec110ea9d062ecf715d178484a73c
+    justification: |-
+      additive: adds the hydrology groups and the performance group, and appends outer; no LAYOUT_VERSION bump, CONSOLIDATION_VERSION 4 appends groups
+  - path: src/hhemt/log.py
+    layout_signature: f60d367cffed4ba85566252c091c34fb33ac769efc6fa088f624379ff2db84ac
+    justification: |-
+      additive: adds the hydrology groups and the performance group, and appends outer; no LAYOUT_VERSION bump, CONSOLIDATION_VERSION 4 appends groups
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 651d02e6e76961f893686c0127def0fb17a8fdf9d2a17dbe84d48510d76d3dad
+    justification: |-
+      additive: adds the hydrology groups and the performance group, and appends outer; no LAYOUT_VERSION bump, CONSOLIDATION_VERSION 4 appends groups
+  - path: src/hhemt/scenario.py
+    layout_signature: 9b002f7cfa383350e782843a594a0861c3923dc72da305e6d4efcb82fa575b3d
+    justification: |-
+      Removal of per-scenario and per-member directories after a verified copy, analysis-level records read where the directory was read, and the removal step after the last clearing; no stored output path, group or variable changes name, and every reader tolerates both states.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: c2719c1d1314bd34f2cd646c80655d3738c04c88456e6c0c56b5f25d7889bd4a
+    justification: |-
+      Removal of per-scenario and per-member directories after a verified copy, analysis-level records read where the directory was read, and the removal step after the last clearing; no stored output path, group or variable changes name, and every reader tolerates both states.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 0dfab86b8c2986ce5fd397b34f6d018b019e3590482474b4bc0022c014c0349d
+    justification: |-
+      Removal of per-scenario and per-member directories after a verified copy, analysis-level records read where the directory was read, and the removal step after the last clearing; no stored output path, group or variable changes name, and every reader tolerates both states.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 0e5ad866fe61874326474bd05b4da1ec7fcc1178696cbb9e9d4f66dada0e3d42
+    justification: |-
+      Consolidation skips scenarios whose directories were removed after a verified copy, like events already in the append-only groups; no stored output path, group or variable changes name.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 01e83de61da97904296050e2bf3507a6b801d1ca5e5cee2a8df502d481212ba1
+    justification: |-
+      Process-stage reprocess of a master of removed members refuses; removed-member views and records as before. No stored output path, group or variable changes name.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: d9b7c962e48e0558a4a83edc7e3ae1d0da9be4bb309be40c97a9170e23b2e270
+    justification: |-
+      The in-process consolidation passes the live status table so a removed scenario's record captures its real status rows; no stored output path, group or variable changes name.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: f6e88f13504ee62c59b8a46939b38b24cb48f878410253725ed17adb2d4b5e39
+    justification: |-
+      The removal step also runs when the consolidation takes its early reuse return, so a pending removal is finished and an eligible scenario removed; no stored output path, group or variable changes name.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: d71c4a75c6533313c53379317201b034cb18316b9db7f8551ade4845e8fa977d
+    justification: |-
+      Additive: string coordinates along event_iloc are created at a fixed width and cast to a stored group's width on append; a group created narrower is refused before any write; no group or path moves
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 18ddf6f1c42a465e34cdc73d9550576d8ab2f939a2b1907b9b772c781a89f531
+    justification: |-
+      Additive: a member series slice is cast to the master group's stored string width before the copy, and a narrower older group is refused before any write; no group or path moves
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 8fb32f6e53fb4a4dbee50d77f44163a41f57ef4a926a44c2374e9c7f86f7ff32
+    justification: |-
+      Additive: string columns (coordinates and data variables) along event_iloc are created at a fixed width; a narrower stored string array is rewritten in place at the fixed width, labels only, verified; the stored event id is part of a slice's equality; no group or path moves
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 9f3a49abe3013d8493d240dbde5598445678d6a9b846b39f390e8244c597b9f9
+    justification: |-
+      Additive: string columns along event_iloc are fixed-width, a narrower stored string array is rewritten in place (labels only, verified), and an over-width value is refused naming it; no group or path moves
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 87a48325cc1430c824c57145d395a4ec611a70a5f30dde2c5f0868b80b242c6e
+    justification: |-
+      Additive: string columns along event_iloc are fixed-width, a narrower stored string array is rewritten in place (labels only, verified), and an over-width value is refused naming it; no group or path moves
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: d29d9d6417e48c2097c06ee34651311b187bb19cda9a9b4048cd6f194831e860
+    justification: |-
+      Additive: an interrupted in-place widening of a stored string array is settled at the first read of its group; no group or path of a finished tree moves
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: b1d5b6f43d36460404049bd0681819acc0256641b77923ef4b5bf533708e8bf9
+    justification: |-
+      additive: adds the scenario records, the directory removal, the read-only member view, fixed-width string coordinates, and the interrupted-widening settle; no LAYOUT_VERSION bump
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 625a85ed8eb4a25a5d2ce182cbb01194b5a7d6fecbbaa9088bf89919aa31311e
+    justification: |-
+      additive: adds the scenario records, the directory removal, the read-only member view, fixed-width string coordinates, and the interrupted-widening settle; no LAYOUT_VERSION bump
+  - path: src/hhemt/process_simulation.py
+    layout_signature: bc0abc0ee51eaf69f4fe251a5382418c6a9d2b2dd318c30fd8a23f07f4106190
+    justification: |-
+      Additive: _reclaim_attrs and _reclaim_paths take the consolidation toggle as an argument, the timeseries class is never applied by the process runner, a name-set helper is added, and the runner's log line branches on the resolved clearing switch; no stored output path, group or variable changes name. No LAYOUT_VERSION bump.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: f9b5af0be937f3145889ba9d711e51f7826ea78ec909a1fb1074eb9b5c0cb865
+    justification: |-
+      Docstring and comment rewording and the member-view docstring; no stored group, path or variable changes name. No LAYOUT_VERSION bump.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 782d546283347e5b6c10206a729fd9b8d84384a28ac8d19133d1a0bd62d91f5a
+    justification: |-
+      Additive: the hydrology writers place each slice inside a deferred_consolidation block, and docstrings are reworded; no stored group, path or variable changes name. No LAYOUT_VERSION bump.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 9d405efa063e36b9660eda5842ef127ba2b0b9c5008c6dad7299e9d7d77c0833
+    justification: |-
+      Config defaults and description wording only: toggle_consolidate_timeseries True, clear_raw 'all', remove_after_processing 'all', and the four rewritten field descriptions. Input-config defaults, not stored fields: no stored group, path or variable changes name. No LAYOUT_VERSION bump.

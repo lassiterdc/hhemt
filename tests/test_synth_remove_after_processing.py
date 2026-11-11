@@ -67,11 +67,12 @@ def test_reclaim_drop_set_is_disjoint_from_preserve_set(model_type):
     """FALSIFYING TEST -- fails if the reclaim would ever remove a preserved artifact.
 
     Name-level and fixture-free on purpose: a guard that needs a compiled synth model is a
-    guard that gets skipped. Pre-fix, ``_reclaim_attrs`` does not exist and this errors at
-    import -- the required pre-fix FAIL.
+    guard that gets skipped. The set read is the NAME set of the ``timeseries`` class
+    (``_timeseries_drop_names``), because ``_reclaim_attrs`` applies D24 (b) and returns nothing for the
+    class under either consolidation value, which would make this guard pass against an empty set.
     """
     preserve = set(_SUMMARY_ATTRS_BY_MODEL[model_type])
-    drop = set(_Proc._reclaim_attrs(model_type, policy="all"))
+    drop = set(_Proc._timeseries_drop_names(model_type))
     assert preserve & drop == set(), (
         f"reclaim would remove preserved artifact(s) for {model_type}: {sorted(preserve & drop)}"
     )
@@ -85,17 +86,32 @@ def test_preserve_and_drop_sets_are_one_to_one_paired(model_type):
     alone is satisfied by an EMPTY drop set. Pairing pins the cardinality too.
     """
     preserve = _SUMMARY_ATTRS_BY_MODEL[model_type]
-    drop = _Proc._reclaim_attrs(model_type, policy="all")
+    drop = _Proc._timeseries_drop_names(model_type)
     assert len(drop) == len(preserve), (
         f"{model_type}: {len(drop)} timeseries attr(s) paired against {len(preserve)} summary attr(s)"
     )
 
 
 @pytest.mark.parametrize("model_type", _MODEL_TYPES)
-def test_reclaim_attrs_is_empty_for_the_strict_safe_default(model_type):
-    """The shipped default reclaims nothing, and the empty policy list is rejected."""
-    assert _Proc._reclaim_attrs(model_type, policy="none") == ()
-    assert _Proc._reclaim_attrs(model_type, policy=["raw_swmm_binaries"]) == ()
+@pytest.mark.parametrize("consolidation_on", [True, False])
+def test_reclaim_attrs_is_empty_for_the_strict_safe_default(model_type, consolidation_on):
+    """A policy electing no per-scenario series reclaims nothing, whichever way consolidation is set."""
+    assert _Proc._reclaim_attrs(model_type, policy="none", consolidation_on=consolidation_on) == ()
+    assert _Proc._reclaim_attrs(model_type, policy=["raw_swmm_binaries"], consolidation_on=consolidation_on) == ()
+
+
+@pytest.mark.parametrize("model_type", _MODEL_TYPES)
+@pytest.mark.parametrize("consolidation_on", [True, False])
+def test_runner_reclaim_never_applies_the_timeseries_class(model_type, consolidation_on):
+    """D24 (b): the process runner deletes no per-scenario series when the class is elected, under either arm.
+
+    With consolidation on the class is discharged by the consolidation's verified clearing; with it off the series
+    are the processed output. Must-fire control: the class's NAME set is non-empty, so the empty answer is a
+    decision and not an empty table.
+    """
+    assert _Proc._timeseries_drop_names(model_type) != ()
+    assert _Proc._reclaim_attrs(model_type, policy="all", consolidation_on=consolidation_on) == ()
+    assert _Proc._reclaim_attrs(model_type, policy=["timeseries"], consolidation_on=consolidation_on) == ()
 
 
 def test_rpt_suffix_is_never_in_the_coupled_swmm_reclaim_allowlist():
@@ -115,7 +131,14 @@ def test_rpt_suffix_is_never_in_the_coupled_swmm_reclaim_allowlist():
 
 
 def test_default_config_reclaims_nothing():
-    """Asserted on the CONFIG, never by flipping the knob in memory.
+    """The default config reclaims EVERY class: ``remove_after_processing`` is the literal ``"all"`` (D24 (a)).
+
+    The node keeps its historical name so the chunk gate's credit follows it. Strength is kept: the EXACT default is
+    pinned as the string ``"all"``, it expands to the full seven-class set, and the two clearing fields beside it
+    (``clear_raw`` and the consolidation toggle) are pinned too, because the directory removal is keyed on the
+    conjunction of the three.
+
+    Asserted on the CONFIG, never by flipping the knob in memory.
 
     Gotcha 73: the process runner is a SUBPROCESS that loads its config from disk, so a
     test that sets ``analysis.cfg_analysis.remove_after_processing`` on a built analysis
@@ -123,7 +146,22 @@ def test_default_config_reclaims_nothing():
     must inject the knob at case-construction time via
     ``retrieve_synth_TRITON_SWMM_test_case(..., additional_analysis_configs={...})``.
     """
-    assert analysis_config.model_fields["remove_after_processing"].default == "none"
+    import hhemt.config.analysis as config_analysis
+
+    assert not hasattr(config_analysis, "_DEFAULT_REMOVE_AFTER_PROCESSING")
+    default = analysis_config.model_fields["remove_after_processing"].default
+    assert default == "all"
+    assert set(_Proc._reclaim_classes(default)) == {
+        "timeseries",
+        "raw_swmm_binaries",
+        "coupled_rpt",
+        "hydro_out",
+        "prep_inputs",
+        "hydrographs",
+        "standalone_rpt",
+    }
+    assert analysis_config.model_fields["clear_raw"].default == "all"
+    assert analysis_config.model_fields["toggle_consolidate_timeseries"].default is True
 
 
 @pytest.mark.parametrize(
@@ -167,7 +205,7 @@ def test_reclaim_classes_normalization():
 )
 def test_which_restricts_the_drop_set(which, expected_swmm, expected_triton):
     """`which` narrows the drop set the same way it narrows the processing it follows."""
-    attrs = _Proc._reclaim_attrs("tritonswmm", policy="all", which=which)
+    attrs = _Proc._timeseries_drop_names("tritonswmm", which=which)
     has_swmm = any(_Proc._attr_is_swmm_side(a) for a in attrs)
     has_triton = any(not _Proc._attr_is_swmm_side(a) for a in attrs)
     assert has_swmm is expected_swmm
@@ -220,6 +258,8 @@ def test_data_availability_check_is_registered_and_graceful_absent():
         "consolidated_triton_timeseries_cleared",
         # The same disclosure for the SWMM-only system series store, read back from swmm_only/system/timeseries.
         "consolidated_system_timeseries_cleared",
+        # The performance series (tritonswmm and triton_only), read back from {family}/performance/timeseries.
+        "consolidated_performance_timeseries_cleared",
     }
     # Assert on the CODE, not the source text: the docstring legitimately names
     # `remove_after_processing` in order to say the check must not read it, so a raw

@@ -282,6 +282,24 @@ def compute_and_write_scope_sentinel(
 _ABSENT_CHILD_WARN_THRESHOLD = 8
 
 
+def removed_scenario_bytes(analysis_dir: Path) -> dict[str, int]:
+    """Per removed scenario, the bytes its directory held at removal, read from the analysis-level records.
+
+    ``sum_child_sentinels`` walks the child directories that EXIST, so a scenario whose directory was removed
+    (D24 (e)) contributes zero present bytes to the analysis sentinel by construction; its last measured size
+    survives only in the record (``du_bytes_before_removal``). The disk-use report reads this mapping for the
+    retained-bytes column. Keyed by event id, unit: bytes; an unreadable record is skipped.
+    """
+    from hhemt.scenario_records import REMOVED_STATES, read_scenario_record, recorded_event_ids
+
+    out: dict[str, int] = {}
+    for event_id in recorded_event_ids(analysis_dir):
+        rec = read_scenario_record(analysis_dir, event_id)
+        if rec is not None and rec["state"] in REMOVED_STATES:
+            out[event_id] = int(rec.get("du_bytes_before_removal", 0))
+    return out
+
+
 def sum_child_sentinels(scope_dir: Path, *, scope: Scope, child_scope_dirs: list[str]) -> bool:
     """Compute a scope's DU by SUMMING child-scope _du.json sentinels + a bounded
     own-files walk that does NOT recurse into child-scope dirs. Routes through

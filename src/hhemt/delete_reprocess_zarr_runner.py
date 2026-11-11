@@ -61,8 +61,27 @@ def records_summary_clearing(analysis_dir: Path) -> bool:
     ``members/*/sims/{event_id}/log_{model}.json``. A recorded clearing means the ``summary`` branch holds the only
     copy of that scenario's summaries, so deleting the branch would destroy them.
     """
+    from hhemt.scenario_records import REMOVED_STATES
     from hhemt.summary_paths import SUMMARY_CLEARING_FIELD, parse_summary_clearing_record
 
+    # Removed scenarios (D24 (e)) keep their model logs in the analysis-level record, so the guard that keeps every
+    # summary branch reads the records too: after the directory removal the branch is the only copy, and a glob of
+    # `sims/*/log_*.json` alone would find nothing and let the branches be deleted.
+    for pattern in (
+        "_status/scenario_records/*.json",
+        "_status/member_records/member_*/scenario_records/*.json",
+        "members/*/_status/scenario_records/*.json",
+    ):
+        for rec_file in Path(analysis_dir).glob(pattern):
+            try:
+                rec = json.loads(rec_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(rec, dict) or rec.get("state") not in REMOVED_STATES:
+                continue
+            for logged in (rec.get("model_logs") or {}).values():
+                if isinstance(logged, dict) and parse_summary_clearing_record(logged.get(SUMMARY_CLEARING_FIELD)):
+                    return True
     for pattern in ("sims/*/log_*.json", "members/*/sims/*/log_*.json"):
         for log_file in Path(analysis_dir).glob(pattern):
             try:

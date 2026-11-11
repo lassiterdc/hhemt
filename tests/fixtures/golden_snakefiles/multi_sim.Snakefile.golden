@@ -22,6 +22,7 @@ config["report"] = {"generated_at": _dt.now().isoformat(timespec="seconds")}
 report: "report/workflow_description.rst"
 
 SIM_IDS = ['event_index.0', 'event_index.1', 'event_index.2']
+REPORT_EVENT_IDS = ['event_index.0', 'event_index.1', 'event_index.2']
 ILOC_BY_EVENT_ID = {'event_index.0': 0, 'event_index.1': 1, 'event_index.2': 2}
 
 from hhemt.report_plot_ids import (
@@ -40,7 +41,7 @@ rule all:
         "scenario_status.csv",
         "workflow_summary.md",
         "plots/system_overview.html",
-        expand("plots/per_sim/{event_id}/event_page__evt.{event_id}.html", event_id=SIM_IDS),
+        expand("plots/per_sim/{event_id}/event_page__evt.{event_id}.html", event_id=REPORT_EVENT_IDS),
         "plots/per_analysis/summary_table.html",
         "plots/appendix/scenario_status.html",
         "plots/errors_and_warnings/validation_report.html",
@@ -722,7 +723,7 @@ rule export_scenario_status:
 rule render_report:
     input:
         "plots/system_overview.html",
-        expand("plots/per_sim/{event_id}/event_page__evt.{event_id}.html", event_id=SIM_IDS),
+        expand("plots/per_sim/{event_id}/event_page__evt.{event_id}.html", event_id=REPORT_EVENT_IDS),
         "plots/per_analysis/summary_table.html",
         "plots/appendix/scenario_status.html",
         "plots/errors_and_warnings/validation_report.html",

@@ -287,6 +287,11 @@ def _compare(golden: xr.Dataset, migrated: xr.Dataset, where: str, node_store: b
             "format",
             "axis",
         }
+        # The identifier coordinate `event_iloc` of the preparation-stage inflow capture carries `cf_role`, a CF key
+        # that no layout-26 store held and the migration does not touch. It is not stale when the migrated store holds
+        # it exactly as the golden does; the exemption is that one variable, that one key, and equality with the golden.
+        if v == "event_iloc" and ga.get("cf_role") == ma.get("cf_role") == "timeseries_id":
+            stale = stale - {"cf_role"}
         if (
             stale
             or any(ga.get(k) != ma.get(k) for k in ("units", "standard_name"))

@@ -130,7 +130,6 @@ def render(
     # renderer-IO audit (Gotcha 53) compares declared against ACTUAL reads, and
     # an index-derived list would silently drift when a builder's tuple changes.
     sys_paths = analysis._system.sys_paths
-    proc = analysis._retrieve_sim_run_processing_object(event_iloc)
     source_paths = [
         analysis.analysis_paths.analysis_datatree_zarr,
         Path(sys_paths.dem_processed),
@@ -140,7 +139,9 @@ def render(
     watershed = analysis._system.cfg_system.watershed_gis_polygon
     if watershed:
         source_paths.append(Path(watershed))
-    inp = getattr(proc.scen_paths, "swmm_hydraulics_inp", None) or proc.scen_paths.swmm_full_inp
+    from hhemt.report_renderers.per_sim_conduit_flow import event_hydraulics_inp
+
+    inp = event_hydraulics_inp(analysis, event_iloc)
     if inp:
         source_paths.append(Path(inp))
 

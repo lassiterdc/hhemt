@@ -565,7 +565,11 @@ class ZeroUserInfoScanner:
 
     def scan_member(self, member: str, data: bytes) -> list[MemberHit]:
         """The hits of one member's bytes, without recording them."""
-        text = data.decode("utf-8", errors="ignore")
+        # A byte that is not valid UTF-8 becomes U+FFFD, which no pattern here treats as part of an address, a path
+        # or a configured value, so it BREAKS adjacency. Dropping it (errors="ignore") glued the text on either side
+        # of every such byte, and a binary member (a GeoTIFF, a NetCDF) then formed address-shaped strings that no
+        # byte of it holds. Valid UTF-8 decodes to exactly the same text either way.
+        text = data.decode("utf-8", errors="replace")
         found: list[MemberHit] = []
         for match in EMAIL_PATTERN.finditer(text):
             if match.group(0).lower() not in self._exempt_emails:

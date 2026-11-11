@@ -459,6 +459,8 @@ class ReferenceStoreVerdict:
     status: Literal["equal", "differs", "missing_in_rerun"]
     variables: dict[str, str] = field(default_factory=dict)
     extra_variables: tuple[str, ...] = ()
+    #: ``(variable, reason)`` for each variable present in both stores that was NOT compared, by rule.
+    excluded: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -477,6 +479,13 @@ class ReferenceComparison:
     atol: float
 
     @property
+    def exclusions(self) -> tuple[tuple[str, str, str], ...]:
+        """``(store, variable, reason)`` for every variable the comparison left out, so a report says what it did not
+        compare. An exclusion applies only to a variable present in BOTH stores: a missing store or variable is a
+        failure whatever the rule, and a changed scientific variable is never excluded."""
+        return tuple((v.store, name, reason) for v in self.verdicts for name, reason in v.excluded)
+
+    @property
     def passed(self) -> bool:
         """True when the bundle carried at least one store and every one is ``equal``."""
         return bool(self.verdicts) and all(v.status == "equal" for v in self.verdicts)
@@ -491,6 +500,8 @@ class ReferenceComparison:
                 for name, reason in sorted(verdict.variables.items()):
                     lines.append(f"{verdict.store}: variable {name!r} {reason}")
         equal = sum(v.status == "equal" for v in self.verdicts)
+        for store, name, reason in self.exclusions:
+            lines.append(f"not compared: {store}: variable {name!r} ({reason})")
         lines.append(
             f"{equal} of {len(self.verdicts)} reference stores equal (rtol={self.rtol}, atol={self.atol}); "
             f"{len(self.extra_stores)} store(s) in the re-run are not in the bundle"
@@ -623,6 +634,27 @@ def compare_reference_outputs(
     return ReferenceComparison(tuple(verdicts), extra_stores, rtol, atol)
 
 
+_STAMP_REASON = "build-provenance stamp: records which build produced the store, not a scientific value"
+_TIMER_REASON = "wall-clock timer of the performance summary: differs between any two runs of the same build"
+
+
+def _build_stamp_names() -> frozenset[str]:
+    """The per-event stamp coordinates, derived from the keys of ``provenance.producing_stamp`` (``hhemt_sha`` becomes
+    ``hhemt_producing_sha``, and so on), so the list follows the stamp's own definition."""
+    from hhemt.provenance import producing_stamp
+
+    return frozenset("hhemt_producing_" + key.removeprefix("hhemt_") for key in producing_stamp())
+
+
+def _is_performance_store(rel: str, group: str | None) -> bool:
+    """Whether the store is a ``performance`` summary: the tree group ``{family}/performance/summary``, or a
+    per-scenario ``*perf*_summary`` store. Measured on a real re-run: every floating-point variable of that group is a
+    wall-clock timer (all but two zero-valued ones differ), and its integer and text variables are deterministic."""
+    if group is not None:
+        return group.rstrip("/").endswith("performance/summary")
+    return "_perf_summary" in rel
+
+
 def _reference_verdict(
     rel: str, ref_path: Path, rerun_path: Path, group: str | None, rtol: float, atol: float
 ) -> ReferenceStoreVerdict:
@@ -634,12 +666,27 @@ def _reference_verdict(
     ref_ds = _open_reference_store(ref_path, group)
     new_ds = _open_reference_store(rerun_path, group)
     differing: dict[str, str] = {}
+    excluded: list[tuple[str, str]] = []
+    stamps = _build_stamp_names()
+    performance = _is_performance_store(rel, group)
     for name in sorted(ref_ds.variables, key=str):
         if name not in new_ds.variables:
             differing[str(name)] = "is absent from the re-run"
+            continue
+        if str(name) in stamps:
+            excluded.append((str(name), _STAMP_REASON))
+            continue
+        if performance and name in ref_ds.data_vars and ref_ds[name].dtype.kind == "f":
+            excluded.append((str(name), _TIMER_REASON))
             continue
         same, reason = _values_equal(ref_ds[name].values, new_ds[name].values, rtol, atol)
         if not same:
             differing[str(name)] = reason
     extra = tuple(sorted(str(n) for n in new_ds.variables if n not in ref_ds.variables))
-    return ReferenceStoreVerdict(rel, "differs" if differing else "equal", variables=differing, extra_variables=extra)
+    return ReferenceStoreVerdict(
+        rel,
+        "differs" if differing else "equal",
+        variables=differing,
+        extra_variables=extra,
+        excluded=tuple(excluded),
+    )

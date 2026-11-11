@@ -22,6 +22,7 @@ from hhemt.report_renderers._tabulator_defaults import (
     build_html_document,
     build_options_dict,
 )
+from hhemt.scenario_records import all_members_for_reading_of
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
@@ -51,7 +52,7 @@ def render(
     is_sensitivity_master = (
         getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
         and getattr(analysis, "sensitivity", None) is not None
-        and len(analysis.sensitivity.members) > 0
+        and len(all_members_for_reading_of(analysis.sensitivity)) > 0
     )
 
     metrics = report_cfg.per_analysis_summary.metrics
@@ -96,7 +97,7 @@ def render(
             master_simlogs = analysis.analysis_paths.simlog_directory
             log_source_files.extend(sorted(master_simlogs.glob("model_*.log")))
         per_member_rows = []
-        for member_id, sub in analysis.sensitivity.members.items():
+        for member_id, sub in all_members_for_reading_of(analysis.sensitivity).items():
             n = len(sub.df_sims.index)
             if use_csv:
                 _id_col = resolve_member_id_column(status_df.columns)

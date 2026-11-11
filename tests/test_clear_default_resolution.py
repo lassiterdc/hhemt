@@ -74,9 +74,13 @@ def test_unset_clearing_resolves_to_false_when_consolidation_is_off(tmp_path: Pa
     than in a model validator; the resolved value is the same and the test passes.
     """
     cfg = _resolved(tmp_path)
-    assert cfg.toggle_consolidate_timeseries is False
-    assert cfg.toggle_clear_scenario_timeseries_after_consolidation is False
+    assert cfg.toggle_consolidate_timeseries is True, "consolidation is on by default (D24 (a))"
+    assert cfg.toggle_clear_scenario_timeseries_after_consolidation is True
     assert _preflight_refusals(cfg) == [], "an analysis that mentions neither key must clear preflight"
+    # The off arm, now explicit: with consolidation off the unset clearing key still resolves to False.
+    off = _resolved(tmp_path, toggle_consolidate_timeseries=False)
+    assert off.toggle_clear_scenario_timeseries_after_consolidation is False
+    assert _preflight_refusals(off) == [], "consolidation off with clearing unset must clear preflight"
 
 
 def test_the_resolved_value_is_what_a_written_config_carries(tmp_path: Path) -> None:
@@ -92,7 +96,8 @@ def test_the_resolved_value_is_what_a_written_config_carries(tmp_path: Path) -> 
     for toggles, expected in (
         ({"toggle_consolidate_timeseries": True}, True),
         ({"toggle_consolidate_timeseries": True, _CLEAR: False}, False),
-        ({}, False),
+        ({"toggle_consolidate_timeseries": False}, False),
+        ({}, True),
     ):
         dumped = _resolved(tmp_path, **toggles).model_dump()[_CLEAR]
         assert dumped is expected, (toggles, dumped)
@@ -109,7 +114,7 @@ def test_explicit_true_without_consolidation_is_still_refused_and_with_it_is_not
     refusing whenever clearing is on. A second correct implementation words the refusal differently or reports
     it with a different field label; the test reads only that the error names the field.
     """
-    refused = _preflight_refusals(_resolved(tmp_path, **{_CLEAR: True}))
+    refused = _preflight_refusals(_resolved(tmp_path, toggle_consolidate_timeseries=False, **{_CLEAR: True}))
     assert len(refused) == 1, "explicit True with consolidation off must be refused"
     assert _CLEAR in str(refused[0])
     accepted = _preflight_refusals(_resolved(tmp_path, toggle_consolidate_timeseries=True, **{_CLEAR: True}))

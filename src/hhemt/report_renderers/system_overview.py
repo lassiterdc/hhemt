@@ -45,6 +45,7 @@ from hhemt import units
 from hhemt.report_renderers._map_bounds import (
     compute_padded_square_bounds,
 )
+from hhemt.scenario_records import all_members_for_reading_of
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
@@ -955,12 +956,29 @@ def _master_renders_swmm(analysis: TRITONSWMM_analysis) -> bool:
 
     if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
         types: set = set()
-        subs = getattr(getattr(analysis, "sensitivity", None), "members", {}) or {}
+        _sens = getattr(analysis, "sensitivity", None)
+        subs = (all_members_for_reading_of(_sens) if _sens is not None else {}) or {}
         for sub in subs.values():
             types |= _enabled(sub)
         types |= _enabled(analysis)
         return bool(types & {"tritonswmm", "swmm"})
     return bool(_enabled(analysis) & {"tritonswmm", "swmm"})
+
+
+def _kept_inps(analysis) -> dict[str, Path]:
+    """The INP copies the directory removal kept (own records, else the first removed member's moved records)."""
+    from hhemt.scenario_records import kept_inp_paths, member_records_dir
+
+    base = Path(analysis.analysis_paths.analysis_dir)
+    kept = kept_inp_paths(base)
+    if kept:
+        return kept
+    sens = getattr(analysis, "sensitivity", None)
+    for member_id in sorted(getattr(sens, "recorded_members", {}) or {}):
+        kept = kept_inp_paths(member_records_dir(base, member_id))
+        if kept:
+            return kept
+    return {}
 
 
 def _resolve_inp_sources(analysis: TRITONSWMM_analysis) -> tuple[Path, Path]:
@@ -990,14 +1008,26 @@ def _resolve_inp_sources(analysis: TRITONSWMM_analysis) -> tuple[Path, Path]:
             return hydro_path, hydro_path
         if hydraulics_path is not None:
             return hydraulics_path, hydraulics_path
+        # Every scenario directory may have been removed after its results were verified into the tree (D24 (e));
+        # the removal keeps one copy of each prepared INP beside the records, and the panels read that.
+        kept = _kept_inps(analysis)
+        if "hydro" in kept and "hydraulics" in kept:
+            return kept["hydro"], kept["hydraulics"]
+        for kind in ("full", "hydro", "hydraulics"):
+            if kind in kept:
+                return kept[kind], kept[kind]
         raise FileNotFoundError(
             "system_overview renderer requires at least one of "
             "swmm_full_inp / swmm_hydro_inp / swmm_hydraulics_inp to exist"
         )
 
     if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
-        subs = analysis.sensitivity.members
-        first_sub = subs[next(iter(subs))]
+        # Every member, removed ones included; the first ACTIVE member is preferred because a removed member's
+        # prepared inputs were removed with its directory and `_pick` reads them.
+        subs = all_members_for_reading_of(analysis.sensitivity)
+        first_sub = next((s for s in subs.values() if not getattr(s, "is_recorded_member", False)), None)
+        if first_sub is None:
+            first_sub = subs[next(iter(subs))]
         return _pick(first_sub._retrieve_sim_runs(0)._scenario.scen_paths)
     return _pick(analysis._retrieve_sim_runs(0)._scenario.scen_paths)
 

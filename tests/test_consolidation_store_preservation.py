@@ -254,7 +254,9 @@ def _gate_analysis(root: Path, ilocs, stamped_fingerprint):
         add_sim_processing_entry=lambda *a, **k: None,
     )
     return types.SimpleNamespace(
-        analysis_paths=types.SimpleNamespace(analysis_datatree_zarr=store, analysis_dir=root),
+        analysis_paths=types.SimpleNamespace(
+            analysis_datatree_zarr=store, analysis_dir=root, simulation_directory=root / "sims"
+        ),
         log=log,
         _refresh_log=lambda: None,
         cfg_analysis=types.SimpleNamespace(analysis_id="w1", toggle_consolidate_timeseries=False),

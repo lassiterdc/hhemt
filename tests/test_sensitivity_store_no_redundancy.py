@@ -507,7 +507,7 @@ def test_the_masters_reprocess_delete_keeps_every_member_timeseries_branch_and_t
     unified = tmp_path / "sensitivity_datatree.zarr"
     write_datatree_zarr(xr.DataTree.from_dict({"/": xr.Dataset(attrs={"a": 1})}), unified)
     series_before = _digest(master.store / "member_1" / SERIES)
-    assert zarr_root_attrs(master.store).get("consolidation_version") == 3
+    assert zarr_root_attrs(master.store).get("consolidation_version") == 4
     assert delete_reprocess_zarr_runner.main(["--analysis-dir", str(tmp_path)]) == 0
     assert not unified.exists()
     assert "consolidation_version" not in zarr_root_attrs(master.store)

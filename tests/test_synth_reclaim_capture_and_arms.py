@@ -183,6 +183,9 @@ def test_per_node_capture_is_bit_identical_to_the_written_hydrograph(synth_prepa
     )
     inflow = cap["inflow"].values.astype("float64")
     rebuilt = np.column_stack([inflow[g["i"].to_numpy()].sum(axis=0) for _, g in df.groupby(["x", "y"], sort=True)])
+    # The capture covers every non-outfall node, so a gridcell none of whose nodes received inflow is an all-zero
+    # column here; tseries.hyg omits such a gridcell, so the same omission rule is applied before comparing.
+    rebuilt = rebuilt[:, rebuilt.sum(axis=0) > 0]
 
     assert rebuilt.shape == written_cells.shape, (
         f"gridcell reconstruction shape {rebuilt.shape} != written {written_cells.shape}"

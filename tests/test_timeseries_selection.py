@@ -628,25 +628,41 @@ def test_consolidating_pruned_scenarios_stores_exactly_the_kept_variables_and_cl
 
 
 def test_a_scenario_pruned_differently_is_refused_by_the_append_guard_naming_the_variable(golden_extractor):
-    """Property: if one scenario's store was pruned differently from its siblings (a changed keep-list), the append
-    raises ``ProcessingError`` naming the variable that differs, before writing it.
+    """Property: if one scenario's store was pruned differently from its siblings (a changed keep-list), the
+    append joins OUTER instead of refusing: the variable the event lacks is NaN at that event, stored events keep
+    their values, and the variable-set record of the event names the variable.
 
-    Class: NEW CAPABILITY. Plausible wrong implementation: tolerating a differing variable set, which makes the
-    consolidated store unreadable (measured). Reachability: event 2's store is pruned further by hand.
-    Both-states anchor: exception type, name and the stored event list. Killed by: no guard.
-    A second correct implementation pads the missing variable with NaN; the shape raises.
+    The node keeps its historical name so the chunk gate's credit follows it; the landed refusal it once pinned is
+    replaced by the outer join. Same input as before: event 2's store is pruned further by hand.
+    Class: NEW CAPABILITY. Plausible wrong implementation: the landed guard, which raises ``ProcessingError`` and
+    leaves the stored event list [0, 1]. Both-states anchor: the stored event list, the values of ``flooding`` at
+    events 0 and 1 against their sources, the NaN at event 2, and the record. Must-fire control: ``depth``, which
+    event 2 keeps, equals its source at event 2, so the NaN is confined to the missing variable.
     """
     a = _golden(golden_extractor, extra="timeseries_keep_swmm_node: [depth, flooding]\n")
     _prune_all(a, None)
     sel = _sel()
     sel.prune_timeseries_store(_node_store(a, 2), "swmm_node", "tritonswmm", ["depth"])
-    with pytest.raises(Exception) as err:
-        a.process.consolidate_timeseries()
-    assert type(err.value).__name__ == "ProcessingError" and "flooding" in str(err.value)
+    sources = {i: xr.open_zarr(_node_store(a, i), consolidated=False).load() for i in (0, 1, 2)}
+    assert "flooding" in sources[0].data_vars and "flooding" not in sources[2].data_vars
+    a.process.consolidate_timeseries()
     stored = xr.open_zarr(
         a.analysis_paths.analysis_datatree_zarr, group="tritonswmm/swmm_node/timeseries", consolidated=False
+    ).load()
+    assert [int(v) for v in stored["event_iloc"].values] == [0, 1, 2]
+    for i in (0, 1):
+        n = sources[i].sizes["date_time"]
+        np.testing.assert_array_equal(
+            stored["flooding"].sel(event_iloc=i).values[:, :n],
+            sources[i]["flooding"].transpose("node_id", "date_time").values,
+        )
+    assert bool(stored["flooding"].sel(event_iloc=2).isnull().all())
+    n2 = sources[2].sizes["date_time"]
+    np.testing.assert_array_equal(
+        stored["depth"].sel(event_iloc=2).values[:, :n2],
+        sources[2]["depth"].transpose("node_id", "date_time").values,
     )
-    assert [int(v) for v in stored["event_iloc"].values] == [0, 1]
+    assert "flooding" in str(stored["variable_set_across_members"].sel(event_iloc=2).values)
 
 
 def test_the_keep_lists_join_the_consolidation_fingerprint_by_what_they_resolve_to(golden_extractor):

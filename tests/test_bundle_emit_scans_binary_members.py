@@ -702,3 +702,96 @@ def test_a_marked_member_whose_first_block_holds_no_nul_byte_is_still_decoded(tm
             assert "input.txt" in message and "pattern_rules" in message, label
         else:
             _emit(staging, staging.parent)
+
+
+# --------------------------------------------------------------------------------------
+# A byte that is not text breaks adjacency: unrelated text on either side must not glue into a match
+# --------------------------------------------------------------------------------------
+
+_BAD = b"\xff\xfe\x80"  # bytes that are never valid UTF-8
+# Fake producer address, built from fragments (this file is scanned by the repository's anonymization guard).
+_ADDRESS = ("someone" + "@" + "example" + "." + "invalid").encode()
+
+
+_GLUED = "abc" + "@" + "example" + ".com"  # what the pieces form when the invalid bytes are dropped
+
+
+def _glued_binary() -> bytes:
+    """Binary bytes whose text pieces form an address ONLY when the invalid bytes between them are dropped."""
+    return (
+        b"\x00\x01"
+        + _filler(300, 3).encode()
+        + b" abc"
+        + _BAD
+        + b"@"
+        + _BAD
+        + b"example"
+        + _BAD
+        + b".com "
+        + _filler(300, 4).encode()
+        + b"\x00"
+    )
+
+
+def _old_decode_scanner(monkeypatch) -> G.ZeroUserInfoScanner:
+    """A scanner whose member decode is the one that dropped invalid bytes (errors="ignore")."""
+    scanner = _scanner()
+
+    def old_scan_member(member: str, data: bytes):
+        text = data.decode("utf-8", errors="ignore")
+        found = []
+        for match in G.EMAIL_PATTERN.finditer(text):
+            if match.group(0).lower() not in scanner._exempt_emails:
+                found.append(G.MemberHit(member, G.LAYER_PATTERNS, "email-address pattern (value not shown)"))
+                break
+        return found
+
+    monkeypatch.setattr(scanner, "scan_member", old_scan_member)
+    return scanner
+
+
+def test_invalid_bytes_do_not_glue_unrelated_text_into_an_address(monkeypatch):
+    """Property: a binary member whose invalid bytes sit between text pieces that would form an address if the
+    bytes were dropped produces NO hit, scanned through `scan_binary_member` as the emit does.
+
+    Class: synthetic binary bytes, no real data. Must-fire control: the same bytes through the decode that drops
+    invalid bytes (errors="ignore") DO produce an email hit, and the glued string exists only after dropping.
+    Kills it: decoding with errors="ignore". A second correct implementation splits the text at each invalid
+    byte instead of replacing it.
+    """
+    data = _glued_binary()
+    assert data.decode("utf-8", errors="ignore").count(_GLUED) == 1, "control: the pieces glue when dropped"
+    assert _GLUED.encode() not in data
+    clean = _scanner()
+    G.scan_binary_member(clean, "x.bin", io.BytesIO(data))
+    assert clean.hits == []
+    old = _old_decode_scanner(monkeypatch)
+    G.scan_binary_member(old, "x.bin", io.BytesIO(data))
+    assert old.hits, "control: the decode that drops invalid bytes reports the glued string"
+
+
+@pytest.mark.parametrize("pad", [b"", _BAD])
+def test_a_real_address_in_a_binary_member_between_invalid_bytes_is_still_refused(pad):
+    """Property: a real address-shaped value, a per-user path and a configured value each embedded in a binary
+    member between invalid bytes are still found.
+
+    Class: the three layers through the same record path. Must-fire control: the `pad` parameter empty and non-empty;
+    both fire. Kills it: a replace decode that also hides real values.
+    """
+    for value, layer in ((_ADDRESS, G.LAYER_PATTERNS), (PLANTED_BYTES, G.LAYER_PATTERNS)):
+        scanner = _scanner()
+        data = b"\x00" + _BAD + pad + value + pad + _BAD + b"\x00"
+        G.scan_binary_member(scanner, "x.bin", io.BytesIO(data))
+        assert [h.layer for h in scanner.hits] == [layer], value
+    configured = b"fake-configured-value-0123456789"
+    scanner = _scanner()
+    scanner._config_checks.append(("configured path", len(configured), lambda t: configured.decode() in t))
+    G.scan_binary_member(scanner, "x.bin", io.BytesIO(b"\x00" + _BAD + pad + configured + pad + _BAD + b"\x00"))
+    assert [h.layer for h in scanner.hits] == [G.LAYER_CONFIG_VALUES]
+
+
+def test_a_text_member_with_a_real_address_is_still_refused():
+    """Property: a valid UTF-8 text member holding an address is refused as before (decode unchanged for text)."""
+    scanner = _scanner()
+    hits = scanner.record("note.txt", b"contact " + _ADDRESS + b" today")
+    assert [h.layer for h in hits] == [G.LAYER_PATTERNS]

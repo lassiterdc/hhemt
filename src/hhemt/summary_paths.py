@@ -41,10 +41,19 @@ def summary_clearing_record(sim_folder: Path, model: str) -> dict | None:
     """The summary-clearing record in ``{sim_folder}/log_{model}.json``, or None when there is none.
 
     Path-only: the log is read with ``json`` and no scenario is built, which is what lets the completion
-    predicates below consult it. An absent, unreadable or malformed log reads as no record.
+    predicates below consult it. An absent, unreadable or malformed log reads as no record. After the scenario
+    directory was removed (D24 (e)) the same field is read from the analysis-level record
+    (``scenario_records.record_for`` semantics, resolved from the folder path: ``{analysis_dir}/sims/{event_id}``).
     """
+    from hhemt.scenario_records import REMOVED_STATES, read_scenario_record
+
+    sim_folder = Path(sim_folder)
+    removed = read_scenario_record(sim_folder.parent.parent, sim_folder.name)
+    if removed is not None and removed["state"] in REMOVED_STATES:
+        logged = (removed.get("model_logs") or {}).get(model)
+        return parse_summary_clearing_record(logged.get(SUMMARY_CLEARING_FIELD)) if isinstance(logged, dict) else None
     try:
-        payload = json.loads((Path(sim_folder) / f"log_{model}.json").read_text(encoding="utf-8"))
+        payload = json.loads((sim_folder / f"log_{model}.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     return parse_summary_clearing_record(payload.get(SUMMARY_CLEARING_FIELD)) if isinstance(payload, dict) else None
@@ -66,7 +75,7 @@ def summary_clearing_record(sim_folder: Path, model: str) -> dict | None:
 # scenario.ScenarioPaths' output_*_summary naming (scenario.py:148-224).
 # DELIBERATE INDEPENDENT COPY, do not lift: tests/test_synth_remove_after_processing.py:45
 # hand-maintains this membership as the guard's independent ground truth. Its own :40-44
-# comment states why, and its guards compare it against PRODUCTION _reclaim_attrs.
+# comment states why, and its guards compare it against the name set of PRODUCTION _timeseries_drop_names.
 _SUMMARY_STEMS_BY_MODEL: dict[str, tuple[str, ...]] = {
     "tritonswmm": (
         "TRITONSWMM_TRITON_summary",
@@ -160,6 +169,16 @@ def scenario_summaries_present(analysis, event_id: str, enabled_models: list[str
     summary set is required (Gotcha 34) — a narrower set marks a sub COMPLETE
     that consolidation SKIPS, re-opening the exact render bug.
     """
+    from hhemt.scenario_records import event_is_removed, recorded_member_event_done
+
+    if getattr(analysis, "is_recorded_member", False):
+        # A removed sensitivity member (read-only view): its scenarios' records were moved into the master, and a
+        # done record there means every summary was read back into the tree.
+        return recorded_member_event_done(analysis.master_dir, analysis.member_id, event_id)
+    # A removed scenario (record pending or done) has every summary in the consolidated tree by construction: the
+    # record is written only after each store was read back (D24 (e)). Read path-only, no scenario constructed.
+    if event_is_removed(analysis.analysis_paths.analysis_dir, event_id):
+        return True
     processed = analysis.analysis_paths.simulation_directory / event_id / "processed"
     out_type = analysis.cfg_analysis.target_processed_output_type
     for model in enabled_models:

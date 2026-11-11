@@ -376,3 +376,114 @@ def test_provenance_continues_past_a_missing_ldd_to_readelf(tmp_path, monkeypatc
     monkeypatch.setattr(subprocess, "run", fake_run)
     assert analysis_module._capture_binary_provenance(sub) == {"dynamic_tags": "readelf output"}
     assert calls == [["readelf", "-d", str(exe)]]
+
+
+# ---- the test subset's event windows --------------------------------------------------------------------------------
+
+
+def _windows_world(golden_extractor, monkeypatch, *, with_windows_csv: bool):
+    """A member-like configuration over the golden weather, optionally declaring a windows csv whose windows are the
+    FULL-length axis endpoints of each event, the sub-configurations `_build_test_analyses` writes for it, and the
+    scenario stand-in that runs the real weather writer over the sub's sliced weather."""
+    import pandas as pd
+
+    from hhemt.config.loaders import load_analysis_config
+
+    root, cfg = _member_like_config(golden_extractor)
+    tdim = cfg.weather_time_series_timestep_dimension_name
+    events = pd.read_csv(cfg.weather_events_to_simulate)
+    index = list(cfg.weather_event_indices)
+    rows = []
+    with xr.open_dataset(cfg.weather_timeseries, engine="h5netcdf") as wx:
+        for _, row in events.iterrows():
+            axis = wx.sel({c: row[c] for c in index})[tdim].values
+            rows.append({**{c: row[c] for c in index}, "win_start": axis[0], "win_end": axis[-1]})
+    if with_windows_csv:
+        windows = root / "event_windows.csv"
+        pd.DataFrame(rows).to_csv(windows, index=False)
+        cfg = cfg.model_validate(
+            {
+                **cfg.model_dump(),
+                "weather_event_windows_csv": str(windows),
+                "weather_event_start_column": "win_start",
+                "weather_event_end_column": "win_end",
+            }
+        )
+    master, _ = _sensitivity_master(TOGGLE_COMBINATIONS[sorted(TOGGLE_COMBINATIONS)[0]])
+    reps = _select(master)[:1]
+    reps[0].source_analysis.cfg_analysis = cfg
+    built: list = []
+    monkeypatch.setattr(analysis_module, "TRITONSWMM_analysis", lambda *a, **k: built.append(a) or SimpleNamespace())
+    analysis_dir = root / cfg.analysis_id
+    holder = SimpleNamespace(
+        cfg_analysis=cfg,
+        analysis_paths=SimpleNamespace(analysis_dir=analysis_dir),
+        analysis_config_yaml=root / "analysis_config.yaml",
+        hpc_system_config_yaml=HPC_SENTINEL,
+    )
+    holder._atomic_write_analysis_yaml = lambda cfg_a, sub_dir: TRITONSWMM_analysis._atomic_write_analysis_yaml(
+        holder, cfg_a, sub_dir
+    )
+    TRITONSWMM_analysis._build_test_analyses(holder, reps, n_reporting_timesteps=3, reporting_timestep_s=7)
+    yaml_path = next((analysis_dir / "_test").glob("*.yaml"))
+    return load_analysis_config(yaml_path), events.iloc[0], index, cfg
+
+
+def _run_weather_writer(cfg_sub, event_row, index, tmp_path):
+    """The real `_write_sim_weather_nc` over the sub's configuration, for one event, on a stand-in scenario."""
+    from hhemt.scenario import TRITONSWMM_scenario
+
+    class _Scen:
+        weather_event_indexers = {c: event_row[c] for c in index}
+        _analysis = SimpleNamespace(cfg_analysis=cfg_sub, _event_window_cache={})
+        scen_paths = SimpleNamespace(weather_timeseries=tmp_path / "sim_weather.nc")
+        _resolve_event_window = TRITONSWMM_scenario._resolve_event_window
+
+    scen = _Scen()
+    TRITONSWMM_scenario._write_sim_weather_nc(scen)
+    return scen.scen_paths.weather_timeseries
+
+
+def test_the_test_subset_unsets_the_event_windows_of_the_full_length_weather(
+    golden_extractor, monkeypatch, tmp_path
+) -> None:
+    """Property: a base configuration that declares a windows csv (windows on the FULL-length axis) yields a test
+    sub-configuration with the csv unset, and the real weather writer succeeds on the sliced weather.
+
+    Must-fire control: the same build with the windows inherited (the overlay that inherits them, restored by wrapping
+    `model_validate`) makes that writer raise `ConfigurationError` on the windows field.
+    Kills it: an overlay that does not unset the csv. A second correct implementation drops the column-name fields
+    too; the writer still succeeds.
+    """
+    from hhemt.exceptions import ConfigurationError
+
+    cfg_sub, event_row, index, base_cfg = _windows_world(golden_extractor, monkeypatch, with_windows_csv=True)
+    assert cfg_sub.weather_event_windows_csv is None
+    out = _run_weather_writer(cfg_sub, event_row, index, tmp_path)
+    with xr.open_dataset(out, engine="h5netcdf") as wx:
+        assert wx.sizes[cfg_sub.weather_time_series_timestep_dimension_name] == 4
+
+    # Control: an overlay that inherits the base configuration's windows. Rebuild the sub-configuration that way
+    # (the base windows kept, the sliced weather path of the real sub) and the same writer refuses.
+    old_style = cfg_sub.model_validate(
+        {
+            **cfg_sub.model_dump(),
+            "weather_event_windows_csv": str(base_cfg.weather_event_windows_csv),
+            "weather_event_start_column": "win_start",
+            "weather_event_end_column": "win_end",
+        }
+    )
+    with pytest.raises(ConfigurationError, match="not on the weather time axis"):
+        _run_weather_writer(old_style, event_row, index, tmp_path / "old")
+
+
+def test_a_configuration_without_a_windows_csv_is_unchanged_by_the_test_subset(
+    golden_extractor, monkeypatch, tmp_path
+) -> None:
+    """Property: with no windows csv in the base configuration the sub-configuration has none either and the weather
+    writer succeeds on the sliced weather, as before."""
+    cfg_sub, event_row, index, _base = _windows_world(golden_extractor, monkeypatch, with_windows_csv=False)
+    assert cfg_sub.weather_event_windows_csv is None
+    out = _run_weather_writer(cfg_sub, event_row, index, tmp_path)
+    with xr.open_dataset(out, engine="h5netcdf") as wx:
+        assert wx.sizes[cfg_sub.weather_time_series_timestep_dimension_name] == 4

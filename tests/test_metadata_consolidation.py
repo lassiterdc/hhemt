@@ -55,11 +55,13 @@ def test_consolidation_emits_core_and_sidecar(golden_multisim_analysis, monkeypa
     assert sidecar.stat().st_mtime_ns == m1
 
 
-def test_sensitivity_consolidation_emits_master_and_sub_provenance(golden_sensitivity_analysis):
+def test_sensitivity_consolidation_emits_master_and_sub_provenance(golden_sensitivity_analysis_keeping_scenarios):
     # Sensitivity master carries the embedded core + co-located sidecar, and each
     # consolidated member independently carries its own sidecar (produced by the
     # per-sub consolidate_to_datatree wiring — no sub-loop in the master path).
-    sensitivity = golden_sensitivity_analysis.sensitivity
+    # This row is about members that keep their own tree, so it names the clearing switch off: with the default the
+    # member trees move into the master (next row).
+    sensitivity = golden_sensitivity_analysis_keeping_scenarios.sensitivity
     master_sidecar = sensitivity.experiment.analysis_paths.analysis_dir / "ro-crate-metadata.json"
     assert not master_sidecar.exists(), "precondition: the golden carries no master sidecar"
 
@@ -81,3 +83,25 @@ def test_sensitivity_consolidation_emits_master_and_sub_provenance(golden_sensit
             consolidated_subs += 1
             assert (sub.analysis_paths.analysis_dir / "ro-crate-metadata.json").exists()
     assert consolidated_subs > 0  # at least one sub consolidated + carried a sidecar
+
+
+def test_sensitivity_consolidation_with_the_default_clearing_keeps_each_members_sidecar_and_moves_its_tree(
+    golden_sensitivity_analysis,
+):
+    """Property: with the default clearing, each member's tree moves into the master and each member still carries its
+    own provenance sidecar, and the master tree holds a group for every member, so a member's provenance is reachable.
+
+    Must-fire control: no member holds its own `analysis_datatree.zarr` afterwards (the move happened), so the sidecar
+    check is not satisfied by a kept tree.
+    """
+    sensitivity = golden_sensitivity_analysis.sensitivity
+    sensitivity.consolidate_sensitivity_datatree()
+    master_tree = xr.open_datatree(
+        sensitivity.analysis_paths.sensitivity_datatree_zarr, engine="zarr", consolidated=False
+    )
+    assert "ro_crate_metadata" in master_tree.attrs
+    assert sensitivity.members
+    for member_id, sub in sensitivity.members.items():
+        assert not sub.analysis_paths.analysis_datatree_zarr.exists(), member_id
+        assert (sub.analysis_paths.analysis_dir / "ro-crate-metadata.json").exists(), member_id
+        assert f"member_{member_id}" in master_tree.children, member_id
