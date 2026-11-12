@@ -33,7 +33,8 @@
           { "context": "build (ubuntu-latest, 3.12)" },
           { "context": "anonymization-guard" },
           { "context": "docs-build" },
-          { "context": "citation-validate" }
+          { "context": "citation-validate" },
+          { "context": "compile-synth-render-gate" }
         ]
       }
     }
