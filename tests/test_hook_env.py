@@ -327,6 +327,8 @@ def test_hhemt_ty_env_is_kept_when_preset_and_defaults_to_the_key_directory(tmp_
 
 
 def _uv_has(version: str) -> bool:
+    if shutil.which("uv") is None:
+        return False
     return subprocess.run(["uv", "python", "find", version], capture_output=True).returncode == 0
 
 

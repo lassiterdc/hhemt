@@ -46,6 +46,8 @@ dependencies:
                   # the ONLY source of the runtime graph under `pip install -e . --no-deps`.
                   # Until 2026-08-26 this was held only by hsmodels' transitive pin.
   - pyyaml
+  - aenum  # swmm-toolkit imports it, and the post-create `pip install --no-deps` skips its dependencies
+  - julian  # pyswmm imports it, for the same reason
   - zarr>=3.1.4
   - netcdf4
   - scipy
