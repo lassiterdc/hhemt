@@ -1,0 +1,10 @@
+# One spelling per term across the pages.
+extends: substitution
+message: "Use '%s' instead of '%s'."
+level: warning
+ignorecase: true
+swap:
+  re-run: rerun
+  re-runs: reruns
+  wallclock: wall-clock
+  wall-time: walltime

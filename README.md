@@ -55,7 +55,7 @@ Pick the row that matches the job:
 
 ## Citation
 
-If you use this software, please cite the software through the Zenodo DOI. Citation metadata is
+If you use this software, cite the software through the Zenodo DOI. Citation metadata is
 maintained in [`CITATION.cff`](CITATION.cff), and GitHub's "Cite this
 repository" button reads that file.
 

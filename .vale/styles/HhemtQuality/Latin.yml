@@ -1,0 +1,8 @@
+# Latin abbreviations are read inconsistently; write the English.
+extends: existence
+message: "Write the English for '%s' (for example, such as, that is, and so on)."
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '\b(?:e\.g\.|i\.e\.|etc\.|et\s+al\.|cf\.|viz\.)'

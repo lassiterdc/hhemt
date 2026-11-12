@@ -265,6 +265,7 @@ _GATE_LABELS = {
     "python scripts/check_autodoc_coverage.py": "autodoc coverage",
     "python scripts/check_docs_content.py": "docs content hygiene",
     "python scripts/check_published_surface.py": "published-surface fidelity",
+    "python scripts/check_vale.py": "Vale style check",
 }
 _NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8}
 

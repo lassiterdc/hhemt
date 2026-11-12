@@ -1,0 +1,7 @@
+# The pages speak of the toolkit and of the reader, never of an author.
+extends: existence
+message: "Name the toolkit or address the reader; do not write '%s'."
+level: warning
+ignorecase: true
+raw:
+  - '\b(?:we|our|let''s)\b'

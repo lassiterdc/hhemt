@@ -1,0 +1,9 @@
+# F6_link_text, heading arm.
+extends: existence
+message: 'Heading ''%s'' says ''when and why'' or ''when to''.'
+level: warning
+ignorecase: true
+nonword: true
+scope: heading
+raw:
+  - '\bwhen\s+and\s+why\b|\bwhen\s+to\b'

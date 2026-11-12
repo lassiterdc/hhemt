@@ -1,0 +1,7 @@
+extends: existence
+message: 'Address the reader; ''%s'' names a party the page does not introduce.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '\b(?:developers?|(?<!project\s)maintainers?|users?)\b|\bask\s+the\b|\braise\s+(?:the\s+)?concerns?\b|\breport\s+your\b'

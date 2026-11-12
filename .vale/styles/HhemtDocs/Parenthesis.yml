@@ -1,0 +1,7 @@
+extends: existence
+message: 'State the aside as its own sentence, or cut it.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '[()]'

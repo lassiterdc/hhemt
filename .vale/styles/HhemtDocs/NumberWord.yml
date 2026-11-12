@@ -1,0 +1,7 @@
+extends: existence
+message: 'State a count as a numeral, not ''%s''.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozens?|hundreds?)\b'

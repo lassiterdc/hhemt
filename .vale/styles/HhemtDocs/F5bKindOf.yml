@@ -1,0 +1,7 @@
+extends: existence
+message: 'Name the class instead of ''%s''.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '(?<![-\w])kinds?\s+of\b'

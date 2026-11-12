@@ -1,0 +1,16 @@
+# A colon in a heading, before a list, or inside a token (no space after) is kept. The match is the 
+# colon and the whitespace after it, with the first character of the following text in a lookahead: a 
+# match that reaches into a code span after the colon is not contiguous in the source, and Vale then 
+# drops or misplaces the alert. A colon that ends a line and is followed by a list or table line on 
+# the next line is kept, as in the suite. A match of the bare colon is worse, because Vale then 
+# attributes it to the first colon of the block.
+# A run of colons (the `:::` of a mkdocstrings directive) is syntax, not prose, so the colon must follow
+# a character that is neither whitespace nor a colon.
+extends: existence
+message: 'Replace the colon with a prepositional phrase or a full stop.'
+level: warning
+ignorecase: true
+nonword: true
+scope: ~heading
+raw:
+  - '(?<=[^\s:]):\**(?:[ \t]+(?=\S)|[ \t]*\n\s*(?!(?:[-*+]|\d+[.)])\s|\|)(?=\S))'

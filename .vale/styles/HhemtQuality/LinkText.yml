@@ -1,0 +1,9 @@
+# Link text names the target.
+extends: existence
+message: "Name the target in the link text; '%s' says nothing out of context."
+level: warning
+ignorecase: true
+nonword: true
+scope: raw
+raw:
+  - '(?<=\[)(?:here|this|that|link|this\s+link|this\s+page|the\s+page|page|click\s+here|read\s+more|more|more\s+info|https?://[^\]\s]+)(?=\]\()'

@@ -1,0 +1,7 @@
+extends: existence
+message: 'Avoid the contraction ''%s''.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '\b\w+n[''’]t\b'

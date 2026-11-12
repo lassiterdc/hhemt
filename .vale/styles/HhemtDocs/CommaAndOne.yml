@@ -1,0 +1,7 @@
+extends: existence
+message: 'Cut '', and ... one''.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - ',\s+and\b[^.!?]*?(?<![-\w])one(?![-\w])'

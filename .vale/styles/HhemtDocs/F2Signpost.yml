@@ -1,0 +1,11 @@
+# Second arm approximates the suite's link arm: Vale text has no link marker, so a sentence that 
+# starts with a short capitalised noun phrase and a reporting verb stands for a link label. The match 
+# is only the first word, via a lookahead: Vale drops an alert whose matched text spans the stripped 
+# link markup.
+extends: existence
+message: 'Signpost sentence ''%s'': state the content and delete the sentence.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '\b(?:this|that|the|each|every)\s+(?:page|section|guide|tutorial|runbook|table|document|chapter|reference|listing|FAQ|admonition|note)\s+(?:\w+\s+){0,2}?(?:explains?|describes?|covers?|shows?|says?|lists?|records?|names?|states?|reports?|documents?|tells|sets out|carries)\s+(?:\w+\s+){0,2}?(?<![-\w])(?:what|how|why|when|where|who|whether)(?![-\w])|(?m)^[A-Z]\w*(?=(?:\s+[A-Z]\w*){0,2}\s+(?:explains?|describes?|covers?|shows?|says?|lists?|records?|names?|states?|reports?|documents?|tells|sets out|carries)\s+(?:\w+\s+){0,2}?(?<![-\w])(?:what|how|why|when|where|who|whether)(?![-\w]))'

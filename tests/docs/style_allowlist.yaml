@@ -185,31 +185,6 @@ entries:
     status: permitted
     reason: "Tried: stating the sentence once on Home and once in the installation guide, which repeats it. The snippet is the one source that both pages include, and the word cannot be dropped because the sentence states the platform. The built pages other than Home and the installation guide do not include the snippet."
   # Baseline entries of the banned-term rules, sorted by surface, page and line number. Each holds the SHA-1 of its line and is repaired by the page pass of its subset.
-  - page: "docs/_snippets/hpc-system-config-role.md"
-    rule: "colon"
-    line_sha1: "c73435827ca2051220a8b86691d4704878e1dfc6"
-    status: baseline
-    reason: "Present when the rule was added; the page pass of the how-to pages repairs it."
-  - page: "docs/_snippets/hpc-system-config-role.md"
-    rule: "starts_this_that"
-    line_sha1: "c73435827ca2051220a8b86691d4704878e1dfc6"
-    status: baseline
-    reason: "Present when the rule was added; the page pass of the how-to pages repairs it."
-  - page: "docs/_snippets/hpc-system-config-role.md"
-    rule: "ban_rather_than"
-    line_sha1: "58cddcefc4803d5cc640b32e14a8862762593f8e"
-    status: baseline
-    reason: "Present when the rule was added; the page pass of the how-to pages repairs it."
-  - page: "docs/_snippets/hpc-system-config-role.md"
-    rule: "ban_one_period"
-    line_sha1: "142566196f742c9f993ebf5609e98f6b5faf9a65"
-    status: baseline
-    reason: "Present when the rule was added; the page pass of the how-to pages repairs it."
-  - page: "docs/_snippets/hpc-system-config-role.md"
-    rule: "comma_and_one"
-    line_sha1: "142566196f742c9f993ebf5609e98f6b5faf9a65"
-    status: baseline
-    reason: "Present when the rule was added; the page pass of the how-to pages repairs it."
   - page: "src/hhemt/report_templates/captions/_harvested.rst"
     rule: "ban_its"
     line_sha1: "6fe7be132ea167a9e55195697449cc3d9a04e55a"

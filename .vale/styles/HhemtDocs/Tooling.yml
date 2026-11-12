@@ -1,0 +1,7 @@
+extends: existence
+message: 'Tooling word ''%s'' does not belong on a published page.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '(?<![\w/])/eda-spinup\b|\bslash command\b|\bskills?\b|\bspecialists?\b|\bclaude\b|\bagentic\b|\bLLM\b|\bsubagents?\b'

@@ -1,0 +1,24 @@
+extends: substitution
+message: "Use '%s' instead of '%s'."
+level: warning
+ignorecase: true
+swap:
+  in order to: to
+  due to the fact that: because
+  a number of: several
+  is able to: can
+  are able to: can
+  prior to: before
+  in the event that: if
+  at this point in time: now
+  whether or not: whether
+  make use of: use
+  utilize: use
+  with respect to: for
+  with regard to: for
+  in terms of: for
+  as well as: and
+  so as to: to
+  for the purpose of: for
+  by means of: with
+  the fact that: that

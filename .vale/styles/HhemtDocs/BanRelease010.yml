@@ -1,0 +1,7 @@
+extends: existence
+message: 'Cut the release number ''%s''.'
+level: warning
+ignorecase: false
+nonword: true
+raw:
+  - '(?<![\w.])0\.1\.0(?![\w.])'

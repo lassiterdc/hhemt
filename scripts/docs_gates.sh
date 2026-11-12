@@ -12,7 +12,7 @@
 # ANOTHER tree's editable install at this one.
 #
 # Each gate is announced on stdout before it runs, so a local log keeps the
-# per-step legibility the Actions summary loses when four steps become one.
+# per-step legibility the Actions summary loses when five steps become one.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -52,3 +52,7 @@ gate python scripts/check_docs_content.py
 # Imports both gates and is imported by neither, so it inverts no import
 # direction.
 gate python scripts/check_published_surface.py --site-dir site
+
+# Wording of the published pages: the Vale rules of `.vale/styles/`, which every page must satisfy with no
+# alert. Needs the `vale` executable on PATH; the CI job installs it.
+gate python scripts/check_vale.py

@@ -1,0 +1,7 @@
+extends: existence
+message: 'Cleft ''%s'': restore the actor and the verb.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '\b(?:is|are|was|were)\s+what(?![-\w])'

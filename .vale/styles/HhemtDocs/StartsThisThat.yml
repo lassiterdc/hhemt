@@ -1,0 +1,13 @@
+extends: existence
+message: 'Start with the subject instead of ''%s''.'
+level: warning
+ignorecase: false
+nonword: true
+scope:
+  - sentence
+  - heading
+  - list
+  - table.cell
+  - table.header
+raw:
+  - '^(?:This|That)(?![-\w])'

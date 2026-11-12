@@ -1,0 +1,7 @@
+# Capitalised NOT, NEVER, ALWAYS, MUST and DO NOT carry emphasis that a sentence of prose carries by its wording.
+extends: existence
+message: "Carry the emphasis in the wording; do not capitalise '%s'."
+level: warning
+ignorecase: false
+raw:
+  - '\b(?:NOT|NEVER|ALWAYS|MUST|DO NOT)\b'

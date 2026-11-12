@@ -1,0 +1,9 @@
+# The glossary exception for 'runbook' is an ignore-store entry; Vale's conditional rule reads one 
+# file only.
+extends: existence
+message: 'Cut ''%s''; if the sentence still needs it, rephrase.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '(?<![-\w])(?:runbook)(?![-\w])'

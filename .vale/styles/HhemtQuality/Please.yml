@@ -1,0 +1,7 @@
+# An instruction is a plain imperative.
+extends: existence
+message: "State the instruction as an imperative; cut '%s'."
+level: warning
+ignorecase: true
+raw:
+  - '\b(?:please|kindly)\b'

@@ -1,0 +1,7 @@
+extends: existence
+message: 'Cut the em dash: use a full stop or a comma.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '—'

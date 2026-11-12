@@ -55,8 +55,9 @@ If you do not agree to the terms for a particular contribution, open an issue to
 
 ## Workflow
 
+- Open an issue before you build when a requirement is unclear or the sources disagree. State the intended change and how a reviewer can tell that the change works in the issue or the pull request description. Update the description when the approach, the scope, or the risk changes.
 - Create a feature branch from `develop`.
-- Make changes with tests.
+- Add a test with each change. A bug fix carries a test that fails before the fix, and new behaviour carries a test.
 - Run `just qa` before opening a pull request. The `qa` recipe formats, lints, type-checks, runs
   `scripts/check_du_sentinel_sites.py` and `scripts/check_vocabulary_freeze.py`, and runs
   the fast test tier. To gate the compile tier explicitly, run `just test-gated`. The `test-gated` recipe
@@ -88,11 +89,10 @@ If you do not agree to the terms for a particular contribution, open an issue to
       and the requirement unset is green even when no compile is possible. A run with the requirement
       set and no venue declared refuses every compile. A run with neither export recorded
       is not a gate result.
-    - **Venue of compile-tier runs.** The code leaves the venue unenforced. The project rule places test runs that
-      compile the solver or execute a simulation on an HPC cluster with the
-      solver's toolchain, on the cluster's scratch filesystem. The rule covers
-      Gate B and the scheduler-array suite alike. The toolkit imposes no such restriction, because the venue token names a capability and
-      no code names the cluster that runs the tests. Tests that compile no solver and
+    - **Venue of compile-tier runs.** The venue token names a capability, and no code names a cluster, so a
+      machine with the solver's toolchain can run the compile tier. `compile-tests.yml` runs a named subset of the
+      compile tier after a change merges into `develop`, and Gate B runs the whole tier before a release, so you need
+      not run the compile tier yourself. Tests that compile no solver and
       execute no simulation run on any machine. A suite-level green claim requires `scope=union`.
       The `hhemt test toolkit` CLI produces no `scope=union` result, as the
       [CLI reference](reference/cli.md#hhemt-test-toolkit) records, and
@@ -105,7 +105,7 @@ If you do not agree to the terms for a particular contribution, open an issue to
   The first run of either gate downloads the example data from HydroShare
   when `test_data/norfolk_coastal_flooding` is absent. The download costs time once
   per machine and can dominate the wall clock on a slow link.
-- Submit a pull request.
+- Open a pull request into `develop`. Name in the description each change that is visible when someone runs the toolkit. The `HISTORY.md` entry is written at release.
 
 ## Documentation
 
@@ -142,6 +142,9 @@ branch against the gates in `scripts/docs_gates.sh`:
 - public-API autodoc coverage
 - docs content hygiene
 - published-surface fidelity
+- the Vale style check, run with the `vale` version that `.github/workflows/docs-build.yml` installs
+
+The Vale gate needs the `vale` executable on `PATH`. Install the version that CI pins with `pip install vale==3.26.0.1`.
 
 Run the same list locally before opening a pull request:
 
@@ -173,125 +176,45 @@ declaration. A ruling-backed exemption stays until the ruling is reopened.
 Add a marker only when the page fails the class that the marker
 escapes. A marker states a fact about the file and silences no finding.
 
-The page carries a personal-voice exemption. The page is written in the voice of the author, so the content gate's prose class skips the page. The style test grades the page like
-every other page.
-
 ## Branching and releases
 
 Read [Branching and release model](explanation/branching-and-release-model.md) for the branches, contributor branching, the release definition, the tests that carry a structural gate, the layout version, and the release version.
 
----
+## Code conventions
 
-## Development principles
+`just qa` and the pre-commit hooks check formatting, import order, and the `E`, `W`, `F`, `I`, `B`, and `UP` lint rule families that `[tool.ruff.lint]` in `pyproject.toml` selects, and `just qa` also type-checks with `ty`. Review checks the conventions that no tool checks, and the rest of this section states them.
 
-### Ask before assuming
-When a requirement is unclear or sources disagree, ask in an issue on the repository, or in the pull request description, before you proceed.
+### Unused code
 
-### Describe a change before building
-State the intended change and the success criteria in the issue or the pull request description before you build. When the work shows that the description needs a change, such as a deviation from the approach, a scope change, or a new risk, update the description before you continue and avoid adapting silently.
+The `F` family flags an unused import with `F401` and an unused local variable with `F841`. Both `just qa` and the pre-commit hook run `ruff check --fix`. Outside an `__init__.py` file, the fixer deletes an unused import without asking and leaves an unused local variable in place. In an `__init__.py` file, the fixer deletes no import. No selected rule flags an unused function argument, so review removes the argument unless an interface fixes the signature.
 
-### Prefer the correct approach over the cheap approach
-- Look for better ways of achieving development goals and raise the ideas
-- Raise a concern in the pull request when a design decision diverges from best practices
-- Look for opportunities to make code more efficient, such as vectorizing operations and avoiding loops with pandas
+An import whose only job is a side effect, such as `import rioxarray` registering the `.rio` accessor, needs `# noqa: F401` on the line and a comment that names the side effect, because the fixer deletes the line otherwise. The form `import x as _` has no compliant alternative, because the alias still trips `F401`. To bind a name only to trigger a property that raises, write `_ = system.analysis`, a form that `F841` accepts.
 
-### Backward compatibility is NOT a priority
+### Suppressing lint findings
 
-**Rationale.** Clean code matters more than preserved APIs. Git history is the safety net.
+Comply with a finding by default. Suppress a finding only when the finding is wrong about this code, when complying would change behaviour, or when complying would delete information such as a column alignment or an assertion. Satisfying a finding by weakening a check is not compliance. Writing `strict=False` to satisfy `B905` on `zip(a, b)` keeps the silent truncation that `strict=True` turns into a `ValueError`.
 
-When refactoring:
-- ❌ No warnings that announce the removal of an old API
-- ❌ No old APIs kept "for compatibility"
-- ❌ No compatibility shims or aliases
-- ✅ Do update all usage sites immediately
-- ✅ Do delete obsolete code completely
+Write the reason as a fact that a reader can check. The reason in `# noqa: B905 - the lists are appended in separate statements in a background thread` points at a fact, and a word such as "intentional" asserts only that someone made the choice. When several sites share one ground, such as a Python floor or a dependency version, write the ground once and point the other sites at that statement. The configuration selects no rule that reports a stale `# noqa`, so no tool notices a reason that has gone stale.
 
-### Most function arguments should not have defaults
+Put the suppression at the smallest scope where the reason is true. The choices are a `# noqa: XXX` on the line, a `per-file-ignores` entry in `pyproject.toml` with the reason in a comment above the entry, and a global `ignore`. No suppression has earned a global `ignore`. The `B008` entries for `src/hhemt/cli.py` and `src/hhemt/version_migration/__main__.py` and the `E501` entry for `scripts/rollin_status.py` show the form. Open an issue for a real defect that the pull request leaves unfixed, and cite the issue in the reason.
 
-Default function arguments can lead to unexpected behavior that is hard to debug. Avoid default values unless a default is almost always the correct choice, as with `verbose=True`. Configuration fields that a person populates call for the most care, because that person should make an intentional choice about every input.
+### Public names and compatibility
 
-### Avoid aliases
+Rename or remove a Python name in place. Delete the old name and update every call site in the same pull request. Keep no alias, shim, or warning for the old name, because git history records the name. A migration covers each case that outlives the code:
 
-Do not create aliases for functions, classes, or variables. An alias is a second name for the same object. An alias creates confusion about the authoritative name and is a form of backward-compatibility shim. Rename the item and update all call sites when something needs renaming.
+- A retired or renamed key in a system, analysis, or report configuration file still loads, with a `DeprecationWarning` that says where the key went.
+- A change to the on-disk layout bumps `LAYOUT_VERSION` and adds a migration under `src/hhemt/version_migration/`. At commit, `scripts/check_layout_version.py` checks that a bump carries a migration and fixtures. At push, the script checks that a change to a layout-relevant file carries a bump or an allowlist entry.
 
-### No cruft/all variables, imports, and function arguments must be used
+### Design conventions
 
-Unused elements signal that an implementation may be incomplete. Treat unused elements as an investigation trigger and as more than lint to suppress.
+- Give a parameter a default only when one value is almost always correct, as with `verbose=True`. A configuration field that a person populates takes the most care, because that person makes an intentional choice about every input.
+- Raise an exception on failure in a critical path. Never return `False` or `None` silently. Put the file paths, return codes, and log locations in the message, so that the failure is actionable.
+- Check that a step completed through the log of the step. A file can exist and be corrupt, incomplete, or left over from a failed earlier run. Checking that an input file exists before reading the file is the exception.
+- Put machine-specific information in the configuration file that each deployment defines, and write no path or machine constant into core code.
 
-If you come across an unused variable, import, or function argument, investigate before removing:
-1. Check whether the surrounding implementation is incomplete
-2. Search the git history and the issue tracker for changes to that function, and determine whether a later use is intended
-3. If the cause is still unclear, post hypotheses about why the element exists in an issue or on the pull request
-4. Exception A applies to elements included for work in progress in the same pull request. Mark each with a comment that links the issue tracking that work
-5. Exception B applies to an element whose *evaluation* is the point, where the name is unread and the statement is load-bearing. One case is an import whose side effect is registration, as `import rioxarray` registers the `.rio` accessor. Another case is a bind whose only job is to trigger a property that raises. Prefer the compliant form when a compliant form exists and is a no-op. `_ = system.analysis` trips no F841, so use that form and keep the explanation as a plain comment. No compliant form exists for `import x as _`, since the import still trips F401. Suppress with `# noqa` and state the side effect. "Unused" here is the name-liveness verdict of the linter and makes no claim about the behavior of the statement. The verdict and the behavior come apart in this case.
+### Docstrings and type hints
 
-Post your observations, hypotheses, and recommendations in the issue or the pull request.
-
-After investigation, and once the reviewer of the pull request agrees, remove unused code, dead branches, commented-out blocks, and stale imports.
-
-### Suppressing a lint finding: comply, or annotate with a checkable reason
-
-Comply by default. Reach for `# noqa` only when complying would change
-behaviour or delete information.
-
-| The finding is… | Do this | Because |
-|---|---|---|
-| Wrong about this code, a genuine false positive | `# noqa: XXX` + reason | Complying would encode a falsehood. |
-| Right, and the compliant form is behaviour-identical | Comply | A suppression here is debt against no offsetting truth. |
-| Right, but compliance is unavailable | `# noqa` or `per-file-ignores` + a reason naming the blocker | The blocker is the reason, and blockers expire, so the reason must be checkable. |
-| Right, and complying would delete information | `# noqa: XXX` + reason | Column alignment, an assertion, and an intended shape are all information. |
-| A real defect nobody is fixing today | Fix the defect, or ignore the finding with an explicit tracked note | A tracked note keeps the defect visible and dated, and a bare suppression hides the defect. |
-
-**The "No cruft" section governs unused variables, imports, and function arguments, and the section is narrower than this table.** Investigate first. Do not suppress an F401, F841, or ARG finding on the strength of this section alone. Exceptions A and B in that section are the whole of the license.
-
-**Rules about the reason itself.**
-
-1. *State a fact and omit preferences.* A word such as "intentional" asserts only that
-   someone made the choice, and a reader can check no part of that claim. A reader can check the reason in `# noqa: B905 - the lists are appended in separate statements in a background thread`, because the reason points at a fact.
-2. *Single-source a reason that names a repo-wide fact.* When several sites share one ground, such as a Python floor, a dependency version, or a downstream consumer, write
-   the ground once and point the other sites at that statement.
-   A change of ground then takes a single edit, and no missed site goes quietly wrong.
-   No tool detects a suppression whose reason has gone stale. The rule still fires, so
-   the directive is still consumed, and even `RUF100` stays silent.
-
-**Fixes that are not compliance.** Making the finding go away by weakening the assertions of the
-code is a behaviour change with the paperwork of a lint fix. A silent truncation shows the case.
-`zip(a, b, strict=False)` truncates where `strict=True` raises. Suppress the finding and say why when the
-compliant form changes behaviour.
-
-**Scope of the suppression.** Put the suppression at the smallest scope where the reason is
-true:
-
-- the reason is about *this line* -> per-site `# noqa: XXX -- reason`
-- the reason is about *this file* -> `per-file-ignores` in `pyproject.toml`, with the
-  reason as a comment above the entry. The existing Typer/`B008` and
-  `rollin_status.py`/`E501` entries are the model.
-- the reason is about *the whole project* -> a global `ignore`. No suppression
-  qualifies, and the bar should stay high.
-
-### Functions have docstrings, type hints, and type checking
-
-Apply this standard to code you write or modify. In touched scripts, apply the standard to existing code as the scripts change, and skip a global retrofit pass.
-
-### Fail-fast
-
-Critical paths raise exceptions and never return `False` or `None` silently on failure.
-
-### Preserve context in exceptions
-
-Exceptions should include file paths, return codes, and log locations for actionable debugging.
-
-### Prefer log-based completion checks over file existence checks
-
-A file may exist but be corrupt, incomplete, or from a previous failed run. File existence checks can mask errors when log checks are available.
-
-- **Exception.** File existence is appropriate for verifying *input* files before reading them.
-
-### Keep system-agnostic software
-
-System-specific information belongs in configuration files that each deployment defines. Avoid hardcoded paths or machine-specific constants in core code.
-
----
+Write type hints and a NumPy-style docstring, with the `Parameters`, `Returns`, and `Raises` sections of the `numpydoc` convention, for every function you write or modify. The documentation site renders docstrings with the `mkdocstrings` Python handler configured with `docstring_style: numpy`. In a touched script, apply the standard to existing code as the script changes, and skip a global retrofit pass.
 
 ## Repository map
 
@@ -300,10 +223,3 @@ System-specific information belongs in configuration files that each deployment 
 - `architecture.md` covers project structure, key modules, and data flow.
 - `docs/` holds the source for the published documentation site, built with MkDocs.
 
----
-
-## Docstring standard
-
-Public methods and modules use **NumPy-style docstrings**, the `numpydoc` convention of `Parameters`, `Returns`, and `Raises` sections. The documentation site renders the docstrings with the `mkdocstrings` Python handler, configured with `docstring_style: numpy`, so a docstring that follows the convention renders correctly in the API reference with no further annotation.
-
-Contributors adding new public methods include a NumPy-style docstring when writing the method.

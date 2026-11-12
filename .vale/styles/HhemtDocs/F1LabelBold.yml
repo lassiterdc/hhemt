@@ -1,0 +1,10 @@
+# F1_label, bold run-in position. Vale has no strong scope, so this reads the raw source and also sees 
+# fenced code (suite masks fences).
+extends: existence
+message: 'Question-form bold run-in label ''%s''.'
+level: warning
+ignorecase: true
+nonword: true
+scope: raw
+raw:
+  - '(?m)^[ \t]*(?:[-*][ \t]+|\d+\.[ \t]+)?\*\*\s*(?:(?:what|how|why|when|where|who|whether)(?![-\w])|[^*\n]*\?\s*\*\*)'

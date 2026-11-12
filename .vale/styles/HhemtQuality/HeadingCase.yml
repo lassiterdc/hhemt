@@ -1,0 +1,18 @@
+# Headings are sentence case. The glossary page is switched off in .vale.ini.
+extends: capitalization
+message: "Write the heading in sentence case: '%s'."
+level: warning
+scope: heading
+match: $sentence
+indicators:
+  - ':'
+exceptions:
+  - '[0-9A-Z][A-Z0-9&]+'
+  - '[A-Za-z]*[A-Z][a-z]+[A-Z][A-Za-z]*'
+  - Apptainer
+  - H&H Ensemble Modeling Toolkit
+  - Hurricane Irene
+  - Norfolk
+  - Python
+  - Snakemake
+  - Zenodo

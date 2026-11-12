@@ -1,0 +1,7 @@
+extends: existence
+message: 'Cut the filler or marketing word ''%s''.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '\b(?:exactly|specifically|importantly|essentially|fundamentally|ultimately|particularly|inherently|increasingly|seamless|seamlessly|powerful|robust|effortless|effortlessly|cutting-edge|state-of-the-art|game-changing|leverage|leverages|leveraged|leveraging|empower|empowers|streamline|streamlines|streamlined|supercharge|supercharges|blazing|unlock|unlocks)\b'

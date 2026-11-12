@@ -22,12 +22,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[docs]"
-      # The four gates (strict build with the htmlproofer internal-link check,
+      - name: Install Vale
+        run: pip install vale==3.26.0.1
+      # The five gates (strict build with the htmlproofer internal-link check,
       # public-API autodoc coverage, docs content hygiene, published-surface
-      # fidelity) live ONCE, in scripts/docs_gates.sh, each beside the rationale
+      # fidelity, and the Vale style check) live ONCE, in scripts/docs_gates.sh, each beside the rationale
       # for it. `just docs-check` runs the same script locally through
       # `scripts/hook_env.sh --python 3.12`; here RUN is empty, so every gate runs on
-      # the interpreter the install step above populated. The script announces
+      # the interpreter that the `Install project with docs extras` step populated. The script announces
       # each gate on stdout, which is where the per-step attribution now lives.
       - name: Run the documentation gates
         run: bash scripts/docs_gates.sh

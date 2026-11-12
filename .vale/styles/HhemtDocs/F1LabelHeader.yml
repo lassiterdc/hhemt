@@ -1,0 +1,10 @@
+# F1_label, table header position. A split of the suite rule into one Vale check per position, because 
+# Vale scopes are per check.
+extends: existence
+message: 'Question-form table header cell ''%s'': a header takes a noun.'
+level: warning
+ignorecase: true
+nonword: true
+scope: table.header
+raw:
+  - '(?<![-\w])(?:what|how|why|when|where|who|whether)(?![-\w])|\?\s*$'

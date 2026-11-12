@@ -1,0 +1,9 @@
+# The suite also reads inline code spans for this rule; Vale ignores them, so a marker quoted in a 
+# code span is not flagged here.
+extends: existence
+message: 'Unbuilt or planned work: ''%s''.'
+level: warning
+ignorecase: false
+nonword: true
+raw:
+  - '(?i:\b(?:planned|not\s+yet|not\s+implemented|TODO|FIXME|roadmap|future\s+release|future\s+version|will\s+be\s+added|will\s+be\s+implemented|will\s+be\s+supported|coming\s+soon|reserved\s+for|unimplemented|stub|no\s+effect|currently\s+ignored|not\s+used|not\s+read|not\s+wired|deferred|follow-up|deprecated|deprecation)\b)|(?i:\bverbatim\b.{0,120}?(?:\b(?:line|lines)\s+\d+\b|\.py:\d+))|\bADR-\d+\b|\([A-Z]{1,2}\d{1,2}\)|\bDRAFT\b'

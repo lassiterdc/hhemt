@@ -1,0 +1,8 @@
+extends: existence
+message: 'A heading may not end in ''of''.'
+level: warning
+ignorecase: true
+nonword: true
+scope: heading
+raw:
+  - '(?<![-\w])of\s*$'

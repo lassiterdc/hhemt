@@ -1,0 +1,11 @@
+# Switched off in .vale.ini for the Home page and the installation guide. The match carries the word 
+# before and the word after Linux when there are any: Vale locates a match by its text, so a bare 
+# 'Linux' (or 'on Linux') that occurs inside a bold run and again later in the block is attributed to 
+# the later occurrence and the alert for the first is lost.
+extends: existence
+message: 'Say ''Linux'' once, on the Home page or in the installation guide; elsewhere cut the sentence.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '(?:[\w''-]+\s+)?(?<![-\w])Linux(?![-\w])(?:\s+[\w''-]+)?'

@@ -1,0 +1,7 @@
+extends: existence
+message: 'Cut ''%s''; if the sentence still needs it, rephrase.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '(?<![-\w])(?:deliberate)(?![-\w])'

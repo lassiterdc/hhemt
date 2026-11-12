@@ -1,0 +1,9 @@
+# F1_label, heading position (suite arm 1).
+extends: existence
+message: 'Question-form heading ''%s'': name the topic noun.'
+level: warning
+ignorecase: true
+nonword: true
+scope: heading
+raw:
+  - '^\s*(?:\d+\.\s+)?(?:what|how|why|when|where|who|whether)(?![-\w])|\?\s*$'

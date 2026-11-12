@@ -1,0 +1,9 @@
+# The contributing guide stays below 2500 words. In the guides of 11 projects read on 2026-11-12 the median is
+# 1756 words and the third quartile is 3748, measured with Vale's own word count; 2500 lies between the two.
+# Vale has no line-count metric, so the limit is in words.
+extends: metric
+message: "The guide holds %s words; keep it below 2500 and move the detail to the page that owns it."
+level: warning
+formula: |
+  words
+condition: "> 2500"

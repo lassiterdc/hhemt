@@ -1,0 +1,7 @@
+# A paragraph that holds more than one point.
+extends: occurrence
+message: "Split this paragraph; it runs past 120 words."
+level: warning
+scope: paragraph
+max: 120
+token: "[\\w'’-]+"

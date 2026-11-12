@@ -1,0 +1,8 @@
+# An image without alt text is invisible to a screen reader.
+extends: existence
+message: "Add alt text to the image."
+level: warning
+nonword: true
+scope: raw
+raw:
+  - '!\[\s*\]\('
