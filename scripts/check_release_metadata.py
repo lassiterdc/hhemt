@@ -22,7 +22,8 @@ defect class this repository has measured repeatedly:
 
   * It does not check the DOI. The DOI kind convention is a RECORDED decision and
     deliberately not an enforced one -- ``architecture.md`` says so in its own body --
-    and the two DOI-bearing surfaces are expected to differ. A DOI check here would
+    and the two DOI-bearing surfaces carry the same concept DOI at the tag and differ
+    only after the docs-only backfill of the version DOI. A DOI check here would
     falsify that text.
   * It does not check that the version is the RIGHT one. It checks that two copies
     agree. ``pyproject.toml`` is the source and nothing external validates it, so a

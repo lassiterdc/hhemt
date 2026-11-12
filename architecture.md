@@ -144,10 +144,10 @@ Note: `environment.yaml` at the repo root and the `conda:` directives in generat
 
 ## DOI kind convention
 
-Two published surfaces carry a Zenodo DOI and they carry DIFFERENT ones on purpose.
+Two published surfaces carry a Zenodo DOI. At a release tag they carry the same one, and they differ only after the release is published.
 
-- `CITATION.cff` carries the CONCEPT DOI (`...151`), which always resolves to the latest release.
-- `docs/index.md`'s printed citation carries the VERSION DOI (`...152`), which pins v0.1.0 permanently.
+- `CITATION.cff` carries the CONCEPT DOI (`10.5281/zenodo.21359151`), which always resolves to the latest release.
+- `docs/index.md`'s printed citation carries the same CONCEPT DOI (`10.5281/zenodo.21359151`) at the tag. After the tag, a docs-only commit on `develop` adds the version DOI of the release to the page, and the `latest` build of the page, which is built from `develop`, shows it. The `stable` build, which is built from the tag, keeps naming only the concept DOI. The version DOI of the previous release (`10.5281/zenodo.21359152`, v0.1.0) pins that release permanently, and the page prints no version DOI before that backfill.
 
 The rule that makes both correct: a surface carries the most precise identifier that
 
@@ -158,9 +158,9 @@ The rule that makes both correct: a surface carries the most precise identifier 
 
 Note which way the two conditions point, because it is not obvious. Condition (2) taken alone argues FOR the version DOI here: the file ships inside one specific release tarball, so a version DOI would stay true of it forever. Condition (1) wins because it is a hard constraint and (2) is a preference. **That is why this is stated as impossibility rather than as advice.** There is no counter-argument to a value that does not exist, whereas advice gets argued back by anyone weighting precision — and this project's own citation guidance weights precision, so advice would lose.
 
-`docs/index.md` passes (1): it is rebuilt from the current branch after each release, so the version DOI exists by the time that page is written.
+`docs/index.md` fails (1) for the same reason at the tag, because the page built from the tag is written before the version DOI exists, so it names the concept DOI there. The `latest` build is rebuilt from `develop` after the release is published, so the version DOI exists by the time the docs-only commit writes it, and (1) holds for that build.
 
-**This is NOT an equality invariant and nothing checks it.** The two values are expected to differ. A future editor who "aligns" them has removed the distinction rather than fixed an inconsistency.
+**This is a recorded convention and nothing checks it.** The two surfaces carry the same concept DOI at the tag, and the version DOI appears only in the `latest` build of `docs/index.md` after the backfill. A future editor who adds a check that equates the two surfaces, or who writes a version DOI into a page that is built from the tag, has either blocked the backfill or put a value into the tag that did not exist when the tag was cut.
 
 Falsifier worth knowing: Zenodo supports reserving a DOI before publication. A reserve-then-tag release workflow would make the version DOI exist at write time, (1) would pass, and this convention would need revisiting. That is a change to how releases are made, not a Zenodo setting.
 
