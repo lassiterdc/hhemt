@@ -26,7 +26,7 @@ The repository ships an `environment.yaml` that pins every runtime dependency, i
 Both `--no-deps` flags are required.
 
 ??? note "Set PYTHONNOUSERSITE=1 in the environment build"
-    `environment.yaml` documents the routes that build the environment. The commands above are the direct-create route, and that route sets no `PYTHONNOUSERSITE`. The bare-environment route builds a bare environment first with `conda create --no-default-packages`, updates into that environment, and sets `export PYTHONNOUSERSITE=1` before the update.
+    `environment.yaml` documents the routes that build the environment. The commands are the direct-create route, and that route sets no `PYTHONNOUSERSITE`. The bare-environment route builds a bare environment first with `conda create --no-default-packages`, updates into that environment, and sets `export PYTHONNOUSERSITE=1` before the update.
 
     The variable stops Python from adding your `~/.local` packages to `sys.path`. Set the variable when you keep packages there and want certainty that the environment you built is the environment in use. The variable also matters on a cluster at run time, where a stray `~/.local` package can shadow the environment inside a batch job.
 
@@ -36,7 +36,7 @@ Both `--no-deps` flags are required.
     `scripts/check_env_lock_consistency.py` enforces this invariant in CI.
 
 ??? note "environment-lock.yaml is a snapshot and no lockfile"
-    `environment-lock.yaml` is a `conda env export` snapshot, useful for inspecting the exact versions of a known-good environment. The file is a single-platform snapshot and no portable lockfile, and recreating an environment from the file still runs the `pip:` block of the file. When you use the file, apply the same `--no-deps` post-create steps as above. Generate a multi-platform `conda-lock.yml` for bit-level reproducibility across machines.
+    `environment-lock.yaml` is a `conda env export` snapshot, useful for inspecting the exact versions of a known-good environment. The file is a single-platform snapshot and no portable lockfile, and recreating an environment from the file still runs the `pip:` block of the file. When you use the file, apply the same `--no-deps` post-create steps. Generate a multi-platform `conda-lock.yml` for bit-level reproducibility across machines.
 
 ### Option B, the lightweight pip extras
 

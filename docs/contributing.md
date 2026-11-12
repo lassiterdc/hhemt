@@ -17,7 +17,7 @@ By submitting a contribution to this project, whether a pull request, a patch, o
    such as Apache License 2.0. The grant lets the project relicense
    in the future without sign-off from every past contributor.
 
-If you are unable to agree to the terms for a particular contribution, open an issue to discuss the contribution before submitting.
+If you do not agree to the terms for a particular contribution, open an issue to discuss the contribution before submitting.
 
 ## Development setup
 
@@ -40,13 +40,13 @@ If you are unable to agree to the terms for a particular contribution, open an i
    environments unused for 14 days are removed automatically. Set `$HHEMT_HOOK_ENV_ROOT` or `$XDG_CACHE_HOME` to move
    the root. The shared environments stay separate from the conda environment that step 2 creates, so both exist on
    the machine. To point an editor at the shared environment, use the `bin/python` of the path that
-   `scripts/hook_env.sh --print-env --python 3.12` prints. Inside an activated virtualenv, the wrapper unsets
+   `scripts/hook_env.sh --print-env --python 3.12` prints. Inside an activated virtualenv, the wrapper clears
    `VIRTUAL_ENV` before the `uv` call, so the hooks print no warning.
 5. Install the pre-commit hooks with `pre-commit install`. The `pre-commit` package ships
    only with the conda environment defined in `environment.yaml`, and no
    `pyproject.toml` extra declares `pre-commit`. After an install through Option B of
    `docs/how-to/installation.md`, run `pip install pre-commit` first.
-   **Re-run `pre-commit install` after pulling when hooks are already installed.**
+   **Rerun `pre-commit install` after pulling when hooks are already installed.**
    The repository declares `default_install_hook_types: [pre-commit, pre-push, commit-msg]`,
    and git reads that key only at install time, so a clone that installed before the
    key existed keeps `.git/hooks/pre-commit` alone and never fires the pre-push and commit-msg
@@ -69,7 +69,7 @@ If you are unable to agree to the terms for a particular contribution, open an i
     - **Gate A, `just test-fast`.** Gate A runs the fast tier without the tests marked `slow`. Run `just test-fast` before opening a pull request.
       CI differs. `.github/workflows/test.yml` runs bare `pytest` with no
       marker filter, and `compile-tests.yml` must be a required status
-      check before a release PR. `just qa` skips the `test-fast` recipe and inlines a
+      check before a release PR. `just qa` skips the `test-fast` recipe and runs a
       `pytest` call that carries the same `-m` expression, so both apply the same marker
       filtering. The collected populations can still differ, because the dependency sets differ. `qa` runs `scripts/hook_env.sh --python 3.12`, and
       `test-fast` uses the conda `hhemt` environment. `environment.yaml` pins that
@@ -82,10 +82,10 @@ If you are unable to agree to the terms for a particular contribution, open an i
       your cluster's batch scheduler.
     - **The compile venue.** The guard is armed by default. A pytest session must declare a
       permitted *venue* before the session builds the solver or executes SWMM. `just test-gated`
-      sets `HHEMT_COMPILE_VENUE=toolchain` for you, so following the recipe above needs no
+      sets `HHEMT_COMPILE_VENUE=toolchain` for you, so following the recipe needs no
       environment work. Set the variable by hand only when you invoke `pytest` directly and
       want the compile tier. Neither export implies the other. A run with the venue declared
-      and the requirement unset is green while unable to compile. A run with the requirement
+      and the requirement unset is green even when no compile is possible. A run with the requirement
       set and no venue declared refuses every compile. A run with neither export recorded
       is not a gate result.
     - **Venue of compile-tier runs.** The code leaves the venue unenforced. The project rule places test runs that
@@ -160,7 +160,7 @@ Separately from the gates, `python scripts/check_anonymization.py` fails when a 
 
 A page may declare an exemption from part of the documentation content gate.
 The declaration is an HTML comment on the first line of the page. The comment names a marker and
-the class groups the marker exempts. The table below is generated from the constants of the gate at
+the class groups the marker exempts. The marker table is generated from the constants of the gate at
 documentation build time and always agrees with them.
 
 <!-- hhemt:marker-governance -->
@@ -182,7 +182,7 @@ Read [Branching and release model](explanation/branching-and-release-model.md) f
 
 ---
 
-## Development Principles
+## Development principles
 
 ### Ask before assuming
 When a requirement is unclear or sources disagree, ask in an issue on the repository, or in the pull request description, before you proceed.
@@ -242,7 +242,7 @@ behaviour or delete information.
 | Right, and complying would delete information | `# noqa: XXX` + reason | Column alignment, an assertion, and an intended shape are all information. |
 | A real defect nobody is fixing today | Fix the defect, or ignore the finding with an explicit tracked note | A tracked note keeps the defect visible and dated, and a bare suppression hides the defect. |
 
-**The "No cruft" section above governs unused variables, imports, and function arguments, and the section is narrower than this table.** Investigate first. Do not suppress an F401, F841, or ARG finding on the strength of this section alone. Exceptions A and B in that section are the whole of the license.
+**The "No cruft" section governs unused variables, imports, and function arguments, and the section is narrower than this table.** Investigate first. Do not suppress an F401, F841, or ARG finding on the strength of this section alone. Exceptions A and B in that section are the whole of the license.
 
 **Rules about the reason itself.**
 
@@ -266,7 +266,7 @@ true:
 - the reason is about *this file* -> `per-file-ignores` in `pyproject.toml`, with the
   reason as a comment above the entry. The existing Typer/`B008` and
   `rollin_status.py`/`E501` entries are the model.
-- the reason is about *the whole project* -> a global `ignore`. No suppression currently
+- the reason is about *the whole project* -> a global `ignore`. No suppression
   qualifies, and the bar should stay high.
 
 ### Functions have docstrings, type hints, and type checking

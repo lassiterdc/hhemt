@@ -3,7 +3,7 @@
 A **reporting set** is a named bundle of report renderers plus a sidebar category order. One set produces one report with every renderer in the bundle. The choice of set fixes the figures and tables of a report and the sidebar order. A single config field selects a set without code edits.
 
 !!! tip "One set usually suffices"
-    A report with benchmarking results next to compute-configuration comparisons usually selects one set that bundles both renderers. `compute_config_byte_identity` is the clearest case. The set carries `sensitivity_benchmarking` and `eda_compute_sensitivity` together, so the report shows both. A list is necessary only when no single set carries every renderer you want. To identify the set behind a report, read the bundle contents below and skip any reasoning from the figures present.
+    A report with benchmarking results next to compute-configuration comparisons usually selects one set that bundles both renderers. `compute_config_byte_identity` is the clearest case. The set carries `sensitivity_benchmarking` and `eda_compute_sensitivity` together, so the report shows both. A list is necessary only when no single set carries every renderer you want. To identify the set behind a report, read the bundle contents and skip any reasoning from the figures present.
 
 ## Selecting one or more
 
@@ -36,9 +36,9 @@ report:
 ```
 
 ??? note "Compositions that add figures, and the pair for separate sweeps"
-    The list above composes to the same bundle as `benchmarking` alone. Every pair that the rules below admit behaves that way with one exception. In each of the other pairs a single set carries everything that the other set carries, so naming the larger set is enough. The exception is `compute_sensitivity` with `dem_resolution`. The pair passes every rule below and still fails to render the added figures. `config_diff_maps` subtracts members cell by cell and refuses members on different grids with a `ProcessingError`. The `dem_resolution` figures need a ladder of grids. No single sweep serves both, and separate sweeps solve the conflict, as [Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md) shows.
+    The list composes to the same bundle as `benchmarking` alone. Every pair that the rules admit behaves that way with one exception. In each of the other pairs a single set carries everything that the other set carries, so naming the larger set is enough. The exception is `compute_sensitivity` with `dem_resolution`. The pair passes every rule and still fails to render the added figures. `config_diff_maps` subtracts members cell by cell and refuses members on different grids with a `ProcessingError`. The `dem_resolution` figures need a ladder of grids. No single sweep serves both, and separate sweeps solve the conflict, as [Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md) shows.
 
-`analysis.run()` checks each rule below at entry, before any compute is committed.
+`analysis.run()` checks each rule at entry, before any compute is committed.
 
 - **Every named set must describe the same type of analysis.** An event-ensemble set and a sensitivity set never mix, and `combined` is never selectable on an analysis.
 - **The sweep must vary an axis for each named set that requires an axis.** The requirements add up. A list of `compute_sensitivity` and `dem_resolution` needs a sweep that varies a compute-configuration field and `target_dem_resolution`.
@@ -81,7 +81,7 @@ Every set here replaces `per_sim` with `per_sim_per_member`. Every set except `s
 
 ## Set bundles
 
-`disabled_renderers` can drop any name below.
+`disabled_renderers` can drop any name that follows.
 
 | Set | Renderers |
 |---|---|
@@ -97,7 +97,7 @@ Every set here replaces `per_sim` with `per_sim_per_member`. Every set except `s
 
 ## Dropping a renderer from a set
 
-`disabled_renderers` subtracts named renderers from the bundle of the active set and keeps the set. The report contains every renderer of the bundle except the dropped ones, and any name from the bundle above is a valid entry. A large event ensemble is the usual reason. The per-event figures, `per_sim` or `per_sim_per_member` on a sweep, add a page for every event.
+`disabled_renderers` subtracts named renderers from the bundle of the active set and keeps the set. The report contains every renderer of the bundle except the dropped ones, and any name from the bundle is a valid entry. A large event ensemble is the usual reason. The per-event figures, `per_sim` or `per_sim_per_member` on a sweep, add a page for every event.
 
 ```yaml
 report:

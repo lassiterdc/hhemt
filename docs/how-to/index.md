@@ -10,7 +10,7 @@
 | [Running an experiment definition](running-an-experiment-definition.md) | The `hhemt run-experiment` command and the `experiment.yaml` definition that the command executes |
 | [In-flight operations](in-flight-operations.md) | The commands that monitor, resume, and manage a running analysis |
 | [Diagnosing a failed analysis](diagnosing-a-failed-run.md) | The symptom index, the status ladder, and the log reading for a failed or incomplete analysis |
-| [Forcing and suppressing re-runs](forcing-reruns.md) | The options that force or suppress a rebuild |
+| [Forcing and suppressing reruns](forcing-reruns.md) | The options that force or suppress a rebuild |
 | [Combining experiments](combining-experiments.md) | The merge of render bundles into one cross-experiment report |
 | [Publishing and fetching](publishing.md) | The deposit of a dataset to Zenodo or HydroShare, and the fetch of case-study inputs by DOI or PID |
 | [Reprex round-trip](reprex-roundtrip.md) | The emission of a reproducible-example bundle and the check that runs the bundle on another cluster |

@@ -1,4 +1,4 @@
-# API Reference
+# API reference
 
 - [Error handling](api-toolkit.md) documents `hhemt` and the errors that the package raises.
 - [Analyses](api-analysis.md) documents `hhemt.analysis` and `hhemt.sensitivity_analysis`.

@@ -13,12 +13,12 @@ Run an [experiment definition](../reference/glossary.md#experiment-definition) w
 ## Key references
 
 - [Config filling](config-filling.md) and [HPC-profile setup](hpc-profile-setup.md) describe the system, analysis, and `hpc_system_config` contents.
-- [Forcing and suppressing re-runs](forcing-reruns.md) describes `--override-force-rerun`.
+- [Forcing and suppressing reruns](forcing-reruns.md) describes `--override-force-rerun`.
 - The [CLI reference](../reference/cli.md#exit-codes) lists the exit codes.
 
 ## The experiment definition layout
 
-A conformant definition is a directory with at least the entries below. The `ExperimentConfig` descriptor model validates the directory, as [Verifying an experiment definition conforms](#verifying-an-experiment-definition-conforms) describes.
+A conformant definition is a directory with at least the following entries. The `ExperimentConfig` descriptor model validates the directory, as [Verifying an experiment definition conforms](#verifying-an-experiment-definition-conforms) describes.
 
 ```
 experiments/my_experiment/
@@ -73,7 +73,7 @@ Compile the solver for the partition that the experiment targets before the firs
 | `--mode` | Behaviour |
 |----------|-----------|
 | `resume`, the default | Continue from the last checkpoint and keep completed simulations. |
-| `fresh` | Delete the whole analysis directory first and rebuild everything. The wipe guard below applies. |
+| `fresh` | Delete the whole analysis directory first and rebuild everything. The wipe guard applies. |
 
 The parser refuses any other value with exit 2, and `hhemt run-experiment --help` lists the accepted values.
 
@@ -89,7 +89,7 @@ The wipe guard refuses `--mode fresh` with exit 2 when the analysis directory st
 
 `--override-wipe-nonempty` differs from `--yes`. `--yes` accepts the descriptor-override table, described under [The override gate](#the-override-gate), and authorizes no deletion. `--override-wipe-nonempty` authorizes the deletion and accepts no override. To remove an analysis, use `hhemt delete`, as noted in [Add scenarios or events to a running sweep](forcing-reruns.md#add-scenarios-or-events-to-a-running-sweep).
 
-Keep `--mode resume` and pass `--override-force-rerun` to re-run completed scenarios without deleting any file. [Forcing and suppressing re-runs](forcing-reruns.md#force-a-full-re-run-of-specific-scenarios) lists the accepted values and the stage floor.
+Keep `--mode resume` and pass `--override-force-rerun` to rerun completed scenarios without deleting any file. [Forcing and suppressing reruns](forcing-reruns.md#force-a-full-rerun-of-specific-scenarios) lists the accepted values and the stage floor.
 
 ```bash
 # Re-run every completed scenario in place, no wipe:
@@ -109,7 +109,7 @@ The git-tracked system and analysis configs carry portable `${VAR}` placeholders
 
 ## The override gate
 
-`experiment.yaml` is the single source of truth. A CLI flag that overrides a value the descriptor declares, currently `--hpc-system-config`, makes the verb print a side-by-side `descriptor (config)` and `CLI override` table and require confirmation.
+`experiment.yaml` is the single source of truth. A CLI flag that overrides a value the descriptor declares, `--hpc-system-config`, makes the verb print a side-by-side `descriptor (config)` and `CLI override` table and require confirmation.
 
 ```bash
 # Non-interactive contexts (a submit script) must pass --yes to accept an override:

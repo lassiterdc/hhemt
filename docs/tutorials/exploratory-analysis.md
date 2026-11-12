@@ -18,7 +18,7 @@ The command runs in process on the calling machine, with no allocation, no simul
 | `eda_local/` | A package for your own EDA code |
 | `cfg_analysis.yaml`, `cfg_system.yaml` | The system and analysis configs as the notebook reads them |
 
-A copied analysis directory can print a line that the validation report could not be persisted again, because a relative DEM path resolves in the original directory only. The step finishes with that line, and the files above are written. [Run the exploratory analysis](../how-to/running-eda.md) covers the options of the command.
+A copied analysis directory can print a line that the validation report could not be persisted again, because a relative DEM path resolves in the original directory only. The step finishes with that line, and the files are written. [Run the exploratory analysis](../how-to/running-eda.md) covers the options of the command.
 
 ## The seeded notebook
 
@@ -56,7 +56,7 @@ For this ensemble the verdict reads `passed` false, `applicable` true and `instr
 
 ## Difference plots for Hurricane Irene
 
-The notebook is the place to author further cells. The committed result `assets/irene-example-result.zarr` holds the groups that the plots read, trimmed to the variables they use, for the Hurricane Irene event. The groups `tritonswmm`, `triton_only` and `swmm_only` hold the coupled model, TRITON, and SWMM. In the notebook, `ctx.datatree` is the `DataTree` of the analysis. The cell below opens the committed copy, so the plots reproduce without the analysis directory.
+The notebook is the place to author further cells. The committed result `assets/irene-example-result.zarr` holds the groups that the plots read, trimmed to the variables they use, for the Hurricane Irene event. The groups `tritonswmm`, `triton_only` and `swmm_only` hold the coupled model, TRITON, and SWMM. In the notebook, `ctx.datatree` is the `DataTree` of the analysis. The next cell opens the committed copy, so the plots reproduce without the analysis directory.
 
 ```python
 from pathlib import Path

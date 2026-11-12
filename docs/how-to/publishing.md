@@ -23,7 +23,7 @@ Publish a consolidated analysis to Zenodo or HydroShare and fetch the heavy inpu
 | **Analysis-directory set**, the consolidated zarr with `ro-crate-metadata.json` and the system and analysis configs | `hhemt publish --target {zenodo or hydroshare}` | **Data-DOI** for the archived, citable analysis outputs with provenance, reproducible from the configs and the crate | Archiving results for citation or a data-availability statement |
 | **Reprex bundle**, the round-trippable bundle that runs an experiment from scratch | `hhemt publish --target {zenodo or hydroshare} --reprex-bundle` | **Runnable-DOI**. `hhemt ingest --doi {DOI} --hpc-system-config {your-cluster-hpc-system-config.yaml}` fetches and reconstitutes the bundle, then prints the `hhemt run` command that runs the bundle | A reproducible experiment that anyone can fetch by DOI, as [the DOI round-trip](doi-roundtrip-e2e.md) shows |
 
-Both deposits use the same `target` seam and the same credentials below, and differ only in the deposited bytes. The rest of this guide describes the data-DOI deposit, and the runnable-DOI path is identical with `--reprex-bundle` added.
+Both deposits use the same `target` seam and the same credentials, and differ only in the deposited bytes. The rest of this guide describes the data-DOI deposit, and the runnable-DOI path is identical with `--reprex-bundle` added.
 
 Both deposits are made from an experiment definition with the config-driven form.
 
@@ -32,7 +32,7 @@ hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --tar
 hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --target zenodo --reprex-bundle
 ```
 
-To try a deposit without minting a citable DOI, use the Zenodo sandbox. `HHEMT_ZENODO_BASE_URL=https://sandbox.zenodo.org` together with a sandbox token selects the sandbox. The `10.5072` DOI prefix marks a discardable record, and production Zenodo mints `10.5281`. `hhemt ingest` resolves the Zenodo host from the same variable, so a sandbox DOI resolves against the sandbox and never against production. [The DOI round-trip](doi-roundtrip-e2e.md) names the deposit that verified the command forms and the parts left unverified.
+To try a deposit without minting a citable DOI, use the Zenodo sandbox. `HHEMT_ZENODO_BASE_URL=https://sandbox.zenodo.org` together with a sandbox token selects the sandbox. The `10.5072` DOI prefix marks a record that you can discard, and production Zenodo mints `10.5281`. `hhemt ingest` resolves the Zenodo host from the same variable, so a sandbox DOI resolves against the sandbox and never against production. [The DOI round-trip](doi-roundtrip-e2e.md) names the deposit that verified the command forms and the parts left unverified.
 
 ## Before you publish
 
@@ -83,7 +83,7 @@ HydroShare needs a manual step, because hsclient has no programmatic DOI mint. `
 hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --target hydroshare
 ```
 
-Open the `record_url` that the command prints and click **Publish** in the HydroShare web UI to mint the DOI. To record the data-to-software relation on the resource, pass `--software-doi` on that first `hhemt publish --target hydroshare` call, as the Zenodo example above shows. The toolkit writes the software DOI into the relations of the resource before the resource goes public. Do not re-run `publish` to add the DOI afterwards. Every HydroShare `publish` call creates a new resource, so a second call deposits a second copy and leaves the first untouched. For HydroShare deposits, the toolkit writes no reciprocal edge on the software record, from software to data, because that edge needs the minted DOI.
+Open the `record_url` that the command prints and click **Publish** in the HydroShare web UI to mint the DOI. To record the data-to-software relation on the resource, pass `--software-doi` on that first `hhemt publish --target hydroshare` call, as the Zenodo example shows. The toolkit writes the software DOI into the relations of the resource before the resource goes public. Do not rerun `publish` to add the DOI afterwards. Every HydroShare `publish` call creates a new resource, so a second call deposits a second copy and leaves the first untouched. For HydroShare deposits, the toolkit writes no reciprocal edge on the software record, from software to data, because that edge needs the minted DOI.
 
 ## Publish a sensitivity analysis
 

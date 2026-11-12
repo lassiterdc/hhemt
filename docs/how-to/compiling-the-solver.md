@@ -84,4 +84,4 @@ No other change calls for a rebuild. Updating hhemt, changing `execution_mode` o
 
 ## If an analysis stops at setup
 
-An analysis stops at the first step when the setup check finds an uncompiled model. [Diagnosing a failed analysis](diagnosing-a-failed-run.md#setup-says-a-model-is-enabled-but-not-compiled) shows the line that the setup check leaves in the setup log and the remedy. The compile on this page for your machine satisfies the check.
+An analysis stops at the first step when the setup check finds a model that is not compiled. [Diagnosing a failed analysis](diagnosing-a-failed-run.md#setup-says-a-model-is-enabled-but-not-compiled) shows the line that the setup check leaves in the setup log and the remedy. The compile on this page for your machine satisfies the check.

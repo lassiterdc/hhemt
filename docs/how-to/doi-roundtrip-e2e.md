@@ -28,7 +28,7 @@ hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --tar
 ```
 
 ??? note "Bundle larger than the target limit"
-    Before uploading, a size validator measures the bundle against the **documented** limits of the target, Zenodo 50 GB per record and HydroShare 20 GB default account quota, and warns when the bundle will not fit. The warning states the exact overflow and a menu of remedies. The validator never blocks, because neither platform exposes a queryable quota. The deposit is attempted, and the toolkit catches a live storage rejection and reframes the rejection with the real numbers.
+    Before uploading, a size validator compares the bundle with the **documented** limits of the target, Zenodo 50 GB per record and HydroShare 20 GB default account quota, and warns on overflow. The warning states the exact overflow and a menu of remedies. The validator never blocks, because neither platform exposes a queryable quota. The deposit is attempted, and the toolkit catches a live storage rejection and restates the rejection with the real numbers.
 
 ## 2. Fetch and reconstitute on another machine
 
@@ -51,16 +51,16 @@ hhemt ingest --doi {minted-doi} --host zenodo --target-dir {target} --hpc-system
 hhemt run --system-config {reconstituted-system.yaml} --analysis-config {reconstituted-analysis.yaml} --hpc-system-config {your-cluster-hpc-system-config.yaml}
 ```
 
-The `Run it with:` line that ingest prints omits `--hpc-system-config`. Add the flag as above. Without the flag the analysis is refused for the same reason.
+The `Run it with:` line that ingest prints omits `--hpc-system-config`. Add the flag. Without the flag the analysis is refused for the same reason.
 
 !!! example "Verified against a live Zenodo sandbox deposit"
-    The command forms on this page were run against a Zenodo **sandbox** deposit of a CPU sensitivity analysis of compute configurations, with one data deposit and one runnable reprex-bundle deposit. The reprex-bundle deposit is larger because the bundle carries the declared inputs. [Choose a deposit unit](publishing.md#choose-a-deposit-unit-data-doi-or-runnable-doi) explains the sandbox and the sandbox DOI prefix. The check did not re-run the sweep from the deposit and ran only `hhemt run --dry-run` on the reconstituted configs.
+    The command forms on this page were run against a Zenodo **sandbox** deposit of a CPU sensitivity analysis of compute configurations, with one data deposit and one runnable reprex-bundle deposit. The reprex-bundle deposit is larger because the bundle carries the declared inputs. [Choose a deposit unit](publishing.md#choose-a-deposit-unit-data-doi-or-runnable-doi) explains the sandbox and the sandbox DOI prefix. The check did not rerun the sweep from the deposit and ran only `hhemt run --dry-run` on the reconstituted configs.
 
 ## Excluding an input
 
 Use the exclusion when an input is too large to deposit, or when you may **not redistribute the input** because the data is licensed, proprietary, or otherwise restricted. The bundle carries the excluded input *by reference*. The bundle records the origin of the input, the hash of the input, and the way to obtain the input.
 
-Follow the steps below in order. Each excluded input needs a durable record before you author the exclude-config. The toolkit offers no per-file deposit helper to mint a record.
+Follow the steps in order. Each excluded input needs a durable record before you author the exclude-config. The toolkit offers no per-file deposit helper to mint a record.
 
 ### Step 1: give the input a durable record
 

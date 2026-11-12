@@ -16,7 +16,7 @@ The `format` argument of `render_report()` overrides the setting for one render.
 
 ## Sidebar sections
 
-The active reporting set, selected with `report.reporting_set`, decides the sections. [Reporting sets](reporting-sets.md) lists the sets. The default set renders the sections below in sidebar order.
+The active reporting set, selected with `report.reporting_set`, decides the sections. [Reporting sets](reporting-sets.md) lists the sets. The default set renders the sections in sidebar order.
 
 | Section | Contents |
 |---|---|

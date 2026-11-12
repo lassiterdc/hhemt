@@ -143,7 +143,7 @@ nav:
       - Running an experiment definition: how-to/running-an-experiment-definition.md
       - In-flight operations: how-to/in-flight-operations.md
       - Diagnosing a failed analysis: how-to/diagnosing-a-failed-run.md
-      - Forcing and suppressing re-runs: how-to/forcing-reruns.md
+      - Forcing and suppressing reruns: how-to/forcing-reruns.md
       - Combining experiments: how-to/combining-experiments.md
       - Running a synthetic compute-sensitivity experiment: how-to/synthetic-compute-sensitivity-experiment.md
       - Run the exploratory analysis: how-to/running-eda.md

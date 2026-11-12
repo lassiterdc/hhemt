@@ -26,10 +26,12 @@ hhemt run --system-config my_system.yaml --analysis-config my_analysis.yaml --dr
 |---|---|
 | `run` | Execute the workflow from the system and analysis configs. The command is the main entry point. `--dry-run` validates and prints the plan without executing. In native mode, compile the solver first with [Compile the solver](../how-to/compiling-the-solver.md). In container mode, `--build-sifs` builds any missing image inside the driver before submitting. Alongside `--build-sifs`, `--sif-build-config` names the build venue and resources. `--force-sif-rebuild` rebuilds every identity that the experiment requires even when the image is present. `--no-wait` builds and verifies without submitting the experiment. The flags `--sif-build-config`, `--force-sif-rebuild`, and `--no-wait` need `--build-sifs`. See [Building container images](../how-to/building-container-images.md). Resume is the default mode, so an interrupted workflow continues without a flag. `--from-scratch` clears the artifacts and starts fresh. `--overwrite` equals `--override-force-rerun all` and re-executes every simulation without clearing anything. `--status` prints the status report of the workflow and exits without executing anything. |
 | `run-experiment` | Execute an [experiment definition](glossary.md#experiment-definition). The `experiment.yaml` names the configs, the inputs, and the toolkit pin. See [Running an experiment definition](../how-to/running-an-experiment-definition.md). |
-| `reprocess` | Re-execute the downstream stages of processing, consolidation, and rendering against simulation outputs that already exist, without repeating the simulations. The command fits correct results with a wrong report. See [Forcing and suppressing re-runs](../how-to/forcing-reruns.md). |
+| `reprocess` | Re-execute the downstream stages of processing, consolidation, and rendering against simulation outputs that already exist, without repeating the simulations. The command fits correct results with a wrong report. See [Forcing and suppressing reruns](../how-to/forcing-reruns.md). |
 | `cancel` | Cancel a running workflow. The command signals Snakemake, cancels the workers, ends the driver session, and prints the cancellation record that `analysis.cancel()` returns. Name the analysis the way you started the workflow. `--experiment {definition dir}` takes an optional `--cluster` when the definition declares one cluster. `--system-config {file} --analysis-config {file}` takes an optional `--hpc-system-config`. The command refuses when given neither form or both forms. `--rule-class {prefix}` cancels only the jobs of that rule class, may be repeated, and leaves other jobs running. `--wait-timeout {seconds}` bounds the wait for the workflow process to exit. The command exits `0` when the `success` of the record is true and `1` otherwise. A `jobs_were_running` of `None` means the command could not establish whether jobs were running, as when the session is gone and the command checked only the driver. |
 
-**A submission refuses while another orchestration driver may be alive.** Every submission records a driver sentinel under `{analysis_dir}/_status/_orchestrator/`. The next submission refuses with exit `3` while any recorded driver is alive or the host lacks a probe for the driver. Re-submit from the origin host of the sentinel, where the probe returns a measurement and no belief. Pass `--override-live-driver DRIVER_ID` to `hhemt run` only when that host is unreachable and you have established that the driver is gone. Name the exact `driver_id` from a `*.json` file in the sentinel directory. The flag is an assertion and no force flag. The submission still refuses while any other driver is alive or indeterminate, and the command refuses an id that matches no sentinel. `hhemt run-experiment` has the same gate and exposes no override.
+**A submission refuses while another orchestration driver may be alive.** Every submission records a driver sentinel under `{analysis_dir}/_status/_orchestrator/`. The next submission refuses with exit `3` while any recorded driver is alive or the host lacks a probe for the driver. Re-submit from the origin host of the sentinel, where the probe returns a measurement and no belief.
+
+Pass `--override-live-driver DRIVER_ID` to `hhemt run` only when that host is unreachable and you have established that the driver is gone. Name the exact `driver_id` from a `*.json` file in the sentinel directory. The flag is an assertion and no force flag. The submission still refuses while any other driver is alive or indeterminate, and the command refuses an id that matches no sentinel. `hhemt run-experiment` has the same gate and exposes no override.
 
 ## Inspecting and reporting
 
@@ -60,7 +62,7 @@ hhemt run --system-config my_system.yaml --analysis-config my_analysis.yaml --dr
 
 ## Cleanup
 
-The commands below delete an analysis tree or the bookkeeping inside the tree. Each lists the deletion targets before deleting. The `cleanup-*` commands list by default and delete only with `--apply`. `delete` and `reset` take `--dry-run`.
+The commands delete an analysis tree or the bookkeeping inside the tree. Each lists the deletion targets before deleting. The `cleanup-*` commands list by default and delete only with `--apply`. `delete` and `reset` take `--dry-run`.
 
 | Command | Purpose |
 |---|---|
@@ -75,9 +77,9 @@ The commands below delete an analysis tree or the bookkeeping inside the tree. E
 
 | Command | Purpose |
 |---|---|
-| `cache` | Report the on-disk caches that the synthetic test tier reuses and the tier address that keys the caches. `cache status` prints each root with a presence flag and the address that this checkout resolves to. `cache clear` lists the roots that a clear would remove and removes them only with `--apply`. Without a permitted compile venue, `cache clear` leaves the compiled-build tier in place and exits `2`, because this machine is unable to rebuild the tier. See [Branching and release](../explanation/branching-and-release-model.md). |
+| `cache` | Report the on-disk caches that the synthetic test tier reuses and the tier address that keys the caches. `cache status` prints each root with a presence flag and the address that this checkout resolves to. `cache clear` lists the roots that a clear would remove and removes them only with `--apply`. Without a permitted compile venue, `cache clear` leaves the compiled-build tier in place and exits `2`, because the machine lacks the means to rebuild the tier. See [Branching and release](../explanation/branching-and-release-model.md). |
 | `synth-experiment` | Load-smoke a synthetic experiment by validating the config and building the matrix. An empty `dem_resolution_ladder` selects the compute-config matrix with the partition as an axis, and a set ladder selects the DEM-resolution matrix. `--dry-run` writes no file. Without the flag the command writes the matrix CSV and generates the synthetic model. See [Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md). |
-| `test` | Execute a test campaign against a chosen SUBJECT. The subject `toolkit` is the pytest suite of the toolkit as a scheduler array, described in the subsection below. The subject `analysis` is one end-to-end smoke test of YOUR experiment on the cluster of the experiment. Start the test with `hhemt test analysis --experiment {definition dir}`. `--cluster` is optional when the definition declares one cluster. `test analysis` submits real work, exits `3` when any representative reports failure, and takes no further subcommand. |
+| `test` | Execute a test campaign against a chosen SUBJECT. The subject `toolkit` is the pytest suite of the toolkit as a scheduler array, described in the `hhemt test toolkit` subsection. The subject `analysis` is one end-to-end smoke test of YOUR experiment on the cluster of the experiment. Start the test with `hhemt test analysis --experiment {definition dir}`. `--cluster` is optional when the definition declares one cluster. `test analysis` submits real work, exits `3` when any representative reports failure, and takes no further subcommand. |
 
 ??? note "The toolkit test suite as a scheduler array"
 
@@ -130,7 +132,7 @@ The verbs `reprocess`, `recompute-plan`, `check-invalidating-fixes`, and `delete
 
 A `10` means that the underlying exception had no mapped code. When a script targets a specific failure and receives `10`, open an issue on the repository with the command and the output.
 
-The codes of `run-experiment` cover the cases below.
+The codes of `run-experiment` cover the following cases.
 
 | Code | Cases for `run-experiment` |
 |---|---|

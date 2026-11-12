@@ -41,8 +41,8 @@ Run the command on the machine that will run the gate, immediately before submit
 [CLI reference](../reference/cli.md#development) describes the listing that the bare
 `hhemt cache clear` prints, the `--apply` flag, and the exit status.
 
-**The venue declaration is the other half.** A session that is unable to compile skips the compile tier
-and leaves the tier unfailed, and a skip is not a pass. The release gate needs both exports,
+**The venue declaration is the other half.** A session with no way to compile skips the compile tier
+and leaves the tier with no failure, and a skip is not a pass. The release gate needs both exports,
 `HHEMT_COMPILE_VENUE=toolchain` and `HHEMT_REQUIRE_COMPILE_TIER=1`.
 [Contributing](../contributing.md#workflow) lists the effect of each export and the conditions that make a run
 count as a gate result. [`hhemt test toolkit`](../reference/cli.md#hhemt-test-toolkit)
@@ -54,7 +54,9 @@ documents the record that a run leaves of the exports.
 A small set of tests declares a `skipif` on `on_scheduler_node()`, defined in `tests/utils_for_testing.py`.
 The function returns true whenever a scheduler job variable such as `SLURM_JOB_ID` is set. Every chunk of a
 harness array run is a SLURM job, so the gate fires inside the array. The array declines the test
-and attempts no run of the test, and a declined test is not a passed test. Membership is fixed at plan
+and attempts no run of the test, and a declined test is not a passed test.
+
+Membership is fixed at plan
 time. A test belongs to the set when any `skipif` reason that the test declares is a reason the
 aggregator lists as structural, `STRUCTURAL_SKIP_REASONS` in `src/hhemt/suite/aggregate.py`, even when a
 different gate is the gate pytest reports. Every run's `summary.md` reports the set in the section

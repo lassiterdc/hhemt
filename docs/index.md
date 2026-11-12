@@ -14,7 +14,7 @@ datasets and an interactive report.
 ## Highlights
 
 - **Open science.** [Bundles and publishing](how-to/publishing.md) package results with their metadata for deposit in Zenodo or HydroShare.
-- **Selective re-runs.** The Snakemake workflow manager [re-runs only the simulations whose inputs changed](how-to/forcing-reruns.md).
+- **Selective reruns.** The Snakemake workflow manager [reruns only the simulations whose inputs changed](how-to/forcing-reruns.md).
 - **Limited peak disk use.** The toolkit processes outputs as simulations finish, and the [`clear_raw` option](reference/config-schema.md) deletes the raw outputs afterward.
 - **Interactive reports.** The toolkit renders [a self-contained report](reference/example-report.md) for each completed analysis.
 - **Exploratory analysis.** The `hhemt eda` command [writes a Jupyter notebook](tutorials/exploratory-analysis.md) for continued work on a result.
@@ -49,7 +49,7 @@ Lassiter, D. (2026). H&H Ensemble Modeling Toolkit (hhemt) (Version 0.2.0)
 
 Zenodo issues a *concept* DOI and a *version* DOI. The concept DOI resolves to the
 newest release. A version DOI resolves to a single release permanently. Zenodo creates the
-version DOI after a release is published, so the citation above carries the concept DOI. To
+version DOI after a release is published, so the citation carries the concept DOI. To
 pin the exact version of a result, take the version DOI from the Zenodo record that the
 concept DOI resolves to. The DOI badge on the repository page and the "Cite this
 repository" button hand out the concept DOI. A consolidated output records the toolkit

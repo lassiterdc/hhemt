@@ -1,6 +1,6 @@
 # FAIR scope of an HHEMT reproducibility dataset
 
-FAIR applies as a continuum over the whole recreation set of inputs, configs, captured environment, provenance, and outputs. Outputs alone are not the scope. The **dataset** license, described below, is chosen separately from the software license. [The Home page](../index.md#license) states the license of the toolkit. The dataset has no license until you choose one, and publishing requires a license.
+FAIR applies as a continuum over the whole recreation set of inputs, configs, captured environment, provenance, and outputs. Outputs alone are not the scope. The **dataset** license is chosen separately from the software license. [The Home page](../index.md#license) states the license of the toolkit. The dataset has no license until you choose one, and publishing requires a license.
 
 | Artifact class | Findable | Accessible | Interoperable | Reusable |
 |---|---|---|---|---|
@@ -10,7 +10,7 @@ FAIR applies as a continuum over the whole recreation set of inputs, configs, ca
 | Provenance in RO-Crate and PROV | Embedded in the DataTree with a co-located sidecar | Deterministic JSON-LD | RO-Crate 1.2, PROV-O, CodeMeta, DataCite, and CF-1.13 | Reusable metadata |
 | Consolidated outputs as a zarr DataTree | DataCite DOI through `analysis.publish` | Published, version-pinned, and DOI-registered | Hierarchical zarr and CF-1.13 | Dataset license `rightsList` and `IsCompiledBy` → software |
 
-Choose the dataset license with `analysis_config.dataset_license`. The value is a Creative Commons SPDX identifier from `CC0-1.0`, `CC-BY-4.0`, `CC-BY-SA-4.0`, `CC-BY-NC-4.0`, `CC-BY-NC-SA-4.0`, `CC-BY-ND-4.0`, and `CC-BY-NC-ND-4.0`, and the field has no default. A configuration without the license loads, executes, and consolidates. `publish()` refuses to deposit until the license is set and the outputs are consolidated again. `CC0-1.0` waives copyright, database rights, and attribution, and the DOI, DataCite, and CITATION.cff carry citability. CC NonCommercial is broader than education-only use and applies to every reuser.
+Choose the dataset license with `analysis_config.dataset_license`. The value is a Creative Commons SPDX identifier from `CC0-1.0`, `CC-BY-4.0`, `CC-BY-SA-4.0`, `CC-BY-NC-4.0`, `CC-BY-NC-SA-4.0`, `CC-BY-ND-4.0`, and `CC-BY-NC-ND-4.0`, and the field has no default. A configuration without the license loads, executes, and consolidates. `publish()` refuses to deposit until the license is set and the outputs are consolidated again. `CC0-1.0` waives copyright, database rights, and attribution, and the DOI, DataCite, and CITATION.cff make the dataset citable. CC NonCommercial is broader than education-only use and applies to everyone who reuses the dataset.
 
 Set the license in the analysis config.
 

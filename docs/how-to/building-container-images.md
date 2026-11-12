@@ -40,7 +40,7 @@ The output is the identity table, with a row for each image that the experiment 
 
 ## Build
 
-Drop `--dry-run` to build. The options below shape the build.
+Drop `--dry-run` to build. The options shape the build.
 
 - `--only KEY` builds a subset. Take the KEY or a `FAMILY:HW` pair from the dry-run table.
 - `--force` rebuilds identities with an existing image. A rebuild replaces an image only on success, so a failed rebuild leaves the working image in place.

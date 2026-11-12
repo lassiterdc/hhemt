@@ -19,7 +19,7 @@ would let contributors running a single recipe gate on different sets of tests.
 
 ## Markers and the fast tier
 
-The markers below classify a test:
+The markers classify a test:
 
 - `compile_tier` marks a test that compiles the solver or runs a simulation. Collection
   derives the marker from the fixture closure. A test that compiles directly in the body
@@ -41,7 +41,7 @@ command directly.
 The tier needs no solver. A test that needs a finished analysis tree starts from a
 committed golden tree and reprocesses that tree. The golden tree is a small finished
 analysis that a generator builds. The tests that build a private tree of their own form a
-committed, reviewed list, and a test compares the list with the census of build requests,
+committed, reviewed list. A test compares the list with the census of build requests,
 so a new test of that class fails the comparison until the list names the test.
 
 ## The compile tier and the venue
@@ -74,7 +74,9 @@ commit identity, so a commit that edits none of the files leaves the term unchan
 goes red on such a run may show a regression, or the red may come from the rebuild that ran
 underneath the test, and the run separates neither case because the rebuild is silent.
 Run the test a second time at the same provenance before treating a new red as a
-regression. The triggers are any edit to a Python file under `src/hhemt/`, any edit to a
+regression.
+
+The triggers are any edit to a Python file under `src/hhemt/`, any edit to a
 builder source, and anything that relocates the analysis tree, such as the component split
 of the array suite. The [CLI reference](../reference/cli.md#hhemt-test-toolkit) covers
 the component split. Relocation turns a single shared fixture build into one build per relocated part.
@@ -89,11 +91,11 @@ build the solver and refuses to execute a simulation unless the session declares
 permitted *venue*.
 
 The guard exists because building the solver and executing a simulation reach
-outside the process, and a machine that is unable to support them fails in ways that read
+outside the process, and a machine that lacks support for them fails in ways that read
 as test failures and hide the environment problem. Declaring a venue makes the
 requirement explicit at the point of binding.
 
-The token relaxes and never arms. Absent, misspelt, or unrecognised, the token lands on the
+The token relaxes and never arms. Absent, misspelled, or unrecognised, the token lands on the
 safe side at both places that read the token, so a typo tightens the guard and never
 disables the guard. A guard whose failure mode is silent
 permission is worse than no guard, because the guard reports success from a machine that
@@ -110,7 +112,7 @@ nobody runs the tier, and a gate that nobody runs becomes a formality. Chunking 
 across a scheduler array converts waiting time into a scheduling problem.
 
 Chunking changes how results are read. Each chunk reports a separate outcome, so a verdict for
-the suite is a computation over chunks and no longer a single exit code. The computation
+the suite is a computation over chunks and not a single exit code. The computation
 accounts for chunks that never reported. Aggregation is therefore a separate step with a
 separate output, and the last chunk skips the aggregation on the way out.
 
@@ -119,12 +121,12 @@ separate output, and the last chunk skips the aggregation on the way out.
 The harness records the coverage of a run in a `scope` token, and results from different scopes
 support different claims.
 
-- `scope=array` is the array alone. A set of tests is structurally unable to evaluate inside a
+- `scope=array` is the array alone. A set of tests structurally has no way to evaluate inside a
   scheduler allocation, so an array run covers that complement not at all.
 - `scope=union` is the array plus the complement, and only that scope supports a claim
   about the suite.
 
-A triage run is narrower than both scopes. The triage re-runs the failing and unevaluated
+A triage run is narrower than both scopes. The triage reruns the failing and unevaluated
 set of the previous run, so a green triage covers only the selected tests and the tests the
 triage left out stay unevaluated. The toolkit enforces the distinction in the
 filenames the toolkit writes and trusts no reader to remember the distinction. The

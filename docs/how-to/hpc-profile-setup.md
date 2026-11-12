@@ -11,14 +11,14 @@ Write an HPC system profile that describes one cluster, and point an analysis at
 
 ## Key references
 
-- [Configuration schema](../reference/config-schema.md#hpc-system-config) gives the meaning, type, and requiredness of every field. The schema derives from the models themselves, so the schema stays current.
+- [Configuration schema](../reference/config-schema.md#hpc-system-config) gives the meaning, the type, and whether each field is required. The schema derives from the models themselves, so the schema stays current.
 - [Config filling](config-filling.md) describes the path through the system, analysis, and HPC configs.
 - [Building container images](building-container-images.md) covers the images for container mode.
 - [Compile the solver](compiling-the-solver.md) covers the build for a partition.
 
 ## Start from a working profile
 
-Below is an example HPC profile. The profile shows every accepted field. The optional fields that the example cluster leaves unused carry their default values. Anonymized versions of the profile and of an AMD-GPU counterpart are in [`test_data/norfolk_coastal_flooding/`](https://github.com/lassiterdc/hhemt/tree/main/test_data/norfolk_coastal_flooding) on the repository. Where a repository file and this page differ, this page is current.
+An example HPC profile follows. The profile shows every accepted field. The optional fields that the example cluster leaves unused carry their default values. Anonymized versions of the profile and of an AMD-GPU counterpart are in [`test_data/norfolk_coastal_flooding/`](https://github.com/lassiterdc/hhemt/tree/main/test_data/norfolk_coastal_flooding) on the repository. Where a repository file and this page differ, this page is current.
 
 ```yaml
 hpc_name: uva_rivanna
@@ -79,7 +79,7 @@ executor_profile_extras: {}            # advanced escape hatch; leave empty
 
 ### Required changes
 
-Change the values marked `CHANGE THIS` above.
+Change the values marked `CHANGE THIS`.
 
 - **`default_account`** is your SLURM account. The account is charged for every job that the toolkit submits.
 - **`container.sif_root`** is the directory that `hhemt build-sifs` writes into and the only place where the toolkit looks for an image, resolved by identity. The field matters only with `execution_environment: container` on the analysis config. A native analysis ignores the whole `container:` block, so you can leave the block untouched.
@@ -123,10 +123,10 @@ On `/scratch` of the example cluster the command reported 13.19 TB total. The va
 
 ## Choose a partition
 
-Pick a partition name on your **analysis** config. Use `hpc_ensemble_partition` for the simulations and `hpc_setup_and_analysis_processing_partition` for setup and post-processing. The name must be a key under `partitions:` in the profile. The profile above offers `standard`, `gpu-a6000`, and `gpu-a100-80`.
+Pick a partition name on your **analysis** config. Use `hpc_ensemble_partition` for the simulations and `hpc_setup_and_analysis_processing_partition` for setup and post-processing. The name must be a key under `partitions:` in the profile. The example profile offers `standard`, `gpu-a6000`, and `gpu-a100-80`.
 
 !!! warning "GPU hardware derives from the partition"
-    You set no `gpu_hardware` on the analysis config. The partition you choose determines the GPU architecture that the solver is compiled for and the GPU backend that builds the solver, because the toolkit reads `gpu_hardware` and `gpu_compilation_backend` from the entry of that partition above.
+    You set no `gpu_hardware` on the analysis config. The partition you choose determines the GPU architecture that the solver is compiled for and the GPU backend that builds the solver, because the toolkit reads `gpu_hardware` and `gpu_compilation_backend` from the entry of that partition.
 
     The GPU partitions in the profile differ only in hardware values for this reason, and selecting `gpu-a100-80` in place of `gpu-a6000` changes the GPU hardware of an analysis.
 
@@ -136,8 +136,8 @@ Compile the solver for a partition before the first analysis on the partition. [
 
 A profile for an AMD-GPU cluster uses the same schema with different values.
 
-??? example "AMD-GPU profile compared with the UVA profile above"
-    Apart from `hpc_name`, the top-level fields below differ.
+??? example "AMD-GPU profile compared with the UVA profile"
+    Apart from `hpc_name`, the top-level fields differ as follows.
 
     | Field | UVA Rivanna | OLCF Frontier |
     |---|---|---|

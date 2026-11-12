@@ -79,7 +79,7 @@ def code_rerun_triggers(workflow_src: str) -> set[str]:
 
 def check_rerun_page(page_text: str, triggers: set[str]) -> list[str]:
     """Problems: a trigger the code sets and the page omits, or a trigger the page names and the code omits."""
-    named = spans(section_of(page_text, "Re-run triggers"))
+    named = spans(section_of(page_text, "Rerun triggers"))
     problems = [f"trigger {t} is set in code and not named on the page" for t in sorted(triggers - named)]
     problems += [
         f"{t} is named on the page and is not a trigger in code" for t in sorted((_ALL_TRIGGERS - triggers) & named)

@@ -25,9 +25,9 @@ swmm_coupling_mode: list
 swmm_coupling_nodes_file: swmm_coupling_nodes.txt
 ```
 
-**The candidates of the opt-in mode** follow the SWMM reading of an inflow line. A line names a FLOW inflow when the line holds at least a node, a constituent, and a time series, and the constituent is no name in `[POLLUTANTS]` and begins with `FLOW`, ignoring the case of ASCII letters. A node with only a pollutant inflow line is therefore no candidate, because SWMM gives the node no water inflow. Under `list` or `all_junctions` the toolkit reads `[INFLOWS]` for the undefined-node check below and for no other purpose, so no inflow line adds, removes, or reorders a candidate.
+**The candidates of the opt-in mode** follow the SWMM reading of an inflow line. A line names a FLOW inflow when the line holds at least a node, a constituent, and a time series, and the constituent is no name in `[POLLUTANTS]` and begins with `FLOW`, ignoring the case of ASCII letters. A node with only a pollutant inflow line is therefore no candidate, because SWMM gives the node no water inflow. Under `list` or `all_junctions` the toolkit reads `[INFLOWS]` for the undefined-node check and for no other purpose, so no inflow line adds, removes, or reorders a candidate.
 
-Only the coupled model reads the list. A system with the coupled model off, `toggle_tritonswmm_model: false`, selects no coupling nodes and writes no list. The coupling checks made before submission skip that system. The undefined-inflow-node check below still reads the standalone `SWMM_full` model when that model is on. Of the declaration, only the config-load rule on `swmm_coupling_nodes_file` above still applies.
+Only the coupled model reads the list. A system with the coupled model off, `toggle_tritonswmm_model: false`, selects no coupling nodes and writes no list. The coupling checks made before submission skip that system. The undefined-inflow-node check still reads the standalone `SWMM_full` model when that model is on. Of the declaration, only the config-load rule on `swmm_coupling_nodes_file` above still applies.
 
 ## Coupled node types
 
@@ -46,14 +46,14 @@ A candidate of an uncoupled type keeps the place in the pipe network and the inf
 
 ## One node per DEM cell with the opt-in mode
 
-Setting `one_coupled_inflow_node_per_dem_cell: true` in the analysis config limits each DEM cell to one coupled junction. The option applies only to the opt-in mode. Under `list` or `all_junctions` the declaration is the coupled set, so the combination is refused before any job is submitted. In each cell with several candidate junctions the toolkit keeps one junction by the rules below.
+Setting `one_coupled_inflow_node_per_dem_cell: true` in the analysis config limits each DEM cell to one coupled junction. The option applies only to the opt-in mode. Under `list` or `all_junctions` the declaration is the coupled set, so the combination is refused before any job is submitted. In each cell with several candidate junctions the toolkit keeps one junction by the following rules.
 
 1. **Largest pipe first.** The toolkit ranks each junction by the largest flow area among the outgoing conduits, orifices, and weirs of the junction. A junction without such an outgoing link ranks by the largest incoming link, the pipe that the junction drains through by reverse flow. A junction with neither ranks last. Pumps and outlets carry no cross-section and never serve for ranking.
 2. **Ties go to the exit of the cell.** When junctions share the largest key, the toolkit keeps the junction of the cell whose outgoing link leaves the cell, then the junction with the lowest invert, then the first junction. The choice covers all junctions of the cell, so a tie can hand the cell to the exit junction even when the pipe of the exit junction is smaller.
 
 A junction that the ranking drops is left off the coupling list, and the inflow lines of the junction stay in the model.
 
-The flow areas are the full areas that SWMM uses for each cross-section shape, computed by `calc_area` in `src/hhemt/scenario.py`. **Additional pipe shapes can be added there.** Size-coded horizontal ellipses and arches have a first dimension that is a standard-size code and no length, and the toolkit treats the shapes as unsizable.
+The flow areas are the full areas that SWMM uses for each cross-section shape, computed by `calc_area` in `src/hhemt/scenario.py`. **Additional pipe shapes can be added there.** Size-coded horizontal ellipses and arches have a first dimension that is a standard-size code and no length, and the toolkit computes no area for the shapes.
 
 The pipe-size key sometimes misses the manhole that would overflow first. On the reference model of the toolkit, `test_data/TRITON_SWMM_test_model`, and on no other measured model, the key kept a manhole other than the lowest-rimmed manhole in some of the cells that the key decided without a tie. Within one cell every manhole sits under one ground elevation, so a rim difference there is a difference in recorded manhole depths. An uncoupled manhole that fills to the rim keeps the excess inside SWMM and spills no water onto the surface.
 
@@ -65,6 +65,6 @@ TRITON-SWMM takes the rim of a coupled node from the depth that SWMM uses for th
 
 Setting `swmm_node_rim_from_dem: true` in the analysis configuration takes the rim of each coupled node from the DEM. The rim is the elevation of the grid cell of the node minus the invert of the node. The option is off by default.
 
-The conversion of the surface hydrographs to cubic meters per second starts from the flow unit of the hydrology model and finishes before TRITON reads the hydrographs, so the runoff of an `LPS` or `MLD` model reaches the surface in the right units. The per-node inflow record beside the hydrographs is converted the same way and names the unit that the conversion started from. The hydrology model declares `CMS`, `LPS`, or `MLD`. Scenario preparation refuses `CFS`, `GPM`, and `MGD`, and counts a model with no `FLOW_UNITS` line as `CFS`.
+The conversion of the surface hydrographs to cubic meters per second starts from the flow unit of the hydrology model and finishes before TRITON reads the hydrographs. The runoff of an `LPS` or `MLD` model therefore reaches the surface in the right units. The per-node inflow record beside the hydrographs is converted the same way and names the unit that the conversion started from. The hydrology model declares `CMS`, `LPS`, or `MLD`. Scenario preparation refuses `CFS`, `GPM`, and `MGD`, and counts a model with no `FLOW_UNITS` line as `CFS`.
 
 The hydraulics model and the standalone model must use `CMS`. The toolkit reads their flows from the SWMM report and output files as cubic meters per second without conversion. SWMM writes the files in the unit of the model, so a model in `LPS` would be read 1000 times too large and a model in `MLD` 86.4 times too large. The toolkit reads a `FLOW_UNITS` value the way SWMM reads the value. The last line that carries a value wins, and the first letters match the unit word.

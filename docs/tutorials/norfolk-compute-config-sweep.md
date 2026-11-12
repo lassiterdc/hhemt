@@ -2,7 +2,7 @@
 
 ## Key result
 
-[Read the full benchmarking report](../reference/bundles/norfolk-compute-config-sweep-report.html). The **Benchmarking** page of the report holds the figure below, drawn against total devices.
+[Read the full benchmarking report](../reference/bundles/norfolk-compute-config-sweep-report.html). The **Benchmarking** page of the report holds the figure that follows, drawn against total devices.
 
 ![Wall-clock time, compute cost, speedup, and efficiency against total devices for every compute configuration of the Norfolk experiment](assets/compute-configurations-key-result.png)
 
@@ -47,7 +47,7 @@ member_id,analysis.run_mode,analysis.n_nodes,analysis.n_mpi_procs,analysis.n_omp
 9,hybrid,1,8,2,0,2,360
 ```
 
-The loader reads a column in one of the forms below and refuses any column in another form, naming the offending columns and the accepted forms.
+The loader reads a column in one of the following forms and refuses any column in another form, naming the offending columns and the accepted forms.
 
 | Column form | Example | Meaning |
 |---|---|---|
@@ -226,5 +226,5 @@ hhemt combine benchmarking_second_amd/render_bundle/*.zip \
 
 - [Reporting sets](../reference/reporting-sets.md) lists the renderers that `benchmarking` bundles and the steps to add the compute-sensitivity figures.
 - [Running a synthetic compute-sensitivity experiment](../how-to/synthetic-compute-sensitivity-experiment.md) runs the same experiment on a generated model, for characterizing a cluster without staged case-study data.
-- [Configuration schema](../reference/config-schema.md) lists every field in the blocks above and the fields each dispatch mode adds.
+- [Configuration schema](../reference/config-schema.md) lists every field in the blocks and the fields each dispatch mode adds.
 - [Running a simulation interactively in Python](interactive-python.ipynb) lists the compute configurations and the dispatch calls.

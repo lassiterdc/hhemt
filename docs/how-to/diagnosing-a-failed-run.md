@@ -2,7 +2,7 @@
 
 ## Goal
 
-Name the phase that failed, the artifact that shows the failure, and whether the raw outputs needed to retry still exist. The steps below narrow the search and re-run no step.
+Name the phase that failed, the artifact that shows the failure, and whether the raw outputs needed to retry still exist. The steps narrow the search and rerun no step.
 
 ## Prerequisites
 
@@ -11,7 +11,7 @@ Name the phase that failed, the artifact that shows the failure, and whether the
 ## Key references
 
 - [Operating on an analysis while jobs are in flight](in-flight-operations.md) describes the operations that leave running jobs in place.
-- [Rerun triggers](../reference/rerun-triggers.md) explains the re-run triggers.
+- [Rerun triggers](../reference/rerun-triggers.md) explains the rerun triggers.
 - The [CLI reference](../reference/cli.md) lists the commands and exit codes.
 
 ## Symptom index
@@ -24,7 +24,7 @@ Start from the symptom you have. When no entry matches or the information to pic
 | [Setup says a model is enabled but not compiled](#setup-says-a-model-is-enabled-but-not-compiled) | Native mode needs a one-time compile, and the machine has no build |
 | [The job died at walltime](#the-job-died-at-walltime) | Expected, and the job resumes from the last checkpoint |
 | [The report is wrong but the results are fine](#the-report-is-wrong-but-the-results-are-fine) | The simulations are sound, and the stages after them need rebuilding |
-| [A resumed analysis that I expected to be a no-op re-executed everything](#a-resumed-analysis-that-i-expected-to-be-a-no-op-re-executed-everything) | A re-run trigger fired and no failure occurred |
+| [A resumed analysis that I expected to be a no-op re-executed everything](#a-resumed-analysis-that-i-expected-to-be-a-no-op-re-executed-everything) | A rerun trigger fired and no failure occurred |
 | [Results look wrong and the cause is unknown](#results-look-wrong-and-the-cause-is-unknown) | Possibly a known bug and no configuration error |
 
 !!! warning "A green exit is not evidence of success"
@@ -47,7 +47,7 @@ The status flags hold the same information on the filesystem.
 ls analysis_dir/_status/
 ```
 
-The table below lists the phases in execution order. The leading letter encodes the order with one exception. The flag `f_consolidate_scenario_evt-*` runs before `e_consolidate_*` and sorts after that rung. Read progress down the table and never down a sorted listing.
+The table lists the phases in execution order. The leading letter encodes the order with one exception. The flag `f_consolidate_scenario_evt-*` runs before `e_consolidate_*` and sorts after that rung. Read progress down the table and never down a sorted listing.
 
 | Prefix | Phase |
 |---|---|
@@ -61,7 +61,7 @@ The table below lists the phases in execution order. The leading letter encodes 
 
 **The last rung present, reading down the table, is the phase that completed, and the failure is in the next rung down.** Each flag has a `.flag.json` sidecar that names the rule, model type, member, and event of the flag.
 
-A cold-cache failure shows as a missing `a_setup_*` flag, with the uncompiled model named in `logs/setup.log`, or in `logs/setup_target_{N}.log` on an experiment. In native mode the setup rule checks that every enabled solver is compiled, and a container ships the solver inside the image. [Compile the solver](compiling-the-solver.md#compilation-as-a-separate-step) describes the compile.
+A cold-cache failure shows as a missing `a_setup_*` flag, with the model that is not compiled named in `logs/setup.log`, or in `logs/setup_target_{N}.log` on an experiment. In native mode the setup rule checks that every enabled solver is compiled, and a container ships the solver inside the image. [Compile the solver](compiling-the-solver.md#compilation-as-a-separate-step) describes the compile.
 
 ## 2. Read the log for the phase that did not complete
 
@@ -92,7 +92,7 @@ When no `c_run_*` flag exists in `analysis_dir/_status/`, the simulation never s
 
 ### Setup says a model is enabled but not compiled
 
-No `a_setup_*` flag exists, and `logs/setup.log`, or `logs/setup_target_{N}.log` on an experiment, ends with a line of the form below.
+No `a_setup_*` flag exists, and `logs/setup.log`, or `logs/setup_target_{N}.log` on an experiment, ends with a line of this form.
 
 ```text
 TRITON-SWMM is enabled but not compiled and --compile-triton-swmm not specified
@@ -109,11 +109,11 @@ Raise the simulation retry count in place of the walltime when checkpoints are f
 
 ### The report is wrong but the results are fine
 
-Avoid a re-run. Use `reprocess` to repeat processing, consolidation, and rendering against the existing simulation outputs.
+Avoid a rerun. Use `reprocess` to repeat processing, consolidation, and rendering against the existing simulation outputs.
 
 ### A resumed analysis that I expected to be a no-op re-executed everything
 
-A re-run trigger fired and no failure occurred. [Rerun triggers](../reference/rerun-triggers.md) explains the triggers.
+A rerun trigger fired and no failure occurred. [Rerun triggers](../reference/rerun-triggers.md) explains the triggers.
 
 ### Results look wrong and the cause is unknown
 
@@ -127,13 +127,13 @@ The CLI uses one structured exit code per failure class. The [CLI reference](../
 
 A rendered report carries an **Errors and Warnings** section, and [The interactive analysis report](../reference/example-report.md#sidebar-sections) lists the contents. On an analysis that completed far enough to render, read the section before the logs, because the section holds the same information, already triaged.
 
-## Before you re-run
+## Before you rerun
 
-Re-running a whole analysis to fix a downstream problem is the most common expensive mistake. The options below run in increasing order of cost.
+Re-running a whole analysis to fix a downstream problem is the most common expensive mistake. The options run in increasing order of cost.
 
 1. `hhemt reprocess --start-with render` when the report is wrong and the data is fine.
 2. `hhemt reprocess --start-with consolidate` or `process` when processing or consolidation is wrong and the simulations are fine.
-3. `hhemt run` with `--override-force-rerun` scoped to the work that needs a re-run.
-4. A full re-run.
+3. `hhemt run` with `--override-force-rerun` scoped to the work that needs a rerun.
+4. A full rerun.
 
-Scope option 3 as [Forcing and suppressing re-runs](forcing-reruns.md) describes.
+Scope option 3 as [Forcing and suppressing reruns](forcing-reruns.md) describes.

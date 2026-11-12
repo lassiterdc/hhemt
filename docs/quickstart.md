@@ -50,7 +50,7 @@ local_cpu_cores_for_workflow: 4
 The [interactive Python tutorial](tutorials/interactive-python.ipynb) explains each call, including why the compile line comes before the first `run()` on every machine.
 
 For configs you author yourself, set `hhemt_sha` in `analysis.yaml` to the value that
-the snippet above passes. [Config filling](how-to/config-filling.md#4-point-the-analysis-config-at-your-events)
+the snippet passes. [Config filling](how-to/config-filling.md#4-point-the-analysis-config-at-your-events)
 states the value.
 
 ```python

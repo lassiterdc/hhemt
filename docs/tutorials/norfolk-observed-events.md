@@ -2,13 +2,13 @@
 
 ## Key result
 
-[Read the full report](../reference/bundles/norfolk-observed-events-report.html). The figure below is the TRITON-SWMM result for Hurricane Irene from the **Per Simulation Results** pages of that report.
+[Read the full report](../reference/bundles/norfolk-observed-events-report.html). The figure is the TRITON-SWMM result for Hurricane Irene from the **Per Simulation Results** pages of that report.
 
 ![Peak flood depth, water surface elevation, rainfall, and boundary water level of the TRITON-SWMM simulation of Hurricane Irene](assets/observed-events-irene-result.png)
 
 ## The ensemble
 
-An **observed-event ensemble** simulates storms that happened, driven by the measured rainfall and water level of each storm. The ensemble simulates the observed events below on the Norfolk, VA case study at a 3.5 m grid, each with the TRITON-SWMM, TRITON, and SWMM models. The status export lists a row per event and model. The ensemble demonstrates the output and gives no hazard estimate for the storms.
+An **observed-event ensemble** simulates storms that happened, driven by the measured rainfall and water level of each storm. The ensemble simulates the observed events on the Norfolk, VA case study at a 3.5 m grid, each with the TRITON-SWMM, TRITON, and SWMM models. The status export lists a row per event and model. The ensemble demonstrates the output and gives no hazard estimate for the storms.
 
 The ensemble ran natively without a container on a CPU partition of a university cluster, with every simulation on one node. Any machine with the compiled solver runs the same definition, and only the dispatch fields of the analysis config change.
 
@@ -25,7 +25,7 @@ The events come from a subset of the observed-event index, the table of every st
 | Hurricane Matthew | 2016-10-08 08:04 to 2016-10-09 18:12 | compound | [nnva.gov storm surge page](https://www.nnva.gov/3052/Storm-Surge) |
 | Hurricane Dorian | 2019-09-06 07:46 to 2019-09-07 04:54 | surge | [pilotonline.com, 6 September 2019](https://www.pilotonline.com/2019/09/06/hampton-roads-ducked-the-worst-of-hurricane-dorian/) |
 
-The event type is the classification of the observed-event index. All events are compound except the last, a surge event. The rows follow date order, the order of the event pages of the report. The report labels each event from the event index, so read the attribution and source of each event from the table above. The Isabel source covers the storm, the place in Hampton Roads, and the year. The Hermine source covers the storm, the place, and the days inside the simulation window on Friday 2 and Saturday 3 September 2016. Neither source gives the bounds of the window.
+The event type is the classification of the observed-event index. All events are compound except the last, a surge event. The rows follow date order, the order of the event pages of the report. The report labels each event from the event index, so read the attribution and source of each event from the table. The Isabel source covers the storm, the place in Hampton Roads, and the year. The Hermine source covers the storm, the place, and the days inside the simulation window on Friday 2 and Saturday 3 September 2016. Neither source gives the bounds of the window.
 
 ## The config
 
@@ -51,7 +51,7 @@ multi_sim_run_method: batch_job
 execution_environment: native
 ```
 
-`run_mode: hybrid` with 4 MPI ranks of 2 OpenMP threads gives each simulation 8 cores on one node, and `multi_sim_run_method: batch_job` submits each simulation as a separate job. The ensemble used the 4 rank by 2 thread split, and the split carries no recommendation. The [compute-configuration sweep](norfolk-compute-config-sweep.md) ranks that split last among the 8-core splits the sweep tried, at 1.331 hours against 0.999 for 8 OpenMP threads in a single simulation each. The subset file is a table with a row per event and the columns below.
+`run_mode: hybrid` with 4 MPI ranks of 2 OpenMP threads gives each simulation 8 cores on one node, and `multi_sim_run_method: batch_job` submits each simulation as a separate job. The ensemble used the 4 rank by 2 thread split, and the split carries no recommendation. The [compute-configuration sweep](norfolk-compute-config-sweep.md) ranks that split last among the 8-core splits the sweep tried, at 1.331 hours against 0.999 for 8 OpenMP threads in a single simulation each. The subset file is a table with a row per event and the following columns.
 
 ```text
 year,event_type,event_id,event_start,event_end,description,event_label

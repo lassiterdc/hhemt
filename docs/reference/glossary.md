@@ -12,7 +12,7 @@ A set of [experiments](#experiment). The experiments of a matrix differ in the c
 
 ### experiment
 
-One or more [analyses](#analysis). The name covers the objects below.
+One or more [analyses](#analysis). The name covers the following objects.
 
 - An **experiment definition** is a directory holding an `experiment.yaml` descriptor. The descriptor points to the system config and the analysis config of the experiment. The descriptor records the input datasets, the toolkit version of the pin, and whether the experiment runs in a container. The schema is `ExperimentConfig`. See [Running an experiment definition](../how-to/running-an-experiment-definition.md).
 - A **case-study experiment** is the object that `NorfolkIreneExperiment.load` and `TRITON_SWMM_experiment.from_case_study` return. The object holds a system as `.system` and an analysis as `.analysis`, built from a [case study](#case-study).
@@ -108,7 +108,7 @@ A small JSON file under the `_status/` directory of an analysis that marks work 
 
 ### hotstart
 
-A restart of a TRITON simulation from an earlier checkpoint. [Scale and hardware](../explanation/limitations.md#scale-and-hardware) covers a simulation that a wall-time limit stops.
+A restart of a TRITON simulation from an earlier checkpoint. [Scale and hardware](../explanation/limitations.md#scale-and-hardware) covers a simulation that a walltime limit stops.
 
 ### Snakemake
 

@@ -95,7 +95,7 @@ eda:
     - dem_resolution_coupling_table
 ```
 
-The table below lists the registered plots. The table derives from the renderer registry at documentation build time.
+The table lists the registered plots. The table derives from the renderer registry at documentation build time.
 
 <!-- hhemt:eda-kind-table -->
 

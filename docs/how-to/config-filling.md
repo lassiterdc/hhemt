@@ -19,7 +19,7 @@ Produce a working system config and analysis config for your own study area, and
 
 Start from the [system config template](https://github.com/lassiterdc/hhemt/blob/main/test_data/norfolk_coastal_flooding/template_system_config.yaml) and the [analysis config template](https://github.com/lassiterdc/hhemt/blob/main/test_data/norfolk_coastal_flooding/template_analysis_config.yaml) on the repository. Save each template as a file of your own, such as `my_system.yaml` and `my_analysis.yaml`.
 
-The templates define a serial, local configuration. The steps below replace a placeholder path, set a value only you know for your study area, or opt into a feature that the default leaves off.
+The templates define a serial, local configuration. The steps replace a placeholder path, set a value only you know for your study area, or opt into a feature that the default leaves off.
 
 ## 2. Point the system config at your data
 
@@ -31,7 +31,7 @@ A DEM with burned-in sentinel elevations for buildings or for the area outside t
 
 ## 3. Resolve the toggles
 
-Each toggle that you flip makes other fields required. Set the toggles first and then fill the fields that they demand. The [toggle-dependency table](../reference/config-schema.md#toggle-dependent-required-fields) lists each pairing. The common pairings are below.
+Each toggle that you flip makes other fields required. Set the toggles first and then fill the fields that they demand. The [toggle-dependency table](../reference/config-schema.md#toggle-dependent-required-fields) lists each pairing. The common pairings follow.
 
 - A landuse raster for Manning's *n* in place of a constant requires the lookup file, the raster, and the column names that the schema lists.
 - SWMM for hydrology requires the hydrology `.inp` and a subcatchment-to-raingage mapping.
@@ -65,7 +65,7 @@ Author the HPC system config as [HPC-profile setup](hpc-profile-setup.md) descri
 
 ## 6. Verify before you commit compute
 
-A dry run checks every step above in seconds and submits no job.
+A dry run checks every step in seconds and submits no job.
 
 ```bash
 hhemt run --system-config my_system.yaml --analysis-config my_analysis.yaml --dry-run
