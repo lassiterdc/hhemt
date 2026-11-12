@@ -16,13 +16,23 @@ import sys
 PAGES = ("docs", "README.md")
 
 
+def tracked_pages() -> list[str]:
+    """The Markdown pages under `PAGES` that git tracks.
+
+    The documentation build writes generated pages into `docs/` (they are gitignored), so Vale is given the tracked
+    files and not the directory.
+    """
+    listed = subprocess.run(["git", "ls-files", "-z", *PAGES], capture_output=True, text=True, check=True).stdout
+    return sorted(path for path in listed.split("\0") if path.endswith(".md"))
+
+
 def main() -> int:
     vale = shutil.which("vale")
     if vale is None:
         print("check_vale.py: `vale` is not on PATH; run `pip install vale`.", file=sys.stderr)
         return 2
     run = subprocess.run(
-        [vale, "--config=.vale.ini", "--output=JSON", *PAGES],
+        [vale, "--config=.vale.ini", "--output=JSON", *tracked_pages()],
         capture_output=True,
         text=True,
         check=False,
