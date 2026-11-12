@@ -127,9 +127,9 @@ The source is the group `triton` of `tritonswmm` and of `triton_only` in `assets
 
 Each member of the step has a calculation half and a figure half that fail independently. The calculation reads the analysis, writes a backing dataset under `eda/`, and returns a verdict. The verdict merges into `validation_report.json` and appears under Errors and Warnings in the report. The figure reads the backing dataset only. A calculation that finds no applicable data writes no dataset and records a not-applicable verdict, and the figure is skipped, so a missing result never appears as an empty figure.
 
-The step writes figures to `plots/eda/` for each calculation that wrote a backing dataset, and an event ensemble has none. A [reporting set](../reference/reporting-sets.md) decides whether `analysis_report.html` shows them. The sets `compute_sensitivity`, `dem_resolution` and `compute_config_byte_identity` carry the exploratory adapter, and [Sensitivity-analysis sets](../reference/reporting-sets.md#sensitivity-analysis-sets) states the result of selecting one for an analysis of another shape.
+The step writes figures to `plots/eda/` for each calculation that wrote a backing dataset, and an event ensemble has none. A [reporting set](../reference/reporting-sets.md) decides whether `analysis_report.html` shows them. The sets `compute_sensitivity`, `dem_resolution`, and `compute_config_byte_identity` carry the exploratory adapter, and [Sensitivity-analysis sets](../reference/reporting-sets.md#sensitivity-analysis-sets) states the result of selecting such a set for an analysis of another shape.
 
-A verdict reports whether the comparison found a difference and the size of the difference at a stated detection floor. The reader decides whether that difference matters. [`hhemt combine`](../how-to/combining-experiments.md) compares finished experiments with each other.
+A verdict reports a difference or none, with the size of the difference at a stated detection floor. The reader decides whether that difference matters. [`hhemt combine`](../how-to/combining-experiments.md) compares finished experiments with each other.
 
 ## Next steps
 

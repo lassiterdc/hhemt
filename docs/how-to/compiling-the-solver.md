@@ -77,7 +77,7 @@ The check of an analysis reads the log that the build left in the build director
 
 - **You changed `TRITONSWMM_branch_key`.** Remove the clone at `TRITONSWMM_software_directory` and compile again. The build directories live inside the clone. A compile refuses to proceed while the checkout of the clone disagrees with the pin, and the message names the directory to remove.
 - **You changed `TRITONSWMM_git_URL`.** Remove the clone the same way. No check compares the remote of the clone against the config, so a clone from the old URL with a checkout that matches the pin is reused silently.
-- **You will submit to a GPU partition with a `gpu_hardware` you have no build for.** Compile with that partition as `--target-partition`. The new build lands in a separate directory, and the existing builds stay untouched.
+- **You will submit to a GPU partition whose `gpu_hardware` has no build.** Compile with that partition as `--target-partition`. The new build lands in a separate directory, and the existing builds stay untouched.
 - **You want an existing backend rebuilt** after a change to the modules that the profile loads, or because a build is suspect. Pass `--recompile-if-already-done` to the command.
 
 No other change calls for a rebuild. Updating hhemt, changing `execution_mode` or `multi_sim_run_method`, editing the analysis config, and `hhemt run --from-scratch` all leave the build in place. `--from-scratch` clears the analysis directory. The build lives under the software directory.

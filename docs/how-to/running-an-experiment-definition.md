@@ -87,7 +87,7 @@ hhemt run-experiment --experiment experiments/my_experiment --cluster uva --mode
 
 The wipe guard refuses `--mode fresh` with exit 2 when the analysis directory still holds completed simulations marked by `_status/c_run_*.flag` files, consolidated output, in-flight submission sentinels under `_status/_submitted` or `_status/_queued`, or an orchestrator sentinel under `_status/_orchestrator`. The refusal names the finding of the guard. `hhemt run --from-scratch` applies the same guard and raises `ConfigurationError`. Pass `--override-wipe-nonempty` to delete the work on purpose.
 
-`--override-wipe-nonempty` differs from `--yes`. `--yes` accepts the descriptor-override table, described under [The override gate](#the-override-gate), and authorizes no deletion. `--override-wipe-nonempty` authorizes the deletion and accepts no override. To remove an analysis, use `hhemt delete`, as [Add scenarios or events to a running sweep](forcing-reruns.md#add-scenarios-or-events-to-a-running-sweep) notes.
+`--override-wipe-nonempty` differs from `--yes`. `--yes` accepts the descriptor-override table, described under [The override gate](#the-override-gate), and authorizes no deletion. `--override-wipe-nonempty` authorizes the deletion and accepts no override. To remove an analysis, use `hhemt delete`, as noted in [Add scenarios or events to a running sweep](forcing-reruns.md#add-scenarios-or-events-to-a-running-sweep).
 
 Keep `--mode resume` and pass `--override-force-rerun` to re-run completed scenarios without deleting any file. [Forcing and suppressing re-runs](forcing-reruns.md#force-a-full-re-run-of-specific-scenarios) lists the accepted values and the stage floor.
 

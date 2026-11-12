@@ -69,7 +69,7 @@ Every path lands under the analysis directory.
 | `eda_local/` | Your own EDA package, outside the toolkit source tree |
 | `cfg_analysis.yaml`, `cfg_system.yaml` | The configs, persisted so that the notebook can re-derive the variables |
 
-The report lists the verdicts under Errors and Warnings, as [Calculation and figure](../tutorials/exploratory-analysis.md#calculation-and-figure) sets out.
+As [Calculation and figure](../tutorials/exploratory-analysis.md#calculation-and-figure) sets out, the report lists the verdicts under Errors and Warnings.
 
 ## Choose the figures to render
 

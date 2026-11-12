@@ -184,7 +184,7 @@ A portable zip that `bundle_report_data()` writes. The zip holds the data behind
 
 ### EDA
 
-Exploratory data analysis. In hhemt, EDA is the step after consolidation that compares an analysis against itself. The comparison shows whether a result belongs to the model or to the compute configuration. See [Exploratory analysis](../tutorials/exploratory-analysis.md).
+Exploratory data analysis. In hhemt, EDA is the step after consolidation that compares an analysis against itself. The comparison separates a result that belongs to the model from one that belongs to the compute configuration. See [Exploratory analysis](../tutorials/exploratory-analysis.md).
 
 ## Publishing and reproducing
 

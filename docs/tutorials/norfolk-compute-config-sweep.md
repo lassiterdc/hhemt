@@ -82,7 +82,7 @@ Keep one `serial` member in every sweep. The scaling panels normalize each serie
 
 ## Run the experiment
 
-Install the toolkit and compile the solver first, following [Installation](../how-to/installation.md) and [Compile the solver](../how-to/compiling-the-solver.md#on-a-cluster). A cluster needs both on the machine that submits the jobs. Author an HPC profile for the cluster with [HPC-profile setup](../how-to/hpc-profile-setup.md). A workstation without a scheduler follows [A pair of members on one machine](#a-pair-of-members-on-one-machine).
+Install the toolkit and compile the solver first by following [Installation](../how-to/installation.md) and [Compile the solver](../how-to/compiling-the-solver.md#on-a-cluster). A cluster needs both on the machine that submits the jobs. Author an HPC profile for the cluster with [HPC-profile setup](../how-to/hpc-profile-setup.md). A workstation without a scheduler follows [A pair of members on one machine](#a-pair-of-members-on-one-machine).
 
 The dry run of [Config filling step 6](../how-to/config-filling.md#6-verify-before-you-commit-compute) validates every member before anything is submitted.
 

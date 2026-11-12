@@ -77,7 +77,7 @@ hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --tar
 
 ## Publish to HydroShare
 
-HydroShare needs a manual step, because hsclient has no programmatic DOI mint. `hhemt publish` creates the resource, uploads the deposit set, sets the resource public, and then **stops and prints a manual instruction**.
+HydroShare needs a manual step, because hsclient has no programmatic DOI mint. `hhemt publish` creates the resource, uploads the deposit set, and sets the resource public. The command then **stops and prints a manual instruction**.
 
 ```bash
 hhemt publish --experiment {experiment-definition-dir} --cluster {cluster} --target hydroshare

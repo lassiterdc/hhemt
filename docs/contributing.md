@@ -65,7 +65,7 @@ If you are unable to agree to the terms for a particular contribution, open an i
   `pyproject.toml` extra installs `just`. Install `just` from https://github.com/casey/just, or run the commands under the `qa:`
   recipe in `justfile` yourself, in the order they appear there.
 - The suite has [a fast tier and a compile tier](explanation/testing-the-toolkit.md#tiers-and-machine-independence).
-  `just qa` runs the fast tier. Gate A and Gate B cover the tiers:
+  `just qa` runs the fast tier. Gate A and Gate B cover the tiers.
     - **Gate A, `just test-fast`.** Gate A runs the fast tier without the tests marked `slow`. Run `just test-fast` before opening a pull request.
       CI differs. `.github/workflows/test.yml` runs bare `pytest` with no
       marker filter, and `compile-tests.yml` must be a required status
@@ -123,7 +123,7 @@ install step.
 
 ## Writing documentation pages
 
-**State the invocation without the flag list.** A page that shows how to invoke a command that takes configs shows the config-driven form, `hhemt {verb} --system-config CFG_SYS --analysis-config CFG_ANA` or the `python -m hhemt.{module}` equivalent, and names the configs the command reads. Describe a command by the configs the command takes. `hhemt {command} --help` is the authoritative list of flags, and prose that repeats the list goes stale.
+**State the invocation without the flag list.** A page that documents a command that takes configs shows the config-driven form, `hhemt {verb} --system-config CFG_SYS --analysis-config CFG_ANA` or the `python -m hhemt.{module}` equivalent, and names the configs the command reads. Describe a command by the configs the command takes. `hhemt {command} --help` is the authoritative list of flags, and prose that repeats the list goes stale.
 
 **An interactive session belongs on a tutorial, and only there.** A page that drives `analysis.run()`, `analysis.reprocess()`, or `analysis.render_report()` from Python is a tutorial page and states that the form is a Python session.
 
@@ -295,10 +295,10 @@ System-specific information belongs in configuration files that each deployment 
 
 ## Repository map
 
-- `docs/contributing.md`: this file, the contributor guide.
-- `CONTRIBUTING.md`: a short file at the repository root that points here.
-- `architecture.md`: project structure, key modules, and data flow.
-- `docs/`: source for the published documentation site, built with MkDocs.
+- `docs/contributing.md` is this file, the contributor guide.
+- `CONTRIBUTING.md` is a short file at the repository root that points here.
+- `architecture.md` covers project structure, key modules, and data flow.
+- `docs/` holds the source for the published documentation site, built with MkDocs.
 
 ---
 
