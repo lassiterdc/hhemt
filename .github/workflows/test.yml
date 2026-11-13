@@ -60,4 +60,8 @@ jobs:
         ty check --python "$TY_PYTHON" --exit-zero --output-format concise
     - name: Run tests
       run: |
-        pytest
+        # Gate A's population, the fast tier (the justfile's `test-fast` and `just qa` select the same tests),
+        # spread over every core. `--dist loadgroup` keeps each `xdist_group` on one worker, which is how the
+        # tests that share a runs root stay together. The compile tier runs in compile-tests.yml and on the
+        # cluster, and the Snakemake-subprocess tests run in the whole-suite array runs, not on this runner.
+        pytest -n auto --dist loadgroup -m "not slow and not compile_tier and not requires_snakemake_subprocess"
