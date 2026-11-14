@@ -5,10 +5,6 @@ simulations as ensembles across workstations and HPC clusters. The toolkit manag
 full lifecycle from preprocessing through post-processing and produces consolidated
 datasets and an interactive report.
 
-<!-- hhemt:maturity-disclosure -->
-> **On this release.** General outside use is out of scope in this version.
-<!-- /hhemt:maturity-disclosure -->
-
 --8<-- "platform-support.md"
 
 ## Highlights
@@ -35,7 +31,7 @@ The first release was published under the PolyForm Noncommercial License 1.0.0.
 If you use hhemt in published work, cite the software.
 
 ``` { .text .copy }
-Lassiter, D. (2026). H&H Ensemble Modeling Toolkit (hhemt) (Version 0.2.0)
+Lassiter, D. (2026). H&H Ensemble Modeling Toolkit (hhemt) (Version 0.2.1)
 [Computer software]. https://doi.org/10.5281/zenodo.21359151
 ```
 
