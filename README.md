@@ -17,11 +17,6 @@ GPUs.
 * [Documentation](https://hhemt.readthedocs.io)
 * [AGPL-3.0-or-later license](https://www.gnu.org/licenses/agpl-3.0.html)
 
-<!-- hhemt:maturity-disclosure -->
-> **On this release.** The software is documented and archived on Zenodo. General outside use falls outside the
-> scope of this release.
-<!-- /hhemt:maturity-disclosure -->
-
 ## Installation
 
 The full toolkit, including SWMM hydrology execution, is validated only against

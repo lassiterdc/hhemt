@@ -1,5 +1,9 @@
 # Release history
 
+## v0.2.1 (2026-11-14)
+
+The home page and the README no longer carry the statement about outside use of the release. Nothing else changed.
+
 ## v0.2.0 (2026-11-14)
 
 Relicensed under the GNU Affero General Public License v3.0 or later
