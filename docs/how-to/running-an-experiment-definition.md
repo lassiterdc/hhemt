@@ -45,7 +45,7 @@ inputs:
     destinations:
       uva: /scratch/$USER/my_experiment/weather/forcing.nc # the per-cluster path that staging tools read
 toolkit_pin:
-  version: "1.0.0"                      # PyPI version: the durable, installable identifier
+  version: "0.2.1"                      # PyPI version: the durable, installable identifier
 container:
   sha256_source: ro-crate              # the SIF digest's authoritative home is the RO-Crate
 ```

@@ -54,6 +54,7 @@ version that produced the output.
 | DOI | Resolves to | Use case |
 |---|---|---|
 | `10.5281/zenodo.21359151` | always the latest version | Pointing a reader at the software in general. |
+| `10.5281/zenodo.24225253` | version 0.2.1 only | Pinning a result to this exact release. |
 
 `CITATION.cff` in the repository root carries the same metadata in a
 machine-readable form, and GitHub renders the file as a "Cite this repository" button.
