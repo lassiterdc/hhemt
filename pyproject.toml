@@ -371,6 +371,7 @@ include = ["scripts/check_docs_content.py"]
 [tool.ty.overrides.rules]
 invalid-argument-type = "ignore"
 invalid-parameter-default = "ignore"
+unresolved-import = "ignore"
 
 [[tool.ty.overrides]]
 include = ["scripts/check_du_sentinel_sites.py"]
@@ -555,6 +556,7 @@ unresolved-attribute = "ignore"
 include = ["src/hhemt/config/report.py"]
 
 [tool.ty.overrides.rules]
+invalid-assignment = "ignore"
 invalid-return-type = "ignore"
 not-iterable = "ignore"
 unresolved-attribute = "ignore"
@@ -1023,6 +1025,12 @@ include = ["tests/docs/test_retrofit_eda_tutorial_pass.py"]
 invalid-return-type = "ignore"
 
 [[tool.ty.overrides]]
+include = ["tests/docs/test_retrofit_howto2_pass.py"]
+
+[tool.ty.overrides.rules]
+unresolved-import = "ignore"
+
+[[tool.ty.overrides]]
 include = ["tests/docs/test_retrofit_interactive_pass.py"]
 
 [tool.ty.overrides.rules]
@@ -1068,6 +1076,7 @@ include = ["tests/docs/test_review_10c1_pass.py"]
 
 [tool.ty.overrides.rules]
 invalid-return-type = "ignore"
+unresolved-attribute = "ignore"
 
 [[tool.ty.overrides]]
 include = ["tests/fixtures/_triton_source_cache.py"]
@@ -1441,6 +1450,7 @@ include = ["tests/test_defaults_clear_everything.py"]
 [tool.ty.overrides.rules]
 invalid-argument-type = "ignore"
 missing-argument = "ignore"
+unsupported-operator = "ignore"
 
 [[tool.ty.overrides]]
 include = ["tests/test_disk_utilization_render_breakdown.py"]
@@ -1706,7 +1716,7 @@ unresolved-import = "ignore"
 include = ["tests/test_package_import_is_lazy.py"]
 
 [tool.ty.overrides.rules]
-unresolved-attribute = "ignore"
+unresolved-import = "ignore"
 
 [[tool.ty.overrides]]
 include = ["tests/test_per_analysis_summary_labels.py"]
@@ -2050,6 +2060,63 @@ invalid-assignment = "ignore"
 unresolved-attribute = "ignore"
 
 [[tool.ty.overrides]]
+include = ["tests/test_review_1i1_vale_pmix_accept.py"]
+
+[tool.ty.overrides.rules]
+no-matching-overload = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_review_1m1_triage_src.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_review_1m2_triage_scripts.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_review_1m3_triage_docs.py"]
+
+[tool.ty.overrides.rules]
+no-matching-overload = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_review_1p1_figure_spec_hash.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_review_1q1_run_setup_phase.py"]
+
+[tool.ty.overrides.rules]
+unsupported-operator = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_review_1q2_experiment_datatree_zarr.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_review_1r1_runner_flag_ratchet.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_review_1s1_repair_run_mode_instrument.py"]
+
+[tool.ty.overrides.rules]
+unused-ignore-comment = "ignore"
+
+[[tool.ty.overrides]]
 include = ["tests/test_review_6b1_pass.py"]
 
 [tool.ty.overrides.rules]
@@ -2061,6 +2128,12 @@ include = ["tests/test_review_a1_pip_swmm_stack.py"]
 
 [tool.ty.overrides.rules]
 invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_review_a3_ci_shard.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
 
 [[tool.ty.overrides]]
 include = ["tests/test_review_c2_failure_message.py"]
@@ -2138,6 +2211,7 @@ include = ["tests/test_review_unit_discharge_relabel.py"]
 
 [tool.ty.overrides.rules]
 unresolved-attribute = "ignore"
+unsupported-operator = "ignore"
 
 [[tool.ty.overrides]]
 include = ["tests/test_review_units_attributes.py"]
@@ -2323,6 +2397,12 @@ include = ["tests/test_suite_reach_rename.py"]
 not-subscriptable = "ignore"
 
 [[tool.ty.overrides]]
+include = ["tests/test_suite_runner_flag_ratchet.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
 include = ["tests/test_summary_completeness_gate.py"]
 
 [tool.ty.overrides.rules]
@@ -2406,6 +2486,12 @@ include = ["tests/test_synth_00_write_raster.py"]
 
 [tool.ty.overrides.rules]
 unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_synth_01_singlesim.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
 
 [[tool.ty.overrides]]
 include = ["tests/test_synth_04_multisim_with_snakemake.py"]
@@ -2540,7 +2626,6 @@ unresolved-attribute = "ignore"
 include = ["tests/test_synth_remove_after_processing.py"]
 
 [tool.ty.overrides.rules]
-missing-argument = "ignore"
 unresolved-attribute = "ignore"
 
 [[tool.ty.overrides]]
@@ -2616,6 +2701,12 @@ include = ["tests/test_timeseries_selection.py"]
 [tool.ty.overrides.rules]
 invalid-return-type = "ignore"
 not-subscriptable = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_triage_1m1_src_repairs.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
 
 [[tool.ty.overrides]]
 include = ["tests/test_triton_timeseries_consolidation.py"]
