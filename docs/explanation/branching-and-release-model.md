@@ -17,7 +17,7 @@ Feature branches are created from `develop` and merged back into `develop`. See
 ## Release definition
 
 A release is a `develop` → `main` pull request that passes the release gate. The merge is then tagged `vX.Y.Z`.
-**The tag fires the PyPI publish and the Zenodo DOI mint.**
+**The tag fires the PyPI publish.** A separate step after the tag, publishing a GitHub release for the tag, creates the Zenodo archive and the version DOI.
 Tag the release merge on `main`. A tag on `develop` would publish a commit the
 release gate never saw.
 
