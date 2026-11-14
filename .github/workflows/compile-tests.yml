@@ -41,6 +41,22 @@ jobs:
   compile-synth-render-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # CI-HOST MPI SETTING (job level, so every step inherits it; probe run 43559333054).
+    # On a runner whose Azure host exposes the MANA verbs device (/sys/class/infiniband holds
+    # mana_0), Open MPI 5.0.11 selects the `cm` PML (libfabric MTL, "select: init returned
+    # priority 25") over `ob1` (priority 20), and the first local message between two ranks
+    # aborts with MPI_ERR_OTHER in MPI_Isend. On the nine runners without the device the ofi
+    # components fail to initialise and `ob1` is selected by default. On the MANA runner the
+    # cases default, `pml ^ucx`, `smsc ^cma` and PMIX_MCA_gds=hash all failed (0 of 6 rank-size completions, 2 ranks x 3 message sizes);
+    # `pml ob1` with `btl self,sm` passed 3 of 3 repetitions (6 of 6 rank-size completions each). Pinning
+    # exactly that configuration is correct here because this is a SINGLE-NODE runner: no
+    # inter-node transport is needed. It is a CI-host setting, NOT a toolkit launch setting:
+    # the HPC systems the toolkit targets expose no MANA device and must keep Open MPI's own
+    # selection. The toolkit's solver launch inherits these through os.environ
+    # (run_simulation_runner.py passes env={**os.environ, **env} to the `bash -lc` mpirun).
+    env:
+      OMPI_MCA_pml: ob1
+      OMPI_MCA_btl: self,sm
     defaults:
       run:
         shell: bash -el {0}
@@ -66,6 +82,24 @@ jobs:
           # developer actually runs (docs/how-to/installation.md Option A).
           environment-file: environment.yaml
           auto-activate-base: false
+          # Same input and reason as type-gate.yml: conda appends its implicit `defaults`
+          # channel below the two channels environment.yaml names, and the solver then
+          # searches three channels' repodata (measured in type-gate.yml's comment: file
+          # channels only 14m56s against 61m17s with `defaults`, same 433 packages).
+          # environment.yaml names `conda-forge` and `bioconda` and no `defaults`, so this
+          # makes CI honour the file as written.
+          conda-remove-defaults: "true"
+
+      - name: Guard - defaults channel removed (fails in seconds, not after a slow solve)
+        # Provisioning above already solved; this still catches a remove-defaults that
+        # silently stopped taking effect, the way type-gate.yml's solve step does, so the
+        # next solve is not the one that reveals it.
+        run: |
+          conda config --show channels
+          if conda config --show channels | grep -qx -- '  - defaults'; then
+            echo "defaults channel still configured; conda-remove-defaults did not take effect"
+            exit 1
+          fi
 
       - name: Install swmmio (--no-deps — preserve conda pyswmm 2.x / numpy 1.x)
         # --no-deps prevents `pip install -U` from touching the conda graph at all.
@@ -139,6 +173,16 @@ jobs:
             else
               echo "ompi_info=unavailable (not on PATH)"
             fi
+            echo "--- infiniband (a MANA host lists mana_0 here; see the job-level OMPI_MCA_ env)"
+            ls -l /sys/class/infiniband 2>&1
+            echo "--- Open MPI pml/mtl/btl components"
+            if command -v ompi_info >/dev/null 2>&1; then
+              ompi_info --parsable 2>&1 | grep -E '^mca:(pml|mtl|btl):[A-Za-z0-9_]+:version:"component:'
+            else
+              echo "components=unavailable (ompi_info not on PATH)"
+            fi
+            echo "--- OMPI_MCA_ environment"
+            env | grep '^OMPI_MCA_' | sort
             echo "--- solver-free two-rank launch"
             timeout 120 mpirun -np 2 true 2>&1
             echo "mpirun_np2_rc=$?"
