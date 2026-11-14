@@ -7,7 +7,7 @@ authors:
     given-names: "Daniel"
     email: "daniel.lassiter@outlook.com"
 version: "0.2.0"
-date-released: "2026-11-12"
+date-released: "2026-11-14"
 license: AGPL-3.0-or-later
 repository-code: "https://github.com/lassiterdc/hhemt"
 url: "https://hhemt.readthedocs.io"

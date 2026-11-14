@@ -1,6 +1,6 @@
 # Release history
 
-## v0.2.0 (2026-11-12)
+## v0.2.0 (2026-11-14)
 
 Relicensed under the GNU Affero General Public License v3.0 or later
 (AGPL-3.0-or-later). Release 0.1.0, on PyPI and Zenodo, was published under the
