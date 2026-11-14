@@ -4,10 +4,13 @@ weather_event_indices: ['year', 'event_type', 'event_id']
 weather_time_series_storm_tide_datavar: 'waterlevel_m'
 weather_time_series_timestep_dimension_name: 'timestep'
 weather_time_series_spatial_mean_rainfall_datavar: 'mm_per_hr'  # Step-0 TBD: confirm via Rivanna weather NetCDF schema dump
-weather_timeseries: '${DATA_DIR}/obs_event_tseries_from_yrs_with_complete_coverage.nc'
-# weather_event_summary_csv: '${DATA_DIR}/obs_event_summaries_from_yrs_with_complete_coverage.csv'
-storm_tide_boundary_line_gis: '${DATA_DIR}/shp_boundary_condition/variable_bc.shp'
-weather_events_to_simulate: '${DATA_DIR}/PLACEHOLDER.csv'
+weather_timeseries: '${DATA_DIR}/external/obs_event_tseries_from_yrs_with_complete_coverage.nc'
+# weather_event_summary_csv: '${DATA_DIR}/external/observed_event_events.csv'
+storm_tide_boundary_line_gis: '${DATA_DIR}/external/variable_bc.shp'
+weather_events_to_simulate: '${DATA_DIR}/external/PLACEHOLDER.csv'
+weather_event_windows_csv: '${DATA_DIR}/external/event_windows_observed.csv'  # per-event windows on the weather file's own time axis; without it preflight rejects 70 of 71 observed events for incomplete forcing
+weather_event_start_column: 'event_start'
+weather_event_end_column: 'event_end'
 analysis_description:
 run_mode: "serial"
 multi_sim_run_method: "local"

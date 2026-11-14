@@ -42,6 +42,9 @@ The analysis config names the weather record, the event windows, and the subset 
 
 ```yaml
 weather_events_to_simulate: observed_events_named_subset.csv
+weather_event_windows_csv: ${DATA_DIR}/external/event_windows_observed.csv
+weather_event_start_column: event_start
+weather_event_end_column: event_end
 toggle_sensitivity_analysis: false
 run_mode: hybrid
 n_mpi_procs: 4
@@ -50,6 +53,8 @@ n_nodes: 1
 multi_sim_run_method: batch_job
 execution_environment: native
 ```
+
+The `weather_event_*` window fields point the analysis at a windows file. The file gives each event a start and an end on the weather record's own time axis. Without the file, preflight checks the forcing over the whole axis of the record and rejects 70 of the 71 observed events as incomplete. The Norfolk analysis template carries the same fields.
 
 `run_mode: hybrid` with 4 MPI ranks of 2 OpenMP threads gives each simulation 8 cores on one node, and `multi_sim_run_method: batch_job` submits each simulation as a separate job. The ensemble used the 4 rank by 2 thread split, and the split carries no recommendation. The [compute-configuration sweep](norfolk-compute-config-sweep.md) ranks that split last among the 8-core splits the sweep tried, at 1.331 hours against 0.999 for 8 OpenMP threads in a single simulation each. The subset file is a table with a row per event and the following columns.
 

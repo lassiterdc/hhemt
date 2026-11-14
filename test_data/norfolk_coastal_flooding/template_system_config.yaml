@@ -2,11 +2,11 @@
 crs:  # canonical home for horizontal+vertical CRS resolution
   horizontal_epsg: 32147  # NAD83 / Virginia South (meter) — Norfolk coastal area
   vertical_epsg: 5703     # NAVD88 height (m)
-watershed_gis_polygon: '${DATA_DIR}/shp_watershed/norfolk_wshed_epsg32147_state_plane_m.shp'
+watershed_gis_polygon: '${DATA_DIR}/external/norfolk_wshed_epsg32147_state_plane_m.shp'
 system_directory: '${PACKAGE_DIR}/system'
-DEM_fullres: '${DATA_DIR}/fullres_dem_m.tif'
-landuse_lookup_file: '${DATA_DIR}/landuse_lookup_tables.csv'
-landuse_raster: '${DATA_DIR}/landuse_clipped_to_triton_extent.tif'
+DEM_fullres: '${DATA_DIR}/external/fullres_dem_m.tif'
+landuse_lookup_file: '${DATA_DIR}/external/landuse_lookup_tables.csv'
+landuse_raster: '${DATA_DIR}/external/landuse_clipped_to_triton_extent.tif'
 TRITONSWMM_software_directory: '${PACKAGE_DIR}/triton'
 SWMM_software_directory: '${PACKAGE_DIR}/swmm'
 TRITONSWMM_git_URL: 'https://code.ornl.gov/hydro/triton.git'
@@ -15,11 +15,11 @@ SWMM_git_URL: 'https://github.com/USEPA/Stormwater-Management-Model.git'
 SWMM_tag_key: 'v5.2.4' 
 # GPU backend: set to 'HIP' for AMD/ROCm or 'CUDA' for NVIDIA; leave unset for CPU-only compilation
 gpu_compilation_backend: null
-triton_swmm_configuration_template: '${DATA_DIR}/TRITON_SWMM_definition_template.cfg'
-SWMM_hydraulics: '${DATA_DIR}/swmm/hague_hydraulics_model_template.inp'
-SWMM_hydrology: '${DATA_DIR}/swmm/hague_hydrology_model_template.inp'
-SWMM_full: '${DATA_DIR}/swmm/hague_full_model_template.inp'
-subcatchment_raingage_mapping: '${DATA_DIR}/b_sub_ids_and_mrms_rain_col.csv'
+triton_swmm_configuration_template: '${DATA_DIR}/external/TRITON_SWMM_definition_template.cfg'
+SWMM_hydraulics: '${DATA_DIR}/external/hague_hydraulics_model_template.inp'
+SWMM_hydrology: '${DATA_DIR}/external/hague_hydrology_model_template.inp'
+SWMM_full: '${DATA_DIR}/external/hague_full_model_template.inp'
+subcatchment_raingage_mapping: '${DATA_DIR}/external/b_sub_ids_and_mrms_rain_col.csv'
 subcatchment_raingage_mapping_gage_id_colname: 'raingage_id'
 # ATTRIBUTE NAMES
 landuse_lookup_class_id_colname: 'CLASS_ID'

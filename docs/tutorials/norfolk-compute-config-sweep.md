@@ -68,7 +68,7 @@ The analysis config turns the sweep on, points at the sheet, selects the single 
 ```yaml
 toggle_sensitivity_analysis: true
 sensitivity_analysis: compute_config_sweep.csv
-weather_events_to_simulate: irene_event_index.csv
+weather_events_to_simulate: hurricane_irene_event_index.csv
 run_mode: serial
 multi_sim_run_method: batch_job
 execution_environment: native

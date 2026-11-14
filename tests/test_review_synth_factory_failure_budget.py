@@ -135,10 +135,11 @@ def _template_with(tmp_path, extra):
     """Return the toolkit's template analysis config as a dict whose path fields point at real files.
 
     The template names ``${DATA_DIR}`` placeholders that do not exist, and ``analysis_config``
-    validates path existence and the shape of ``hhemt_sha``; only those four fields are repointed.
+    validates path existence and the shape of ``hhemt_sha``; every ``${DATA_DIR}`` path field and
+    ``hhemt_sha`` are repointed, so a path field the template gains later needs no edit here.
     """
     cfg = yaml.safe_load(_TEMPLATE.read_text())
-    for field in ("weather_timeseries", "storm_tide_boundary_line_gis", "weather_events_to_simulate"):
+    for field in [k for k, v in cfg.items() if isinstance(v, str) and v.startswith("${DATA_DIR}/")]:
         path = tmp_path / f"{field}.dat"
         path.write_text("x")
         cfg[field] = str(path)

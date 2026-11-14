@@ -1357,15 +1357,7 @@ class TRITON_SWMM_experiment:
                     reason=("ZIP has multiple top-level folders; cannot determine Bag root."),
                 )
             if validate:
-                bag = bagit.Bag(str(bag_root))
-                if bag.is_valid():
-                    print("Bag verified! All bagit checksums match.", flush=True)
-                else:
-                    raise ProcessingError(
-                        operation="hydroshare_bag_validation",
-                        filepath=str(bag_root),
-                        reason=("bagit manifest validation failed (bag is not self-consistent)."),
-                    )
+                cls._validate_hydroshare_bag(bag_root, pinned=bool(expected_manifest))
             cls._verify_manifest(bag_root, expected_manifest)
             bag_root.rename(dest)
             zip_path.unlink()  # EXEMPT-DU: test-example-fixture
@@ -1376,6 +1368,68 @@ class TRITON_SWMM_experiment:
             filepath=None,
             reason=f"unknown deposit host {host!r} (expected 'zenodo' or 'hydroshare')",
         )
+
+    # A multipart-upload etag: HydroShare records the S3 etag of a multi-part object (any file
+    # above 5 MiB) in the bag's manifest-md5 where bagit expects a plain md5, so no md5 of such a
+    # file can be checked against the bag. Hex digest, then ``-{part count}``.
+    _MULTIPART_ETAG_RE = re.compile(r"-\d+$")
+
+    @classmethod
+    def _validate_hydroshare_bag(cls, bag_root: Path, *, pinned: bool) -> None:
+        """Validate a fetched HydroShare bag; ``pinned`` is whether a sha256 manifest was supplied.
+
+        PINNED (non-empty ``expected_manifest``): bagit's STRUCTURAL arm only
+        (``completeness_only=True``: payload-oxum, no declared-but-missing and no
+        undeclared payload file). The md5 payload arm is skipped, because the caller's
+        ``_verify_manifest`` then reads every declared file against its sha256 and
+        HydroShare cannot compute a plain md5 for a multi-part object, so the md5 arm fails
+        a bag the manifest fully verifies (measured on the Norfolk case: the DEM above
+        5 MiB). ``_verify_manifest`` runs unconditionally after this method.
+
+        ABSENT (``None`` or empty): full bagit validation, and a manifest-md5 entry that is
+        a multipart etag is refused as UNVERIFIABLE rather than skipped, because with no
+        manifest the md5 arm is the only integrity check, and skipping it would turn the
+        refusal of a corrupted deposit into acceptance (``_fetch_bundle_zip`` passes no
+        manifest).
+        """
+        bag = bagit.Bag(str(bag_root))
+        if pinned:
+            try:
+                bag.validate(completeness_only=True)
+            except bagit.BagError as exc:
+                raise ProcessingError(
+                    operation="hydroshare_bag_validation",
+                    filepath=str(bag_root),
+                    reason=f"bagit structural validation failed (bag is incomplete or inconsistent): {exc}",
+                ) from exc
+            print(
+                "Bag structure verified; payload integrity is checked against the case.yaml sha256 manifest.",
+                flush=True,
+            )
+            return
+        unverifiable = sorted(
+            rel_path for rel_path, hashes in bag.entries.items() if cls._MULTIPART_ETAG_RE.search(hashes.get("md5", ""))
+        )
+        if unverifiable:
+            shown = ", ".join(unverifiable[:5]) + (" ..." if len(unverifiable) > 5 else "")
+            raise ProcessingError(
+                operation="hydroshare_bag_validation",
+                filepath=str(bag_root),
+                reason=(
+                    f"the deposit has {len(unverifiable)} file(s) with no checkable md5 (HydroShare records a "
+                    f"multipart etag, not an md5, for a file above 5 MiB): {shown}. With no sha256 manifest "
+                    "there is no integrity check for them, so the fetch is refused. Pin a case.yaml "
+                    "manifest (python -m hhemt.generate_case_manifest) and fetch again."
+                ),
+            )
+        if bag.is_valid():
+            print("Bag verified! All bagit checksums match.", flush=True)
+        else:
+            raise ProcessingError(
+                operation="hydroshare_bag_validation",
+                filepath=str(bag_root),
+                reason="bagit manifest validation failed (bag is not self-consistent).",
+            )
 
     @classmethod
     def _fetch_file_by_url(cls, url: str, dest: Path, *, expected_sha256: str | None = None) -> Path:
@@ -1678,7 +1732,7 @@ class NorfolkObservedExperiment:
         # Differs from NorfolkIreneExperiment.load only in the two analysis-config values
         # below: the weather-event index CSV and the analysis description.
 
-        weather_events_to_simulate = "obs_event_summaries_from_yrs_with_complete_coverage.csv"
+        weather_events_to_simulate = "observed_event_events.csv"
         analysis_description = "Observed event ensemble"
         return TRITON_SWMM_experiment.from_case_study(
             case_name=cnst.NORFOLK_EX,

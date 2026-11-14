@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 # Template mirrors Norfolk's TRITON_SWMM_definition_template.cfg (at
-# examples/norfolk_coastal_flooding/data/contents/). Placeholders use the
+# examples/norfolk_coastal_flooding/data/contents/external/). Placeholders use the
 # ${NAME} syntax consumed by TRITONSWMM_scenario._generate_TRITON_SWMM_cfg
 # via utils.create_from_template -> string.Template.safe_substitute. Do not
 # pre-substitute these at synth build time — the toolkit fills them in at
