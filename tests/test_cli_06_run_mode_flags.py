@@ -131,3 +131,31 @@ def test_overwrite_contradicted_by_another_force_rerun_value_is_refused(run_call
 
     assert result.exit_code == 2
     assert run_calls == []
+
+
+# R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+# completed-tree fixture applies. Evidence:
+#     monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)
+@pytest.mark.parametrize(
+    ("mode_args", "from_scratch"),
+    [
+        pytest.param([], False, id="default-resumes"),
+        pytest.param(["--mode", "resume"], False, id="resume"),
+        pytest.param(["--mode", "fresh"], True, id="fresh"),
+    ],
+)
+def test_mode_reaches_run_as_the_from_scratch_boolean(run_calls, config_args, mode_args, from_scratch):
+    """Property: `--mode` decides the `from_scratch` boolean `run()` receives, and nothing else does.
+
+    Class: every value of the closed `--mode` choice, plus its absence (which resumes). Why it
+    is required: `Analysis.run` keeps its boolean parameter, so the command converts the mode
+    once at the call site, and a conversion that drops or inverts the value turns a requested
+    wipe into a resume or the reverse. What kills it: forwarding `from_scratch=False` whatever
+    the mode, or reading the default as fresh. A second correct implementation under which it
+    still passes: converting inside argument validation or through a `RunMode`-keyed table,
+    since only the forwarded boolean is asserted.
+    """
+    result = runner.invoke(app, [*config_args, *mode_args])
+
+    assert len(run_calls) == 1, f"run() not reached; exit {result.exit_code}: {result.output}"
+    assert run_calls[0]["from_scratch"] is from_scratch

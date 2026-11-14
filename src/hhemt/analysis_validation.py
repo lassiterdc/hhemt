@@ -433,7 +433,7 @@ def check_analysis_summaries_created(analysis: TRITONSWMM_analysis) -> CheckResu
 
     sensitivity_on = getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
     if sensitivity_on and getattr(analysis, "sensitivity", None) is not None:
-        sens_zarr = analysis.analysis_paths.sensitivity_datatree_zarr
+        sens_zarr = analysis.analysis_paths.experiment_datatree_zarr
         if sens_zarr is None or not sens_zarr.exists():
             missing.append({"detail": f"Sensitivity DataTree zarr missing at {sens_zarr}"})
         for member_id, sub in all_members_for_reading_of(analysis.sensitivity).items():
@@ -812,7 +812,7 @@ def _read_triton_provenance(analysis: TRITONSWMM_analysis) -> str | None:
 
     paths = analysis.analysis_paths
     if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
-        zarr_path = getattr(paths, "sensitivity_datatree_zarr", None)
+        zarr_path = getattr(paths, "experiment_datatree_zarr", None)
     else:
         zarr_path = getattr(paths, "analysis_datatree_zarr", None)
     if zarr_path is None or not zarr_path.exists():
@@ -1818,7 +1818,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=No
         _tree_ev: dict = {}
         try:
             _p = (
-                analysis.analysis_paths.sensitivity_datatree_zarr
+                analysis.analysis_paths.experiment_datatree_zarr
                 if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
                 else analysis.analysis_paths.analysis_datatree_zarr
             )
@@ -2217,7 +2217,7 @@ def check_resume_schedule_honored(analysis: TRITONSWMM_analysis, *, df_status=No
         _ev: dict = {}
         try:
             _p = (
-                analysis.analysis_paths.sensitivity_datatree_zarr
+                analysis.analysis_paths.experiment_datatree_zarr
                 if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
                 else analysis.analysis_paths.analysis_datatree_zarr
             )
@@ -3169,7 +3169,7 @@ def check_consolidated_metadata(analysis: TRITONSWMM_analysis) -> CheckResult:
     required = state is not None and state.layout_version >= CONSOLIDATED_INDEX_REQUIRED_FROM_LAYOUT
     stores: list[Path] = []
     for _member_id, sub in [(None, analysis), *list(_iter_members_or_self(analysis))]:
-        for attr in ("analysis_datatree_zarr", "sensitivity_datatree_zarr"):
+        for attr in ("analysis_datatree_zarr", "experiment_datatree_zarr"):
             candidate = getattr(sub.analysis_paths, attr, None)
             if candidate is not None and Path(candidate).is_dir() and Path(candidate) not in stores:
                 stores.append(Path(candidate))

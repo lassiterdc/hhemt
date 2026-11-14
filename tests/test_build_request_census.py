@@ -162,7 +162,8 @@ _EXCUSES: tuple[_Excuse, ...] = (
         "tests/test_cli_01_validation.py",
         'analysis_config.write_text("version: 1\\n")',
         (
-            "tests/test_cli_01_validation.py::test_from_scratch_and_resume_mutually_exclusive",
+            "tests/test_cli_01_validation.py::test_retired_mode_flags_are_refused_as_unknown",
+            "tests/test_cli_01_validation.py::test_mode_is_a_closed_choice_refused_at_parse_time",
             "tests/test_cli_01_validation.py::test_removed_event_selection_options_are_refused_as_unknown",
             "tests/test_cli_01_validation.py::test_verbose_and_quiet_mutually_exclusive",
             "tests/test_cli_01_validation.py::test_system_config_is_required",
@@ -269,6 +270,9 @@ _EXCUSES: tuple[_Excuse, ...] = (
             "tests/test_cli_06_run_mode_flags.py::test_overwrite_forwards_a_different_run_argument_than_resume",
             "tests/test_cli_06_run_mode_flags.py::test_overwrite_forwards_force_rerun_all",
             "tests/test_cli_06_run_mode_flags.py::test_overwrite_contradicted_by_another_force_rerun_value_is_refused",
+            "tests/test_cli_06_run_mode_flags.py::test_mode_reaches_run_as_the_from_scratch_boolean[default-resumes]",
+            "tests/test_cli_06_run_mode_flags.py::test_mode_reaches_run_as_the_from_scratch_boolean[resume]",
+            "tests/test_cli_06_run_mode_flags.py::test_mode_reaches_run_as_the_from_scratch_boolean[fresh]",
         ),
     ),
     _Excuse(
@@ -276,8 +280,8 @@ _EXCUSES: tuple[_Excuse, ...] = (
         "tests/test_cli_07_run_flag_combinations.py",
         'monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)',
         (
-            "tests/test_cli_07_run_flag_combinations.py::test_control_resume_off_route_reaches_the_fresh_branch",
-            "tests/test_cli_07_run_flag_combinations.py::test_overwrite_never_cancels_from_scratch",
+            "tests/test_cli_07_run_flag_combinations.py::test_control_mode_fresh_alone_reaches_the_fresh_branch",
+            "tests/test_cli_07_run_flag_combinations.py::test_overwrite_never_cancels_mode_fresh",
         ),
     ),
     _Excuse(
@@ -322,7 +326,7 @@ _EXCUSES: tuple[_Excuse, ...] = (
         "tests/test_cli_12_run_from_scratch.py",
         'monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)',
         (
-            "tests/test_cli_12_run_from_scratch.py::test_from_scratch_alone_selects_fresh_and_the_guard_still_refuses_both",
+            "tests/test_cli_12_run_from_scratch.py::test_mode_fresh_alone_selects_fresh_and_the_retired_flags_are_refused",
         ),
     ),
     _Excuse(

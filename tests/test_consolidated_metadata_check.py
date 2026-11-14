@@ -164,7 +164,7 @@ def test_a_missing_store_is_not_applicable(tmp_path):
 
 
 def _stub_analysis(tmp_path: Path, store: Path | None):
-    paths = SimpleNamespace(analysis_dir=tmp_path, analysis_datatree_zarr=store, sensitivity_datatree_zarr=None)
+    paths = SimpleNamespace(analysis_dir=tmp_path, analysis_datatree_zarr=store, experiment_datatree_zarr=None)
     return SimpleNamespace(
         cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=False), sensitivity=None, analysis_paths=paths
     )

@@ -608,7 +608,7 @@ def _provenance_software(app: dict, src: dict) -> str:
 #: call returns a DIFFERENT path or None. So the failure is masked in the first case and
 #: wrong in the others, and in none of them does anything raise. It cannot be detected
 #: after the rename that arms it, so this guard has value only while added BEFORE one.
-_DECLARED_TREE_PATH_ATTRS = ("sensitivity_datatree_zarr", "analysis_datatree_zarr")
+_DECLARED_TREE_PATH_ATTRS = ("experiment_datatree_zarr", "analysis_datatree_zarr")
 
 
 def _resolve_consolidated_tree(analysis_dir: Path, analysis: TRITONSWMM_analysis | None) -> Path | None:

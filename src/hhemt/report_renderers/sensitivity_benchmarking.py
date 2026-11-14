@@ -57,7 +57,13 @@ from hhemt.exceptions import ProcessingError
 from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
 from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
-from hhemt.scenario_records import all_members_for_reading_of
+from hhemt.scenario_records import (
+    REMOVED_STATES,
+    RecordedSimRun,
+    all_members_for_reading_of,
+    read_scenario_record,
+    scenario_record_path,
+)
 from hhemt.swmm_output_parser import parse_total_elapsed
 from hhemt.utils import EXPERIMENT_TREE_NAME, open_store
 
@@ -2032,7 +2038,7 @@ def _collect_rows(experiment: TRITONSWMM_analysis, dependent_var: str) -> tuple[
         enabled = analysis._get_enabled_model_types()
         if "swmm" in enabled and len(enabled) == 1:
             for event_iloc in analysis.df_sims.index:
-                proc = analysis._retrieve_sim_run_processing_object(int(event_iloc))
+                proc = _swmm_only_event_handle(analysis, int(event_iloc))
                 rpt = proc.scen_paths.swmm_full_rpt_file
                 if getattr(proc, "is_recorded", False):
                     # A removed SWMM-only member: the row reads the `Total elapsed time` captured at removal, and
@@ -2051,6 +2057,36 @@ def _collect_rows(experiment: TRITONSWMM_analysis, dependent_var: str) -> tuple[
                 rows.append({"sa_id": member_id, "event_iloc": int(event_iloc), "value": value})
                 source_paths.append(rpt)
     return rows, source_paths
+
+
+def _swmm_only_event_handle(analysis, event_iloc: int):
+    """The handle ``_collect_rows`` reads one SWMM-only event through, record-backed when the event is removed.
+
+    A member the master has already replaced by a recorded view answers for itself, and its answer is returned
+    untouched. An ACTIVE member whose event was removed (its record ``pending`` or ``done``, its ``sims/{event}/``
+    directory gone) is the state an interrupted master consolidation leaves: the member is still an analysis, and
+    asking it for ``_retrieve_sim_run_processing_object`` builds a processing object that calls ``get_log`` on the
+    removed scenario and raises ``ScenarioRemovedError``. That event gets the same ``RecordedSimRun`` a removed
+    member's view yields, so the caller's ``is_recorded`` branch reads ``captured['swmm_total_elapsed']`` and declares
+    the record file as the source. Deliberately NOT a ``try``/``except ScenarioRemovedError`` around the call: the
+    record is read once and its state decides, so a ``superseded`` or absent record leaves the live handle, and a
+    failure of any other kind still surfaces instead of being read as a removed event.
+    """
+    if getattr(analysis, "is_recorded_member", False):
+        return analysis._retrieve_sim_run_processing_object(event_iloc)
+    from hhemt.scenario import compute_event_id_slug
+
+    event_id = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
+    analysis_dir = Path(analysis.analysis_paths.analysis_dir)
+    record = read_scenario_record(analysis_dir, event_id)
+    if record is None or record["state"] not in REMOVED_STATES:
+        return analysis._retrieve_sim_run_processing_object(event_iloc)
+    return RecordedSimRun(
+        event_id,
+        Path(analysis.analysis_paths.simulation_directory) / event_id,
+        record,
+        scenario_record_path(analysis_dir, event_id),
+    )
 
 
 def _find_perf_node(tree: xr.DataTree, member_id: str) -> xr.Dataset | None:

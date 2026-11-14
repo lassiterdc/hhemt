@@ -304,8 +304,10 @@ PATH_PATTERN = re.compile(_UNIX_PATH_FRAGMENT + "|" + WINDOWS_PATH_FRAGMENT)
 # The local part is matched POSSESSIVELY and only from the start of a run of local-part characters
 # (the look-behind), so the scan is linear in the member length: the non-possessive form
 # backtracks quadratically over a long alphanumeric run such as base64 in an html page. Equal to
-# the repository guard's pattern string.
-EMAIL_PATTERN = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]++@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+# the repository guard's pattern string. The local part and the domain labels are read with Unicode
+# `\w` and the top-level label with `[^\W\d_]` (Unicode letters only, two or more), so an address
+# written in another script is read whole rather than missed or matched by its ASCII tail.
+EMAIL_PATTERN = re.compile(r"(?<![\w.%+-])[\w.%+-]++@[\w.-]+\.[^\W\d_]{2,}")
 
 # Third-party addresses that Snakemake's report inlines into the baseline html page (license
 # headers of vendored JavaScript), measured as nine distinct addresses. They are exempt BY VALUE

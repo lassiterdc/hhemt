@@ -329,6 +329,10 @@ def _coupled_system_configs(analysis) -> list:
     ]
 
 
+#: How many incomplete sim names the resume banner prints before it collapses the rest into a count.
+_RESUME_BANNER_MAX_NAMED_SIMS = 20
+
+
 class TRITONSWMM_analysis:
     """Orchestrates one ensemble of coupled TRITON-SWMM simulations.
 
@@ -542,7 +546,7 @@ class TRITONSWMM_analysis:
 
         # Sensitivity-level DataTree zarr: the experiment root store that aggregates the members.
         if cfg_analysis.toggle_sensitivity_analysis:
-            analysis_paths_kwargs["sensitivity_datatree_zarr"] = analysis_dir / "experiment_datatree.zarr"
+            analysis_paths_kwargs["experiment_datatree_zarr"] = analysis_dir / "experiment_datatree.zarr"
 
         self.analysis_paths = AnalysisPaths(**analysis_paths_kwargs)
         # Running identity: this process runs the hhemt commit the config names, or it
@@ -716,31 +720,46 @@ class TRITONSWMM_analysis:
         # staying O(flag-stat): no scenario instantiation. (c_run flags are durable
         # post-completion; ``_invalidate_downstream_flags`` never deletes them.)
         total_sims = self.nsims
+        # Scenario labels with no completion flag, in enumeration order. They go into the
+        # banner so a resume names WHICH sims are still owed, not only how many.
+        incomplete_labels: list[str] = []
         if self.cfg_analysis.toggle_sensitivity_analysis:
             # The canonical per-(member_id, event_id) enumeration is owned by the
             # members; the member-flag glob is the existing sensitivity count
             # (``c_run_*_member-*`` flags are likewise post-completion + durable).
             sim_flags = list(status_dir.glob(f"c_run_{primary_model_type}_member-*_evt-*_complete.flag"))
             n_complete = len(sim_flags)
+            # Naming is an addition to a count that must always print: where the member set is
+            # not available the banner keeps the count alone rather than failing the constructor.
+            members = getattr(getattr(self, "sensitivity", None), "members", None) or {}
+            present = {flag.name for flag in sim_flags}
+            from hhemt.scenario import compute_event_id_slug
+
+            for member_id, member in members.items():
+                for i in range(len(member.df_sims)):
+                    slug = compute_event_id_slug(member._retrieve_weather_indexer_using_integer_index(i))
+                    flag_name = f"c_run_{primary_model_type}_member-{member_id}_evt-{slug}_complete.flag"
+                    if flag_name not in present:
+                        incomplete_labels.append(f"member-{member_id}_evt-{slug}")
         else:
             from hhemt.scenario import compute_event_id_slug
 
-            n_complete = sum(
-                1
-                for i in range(len(self.df_sims))
-                if (
-                    status_dir
-                    / (
-                        f"c_run_{primary_model_type}_evt-"
-                        f"{compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(i))}"
-                        "_complete.flag"
-                    )
-                ).exists()
-            )
+            n_complete = 0
+            for i in range(len(self.df_sims)):
+                slug = compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(i))
+                if (status_dir / f"c_run_{primary_model_type}_evt-{slug}_complete.flag").exists():
+                    n_complete += 1
+                else:
+                    incomplete_labels.append(f"evt-{slug}")
         n_incomplete = total_sims - n_complete
 
         analysis_id = self.cfg_analysis.analysis_id
         print(f"[Analysis] Resuming {analysis_id} — {n_complete}/{total_sims} sims complete.", flush=True)
+        if incomplete_labels:
+            shown = incomplete_labels[:_RESUME_BANNER_MAX_NAMED_SIMS]
+            more = len(incomplete_labels) - len(shown)
+            tail = f" (+{more} more)" if more > 0 else ""
+            print(f"[Analysis] Incomplete sims ({len(incomplete_labels)}): {', '.join(shown)}{tail}", flush=True)
 
         # Surface the effective per-sim retry budget so the operator sees the
         # cap before a silent post-cap non-completion. This prints the config value;
@@ -1318,6 +1337,7 @@ class TRITONSWMM_analysis:
             "'CC-BY-NC-SA-4.0', 'CC-BY-ND-4.0', 'CC-BY-NC-ND-4.0'] | None"
         ) = None,
         software_doi: "str | None" = None,
+        creators: "list[dict] | None" = None,
     ) -> dict:
         """Deposit this analysis to a DOI-minting repository.
 
@@ -1334,6 +1354,9 @@ class TRITONSWMM_analysis:
         expect, compared against the crate only after the config check has passed. A
         mismatch raises PublishError. Returns ``{"target","data_doi","software_doi","record_url"}``.
         For target='hydroshare' data_doi is None and the dict also carries "manual_step".
+        The creators argument is the list of creator dicts the deposit credits. Without creators,
+        a Zenodo deposit is credited to the organization. The HydroShare target ignores the
+        argument and warns when a caller supplies creators.
         """
         from hhemt.publishing import publish_analysis
 
@@ -1342,6 +1365,7 @@ class TRITONSWMM_analysis:
             target=target,
             override_dataset_license=override_dataset_license,
             software_doi=software_doi,
+            creators=creators,
         )
 
     def publish_reprex_bundle(
@@ -1354,6 +1378,7 @@ class TRITONSWMM_analysis:
             "'CC-BY-NC-SA-4.0', 'CC-BY-ND-4.0', 'CC-BY-NC-ND-4.0'] | None"
         ) = None,
         software_doi: "str | None" = None,
+        creators: "list[dict] | None" = None,
         container_defs: "list[Path] | None" = None,
     ) -> dict:
         """Deposit the runnable reprex bundle to a DOI-minting repository.
@@ -1397,6 +1422,7 @@ class TRITONSWMM_analysis:
             deposit_source=bundle_zip,
             override_dataset_license=override_dataset_license,
             software_doi=software_doi,
+            creators=creators,
         )
 
     def eda(
@@ -3622,7 +3648,7 @@ class TRITONSWMM_analysis:
 
         # Determine which phases were completed based on parameters
         phases_completed = []
-        if workflow_params["process_system_level_inputs"] or workflow_params["compile_TRITON_SWMM"]:
+        if workflow_params["process_system_level_inputs"] or workflow_params["run_setup_phase"]:
             phases_completed.append("setup")
         if workflow_params["prepare_scenarios"]:
             phases_completed.append("prepare")
@@ -4452,7 +4478,7 @@ class TRITONSWMM_analysis:
         mode: Literal["local", "slurm", "auto"] = "auto",
         process_system_level_inputs: bool = False,
         overwrite_system_inputs: bool = False,
-        compile_TRITON_SWMM: bool = True,
+        run_setup_phase: bool = True,
         recompile_if_already_done_successfully: bool = False,
         prepare_scenarios: bool = True,
         overwrite_scenario_if_already_set_up: bool = False,
@@ -4498,7 +4524,7 @@ class TRITONSWMM_analysis:
             If True, process system-level inputs for the DEM and Mannings in the setup phase
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
-        compile_TRITON_SWMM : bool
+        run_setup_phase : bool
             Compiles no solver, because no emitted setup rule carries a ``--compile-*`` flag, so
             the rule asserts the solver tier and avoids building the solver. In container
             mode the rule performs no such check, because the SIF carries the binary.
@@ -4676,7 +4702,7 @@ class TRITONSWMM_analysis:
                     mode=mode,
                     process_system_level_inputs=process_system_level_inputs,
                     overwrite_system_inputs=overwrite_system_inputs,
-                    compile_TRITON_SWMM=compile_TRITON_SWMM,
+                    run_setup_phase=run_setup_phase,
                     recompile_if_already_done_successfully=recompile_if_already_done_successfully,
                     prepare_scenarios=prepare_scenarios,
                     overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
@@ -4716,7 +4742,7 @@ class TRITONSWMM_analysis:
                     mode=mode,
                     process_system_level_inputs=process_system_level_inputs,
                     overwrite_system_inputs=overwrite_system_inputs,
-                    compile_TRITON_SWMM=compile_TRITON_SWMM,
+                    run_setup_phase=run_setup_phase,
                     recompile_if_already_done_successfully=recompile_if_already_done_successfully,
                     prepare_scenarios=prepare_scenarios,
                     overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,

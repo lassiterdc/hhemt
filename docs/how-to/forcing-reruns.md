@@ -67,7 +67,7 @@ Resume in the default mode. Under the graceful-rerun semantics of the toolkit, `
 hhemt run --system-config my_system.yaml --analysis-config my_analysis.yaml
 ```
 
-Avoid `--from-scratch` for adding work. The flag is the full-tree delete of `hhemt run`, and the guard refuses whenever the analysis directory holds work. Only a directory that the guard sees as empty is wiped and rebuilt from the beginning.
+Avoid `--mode fresh` for adding work. The mode is the full-tree delete of `hhemt run`, and the guard refuses whenever the analysis directory holds work. Only a directory that the guard sees as empty is wiped and rebuilt from the beginning.
 
 `hhemt run` offers no flag that overrides the guard. The flag for a wipe on purpose is `--override-wipe-nonempty` on `hhemt run-experiment --mode fresh`, and the command prints the cost before the delete. To remove an analysis, use `hhemt delete`. The command carries a confirmation and in-flight guards. [Run modes and the wipe guard](running-an-experiment-definition.md#run-modes-and-the-wipe-guard) describes the wipe flag and the delete, and gives the command-line form of the guard.
 

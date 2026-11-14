@@ -724,7 +724,16 @@ class _HydroShareTarget:
 
     def publish(self, *, deposit, license_spdx, software_doi, analysis_dir, creators=None) -> dict:
         # creators: accepted for call-site parity; an hsclient creator-metadata mapping is a
-        # future enhancement (the HydroShare leg does not require it). Intentionally unused.
+        # future enhancement (the HydroShare leg does not require it). Not applied, and the
+        # caller is told so rather than left to find the deposit uncredited.
+        if creators:
+            warnings.warn(
+                "The HydroShare target does not apply `creators`: the resource is created "
+                "with the account's own author metadata. Set the authors on the resource "
+                "after the deposit, or use target='zenodo', which credits them.",
+                UserWarning,
+                stacklevel=2,
+            )
         # Invocation 1: hs.create -> upload -> set metadata -> set_sharing_status(public=True),
         #   then STOP and surface the manual web-UI DOI-mint instruction (hsclient v1.1.6 has
         #   no programmatic .publish()/DOI mint).

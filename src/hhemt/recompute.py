@@ -345,7 +345,7 @@ def _iter_scope_stamps(analysis: TRITONSWMM_analysis):
 
     paths = analysis.analysis_paths
     if analysis.cfg_analysis.toggle_sensitivity_analysis:
-        locations = [("sensitivity-master", getattr(paths, "sensitivity_datatree_zarr", None))]
+        locations = [("sensitivity-master", getattr(paths, "experiment_datatree_zarr", None))]
     else:
         locations = [("analysis-datatree", getattr(paths, "analysis_datatree_zarr", None))]
 

@@ -66,7 +66,7 @@ def _assert_emitted_and_enumerated(content: str, generator: str) -> None:
 def test_multisim_generator_emits_and_enumerates(synth_multi_sim_analysis):
     content = synth_multi_sim_analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=True,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         prepare_scenarios=True,
         process_timeseries=True,
     )

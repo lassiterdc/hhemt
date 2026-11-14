@@ -35,7 +35,7 @@ def test_five_site_lockstep_multisim(synth_multi_sim_analysis):
     builder = synth_multi_sim_analysis._workflow_builder
     gen_kwargs = dict(
         process_system_level_inputs=True,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         prepare_scenarios=True,
         process_timeseries=True,
     )

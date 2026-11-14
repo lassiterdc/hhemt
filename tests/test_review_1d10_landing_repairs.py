@@ -39,7 +39,7 @@ def _master(root: Path) -> SimpleNamespace:
         cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=True),
         analysis_paths=SimpleNamespace(
             analysis_dir=root,
-            sensitivity_datatree_zarr=root / EXPERIMENT_TREE_NAME,
+            experiment_datatree_zarr=root / EXPERIMENT_TREE_NAME,
             analysis_datatree_zarr=None,
         ),
         process=SimpleNamespace(open_datatree=_own_tree_is_unreachable),
@@ -122,7 +122,7 @@ def test_the_pointer_predicate_follows_the_write_fields_binding_over_every_analy
     golden_extractor,
 ):
     """Property: over the master and the four members of the real sensitivity golden, the analyses `_pointer_target`
-    treats as a master are exactly those whose `analysis_paths.sensitivity_datatree_zarr` is bound; the master's target
+    treats as a master are exactly those whose `analysis_paths.experiment_datatree_zarr` is bound; the master's target
     is its experiment store and each member's is its own `analysis_datatree.zarr`.
     The clearing switch is off here (the golden names neither toggle, and the default is on, which moves each member's
         tree into the master and leaves a member with no tree of its own to point to); the next test covers that state.
@@ -151,12 +151,12 @@ def test_the_pointer_predicate_follows_the_write_fields_binding_over_every_analy
     members = [a for a in analyses if a is not master]
     assert len(members) == 4, "the golden's four members"
     for analysis in analyses:
-        bound = analysis.analysis_paths.sensitivity_datatree_zarr is not None
+        bound = analysis.analysis_paths.experiment_datatree_zarr is not None
         assert bool(analysis.cfg_analysis.toggle_sensitivity_analysis) is bound
 
     master_target = post._pointer_target(master)
     assert master_target is not None, "control: the master's store was written"
-    assert master_target[0] == master.analysis_paths.sensitivity_datatree_zarr
+    assert master_target[0] == master.analysis_paths.experiment_datatree_zarr
     for member in members:
         target = post._pointer_target(member)
         assert target is not None

@@ -240,7 +240,7 @@ def test_combine_and_metadata_walkers_share_the_armless_root_tree_order(tmp_path
 
 
 def test_sensitivity_attribute_is_bound_to_the_experiment_filename(synth_sensitivity_analysis):
-    """Property: on a constructed sensitivity analysis, ``analysis_paths.sensitivity_datatree_zarr``
+    """Property: on a constructed sensitivity analysis, ``analysis_paths.experiment_datatree_zarr``
     is the path ``experiment_datatree.zarr``, which is the binding ``analysis.py`` makes in its
     constructor when ``toggle_sensitivity_analysis`` is true.
 
@@ -265,7 +265,7 @@ def test_sensitivity_attribute_is_bound_to_the_experiment_filename(synth_sensiti
     analysis = synth_sensitivity_analysis
 
     assert analysis.cfg_analysis.toggle_sensitivity_analysis is True
-    assert analysis.analysis_paths.sensitivity_datatree_zarr.name == "experiment_datatree.zarr"
+    assert analysis.analysis_paths.experiment_datatree_zarr.name == "experiment_datatree.zarr"
 
 
 def _two_store_root(root: Path, *, live: str, members: bool, cfg_arm: bool | None) -> Path:

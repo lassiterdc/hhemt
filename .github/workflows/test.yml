@@ -3,34 +3,52 @@
 
 name: Test Python application
 
-# NOTE (first-public-release): this job installs via `pip install -e ".[test]"`,
-# which resolves an UNVALIDATED SWMM stack, so every SWMM-executing test SKIPS
-# (tests/utils_for_testing.py::swmm_stack_version_mismatch fires). This check
-# therefore certifies lint + non-SWMM unit behavior ONLY. "The software compiles
-# and runs SWMM" is certified by compile-tests.yml, which provisions the validated
+# NOTE: this job installs via `pip install -e ".[test,docs]"`. pyproject.toml caps
+# `pyswmm<2.2` and `swmm-toolkit<0.16`, so pip resolves the same SWMM Python stack the
+# lock validates (pyswmm 2.1.0, swmm-toolkit 0.15.x). The SWMM-executing tests in the
+# fast tier therefore RUN on this runner rather than skip; the solver-compiling tests
+# (the compile tier) still run in compile-tests.yml, which provisions the validated
 # conda env — that job must be a REQUIRED status check before the release PR.
 
 on:
+  # develop only: the release PR (develop -> main) reads this check from the develop push run
+  # on its head SHA, so a trigger on main would run the same check twice for one SHA.
   push:
-    branches: [ "main", "develop" ]
+    branches: [ "develop" ]
   pull_request:
-    branches: [ "main", "develop" ]
+    branches: [ "develop" ]
 
 permissions:
   contents: read
 
 jobs:
-  build:
+  shard:
+    name: shard ${{ matrix.shard }} of ${{ matrix.shard-count }}
     strategy:
+      # Every shard runs to the end so the fan-in has every shard's durations and node ids.
+      fail-fast: false
       matrix:
-        # Test all supported Python versions under Ubuntu
         os: [ubuntu-latest]
         python-version: ['3.12']
+        # The shard count is chosen from a measured run: the first sharded run's per-shard wall
+        # clock and the fan-in's five heaviest files and groups decide whether to change N or to
+        # assign files by duration. `shard` must list every residue 1..shard-count; the fan-in
+        # fails when the shards do not together cover the unsharded selection.
+        shard-count: [8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
 
     runs-on: ${{ matrix.os }}
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        # Full history and every tag, not the default depth-1 clone. Four tests read
+        # git history: three derive a toolkit version with `git describe --tags --long`
+        # and a commit count from a sha, and one checks that the pre-retirement commit
+        # f22181a3 exists. On a depth-1 clone with no tags the first two return None and
+        # a tagless `0.2.0+g<sha>` form, and the last reports the commit is not in the
+        # clone. All four fail on such a clone and pass on a full one.
+        fetch-depth: 0
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
@@ -43,6 +61,62 @@ jobs:
         # at module scope to derive the rendered-docstring population the way the
         # renderer does. Both live in `docs`, so `.[test]` alone cannot COLLECT
         # that file and the whole step errors before a single assertion runs.
+        pip install -e ".[test,docs]"
+    - name: Run this shard's tests
+      env:
+        SHARD: ${{ matrix.shard }}
+        SHARD_COUNT: ${{ matrix.shard-count }}
+      run: |
+        # Gate A's population, the fast tier (the justfile's `test-fast` and `just qa` select the same tests),
+        # spread over every core of this runner. `--dist loadgroup` keeps each `xdist_group` on one worker, which
+        # is how the tests that share a runs root stay together; a group split across two SHARDS is safe because
+        # each runner has its own filesystem. The compile tier runs in compile-tests.yml and on the cluster, and
+        # the Snakemake-subprocess tests run in the whole-suite array runs, not on this runner.
+        #
+        # `tests` is passed explicitly: `--ci-shard` is registered by tests/conftest.py, and pytest loads that
+        # conftest before parsing options only when it sits on a path argument (`testpaths` is read too late).
+        #
+        # The wall-clock file is written even when pytest fails, so a red shard still reports its duration.
+        mkdir -p ci-shard
+        start="$(date +%s)"
+        status=0
+        pytest tests -n auto --dist loadgroup \
+          -m "not slow and not compile_tier and not requires_snakemake_subprocess" \
+          --ci-shard "${SHARD}/${SHARD_COUNT}" \
+          --ci-shard-record ci-shard/nodeids.txt \
+          --junitxml=ci-shard/junit.xml -o junit_family=xunit1 || status=$?
+        echo "$(( $(date +%s) - start ))" > ci-shard/wall_seconds.txt
+        exit "${status}"
+    - name: Upload this shard's node ids, junit report and wall clock
+      if: always()
+      uses: actions/upload-artifact@v5
+      with:
+        name: ci-shard-${{ matrix.shard }}-of-${{ matrix.shard-count }}
+        path: ci-shard/
+        if-no-files-found: error
+
+  # THE REQUIRED CHECK. The job's display name below is the required status context, so it is spelled out
+  # rather than derived from a matrix, and no shard job may carry it.
+  build:
+    name: build (ubuntu-latest, 3.12)
+    needs: [shard]
+    # Without `if: always()` a failed or cancelled shard SKIPS this job, and GitHub treats a skipped
+    # required job as passing.
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install project with test extras
+      run: |
+        python -m pip install --upgrade pip
+        # Same install as a shard: the unsharded collection below imports the whole test tree.
         pip install -e ".[test,docs]"
     - name: Lint with ruff
       run: |
@@ -58,10 +132,118 @@ jobs:
         # gate above cannot see them by construction.
         TY_PYTHON="$(python -c 'import sys; print(sys.prefix)')"
         ty check --python "$TY_PYTHON" --exit-zero --output-format concise
-    - name: Run tests
+    - name: Collect the unsharded fast-tier selection
+      if: always()
       run: |
-        # Gate A's population, the fast tier (the justfile's `test-fast` and `just qa` select the same tests),
-        # spread over every core. `--dist loadgroup` keeps each `xdist_group` on one worker, which is how the
-        # tests that share a runs root stay together. The compile tier runs in compile-tests.yml and on the
-        # cluster, and the Snakemake-subprocess tests run in the whole-suite array runs, not on this runner.
-        pytest -n auto --dist loadgroup -m "not slow and not compile_tier and not requires_snakemake_subprocess"
+        # Same expression, same `tests` argument as a shard, no `--ci-shard` and no xdist: the node ids it
+        # prints are the reference the shards' recorded ids must partition.
+        pytest tests --collect-only -q \
+          -m "not slow and not compile_tier and not requires_snakemake_subprocess" > unsharded-collection.txt
+    - name: Download every shard's artifacts
+      if: always()
+      uses: actions/download-artifact@v6
+      with:
+        pattern: ci-shard-*
+        path: shard-artifacts
+    - name: Check the shards partition the selection, and report the duration floor
+      if: always()
+      run: |
+        python - <<'PYEOF'
+        import collections
+        import pathlib
+        import re
+        import sys
+        import xml.etree.ElementTree as ET
+
+        root = pathlib.Path("shard-artifacts")
+        failures = []
+
+        # A node id line starts with a path ending `.py::`; reaper notices, warnings and the footer do not.
+        node_id = re.compile(r"^\S+\.py::.*$")
+        unsharded_text = pathlib.Path("unsharded-collection.txt").read_text(encoding="utf-8").splitlines()
+        unsharded = [line for line in unsharded_text if node_id.match(line)]
+        footer = [m for line in unsharded_text if (m := re.match(r"^(\d+)(?:/\d+)? tests? collected", line))]
+        if not footer or int(footer[-1].group(1)) != len(unsharded):
+            failures.append(
+                f"the unsharded collection printed {len(unsharded)} node id lines but its footer says "
+                f"{footer[-1].group(1) if footer else 'nothing'}; the parser and pytest disagree"
+            )
+
+        # Artifact directories are named ci-shard-K-of-N.
+        shards = {}
+        counts = set()
+        for directory in sorted(root.glob("ci-shard-*-of-*")):
+            m = re.fullmatch(r"ci-shard-(\d+)-of-(\d+)", directory.name)
+            shards[int(m.group(1))] = directory
+            counts.add(int(m.group(2)))
+        if len(counts) != 1:
+            sys.exit(f"FAIL: the shard artifacts name more than one shard count: {sorted(counts)}")
+        count = counts.pop()
+        if sorted(shards) != list(range(1, count + 1)):
+            failures.append(f"shard labels present {sorted(shards)} are not exactly 1..{count}")
+
+        recorded = {}
+        for k, directory in shards.items():
+            path = directory / "nodeids.txt"
+            recorded[k] = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+            if not path.exists():
+                failures.append(f"shard {k} uploaded no nodeids.txt")
+
+        seen = collections.Counter(i for ids in recorded.values() for i in ids)
+        expected = collections.Counter(unsharded)
+        overlap = sorted(i for i, n in seen.items() if n > 1)
+        missing = sorted((expected - seen).elements())
+        extra = sorted((seen - expected).elements())
+        print(f"shard count N = {count}")
+        print("selected per shard: " + ", ".join(f"{k}: {len(recorded[k])}" for k in sorted(recorded)))
+        print(f"sum of shards = {sum(len(v) for v in recorded.values())}; unsharded = {len(unsharded)}")
+        print(f"overlap = {len(overlap)}; missing from every shard = {len(missing)}; not in the unsharded = {len(extra)}")
+        for label, items in (("overlap", overlap), ("missing", missing), ("extra", extra)):
+            for item in items[:10]:
+                print(f"  {label}: {item}")
+        if overlap or missing or extra:
+            failures.append("the shards are not a partition of the unsharded selection")
+
+        # Duration floor. A test file or an xdist group cannot be split across shards, so the heaviest of each
+        # bounds what any assignment can achieve. Test seconds are setup + call + teardown from each shard's junit.
+        by_file = collections.Counter()
+        by_group = collections.Counter()
+        for k, directory in shards.items():
+            wall = directory / "wall_seconds.txt"
+            junit = directory / "junit.xml"
+            test_seconds = 0.0
+            if junit.exists():
+                for case in ET.parse(junit).getroot().iter("testcase"):
+                    seconds = float(case.get("time") or 0.0)
+                    test_seconds += seconds
+                    by_file[case.get("file") or case.get("classname")] += seconds
+                    name = case.get("name") or ""
+                    before, at, group = name.rpartition("@")
+                    # A parameter id may contain "@"; the xdist suffix follows a bracket-balanced id.
+                    if at and before.count("[") == before.count("]"):
+                        by_group[group] += seconds
+            wall_text = wall.read_text().strip() if wall.exists() else "missing"
+            print(f"shard {k}: wall clock {wall_text} s; sum of test seconds {test_seconds:.0f}")
+        for title, table in (("files", by_file), ("xdist groups", by_group)):
+            print(f"five heaviest {title} (test seconds, all shards):")
+            for name, seconds in table.most_common(5):
+                print(f"  {seconds:9.1f}  {name}")
+
+        if failures:
+            for failure in failures:
+                print(f"::error::{failure}")
+            sys.exit(1)
+        print("partition check passed")
+        PYEOF
+    - name: Require every shard to have succeeded
+      if: always()
+      env:
+        SHARD_RESULT: ${{ needs.shard.result }}
+      run: |
+        # `needs.shard.result` aggregates the matrix: `success` only when every shard succeeded, so a failed,
+        # cancelled or skipped shard all fail this step.
+        echo "shard matrix result: ${SHARD_RESULT}"
+        if [ "${SHARD_RESULT}" != "success" ]; then
+          echo "::error::the shard matrix concluded '${SHARD_RESULT}', not 'success'"
+          exit 1
+        fi

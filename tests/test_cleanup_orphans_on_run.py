@@ -56,7 +56,7 @@ def sensitivity_analysis_with_orphans(synthetic_sensitivity_completed_isolated):
       builder writes one per member when it builds the Snakefile, so removing a
       member's CSV row orphans it like the member's dir and flags)
     - a member_999/ group directory inside the master's consolidated tree
-      (``analysis_paths.sensitivity_datatree_zarr``, which resolves to
+      (``analysis_paths.experiment_datatree_zarr``, which resolves to
       ``experiment_datatree.zarr``), if that store exists
     """
     analysis = synthetic_sensitivity_completed_isolated.experiment
@@ -82,7 +82,7 @@ def sensitivity_analysis_with_orphans(synthetic_sensitivity_completed_isolated):
     # Orphan input-fingerprint: member-999 absent from df_setup.index.
     (status_dir / "member-999_inputs.json").write_text("{}")
 
-    zarr_path = analysis.analysis_paths.sensitivity_datatree_zarr
+    zarr_path = analysis.analysis_paths.experiment_datatree_zarr
     if zarr_path is not None and zarr_path.exists():
         (zarr_path / "member_999").mkdir(parents=True, exist_ok=True)
         (zarr_path / "member_999" / "sentinel.txt").write_text("orphan-group")
@@ -101,9 +101,9 @@ def test_find_orphan_status_flags(sensitivity_analysis_with_orphans):
 
 def test_find_orphan_datatree_groups(sensitivity_analysis_with_orphans):
     member = sensitivity_analysis_with_orphans.sensitivity
-    zarr_path = sensitivity_analysis_with_orphans.analysis_paths.sensitivity_datatree_zarr
+    zarr_path = sensitivity_analysis_with_orphans.analysis_paths.experiment_datatree_zarr
     if zarr_path is None or not zarr_path.exists():
-        pytest.skip("analysis_paths.sensitivity_datatree_zarr is not present in fixture")
+        pytest.skip("analysis_paths.experiment_datatree_zarr is not present in fixture")
     orphans = member.find_orphan_datatree_groups()
     assert "999" in orphans
 
@@ -134,7 +134,7 @@ def test_cleanup_all_orphans_dry_run(sensitivity_analysis_with_orphans):
 
 def test_cleanup_all_orphans_force_deletes(sensitivity_analysis_with_orphans):
     member = sensitivity_analysis_with_orphans.sensitivity
-    zarr_path = sensitivity_analysis_with_orphans.analysis_paths.sensitivity_datatree_zarr
+    zarr_path = sensitivity_analysis_with_orphans.analysis_paths.experiment_datatree_zarr
     zarr_existed_before = zarr_path is not None and zarr_path.exists()
 
     result = member.cleanup_all_orphans(dry_run=False, force=True, verbose=False)
@@ -185,7 +185,7 @@ def test_run_dry_run_preserves_all_orphans(sensitivity_analysis_with_orphans):
     analysis = sensitivity_analysis_with_orphans
     analysis_dir = analysis.analysis_paths.analysis_dir
     status_dir = analysis_dir / "_status"
-    zarr_path = analysis.analysis_paths.sensitivity_datatree_zarr
+    zarr_path = analysis.analysis_paths.experiment_datatree_zarr
     zarr_group = zarr_path / "member_999" if (zarr_path is not None and zarr_path.exists()) else None
     with patch("hhemt.config.report.validate_sensitivity_independent_vars"):
         with patch.object(

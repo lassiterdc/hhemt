@@ -1,0 +1,48 @@
+# Release PR tree identity: a develop -> main pull request must merge into main to EXACTLY the
+# tree of its head commit. The job key `release-pr-tree-identity` IS the required-status-check
+# context string; do not add a job-level `name:` (it would replace the context).
+#
+# WHY THIS EXISTS. The heavy required checks (test, compile-tests, docs-build, ...) no longer
+# trigger on pull_request into main or push to main, so a release PR reads them from the develop
+# push run on its head SHA. That certifies the head commit, and the merge lands the MERGE REF.
+# This job closes the gap: if the merge ref's tree equals the head's tree, the tested tree is the
+# tree that lands. It is false when main holds content develop lacks (a hotfix committed straight
+# to main, or a merge that resolved a conflict), and that is the case it exists to refuse.
+#
+# Limit, stated so a green is not read as broader than it is: the merge ref is computed when the
+# PR is opened or pushed. A commit that reaches main afterwards changes the merge but does not
+# re-trigger this job, and the ruleset does not require branches to be up to date.
+name: Release PR tree identity
+
+on:
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  release-pr-tree-identity:
+    runs-on: ubuntu-latest
+    steps:
+      # On a pull_request event this checks out refs/pull/N/merge: HEAD is the merge commit.
+      # Depth 2 holds the merge commit and both of its parents.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: The merge ref's tree equals the PR head's tree
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git cat-file -e "${PR_HEAD_SHA}^{commit}" 2>/dev/null || git fetch --depth=1 origin "${PR_HEAD_SHA}"
+          merge_tree="$(git rev-parse 'HEAD^{tree}')"
+          head_tree="$(git rev-parse "${PR_HEAD_SHA}^{tree}")"
+          echo "merge ref ($(git rev-parse HEAD)) tree: ${merge_tree}"
+          echo "PR head (${PR_HEAD_SHA}) tree:          ${head_tree}"
+          if [ "${merge_tree}" != "${head_tree}" ]; then
+            echo "::error::The merge into main would produce tree ${merge_tree}, not the tested head tree ${head_tree}. main holds content develop lacks; merge main into develop and re-run the release gate on the new head."
+            git diff --stat "${PR_HEAD_SHA}" HEAD || true
+            exit 1
+          fi
+          echo "Tree identity holds: what the develop push run tested is what lands on main."

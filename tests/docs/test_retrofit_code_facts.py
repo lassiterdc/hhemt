@@ -264,6 +264,7 @@ _GATE_LABELS = {
     "mkdocs build --strict": "strict build",
     "python scripts/check_autodoc_coverage.py": "autodoc coverage",
     "python scripts/check_docs_content.py": "docs content hygiene",
+    "python scripts/check_docstring_dialect.py": "docstring dialect",
     "python scripts/check_published_surface.py": "published-surface fidelity",
     "python scripts/check_vale.py": "Vale style check",
 }
@@ -635,7 +636,7 @@ def test_control_a_flag_the_parser_lacks_is_refused(pages):
     run = command_tree().subcommands["run"].options
     page = pages["docs/how-to/compiling-the-solver.md"].replace("--compile-triton-swmm", "--compile-triton-swm", 1)
     assert check_setup_flags(page, setup_flags, run)
-    assert check_setup_flags(page.replace("`--from-scratch`", "`--from-scrach`", 1), setup_flags, run)
+    assert check_setup_flags(page.replace("`--mode`", "`--mod`", 1), setup_flags, run)
 
 
 def test_compile_page_toggles_are_system_config_fields(pages):

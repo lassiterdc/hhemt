@@ -23,8 +23,9 @@
 name: Compile-bearing synth render-gate tier
 
 on:
-  pull_request:
-    branches: [ "main" ]
+  # Push to develop only: the release PR (develop -> main) reads compile-synth-render-gate from
+  # the develop push run on its head SHA. A pull_request trigger on main ran this heaviest job a
+  # second time for the same SHA.
   push:
     branches: [ "develop" ]
   workflow_dispatch:
@@ -110,6 +111,41 @@ jobs:
       - name: Guard — environment-lock.yaml swmm-provenance consistency
         run: python scripts/check_env_lock_consistency.py
 
+      - name: Host fingerprint (decides H1 on every run, pass or fail)
+        # Diagnosability, not a gate: this step records what the runner offers the MPI
+        # solver and NEVER fails the job, because a refused `mpirun` is the finding and
+        # a red here would hide the pytest result that follows it. The load-bearing line
+        # is `mpirun -np 2 true`: it launches two ranks of a solver-free program, so a
+        # runner whose MPI refuses two ranks (too few slots, a binding policy) shows as
+        # a non-zero rc here on every run instead of only inside a failed simulation
+        # (R1 / H1 of the release-pr-reds shape). The rc is printed as `mpirun_np2_rc=N`.
+        run: |
+          set +e
+          {
+            echo "### Host fingerprint"
+            echo '```text'
+            echo "nproc=$(nproc)"
+            echo "--- lscpu"
+            lscpu
+            echo "--- hwloc core count"
+            if command -v hwloc-calc >/dev/null 2>&1; then
+              echo "hwloc_cores=$(hwloc-calc --number-of core all 2>&1)"
+            else
+              echo "hwloc_cores=unavailable (hwloc-calc not on PATH)"
+            fi
+            echo "--- ompi_info"
+            if command -v ompi_info >/dev/null 2>&1; then
+              ompi_info --version 2>&1 | head -n 3
+            else
+              echo "ompi_info=unavailable (not on PATH)"
+            fi
+            echo "--- solver-free two-rank launch"
+            timeout 120 mpirun -np 2 true 2>&1
+            echo "mpirun_np2_rc=$?"
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 0
+
       - name: Compile-bearing synth render-gate tests (serial, toolchain-required)
         env:
           # The runner IS the toolchain venue; this RELAXES the fail-closed compile
@@ -139,3 +175,24 @@ jobs:
             tests/test_synth_08_sensitivity_reprocess.py \
             tests/test_synth_eda_facade.py \
             --deselect tests/test_synth_04_multisim_with_snakemake.py::test_snakemake_workflow_end_to_end
+
+      - name: Upload failure diagnostics (simulation logs and status files)
+        # Before this step a failed run kept nothing that named the failing rule: the
+        # compile-tier job uploaded no artifact, so the Actions page could not say which
+        # Snakemake rule or which member of a multi-sim analysis failed. `if: failure()`
+        # scopes it to a red pytest step and costs a green run nothing.
+        # `include-hidden-files: true` is required, not optional: the cache root is
+        # `~/.cache/...` and upload-artifact v4+ skips any path under a dot-directory by
+        # default, which would upload zero files and report success.
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: compile-gate-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ~/.cache/hhemt/synthetic_test_runs/**/logs/**
+            ~/.cache/hhemt/synthetic_test_runs/**/_status/**
+            /tmp/pytest-of-runner/**/logs/**
+            /tmp/pytest-of-runner/**/_status/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14

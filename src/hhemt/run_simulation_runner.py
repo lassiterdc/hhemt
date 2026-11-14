@@ -992,6 +992,13 @@ def main():
         # Verify completion via log file check (no refresh needed - we'll check the log file directly)
         if not scenario.run.model_run_completed(model_type):
             logger.error(f"[{event_iloc}] Simulation did not complete successfully")
+            # Raised inside the try so the except arm below logs the PMIx cause and its remedy
+            # and records the terminal failure once. Without this call a SLURM run, the only
+            # path that runs MPI under PMIx, ends as a bare "did not complete" and a _failed_
+            # marker, because this runner never goes through finalize_sim.
+            from hhemt.run_simulation import raise_if_pmix_gds_failure
+
+            raise_if_pmix_gds_failure(model_logfile, event_iloc=event_iloc, model_type=model_type)
             _n_fail = _bump_terminal_failures(scenario, model_type)
             if _n_fail is not None:
                 logger.error(

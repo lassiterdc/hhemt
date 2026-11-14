@@ -95,8 +95,11 @@ PATTERN_CLASSES = (CLASS_EMAIL, CLASS_PATH)
 # The local part is matched POSSESSIVELY and only from the start of a run of local-part
 # characters (the look-behind), so the scan is linear in the line length. The literal
 # non-possessive form does not finish on the two ~100 MB published bundle pages (measured:
-# quadratic backtracking over long alphanumeric runs).
-EMAIL_RE = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]++@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+# quadratic backtracking over long alphanumeric runs). The local part and the domain labels are
+# read with Unicode `\w` and the top-level label with `[^\W\d_]` (Unicode letters only, two or
+# more), so an address written in another script is read whole; equal, string for string, to the
+# toolkit gate's pattern.
+EMAIL_RE = re.compile(r"(?<![\w.%+-])[\w.%+-]++@[\w.-]+\.[^\W\d_]{2,}")
 
 _UNIX_ROOTS = (
     "home",

@@ -10,10 +10,12 @@
 name: Anonymization guard
 
 on:
+  # develop only: the release PR (develop -> main) reads this check from the develop push run
+  # on its head SHA, so a trigger on main would run the same check twice for one SHA.
   push:
-    branches: [ "main", "develop" ]
+    branches: [ "develop" ]
   pull_request:
-    branches: [ "main", "develop" ]
+    branches: [ "develop" ]
 
 # The producer-specific list reaches CI as the repository secret
 # HHEMT_ANONYMIZATION_BLOCKLIST_CONTENT. The developer creates that secret (no agent does).

@@ -333,14 +333,14 @@ def _member_node_count(store: Path) -> int:
     member: a bare directory count returns 2, and a `zarr.json`-gated count returns 2 as
     well, because `parameters` is a real zarr group. Counting by vocabulary returns 1.
 
-    NO `zarr.json` CONJUNCT, and the divergence from `V0023._member_group_count` is
+    NO `zarr.json` CONJUNCT, and the divergence from `V0025._member_group_count` is
     DELIBERATE rather than an oversight. This function matches the only member-group
     reader already landed in this repository, `V0022._member_group_prefixes`, which tests
     `is_dir()` and the prefix and nothing else. A `zarr.json` conjunct changes the answer
     on exactly one population -- a member directory that carries no group node, which is
     the BROKEN hierarchy `_apply_zarr_unify_to_experiment_tree`'s own docstring describes
     a bare directory move as producing -- and the two readers are right to differ there:
-    `V0023` MOVES a store and must refuse on a malformed tree, while this function
+    `V0025` MOVES a store and must refuse on a malformed tree, while this function
     RETURNS a classification and would otherwise report less than the evidence supports.
     """
     if not store.is_dir():

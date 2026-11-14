@@ -5191,3 +5191,31 @@ non_breaking_allowlist:
     layout_signature: e5610a456d66625747802f1188c3a2d92f89b46e813477273c3e558bfb4bb355
     justification: |-
       A method name changes: the every-member reader becomes an internal method and its one self-call follows; no stored group, path or variable changes name. No LAYOUT_VERSION bump.
+  - path: src/hhemt/scenario.py
+    layout_signature: 838eb887a16d1eb2201c1d430eddaddad1d07aa34fbc4b744e0c52f56f10b581
+    justification: |-
+      Type repair only: the three ProcessingError raises in find_closest_dem_coord pass filepath=None and carry the boundary-condition label in operation, so the exception's message text changes while no file, path, key, group, variable, log field or fingerprint is written differently; no on-disk state changes and no migration is owed.
+  - path: src/hhemt/scenario.py
+    layout_signature: 140c5ec948ede36d55242092995d1694ae7f87d1d3774b9225ac3431957ad73e
+    justification: |-
+      Type-gate repair only: one early return replaces a None-conditional expression in the coupled-node check with the same outcomes, and four ty ignore comments sit on lines whose behavior is unchanged; no file, path, key, group, variable, log field or fingerprint is written differently, so no on-disk state changes and no migration is owed.
+  - path: src/hhemt/config/loaders.py
+    layout_signature: 192900e04ad02dd23d364361fcba1ac4d161cd5221cb169c1bf7dbe58374e191
+    justification: |-
+      chunk 1m.1: a node-local-roots helper extracted from the missing-config message; same roots, no persisted path, filename, key or column moved
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: f84d3ca79f89a69202e82c135e499f12656bcf311de365955a252e66e2de2912
+    justification: |-
+      chunk 1m.1: publish and publish_reprex_bundle gain a creators parameter forwarded to publish_analysis; no persisted path, filename, key or column moved
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: e913fa57ce98f8476ddba80348a46dd6cff6e2b6a117af7ae9b65b55b11189fa
+    justification: |-
+      chunk 1q.1: the keyword parameter compile_TRITON_SWMM is renamed run_setup_phase on the sensitivity submit_workflow signature, its docstring entry and its forward to the workflow builder; no stored group, path, filename, key or column moved, and nothing on disk changes name.
+  - path: src/hhemt/paths.py
+    layout_signature: 53b2a2ce635b0fc6f3534d9d45daab89374fa5cac736fbf5598424c64a9b0a6a
+    justification: |-
+      chunk 1q.2: the AnalysisPaths field sensitivity_datatree_zarr is renamed experiment_datatree_zarr in place (declaration slot unchanged); the value the analysis binds was already experiment_datatree.zarr, so no stored group, path, filename, key or column moved and nothing on disk changes name. No LAYOUT_VERSION bump.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 2d9604113efdb4206e6b347730b925ceb6f4a5714b1bbb090d6da36f85f95449
+    justification: |-
+      chunk 1q.2: the nine mentions of the AnalysisPaths attribute sensitivity_datatree_zarr follow its rename to experiment_datatree_zarr (seven code reads, one docstring line and one error-message line); the path they read was already experiment_datatree.zarr, so no stored group, path, filename, key or column moved and nothing on disk changes name. No LAYOUT_VERSION bump.

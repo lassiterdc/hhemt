@@ -88,7 +88,7 @@ def sensitivity(synth_sensitivity_builder, monkeypatch):
 
 _MULTISIM_KWARGS = dict(
     process_system_level_inputs=True,
-    compile_TRITON_SWMM=True,
+    run_setup_phase=True,
     prepare_scenarios=True,
     process_timeseries=True,
 )

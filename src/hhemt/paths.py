@@ -62,7 +62,7 @@ class AnalysisPaths(MainDataClass):
     # Sensitivity-level hierarchical DataTree zarr (aggregates member trees). It holds each member's `summary` AND
     # `timeseries` branches under `member_{id}/{family}/{kind}/`, so a sensitivity master has no separate series
     # store either.
-    sensitivity_datatree_zarr: Path | None = None
+    experiment_datatree_zarr: Path | None = None
 
     # The consolidated per-scenario time series live INSIDE analysis_datatree.zarr, in the `timeseries` branch of each
     # group (`{family}/{kind}/timeseries`), appended one scenario at a time on the elapsed_s axis. There is no

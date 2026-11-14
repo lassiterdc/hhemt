@@ -798,7 +798,7 @@ def induce_incomplete_analysis(sensitivity, member_id, *, delete_master_tree=Fal
         sub.log.datatree_consolidation_complete.set(False)
     if delete_master_tree:
         master = sensitivity.experiment
-        mtree = master.analysis_paths.sensitivity_datatree_zarr
+        mtree = master.analysis_paths.experiment_datatree_zarr
         if mtree is not None and mtree.exists():
             fast_rmtree(mtree)
         (master.analysis_paths.analysis_dir / "_status" / "f_consolidate_experiment_complete.flag").unlink(

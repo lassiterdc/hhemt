@@ -648,6 +648,53 @@ def _validate_toggle_dependencies_analysis(cfg: analysis_config, result: Validat
             )
 
 
+def _read_sensitivity_file(path: Path):
+    """Read the sensitivity file the way production does, so preflight and build accept the same files.
+
+    Production (`TRITONSWMM_sensitivity_analysis._retrieve_df_setup`) reads `.csv` and `.xlsx` by the
+    lower-cased extension and raises `ValueError` for any other, so a `.txt` file holding CSV text
+    must fail here too rather than at workflow build.
+    """
+    import pandas as pd
+
+    extension = path.name.lower().split(".")[-1]
+    if extension == "csv":
+        return pd.read_csv(path)
+    if extension == "xlsx":
+        return pd.read_excel(path)
+    raise ValueError("File extension not recognized for file defining sensitivity analysis.")
+
+
+def _validate_sensitivity_file_readable(cfg_analysis: analysis_config, result: ValidationResult):
+    """Refuse a sensitivity file that exists but cannot be parsed.
+
+    The one place preflight reports it. The validators that read the sensitivity file for a
+    column or a row cap (``_validate_per_member_system_configs`` and its siblings) skip
+    silently on a file they cannot parse, because this check has already said so; without it a
+    corrupt or mislabeled ``.xlsx`` passed preflight and failed hours later at workflow build.
+    A missing file is not reported here: ``is_file()`` gates the read, and the existence check
+    belongs to the config validators.
+    """
+
+    if not cfg_analysis.toggle_sensitivity_analysis:
+        return
+    sensitivity_csv = cfg_analysis.sensitivity_analysis
+    if sensitivity_csv is None:
+        return
+    sensitivity_csv = Path(sensitivity_csv)
+    if not sensitivity_csv.is_file():
+        return
+    try:
+        _read_sensitivity_file(sensitivity_csv)
+    except Exception as exc:
+        result.add_error(
+            field="analysis.sensitivity_analysis",
+            message=f"The sensitivity file exists but cannot be parsed: {type(exc).__name__}: {exc}",
+            current_value=str(sensitivity_csv),
+            fix_hint="Re-save the file as a valid .csv or .xlsx, or point sensitivity_analysis at a readable file",
+        )
+
+
 def _validate_per_member_system_configs(
     cfg_system: system_config,
     cfg_analysis: analysis_config,
@@ -673,7 +720,8 @@ def _validate_per_member_system_configs(
 
     Skipped silently when the gate conditions don't apply (no sensitivity
     analysis, no CSV path, missing CSV file, no ``system_config_yaml`` column,
-    or unreadable CSV). Other validators surface those upstream issues.
+    or unreadable CSV). An unreadable CSV is reported by
+    ``_validate_sensitivity_file_readable``, and the other upstream issues by their own validators.
     """
     import pandas as pd
 
@@ -690,10 +738,7 @@ def _validate_per_member_system_configs(
         # The sensitivity setup may be .csv or .xlsx; both branches in
         # downstream code use pandas. Read header-only to detect the column,
         # then full payload only when the column is present.
-        if sensitivity_csv.suffix.lower() in {".xlsx", ".xls"}:
-            df = pd.read_excel(sensitivity_csv)
-        else:
-            df = pd.read_csv(sensitivity_csv)
+        df = _read_sensitivity_file(sensitivity_csv)
     except Exception:
         return
 
@@ -886,7 +931,6 @@ def _validate_per_row_partition_requires_batch_job(
     Runs only when ``toggle_sensitivity_analysis=True`` AND the CSV is readable AND
     a partition overlay column is present. Skipped silently otherwise.
     """
-    import pandas as pd
 
     if not cfg_analysis.toggle_sensitivity_analysis:
         return
@@ -899,10 +943,7 @@ def _validate_per_row_partition_requires_batch_job(
     if not sensitivity_csv.is_file():
         return
     try:
-        if sensitivity_csv.suffix.lower() in {".xlsx", ".xls"}:
-            df = pd.read_excel(sensitivity_csv)
-        else:
-            df = pd.read_csv(sensitivity_csv)
+        df = _read_sensitivity_file(sensitivity_csv)
     except Exception:
         return
 
@@ -1833,10 +1874,7 @@ def _validate_per_member_row_caps(
     import pandas as pd
 
     try:
-        if sensitivity_csv.suffix.lower() in {".xlsx", ".xls"}:
-            df = pd.read_excel(sensitivity_csv)
-        else:
-            df = pd.read_csv(sensitivity_csv)
+        df = _read_sensitivity_file(sensitivity_csv)
     except Exception:
         return
 
@@ -2337,6 +2375,7 @@ def preflight_validate(
     # at instantiation time. Needs cfg_system (for master toggles) — invoked
     # here at the preflight_validate level rather than from inside
     # _validate_toggle_dependencies_analysis (which lacks cfg_system).
+    _validate_sensitivity_file_readable(cfg_analysis, result)
     _validate_per_member_system_configs(cfg_system, cfg_analysis, result)
     # Re-parented here from _validate_storm_tide_data: this is a whole-analysis
     # check and needs BOTH configs to resolve the rule-(1) forcing variable set.

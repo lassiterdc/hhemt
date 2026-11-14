@@ -422,7 +422,7 @@ def _rebuild_member_summaries(master, member_id: str, analysis) -> dict[str, xr.
 
 def _moved_member_summary_nodes(master, member_id: str, analysis) -> tuple[dict[str, xr.Dataset], str]:
     """The summary nodes of a member whose tree moved: read from the master, or rebuilt when stale or missing there."""
-    store = master.analysis_paths.sensitivity_datatree_zarr
+    store = master.analysis_paths.experiment_datatree_zarr
     node_name = f"{master.member_prefix}{member_id}"
     recorded = [g for g in _recorded_move_groups(analysis, member_id) if g.endswith("/summary")]
     current = analysis.process._consolidation_inputs_fingerprint()
@@ -855,7 +855,7 @@ class TRITONSWMM_sensitivity_analysis:
         # setup stuff
         process_system_level_inputs: bool = True,
         overwrite_system_inputs: bool = False,
-        compile_TRITON_SWMM: bool = True,
+        run_setup_phase: bool = True,
         recompile_if_already_done_successfully: bool = False,
         # ensemble run stuff
         prepare_scenarios: bool = True,
@@ -895,7 +895,7 @@ class TRITONSWMM_sensitivity_analysis:
             If True, process system-level inputs for the DEM and Mannings
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
-        compile_TRITON_SWMM : bool
+        run_setup_phase : bool
             Accepted for signature parity and inert on the generated workflow. The
             primary Snakefile generator carries no read of the parameter, so the parameter changes no emitted
             rule. The parameter compiles no solver, because no emitted setup rule carries a
@@ -1051,7 +1051,7 @@ class TRITONSWMM_sensitivity_analysis:
                 mode=mode,
                 process_system_level_inputs=process_system_level_inputs,
                 overwrite_system_inputs=overwrite_system_inputs,
-                compile_TRITON_SWMM=compile_TRITON_SWMM,
+                run_setup_phase=run_setup_phase,
                 recompile_if_already_done_successfully=recompile_if_already_done_successfully,
                 prepare_scenarios=prepare_scenarios,
                 overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
@@ -1470,7 +1470,7 @@ class TRITONSWMM_sensitivity_analysis:
                     if _sub_zarr is not None and _sub_zarr.exists():
                         delete_and_account([_sub_zarr], scope_dir=analysis.analysis_paths.analysis_dir, scope="member")
                         affected_sub_dirs.add(analysis.analysis_paths.analysis_dir)
-                _primary_zarr = self.analysis_paths.sensitivity_datatree_zarr
+                _primary_zarr = self.analysis_paths.experiment_datatree_zarr
                 if _primary_zarr is not None and _primary_zarr.exists():
                     delete_and_account([_primary_zarr], scope_dir=experiment_dir, scope="analysis")
                 for _sub_dir in affected_sub_dirs:
@@ -1850,6 +1850,7 @@ class TRITONSWMM_sensitivity_analysis:
             "'CC-BY-NC-SA-4.0', 'CC-BY-ND-4.0', 'CC-BY-NC-ND-4.0'] | None"
         ) = None,
         software_doi: "str | None" = None,
+        creators: "list[dict] | None" = None,
     ) -> dict:
         """Deposit the sensitivity PRIMARY tree to a DOI-minting repo.
 
@@ -1858,7 +1859,9 @@ class TRITONSWMM_sensitivity_analysis:
         experiment_datatree.zarr, the primary-rooted ro-crate sidecar, and the
         materialized configs, ``cfg_analysis.yaml`` and ``cfg_system.yaml``. See
         ``publishing._deposit_set``. The function filters the list by existence. The license is
-        read from the emitted crate. Returns {"target","data_doi","software_doi","record_url"}.
+        read from the emitted crate. The creators argument is the list of creator dicts the
+        deposit credits, as the analysis-tier facade describes. Returns
+        {"target","data_doi","software_doi","record_url"}.
         """
         from hhemt.publishing import publish_analysis
 
@@ -1867,6 +1870,7 @@ class TRITONSWMM_sensitivity_analysis:
             target=target,
             override_dataset_license=override_dataset_license,
             software_doi=software_doi,
+            creators=creators,
             consolidated_zarr_relpath="experiment_datatree.zarr",
         )
 
@@ -1880,6 +1884,7 @@ class TRITONSWMM_sensitivity_analysis:
             "'CC-BY-NC-SA-4.0', 'CC-BY-ND-4.0', 'CC-BY-NC-ND-4.0'] | None"
         ) = None,
         software_doi: "str | None" = None,
+        creators: "list[dict] | None" = None,
         container_defs: "list[Path] | None" = None,
     ) -> dict:
         """Deposit the runnable reprex bundle for the sensitivity primary.
@@ -1898,6 +1903,7 @@ class TRITONSWMM_sensitivity_analysis:
             exclude_config=exclude_config,
             override_dataset_license=override_dataset_license,
             software_doi=software_doi,
+            creators=creators,
             container_defs=container_defs,
         )
 
@@ -2133,7 +2139,7 @@ class TRITONSWMM_sensitivity_analysis:
 
         Ensures each member has a consolidated ``analysis_datatree.zarr``
         first, then assembles them into a single hierarchical store at
-        ``experiment_datatree.zarr``, the ``sensitivity_datatree_zarr`` path.
+        ``experiment_datatree.zarr``, the ``experiment_datatree_zarr`` path.
 
         When ``allow_incomplete`` is True, the default, members whose
         per-scenario summaries are not all present on disk are SKIPPED with a
@@ -2148,9 +2154,9 @@ class TRITONSWMM_sensitivity_analysis:
         suites by default. To restore strict fail-fast on canonical runs, flip
         this default back to ``False``.
         """
-        fname_out = self.analysis_paths.sensitivity_datatree_zarr
+        fname_out = self.analysis_paths.experiment_datatree_zarr
         if fname_out is None:
-            raise ValueError("sensitivity_datatree_zarr path is not configured on AnalysisPaths.")
+            raise ValueError("experiment_datatree_zarr path is not configured on AnalysisPaths.")
 
         # Bare .exists() is an unreliable completion signal — a
         # present-but-corrupt experiment_datatree.zarr (a write that crashed
@@ -2478,7 +2484,7 @@ class TRITONSWMM_sensitivity_analysis:
         """
         from hhemt.exceptions import ProcessingError
 
-        store = self.analysis_paths.sensitivity_datatree_zarr
+        store = self.analysis_paths.experiment_datatree_zarr
         node_name = f"{self.member_prefix}{member_id}"
         if store is None or not zarr_store_has_index(store):
             raise ProcessingError(
@@ -2568,7 +2574,7 @@ class TRITONSWMM_sensitivity_analysis:
 
     def open_sensitivity_datatree(self) -> "xr.DataTree":
         """Open the consolidated sensitivity DataTree zarr lazily."""
-        path = self.analysis_paths.sensitivity_datatree_zarr
+        path = self.analysis_paths.experiment_datatree_zarr
         if path is None or not path.exists():
             raise ValueError("Sensitivity DataTree zarr not found. Run consolidate_sensitivity_datatree() first.")
         return open_store(path, chunks="auto")
@@ -2967,7 +2973,7 @@ class TRITONSWMM_sensitivity_analysis:
         the member_id strings without prefix. Returns an empty list if the zarr
         is absent.
         """
-        zarr_path = self.analysis_paths.sensitivity_datatree_zarr
+        zarr_path = self.analysis_paths.experiment_datatree_zarr
         if zarr_path is None or not zarr_path.exists():
             return []
         expected_member_ids = set(self.df_setup.index.astype(str))
@@ -3072,7 +3078,7 @@ class TRITONSWMM_sensitivity_analysis:
         result["sensitivity_datatree_removed"] = False
         result["master_flag_removed"] = False
         if any_orphan:
-            zarr_path = self.analysis_paths.sensitivity_datatree_zarr
+            zarr_path = self.analysis_paths.experiment_datatree_zarr
             if zarr_path is not None and zarr_path.exists():
                 if verbose:
                     print(

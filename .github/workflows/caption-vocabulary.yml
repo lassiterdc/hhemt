@@ -19,10 +19,12 @@
 name: Caption vocabulary guard
 
 on:
+  # develop only: the release PR (develop -> main) reads this check from the develop push run
+  # on its head SHA, so a trigger on main would run the same check twice for one SHA.
   push:
-    branches: [ "main", "develop" ]
+    branches: [ "develop" ]
   pull_request:
-    branches: [ "main", "develop" ]
+    branches: [ "develop" ]
 
 permissions:
   contents: read

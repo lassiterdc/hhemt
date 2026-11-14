@@ -649,10 +649,15 @@ def _build_stamp_names() -> frozenset[str]:
 def _is_performance_store(rel: str, group: str | None) -> bool:
     """Whether the store is a ``performance`` summary: the tree group ``{family}/performance/summary``, or a
     per-scenario ``*perf*_summary`` store. Measured on a real re-run: every floating-point variable of that group is a
-    wall-clock timer (all but two zero-valued ones differ), and its integer and text variables are deterministic."""
+    wall-clock timer (all but two zero-valued ones differ), and its integer and text variables are deterministic.
+
+    The per-scenario form is decided by the store's own file name and never by a directory above it, because the
+    directory between ``sims/`` and ``processed/`` is a producer-chosen event id: an id that contains ``_perf_summary``
+    would otherwise class every store under it as a performance store and drop that store's float variables from the
+    comparison, so a changed scientific value would read as equal."""
     if group is not None:
         return group.rstrip("/").endswith("performance/summary")
-    return "_perf_summary" in rel
+    return rel.rsplit("/", 1)[-1].split(".", 1)[0].endswith("_perf_summary")
 
 
 def _reference_verdict(

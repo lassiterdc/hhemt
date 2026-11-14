@@ -50,8 +50,12 @@ END_MARKER = "# === END GENERATED ty overrides -- nothing may be added below thi
 # so it does not depend on this generator's scope either.
 CANARY_DIR = "tools/ty_canary"
 
+# A notebook diagnostic prints as `file.ipynb:cell 11:6:1: ...`. The optional `:cell N` group is
+# matched OUTSIDE the path group so the diagnostic is attributed to the notebook path, which the
+# per-path override then covers exactly as it covers a module. Without it the line never matched
+# and `ty check` (which reads notebooks) stayed red after any regeneration.
 DIAGNOSTIC_RE = re.compile(
-    r"^(?P<path>[^:]+):(?P<line>\d+):(?P<col>\d+): (?P<severity>error|warning)\[(?P<rule>[a-z-]+)\]"
+    r"^(?P<path>[^:]+)(?::cell \d+)?:(?P<line>\d+):(?P<col>\d+): (?P<severity>error|warning)\[(?P<rule>[a-z-]+)\]"
 )
 
 

@@ -80,7 +80,7 @@ def test_default_set_category_co_sourced(synth_multi_sim_analysis):
     source = _capture_source_categories(
         lambda: builder.generate_snakefile_content(
             process_system_level_inputs=True,
-            compile_TRITON_SWMM=True,
+            run_setup_phase=True,
             prepare_scenarios=True,
             process_timeseries=True,
         )

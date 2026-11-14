@@ -7,9 +7,10 @@
 # and every surface reads green having verified nothing. This guard turns that silence
 # into a red build.
 #
-# TRIGGER SCOPE, and it is load-bearing rather than copied. This fires on main/develop
+# TRIGGER SCOPE, and it is load-bearing rather than copied. This fires on develop
 # push+PR only, matching every other guard workflow in this directory. A feature branch
-# is therefore NOT blocked; the block arrives at the merge PR, where a human is present
+# is therefore NOT blocked; the red arrives on the develop PR or push, and on a release PR's
+# rollup through the develop push run on its head SHA, where a human is present
 # to act on it. That is what makes a blocking-and-loud guard landable against a
 # known-failing state without stalling in-flight branch work.
 #
@@ -18,10 +19,12 @@
 name: Case-manifest pin guard
 
 on:
+  # develop only: the release PR (develop -> main) reads this check from the develop push run
+  # on its head SHA, so a trigger on main would run the same check twice for one SHA.
   push:
-    branches: [ "main", "develop" ]
+    branches: [ "develop" ]
   pull_request:
-    branches: [ "main", "develop" ]
+    branches: [ "develop" ]
 
 permissions:
   contents: read

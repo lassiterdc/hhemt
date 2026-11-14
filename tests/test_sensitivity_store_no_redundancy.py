@@ -156,7 +156,7 @@ class _Master:
         self.root = root
         self.members = members
         self.store = root / "experiment_datatree.zarr"
-        self.analysis_paths = SimpleNamespace(sensitivity_datatree_zarr=self.store)
+        self.analysis_paths = SimpleNamespace(experiment_datatree_zarr=self.store)
         self.df_setup = pd.DataFrame(
             {"run_mode": ["cpu"] * len(members)}, index=pd.Index(list(members), name="member_id")
         )

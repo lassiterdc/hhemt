@@ -584,7 +584,7 @@ def _fake_master(tmp_path: Path, *, with_view: bool = True):
         sensitivity=sens,
         analysis_paths=SimpleNamespace(
             analysis_dir=master,
-            sensitivity_datatree_zarr=master / "sensitivity_datatree.zarr",
+            experiment_datatree_zarr=master / "sensitivity_datatree.zarr",
             simulation_directory=master / "sims",
         ),
     )
@@ -614,7 +614,7 @@ def test_the_analysis_summary_check_tests_the_masters_group_for_a_removed_member
     from hhemt import analysis_validation as av
 
     analysis = _fake_master(tmp_path)
-    zarr = analysis.analysis_paths.sensitivity_datatree_zarr
+    zarr = analysis.analysis_paths.experiment_datatree_zarr
     zarr.mkdir(parents=True)
     assert [d for d in av.check_analysis_summaries_created(analysis).details if "member_3" in d["detail"]]
     (zarr / "member_3").mkdir()

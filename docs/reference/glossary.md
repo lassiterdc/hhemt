@@ -222,7 +222,7 @@ Persistent identifier, the general term for a DOI or any similar permanent ident
 
 ### DataCite
 
-The metadata schema for the registration of dataset DOIs. A deposit supplies the identifier, the creators, the title, the publisher, the publication year, and the resource type.
+The metadata schema for the registration of dataset DOIs. A deposit supplies the identifier, the creators, the title, the publisher, the publication year, and the resource type. Pass `creators=` to `analysis.publish` to credit named people, as a list of creator dicts. Omitted, a Zenodo deposit credits the organization. The HydroShare target applies no `creators` and warns when the argument is given.
 
 ### FAIR
 

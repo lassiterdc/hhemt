@@ -1,6 +1,6 @@
 """The experiment-root store field is a WRITE path; readers use the resolver.
 
-`analysis.py` binds `AnalysisPaths.sensitivity_datatree_zarr` to the literal unified
+`analysis.py` binds `AnalysisPaths.experiment_datatree_zarr` to the literal unified
 filename, and `sensitivity_analysis.consolidate_sensitivity_datatree` writes THROUGH
 that field. A reader that takes the same field is pinned to the unified name and fails
 on a tree that legitimately still carries the retired one -- which is the defect this
@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-FIELD = "sensitivity_datatree_zarr"
+FIELD = "experiment_datatree_zarr"
 
 #: KEYED ON THE RELATIVE PATH, NEVER THE BASENAME. ``src/hhemt/config/analysis.py``
 #: exists alongside ``src/hhemt/analysis.py``, so a basename key would hand the config

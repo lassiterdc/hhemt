@@ -40,8 +40,8 @@ def test_exit_code_2_cli_validation_error_mutually_exclusive(tmp_path):
             str(system_config),
             "--analysis-config",
             str(analysis_config),
-            "--from-scratch",
-            "--resume",
+            "--verbose",
+            "--quiet",
         ],
     )
     assert result.exit_code == 2

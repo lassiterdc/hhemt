@@ -216,6 +216,29 @@ def test_swmm_cross_model_consistency(synth_all_models_analysis_cached):
             pytest.fail("Link time series data variables do not match")
 
 
+def _assert_every_series_holds_every_period(series_by_node, n_periods, n_times):
+    """Assert each node series, and the time axis, hold exactly ``n_periods`` report periods, over more than one.
+
+    ``n_periods`` is the output's own ``NUM_PERIODS``. Must-fire control: ``n_periods > 1`` and a non-empty node
+    set, so a reader that returns nothing, or a one-period output, fails here instead of passing vacuously.
+
+    Class: NEW CAPABILITY. Property: every node series and the time axis of the hydrology ``.out`` carry exactly
+    ``n_periods`` values. Why required: the invariant test's other clauses compare nodes to one another, so a
+    read that drops the final report period from every series left them all green. Killed by: a reader that
+    returns ``n_periods - 1`` values (pyswmm 2.1.0's ``Output.node_series``); measured red on a Rivanna compute
+    node with a plugin that drops the final period. A second correct reader (any read over ``(0, NUM_PERIODS)``)
+    still passes. Not established: that every possible accessor defect is a one-period drop.
+    """
+    assert n_periods > 1, f"the hydrology .out reports {n_periods} period(s); the count check is vacuous below 2"
+    assert series_by_node, "no node series were read, so the period count was not checked"
+    assert n_times == n_periods, f"the time axis has {n_times} steps for {n_periods} report periods"
+    short = {k: len(v) for k, v in series_by_node.items() if len(v) != n_periods}
+    assert not short, (
+        f"{len(short)} node series do not hold all {n_periods} report periods (final period dropped?): "
+        f"{dict(sorted(short.items()))}"
+    )
+
+
 def test_hydrology_variant_local_runoff_invariant(synth_all_models_analysis_cached):
     """Local-runoff-invariant guard — synth-swmm-hydrology-continuity Phase 1 (R7/R8).
 
@@ -234,6 +257,11 @@ def test_hydrology_variant_local_runoff_invariant(synth_all_models_analysis_cach
     * KINWAVE->DYNWAVE reversion -> per-node ``TOTAL_INFLOW`` is byte-identical
       across DW/KW (master R4/A1), so assertions (1)-(3) are structurally BLIND;
       the secondary continuity assertion (4) is that regression's ONLY coverage.
+
+    A fourth, count-bearing clause (0) asserts every node series and the time axis hold the output's FULL
+    ``NUM_PERIODS`` report periods, through the direct toolkit read and through the toolkit's own reader, so a
+    read that drops the final period (pyswmm 2.1.0's ``Output.node_series``) fails it; the clauses above are
+    value-free and node-relative and cannot tell 11 periods from 12.
 
     Mirrors ``swmm_runoff_modeling.write_hydrograph_files``'s two filters: the
     outfall-skip and the ``d_inflow.sum() > 0`` positive-inflow filter that
@@ -281,14 +309,30 @@ def test_hydrology_variant_local_runoff_invariant(synth_all_models_analysis_cach
     # installed pyswmm version.
     with Output(hydro_out) as out:
         n_periods = int(swmm_output.get_times(out.handle, Time.NUM_PERIODS))
-        inflow_sum = {
-            key: float(
-                pd.Series(
-                    swmm_output.get_node_series(out.handle, out.nodes[key], NodeAttribute.TOTAL_INFLOW, 0, n_periods)
-                ).sum()
+        series_by_node = {
+            key: pd.Series(
+                swmm_output.get_node_series(out.handle, out.nodes[key], NodeAttribute.TOTAL_INFLOW, 0, n_periods)
             )
             for key in non_outfall
         }
+        n_times = len(out.times)
+
+    # (0) the FULL report-period count of the output read. The value-free uniformity and zero-set assertions
+    #     below compare nodes to one another, so a read that drops the final report period from EVERY series
+    #     leaves them all green; this is the assertion that tells 11 periods from 12. The count is anchored to
+    #     the file (NUM_PERIODS and the time axis), never to a literal, so a fixture retune does not touch it.
+    _assert_every_series_holds_every_period(series_by_node, n_periods, n_times)
+    inflow_sum = {key: float(series.sum()) for key, series in series_by_node.items()}
+
+    # The reader the toolkit itself calls (write_hydrograph_files and the capture writer) returns the same
+    # full count for the same file: a reader that regressed to a pyswmm accessor dropping the final period
+    # fails here even when the direct read above is whole. Looked up on the module at call time.
+    from hhemt import swmm_runoff_modeling as srm
+
+    node_inflow = srm.read_hydrology_node_inflow(hydro_out, df_node_locs, lst_outfalls)
+    _assert_every_series_holds_every_period(
+        {k: pd.Series(v) for k, v in node_inflow.inflow_by_node.items()}, n_periods, len(node_inflow.times_hr)
+    )
 
     # write_hydrograph_files' second filter (`if d_inflow.sum() > 0`): only
     # positive-inflow nodes produce a TRITON hydrograph. That is the

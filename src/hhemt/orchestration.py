@@ -173,7 +173,7 @@ class WorkflowStatus:
     analysis_dir : Path
         Root directory for analysis outputs
     setup : PhaseStatus
-        Status of setup phase (system inputs, compilation)
+        Status of setup phase (system inputs, and in native mode the build assertion)
     preparation : PhaseStatus
         Status of scenario preparation phase
     simulation : PhaseStatus
@@ -502,7 +502,7 @@ def translate_phases(
     if phases is None:
         return {
             "process_system_level_inputs": True,
-            "compile_TRITON_SWMM": True,
+            "run_setup_phase": True,
             "prepare_scenarios": True,
             "process_timeseries": True,
         }
@@ -513,7 +513,7 @@ def translate_phases(
 
     params = {
         "process_system_level_inputs": "setup" in phases,
-        "compile_TRITON_SWMM": "setup" in phases,
+        "run_setup_phase": "setup" in phases,
         "prepare_scenarios": "prepare" in phases,
         "process_timeseries": "process" in phases,
     }

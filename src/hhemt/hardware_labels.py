@@ -25,6 +25,8 @@ has yet observed.
 
 from __future__ import annotations
 
+import re
+
 #: (needle, label, path_token) in match order. GPU labels use the arch-key vocabulary of
 #: `system.py::_resolve_cuda_arch_flags` (rtx3090/a6000/a100/h100/h200/v100) so a
 #: legend and a compile flag name the same device. Note that the Rivanna PARTITION
@@ -73,3 +75,26 @@ def hardware_label(raw: str | None) -> str | None:
         if needle in low:
             return label
     return name
+
+
+def hardware_path_token(raw: str | None) -> str | None:
+    """Return the filesystem- and wildcard-safe form of a runtime-reported device name.
+
+    The sibling of `hardware_label`, read from the same map row, so a path or a Snakemake
+    wildcard that must name a device never re-slugifies the label at its own site. A mapped
+    name returns the row's pre-slugified token. An unmapped name returns its own slug --
+    lower case, every run of characters outside `[a-z0-9]` collapsed to one `_` -- so two
+    different unmapped devices stay different, as in `hardware_label`. None, a blank name, or a
+    name with no alphanumeric character returns None.
+    """
+    if raw is None:
+        return None
+    name = " ".join(raw.split())
+    if not name:
+        return None
+    low = name.lower()
+    for needle, _label, token in _DEVICE_LABELS:
+        if needle in low:
+            return token
+    slug = "_".join(part for part in re.split(r"[^a-z0-9]+", low) if part)
+    return slug or None

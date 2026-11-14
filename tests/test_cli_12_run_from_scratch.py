@@ -1,10 +1,11 @@
-"""`hhemt run --from-scratch` on its own must select the fresh mode.
+"""`hhemt run --mode fresh` on its own must select the fresh mode, and the retired flags must be gone.
 
-The problem this file guards: `--resume` used to be a boolean whose default was True and which
-had no off form, so the guard refusing `--from-scratch` together with `--resume` fired on EVERY
-`--from-scratch`, including the one `run --help`'s own example shows. The fresh mode was
-unreachable from the command line. The test invokes the real Typer app with the analysis, the
-system and the config loader stubbed, and asserts on the `from_scratch` value `run()` received.
+The problem this file guards: the fresh mode was once unreachable from the command line,
+because a `--resume` boolean that defaulted to True made the guard refuse every
+`--from-scratch`. `--mode {resume,fresh}` replaced both flags, so the route to the wipe is one
+closed choice, and the two retired flags must stay refused rather than linger as aliases that
+a script could still type. The test invokes the real Typer app with the analysis, the system
+and the config loader stubbed, and asserts on the `from_scratch` value `run()` received.
 
 Nothing here compiles a solver or runs a simulation: `run()` is a recorder that stops the
 command as soon as it is called.
@@ -60,19 +61,18 @@ def run_calls(monkeypatch):
 # R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
 # completed-tree fixture applies. Evidence:
 #     monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)
-def test_from_scratch_alone_selects_fresh_and_the_guard_still_refuses_both(run_calls, tmp_path):
-    """Property: `--from-scratch` alone reaches run() fresh; `--from-scratch --resume` is refused.
+def test_mode_fresh_alone_selects_fresh_and_the_retired_flags_are_refused(run_calls, tmp_path):
+    """Property: `--mode fresh` alone reaches run() fresh; `--from-scratch` and `--resume` never reach run().
 
-    Class: every `hhemt run` invocation carrying `--from-scratch`, without `--resume` (must
-    reach run() with `from_scratch=True`) and with an explicit `--resume` (must exit 2 with the
-    mutual-exclusion message, run() never called). Why it is required: `--from-scratch` is the
-    only command-line route to a fresh run, and refusing it unconditionally made that route
-    unreachable; but the two flags still contradict each other when both are typed, so the
-    guard must survive. What kills it: a `--resume` that is True when not typed (the first half
-    exits 2), or deleting the guard (the second half reaches run()). A second correct
-    implementation under which it still passes: a paired `--resume/--no-resume` option whose
-    default is unset, or replacing both flags' check with one on the typed flags, since only
-    the forwarded value, the exit code and the message are asserted.
+    Class: every `hhemt run` invocation carrying `--mode fresh` (must reach run() with
+    `from_scratch=True`) and every one carrying a retired flag (must exit 2, run() never
+    called). Why it is required: `--mode fresh` is the only command-line route to a fresh run,
+    and a retired flag that still parsed would give a script a second spelling that the docs
+    no longer describe. What kills it: a `--mode` that never converts to `from_scratch` (the
+    first half reaches run() with False), or re-adding either retired flag as an alias (the
+    second half reaches run()). A second correct implementation under which it still passes:
+    a `RunMode`-keyed table or a Typer callback doing the conversion, since only the forwarded
+    value, the exit code and the call count are asserted.
     """
     system_config = tmp_path / "system.yaml"
     analysis_config = tmp_path / "analysis.yaml"
@@ -80,11 +80,12 @@ def test_from_scratch_alone_selects_fresh_and_the_guard_still_refuses_both(run_c
     analysis_config.write_text("version: 1\n")
     base = ["run", "--system-config", str(system_config), "--analysis-config", str(analysis_config)]
 
-    result = runner.invoke(app, [*base, "--from-scratch"])
+    result = runner.invoke(app, [*base, "--mode", "fresh"])
     assert len(run_calls) == 1, f"run() not reached; exit {result.exit_code}: {result.output}"
     assert run_calls[0]["from_scratch"] is True
 
-    result = runner.invoke(app, [*base, "--from-scratch", "--resume"])
-    assert result.exit_code == 2, result.output
-    assert "cannot use both" in result.output.lower(), result.output
-    assert len(run_calls) == 1, "an explicit --from-scratch --resume must not reach run()"
+    for retired in ("--from-scratch", "--resume"):
+        result = runner.invoke(app, [*base, retired])
+        assert result.exit_code == 2, result.output
+        assert retired in result.output, result.output
+        assert len(run_calls) == 1, f"{retired} must not reach run()"

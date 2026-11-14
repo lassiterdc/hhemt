@@ -67,7 +67,7 @@ def test_1job_dry_run_does_not_submit(synth_1job_analysis, monkeypatch):
         mode="slurm",
         process_system_level_inputs=True,
         overwrite_system_inputs=False,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         recompile_if_already_done_successfully=False,
         prepare_scenarios=True,
         overwrite_scenario_if_already_set_up=True,
@@ -104,7 +104,7 @@ def test_1job_normal_run_workflow_builder(synth_1job_analysis):
     # Generate Snakefile content
     snakefile_content = analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=True,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         prepare_scenarios=True,
         process_timeseries=True,
     )

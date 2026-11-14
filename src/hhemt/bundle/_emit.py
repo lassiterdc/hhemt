@@ -1725,13 +1725,30 @@ SHAPEFILE_OPTIONAL_SIDECARS = (".prj", ".cpg")
 
 
 def _sidecar_of(shp: Path, extension: str) -> Path | None:
-    """The sidecar of ``shp`` with ``extension`` (any letter case), or None. Same stem, same directory."""
+    """The sidecar of ``shp`` with ``extension`` (any letter case), or None. Same stem, same directory.
+
+    A sidecar that is a link resolving outside the directory the ``.shp`` sits in raises ``ConfigurationError``,
+    because a bundle is an anonymised deposit and would carry the link target's bytes under a sidecar name, which
+    names a file the producer never declared as an input. A link that resolves inside that directory is carried.
+    """
+    from hhemt.exceptions import ConfigurationError
+
     parent = Path(shp).parent
     if not parent.is_dir():
         return None
     wanted = Path(shp).stem.lower() + extension
     for candidate in sorted(parent.iterdir()):
         if candidate.is_file() and candidate.name.lower() == wanted:
+            resolved = candidate.resolve()
+            if not resolved.is_relative_to(parent.resolve()):
+                raise ConfigurationError(
+                    field="declared_input",
+                    message=(
+                        f"shapefile sidecar {candidate} is a link to {resolved}, outside the directory of "
+                        f"{shp}; the bundle would carry that file's bytes under the sidecar name"
+                    ),
+                    fix_hint="Replace the link with a copy of the sidecar inside the .shp's directory, then re-emit.",
+                )
             return candidate
     return None
 

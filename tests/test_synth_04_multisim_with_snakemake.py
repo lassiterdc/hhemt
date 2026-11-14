@@ -26,7 +26,7 @@ def test_snakemake_local_workflow_generation_and_write(synth_multi_sim_analysis)
 
     snakefile_content = analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=True,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         prepare_scenarios=True,
         process_timeseries=True,
     )
@@ -91,7 +91,7 @@ def test_reprocess_render_report_rule_carries_reprocess_flag(synth_multi_sim_ana
     reprocess_content = generate_reprocess_snakefile(builder, start_with="render")
     production_content = builder.generate_snakefile_content(
         process_system_level_inputs=True,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         prepare_scenarios=True,
         process_timeseries=True,
     )
@@ -124,7 +124,7 @@ def test_snakemake_workflow_config_generation(synth_multi_sim_analysis):
 
     snakefile_content = analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=False,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         prepare_scenarios=True,
         process_timeseries=True,
         which="both",
@@ -158,7 +158,7 @@ def test_snakemake_workflow_config_generation(synth_multi_sim_analysis):
         (
             {
                 "process_system_level_inputs": True,
-                "compile_TRITON_SWMM": True,
+                "run_setup_phase": True,
                 "prepare_scenarios": False,
                 "process_timeseries": False,
             },
@@ -168,7 +168,7 @@ def test_snakemake_workflow_config_generation(synth_multi_sim_analysis):
         (
             {
                 "process_system_level_inputs": True,
-                "compile_TRITON_SWMM": True,
+                "run_setup_phase": True,
                 "prepare_scenarios": True,
                 "process_timeseries": True,
             },
@@ -209,7 +209,7 @@ def test_snakemake_workflow_dry_run(synth_multi_sim_analysis):
         mode="local",
         process_system_level_inputs=True,
         overwrite_system_inputs=False,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         recompile_if_already_done_successfully=False,
         prepare_scenarios=True,
         overwrite_scenario_if_already_set_up=True,
@@ -278,7 +278,7 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
         mode="local",
         process_system_level_inputs=True,
         overwrite_system_inputs=False,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         recompile_if_already_done_successfully=False,
         prepare_scenarios=True,
         overwrite_scenario_if_already_set_up=True,
@@ -491,7 +491,7 @@ def test_snakemake_workflow_concurrency_and_process_monitoring(
             mode="local",
             process_system_level_inputs=True,
             overwrite_system_inputs=False,
-            compile_TRITON_SWMM=True,
+            run_setup_phase=True,
             recompile_if_already_done_successfully=False,
             prepare_scenarios=True,
             overwrite_scenario_if_already_set_up=True,
@@ -1146,7 +1146,7 @@ def test_generated_snakefile_plans_no_rule_for_a_removed_event(synth_multi_sim_a
 
     def lists():
         text = analysis._workflow_builder.generate_snakefile_content(
-            process_system_level_inputs=True, compile_TRITON_SWMM=True, prepare_scenarios=True, process_timeseries=True
+            process_system_level_inputs=True, run_setup_phase=True, prepare_scenarios=True, process_timeseries=True
         )
         found = {}
         for line in text.splitlines():

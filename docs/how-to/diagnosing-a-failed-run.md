@@ -23,6 +23,7 @@ Start from the symptom you have. When no entry matches or the information to pic
 | [The analysis produced no output](#the-analysis-produced-no-output) | A phase never started, so find the missing flag |
 | [Setup says a model is enabled but not compiled](#setup-says-a-model-is-enabled-but-not-compiled) | Native mode needs a one-time compile, and the machine has no build |
 | [The job died at walltime](#the-job-died-at-walltime) | Expected, and the job resumes from the last checkpoint |
+| [The solver log names gds/shmem2](#the-solver-log-names-gdsshmem2) | An MPI launch failed inside PMIx. An environment variable is the remedy |
 | [The report is wrong but the results are fine](#the-report-is-wrong-but-the-results-are-fine) | The simulations are sound, and the stages after them need rebuilding |
 | [A resumed analysis that I expected to be a no-op re-executed everything](#a-resumed-analysis-that-i-expected-to-be-a-no-op-re-executed-everything) | A rerun trigger fired and no failure occurred |
 | [Results look wrong and the cause is unknown](#results-look-wrong-and-the-cause-is-unknown) | Possibly a known bug and no configuration error |
@@ -106,6 +107,21 @@ Raise the simulation retry count in place of the walltime when checkpoints are f
 
 ??? note "`perf_*` exceeding the scheduler's elapsed time on a resumed analysis"
     [A caveat on performance columns](../reference/output-data-model.md#a-caveat-on-performance-columns) explains the excess and why the excess is correct.
+
+### The solver log names gds/shmem2
+
+An MPI launch failed, and the solver log carries this text.
+
+```text
+Disabling gds/shmem2 via PMIX_MCA_gds=hash
+```
+
+PMIx could not allocate the shared-memory store that ranks use to exchange job data. The toolkit leaves `PMIX_MCA_gds` unset, because no recorded run has hit the failure and the setting would change every MPI launch without a measurement. The remedy is yours to apply.
+
+1. Export `PMIX_MCA_gds=hash` in the job environment and rerun. The `hash` store keeps one copy of the job data per process and has no shared-memory segment to allocate.
+2. Alternatively, raise `PMIX_MCA_gds_shmem2_segment_size_multiplier` to enlarge the segment.
+
+When a simulation fails and the solver log carries the text, the toolkit raises `PMIxSharedMemoryError`. The error names the log and the remedy, and maps to exit code 4, the simulation failure code.
 
 ### The report is wrong but the results are fine
 

@@ -249,6 +249,20 @@ def _provenance_line(site_dir: Path, *, import_failed: bool = False) -> str:
     )
 
 
+def _import_failure(site_dir: Path, exc: Exception) -> int:
+    """Report an import failure of the public modules as exit 2, with the provenance line.
+
+    Both enumerators reach the public modules through one import path, so a failure
+    there is an environment error rather than a coverage miss, and it must exit 2 from
+    either call. The second enumerator was once left outside the guard: a raise from it
+    ended the run as an uncaught traceback (exit 1, which reads as a coverage failure)
+    with no provenance line naming which tree the verdict was computed over.
+    """
+    print(_provenance_line(site_dir, import_failed=True), file=sys.stderr)
+    print(f"ERROR: could not import public modules: {exc}", file=sys.stderr)
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
@@ -264,9 +278,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         expected = expected_qualnames()
     except Exception as exc:  # import failure is an env error, not a coverage miss
-        print(_provenance_line(args.site_dir, import_failed=True), file=sys.stderr)
-        print(f"ERROR: could not import public modules: {exc}", file=sys.stderr)
-        return 2
+        return _import_failure(args.site_dir, exc)
     anchors = rendered_anchors(args.site_dir)
     missing = sorted(q for q in expected if q not in anchors)
     if missing:
@@ -282,7 +294,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    undocumented = undocumented_symbols()
+    try:
+        undocumented = undocumented_symbols()
+    except Exception as exc:  # the same import path as above, enumerated a second time
+        return _import_failure(args.site_dir, exc)
     if undocumented:
         print(_provenance_line(args.site_dir), file=sys.stderr)
         print("autodoc coverage FAILED — public symbols that render with NO docstring:", file=sys.stderr)

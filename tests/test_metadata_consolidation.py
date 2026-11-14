@@ -67,7 +67,7 @@ def test_sensitivity_consolidation_emits_master_and_sub_provenance(golden_sensit
 
     sensitivity.consolidate_sensitivity_datatree()
 
-    master_zarr = sensitivity.analysis_paths.sensitivity_datatree_zarr
+    master_zarr = sensitivity.analysis_paths.experiment_datatree_zarr
     assert master_zarr is not None and master_zarr.exists()
     master_tree = xr.open_datatree(master_zarr, engine="zarr", consolidated=False)
     assert "ro_crate_metadata" in master_tree.attrs
@@ -97,7 +97,7 @@ def test_sensitivity_consolidation_with_the_default_clearing_keeps_each_members_
     sensitivity = golden_sensitivity_analysis.sensitivity
     sensitivity.consolidate_sensitivity_datatree()
     master_tree = xr.open_datatree(
-        sensitivity.analysis_paths.sensitivity_datatree_zarr, engine="zarr", consolidated=False
+        sensitivity.analysis_paths.experiment_datatree_zarr, engine="zarr", consolidated=False
     )
     assert "ro_crate_metadata" in master_tree.attrs
     assert sensitivity.members

@@ -44,8 +44,8 @@ def test_node_local_config_miss_is_explained():
 def test_ordinary_config_miss_is_not_decorated():
     """Negative control on the ATTRIBUTION gate. Green both sides.
 
-    The path sits under the repository worktree, which is outside gettempdir(),
-    /tmp and /var/tmp, so the same call takes the unattributed branch. `tmp_path`
+    The path sits under a root directly below `/`, which is outside gettempdir(),
+    /tmp and /var/tmp wherever the repository is checked out, so the same call takes the unattributed branch. `tmp_path`
     is NOT usable here, and the reason is the point of the arm: pytest's tmp_path
     is itself under /tmp on most Linux hosts and the diagnostic's root set includes
     the /tmp literal, so monkeypatching gettempdir away would not move the path out
@@ -54,7 +54,7 @@ def test_ordinary_config_miss_is_not_decorated():
     Without this arm a version that appended the prose to every FileNotFoundError
     would pass the first arm and be wrong.
     """
-    ghost = Path(__file__).resolve().parent / "_absent_config" / "analysis_config.yaml"
+    ghost = Path("/hhemt-1m1-absent-root") / "analysis_config.yaml"
     assert not ghost.exists()
 
     with pytest.raises(FileNotFoundError) as exc:

@@ -11,6 +11,10 @@ instead of a zip. The `report_html_mode` setting, `auto` by default, chooses the
 container on every render that is given no explicit format, and the `report_formats`
 argument of `run()` and `submit_workflow()` is now `override_report_formats`.
 
+`hhemt run` now takes `--mode {resume,fresh}`, as `hhemt run-experiment` does, in place of `--from-scratch` and `--resume`. `--mode fresh` replaces `--from-scratch`, and `--mode resume`, the default, replaces `--resume`. `--overwrite` is unchanged.
+
+The `compile_TRITON_SWMM` keyword of `submit_workflow()` is now `run_setup_phase`, because the setup rule it controls asserts the solver tier and compiles nothing; a call that passes the old keyword raises `TypeError`. The `System.compile_TRITON_SWMM()` method keeps its name.
+
 A bundle now carries the report settings its report was rendered with, and a run or re-process whose report settings differ from the existing report's re-renders the figures and the report.
 
 A bundle written before layout 29 that sets a report, EDA or land-use column setting that no module read fails to load, because the models refuse an unknown key; write the bundle again from its migrated analysis with the current toolkit.

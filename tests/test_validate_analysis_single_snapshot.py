@@ -59,7 +59,7 @@ class _CountingAnalysis:
             # directory from the name of this one, which a MagicMock cannot supply.
             simulation_directory=analysis_dir / "sims",
             analysis_datatree_zarr=analysis_dir / "analysis_datatree.zarr",
-            sensitivity_datatree_zarr=None,
+            experiment_datatree_zarr=None,
         )
         self.cfg_analysis = _PermissiveConfig(
             toggle_sensitivity_analysis=False,

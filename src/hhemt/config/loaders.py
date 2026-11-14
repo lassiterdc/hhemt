@@ -24,6 +24,16 @@ ExistenceMode = Literal["runnable", "template", "metadata"]
 EXISTENCE_CONTEXT_KEY = "existence"
 
 
+def _node_local_roots() -> set[Path]:
+    """The roots whose contents a compute node cannot be assumed to share with the login node.
+
+    ``gettempdir()`` is resolved at call time because under SLURM it can be a per-job directory.
+    """
+    import tempfile
+
+    return {Path(tempfile.gettempdir()).resolve(), Path("/tmp"), Path("/var/tmp")}
+
+
 def _missing_config_message(cfg_yaml: Path, exc: FileNotFoundError) -> str:
     """Explain a missing config path when it sits on a node-local filesystem.
 
@@ -44,11 +54,8 @@ def _missing_config_message(cfg_yaml: Path, exc: FileNotFoundError) -> str:
     A node-local root that is neither (``/local``, ``/scratch-local``) gets the
     unaugmented message, which is no worse than the pre-existing behaviour.
     """
-    import tempfile
-
-    roots = {Path(tempfile.gettempdir()).resolve(), Path("/tmp"), Path("/var/tmp")}
     resolved = cfg_yaml.resolve()
-    if not any(resolved.is_relative_to(root) for root in roots):
+    if not any(resolved.is_relative_to(root) for root in _node_local_roots()):
         return str(exc)
     return (
         f"{exc}\n"

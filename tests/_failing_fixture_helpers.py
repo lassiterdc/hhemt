@@ -351,7 +351,7 @@ def inject_sensitivity_failures_at_paths(paths: dict) -> None:
     if sys_log.exists():
         _mutate_log_field(sys_log, "compilation_swmm_successful", False)
     # Delete the master store the CHECK reads. The name mirrors
-    # analysis.py:387 (`analysis_paths_kwargs["sensitivity_datatree_zarr"] =
+    # analysis.py:387 (`analysis_paths_kwargs["experiment_datatree_zarr"] =
     # analysis_dir / "experiment_datatree.zarr"`), which is the SAME field
     # sensitivity_analysis.py:1625 writes and analysis_validation.py:340 reads. Mirror the
     # FIELD, never resolve_experiment_tree: the resolver's priority order can select a

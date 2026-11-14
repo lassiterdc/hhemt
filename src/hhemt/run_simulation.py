@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Literal
 import pandas as pd
 
 from hhemt.config.hpc_system import resolve_container_spec, system_directory_bind
-from hhemt.exceptions import ConfigurationError
+from hhemt.exceptions import ConfigurationError, SimulationError
 from hhemt.resource_management import _parse_slurm_allocated_gpus
 from hhemt.scenario import TRITONSWMM_scenario, compute_event_id_slug
 from hhemt.swmm_markers import (
@@ -445,6 +445,52 @@ def failed_write_resume_message(f_step: int, n_step: int, failed_replay: bool) -
         f"Snapshot at checkpoint {f_step} failed to write (below unusable checkpoint {n_step}); "
         f"resuming at checkpoint {f_step}, where {then}"
     )
+
+
+#: The sentence PMIx 5.0.x prints when its shared-memory data store (``gds/shmem2``) cannot
+#: allocate, and the one the detector below matches. The same text names the remedy, which is
+#: why the toolkit matches on it rather than on a return code: a failed MPI launch exits
+#: with a generic nonzero status that says nothing about which component failed.
+PMIX_GDS_FAILURE_TEXT = "Disabling gds/shmem2 via PMIX_MCA_gds=hash"
+
+
+class PMIxSharedMemoryError(SimulationError):
+    """A solver launch failed because PMIx's ``gds/shmem2`` store could not allocate.
+
+    Raised by ``raise_if_pmix_gds_failure`` when a failed solver's log carries
+    ``PMIX_GDS_FAILURE_TEXT``. The toolkit does not set ``PMIX_MCA_gds`` itself: no recorded
+    hhemt run has hit this failure, so the export would be an unmeasured change to every MPI
+    launch. The remedy is the user's to apply, and the message names it.
+    """
+
+    def __init__(self, event_iloc: int, model_type: str, logfile: Path | None = None):
+        super().__init__(event_iloc, model_type, logfile)
+        self.args = (
+            f"{self.args[0]}\n"
+            "  Cause: PMIx could not allocate its shared-memory data store (gds/shmem2), and the\n"
+            f"         solver log says so ('{PMIX_GDS_FAILURE_TEXT}').\n"
+            "  Remedy: export PMIX_MCA_gds=hash in the job environment and rerun, or raise\n"
+            "          PMIX_MCA_gds_shmem2_segment_size_multiplier. See\n"
+            "          docs/how-to/diagnosing-a-failed-run.md, 'The solver log names gds/shmem2'.",
+        )
+
+
+def raise_if_pmix_gds_failure(logfile: Path | None, *, event_iloc: int, model_type: str) -> None:
+    """Raise ``PMIxSharedMemoryError`` when the solver log at ``logfile`` carries the PMIx text.
+
+    Call it for a solver that already failed. It returns silently when the log is missing,
+    unreadable or free of the text, so a failure with any other cause keeps its own handling.
+    The log is streamed line by line and the scan stops at the first match, because a solver
+    log can be large.
+    """
+    if logfile is None or not logfile.is_file():
+        return
+    try:
+        with open(logfile, errors="replace") as handle:
+            if any(PMIX_GDS_FAILURE_TEXT in line for line in handle):
+                raise PMIxSharedMemoryError(event_iloc, model_type, logfile)
+    except OSError:
+        return
 
 
 class TRITONSWMM_run:
@@ -2277,6 +2323,11 @@ class TRITONSWMM_run:
                     f"[Scenario {event_iloc}] Simulation {status}, elapsed={elapsed:.1f}s",
                     flush=True,
                 )
+
+            # After the verbose report, so the raw output is still shown before the error
+            # replaces a bare nonzero return code with the PMIx cause and its remedy.
+            if rc != 0:
+                raise_if_pmix_gds_failure(sim_logfile, event_iloc=event_iloc, model_type=model_type)
 
         return launcher, finalize_sim
 

@@ -80,7 +80,7 @@ The check of an analysis reads the log that the build left in the build director
 - **You will submit to a GPU partition whose `gpu_hardware` has no build.** Compile with that partition as `--target-partition`. The new build lands in a separate directory, and the existing builds stay untouched.
 - **You want an existing backend rebuilt** after a change to the modules that the profile loads, or because a build is suspect. Pass `--recompile-if-already-done` to the command.
 
-No other change calls for a rebuild. Updating hhemt, changing `execution_mode` or `multi_sim_run_method`, editing the analysis config, and `hhemt run --from-scratch` all leave the build in place. `--from-scratch` clears the analysis directory. The build lives under the software directory.
+No other change calls for a rebuild. Updating hhemt, changing `execution_mode` or `multi_sim_run_method`, editing the analysis config, and `hhemt run --mode fresh` all leave the build in place. Under `--mode`, the value `fresh` clears the analysis directory. The build lives under the software directory.
 
 ## If an analysis stops at setup
 

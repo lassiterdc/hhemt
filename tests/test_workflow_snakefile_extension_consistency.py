@@ -209,7 +209,7 @@ def _generate_multisim_snakefile_text(analysis, static_backend: Literal["matplot
     monkeypatch.setattr(builder, "_get_report_cfg_static_backend", lambda: static_backend)
     return builder.generate_snakefile_content(
         process_system_level_inputs=False,
-        compile_TRITON_SWMM=False,
+        run_setup_phase=False,
         prepare_scenarios=True,
         process_timeseries=True,
     )

@@ -519,8 +519,9 @@ def test_require_compile_tier_has_exactly_one_reader_and_it_is_in_src():
     Recorded rather than re-demonstrated here, and the reason is a measurement. A query
     against this checkout's own history cannot be relied on in this repository's venues:
     CI fetches at depth 1 (``.github/workflows/test.yml`` uses ``actions/checkout`` with no
-    ``fetch-depth``) and ``main`` takes squash merges only, so the move commit is neither
-    present nor an ancestor there, and under ``check=True`` an unresolvable object raises
+    ``fetch-depth``), so the move commit is not present there. Once the ruleset applies,
+    ``main`` takes merge commits only, which keeps ancestry but does not bring the object
+    into a depth-1 clone, and under ``check=True`` an unresolvable object raises
     rather than degrading. A history this test BUILDS would be worse than either, because
     it would assert on content the test itself authored -- an assertion that cannot fail as
     a function of this repository is not evidence about it.

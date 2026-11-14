@@ -1,10 +1,12 @@
 name: docs-build
 
 on:
+  # develop only: the release PR (develop -> main) reads this check from the develop push run
+  # on its head SHA, so a trigger on main would run the same check twice for one SHA.
   push:
-    branches: [ "main", "develop" ]
+    branches: [ "develop" ]
   pull_request:
-    branches: [ "main", "develop" ]
+    branches: [ "develop" ]
 
 permissions:
   contents: read
@@ -24,9 +26,9 @@ jobs:
           pip install -e ".[docs]"
       - name: Install Vale
         run: pip install vale==3.26.0.1
-      # The five gates (strict build with the htmlproofer internal-link check,
-      # public-API autodoc coverage, docs content hygiene, published-surface
-      # fidelity, and the Vale style check) live ONCE, in scripts/docs_gates.sh, each beside the rationale
+      # The six gates (strict build with the htmlproofer internal-link check,
+      # public-API autodoc coverage, docs content hygiene, docstring dialect,
+      # published-surface fidelity, and the Vale style check) live ONCE, in scripts/docs_gates.sh, each beside the rationale
       # for it. `just docs-check` runs the same script locally through
       # `scripts/hook_env.sh --python 3.12`; here RUN is empty, so every gate runs on
       # the interpreter that the `Install project with docs extras` step populated. The script announces

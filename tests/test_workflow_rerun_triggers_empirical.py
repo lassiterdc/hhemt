@@ -48,7 +48,7 @@ def _run_full_workflow(analysis, *, pickup: bool) -> dict:
         mode="local",
         process_system_level_inputs=True,
         overwrite_system_inputs=False,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         # forced recompile updates compile-artifact mtimes, masking the rerun-trigger signal
         recompile_if_already_done_successfully=False,
         prepare_scenarios=True,

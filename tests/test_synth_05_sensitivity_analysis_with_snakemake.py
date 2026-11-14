@@ -155,7 +155,7 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
     for analysis in sensitivity.members.values():
         snakefile_content = analysis._workflow_builder.generate_snakefile_content(
             process_system_level_inputs=False,
-            compile_TRITON_SWMM=True,
+            run_setup_phase=True,
             prepare_scenarios=True,
             process_timeseries=True,
         )
@@ -359,7 +359,7 @@ def test_snakemake_sensitivity_workflow_dry_run(
         mode="local",
         process_system_level_inputs=True,
         overwrite_system_inputs=True,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         recompile_if_already_done_successfully=True,
         prepare_scenarios=True,
         overwrite_scenario_if_already_set_up=True,
@@ -410,7 +410,7 @@ def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
         mode="local",
         process_system_level_inputs=True,
         overwrite_system_inputs=True,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         recompile_if_already_done_successfully=True,
         prepare_scenarios=True,
         overwrite_scenario_if_already_set_up=True,
@@ -596,7 +596,7 @@ def test_experiment_consolidation_tolerates_incomplete_analysis(golden_sensitivi
     member_items = list(sensitivity.members.items())
     assert len(member_items) >= 2, "test needs >=2 members (one incomplete, one complete)"
 
-    master_zarr = sensitivity.analysis_paths.sensitivity_datatree_zarr
+    master_zarr = sensitivity.analysis_paths.experiment_datatree_zarr
     assert master_zarr is not None and master_zarr.exists(), "master tree should exist after full run"
 
     incomplete_key, incomplete_sub = member_items[0]
@@ -745,7 +745,7 @@ def test_run_and_render_report(synth_sensitivity_analysis_cached):
 
     sensitivity = analysis.sensitivity
     prefix = sensitivity.member_prefix
-    master_zarr = sensitivity.analysis_paths.sensitivity_datatree_zarr
+    master_zarr = sensitivity.analysis_paths.experiment_datatree_zarr
     assert master_zarr is not None and master_zarr.exists(), (
         "master sensitivity_datatree.zarr must exist after a full clean run"
     )

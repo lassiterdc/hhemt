@@ -161,7 +161,7 @@ def _analysis_stub(*, coupled=True, sensitivity=False, df=None, simlog_dir=None)
         cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=sensitivity, is_experiment_member=False),
         analysis_paths=SimpleNamespace(
             analysis_datatree_zarr=None,
-            sensitivity_datatree_zarr=None,
+            experiment_datatree_zarr=None,
             simlog_directory=simlog_dir,
         ),
         df_status=df,
@@ -535,7 +535,7 @@ def test_provenance_stamp_read_roundtrip(tmp_path):
     analysis = SimpleNamespace(
         _system=SimpleNamespace(log=sys_log),
         cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=False),
-        analysis_paths=SimpleNamespace(analysis_datatree_zarr=zarr_path, sensitivity_datatree_zarr=None),
+        analysis_paths=SimpleNamespace(analysis_datatree_zarr=zarr_path, experiment_datatree_zarr=None),
     )
 
     tree = xr.DataTree.from_dict({"/": xr.Dataset(attrs={"analysis_id": "demo"})})
@@ -580,7 +580,7 @@ def test_provenance_stamp_graceful_absent_when_unstamped(tmp_path):
 def _fake_analysis_with_zarr(zarr_path):
     return SimpleNamespace(
         cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=True),
-        analysis_paths=SimpleNamespace(sensitivity_datatree_zarr=zarr_path),
+        analysis_paths=SimpleNamespace(experiment_datatree_zarr=zarr_path),
     )
 
 
@@ -760,7 +760,7 @@ def test_resume_schedule_honored_warns_on_short_coupled_replay(tmp_path):
     analysis = SimpleNamespace(
         _system=SimpleNamespace(cfg_system=SimpleNamespace(toggle_tritonswmm_model=True, toggle_triton_model=False)),
         cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=False),
-        analysis_paths=SimpleNamespace(analysis_datatree_zarr=zpath, sensitivity_datatree_zarr=None),
+        analysis_paths=SimpleNamespace(analysis_datatree_zarr=zpath, experiment_datatree_zarr=None),
     )
     res = check_resume_schedule_honored(analysis)
     assert res.passed is False
@@ -778,7 +778,7 @@ def _triton_arm_b_stub(df):
             toggle_sensitivity_analysis=False,
             resume_interruption_schedule=(36, 72, 108),
         ),
-        analysis_paths=SimpleNamespace(analysis_datatree_zarr=None, sensitivity_datatree_zarr=None),
+        analysis_paths=SimpleNamespace(analysis_datatree_zarr=None, experiment_datatree_zarr=None),
         df_status=df,
     )
 
@@ -1212,7 +1212,7 @@ def test_schedule_honored_verifies_a_snapshot_restore(tmp_path):
     analysis = SimpleNamespace(
         _system=SimpleNamespace(cfg_system=SimpleNamespace(toggle_tritonswmm_model=True, toggle_triton_model=False)),
         cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=False),
-        analysis_paths=SimpleNamespace(analysis_datatree_zarr=zpath, sensitivity_datatree_zarr=None),
+        analysis_paths=SimpleNamespace(analysis_datatree_zarr=zpath, experiment_datatree_zarr=None),
     )
     res = check_resume_schedule_honored(analysis)
     assert res.passed is False

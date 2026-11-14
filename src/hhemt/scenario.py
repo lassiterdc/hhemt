@@ -809,9 +809,11 @@ def triton_coupling_read(*, execution_environment, software_directory, branch_ke
                 f"({sorted(KEYLESS_INFLOWS_READ_CONTAINER_SHAS)}). Build the image at a listed commit."
             ),
         )
-    d = Path(software_directory) if software_directory is not None else None
-    cfg_utils = d / "src" / "config_utils.h" if d is not None else None
-    if cfg_utils is None or not cfg_utils.is_file():
+    if software_directory is None:
+        return None
+    d = Path(software_directory)
+    cfg_utils = d / "src" / "config_utils.h"
+    if not cfg_utils.is_file():
         return None
     if SWMM_COUPLING_NODES_READ in cfg_utils.read_text(errors="replace"):
         return "list"
@@ -2291,22 +2293,22 @@ def find_closest_dem_coord(x_val, y_val, BC_side, rds_dem):
         # never-assigned x_coord and raised an UnboundLocalError naming neither the side nor
         # the accepted values.
         raise ProcessingError(
-            operation="find_closest_dem_coord",
-            filepath="boundary condition",
+            operation="find_closest_dem_coord (boundary condition)",
+            filepath=None,
             reason=f"unknown boundary side {BC_side!r}; expected one of 'left', 'right', 'top', 'bottom'",
         )
     # Kept as guards although every named side takes its coordinates from the DEM's own axes,
     # so neither can fire on a path above. Library code raises rather than ending the process.
     if (x_coord < min(dem_xs)) or (x_coord > max(dem_xs)):
         raise ProcessingError(
-            operation="find_closest_dem_coord",
-            filepath="boundary condition",
+            operation="find_closest_dem_coord (boundary condition)",
+            filepath=None,
             reason=f"x coordinate {x_coord} falls outside the domain of the DEM",
         )
     if (y_coord < min(dem_ys)) or (y_coord > max(dem_ys)):
         raise ProcessingError(
-            operation="find_closest_dem_coord",
-            filepath="boundary condition",
+            operation="find_closest_dem_coord (boundary condition)",
+            filepath=None,
             reason=f"y coordinate {y_coord} falls outside the domain of the DEM",
         )
     return x_coord, y_coord
@@ -2891,7 +2893,7 @@ def inp_link_table(model) -> pd.DataFrame:
         xsections = model.inp.xsections
     columns = ["InletNode", "OutletNode", "LinkType", "Shape", "Geom1", "Geom2", "Geom3", "Geom4", "Barrels"]
     if not frames:
-        return pd.DataFrame(columns=columns)
+        return pd.DataFrame(columns=columns)  # ty: ignore[invalid-argument-type]  # pandas stub rejects a list for columns
     links = pd.concat(frames)
     if xsections is not None and len(xsections):
         xs = xsections.copy()
@@ -2921,7 +2923,7 @@ def return_df_of_nodes_grouped_by_DEM_gridcell(f_inp, dem_processed, verbose=Fal
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         coords = model.inp.coordinates
-    coords = coords.copy() if coords is not None else pd.DataFrame(columns=["X", "Y"])
+    coords = coords.copy() if coords is not None else pd.DataFrame(columns=["X", "Y"])  # ty: ignore[invalid-argument-type]  # pandas stub rejects a list for columns
     coords.index = coords.index.astype(str)
     dem_xs = rds_dem.x.values  # type: ignore
     dem_ys = rds_dem.y.values  # type: ignore
@@ -2970,7 +2972,7 @@ def _geom(row, name: str) -> float:
     """A cross-section dimension as a float, reading a missing or NaN value as 0."""
     value = getattr(row, name, None)
     try:
-        value = float(value)
+        value = float(value)  # ty: ignore[invalid-argument-type]  # None raises TypeError, caught below
     except (TypeError, ValueError):
         return 0.0
     return 0.0 if np.isnan(value) else value
@@ -3229,7 +3231,7 @@ def select_coupling_nodes(cfg_system, hydraulics_inp, dem_processed, links, *, o
                 pd.Series(list(sections.elevations.values()), dtype=object), errors="coerce"
             ).to_numpy(),
         },
-        index=list(sections.node_types),
+        index=list(sections.node_types),  # ty: ignore[invalid-argument-type]  # pandas stub rejects a list for index
     )
     rds_dem = rxr.open_rasterio(dem_processed)
     dem_xs = np.asarray(rds_dem.x.values)  # type: ignore

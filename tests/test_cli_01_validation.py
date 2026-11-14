@@ -1,7 +1,7 @@
 """CLI argument validation tests.
 
 Tests business logic validation rules for CLI arguments including:
-- Mutually exclusive flags
+- Mutually exclusive flags (`--verbose`/`--quiet`) and the closed `--mode` choice
 - Required arguments (system-config, analysis-config)
 - Format validation (walltime, log level)
 - Enum validation (model, which, redownload)
@@ -22,9 +22,27 @@ runner = CliRunner()
 # R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
 # no completed-tree fixture applies. Evidence:
 #     analysis_config.write_text("version: 1\n")
-def test_from_scratch_and_resume_mutually_exclusive(tmp_path):
-    """Test --from-scratch and --resume are mutually exclusive."""
-    # Create minimal valid config files for validation
+def test_retired_mode_flags_are_refused_as_unknown(tmp_path):
+    """`--from-scratch` and `--resume` no longer exist: Typer refuses each as an unknown option."""
+    system_config = tmp_path / "system.yaml"
+    analysis_config = tmp_path / "analysis.yaml"
+    system_config.write_text("version: 1\n")
+    analysis_config.write_text("version: 1\n")
+
+    for option in ("--from-scratch", "--resume"):
+        result = runner.invoke(
+            app,
+            ["run", "--system-config", str(system_config), "--analysis-config", str(analysis_config), option],
+        )
+        assert result.exit_code == 2
+        assert option in result.output
+
+
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
+def test_mode_is_a_closed_choice_refused_at_parse_time(tmp_path):
+    """`--mode` takes only `resume` or `fresh`: another value exits 2 as an invalid choice, not an unknown option."""
     system_config = tmp_path / "system.yaml"
     analysis_config = tmp_path / "analysis.yaml"
     system_config.write_text("version: 1\n")
@@ -32,20 +50,12 @@ def test_from_scratch_and_resume_mutually_exclusive(tmp_path):
 
     result = runner.invoke(
         app,
-        [
-            "run",
-            "--system-config",
-            str(system_config),
-            "--analysis-config",
-            str(analysis_config),
-            "--from-scratch",
-            "--resume",
-        ],
+        ["run", "--system-config", str(system_config), "--analysis-config", str(analysis_config), "--mode", "wipe"],
     )
 
     assert result.exit_code == 2
-    assert "cannot use both" in result.output.lower()
-    assert "--from-scratch" in result.output.lower()
+    assert "Invalid value for '--mode'" in result.output
+    assert "'fresh'" in result.output and "'resume'" in result.output
 
 
 # R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and

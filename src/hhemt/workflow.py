@@ -14,6 +14,7 @@ import datetime
 import json
 import logging
 import math
+import os
 import re
 import shlex
 import socket
@@ -99,6 +100,45 @@ logger = logging.getLogger(__name__)
 
 # The report config given at run entry, written beside the generated Snakefile.
 RUN_ENTRY_REPORT_CONFIG_FILE = "report_config_run_entry.yaml"
+
+#: BLAS and OpenMP thread-count variables that every Snakemake launch defaults to 1.
+#:
+#: Snakemake imports numpy and pandas, and it is the ``sbatch`` caller, so a numpy that
+#: starts one BLAS thread per core on a login node or in a 1-CPU orchestrator job
+#: oversubscribes that host and gets the orchestrator throttled or killed. The
+#: snakemake-executor-plugin-slurm submits every job with ``--export=ALL`` and hhemt starts
+#: Snakemake with no ``env=`` of its own, so these values also reach every submitted job and
+#: jobstep. That is accepted: the cost is at most one BLAS thread on the 1- and 2-CPU
+#: non-simulation rules, and the solver builds its own ``env`` with explicit OMP settings
+#: in ``run_simulation.prepare_simulation_command``. Deliberately NOT a design that spares
+#: the jobs: no environment layer can protect Snakemake while sparing what it submits.
+SNAKEMAKE_THREAD_GUARD_VARS: tuple[str, ...] = (
+    "OPENBLAS_NUM_THREADS",
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+)
+
+#: The shell form of the guard for the emitted scripts that start Snakemake behind an
+#: ``env`` prefix. ``${VAR:-1}`` keeps a value the user exported, as
+#: ``snakemake_thread_guard_assignments`` does for a launch from Python.
+_SNAKEMAKE_THREAD_GUARD_SHELL_ASSIGNMENTS = " ".join(f'{_var}="${{{_var}:-1}}"' for _var in SNAKEMAKE_THREAD_GUARD_VARS)
+
+
+def snakemake_thread_guard_assignments(environ: Mapping[str, str] | None = None) -> list[str]:
+    """Return the ``VAR=1`` words that default Snakemake's thread counts, for an ``env`` prefix.
+
+    One word per variable of ``SNAKEMAKE_THREAD_GUARD_VARS`` that is unset or empty in
+    ``environ`` (default ``os.environ``), which is the ``${VAR:-1}`` rule the emitted scripts
+    use, so a value the user exported is never overridden and contributes no word.
+
+    The guard travels as an ``env`` prefix on the command and not as a change to this
+    process's ``os.environ``. A notebook has usually imported numpy before it calls hhemt, so
+    setting ``os.environ`` would not reach that numpy, and it would silently change the thread
+    count of every later numpy call in the user's own session. A prefix reaches only the
+    Snakemake child.
+    """
+    env = os.environ if environ is None else environ
+    return [f"{var}=1" for var in SNAKEMAKE_THREAD_GUARD_VARS if not env.get(var)]
 
 
 def _shape_report_cfg(analysis):
@@ -1227,6 +1267,106 @@ def parse_snakemake_job_outcomes(text: str) -> tuple[list[dict], list[dict]]:
     return failed, retried
 
 
+# ---- the local failure message: which rules the Snakemake log says failed ---------------------
+#
+# A local Snakemake failure used to return only the analysis directory, so a reader had to find
+# and open the master log to learn which rule failed. The message now carries the return code,
+# the log FILE path and each ``Error in rule R:`` block of that log, capped and in log order.
+# Retried-to-success blocks are shown too, after the never-finished ones: a block Snakemake retried
+# to success is still a record of what went wrong on the way, and the cap, not a filter, bounds
+# the message. A block runs from its header to the next blank line, the next
+# header or the next ``Finished jobid`` line, the same boundary the job-outcome parser reads.
+LOCAL_FAILURE_MAX_ERROR_BLOCKS = 10
+LOCAL_FAILURE_MAX_BLOCK_LINES = 25
+
+
+def extract_snakemake_error_blocks(
+    text: str,
+    *,
+    max_blocks: int = LOCAL_FAILURE_MAX_ERROR_BLOCKS,
+    max_block_lines: int = LOCAL_FAILURE_MAX_BLOCK_LINES,
+) -> tuple[list[str], int]:
+    """Return the first ``max_blocks`` ``Error in rule`` blocks of a Snakemake log and the total count.
+
+    Each returned block is the header line and the lines that follow it up to the block's end, cut to
+    ``max_block_lines`` lines with a marker naming how many lines were dropped. The count is over every
+    block in the log, so a caller can say how many were not shown. Not established: this reads the
+    layout of Snakemake 9.15.0's plain-text log, where a block ends at a blank line.
+    """
+    lines = text.splitlines()
+    blocks: list[str] = []
+    total = 0
+    for i, line in enumerate(lines):
+        if not _SNAKEMAKE_ERROR_HEADER_RE.match(line):
+            continue
+        total += 1
+        if len(blocks) >= max_blocks:
+            continue
+        body = [line]
+        for follow in lines[i + 1 :]:
+            if not follow.strip() or _SNAKEMAKE_ERROR_HEADER_RE.match(follow) or _SNAKEMAKE_FINISHED_RE.match(follow):
+                break
+            body.append(follow)
+        if len(body) > max_block_lines:
+            dropped = len(body) - max_block_lines
+            body = body[:max_block_lines] + [f"    ... ({dropped} more line(s) of this block in the log)"]
+        blocks.append("\n".join(body))
+    return blocks, total
+
+
+def format_local_snakemake_failure_message(returncode: int, snakemake_logfile: Path, snakefile_path: Path) -> str:
+    """Compose the message a failed local Snakemake run returns: return code, log file, failing rule blocks."""
+    parts = [
+        f"Snakemake workflow failed (return code {returncode}).",
+        f"Snakemake log: {snakemake_logfile}",
+        f"See logs for {snakefile_path.parent}",
+    ]
+    try:
+        text = Path(snakemake_logfile).read_text(errors="replace")
+    except OSError as exc:
+        parts.append(f"The Snakemake log could not be read ({exc}), so no failing rule is named.")
+        return "\n".join(parts)
+    all_blocks, total = extract_snakemake_error_blocks(text, max_blocks=10**9)
+    if total == 0:
+        parts.append("No 'Error in rule' block was found in the Snakemake log; read the log for the cause.")
+        return "\n".join(parts)
+    # Never-finished blocks first, then retried-to-success blocks to fill the cap, each group in log
+    # order. Deliberately NOT plain log order: with the default retry budget a rule that retried
+    # to success writes up to three blocks, so ten early retried blocks could push the one block
+    # that explains the failure out of the cap (measured: 12 retried blocks then one never-finished
+    # block showed 10 of 13 and omitted the never-finished rule).
+    failed, _retried = parse_snakemake_job_outcomes(text)
+    never_finished = {(f["jobid"], f["rule_token"]) for f in failed}
+    never_finished_rules_without_jobid = {f["rule_token"] for f in failed if f["jobid"] is None}
+    group_never: list[str] = []
+    group_retried: list[str] = []
+    for block in all_blocks:
+        rule = _SNAKEMAKE_ERROR_HEADER_RE.match(block.splitlines()[0]).group(1)  # type: ignore[union-attr]
+        jobid = next(
+            (int(m.group(1)) for ln in block.splitlines()[1:] if (m := _SNAKEMAKE_BLOCK_JOBID_RE.match(ln))), None
+        )
+        if (jobid, rule) in never_finished or (jobid is None and rule in never_finished_rules_without_jobid):
+            group_never.append(block)
+        else:
+            group_retried.append(block)
+    shown_never = group_never[:LOCAL_FAILURE_MAX_ERROR_BLOCKS]
+    shown_retried = group_retried[: LOCAL_FAILURE_MAX_ERROR_BLOCKS - len(shown_never)]
+    shown = len(shown_never) + len(shown_retried)
+    parts.append(
+        f"{shown} of {total} 'Error in rule' block(s) from the log; "
+        f"{len(group_never)} never finished, {len(group_retried)} were retried to success."
+    )
+    if shown_never:
+        parts.append(f"Never-finished rule(s), {len(shown_never)} of {len(group_never)} shown, in log order:")
+        parts.extend(shown_never)
+    if shown_retried:
+        parts.append(f"Retried to success, {len(shown_retried)} of {len(group_retried)} shown, in log order:")
+        parts.extend(shown_retried)
+    if total > shown:
+        parts.append(f"... {total - shown} more 'Error in rule' block(s) in {snakemake_logfile}")
+    return "\n".join(parts)
+
+
 # ---- the log files a single-job sbatch script names -------------------------------------
 #
 # The waited ``1_job_many_srun_tasks`` path has no Snakemake log of its own: Snakemake runs
@@ -1863,6 +2003,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             self.analysis_paths.analysis_dir,
             snakemake_stderr=log_text,
         )
+        was_success = result.get("success")
         result["partial_failures"] = partial_failures
         result["retried_to_success"] = parse_snakemake_job_outcomes(log_text)[1]
         if partial_failures:
@@ -1871,10 +2012,16 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # The producer rewrites the sentence when it flips the verdict, so every
             # consumer (the CLI reporter, WorkflowResult.__str__, a notebook printing
             # result.message) tells the same truth instead of "completed successfully".
-            result["message"] = (
+            sweep_sentence = (
                 f"{len(partial_failures)} rule(s) permanently failed under --keep-going "
                 f"(the rest of the DAG completed): {tokens}"
             )
+            # A result that already failed carries its own message (the local runner's return code,
+            # log path and error blocks), and replacing it would discard the only text naming the
+            # cause; a result that had succeeded carries a "completed successfully" sentence that
+            # the flip makes false, so that one is replaced.
+            incoming = result.get("message") if was_success is False else None
+            result["message"] = f"{sweep_sentence}\n{incoming}" if incoming else sweep_sentence
             print(
                 f"[Workflow] {len(partial_failures)} rule(s) permanently failed "
                 f"(--keep-going let the rest complete): {tokens}",
@@ -1898,8 +2045,16 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
 
         Prefer `python -m snakemake` so execution works even when the
         `snakemake` console script is not on PATH.
+
+        Every Snakemake launch from Python builds its command from this method, so the
+        BLAS/OpenMP thread guard is applied here once, as an ``env VAR=1`` prefix limited to
+        the variables the user has not set (see ``SNAKEMAKE_THREAD_GUARD_VARS``). Passing
+        ``env=`` at each ``subprocess`` call instead would leave a new launch site unguarded
+        until someone remembered it.
         """
-        return [sys.executable, "-m", "snakemake"]
+        guard = snakemake_thread_guard_assignments()
+        prefix = ["env", *guard] if guard else []
+        return [*prefix, sys.executable, "-m", "snakemake"]
 
     def _check_and_clear_snakemake_lock(
         self,
@@ -3614,7 +3769,7 @@ rule consolidate_scenario:
         self,
         process_system_level_inputs: bool = False,
         overwrite_system_inputs: bool = False,
-        compile_TRITON_SWMM: bool = True,
+        run_setup_phase: bool = True,
         recompile_if_already_done_successfully: bool = False,
         prepare_scenarios: bool = True,
         overwrite_scenario_if_already_set_up: bool = False,
@@ -3644,7 +3799,7 @@ rule consolidate_scenario:
             If True, process system-level inputs (DEM, Mannings) in the setup rule
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
-        compile_TRITON_SWMM : bool
+        run_setup_phase : bool
             If True, the generated setup rule invokes ``python -m hhemt.setup_workflow``
             (system-input preprocessing plus the solver-tier verify arms); when this and
             ``process_system_level_inputs`` are both False the rule only touches its
@@ -3745,7 +3900,7 @@ rule consolidate_scenario:
         # setup rule too, because the build it checks for is the one the sims run.
         # Other rules keep the shared config_args (no --target-partition).
         gpu_compile_config_args = self._get_config_args(target_partition=self.cfg_analysis.hpc_ensemble_partition)
-        skip_setup = not (process_system_level_inputs or compile_TRITON_SWMM)
+        skip_setup = not (process_system_level_inputs or run_setup_phase)
 
         # Make log dirs
         analysis_dir = self.analysis_paths.analysis_dir
@@ -5146,7 +5301,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
                 print(f"[Snakemake] command: \n     {cmd}")
 
             if result.returncode != 0:
-                error_msg = f"Snakemake workflow failed.\nSee logs for {snakefile_path.parent}"
+                error_msg = format_local_snakemake_failure_message(result.returncode, snakemake_logfile, snakefile_path)
                 if verbose:
                     print(f"[Snakemake] ERROR: {error_msg}", flush=True)
                 return {
@@ -6034,8 +6189,11 @@ mkdir -p {str(self.analysis_paths.analysis_log_directory)}
 
 # Trim PATH before launching Snakemake to prevent ARG_MAX overflow in scontrol calls.
 SLURM_BIN=$(dirname "$(command -v scontrol 2>/dev/null || echo "/opt/slurm/current/bin/scontrol")")
+# Default the BLAS/OpenMP thread counts to 1 for Snakemake (a user-exported value wins).
+# They also reach every submitted job, because the SLURM executor plugin uses --export=ALL.
 env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin:/bin" \\
     LD_LIBRARY_PATH="${{CONDA_PREFIX}}/lib" \\
+    {_SNAKEMAKE_THREAD_GUARD_SHELL_ASSIGNMENTS} \\
     ${{CONDA_PREFIX}}/bin/python -m snakemake \\
     --profile {config_dir} \\
     --snakefile {snakefile_path} \\
@@ -6359,8 +6517,11 @@ SLURM_BIN=$(dirname "$(command -v scontrol 2>/dev/null || echo "/opt/slurm/curre
 cd {self.analysis_paths.analysis_dir}
 echo "=== Starting Snakemake ==="
 set +e
+# Default the BLAS/OpenMP thread counts to 1 for Snakemake (a user-exported value wins).
+# They also reach every submitted job, because the SLURM executor plugin uses --export=ALL.
 env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin:/bin" \\
     LD_LIBRARY_PATH="${{CONDA_PREFIX}}/lib" \\
+    {_SNAKEMAKE_THREAD_GUARD_SHELL_ASSIGNMENTS} \\
     ${{CONDA_PREFIX}}/bin/python -m snakemake \\
     --profile {config_dir} \\
     --snakefile {snakefile_path} \\
@@ -7132,7 +7293,7 @@ exit $snakemake_status
         mode: Literal["local", "slurm", "auto"] = "auto",
         process_system_level_inputs: bool = False,
         overwrite_system_inputs: bool = False,
-        compile_TRITON_SWMM: bool = True,
+        run_setup_phase: bool = True,
         recompile_if_already_done_successfully: bool = False,
         prepare_scenarios: bool = True,
         overwrite_scenario_if_already_set_up: bool = False,
@@ -7171,7 +7332,7 @@ exit $snakemake_status
             If True, process system-level inputs (DEM, Mannings) in the setup rule
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
-        compile_TRITON_SWMM : bool
+        run_setup_phase : bool
             If True, the generated setup rule invokes ``python -m hhemt.setup_workflow``
             (system-input preprocessing plus the solver-tier verify arms); when this and
             ``process_system_level_inputs`` are both False the rule only touches its
@@ -7288,7 +7449,7 @@ exit $snakemake_status
             snakefile_content = self.generate_snakefile_content(
                 process_system_level_inputs=process_system_level_inputs,
                 overwrite_system_inputs=overwrite_system_inputs,
-                compile_TRITON_SWMM=compile_TRITON_SWMM,
+                run_setup_phase=run_setup_phase,
                 recompile_if_already_done_successfully=recompile_if_already_done_successfully,
                 prepare_scenarios=prepare_scenarios,
                 overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
@@ -7373,7 +7534,7 @@ exit $snakemake_status
             snakefile_content = self.generate_snakefile_content(
                 process_system_level_inputs=process_system_level_inputs,
                 overwrite_system_inputs=overwrite_system_inputs,
-                compile_TRITON_SWMM=compile_TRITON_SWMM,
+                run_setup_phase=run_setup_phase,
                 recompile_if_already_done_successfully=recompile_if_already_done_successfully,
                 prepare_scenarios=prepare_scenarios,
                 overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
@@ -7455,7 +7616,7 @@ exit $snakemake_status
         snakefile_content = self.generate_snakefile_content(
             process_system_level_inputs=process_system_level_inputs,
             overwrite_system_inputs=overwrite_system_inputs,
-            compile_TRITON_SWMM=compile_TRITON_SWMM,
+            run_setup_phase=run_setup_phase,
             recompile_if_already_done_successfully=recompile_if_already_done_successfully,
             prepare_scenarios=prepare_scenarios,
             overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
@@ -11233,7 +11394,7 @@ ILOC_BY_EVENT_ID_BY_MEMBER = {iloc_by_event_id_by_member!r}
         # setup stuff
         process_system_level_inputs: bool = True,
         overwrite_system_inputs: bool = False,
-        compile_TRITON_SWMM: bool = True,
+        run_setup_phase: bool = True,
         recompile_if_already_done_successfully: bool = False,
         # ensemble run stuff
         prepare_scenarios: bool = True,
@@ -11271,7 +11432,7 @@ ILOC_BY_EVENT_ID_BY_MEMBER = {iloc_by_event_id_by_member!r}
             If True, process system-level inputs (DEM, Mannings)
         overwrite_system_inputs : bool
             If True, overwrite existing system input files
-        compile_TRITON_SWMM : bool
+        run_setup_phase : bool
             Accepted for signature parity and inert on the generated workflow: the
             master Snakefile generator carries no read of the parameter, so the parameter changes no emitted
             rule. The parameter compiles nothing, because no emitted setup rule carries a

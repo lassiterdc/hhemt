@@ -15,6 +15,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from .exceptions import (
@@ -173,10 +174,17 @@ def run_command(
     # ═══════════════════════════════════════════════════════════════
     # Execution Control
     # ═══════════════════════════════════════════════════════════════
-    from_scratch: bool = typer.Option(
-        False,
-        "--from-scratch",
-        help="Clear run artifacts and execute from fresh state",
+    mode: RunMode = typer.Option(
+        RunMode.resume,
+        "--mode",
+        help=(
+            "resume (default) continues from the last checkpoint and never deletes "
+            "completed simulations; fresh DELETES the analysis directory first and "
+            "rebuilds everything, and is refused while the directory holds completed work "
+            "(this command has no override for that refusal; run-experiment does). To "
+            "re-run completed scenarios without a wipe, use --overwrite or "
+            "--override-force-rerun."
+        ),
     ),
     override_clear_raw: str = typer.Option(
         None,
@@ -220,21 +228,13 @@ def run_command(
             "sentinel's origin host, which yields a measurement instead of a belief."
         ),
     ),
-    # False unless typed: resume is already the mode whenever --from-scratch is absent, so this
-    # flag only records whether the user ASKED for it. Deliberately NOT defaulted to True: the
-    # --from-scratch/--resume guard would then refuse every --from-scratch, with no off form.
-    resume: bool = typer.Option(
-        False,
-        "--resume",
-        help="Continue from completed state. Already the default; cannot be combined with --from-scratch.",
-    ),
     overwrite: bool = typer.Option(
         False,
         "--overwrite",
         help=(
             "Re-run every simulation even if completion logs indicate success. Shorthand for "
             "--override-force-rerun all; never deletes the analysis directory (that is "
-            "--from-scratch)."
+            "--mode fresh)."
         ),
     ),
     dry_run: bool = typer.Option(
@@ -354,13 +354,17 @@ def run_command(
         $ hhemt run \\
             --system-config system.yaml --analysis-config analysis.yaml
 
+        # Delete the analysis directory and rebuild everything
+        $ hhemt run \\
+            --system-config system.yaml --analysis-config analysis.yaml \\
+            --mode fresh
+
         # Run with HPC overrides
         $ hhemt run \\
             --system-config system.yaml --analysis-config analysis.yaml \\
             --partition debug --walltime 00:20:00
 
     """
-    from rich.markup import escape
 
     from .cli_utils import EXIT_CODE_MAP, label_for, map_exception_to_exit_code, report_workflow_result
 
@@ -385,8 +389,6 @@ def run_command(
         # Stage 2: Argument Validation
         # ═══════════════════════════════════════════════════════════════
         _validate_cli_arguments(
-            from_scratch=from_scratch,
-            resume=resume,
             verbose=verbose,
             quiet=quiet,
             model=model,
@@ -428,12 +430,12 @@ def run_command(
 
         if validation_result.has_warnings:
             for warning in validation_result.warnings:
-                console.print(f"[yellow]Warning:[/yellow] {warning.message}")
+                console.print(f"[yellow]Warning:[/yellow] {escape(str(warning.message))}")
 
         if not validation_result.is_valid:
             console_err.print("[bold red]Validation failed:[/bold red]")
             for error in validation_result.errors:
-                console_err.print(f"  • {error.message}")
+                console_err.print(f"  • {escape(str(error.message))}")
             raise typer.Exit(2)
 
         if not quiet:
@@ -458,12 +460,14 @@ def run_command(
         # Stage 6: Workflow Orchestration
         # ═══════════════════════════════════════════════════════════════
 
-        # Determine execution mode from CLI flags. There are two modes, fresh and resume
-        # (orchestration.RunMode); re-running completed work without a wipe is the
-        # force_rerun axis, so --overwrite is carried THERE rather than as a third mode.
-        # Deliberately NOT a run_mode value: run() has no parameter that could carry one,
-        # so a mode label alone was announced on the console and silently dropped.
-        run_mode = "fresh" if from_scratch else "resume"
+        # Determine execution mode from CLI flags. --mode is a parse-time closed choice over
+        # orchestration.RunMode (fresh or resume), so no hand check of its value is needed.
+        # Re-running completed work without a wipe is the force_rerun axis, so --overwrite is
+        # carried THERE rather than as a third mode. Deliberately NOT a run_mode value: run()
+        # has no parameter that could carry one, so a mode label alone was announced on the
+        # console and silently dropped. run() keeps its boolean, so the mode is converted once.
+        from_scratch = mode == RunMode.fresh
+        run_mode = mode.value
         if overwrite:
             override_force_rerun = "all"
             run_mode = f"{run_mode}, force_rerun=all"
@@ -648,10 +652,10 @@ def cleanup_orphans_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -781,13 +785,13 @@ def reprocess_command(
         if start_with not in ("process", "consolidate", "render"):
             console_err.print(
                 f"[bold red]Error:[/bold red] --start-with must be one of "
-                f"'process', 'consolidate', 'render'; got {start_with!r}."
+                f"'process', 'consolidate', 'render'; got {escape(repr(start_with))}."
             )
             raise typer.Exit(2)
         if execution_mode not in ("auto", "local", "slurm"):
             console_err.print(
                 f"[bold red]Error:[/bold red] --execution-mode must be one of "
-                f"'auto', 'local', 'slurm'; got {execution_mode!r}."
+                f"'auto', 'local', 'slurm'; got {escape(repr(execution_mode))}."
             )
             raise typer.Exit(2)
 
@@ -811,19 +815,20 @@ def reprocess_command(
             console.print(f"[green]Reprocess completed:[/green] {result.get('message', '(no message)')}")
             raise typer.Exit(0)
         else:
-            console_err.print(f"[bold red]Reprocess failed:[/bold red] {result.get('message', '(no message)')}")
+            message = str(result.get("message", "(no message)"))
+            console_err.print(f"[bold red]Reprocess failed:[/bold red] {escape(message)}")
             raise typer.Exit(1)
 
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
-        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Workflow Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(1) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -930,13 +935,13 @@ def recompute_plan_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
-        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Workflow Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(1) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -1071,13 +1076,13 @@ def check_invalidating_fixes_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
-        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Workflow Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(1) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -1177,13 +1182,13 @@ def eda_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
-        console_err.print(f"[bold red]Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(5) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -1245,13 +1250,13 @@ def synth_experiment_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
-        console_err.print(f"[bold red]Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(5) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -1356,7 +1361,6 @@ def run_experiment_command(
     The experiment definition's experiment.yaml is the single config. Any CLI argument that overrides
     a descriptor-declared value prints both values and requires confirmation.
     """
-    from rich.markup import escape
 
     from .cli_utils import label_for, map_exception_to_exit_code, report_workflow_result
 
@@ -1487,7 +1491,6 @@ def reset_command(
 
         $ hhemt reset --experiment experiments/norfolk_design_storm --yes
     """
-    from rich.markup import escape
 
     from .cli_utils import label_for, map_exception_to_exit_code
 
@@ -1559,7 +1562,6 @@ def _experiment_publisher(analysis):
 
 def _exit_on_error(exc: Exception) -> None:
     """Print a verb failure with its class-keyed label and exit with the mapped code."""
-    from rich.markup import escape
 
     from .cli_utils import label_for, map_exception_to_exit_code
 
@@ -2013,13 +2015,13 @@ def static_plots_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
-        console_err.print(f"[bold red]Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(5) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -2145,13 +2147,13 @@ def delete_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
-        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Workflow Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(1) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -2348,10 +2350,10 @@ def cleanup_orphan_delete_sentinels_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -2452,10 +2454,10 @@ def cleanup_stale_metadata_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -2557,10 +2559,10 @@ def cleanup_settled_markers_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -2574,14 +2576,6 @@ def _validate_cli_arguments(**kwargs) -> None:
 
     Raises CLIValidationError on validation failure.
     """
-    # Mutually exclusive: --from-scratch and --resume
-    if kwargs["from_scratch"] and kwargs["resume"]:
-        raise CLIValidationError(
-            argument="--from-scratch/--resume",
-            message="Cannot use both --from-scratch and --resume",
-            fix_hint="Choose one or omit both (default is --resume)",
-        )
-
     # Mutually exclusive: --verbose and --quiet
     if kwargs["verbose"] and kwargs["quiet"]:
         raise CLIValidationError(
@@ -2661,9 +2655,7 @@ def _print_dry_run_summary(args: dict) -> None:
     console.print("\n[bold]Execution Mode:[/bold]")
     console.print(f"  Model:  {args['model']}")
     console.print(f"  Which:  {args['which']}")
-    # The mode run() receives is decided by --from-scratch alone; --resume only records whether
-    # it was typed, so echoing that flag would report "False" on a dry run that resumes.
-    console.print(f"  Mode:   {'fresh' if args['from_scratch'] else 'resume'}")
+    console.print(f"  Mode:   {args['mode'].value}")
 
     # HPC overrides (if any)
     hpc_overrides = {
@@ -3022,7 +3014,7 @@ def build_sifs_command(
         from hhemt.cli_utils import map_exception_to_exit_code
 
         code = map_exception_to_exit_code(exc)
-        console.print(f"[red]build-sifs failed:[/red] {exc}")
+        console.print(f"[red]build-sifs failed:[/red] {escape(str(exc))}")
         raise typer.Exit(code) from exc
 
 
@@ -3110,7 +3102,7 @@ def ingest_command(
         )
     except Exception as exc:  # noqa: BLE001 — mapped to the CLI exit-code contract
         code = map_exception_to_exit_code(exc)
-        console.print(f"[red]ingest failed:[/red] {exc}")
+        console.print(f"[red]ingest failed:[/red] {escape(str(exc))}")
         raise typer.Exit(code) from exc
 
     bundle_root = exp.bundle_root

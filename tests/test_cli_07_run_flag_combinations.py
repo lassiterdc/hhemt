@@ -7,12 +7,10 @@ flag silently changes what another flag forwards -- the user is told "fresh" and
 resume. Every test here stubs the analysis, the system and the config loader, invokes the
 real Typer app, and asserts on the keyword arguments `run()` RECEIVED.
 
-`--from-scratch` is refused by argument validation whenever `resume` is True, and `--resume`
-has no off form on the command line. These tests pin `resume` to False through Click's
-`default_map`, which sets the `run` subcommand's default exactly as a configuration-supplied
-default would and leaves every other flag on the ordinary argv path, so the combination is
-reached whatever `--resume`'s declared default is. A control test proves the route reaches
-the fresh branch on its own, so a red elsewhere in this file is not the route failing.
+`--mode fresh` is the only route to the wipe and `--overwrite` is the orthogonal force-rerun
+shorthand, so the pair is the one combination whose handling decorates the console mode label.
+A control test proves `--mode fresh` reaches the fresh branch on its own, so a red elsewhere in
+this file is not the route failing.
 
 Nothing here compiles a solver or runs a simulation: `run()` is replaced by a recorder that
 stops the command as soon as it is called.
@@ -27,10 +25,6 @@ import hhemt.validation
 from hhemt.cli import app
 
 runner = CliRunner()
-
-# Click context setting: the `run` subcommand starts with resume=False regardless of the
-# option's declared default, so the tests do not depend on that default.
-_RESUME_OFF = {"run": {"resume": False}}
 
 
 class _Stop(Exception):
@@ -82,18 +76,18 @@ def config_args(tmp_path):
 # R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
 # completed-tree fixture applies. Evidence:
 #     monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)
-def test_control_resume_off_route_reaches_the_fresh_branch(run_calls, config_args):
+def test_control_mode_fresh_alone_reaches_the_fresh_branch(run_calls, config_args):
     """Control for the route this file uses, not a property of the code under review.
 
-    Class: `--from-scratch` alone with the resume default switched off through
-    `default_map`. Why it is here: the property test below is only evidence if this route
-    reaches run() with the fresh mode when nothing else is combined with it; if this test is
-    red, the route is broken and the other test's red says nothing about `--overwrite`. What
-    kills it: a change that stops `--from-scratch` forwarding `from_scratch=True` on its own.
-    A second correct implementation under which it still passes: any mapping of
-    `--from-scratch` onto run(), since only the forwarded boolean is asserted.
+    Class: `--mode fresh` alone. Why it is here: the property test below is only evidence if
+    this route reaches run() with the fresh mode when nothing else is combined with it; if
+    this test is red, the route is broken and the other test's red says nothing about
+    `--overwrite`. What kills it: a change that stops `--mode fresh` forwarding
+    `from_scratch=True` on its own. A second correct implementation under which it still
+    passes: any mapping of `--mode fresh` onto run(), since only the forwarded boolean is
+    asserted.
     """
-    result = runner.invoke(app, [*config_args, "--from-scratch"], default_map=_RESUME_OFF)
+    result = runner.invoke(app, [*config_args, "--mode", "fresh"])
 
     assert len(run_calls) == 1, f"run() not reached; exit {result.exit_code}: {result.output}"
     assert run_calls[0]["from_scratch"] is True
@@ -102,24 +96,24 @@ def test_control_resume_off_route_reaches_the_fresh_branch(run_calls, config_arg
 # R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
 # completed-tree fixture applies. Evidence:
 #     monkeypatch.setattr(hhemt.analysis, "TRITONSWMM_analysis", _Analysis)
-def test_overwrite_never_cancels_from_scratch(run_calls, config_args):
-    """Property: if run() is called under `--from-scratch`, it is called with `from_scratch=True`.
+def test_overwrite_never_cancels_mode_fresh(run_calls, config_args):
+    """Property: if run() is called under `--mode fresh`, it is called with `from_scratch=True`.
 
-    Class: every `hhemt run` invocation that selects `--from-scratch` and also carries
+    Class: every `hhemt run` invocation that selects `--mode fresh` and also carries
     `--overwrite` -- the one other mode flag, and the one whose handling decorates the console
-    mode label. Why it is required: `--from-scratch` is the only flag that wipes the analysis
+    mode label. Why it is required: `--mode fresh` is the only route that wipes the analysis
     directory; forwarding `from_scratch=False` turns a requested fresh run into a resume while
     the console prints "fresh", which is the announced-but-not-carried defect `--overwrite`
     itself was repaired for. What kills it: deriving the forwarded `from_scratch` keyword by
     comparing the console label to the literal "fresh" after `--overwrite` has appended to
     that label. A second correct implementation under which it still passes: REFUSING
-    `--from-scratch --overwrite` with exit 2 before run() is called, since the assertion admits
+    `--mode fresh --overwrite` with exit 2 before run() is called, since the assertion admits
     either a refusal or a call carrying `from_scratch=True`, and forbids only a call carrying
     `from_scratch=False`.
     """
-    result = runner.invoke(app, [*config_args, "--from-scratch", "--overwrite"], default_map=_RESUME_OFF)
+    result = runner.invoke(app, [*config_args, "--mode", "fresh", "--overwrite"])
 
     if not run_calls:
         assert result.exit_code == 2, f"neither refused nor run; exit {result.exit_code}: {result.output}"
         return
-    assert run_calls[0]["from_scratch"] is True, "--overwrite cancelled --from-scratch"
+    assert run_calls[0]["from_scratch"] is True, "--overwrite cancelled --mode fresh"

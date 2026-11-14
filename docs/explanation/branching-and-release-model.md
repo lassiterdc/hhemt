@@ -7,7 +7,7 @@ The project uses a **gitflow-lite** model, with a long-lived development branch,
 - **`develop`** is the GitHub **default branch**. All day-to-day work happens here. Feature and worktree branches are created *from* `develop` and merged *back* into `develop`. Read-the-Docs "latest" builds `develop`.
 - **`main`** is **release-only**. `main` advances *only* through a `develop` → `main` release pull request that passes the release gate. The gate requires all tests green and docs accurate and complete. Every release merge is tagged `vX.Y.Z`. Read-the-Docs "stable" builds the latest tag, so public visitors land on released docs.
 
-A GitHub **ruleset** on `main` enforces the model. The ruleset requires a pull request before merge and linear history. Only `squash` and `rebase` merges are allowed. Force-pushes and deletions are blocked. The same ruleset requires a release PR to pass the test workflow, the anonymization guard, the docs build, the CITATION.cff validation, and the compile-bearing synth render gate. The LAYOUT_VERSION check runs from local pre-commit hooks, as the section [Layout version and release version](#layout-version-and-release-version) describes.
+A GitHub **ruleset** on `main` enforces the model. The ruleset requires a pull request before merge, and only the `merge` method is allowed, so `main` is always `develop` plus merge commits. Force-pushes and deletions are blocked. The same ruleset requires a release PR to pass the test workflow, the anonymization guard, the docs build, the CITATION.cff validation, the compile-bearing synth render gate, and the `release-pr-tree-identity` check. The LAYOUT_VERSION check runs from local pre-commit hooks, as the section [Layout version and release version](#layout-version-and-release-version) describes.
 
 ## Branching for contributors
 
@@ -24,6 +24,14 @@ release gate never saw.
 The tag also separates the documentation versions. `latest` tracks
 `develop` and shows unreleased content, and `stable` tracks the newest tag and is
 the version a visitor sees without a version in the URL.
+
+### Each check runs once per commit
+
+Every heavy check except the compile gate runs on a push to `develop` and on a pull request into `develop`. The compile gate runs on a push to `develop` and on manual dispatch. No heavy check runs on a pull request into `main` or on a push to `main`. A release PR reads each check from the `develop` push run on the head commit, so the checks that certify the release run once per commit and not twice.
+
+The develop push run certifies the head commit, while the merge lands the merge result. The `release-pr-tree-identity` job closes the difference. The job is cheap and runs only on a pull request into `main`. The job fails when the tree of the merge result differs from the tree of the PR head. The usual cause is content on `main` that `develop` lacks. Merge `main` into `develop` and wait for the checks on the new head.
+
+The job compares the merge result that GitHub computed when the PR was opened or last pushed. A later commit to `main` leaves that result stale, because the job runs again only on a new push to the PR.
 
 ### The release gate runs on a cleared cache, in a compiling venue
 

@@ -38,7 +38,7 @@ def _assert_label_map_used(text: str, needle: str) -> None:
 def test_multisim_per_sim_page_labels_use_the_label_map(synth_multi_sim_analysis):
     text = synth_multi_sim_analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=True,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         prepare_scenarios=True,
         process_timeseries=True,
     )

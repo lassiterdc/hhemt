@@ -53,7 +53,15 @@
 unpaired_allowlist:
   - renderer: sensitivity_benchmarking
     caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
-    renderer_sha256: f407be29365b86c4d5a8a408032bbbde98e8b94318486396fc7383a51b26559b
+    renderer_sha256: 5d10ed18e19e3d88ed087df7df8e2e4be2999d9b8ca3f66196beff0cdd6d015c
+    justification_2026_11_13_1g1_removed_event_active_member: >-
+      Re-read 2026-11-13 against this renderer's diff (git diff HEAD -- src/hhemt/report_renderers/sensitivity_benchmarking.py).
+      The one added branch routes an active SWMM-only member's removed event through the record-backed handle already used
+      for a removed member, so the row reads the SWMM total elapsed time captured in its record. The caption was read in full:
+      it states the time against the independent variable, the slowest-rank wall-clock summed over restarts for a TRITON or
+      TRITON-SWMM member, the aggregation statistic and the per-axis scaling, and makes no claim about a SWMM-only member's
+      source file or where a removed event is read from, so every clause is still true. PAIRING discharge on a re-read; the
+      digest expires on the next change to this renderer.
     justification_2026_11_10_member_key_constant: >-
       Re-read 2026-11-10 by the coordinator against this renderer's diff since the last recorded digest
       (git diff cfb8cb37 -- src/hhemt/report_renderers/sensitivity_benchmarking.py). The diff is one line in _collect_rows: the
@@ -640,7 +648,16 @@ unpaired_allowlist:
       change, so the exemption expires on the next change to this renderer.
   - renderer: metadata
     caption: src/hhemt/report_templates/captions/metadata.rst
-    renderer_sha256: 282b9af3bd6ba2670c3964fba3f9da79fc2654f0dd54fc13cddc6cc54ad04073
+    renderer_sha256: 63a375f065a90c5d667c148115ddbb7f145272431a45bffe25171d3e20673f78
+    justification_2026_11_13_1q2_attribute_rename: >-
+      Chunk 1q.2 renames the AnalysisPaths attribute sensitivity_datatree_zarr to
+      experiment_datatree_zarr. The only hunk in this renderer is the first string of
+      `_DECLARED_TREE_PATH_ATTRS`, listed by `git diff -U0 | grep '^@@'`. Caption RE-READ IN FULL
+      (20 lines: the three displayed sections, Provenance, Data Availability and Reproduction
+      Guide, plus the Sources block) against the diff; it names no attribute and no store
+      filename (`grep -c datatree` over it prints 0), so nothing in it can have gone stale. This
+      is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after the
+      edit, so the exemption expires on the next change to this renderer.
     justification_2026_11_02_title_colon: >-
       The page title joins the page name and the analysis id with a colon in place of an em dash.
       Caption RE-READ IN FULL (20 lines): it names no page title, and it describes the three displayed

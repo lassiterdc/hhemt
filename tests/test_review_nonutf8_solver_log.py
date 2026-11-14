@@ -129,7 +129,7 @@ def _analysis_stub(*, df, simlog_dir):
         ),
         analysis_paths=SimpleNamespace(
             analysis_datatree_zarr=None,
-            sensitivity_datatree_zarr=None,
+            experiment_datatree_zarr=None,
             simlog_directory=simlog_dir,
         ),
         df_status=df,

@@ -440,7 +440,7 @@ def _master(members: dict):
         members=members,
         df_setup=pd.DataFrame({"run_mode": ["cpu"] * len(members)}, index=pd.Index(list(members), name="member_id")),
         experiment=SimpleNamespace(cfg_analysis=SimpleNamespace(analysis_id="exp")),
-        analysis_paths=SimpleNamespace(sensitivity_datatree_zarr=None),
+        analysis_paths=SimpleNamespace(experiment_datatree_zarr=None),
     )
 
 

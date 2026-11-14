@@ -141,6 +141,7 @@ branch against the gates in `scripts/docs_gates.sh`:
 - the strict build, including the htmlproofer internal-link check
 - public-API autodoc coverage
 - docs content hygiene
+- docstring dialect
 - published-surface fidelity
 - the Vale style check, run with the `vale` version that `.github/workflows/docs-build.yml` installs
 

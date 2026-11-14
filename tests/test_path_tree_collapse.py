@@ -158,7 +158,7 @@ def test_metadata_reflective_tuple_resolves_sensitivity_first():
 
     from hhemt.paths import AnalysisPaths
 
-    assert metadata._DECLARED_TREE_PATH_ATTRS[0] == "sensitivity_datatree_zarr", (
+    assert metadata._DECLARED_TREE_PATH_ATTRS[0] == "experiment_datatree_zarr", (
         f"the reflective lookup now resolves {metadata._DECLARED_TREE_PATH_ATTRS[0]!r} FIRST. "
         f"`_resolve_consolidated_tree`'s docstring declares the sensitivity-master name is "
         f"tried first, mirroring `_combine_merge._resolve_root_tree`. Either the precedence "
@@ -197,7 +197,7 @@ def test_metadata_reflective_guard_fires_under_a_rename(monkeypatch):
         "AnalysisPaths",
         [
             ("analysis_tree_zarr", object, dataclasses.field(default=None)),
-            ("sensitivity_datatree_zarr", object, dataclasses.field(default=None)),
+            ("experiment_datatree_zarr", object, dataclasses.field(default=None)),
         ],
     )
     monkeypatch.setattr("hhemt.paths.AnalysisPaths", renamed)

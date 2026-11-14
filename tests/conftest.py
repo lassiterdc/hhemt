@@ -12,12 +12,25 @@
 #   * an end-of-session sweep that reclaims stale run dirs from the cache;
 #   * completion markers that the completed-tree fixtures write and check, so a tree
 #     whose build did not finish is rebuilt rather than handed out.
+import os
+
+# Typer decides at its own import whether to force a colour terminal: it does so when
+# GITHUB_ACTIONS (or FORCE_COLOR / PY_COLORS) is set, unless _TYPER_FORCE_DISABLE_TERMINAL
+# is set. On an Actions runner that put ANSI escapes into every `--help` and usage-error
+# text a CLI test asserts on, so three plain-text assertions passed on a laptop and failed
+# in CI. The setting goes here, above every other import, because the variable is read
+# once when typer.rich_utils is first imported and an import chain that reaches typer
+# earlier would make a later assignment a silent no-op. `setdefault` leaves a value the
+# caller exported alone. Deliberately NOT a strip of the escapes inside each assertion:
+# that is one site per assertion instead of one site.
+os.environ.setdefault("_TYPER_FORCE_DISABLE_TERMINAL", "1")
+
+import argparse
 import ast
 import contextlib
 import functools
 import hashlib
 import inspect
-import os
 import shutil
 import textwrap
 from pathlib import Path
@@ -109,8 +122,110 @@ _SESSION_START_OVERRIDE = pytest.StashKey[object]()
 
 
 def pytest_configure(config):
-    """Record whether HHEMT_TEST_RUNS_ROOT_OVERRIDE was exported when this session (or xdist worker) started."""
+    """Record whether HHEMT_TEST_RUNS_ROOT_OVERRIDE was exported when this session (or xdist worker) started.
+
+    Also registers the CI shard plugin when `--ci-shard` or `--ci-shard-record` was given (see `_CiShardPlugin`)."""
     config.stash[_SESSION_START_OVERRIDE] = os.environ.get(_TEST_RUNS_ROOT_OVERRIDE_ENV, _RUNS_ROOT_OVERRIDE_UNSET)
+    shard = config.getoption("--ci-shard", default=None)
+    record = config.getoption("--ci-shard-record", default=None)
+    if shard is not None or record is not None:
+        config.pluginmanager.register(_CiShardPlugin(shard, record), "hhemt-ci-shard")
+
+
+# CI SHARDING. The Actions `build` check runs the fast tier across a matrix of runners, each running every test file
+# whose stable hash falls in its residue class, so the wall clock is the slowest shard and not the whole tier. The
+# fan-in job in .github/workflows/test.yml checks that the shards together ran exactly the unsharded selection.
+#
+# The shard key is the test FILE, not the test: tests in one file share module-scope state and the compile-tier
+# fixtures are built per file, so a per-test split would build each tree on several runners. The key is a SHA-256 of
+# the file's rootdir-relative path, never the built-in `hash()`, because `hash()` of a str changes between
+# interpreter processes (PYTHONHASHSEED) and two shards would then disagree about which files are theirs, leaving
+# some file in no shard and no check red.
+#
+# Shards are numbered 1..N and shard K owns residue `K % N`, so K = N owns residue 0 and the N labels cover every
+# residue exactly once.
+def _parse_ci_shard(text: str) -> tuple[int, int]:
+    """Parse `K/N` into (K, N), or raise `argparse.ArgumentTypeError` (a usage error, exit 4) unless 1 <= K <= N."""
+    parts = text.split("/")
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        raise argparse.ArgumentTypeError(f"--ci-shard expects K/N with integers, got {text!r}")
+    index, count = int(parts[0]), int(parts[1])
+    if not 1 <= index <= count:
+        raise argparse.ArgumentTypeError(f"--ci-shard expects 1 <= K <= N, got {text!r}")
+    return index, count
+
+
+def _ci_shard_residue(test_file: str, count: int) -> int:
+    """The shard residue (0..count-1) of a rootdir-relative test file path; identical in every process."""
+    return int.from_bytes(hashlib.sha256(test_file.encode("utf-8")).digest()[:8], "big") % count
+
+
+def pytest_addoption(parser):
+    """Register `--ci-shard K/N` and `--ci-shard-record FILE`.
+
+    A bare `pytest` run does not see them, because this conftest loads before option parsing only when `tests` is a
+    path argument; test.yml passes it."""
+    group = parser.getgroup("hhemt-ci-shard", "CI sharding of the fast tier")
+    group.addoption(
+        "--ci-shard",
+        metavar="K/N",
+        type=_parse_ci_shard,
+        default=None,
+        help="run only the test files whose stable hash is K mod N (shards are numbered 1..N)",
+    )
+    group.addoption(
+        "--ci-shard-record",
+        metavar="FILE",
+        default=None,
+        help="after collection, write the node id of every selected test to FILE, one per line",
+    )
+
+
+# The bare node id, kept on the item itself. Deliberately NOT a dict keyed by the item: a pytest node hashes by its
+# node id, so the `@<xdist_group>` suffix pytest-xdist appends changes the hash and every later lookup misses.
+_CI_SHARD_BARE_NODEID = pytest.StashKey[str]()
+
+
+class _CiShardPlugin:
+    """Deselect by test-file hash and record the selection, for the CI `build` fan-in's partition check."""
+
+    def __init__(self, shard, record_path):
+        self._shard = shard
+        self._record_path = record_path
+
+    # `tryfirst` puts this ahead of pytest-xdist's worker hook, which appends `@<xdist_group>` to every grouped
+    # item's node id. The ids are captured here, before the suffix, because the fan-in's unsharded
+    # `pytest --collect-only -q` runs without xdist and prints the bare id; a recorded id carrying the suffix would
+    # never equal it and the partition check would report every grouped test as missing.
+    @pytest.hookimpl(tryfirst=True)
+    def pytest_collection_modifyitems(self, config, items):
+        """Stash every item's bare node id, then drop the items whose test file is not in this shard's residue class."""
+        for item in items:
+            item.stash[_CI_SHARD_BARE_NODEID] = item.nodeid
+        if self._shard is None:
+            return
+        index, count = self._shard
+        residue = index % count
+        kept, dropped = [], []
+        for item in items:
+            test_file = item.stash[_CI_SHARD_BARE_NODEID].partition("::")[0]
+            (kept if _ci_shard_residue(test_file, count) == residue else dropped).append(item)
+        if dropped:
+            config.hook.pytest_deselected(items=dropped)
+            items[:] = kept
+
+    def pytest_collection_finish(self, session):
+        """Write the bare node id of every selected test to the `--ci-shard-record` file, if one was given."""
+        if self._record_path is None:
+            return
+        lines = "".join(f"{item.stash.get(_CI_SHARD_BARE_NODEID, item.nodeid)}\n" for item in session.items)
+        target = Path(self._record_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Under `-n`, every xdist worker collects and reaches this hook with the same selection. Write through a
+        # per-process temporary and rename so concurrent workers never leave a half-written file.
+        temporary = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+        temporary.write_text(lines, encoding="utf-8")
+        os.replace(temporary, target)
 
 
 @pytest.fixture(scope="session")

@@ -37,7 +37,7 @@ def _assert_validated_swmm_stack() -> None:
     teardown crash, which the project cannot certify, so the guard refuses rather
     than risk silent heap corruption.
 
-    ``pyproject.toml`` pins ``pyswmm>=2,<3`` and ``swmm-toolkit>=0.15.3,<0.16``,
+    ``pyproject.toml`` pins ``pyswmm>=2,<2.2`` and ``swmm-toolkit>=0.15.3,<0.16``,
     both strictly inside those prefixes, so a plain ``pip install hhemt`` resolves a
     stack this guard ACCEPTS. Do not restate the retired claim that the engine ships
     only from conda-forge -- it seeded that claim on five public documentation

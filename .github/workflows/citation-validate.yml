@@ -1,15 +1,17 @@
 # CITATION.cff validation gate: fails if CITATION.cff is malformed.
 # Part of the release-gate-and-branch-protection plan (ADR-7). The job key
 # `citation-validate` IS the required-status-check context string; do not add a
-# job-level `name:` (it would replace the context). Triggers on PRs to main so a
-# develop->main release PR reports this check on its head commit.
+# job-level `name:` (it would replace the context). A develop->main release PR reports this
+# check on its head commit from the develop push run, since this workflow no longer triggers on main.
 name: Citation validate
 
 on:
+  # develop only: the release PR (develop -> main) reads this check from the develop push run
+  # on its head SHA, so a trigger on main would run the same check twice for one SHA.
   push:
-    branches: [ "main", "develop" ]
+    branches: [ "develop" ]
   pull_request:
-    branches: [ "main", "develop" ]
+    branches: [ "develop" ]
 
 permissions:
   contents: read

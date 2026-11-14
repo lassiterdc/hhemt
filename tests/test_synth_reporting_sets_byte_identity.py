@@ -133,7 +133,7 @@ def test_multisim_default_byte_identical(synth_multi_sim_analysis):
     builder = synth_multi_sim_analysis._workflow_builder
     generated = builder.generate_snakefile_content(
         process_system_level_inputs=True,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         prepare_scenarios=True,
         process_timeseries=True,
     )

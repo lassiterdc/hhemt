@@ -115,10 +115,35 @@ VERSION := `grep -m1 '^version' pyproject.toml | sed -E 's/version = "(.*)"/\1/'
 version:
     @echo "Current version is {{VERSION}}"
 
+# The ruleset file and the live GitHub ruleset must agree, and every required check must have a
+# producing workflow job (scripts/check_ruleset_sync.py). The live half calls `gh api`, so this
+# needs `gh auth login` or GH_TOKEN set; an unreachable GitHub is exit 2, never a pass.
+ruleset-check:
+    python scripts/check_ruleset_sync.py --static --live
+
+# Stamp today's date into the two copies of the release date (CITATION.cff `date-released` and
+# the HISTORY.md `## vX.Y.Z (date)` heading for the current version) in ONE commit, so they
+# cannot disagree (scripts/check_release_metadata.py reads both at `just tag`). Run it on the day
+# of the release, on a tree whose other changes are committed; it refuses a dirty CITATION.cff or
+# HISTORY.md so the commit holds the stamp and nothing else. It creates no tag and pushes nothing.
+stamp-release:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git diff --quiet HEAD -- CITATION.cff HISTORY.md || { echo "CITATION.cff or HISTORY.md has uncommitted changes; commit or stash them so the stamp commit holds the stamp alone." >&2; exit 1; }
+    python scripts/check_release_metadata.py --stamp
+    if git diff --quiet HEAD -- CITATION.cff HISTORY.md; then
+        echo "Release date already stamped; nothing to commit."
+    else
+        git add CITATION.cff HISTORY.md
+        git commit -m "chore(release): stamp v{{VERSION}} release date" -- CITATION.cff HISTORY.md
+    fi
+    python scripts/check_release_metadata.py
+
 # Tag the current version in git and put to github
 tag:
-    git diff --quiet HEAD -- CITATION.cff pyproject.toml
+    git diff --quiet HEAD -- CITATION.cff pyproject.toml HISTORY.md
     python scripts/check_release_metadata.py
+    just ruleset-check
     echo "Tagging version v{{VERSION}}"
     git tag -a v{{VERSION}} -m "Creating version v{{VERSION}}"
     git push origin v{{VERSION}}

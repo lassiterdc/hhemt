@@ -841,7 +841,7 @@ def _load_migration_module(versions_dir: Path, serial: int):
 def test_the_member_group_count_requires_a_marker_and_a_member_name(tmp_path):
     """CONDITION 1 -- the migration-side counter's two independent conjuncts, pinned.
 
-    `V0023._member_group_count` gates on three syntactic terms:
+    `V0025._member_group_count` gates on three syntactic terms:
     `child.is_dir() and _is_group_node(child) and child.name.startswith(_MEMBER_PREFIXES)`.
     Before this node the function had NO executable coverage at all: the v22->v23 golden pair
     returns from `upgrade()` before any classification unless the tree carries BOTH root store

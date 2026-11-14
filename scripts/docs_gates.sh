@@ -45,6 +45,11 @@ gate python scripts/check_autodoc_coverage.py --site-dir site
 # no longer runnable against a bare checkout.
 gate python scripts/check_docs_content.py
 
+# Docstring dialect: a rendered public docstring written in a section style the configured
+# numpy handler does not parse still passes the two gates above and renders its parameters as
+# run-on prose. Needs no built site. Wired here and in the list in docs-build.yml in one landing.
+gate python scripts/check_docstring_dialect.py
+
 # The two mirrors between gate A's DERIVED population and what the built
 # site actually renders, plus the pinned public surface. Needs the SITE, so
 # it is a third leaf rather than a clause inside the gate above; that gate's
@@ -56,3 +61,19 @@ gate python scripts/check_published_surface.py --site-dir site
 # Wording of the published pages: the Vale rules of `.vale/styles/`, which every page must satisfy with no
 # alert. Needs the `vale` executable on PATH; the CI job installs it.
 gate python scripts/check_vale.py
+
+# A green run certifies less than six gate names suggest, and the Actions page shows only
+# the green. State what the run does NOT reach on the stream a reader of that page sees, so
+# nobody reads this exit as "the docs are verified". Each line is a fact about the gate it
+# names, as that gate's own source or output states it: edit the line when the gate moves.
+# (No line begins with the word the gate function is named for, so the list of gates that
+# tests/docs/test_retrofit_code_facts.py reads from this file is unchanged.)
+cat <<'NOTES'
+== docs gates passed. What this run does not certify:
+   - strict build: links between pages only; external URLs are not fetched (validate_external_urls: false in mkdocs.yml).
+   - autodoc coverage: symbols of the modules the API reference pages name. A module dropped from those pages is caught by the published-surface baseline, not here.
+   - docstring dialect: that every rendered public docstring parses as numpy sections. It grades no wording and no accuracy.
+   - docs content: placeholders, bare line citations and banned wording in published pages and the API source lines they render. Files its output lists as personal-voice or repo-internal are advisory and are not gated.
+   - published surface: that the docs content gate's derived population matches what the built site renders, and that the surface has not widened past the pinned baseline. It grades no docstring text.
+   - Vale: the wording of tracked Markdown under docs/ and README.md, never its accuracy. The generated configuration schema pages are untracked, so Vale does not see them; hooks/config_reference.py applies the content patterns to them as it writes them.
+NOTES

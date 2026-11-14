@@ -41,7 +41,7 @@ channels:
 dependencies:
   - python=3.11
   - filelock
-  - typer
+  - typer>=0.26,<1
   - pydantic=2.7  # pyproject requires ==2.7.*; declared here because the conda env is
                   # the ONLY source of the runtime graph under `pip install -e . --no-deps`.
                   # Until 2026-08-26 this was held only by hsmodels' transitive pin.
@@ -113,11 +113,11 @@ dependencies:
   - gxx_linux-64
   # other stuff
   - coverage
-  - pytest
+  - pytest>=9,<9.2
   - pytest-xdist>=3.0
   - py-spy>=0.3.14
   - ruff=0.15.10
-  - ty
+  - ty=0.0.49
   - pre-commit
   - ipdb
   - ipykernel

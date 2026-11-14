@@ -2,14 +2,23 @@
 """CI check enforcing the version-migration discipline.
 
 Usage:
-    python scripts/check_layout_version.py check-a [base_ref=main]
-    python scripts/check_layout_version.py check-b [base_ref=main]
+    python scripts/check_layout_version.py check-a [--range] [base_ref=main]
+    python scripts/check_layout_version.py check-b [--range [--to REF]] [base_ref]
     python scripts/check_layout_version.py check-c [base_ref=main]
     python scripts/check_layout_version.py --stamp {path} --why {text}
     python scripts/check_layout_version.py --stamp {path} --at {rev} --why {text}
 
 Exit 0 = pass; exit 1 = enforcement failure with structured message.
 Check C is warning-only and always exits 0.
+
+NAME THE REF WHEN YOU RUN A CHECK AS A POST-CONDITION. Without `--range`, `check-a` and
+`check-b` grade `base_ref` against the WORKING TREE, and `base_ref` defaults to `main`, so a
+bare `check-b` measures the whole branch since it left `main`, not the change in front of
+you. A branch that carries an unrelated layout-relevant change older than your edit fails a
+bare `check-b` for that change while the venue that gates your push passes. The gating venues
+are in `.pre-commit-config.yaml`: `check-a HEAD` at commit, and `check-a --range HEAD~1` and
+`check-b --range` at push (the range comes from the PRE_COMMIT_FROM_REF and PRE_COMMIT_TO_REF
+that pre-commit exports). Run the form the venue runs, with its ref spelled out.
 
 `--stamp` is the remedy GATE rather than a check: it APPENDS one
 `non_breaking_allowlist` row carrying the changed file's sha256 and the
@@ -243,9 +252,17 @@ def _layout_version_at_head() -> int:
     return int(m.group(1))
 
 
-def _changed_files(base_ref: str, to_ref: str | None = None) -> list[Path]:
+def _changed_files(base_ref: str, to_ref: str | None = None, *, other_bases: tuple[str, ...] = ()) -> list[Path]:
     """Changed paths from `base_ref` to `to_ref` (default: the WORKING TREE), EXCLUDING pure
     git renames/copies.
+
+    `other_bases` is for grading a MERGE commit, where `base_ref` is its first parent and
+    `other_bases` are its remaining parents. A path is kept only if it changed against EVERY
+    base, which is git's own combined-diff rule for what a merge itself introduced. A path
+    equal to a second parent's blob arrived with that parent's history, which was graded when
+    that history was; reading only the first parent counted it as the merge's own change and
+    failed a correct merge of `develop` whenever the branch's allowlist row for the path came
+    last, with no repair short of a row signing content already signed.
 
     `to_ref=None` grades `base_ref`..worktree, which is what pre-commit needs (see the range
     note below). `to_ref="HEAD"` grades the COMMIT RANGE `base_ref`..HEAD, which is what a
@@ -268,6 +285,7 @@ def _changed_files(base_ref: str, to_ref: str | None = None) -> list[Path]:
     still catches the highest-risk such case (compute_event_id_slug), and the
     skip is one-commit-scoped (the next non-rename edit re-enters enforcement).
     """
+
     # {base}..HEAD is a COMMIT RANGE and stops at HEAD. At pre-commit the commit object
     # does not exist, so this range is the PREVIOUS, already-committed commit -- which
     # already passed this hook when it was made. Measured on a real merge: the range
@@ -278,20 +296,37 @@ def _changed_files(base_ref: str, to_ref: str | None = None) -> list[Path]:
     # venue this script runs in (branching-and-release-model.md records that it is wired
     # into no GitHub Actions workflow), so the range being wrong made the file-scan arm
     # inert everywhere rather than only at commit time.
-    diff_args = ["diff", "--name-status", "-M", base_ref]
-    if to_ref is not None:
-        diff_args.append(to_ref)
-    out = _git(*diff_args).strip()
-    changed: list[Path] = []
-    for line in out.splitlines():
-        if not line.strip():
-            continue
-        fields = line.split("\t")
-        status = fields[0]
-        if status.startswith("R") or status.startswith("C"):
-            continue
-        changed.append(REPO_ROOT / fields[-1])
+    def changed_against(base: str) -> list[Path]:
+        diff_args = ["diff", "--name-status", "-M", base]
+        if to_ref is not None:
+            diff_args.append(to_ref)
+        out = _git(*diff_args).strip()
+        paths: list[Path] = []
+        for line in out.splitlines():
+            if not line.strip():
+                continue
+            fields = line.split("\t")
+            status = fields[0]
+            if status.startswith("R") or status.startswith("C"):
+                continue
+            paths.append(REPO_ROOT / fields[-1])
+        return paths
+
+    changed = changed_against(base_ref)
+    for other in other_bases:
+        also_changed = set(changed_against(other))
+        changed = [p for p in changed if p in also_changed]
     return changed
+
+
+def _commit_other_parents(commit: str) -> tuple[str, ...]:
+    """Every parent of `commit` after the first, or `()` for a non-merge or root commit.
+
+    Pairs with `_commit_parent`, which returns the first parent: a caller grading a merge needs
+    both to hand `_changed_files` the full parent set.
+    """
+    fields = _git("rev-list", "--parents", "-n", "1", commit).split()
+    return tuple(fields[2:])
 
 
 def _added_files(base_ref: str) -> list[Path]:
@@ -566,9 +601,10 @@ def _commit_parent(commit: str) -> str | None:
     is no migration to demand and no predecessor version to compare against, which is the
     same reasoning `_base_ref_or_verdict` applies at an unborn HEAD.
 
-    `^` is the FIRST PARENT, so for a merge this compares against the branch being merged
-    into -- the same "what this commit introduced" definition `git show` uses, rather than a
-    diff against every parent. `^{commit}` peels, in case `^` ever names a tag.
+    `^` is the FIRST PARENT, so for a merge the LAYOUT_VERSION comparison and the root-commit
+    signal use the branch being merged into. The file scan does NOT: `_check_b_range` grades a
+    merge on paths changed against every parent (see `_changed_files`). `^{commit}` peels, in
+    case `^` ever names a tag.
     """
     try:
         return _git("rev-parse", "--verify", "--quiet", f"{commit}^^{{commit}}", suppress_stderr=True).strip()
@@ -663,6 +699,41 @@ def _scan_changed_files(
         if rel in paths or any(_layout_glob_match(rel, g) for g in globs):
             relevant.append(p)
     return relevant
+
+
+def _signed_blobs_by_path(sentinel: dict) -> dict[str, set[str]]:
+    """Every `layout_signature` any allowlist row carries, keyed by path.
+
+    `_load_allowlist` keeps one entry per path (last wins), which is right for grading a change and
+    wrong for asking whether a blob was EVER signed: a branch's later row for the same path
+    replaces `develop`'s in that map while `develop`'s row stays in the file. Reads the rows
+    directly so a superseded signature still counts as a signature.
+    """
+    signed: dict[str, set[str]] = {}
+    for raw in sentinel.get("non_breaking_allowlist", []) or []:
+        if isinstance(raw, dict) and isinstance(raw.get("layout_signature"), str) and "path" in raw:
+            signed.setdefault(raw["path"], set()).add(raw["layout_signature"])
+    return signed
+
+
+def _unsigned_carried_files(
+    carried: list[Path],
+    paths: set[str],
+    globs: list[str],
+    signed: dict[str, set[str]],
+    content_hash,
+) -> list[Path]:
+    """The layout-relevant members of `carried` whose blob no allowlist row ever signed.
+
+    `carried` are paths a merge took unchanged from one of its parents. An empty allowlist is
+    passed to the shared scan so relevance is decided by the same predicate as every other arm.
+    """
+    relevant = _scan_changed_files(carried, paths, globs, {}, content_hash)
+    return [
+        p
+        for p in relevant
+        if content_hash(str(p.relative_to(REPO_ROOT))) not in signed.get(str(p.relative_to(REPO_ROOT)), set())
+    ]
 
 
 def _merge_parent_shas(range_mode: bool) -> list[str]:
@@ -1012,14 +1083,29 @@ def _check_b_range(from_ref: str, to_ref: str, sentinel: dict) -> int:
                 f"check-a covers this commit ({from_ref}..{to_ref})"
             )
             continue
+        other_parents = _commit_other_parents(commit)
+        content_at = lambda rel, c=commit: _file_content_hash_at(c, rel)  # noqa: E731
         hits = _scan_changed_files(
-            _changed_files(parent, commit),
+            # A MERGE is graded on what it introduced, i.e. paths changed against EVERY parent.
+            # Deliberately NOT first-parent only: that reads a blob carried in from the other parent as
+            # the merge's own change and fails a correct merge of `develop` when the branch's last-wins
+            # allowlist row signs different content. Non-merge commits have no other parent, so their
+            # grading is unchanged.
+            _changed_files(parent, commit, other_bases=other_parents),
             paths,
             globs,
             allow,
             # THE RANGE VENUE'S CONTENT SOURCE -- the graded commit's blob, never the worktree.
-            lambda rel, c=commit: _file_content_hash_at(c, rel),
+            content_at,
         )
+        if other_parents:
+            # The paths the every-parent rule dropped were carried in by another parent. They are not
+            # the merge's own change, but a layout file whose carried blob NO row signs is still
+            # reported: the remote exclusion trusts pushed commits, and no CI workflow re-runs this
+            # check, so a develop commit that bypassed its hook is seen nowhere else.
+            introduced = set(_changed_files(parent, commit, other_bases=other_parents))
+            carried = [p for p in _changed_files(parent, commit) if p not in introduced]
+            hits += _unsigned_carried_files(carried, paths, globs, _signed_blobs_by_path(sentinel), content_at)
         if hits:
             failures.append((commit, hits))
 

@@ -216,7 +216,7 @@ def _stub(analysis_id: str, *, clear: bool, tree_path: Path | None = None, maste
         ),
         analysis_paths=SimpleNamespace(
             analysis_datatree_zarr=tree_path,
-            sensitivity_datatree_zarr=master_tree,
+            experiment_datatree_zarr=master_tree,
             analysis_dir=master_tree.parent if master_tree is not None else None,
         ),
         process=SimpleNamespace(open_datatree=open_datatree),

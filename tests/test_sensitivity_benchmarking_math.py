@@ -624,7 +624,7 @@ def _stub_analysis(tmp_path, *, write_csv=True, ledger_value=900.0, perf_total=2
     return SimpleNamespace(
         sensitivity=SimpleNamespace(members={"serial_6_r1": sub}),
         analysis_paths=SimpleNamespace(
-            sensitivity_datatree_zarr=tree_path,
+            experiment_datatree_zarr=tree_path,
             analysis_dir=tmp_path,
         ),
     )
@@ -704,7 +704,7 @@ def test_collect_rows_reads_simulation_from_datatree_like_every_other_column(tmp
     )
     analysis = SimpleNamespace(
         sensitivity=SimpleNamespace(members={"serial_6_r1": sub}),
-        analysis_paths=SimpleNamespace(sensitivity_datatree_zarr=tree_path, analysis_dir=tmp_path),
+        analysis_paths=SimpleNamespace(experiment_datatree_zarr=tree_path, analysis_dir=tmp_path),
     )
     rows, _ = _collect_rows(analysis, "performance.Simulation")
     assert rows[0]["value"] == pytest.approx(150.0)

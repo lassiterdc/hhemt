@@ -7,6 +7,7 @@ Every private string is built from fragments, so this file holds no real value.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import subprocess
 import sys
@@ -113,6 +114,14 @@ def test_the_leak_check_reports_a_printed_value():
 
 _PINNED = {"plotly": "5.24.1", "kaleido": "0.2.1"}
 
+# The committed PNG is fixed by the fonts as well as by the two pins above. The figures' font stack is
+# `Helvetica, Arial, sans-serif` (layout.template.layout.font.family of the report's figures) and no Helvetica
+# family is installed where the PNG was rendered, so the face drawn is Arial: with the same python, plotly,
+# kaleido and report, hiding only the Arial files changes 33634 of 3360000 pixels, and hiding only the Verdana
+# files changes none. This digest is the sha256 over the sorted sha256 of each distinct file fontconfig lists
+# for the family Arial (four faces) on the host that rendered the committed PNG.
+_ARIAL_FACES_DIGEST = "47fd383dfbbd102232849076b24917c2e273fca6c3223e139190f1a755f94f11"
+
 
 def _toolchain_matches() -> bool:
     from importlib import metadata
@@ -121,6 +130,26 @@ def _toolchain_matches() -> bool:
         return all(metadata.version(name) == version for name, version in _PINNED.items())
     except metadata.PackageNotFoundError:
         return False
+
+
+def _arial_faces_digest() -> str | None:
+    """The digest of the Arial faces fontconfig lists on this host, or None when fc-list is absent or lists none.
+
+    Callers compare it with `_ARIAL_FACES_DIGEST`; a host with other Arial files, or none, does not match.
+    """
+    try:
+        listed = subprocess.run(["fc-list", "Arial", "file"], capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    files = sorted({line.strip().rstrip(":") for line in listed.splitlines() if line.strip()})
+    if not files:
+        return None
+    contents = sorted({hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in files})
+    return hashlib.sha256("\n".join(contents).encode()).hexdigest()
+
+
+def _renderer_matches() -> bool:
+    return _toolchain_matches() and _arial_faces_digest() == _ARIAL_FACES_DIGEST
 
 
 def _render(title: str, dest: Path) -> bytes:
@@ -144,7 +173,11 @@ def _render(title: str, dest: Path) -> bytes:
 
 
 @pytest.mark.skipif(
-    not _toolchain_matches(), reason="the figure bytes are fixed only under plotly 5.24.1 and kaleido 0.2.1"
+    not _renderer_matches(),
+    reason=(
+        "the figure bytes are fixed only under plotly 5.24.1, kaleido 0.2.1 "
+        "and the Arial faces the committed PNG was rendered with"
+    ),
 )
 def test_the_committed_figure_is_the_figure_of_the_committed_report(tmp_path):
     """Class: the committed PNG against a fresh `figure` render of the committed report, on the pinned toolchain.
